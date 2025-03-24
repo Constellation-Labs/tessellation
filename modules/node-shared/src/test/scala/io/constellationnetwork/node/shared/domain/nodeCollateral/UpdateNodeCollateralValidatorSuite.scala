@@ -25,7 +25,7 @@ import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed.forAsyncHasher
-import io.constellationnetwork.security.signature.SignedValidator.InvalidSignatures
+import io.constellationnetwork.security.signature.SignedValidator.{InvalidSignatures, NotSignedExclusivelyByAddressOwner}
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import io.constellationnetwork.shared.sharedKryoRegistrar
@@ -35,7 +35,7 @@ import weaver.MutableIOSuite
 
 object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
 
-  type Res = (JsonSerializer[IO], Hasher[IO], SecurityProvider[IO], KeyPair)
+  type Res = (JsonSerializer[IO], Hasher[IO], SecurityProvider[IO], KeyPair, Address)
 
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
@@ -43,20 +43,27 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
     h = Hasher.forJson[IO]
     kp <- KeyPairGenerator.makeKeyPair[IO].asResource
-  } yield (j, h, sp, kp)
+    sourceAddress <- kp.getPublic.toId.toAddress.asResource
+  } yield (j, h, sp, kp, sourceAddress)
 
   def testCreateNodeCollateral(
     keyPair: KeyPair,
+    sourceAddress: Address,
     tokenLockReference: Hash = Hash.empty,
     parent: NodeCollateralReference = NodeCollateralReference.empty
   ): UpdateNodeCollateral.Create = UpdateNodeCollateral.Create(
+    source = sourceAddress,
     nodeId = PeerId.fromPublic(keyPair.getPublic),
     amount = NodeCollateralAmount(NonNegLong(100L)),
     tokenLockRef = tokenLockReference,
     parent = parent
   )
 
-  def testWithdrawNodeCollateral(keyPair: KeyPair): UpdateNodeCollateral.Withdraw = UpdateNodeCollateral.Withdraw(
+  def testWithdrawNodeCollateral(
+    keyPair: KeyPair,
+    sourceAddress: Address
+  ): UpdateNodeCollateral.Withdraw = UpdateNodeCollateral.Withdraw(
+    source = sourceAddress,
     collateralRef = NodeCollateralReference.empty.hash
   )
 
@@ -89,11 +96,11 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
   test(
     "should succeed when the create node collateral is signed correctly, is signed correctly, the node is authorized, and parents are valid"
   ) { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
-      validCreate = testCreateNodeCollateral(keyPair, tokenLockReference)
+      validCreate = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       seedlist <- mkSeedlist(validCreate.nodeId)
       validator = mkValidator(seedlist)
@@ -102,12 +109,12 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when the create node collateral is not signed correctly") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
-      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair1)
-      validCreate = testCreateNodeCollateral(keyPair, tokenLockReference)
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
+      validCreate = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair).map(signed =>
         signed.copy(proofs =
           NonEmptySet.fromSetUnsafe(
@@ -118,11 +125,19 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       seedlist <- mkSeedlist(validCreate.nodeId)
       validator = mkValidator(seedlist)
       result <- validator.validateCreateNodeCollateral(signed, lastContext)
-    } yield expect.same(InvalidSigned(InvalidSignatures(signed.proofs)).invalidNec, result)
+    } yield expect.all(result match {
+      case Invalid(errors) =>
+        errors.exists {
+          case InvalidSigned(NotSignedExclusivelyByAddressOwner) => true
+          case InvalidSigned(InvalidSignatures(signed.proofs)) => true
+          case _ => false
+        }
+      case _ => false
+    })
   }
 
   test("should fail when the create node collateral has more than one signature") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -131,22 +146,31 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       activeTokenLocks = lastContext.activeTokenLocks.get
       tokenLocks = activeTokenLocks(keyPair1.getPublic.toAddress)
       lastContext1 = lastContext.copy(activeTokenLocks = Some(activeTokenLocks.updated(keyPair2.getPublic.toAddress, tokenLocks)))
-      validCreate = testCreateNodeCollateral(keyPair, tokenLockReference)
+      validCreate = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference)
       signed1 <- forAsyncHasher(validCreate, keyPair1)
       signed2 <- forAsyncHasher(validCreate, keyPair2)
       signed = signed1.addProof(signed2.proofs.head)
       seedlist <- mkSeedlist(validCreate.nodeId)
       validator = mkValidator(seedlist)
       result <- validator.validateCreateNodeCollateral(signed, lastContext1)
-    } yield expect.same(TooManySignatures(signed.proofs).invalidNec, result)
+    } yield
+      expect.all(result match {
+        case Invalid(errors) =>
+          errors.exists {
+            case TooManySignatures(proofs)                         => proofs == signed.proofs
+            case InvalidSigned(NotSignedExclusivelyByAddressOwner) => true
+            case _                                                 => false
+          }
+        case _ => false
+      })
   }
 
   test("should succeed when the create node collateral is signed correctly but the seed list is empty") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
-      validCreate = testCreateNodeCollateral(keyPair, tokenLockReference)
+      validCreate = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateNodeCollateral(signed, lastContext)
@@ -154,11 +178,11 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when the create node collateral is signed correctly but the node is not authorized") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
-      invalidCreate = testCreateNodeCollateral(keyPair, tokenLockReference)
+      invalidCreate = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(invalidCreate, keyPair)
       seedlist <- mkSeedlist()
       validator = mkValidator(seedlist)
@@ -167,16 +191,16 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when there is another collateral for this node") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
-      parent = testCreateNodeCollateral(keyPair, Hash.empty)
+      parent = testCreateNodeCollateral(keyPair, sourceAddress, Hash.empty)
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeNodeCollaterals = Some(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue)))))
       lastRef <- NodeCollateralReference.of(signedParent)
-      validCreate = testCreateNodeCollateral(keyPair, tokenLockReference, lastRef)
+      validCreate = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference, lastRef)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateNodeCollateral(signed, context)
@@ -184,18 +208,18 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
   }
 
   test("should succeed when the tokenLock is not available (another node collateral exists / overwrite)") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       nodeId1 = PeerId.fromPublic(keyPair1.getPublic)
-      parent = testCreateNodeCollateral(keyPair, tokenLockReference)
+      parent = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference)
       signedParent <- forAsyncHasher(parent.copy(nodeId = nodeId1), keyPair)
       lastRef <- NodeCollateralReference.of(signedParent)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeNodeCollaterals = Some(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue)))))
-      validCreate = testCreateNodeCollateral(keyPair, tokenLockReference, lastRef)
+      validCreate = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference, lastRef)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateNodeCollateral(signed, context)
@@ -203,23 +227,23 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail an overwrite request when a pending withdrawal exists") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       nodeId1 = PeerId.fromPublic(keyPair1.getPublic)
-      parent = testCreateNodeCollateral(keyPair, tokenLockReference)
+      parent = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference)
       signedParent <- forAsyncHasher(parent.copy(nodeId = nodeId1), keyPair)
       lastRef <- NodeCollateralReference.of(signedParent)
-      validWithdraw = testWithdrawNodeCollateral(keyPair).copy(collateralRef = lastRef.hash)
+      validWithdraw = testWithdrawNodeCollateral(keyPair, sourceAddress).copy(collateralRef = lastRef.hash)
       signedWithdraw <- forAsyncHasher(validWithdraw, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(
         activeNodeCollaterals = Some(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue)))),
         nodeCollateralWithdrawals = Some(SortedMap(address -> List((signedWithdraw, EpochProgress.MinValue))))
       )
-      validCreate = testCreateNodeCollateral(keyPair, tokenLockReference, lastRef)
+      validCreate = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference, lastRef)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateNodeCollateral(signed, context)
@@ -227,17 +251,17 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when the lastRef of the existing node collateral is different") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
-      parent = testCreateNodeCollateral(keyPair, tokenLockReference)
+      parent = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference)
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       nodeId1 = PeerId.fromPublic(keyPair1.getPublic)
       signedParent <- forAsyncHasher(parent.copy(nodeId = nodeId1), keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeNodeCollaterals = Some(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue)))))
-      validCreate = testCreateNodeCollateral(keyPair, tokenLockReference)
+      validCreate = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateNodeCollateral(signed, context)
@@ -245,11 +269,12 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when the tokenLock is not available (a delegated stake exists)") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
       parent = UpdateDelegatedStake.Create(
+        source = sourceAddress,
         nodeId = PeerId.fromPublic(keyPair.getPublic),
         amount = DelegatedStakeAmount(NonNegLong(100L)),
         tokenLockRef = tokenLockReference
@@ -257,7 +282,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeDelegatedStakes = Some(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue)))))
-      validCreate = testCreateNodeCollateral(keyPair, tokenLockReference)
+      validCreate = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateNodeCollateral(signed, context)
@@ -265,15 +290,15 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when the tokenLock amount is too low") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
-    val parent = testCreateNodeCollateral(keyPair)
+    val parent = testCreateNodeCollateral(keyPair, sourceAddress)
 
     for {
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, tokenLockAmount = 10L)
-      validCreate = testCreateNodeCollateral(keyPair, tokenLockReference)
+      validCreate = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateNodeCollateral(signed, lastContext)
@@ -281,14 +306,14 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when the tokenLock expires too soon") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, tokenLockUnlockEpoch = Some(EpochProgress.MaxValue))
-      parent = testCreateNodeCollateral(keyPair, tokenLockReference)
+      parent = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference)
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
-      validCreate = testCreateNodeCollateral(keyPair, tokenLockReference)
+      validCreate = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateNodeCollateral(signed, lastContext)
@@ -296,16 +321,16 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
   }
 
   test("should succeed when the withdraw node collateral is signed correctly") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
-    val validParent = testCreateNodeCollateral(keyPair)
+    val validParent = testCreateNodeCollateral(keyPair, sourceAddress)
 
     for {
       signedParent <- forAsyncHasher(validParent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = mkGlobalContext(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue))))
       lastRef <- NodeCollateralReference.of(signedParent)
-      validWithdraw = testWithdrawNodeCollateral(keyPair).copy(collateralRef = lastRef.hash)
+      validWithdraw = testWithdrawNodeCollateral(keyPair, sourceAddress).copy(collateralRef = lastRef.hash)
       signed <- forAsyncHasher(validWithdraw, keyPair)
       seedlist <- mkSeedlist(validParent.nodeId)
       validator = mkValidator(seedlist)
@@ -314,16 +339,16 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when the withdraw node collateral is not signed correctly") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
-    val validParent = testCreateNodeCollateral(keyPair)
+    val validParent = testCreateNodeCollateral(keyPair, sourceAddress)
 
     for {
       signedParent <- forAsyncHasher(validParent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = mkGlobalContext(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue))))
       lastRef <- NodeCollateralReference.of(signedParent)
-      validWithdraw = testWithdrawNodeCollateral(keyPair).copy(collateralRef = lastRef.hash)
+      validWithdraw = testWithdrawNodeCollateral(keyPair, sourceAddress).copy(collateralRef = lastRef.hash)
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       signed <- forAsyncHasher(validWithdraw, keyPair).map(signed =>
         signed.copy(proofs =
@@ -339,23 +364,23 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       expect.all(result match {
         case invalid @ Invalid(_) =>
           invalid.e.exists { e =>
-            e == InvalidSigned(InvalidSignatures(signed.proofs))
+            e == InvalidSigned(NotSignedExclusivelyByAddressOwner)
           }
         case _ => false
       })
   }
 
   test("should fail when the withdraw node collateral has more than one signature") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
-    val validParent = testCreateNodeCollateral(keyPair)
+    val validParent = testCreateNodeCollateral(keyPair, sourceAddress)
 
     for {
       signedParent <- forAsyncHasher(validParent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = mkGlobalContext(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue))))
       lastRef <- NodeCollateralReference.of(signedParent)
-      validWithdraw = testWithdrawNodeCollateral(keyPair).copy(collateralRef = lastRef.hash)
+      validWithdraw = testWithdrawNodeCollateral(keyPair, sourceAddress).copy(collateralRef = lastRef.hash)
       signed1 <- forAsyncHasher(validWithdraw, keyPair)
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       signed2 <- forAsyncHasher(validWithdraw, keyPair1)
@@ -373,9 +398,9 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when lastRef of the withdraw node collateral is empty and the global context is empty") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
-    val validWithdraw = testWithdrawNodeCollateral(keyPair)
+    val validWithdraw = testWithdrawNodeCollateral(keyPair, sourceAddress)
 
     for {
       signed <- forAsyncHasher(validWithdraw, keyPair)
@@ -385,10 +410,10 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when lastRef of the withdraw node collateral is not empty and the global context is empty") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     val lastRef = NodeCollateralReference.empty // .copy(ordinal = NodeCollateralReference.empty.ordinal.next)
-    val invalidWithdraw = testWithdrawNodeCollateral(keyPair).copy(collateralRef = lastRef.hash)
+    val invalidWithdraw = testWithdrawNodeCollateral(keyPair, sourceAddress).copy(collateralRef = lastRef.hash)
 
     for {
       signed <- forAsyncHasher(invalidWithdraw, keyPair)
@@ -398,16 +423,16 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
   }
 
   test("should succeed when lastRef of the withdraw node collateral is not empty and the global context contains the parent") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
-    val parent = testCreateNodeCollateral(keyPair)
+    val parent = testCreateNodeCollateral(keyPair, sourceAddress)
 
     for {
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = mkGlobalContext(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue))))
       lastRef <- NodeCollateralReference.of(signedParent)
-      validWithdraw = testWithdrawNodeCollateral(keyPair).copy(collateralRef = lastRef.hash)
+      validWithdraw = testWithdrawNodeCollateral(keyPair, sourceAddress).copy(collateralRef = lastRef.hash)
       signed <- forAsyncHasher(validWithdraw, keyPair)
       validator = mkValidator()
       result <- validator.validateWithdrawNodeCollateral(signed, context)
@@ -415,16 +440,16 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when lastRef of the withdraw node collateral is not empty and the global context does not contain the parent") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
-    val parent = testCreateNodeCollateral(keyPair)
+    val parent = testCreateNodeCollateral(keyPair, sourceAddress)
 
     for {
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = mkGlobalContext(SortedMap(address -> List()))
       lastRef <- h.hash(parent)
-      invalidWithdraw = testWithdrawNodeCollateral(keyPair).copy(collateralRef = lastRef)
+      invalidWithdraw = testWithdrawNodeCollateral(keyPair, sourceAddress).copy(collateralRef = lastRef)
       signed <- forAsyncHasher(invalidWithdraw, keyPair)
       validator = mkValidator()
       result <- validator.validateWithdrawNodeCollateral(signed, context)
@@ -433,9 +458,9 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
 
   test("should fail when lastRef of the withdraw node collateral is not empty and the global context contains a parent from another user") {
     res =>
-      implicit val (json, h, sp, keyPair) = res
+      implicit val (json, h, sp, keyPair, sourceAddress) = res
 
-      val parent = testCreateNodeCollateral(keyPair)
+      val parent = testCreateNodeCollateral(keyPair, sourceAddress)
 
       for {
         keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -443,7 +468,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
         address <- signedParent.proofs.head.id.toAddress
         context = mkGlobalContext(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue))))
         lastRef <- NodeCollateralReference.of(signedParent)
-        invalidWithdraw = testWithdrawNodeCollateral(keyPair).copy(collateralRef = lastRef.hash)
+        invalidWithdraw = testWithdrawNodeCollateral(keyPair, sourceAddress).copy(collateralRef = lastRef.hash)
         signed <- forAsyncHasher(invalidWithdraw, keyPair)
         validator = mkValidator()
         result <- validator.validateWithdrawNodeCollateral(signed, context)
@@ -451,15 +476,15 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when the node collateral is already withdrawn") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
-    val validParent = testCreateNodeCollateral(keyPair)
+    val validParent = testCreateNodeCollateral(keyPair, sourceAddress)
 
     for {
       signedParent <- forAsyncHasher(validParent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       lastRef <- NodeCollateralReference.of(signedParent)
-      validWithdraw = testWithdrawNodeCollateral(keyPair).copy(collateralRef = lastRef.hash)
+      validWithdraw = testWithdrawNodeCollateral(keyPair, sourceAddress).copy(collateralRef = lastRef.hash)
       signed <- forAsyncHasher(validWithdraw, keyPair)
       context = mkGlobalContext(
         SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue))),

@@ -25,7 +25,7 @@ import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed.forAsyncHasher
-import io.constellationnetwork.security.signature.SignedValidator.InvalidSignatures
+import io.constellationnetwork.security.signature.SignedValidator.{InvalidSignatures, NotSignedExclusivelyByAddressOwner}
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import io.constellationnetwork.shared.sharedKryoRegistrar
@@ -36,7 +36,7 @@ import weaver.MutableIOSuite
 
 object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
 
-  type Res = (JsonSerializer[IO], Hasher[IO], SecurityProvider[IO], KeyPair)
+  type Res = (JsonSerializer[IO], Hasher[IO], SecurityProvider[IO], KeyPair, Address)
 
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
@@ -44,20 +44,24 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
     h = Hasher.forJson[IO]
     kp <- KeyPairGenerator.makeKeyPair[IO].asResource
-  } yield (j, h, sp, kp)
+    sourceAddress <- kp.getPublic.toId.toAddress.asResource
+  } yield (j, h, sp, kp, sourceAddress)
 
   def testCreateDelegatedStake(
     keyPair: KeyPair,
+    sourceAddress: Address,
     tokenLockReference: Hash = Hash.empty,
     parent: DelegatedStakeReference = DelegatedStakeReference.empty
   ): UpdateDelegatedStake.Create = UpdateDelegatedStake.Create(
+    source = sourceAddress,
     nodeId = PeerId.fromPublic(keyPair.getPublic),
     amount = DelegatedStakeAmount(NonNegLong(100L)),
     tokenLockRef = tokenLockReference,
     parent = parent
   )
 
-  def testWithdrawDelegatedStake(keyPair: KeyPair): UpdateDelegatedStake.Withdraw = UpdateDelegatedStake.Withdraw(
+  def testWithdrawDelegatedStake(keyPair: KeyPair, sourceAddress: Address): UpdateDelegatedStake.Withdraw = UpdateDelegatedStake.Withdraw(
+    source = sourceAddress,
     stakeRef = DelegatedStakeReference.empty.hash
   )
 
@@ -88,11 +92,11 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     } yield (ref.hash, mkGlobalContext(tokenLocks = tokenLocks))
 
   test("should succeed when the create delegated stake is signed correctly, the node is authorized, and parents are valid") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
-      validCreate = testCreateDelegatedStake(keyPair, tokenLockReference)
+      validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       seedlist <- mkSeedlist(validCreate.nodeId)
       validator = mkValidator(seedlist)
@@ -101,12 +105,12 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when the create delegated stake is not signed correctly") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
-      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair1)
-      validCreate = testCreateDelegatedStake(keyPair, tokenLockReference)
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
+      validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair).map(signed =>
         signed.copy(proofs =
           NonEmptySet.fromSetUnsafe(
@@ -117,35 +121,52 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       seedlist <- mkSeedlist(validCreate.nodeId)
       validator = mkValidator(seedlist)
       result <- validator.validateCreateDelegatedStake(signed, lastContext)
-    } yield expect.same(InvalidSigned(InvalidSignatures(signed.proofs)).invalidNec, result)
+    } yield expect.all(result match {
+      case Invalid(errors) =>
+        errors.exists {
+          case InvalidSigned(NotSignedExclusivelyByAddressOwner) => true
+          case InvalidSigned(InvalidSignatures(signed.proofs)) => true
+          case _ => false
+        }
+      case _ => false
+    })
   }
 
   test("should fail when the create delegated stake has more than one signature") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
-      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair1)
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
       activeTokenLocks = lastContext.activeTokenLocks.get
-      tokenLocks = activeTokenLocks(keyPair1.getPublic.toAddress)
+      tokenLocks = activeTokenLocks(keyPair.getPublic.toAddress)
       lastContext1 = lastContext.copy(activeTokenLocks = Some(activeTokenLocks.updated(keyPair2.getPublic.toAddress, tokenLocks)))
-      validCreate = testCreateDelegatedStake(keyPair, tokenLockReference)
+      validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed1 <- forAsyncHasher(validCreate, keyPair1)
       signed2 <- forAsyncHasher(validCreate, keyPair2)
       signed = signed1.addProof(signed2.proofs.head)
       seedlist <- mkSeedlist(validCreate.nodeId)
       validator = mkValidator(seedlist)
       result <- validator.validateCreateDelegatedStake(signed, lastContext1)
-    } yield expect.same(TooManySignatures(signed.proofs).invalidNec, result)
+    } yield
+      expect.all(result match {
+        case Invalid(errors) =>
+          errors.exists {
+            case TooManySignatures(proofs)                         => proofs == signed.proofs
+            case InvalidSigned(NotSignedExclusivelyByAddressOwner) => true
+            case _                                                 => false
+          }
+        case _ => false
+      })
   }
 
   test("should succeed when the create delegated stake is signed correctly but the seed list is empty") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
-      validCreate = testCreateDelegatedStake(keyPair, tokenLockReference)
+      validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateDelegatedStake(signed, lastContext)
@@ -153,11 +174,11 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when the create delegated stake is signed correctly but the node is not authorized") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
-      invalidCreate = testCreateDelegatedStake(keyPair, tokenLockReference)
+      invalidCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(invalidCreate, keyPair)
       seedlist <- mkSeedlist()
       validator = mkValidator(seedlist)
@@ -166,16 +187,16 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when there is another stake for this node") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
-      parent = testCreateDelegatedStake(keyPair, Hash.empty)
+      parent = testCreateDelegatedStake(keyPair, sourceAddress, Hash.empty)
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeDelegatedStakes = Some(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue)))))
       lastRef <- DelegatedStakeReference.of(signedParent)
-      validCreate = testCreateDelegatedStake(keyPair, tokenLockReference, lastRef)
+      validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference, lastRef)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateDelegatedStake(signed, context)
@@ -183,18 +204,18 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   }
 
   test("should succeed when the tokenLock is not available (another delegated stake exists / overwrite)") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       nodeId1 = PeerId.fromPublic(keyPair1.getPublic)
-      parent = testCreateDelegatedStake(keyPair, tokenLockReference)
+      parent = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signedParent <- forAsyncHasher(parent.copy(nodeId = nodeId1), keyPair)
       lastRef <- DelegatedStakeReference.of(signedParent)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeDelegatedStakes = Some(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue)))))
-      validCreate = testCreateDelegatedStake(keyPair, tokenLockReference, lastRef)
+      validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference, lastRef)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateDelegatedStake(signed, context)
@@ -202,23 +223,23 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail an overwrite request when a pending withdrawal exists") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       nodeId1 = PeerId.fromPublic(keyPair1.getPublic)
-      parent = testCreateDelegatedStake(keyPair, tokenLockReference)
+      parent = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signedParent <- forAsyncHasher(parent.copy(nodeId = nodeId1), keyPair)
       lastRef <- DelegatedStakeReference.of(signedParent)
-      validWithdraw = testWithdrawDelegatedStake(keyPair).copy(stakeRef = lastRef.hash)
+      validWithdraw = testWithdrawDelegatedStake(keyPair, sourceAddress).copy(stakeRef = lastRef.hash)
       signedWithdraw <- forAsyncHasher(validWithdraw, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(
         activeDelegatedStakes = Some(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue)))),
         delegatedStakesWithdrawals = Some(SortedMap(address -> List((signedWithdraw, EpochProgress.MinValue))))
       )
-      validCreate = testCreateDelegatedStake(keyPair, tokenLockReference, lastRef)
+      validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference, lastRef)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateDelegatedStake(signed, context)
@@ -226,17 +247,17 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   }
 
   test("should fair when the lastRef of the existing delegated stake is different") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
-      parent = testCreateDelegatedStake(keyPair, tokenLockReference)
+      parent = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       nodeId1 = PeerId.fromPublic(keyPair1.getPublic)
       signedParent <- forAsyncHasher(parent.copy(nodeId = nodeId1), keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeDelegatedStakes = Some(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue)))))
-      validCreate = testCreateDelegatedStake(keyPair, tokenLockReference)
+      validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateDelegatedStake(signed, context)
@@ -244,11 +265,12 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when the tokenLock is not available (a node collateral exists)") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
       nodeCollateral = UpdateNodeCollateral.Create(
+        source = sourceAddress,
         nodeId = PeerId.fromPublic(keyPair.getPublic),
         amount = NodeCollateralAmount(NonNegLong(100L)),
         tokenLockRef = tokenLockReference
@@ -256,7 +278,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       signedParent <- forAsyncHasher(nodeCollateral, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeNodeCollaterals = Some(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue)))))
-      validCreate = testCreateDelegatedStake(keyPair, tokenLockReference)
+      validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateDelegatedStake(signed, context)
@@ -264,15 +286,15 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when the tokenLock amount is too low") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
-    val parent = testCreateDelegatedStake(keyPair)
+    val parent = testCreateDelegatedStake(keyPair, sourceAddress)
 
     for {
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, tokenLockAmount = 10L)
-      validCreate = testCreateDelegatedStake(keyPair, tokenLockReference)
+      validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateDelegatedStake(signed, lastContext)
@@ -280,13 +302,13 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when the tokenLock expires too soon") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, tokenLockUnlockEpoch = EpochProgress.MaxValue.some)
-      parent = testCreateDelegatedStake(keyPair, tokenLockReference)
+      parent = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signedParent <- forAsyncHasher(parent, keyPair)
-      validCreate = testCreateDelegatedStake(keyPair, tokenLockReference)
+      validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateDelegatedStake(signed, lastContext)
@@ -294,16 +316,16 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   }
 
   test("should succeed when the withdraw delegated stake is signed correctly") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
-    val validParent = testCreateDelegatedStake(keyPair)
+    val validParent = testCreateDelegatedStake(keyPair, sourceAddress)
 
     for {
       signedParent <- forAsyncHasher(validParent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = mkGlobalContext(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue))))
       lastRef <- DelegatedStakeReference.of(signedParent)
-      validWithdraw = testWithdrawDelegatedStake(keyPair).copy(stakeRef = lastRef.hash)
+      validWithdraw = testWithdrawDelegatedStake(keyPair, sourceAddress).copy(stakeRef = lastRef.hash)
       signed <- forAsyncHasher(validWithdraw, keyPair)
       validator = mkValidator()
       result <- validator.validateWithdrawDelegatedStake(signed, context)
@@ -311,16 +333,16 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when the withdraw delegated stake is not signed correctly") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
-    val validParent = testCreateDelegatedStake(keyPair)
+    val validParent = testCreateDelegatedStake(keyPair, sourceAddress)
 
     for {
       signedParent <- forAsyncHasher(validParent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = mkGlobalContext(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue))))
       lastRef <- DelegatedStakeReference.of(signedParent)
-      validWithdraw = testWithdrawDelegatedStake(keyPair).copy(stakeRef = lastRef.hash)
+      validWithdraw = testWithdrawDelegatedStake(keyPair, sourceAddress).copy(stakeRef = lastRef.hash)
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       signed <- forAsyncHasher(validWithdraw, keyPair).map(signed =>
         signed.copy(proofs =
@@ -335,23 +357,23 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       expect.all(result match {
         case invalid @ Invalid(_) =>
           invalid.e.exists { e =>
-            e == InvalidSigned(InvalidSignatures(signed.proofs))
+            e == InvalidSigned(NotSignedExclusivelyByAddressOwner)
           }
         case _ => false
       })
   }
 
   test("should fail when the withdraw delegated stake has more than one signature") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
-    val validParent = testCreateDelegatedStake(keyPair)
+    val validParent = testCreateDelegatedStake(keyPair, sourceAddress)
 
     for {
       signedParent <- forAsyncHasher(validParent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = mkGlobalContext(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue))))
       lastRef <- DelegatedStakeReference.of(signedParent)
-      validWithdraw = testWithdrawDelegatedStake(keyPair).copy(stakeRef = lastRef.hash)
+      validWithdraw = testWithdrawDelegatedStake(keyPair, sourceAddress).copy(stakeRef = lastRef.hash)
       signed1 <- forAsyncHasher(validWithdraw, keyPair)
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       signed2 <- forAsyncHasher(validWithdraw, keyPair1)
@@ -369,9 +391,9 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when lastRef of the withdraw delegated stake is empty and the global context is empty") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
-    val validWithdraw = testWithdrawDelegatedStake(keyPair)
+    val validWithdraw = testWithdrawDelegatedStake(keyPair, sourceAddress)
 
     for {
       signed <- forAsyncHasher(validWithdraw, keyPair)
@@ -381,10 +403,10 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when lastRef of the withdraw delegated stake is not empty and the global context is empty") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     val lastRef = DelegatedStakeReference.empty // .copy(ordinal = CreateDelegatedStakeReference.empty.ordinal.next)
-    val invalidWithdraw = testWithdrawDelegatedStake(keyPair).copy(stakeRef = lastRef.hash)
+    val invalidWithdraw = testWithdrawDelegatedStake(keyPair, sourceAddress).copy(stakeRef = lastRef.hash)
 
     for {
       signed <- forAsyncHasher(invalidWithdraw, keyPair)
@@ -394,16 +416,16 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   }
 
   test("should succeed when lastRef of the withdraw delegated stake is not empty and the global context contains the parent") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
-    val parent = testCreateDelegatedStake(keyPair)
+    val parent = testCreateDelegatedStake(keyPair, sourceAddress)
 
     for {
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = mkGlobalContext(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue))))
       lastRef <- DelegatedStakeReference.of(signedParent)
-      validWithdraw = testWithdrawDelegatedStake(keyPair).copy(stakeRef = lastRef.hash)
+      validWithdraw = testWithdrawDelegatedStake(keyPair, sourceAddress).copy(stakeRef = lastRef.hash)
       signed <- forAsyncHasher(validWithdraw, keyPair)
       validator = mkValidator()
       result <- validator.validateWithdrawDelegatedStake(signed, context)
@@ -411,16 +433,16 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when lastRef of the withdraw delegated stake is not empty and the global context does not contain the parent") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
-    val parent = testCreateDelegatedStake(keyPair)
+    val parent = testCreateDelegatedStake(keyPair, sourceAddress)
 
     for {
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = mkGlobalContext(SortedMap(address -> List()))
       lastRef <- h.hash(parent)
-      invalidWithdraw = testWithdrawDelegatedStake(keyPair).copy(stakeRef = lastRef)
+      invalidWithdraw = testWithdrawDelegatedStake(keyPair, sourceAddress).copy(stakeRef = lastRef)
       signed <- forAsyncHasher(invalidWithdraw, keyPair)
       validator = mkValidator()
       result <- validator.validateWithdrawDelegatedStake(signed, context)
@@ -429,9 +451,9 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
 
   test("should fail when lastRef of the withdraw delegated stake is not empty and the global context contains a parent from another user") {
     res =>
-      implicit val (json, h, sp, keyPair) = res
+      implicit val (json, h, sp, keyPair, sourceAddress) = res
 
-      val parent = testCreateDelegatedStake(keyPair)
+      val parent = testCreateDelegatedStake(keyPair, sourceAddress)
 
       for {
         keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -439,7 +461,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
         address <- signedParent.proofs.head.id.toAddress
         context = mkGlobalContext(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue))))
         lastRef <- DelegatedStakeReference.of(signedParent)
-        invalidWithdraw = testWithdrawDelegatedStake(keyPair).copy(stakeRef = lastRef.hash)
+        invalidWithdraw = testWithdrawDelegatedStake(keyPair, sourceAddress).copy(stakeRef = lastRef.hash)
         signed <- forAsyncHasher(invalidWithdraw, keyPair)
         validator = mkValidator()
         result <- validator.validateWithdrawDelegatedStake(signed, context)
@@ -447,15 +469,15 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when the delegated stake is already withdrawn") { res =>
-    implicit val (json, h, sp, keyPair) = res
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
 
-    val validParent = testCreateDelegatedStake(keyPair)
+    val validParent = testCreateDelegatedStake(keyPair, sourceAddress)
 
     for {
       signedParent <- forAsyncHasher(validParent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       lastRef <- DelegatedStakeReference.of(signedParent)
-      validWithdraw = testWithdrawDelegatedStake(keyPair).copy(stakeRef = lastRef.hash)
+      validWithdraw = testWithdrawDelegatedStake(keyPair, sourceAddress).copy(stakeRef = lastRef.hash)
       signed <- forAsyncHasher(validWithdraw, keyPair)
       context = mkGlobalContext(
         SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue))),
