@@ -87,10 +87,11 @@ object UpdateNodeCollateralValidator {
             .isSignedExclusivelyBy(signed, signed.source)
             .map(_.errorMap[UpdateNodeCollateralValidationError](InvalidSigned))
           withdrawV <- validateWithdrawal(signed, lastContext)
-        } yield numberOfSignaturesV
-          .productR(signaturesV)
-          .productR(isSignedExclusivelyBySource)
-          .productR(withdrawV)
+        } yield
+          numberOfSignaturesV
+            .productR(signaturesV)
+            .productR(isSignedExclusivelyBySource)
+            .productR(withdrawV)
 
       private def validateNumberOfSignatures[A <: UpdateNodeCollateral](
         signed: Signed[A]

@@ -84,10 +84,11 @@ object UpdateDelegatedStakeValidator {
             .isSignedExclusivelyBy(signed, signed.source)
             .map(_.errorMap[UpdateDelegatedStakeValidationError](InvalidSigned))
           withdrawV <- validateWithdrawal(signed, lastContext)
-        } yield numberOfSignaturesV
-          .productR(signaturesV)
-          .productR(isSignedExclusivelyBySource)
-          .productR(withdrawV)
+        } yield
+          numberOfSignaturesV
+            .productR(signaturesV)
+            .productR(isSignedExclusivelyBySource)
+            .productR(withdrawV)
 
       private def validateNumberOfSignatures[A <: UpdateDelegatedStake](
         signed: Signed[A]

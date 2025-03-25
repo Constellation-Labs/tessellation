@@ -9,6 +9,7 @@ import scala.util.Try
 import io.constellationnetwork.ext.cats.data.OrderBasedOrdering
 import io.constellationnetwork.ext.crypto.RefinedHasher
 import io.constellationnetwork.ext.derevo.ordering
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.cluster.{ClusterSessionToken, SessionToken}
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
@@ -172,6 +173,7 @@ object node {
 
   @derive(eqv, show, encoder, decoder, order, ordering)
   case class UpdateNodeParameters(
+    source: Address,
     delegatedStakeRewardParameters: DelegatedStakeRewardParameters,
     nodeMetadataParameters: NodeMetadataParameters,
     parent: UpdateNodeParametersReference

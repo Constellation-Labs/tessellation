@@ -37,11 +37,11 @@ jobs:
           TESSELLATION_VERSION: ${{ inputs.tessellation_version }}
         uses: "./.github/templates/actions/hypergraph/setup"
 
-      - name: Cache SBT and Coursier
-        uses: actions/cache@v4
+      - name: Save SBT and Coursier Cache
+        uses: actions/cache/save@v4
         with:
           path: ~/.m2
-          key: sbt-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}-${{ inputs.tessellation_version }}
+          key: m2-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}-${{ inputs.tessellation_version }}
 
       - name: Upload hypergraph artifacts to run CI tests
         uses: actions/upload-artifact@v4
@@ -79,11 +79,12 @@ jobs:
           path: .github/code/metagraphs/project-template-metagraph
           key: project-template-metagraph-${{ hashFiles('**/templates/metagraphs/project_template/**') }}-${{ inputs.tessellation_version }}
 
-      - name: Cache SBT and Coursier
-        uses: actions/cache@v4
+      - name: Restore SBT and Coursier Cache
+        id: cache-restore
+        uses: actions/cache/restore@v4
         with:
           path: ~/.m2
-          key: sbt-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}-${{ inputs.tessellation_version }}
+          key: m2-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}-${{ inputs.tessellation_version }}
 
       - name: Setup project template metagraph
         if: steps.cache-metagraph.outputs.cache-hit != 'true'

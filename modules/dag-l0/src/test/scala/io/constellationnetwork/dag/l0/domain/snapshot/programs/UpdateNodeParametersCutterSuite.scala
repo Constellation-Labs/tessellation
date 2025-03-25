@@ -11,6 +11,7 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.schema.ID.Id
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.generators.signatureProofN
 import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
@@ -19,6 +20,7 @@ import io.constellationnetwork.security.{Hasher, SecurityProvider}
 import io.constellationnetwork.shared.sharedKryoRegistrar
 import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 
+import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import org.scalacheck.Gen
 import weaver.MutableIOSuite
@@ -98,7 +100,13 @@ object UpdateNodeParametersCutterSuite extends MutableIOSuite with Checkers {
     for {
       delegatedStakeRewardParameters <- delegatedStakeRewardParametersGen
       nodeMetadataParameters <- nodeMetadataParametersGen
-    } yield UpdateNodeParameters(delegatedStakeRewardParameters, nodeMetadataParameters, UpdateNodeParametersReference.empty)
+    } yield
+      UpdateNodeParameters(
+        Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB"),
+        delegatedStakeRewardParameters,
+        nodeMetadataParameters,
+        UpdateNodeParametersReference.empty
+      )
 
   def signedOf[A](valueGen: Gen[A]): Gen[Signed[A]] =
     for {
