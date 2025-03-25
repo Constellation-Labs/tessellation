@@ -10,8 +10,10 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.schema.ID.Id
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
+import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed.forAsyncHasher
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.security.{Hasher, KeyPairGenerator, SecurityProvider}
@@ -35,8 +37,9 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
-      signedValidList <- validList.traverse(params => forAsyncHasher(params, keyPair))
-      signedInvalidList <- invalidList.traverse(params => forAsyncHasher(params, keyPair))
+      source = keyPair.getPublic.toAddress
+      signedValidList <- validList(source).traverse(params => forAsyncHasher(params, keyPair))
+      signedInvalidList <- invalidList(source).traverse(params => forAsyncHasher(params, keyPair))
       acceptanceManager = mkAcceptanceManager()
       acceptanceResult <- acceptanceManager.acceptUpdateNodeParameters(signedInvalidList ++ signedValidList, mkGlobalContext())
     } yield
@@ -60,7 +63,8 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
   def mkGlobalContext(updateNodeParameters: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)] = SortedMap.empty) =
     GlobalSnapshotInfo.empty.copy(updateNodeParameters = Some(updateNodeParameters))
 
-  val validTestUpdateNodeParameters1: UpdateNodeParameters = UpdateNodeParameters(
+  def validTestUpdateNodeParameters1(source: Address): UpdateNodeParameters = UpdateNodeParameters(
+    source = source,
     delegatedStakeRewardParameters = DelegatedStakeRewardParameters(
       rewardFraction = RewardFraction(5_000_000)
     ),
@@ -71,7 +75,8 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
     parent = UpdateNodeParametersReference.empty
   )
 
-  val validTestUpdateNodeParameters2: UpdateNodeParameters = UpdateNodeParameters(
+  def validTestUpdateNodeParameters2(source: Address): UpdateNodeParameters = UpdateNodeParameters(
+    source = source,
     delegatedStakeRewardParameters = DelegatedStakeRewardParameters(
       rewardFraction = RewardFraction(10_000_000)
     ),
@@ -82,7 +87,8 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
     parent = UpdateNodeParametersReference.empty
   )
 
-  val invalidTestUpdateNodeParameters1: UpdateNodeParameters = UpdateNodeParameters(
+  def invalidTestUpdateNodeParameters1(source: Address): UpdateNodeParameters = UpdateNodeParameters(
+    source = source,
     delegatedStakeRewardParameters = DelegatedStakeRewardParameters(
       rewardFraction = RewardFraction(0)
     ),
@@ -93,7 +99,8 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
     parent = UpdateNodeParametersReference.empty
   )
 
-  val invalidTestUpdateNodeParameters2: UpdateNodeParameters = UpdateNodeParameters(
+  def invalidTestUpdateNodeParameters2(source: Address): UpdateNodeParameters = UpdateNodeParameters(
+    source = source,
     delegatedStakeRewardParameters = DelegatedStakeRewardParameters(
       rewardFraction = RewardFraction(100_000_000)
     ),
@@ -104,9 +111,9 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
     parent = UpdateNodeParametersReference.empty
   )
 
-  val validList =
-    List(validTestUpdateNodeParameters1, validTestUpdateNodeParameters2)
+  def validList(source: Address) =
+    List(validTestUpdateNodeParameters1(source), validTestUpdateNodeParameters2(source))
 
-  val invalidList =
-    List(invalidTestUpdateNodeParameters1, invalidTestUpdateNodeParameters2)
+  def invalidList(source: Address) =
+    List(invalidTestUpdateNodeParameters1(source), invalidTestUpdateNodeParameters2(source))
 }

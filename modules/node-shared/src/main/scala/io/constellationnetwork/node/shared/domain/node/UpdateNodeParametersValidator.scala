@@ -42,10 +42,19 @@ object UpdateNodeParametersValidator {
         lastSnapshotContext: GlobalSnapshotInfo
       ): F[UpdateNodeParametersValidationErrorOr[Signed[UpdateNodeParameters]]] =
         for {
-          signaturesV <- signedValidator.validateSignatures(signed).map(_.errorMap[UpdateNodeParametersValidationError](InvalidSigned))
+          signaturesV <- signedValidator
+            .validateSignatures(signed)
+            .map(_.errorMap[UpdateNodeParametersValidationError](InvalidSigned))
+          isSignedExclusivelyBySource <- signedValidator
+            .isSignedExclusivelyBy(signed, signed.source)
+            .map(_.errorMap[UpdateNodeParametersValidationError](InvalidSigned))
           parentV <- validateParent(signed, lastSnapshotContext)
           rewardFractionV = validateRewardFraction(signed)
-        } yield signaturesV.productR(parentV).productR(rewardFractionV)
+        } yield
+          signaturesV
+            .productR(isSignedExclusivelyBySource)
+            .productR(parentV)
+            .productR(rewardFractionV)
 
       private def validateRewardFraction(
         signed: Signed[UpdateNodeParameters]

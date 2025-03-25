@@ -125,15 +125,16 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       seedlist <- mkSeedlist(validCreate.nodeId)
       validator = mkValidator(seedlist)
       result <- validator.validateCreateNodeCollateral(signed, lastContext)
-    } yield expect.all(result match {
-      case Invalid(errors) =>
-        errors.exists {
-          case InvalidSigned(NotSignedExclusivelyByAddressOwner) => true
-          case InvalidSigned(InvalidSignatures(signed.proofs)) => true
-          case _ => false
-        }
-      case _ => false
-    })
+    } yield
+      expect.all(result match {
+        case Invalid(errors) =>
+          errors.exists {
+            case InvalidSigned(NotSignedExclusivelyByAddressOwner) => true
+            case InvalidSigned(InvalidSignatures(signed.proofs))   => true
+            case _                                                 => false
+          }
+        case _ => false
+      })
   }
 
   test("should fail when the create node collateral has more than one signature") { res =>

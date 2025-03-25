@@ -121,15 +121,16 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       seedlist <- mkSeedlist(validCreate.nodeId)
       validator = mkValidator(seedlist)
       result <- validator.validateCreateDelegatedStake(signed, lastContext)
-    } yield expect.all(result match {
-      case Invalid(errors) =>
-        errors.exists {
-          case InvalidSigned(NotSignedExclusivelyByAddressOwner) => true
-          case InvalidSigned(InvalidSignatures(signed.proofs)) => true
-          case _ => false
-        }
-      case _ => false
-    })
+    } yield
+      expect.all(result match {
+        case Invalid(errors) =>
+          errors.exists {
+            case InvalidSigned(NotSignedExclusivelyByAddressOwner) => true
+            case InvalidSigned(InvalidSignatures(signed.proofs))   => true
+            case _                                                 => false
+          }
+        case _ => false
+      })
   }
 
   test("should fail when the create delegated stake has more than one signature") { res =>

@@ -1,5 +1,7 @@
 type: object
 properties:
+  source:
+    $ref: 'Address.yml'
   delegatedStakeRewardParameters:
     $ref: 'DelegatedStakeRewardParameters.yml'
   nodeMetadataParameters:
