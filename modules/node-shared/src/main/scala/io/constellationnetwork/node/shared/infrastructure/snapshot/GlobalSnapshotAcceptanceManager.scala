@@ -202,7 +202,7 @@ object GlobalSnapshotAcceptanceManager {
           .filter { case (_, actions) => actions.nonEmpty }
           .toMap
 
-        currencyBalances = incomingCurrencySnapshots.toList.map {
+        currencyBalances = currencySnapshots.toList.map {
           case (_, Left(_))              => Map.empty[Option[Address], SortedMap[Address, Balance]]
           case (address, Right((_, si))) => Map(address.some -> si.balances)
         }
