@@ -7,7 +7,6 @@ import cats.syntax.all._
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.ext.cats.syntax.validated._
-import io.constellationnetwork.ext.crypto.RefinedHasher
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersValidator.UpdateNodeParametersValidationErrorOr
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.node.{RewardFraction, UpdateNodeParameters, UpdateNodeParametersReference}
@@ -79,30 +78,30 @@ object UpdateNodeParametersValidator {
 
         def invalidParent: UpdateNodeParametersValidationErrorOr[Signed[UpdateNodeParameters]] = InvalidParent(parent).invalidNec
 
-        val params =
+        val currentNodesParams =
           lastSnapshotContext.updateNodeParameters.getOrElse(SortedMap.empty[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)])
 
-        if (params.isEmpty) {
-          if (parent == UpdateNodeParametersReference.empty) {
-            validParent.pure[F]
-          } else {
-            invalidParent.pure[F]
-          }
-        } else {
-          params.values.toList.filter {
-            case (signed, _) =>
-              signed.value.ordinal == parent.ordinal
-          }.traverse {
-            case (signed, _) =>
-              signed.value.hash.map(h => UpdateNodeParametersReference(signed.value.ordinal, h))
-          }.map { refs =>
-            refs.find(_ == parent) match {
-              case Some(_) => validParent
-              case None    => invalidParent
+        val peerId = getPeerId(signed)
+        currentNodesParams.get(peerId) match {
+          case Some(nodeParams) =>
+            val (signed, _) = nodeParams
+            UpdateNodeParametersReference.of(signed).map { ref =>
+              if (ref === parent)
+                validParent
+              else
+                invalidParent
             }
-          }
+          case None =>
+            if (parent == UpdateNodeParametersReference.empty) {
+              validParent.pure[F]
+            } else {
+              invalidParent.pure[F]
+            }
         }
       }
+
+      private def getPeerId(signed: Signed[UpdateNodeParameters]): Id =
+        signed.proofs.head.id
     }
 
   @derive(eqv, show)
