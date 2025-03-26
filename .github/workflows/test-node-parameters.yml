@@ -1,0 +1,85 @@
+name: Test node parameters
+
+on:
+  workflow_call:
+    inputs:
+      tessellation_version:
+        required: true
+        type: string
+
+jobs:
+  node-parameters-tests:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'npm'
+          cache-dependency-path: .github/action_scripts/package-lock.json
+
+      - name: Installing node dependencies
+        shell: bash
+        run: |
+          cd .github/action_scripts
+          npm i @stardust-collective/dag4
+          npm i js-sha256
+          npm i axios
+          npm i brotli
+          npm i zod
+          npm i node-forge
+
+      - name: Download shared_jars artifacts
+        uses: actions/download-artifact@v4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          name: shared_jars-${{ inputs.tessellation_version }}
+          path: .github/code/shared_jars
+
+      - name: Download Hypergraph Artifact
+        uses: actions/download-artifact@v4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          name: hypergraph-${{ inputs.tessellation_version }}
+          path: .github/code/hypergraph
+
+      - name: Download project template Artifact
+        uses: actions/download-artifact@v4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          name: project-template-metagraph-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}-${{ inputs.tessellation_version }}
+          path: .github/code/metagraphs/project-template-metagraph
+
+      - name: Start Hypergraph
+        uses: "./.github/templates/actions/hypergraph/start"
+        with:
+          INCLUDE_DAG_L1: true
+          DAG_L0_PORT_PREFIX: 90
+          DAG_L1_PORT_PREFIX: 91
+
+      - name: Start Metagraph - Project Template
+        uses: "./.github/templates/actions/metagraph/start"
+        with:
+          INCLUDE_DATA_L1: false
+          METAGRAPH_NAME: project-template-metagraph
+          DL0_PORT_PREFIX: 90
+          ML0_PORT_PREFIX: 80
+          CL1_PORT_PREFIX: 81
+
+      - name: Check
+        run: |
+          cd .github/action_scripts/node_parameters
+          node staking.js 90 91 80 81 82 check
+
+      - name: Upload log files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: currency-transactions-node-log-files-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}-${{ inputs.tessellation_version }}
+          path: .github/code/**/*.log
+          if-no-files-found: warn
+          retention-days: 3
