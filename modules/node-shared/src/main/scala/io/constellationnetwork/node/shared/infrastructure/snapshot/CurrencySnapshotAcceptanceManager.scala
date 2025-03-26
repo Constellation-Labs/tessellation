@@ -263,7 +263,7 @@ object CurrencySnapshotAcceptanceManager {
       )
 
       acceptedTokenLocks = incomingTokenLocks
-        .filter(itl => itl.unlockEpoch.forall(_ >= epochProgress))
+        .filter(itl => itl.unlockEpoch.forall(_ >= lastGlobalSnapshotEpochProgress))
         .groupBy(_.source)
         .toSortedMap
 
@@ -275,7 +275,7 @@ object CurrencySnapshotAcceptanceManager {
       )
 
       updatedBalancesByTokenLocks = updateBalancesByTokenLocks(
-        epochProgress,
+        lastGlobalSnapshotEpochProgress,
         updatedBalancesByFeeTransactions,
         acceptedTokenLocks,
         activeTokenLocks,
