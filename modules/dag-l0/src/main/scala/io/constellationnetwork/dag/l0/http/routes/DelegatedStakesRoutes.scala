@@ -55,18 +55,22 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
 
     for {
       stakes <- lastStakes.traverse {
-        case (stake, ord) => DelegatedStakeReference.of(stake).map(ref => ((stake, ord), lastWithdrawals.find(_._1.stakeRef === ref.hash)))
+        case (stake, ord) =>
+          DelegatedStakeReference
+            .of(stake)
+            .map(ref => ((stake, ord, ref), lastWithdrawals.find { case (withdrawal, _) => withdrawal.stakeRef === ref.hash }))
       }
       infos = stakes.map {
-        case ((stake, acceptedOrdinal), maybeWithdraw) =>
+        case ((stake, acceptedOrdinal, delegatedStakeRef), maybeWithdraw) =>
           DelegatedStakeInfo(
             nodeId = stake.nodeId,
             acceptedOrdinal = acceptedOrdinal,
             tokenLockRef = stake.tokenLockRef,
             amount = stake.amount,
             fee = stake.fee,
-            withdrawalStartEpoch = maybeWithdraw.map(_._2),
-            withdrawalEndEpoch = maybeWithdraw.map(_._2 |+| EpochProgress(withdrawalTimeLimit))
+            hash = delegatedStakeRef.hash,
+            withdrawalStartEpoch = maybeWithdraw.map { case (_, epochProgress) => epochProgress },
+            withdrawalEndEpoch = maybeWithdraw.map { case (_, epochProgress) => epochProgress |+| EpochProgress(withdrawalTimeLimit) }
           )
       }
     } yield
@@ -84,8 +88,8 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
     info.activeDelegatedStakes
       .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
       .get(address)
-      .flatMap(stakes => Option.when(stakes.nonEmpty)(stakes.maxBy(_._1.ordinal)))
-      .traverse(stake => DelegatedStakeReference.of(stake._1))
+      .flatMap(stakes => Option.when(stakes.nonEmpty)(stakes.maxBy { case (delegatedStaking, _) => delegatedStaking.ordinal }))
+      .traverse { case (delegatedStaking, _) => DelegatedStakeReference.of(delegatedStaking) }
       .map(_.getOrElse(DelegatedStakeReference.empty))
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
