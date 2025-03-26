@@ -257,7 +257,14 @@ object CurrencySnapshotAcceptanceManager {
         case tokenUnlock: TokenUnlock => tokenUnlock
       }
 
+      expiredTokenLocksHashes <-
+        (incomingTokenLocks.toList ++ activeTokenLocks.values.flatten)
+          .filter(_.unlockEpoch.exists(_ < lastGlobalSnapshotEpochProgress))
+          .traverse(_.toHashed)
+          .map(_.map(_.hash))
+
       acceptedTokenUnlocks = acceptTokenUnlocks(
+        expiredTokenLocksHashes,
         tokenUnlocks,
         tokenLocksRefs
       )
@@ -633,11 +640,13 @@ object CurrencySnapshotAcceptanceManager {
       sharedArtifactsForAcceptance
 
     private def acceptTokenUnlocks(
+      expiredTokenLockHashes: List[Hash],
       incomingTokenUnlocks: SortedSet[TokenUnlock],
       activeTokenLocksRefs: List[Hash]
     ): SortedSet[TokenUnlock] =
       incomingTokenUnlocks.filter { itu =>
-        activeTokenLocksRefs.contains(itu.tokenLockRef)
+        activeTokenLocksRefs.contains(itu.tokenLockRef) &&
+        !expiredTokenLockHashes.contains(itu.tokenLockRef)
       }
 
     private def acceptTokenLocks(
@@ -696,6 +705,7 @@ object CurrencySnapshotAcceptanceManager {
                 .minus(TokenLockFee.toAmount(tokenLock.fee))
                 .getOrElse(currentBalance)
             }
+
           val updatedBalanceExpired = expired.foldLeft(updatedBalanceUnexpired) { (currentBalance, allowSpend) =>
             currentBalance
               .plus(TokenLockAmount.toAmount(allowSpend.amount))
