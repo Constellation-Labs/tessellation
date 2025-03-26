@@ -16,6 +16,8 @@ properties:
     format: int64
     example: 123
     minimum: 0
+  hash:
+    $ref: 'Hash.yml'
   withdrawalStartEpoch:
     $ref: 'EpochProgress.yml'
     nullable: true

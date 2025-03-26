@@ -91,6 +91,7 @@ object delegatedStake {
     tokenLockRef: Hash,
     amount: DelegatedStakeAmount,
     fee: DelegatedStakeFee,
+    hash: Hash,
     withdrawalStartEpoch: Option[EpochProgress],
     withdrawalEndEpoch: Option[EpochProgress]
   )
