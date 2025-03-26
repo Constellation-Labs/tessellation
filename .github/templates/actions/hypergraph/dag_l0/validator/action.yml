@@ -31,6 +31,7 @@ runs:
 
         cd .github/code/hypergraph/dag-l0/validator-${{ inputs.NODE_NUMBER }}
         java -jar $ROOT_DIRECTORY/.github/code/shared_jars/cl-keytool.jar generate
+        java -jar $ROOT_DIRECTORY/.github/code/shared_jars/cl-keytool.jar export
 
         touch dag-l0-validator-${{ inputs.NODE_NUMBER }}.log
         nohup stdbuf -o0 -e0 java -Denvironment=dev -jar $ROOT_DIRECTORY/.github/code/hypergraph/dag-l0.jar run-validator --ip 127.0.0.1 > dag-l0-validator-${{ inputs.NODE_NUMBER }}.log 2>&1 &
