@@ -33,7 +33,7 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
   validator: UpdateNodeCollateralValidator[F],
   snapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   nodeStorage: NodeStorage[F],
-  withdrawalTimeLimit: NonNegLong
+  withdrawalTimeLimit: EpochProgress
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {
 
@@ -67,7 +67,7 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
             amount = collateral.amount,
             fee = collateral.fee,
             withdrawalStartEpoch = maybeWithdraw.map(_._2),
-            withdrawalEndEpoch = maybeWithdraw.map(_._2 |+| EpochProgress(withdrawalTimeLimit))
+            withdrawalEndEpoch = maybeWithdraw.map(_._2 |+| withdrawalTimeLimit)
           )
       }
     } yield

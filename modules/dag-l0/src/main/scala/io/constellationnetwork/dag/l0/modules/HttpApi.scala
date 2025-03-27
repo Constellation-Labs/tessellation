@@ -21,6 +21,7 @@ import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
@@ -28,6 +29,7 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.NonNegLong
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
 import org.http4s.{HttpApp, HttpRoutes}
@@ -45,7 +47,7 @@ object HttpApi {
     nodeVersion: TessellationVersion,
     httpCfg: HttpConfig,
     sharedValidators: SharedValidators[F],
-    delegatedStakingCfg: DelegatedStakingConfig
+    delegatedStakingWithdrawalTimeLimit: EpochProgress
   ): HttpApi[F, R] =
     new HttpApi[F, R](
       storages,
@@ -58,7 +60,7 @@ object HttpApi {
       nodeVersion,
       httpCfg,
       sharedValidators,
-      delegatedStakingCfg
+      delegatedStakingWithdrawalTimeLimit
     ) {}
 }
 
@@ -73,7 +75,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   nodeVersion: TessellationVersion,
   httpCfg: HttpConfig,
   sharedValidators: SharedValidators[F],
-  delegatedStakingCfg: DelegatedStakingConfig
+  delegatedStakingWithdrawalTimeLimit: EpochProgress
 ) {
 
   private val mkDagCell = (block: Signed[Block]) =>
@@ -160,7 +162,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
         sharedValidators.updateDelegatedStakeValidator,
         storages.globalSnapshot,
         storages.node,
-        delegatedStakingCfg.withdrawalTimeLimit
+        delegatedStakingWithdrawalTimeLimit
       )
     }
   private val nodeCollateralsRoutes = HasherSelector[F].withCurrent { implicit hasher =>
@@ -169,7 +171,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
       sharedValidators.updateNodeCollateralValidator,
       storages.globalSnapshot,
       storages.node,
-      delegatedStakingCfg.withdrawalTimeLimit
+      delegatedStakingWithdrawalTimeLimit
     )
   }
 

@@ -5,6 +5,8 @@ import cats.effect.kernel.Async
 import cats.syntax.functor._
 import cats.syntax.semigroup._
 
+import scala.util.control.NoStackTrace
+
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.schema.address.Address
@@ -102,4 +104,9 @@ object delegatedStake {
     activeDelegatedStakes: List[DelegatedStakeInfo],
     pendingWithdrawals: List[DelegatedStakeInfo]
   )
+
+  @derive(eqv, show)
+  sealed trait DelegatedStakeError extends NoStackTrace
+  case class MissingDelegatedStaking(message: String) extends DelegatedStakeError
+  case class MissingTokenLock(message: String) extends DelegatedStakeError
 }

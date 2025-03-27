@@ -32,11 +32,13 @@ import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.generation.Generation
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
+import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.concurrent.SignallingRef
 
 object SharedServices {
@@ -140,7 +142,7 @@ object SharedServices {
         updateNodeCollateralAcceptanceManager,
         validators.spendActionValidator,
         collateral.amount,
-        cfg.delegatedStaking.withdrawalTimeLimit
+        cfg.delegatedStaking.withdrawalTimeLimit.getOrElse(cfg.environment, EpochProgress.MinValue)
       )
       globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(globalSnapshotAcceptanceManager)
     } yield

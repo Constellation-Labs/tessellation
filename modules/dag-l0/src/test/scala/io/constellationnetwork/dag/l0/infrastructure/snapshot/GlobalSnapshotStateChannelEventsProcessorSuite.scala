@@ -85,7 +85,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           SortedMap.empty,
           Long.MaxValue,
           Hasher.forKryo[IO],
-          DelegatedStakingConfig(RewardFraction(5_000_000), RewardFraction(10_000_000), NonNegLong(7338977L))
+          DelegatedStakingConfig(RewardFraction(5_000_000), RewardFraction(10_000_000), Map(Dev -> EpochProgress(NonNegLong(7338977L))))
         )
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
         LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
