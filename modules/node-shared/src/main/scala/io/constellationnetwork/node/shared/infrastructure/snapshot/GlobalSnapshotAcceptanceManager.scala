@@ -41,7 +41,7 @@ import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact._
-import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.balance.{Amount, Balance, BalanceArithmeticError}
 import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeReference, UpdateDelegatedStake}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
@@ -321,7 +321,10 @@ object GlobalSnapshotAcceptanceManager {
           updatedBalancesByRewards,
           globalAllowSpends,
           globalActiveAllowSpends
-        )
+        ) match {
+          case Right(balances) => balances
+          case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by allow spends: $error")
+        }
 
         updatedGlobalTokenLocks =
           if (ordinal < tokenLocksAddedToGl0Ordinal) {
@@ -354,7 +357,10 @@ object GlobalSnapshotAcceptanceManager {
           updatedBalancesByAllowSpends,
           globalTokenLocks,
           globalActiveTokenLocks
-        )
+        ) match {
+          case Right(balances) => balances
+          case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by token locks: $error")
+        }
 
         lastActiveGlobalAllowSpends = globalActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
         allGlobalAllowSpends <- (globalAllowSpends |+| lastActiveGlobalAllowSpends).toList.traverse {
@@ -373,7 +379,10 @@ object GlobalSnapshotAcceptanceManager {
           updatedBalancesByTokenLocks,
           allGlobalAllowSpends,
           globalSpendTransactions
-        )
+        ) match {
+          case Right(balances) => balances
+          case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by spend transactions: $error")
+        }
 
         (maybeMerkleTree, updatedLastCurrencySnapshotProofs) <- hasher.getLogic(ordinal) match {
           case JsonHash =>
@@ -724,30 +733,43 @@ object GlobalSnapshotAcceptanceManager {
       currentBalances: SortedMap[Address, Balance],
       globalAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
       lastActiveAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
-    ): SortedMap[Address, Balance] = {
+    ): Either[BalanceArithmeticError, SortedMap[Address, Balance]] = {
       val lastActiveGlobalAllowSpends = lastActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
       val expiredGlobalAllowSpends = filterExpiredAllowSpends(lastActiveGlobalAllowSpends, epochProgress)
 
-      (globalAllowSpends |+| expiredGlobalAllowSpends).foldLeft(currentBalances) {
-        case (acc, (address, allowSpends)) =>
-          val unexpired = allowSpends.filter(_.lastValidEpochProgress >= epochProgress)
-          val expired = allowSpends.filter(_.lastValidEpochProgress < epochProgress)
+      (globalAllowSpends |+| expiredGlobalAllowSpends).foldLeft[Either[BalanceArithmeticError, SortedMap[Address, Balance]]](
+        Right(currentBalances)
+      ) {
+        case (accEither, (address, allowSpends)) =>
+          for {
+            acc <- accEither
+            initialBalance = acc.getOrElse(address, Balance.empty)
 
-          val updatedBalanceUnexpired =
-            unexpired.foldLeft(acc.getOrElse(address, Balance.empty)) { (currentBalance, allowSpend) =>
-              currentBalance
-                .minus(SwapAmount.toAmount(allowSpend.amount))
-                .getOrElse(currentBalance)
-                .minus(AllowSpendFee.toAmount(allowSpend.fee))
-                .getOrElse(currentBalance)
+            unexpiredBalance <- {
+              val unexpired = allowSpends.filter(_.lastValidEpochProgress >= epochProgress)
+
+              unexpired.foldLeft[Either[BalanceArithmeticError, Balance]](Right(initialBalance)) { (currentBalanceEither, allowSpend) =>
+                for {
+                  currentBalance <- currentBalanceEither
+                  balanceAfterAmount <- currentBalance.minus(SwapAmount.toAmount(allowSpend.amount))
+                  balanceAfterFee <- balanceAfterAmount.minus(AllowSpendFee.toAmount(allowSpend.fee))
+                } yield balanceAfterFee
+              }
             }
-          val updatedBalanceExpired = expired.foldLeft(updatedBalanceUnexpired) { (currentBalance, allowSpend) =>
-            currentBalance
-              .plus(SwapAmount.toAmount(allowSpend.amount))
-              .getOrElse(currentBalance)
-          }
 
-          acc.updated(address, updatedBalanceExpired)
+            expiredBalance <- {
+              val expired = allowSpends.filter(_.lastValidEpochProgress < epochProgress)
+
+              expired.foldLeft[Either[BalanceArithmeticError, Balance]](Right(unexpiredBalance)) { (currentBalanceEither, allowSpend) =>
+                for {
+                  currentBalance <- currentBalanceEither
+                  balanceAfterExpiredAmount <- currentBalance.plus(SwapAmount.toAmount(allowSpend.amount))
+                } yield balanceAfterExpiredAmount
+              }
+            }
+
+            updatedAcc = acc.updated(address, expiredBalance)
+          } yield updatedAcc
       }
     }
 
@@ -755,50 +777,48 @@ object GlobalSnapshotAcceptanceManager {
       currentBalances: SortedMap[Address, Balance],
       allGlobalAllowSpends: SortedMap[Address, List[Hashed[AllowSpend]]],
       globalSpendTransactions: List[SpendTransaction]
-    ): SortedMap[Address, Balance] =
-      globalSpendTransactions.foldLeft(currentBalances) { (innerAcc, spendTransaction) =>
-        val destinationAddress = spendTransaction.destination
-        val sourceAddress = spendTransaction.source
+    ): Either[BalanceArithmeticError, SortedMap[Address, Balance]] =
+      globalSpendTransactions.foldLeft[Either[BalanceArithmeticError, SortedMap[Address, Balance]]](Right(currentBalances)) {
+        (innerAccEither, spendTransaction) =>
+          for {
+            innerAcc <- innerAccEither
+            destinationAddress = spendTransaction.destination
+            sourceAddress = spendTransaction.source
 
-        val addressAllowSpends = allGlobalAllowSpends.getOrElse(sourceAddress, List.empty)
-        val spendTransactionAmount = SwapAmount.toAmount(spendTransaction.amount)
-        val currentDestinationBalance = innerAcc.getOrElse(destinationAddress, Balance.empty)
+            addressAllowSpends = allGlobalAllowSpends.getOrElse(sourceAddress, List.empty)
+            spendTransactionAmount = SwapAmount.toAmount(spendTransaction.amount)
+            currentDestinationBalance = innerAcc.getOrElse(destinationAddress, Balance.empty)
 
-        spendTransaction.allowSpendRef.flatMap { allowSpendRef =>
-          addressAllowSpends.find(_.hash === allowSpendRef)
-        } match {
-          case Some(allowSpend) =>
-            val sourceAddress = allowSpend.source
-            val currentSourceBalance = innerAcc.getOrElse(sourceAddress, Balance.empty)
-            val balanceToReturnToAddress = allowSpend.amount.value.value - spendTransactionAmount.value.value
+            updatedBalances <- spendTransaction.allowSpendRef.flatMap { allowSpendRef =>
+              addressAllowSpends.find(_.hash === allowSpendRef)
+            } match {
+              case Some(allowSpend) =>
+                val sourceAllowSpendAddress = allowSpend.source
+                val currentSourceBalance = innerAcc.getOrElse(sourceAllowSpendAddress, Balance.empty)
+                val balanceToReturnToAddress = allowSpend.amount.value.value - spendTransactionAmount.value.value
 
-            val updatedDestinationBalance = currentDestinationBalance
-              .plus(spendTransactionAmount)
-              .getOrElse(currentDestinationBalance)
+                for {
+                  updatedDestinationBalance <- currentDestinationBalance.plus(spendTransactionAmount)
+                  updatedSourceBalance <- currentSourceBalance.plus(
+                    Amount(NonNegLong.from(balanceToReturnToAddress).getOrElse(NonNegLong.MinValue))
+                  )
+                } yield
+                  innerAcc
+                    .updated(destinationAddress, updatedDestinationBalance)
+                    .updated(sourceAllowSpendAddress, updatedSourceBalance)
 
-            val updatedSourceBalance = currentSourceBalance
-              .plus(Amount(NonNegLong.from(balanceToReturnToAddress).getOrElse(NonNegLong.MinValue)))
-              .getOrElse(currentSourceBalance)
+              case None =>
+                val currentSourceBalance = innerAcc.getOrElse(sourceAddress, Balance.empty)
 
-            innerAcc
-              .updated(destinationAddress, updatedDestinationBalance)
-              .updated(sourceAddress, updatedSourceBalance)
-
-          case None =>
-            val currentSourceBalance = innerAcc.getOrElse(sourceAddress, Balance.empty)
-
-            val updatedDestinationBalance = currentDestinationBalance
-              .plus(spendTransactionAmount)
-              .getOrElse(currentDestinationBalance)
-
-            val updatedSourceBalance = currentSourceBalance
-              .minus(spendTransactionAmount)
-              .getOrElse(currentSourceBalance)
-
-            innerAcc
-              .updated(destinationAddress, updatedDestinationBalance)
-              .updated(sourceAddress, updatedSourceBalance)
-        }
+                for {
+                  updatedDestinationBalance <- currentDestinationBalance.plus(spendTransactionAmount)
+                  updatedSourceBalance <- currentSourceBalance.minus(spendTransactionAmount)
+                } yield
+                  innerAcc
+                    .updated(destinationAddress, updatedDestinationBalance)
+                    .updated(sourceAddress, updatedSourceBalance)
+            }
+          } yield updatedBalances
       }
 
     private def updateGlobalBalancesByTokenLocks(
@@ -806,29 +826,42 @@ object GlobalSnapshotAcceptanceManager {
       currentBalances: SortedMap[Address, Balance],
       acceptedGlobalTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
       lastActiveGlobalTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]]
-    ): SortedMap[Address, Balance] = {
+    ): Either[BalanceArithmeticError, SortedMap[Address, Balance]] = {
       val expiredGlobalTokenLocks = filterExpiredTokenLocks(lastActiveGlobalTokenLocks, epochProgress)
 
-      (acceptedGlobalTokenLocks |+| expiredGlobalTokenLocks).foldLeft(currentBalances) {
-        case (acc, (address, tokenLocks)) =>
-          val unexpired = tokenLocks.filter(_.unlockEpoch.forall(_ >= epochProgress))
-          val expired = tokenLocks.filter(_.unlockEpoch.exists(_ < epochProgress))
+      (acceptedGlobalTokenLocks |+| expiredGlobalTokenLocks).foldLeft[Either[BalanceArithmeticError, SortedMap[Address, Balance]]](
+        Right(currentBalances)
+      ) {
+        case (accEither, (address, tokenLocks)) =>
+          for {
+            acc <- accEither
+            initialBalance = acc.getOrElse(address, Balance.empty)
 
-          val updatedBalanceUnexpired =
-            unexpired.foldLeft(acc.getOrElse(address, Balance.empty)) { (currentBalance, tokenLock) =>
-              currentBalance
-                .minus(TokenLockAmount.toAmount(tokenLock.amount))
-                .getOrElse(currentBalance)
-                .minus(TokenLockFee.toAmount(tokenLock.fee))
-                .getOrElse(currentBalance)
+            unexpiredBalance <- {
+              val unexpired = tokenLocks.filter(_.unlockEpoch.forall(_ >= epochProgress))
+
+              unexpired.foldLeft[Either[BalanceArithmeticError, Balance]](Right(initialBalance)) { (currentBalanceEither, tokenLock) =>
+                for {
+                  currentBalance <- currentBalanceEither
+                  balanceAfterAmount <- currentBalance.minus(TokenLockAmount.toAmount(tokenLock.amount))
+                  balanceAfterFee <- balanceAfterAmount.minus(TokenLockFee.toAmount(tokenLock.fee))
+                } yield balanceAfterFee
+              }
             }
-          val updatedBalanceExpired = expired.foldLeft(updatedBalanceUnexpired) { (currentBalance, allowSpend) =>
-            currentBalance
-              .plus(TokenLockAmount.toAmount(allowSpend.amount))
-              .getOrElse(currentBalance)
-          }
 
-          acc.updated(address, updatedBalanceExpired)
+            expiredBalance <- {
+              val expired = tokenLocks.filter(_.unlockEpoch.exists(_ < epochProgress))
+
+              expired.foldLeft[Either[BalanceArithmeticError, Balance]](Right(unexpiredBalance)) { (currentBalanceEither, allowSpend) =>
+                for {
+                  currentBalance <- currentBalanceEither
+                  balanceAfterExpiredAmount <- currentBalance.plus(TokenLockAmount.toAmount(allowSpend.amount))
+                } yield balanceAfterExpiredAmount
+              }
+            }
+
+            updatedAcc = acc.updated(address, expiredBalance)
+          } yield updatedAcc
       }
     }
 
