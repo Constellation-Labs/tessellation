@@ -109,7 +109,11 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 SortedMap.empty,
                 Long.MaxValue,
                 Hasher.forKryo[IO],
-                DelegatedStakingConfig(RewardFraction(5_000_000), RewardFraction(10_000_000), NonNegLong(7338977L))
+                DelegatedStakingConfig(
+                  RewardFraction(5_000_000),
+                  RewardFraction(10_000_000),
+                  Map(Dev -> EpochProgress(NonNegLong(7338977L)))
+                )
               )
             contextualTransactionValidator = ContextualTransactionValidator
               .make(TransactionLimitConfig(Balance.empty, 0.hours, TransactionFee.zero, 1.second), None)
@@ -186,7 +190,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               updateNodeCollateralAcceptanceManager,
               validators.spendActionValidator,
               Amount(0L),
-              NonNegLong(136080L)
+              EpochProgress(NonNegLong(136080L))
             )
             globalSnapshotContextFns = GlobalSnapshotContextFunctions.make[IO](globalSnapshotAcceptanceManager)
             snapshotProcessor = {

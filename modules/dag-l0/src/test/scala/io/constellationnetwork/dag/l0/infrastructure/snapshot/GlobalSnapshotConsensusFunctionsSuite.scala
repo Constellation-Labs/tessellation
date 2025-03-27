@@ -264,7 +264,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
           updateNodeCollateralAcceptanceManager,
           spendActionValidator,
           collateral,
-          NonNegLong(136080L)
+          EpochProgress(NonNegLong(136080L))
         )
 
     val feeCalculator = new SnapshotBinaryFeeCalculator[IO] {

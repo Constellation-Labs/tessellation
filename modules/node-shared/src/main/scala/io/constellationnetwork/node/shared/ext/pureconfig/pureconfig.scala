@@ -10,6 +10,7 @@ import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculatorConf
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.transaction.TransactionFee
 import io.constellationnetwork.security.hex.Hex
@@ -30,8 +31,11 @@ package object pureconfig {
   implicit val transactionFeeReader: ConfigReader[TransactionFee] = ConfigReader[NonNegLong].map(TransactionFee(_))
   implicit val peerIdReader: ConfigReader[PeerId] = ConfigReader[String].map(Hex(_)).map(PeerId(_))
   implicit val ordinalReader: ConfigReader[SnapshotOrdinal] = ConfigReader[NonNegLong].map(SnapshotOrdinal(_))
+  implicit val epochProgressReader: ConfigReader[EpochProgress] = ConfigReader[NonNegLong].map(EpochProgress(_))
   implicit val environmentToOrdinalMapReader: ConfigReader[Map[AppEnvironment, SnapshotOrdinal]] =
     genericMapReader[AppEnvironment, SnapshotOrdinal](catchReadError(AppEnvironment.withName))
+  implicit val environmentToEpochProgressMapReader: ConfigReader[Map[AppEnvironment, EpochProgress]] =
+    genericMapReader[AppEnvironment, EpochProgress](catchReadError(AppEnvironment.withName))
   implicit val environmentToSetOfPeersReader: ConfigReader[Map[AppEnvironment, NonEmptySet[PeerId]]] =
     genericMapReader(catchReadError(AppEnvironment.withName))
   implicit val ordinalToFeeCalculatorConfigReader: ConfigReader[Map[SnapshotOrdinal, FeeCalculatorConfig]] =

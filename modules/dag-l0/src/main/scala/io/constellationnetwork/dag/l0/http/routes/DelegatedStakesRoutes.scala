@@ -33,7 +33,7 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
   validator: UpdateDelegatedStakeValidator[F],
   snapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   nodeStorage: NodeStorage[F],
-  withdrawalTimeLimit: NonNegLong
+  withdrawalTimeLimit: EpochProgress
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {
 
@@ -70,7 +70,7 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
             fee = stake.fee,
             hash = delegatedStakeRef.hash,
             withdrawalStartEpoch = maybeWithdraw.map { case (_, epochProgress) => epochProgress },
-            withdrawalEndEpoch = maybeWithdraw.map { case (_, epochProgress) => epochProgress |+| EpochProgress(withdrawalTimeLimit) }
+            withdrawalEndEpoch = maybeWithdraw.map { case (_, epochProgress) => epochProgress |+| withdrawalTimeLimit }
           )
       }
     } yield

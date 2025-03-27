@@ -24,6 +24,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.Globa
 import io.constellationnetwork.node.shared.resources.MkHttpServer
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
 import io.constellationnetwork.schema.cluster.ClusterId
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshot, SnapshotOrdinal}
@@ -126,7 +127,7 @@ object Main
           TessellationVersion.unsafeFrom(BuildInfo.version),
           cfg.http,
           sharedValidators,
-          cfg.shared.delegatedStaking
+          cfg.shared.delegatedStaking.withdrawalTimeLimit.getOrElse(sharedConfig.environment, EpochProgress.MinValue)
         )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)

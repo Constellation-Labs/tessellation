@@ -151,7 +151,7 @@ object types {
   case class DelegatedStakingConfig(
     minRewardFraction: RewardFraction,
     maxRewardFraction: RewardFraction,
-    withdrawalTimeLimit: NonNegLong
+    withdrawalTimeLimit: Map[AppEnvironment, EpochProgress]
   )
 
   case class TrustStorageConfig(

@@ -45,6 +45,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.{
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedValidators}
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotStateProof, SnapshotOrdinal}
 import io.constellationnetwork.security._
@@ -103,7 +104,7 @@ object GlobalSnapshotConsensus {
         sharedServices.updateNodeCollateralAcceptanceManager,
         validators.spendActionValidator,
         collateral,
-        sharedCfg.delegatedStaking.withdrawalTimeLimit
+        sharedCfg.delegatedStaking.withdrawalTimeLimit.getOrElse(sharedCfg.environment, EpochProgress.MinValue)
       )
       consensusStorage <- ConsensusStorage
         .make[
