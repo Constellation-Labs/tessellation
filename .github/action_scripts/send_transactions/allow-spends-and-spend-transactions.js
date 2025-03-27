@@ -1063,12 +1063,12 @@ const currencyWorkflow = {
         balanceManager.verifyCurrencyBalanceChange(PRIVATE_KEYS.key1, initialBalance, amount, fee)
 };
 
-const createUserSpendTransaction = (allowSpendRef, sourceAddress, destinationAddress) => {
+const createUserSpendTransaction = (allowSpendRef, sourceAddress, destinationAddress, useFullAllowSpend, allowSpendAmount) => {
     const { spend: amount } = getRandomAmounts();
     const tx = {
         allowSpendRef: allowSpendRef,
         currencyId: null,
-        amount,
+        amount: useFullAllowSpend ? allowSpendAmount : amount,
         source: sourceAddress,
         destination: destinationAddress
     };
@@ -1077,7 +1077,7 @@ const createUserSpendTransaction = (allowSpendRef, sourceAddress, destinationAdd
         allowSpendRef,
         source: sourceAddress,
         destination: destinationAddress,
-        amount
+        amount: useFullAllowSpend ? allowSpendAmount : amount
     }, null, 2));
     return tx;
 };
@@ -1100,7 +1100,7 @@ const createMetagraphSpendTransaction = (destinationAddress) => {
     return tx;
 };
 
-const createUsageUpdateWithSpendTransaction = (allowSpendRef, sourceAddress, destinationAddress) => {
+const createUsageUpdateWithSpendTransaction = (allowSpendRef, sourceAddress, destinationAddress, useFullAllowSpend, allowSpendAmount) => {
     logWorkflow.info('Creating usage update with spend transactions: ' + JSON.stringify({
         sourceAddress,
         allowSpendRef,
@@ -1111,7 +1111,7 @@ const createUsageUpdateWithSpendTransaction = (allowSpendRef, sourceAddress, des
         UsageUpdateWithSpendTransaction: {
             address: sourceAddress,
             usage: 10,
-            spendTransactionA: createUserSpendTransaction(allowSpendRef, sourceAddress, destinationAddress),
+            spendTransactionA: createUserSpendTransaction(allowSpendRef, sourceAddress, destinationAddress, useFullAllowSpend, allowSpendAmount),
             spendTransactionB: createMetagraphSpendTransaction(destinationAddress)
         }
     };
@@ -1136,8 +1136,8 @@ const createUsageUpdateWithSpendTransaction = (allowSpendRef, sourceAddress, des
     return update;
 };
 
-const sendDataWithSpendTransaction = async (urls, allowSpendHash, sourceAddress, destinationAddress) => {
-    const dataUpdate = createUsageUpdateWithSpendTransaction(allowSpendHash, sourceAddress, destinationAddress);
+const sendDataWithSpendTransaction = async (urls, allowSpendHash, sourceAddress, destinationAddress, useFullAllowSpend, allowSpendAmount) => {
+    const dataUpdate = createUsageUpdateWithSpendTransaction(allowSpendHash, sourceAddress, destinationAddress, useFullAllowSpend, allowSpendAmount);
     const account = dag4.createAccount(PRIVATE_KEYS.key3);
     const proof = await generateProof(dataUpdate, PRIVATE_KEYS.key3, account, SerializerType.STANDARD);
 
@@ -1174,7 +1174,7 @@ const spendTransactionWorkflow = {
         balanceManager.verifyDagBalanceChange(PRIVATE_KEYS.key3, initialBalance, amount, fee)
 };
 
-const executeSpendTransactionWorkflow = async () => {
+const executeSpendTransactionWorkflow = async (useFullAllowSpend = false) => {
     try {
         logWorkflow.start('SpendTransaction');
 
@@ -1205,7 +1205,9 @@ const executeSpendTransactionWorkflow = async () => {
             urls,
             hash,
             address,
-            CONSTANTS.CURRENCY_TOKEN_ID
+            CONSTANTS.CURRENCY_TOKEN_ID,
+            useFullAllowSpend,
+            allowSpendAmount,
         );
 
         await verifySpendActionInGlobalL0(urls, CONSTANTS.CURRENCY_TOKEN_ID, spendResult.update);
@@ -2066,6 +2068,9 @@ const executeWorkflowByType = async (workflowType) => {
             break;
         case 'spend':
             await executeSpendTransactionWorkflow();
+            break;
+        case 'full-spend':
+            await executeSpendTransactionWorkflow(true);
             break;
         case 'unauthorized':
             await executeUnauthorizedSpendTransactionWorkflow();
