@@ -26,10 +26,13 @@ import derevo.circe.magnolia.encoder
 import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.all.NonNegLong
+import io.circe.shapes._
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
 import org.http4s.{HttpRoutes, Request}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import shapeless._
+import shapeless.syntax.singleton._
 
 final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
   mkCell: Signed[UpdateNodeParameters] => Cell[F, StackF, _, Either[CellError, Ω], _],
@@ -126,25 +129,26 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root =>
       snapshotStorage.head.flatMap {
-        case Some((_, info)) =>
-          req
-            .as[Signed[UpdateNodeParameters]]
-            .flatMap(signed => validator.validate(signed, info))
-            .flatTap {
-              case Valid(signed) =>
-                logger.info(s"Accepted node parameters from ${signed.proofs.map(_.id).map(PeerId.fromId(_))}")
-              case Invalid(errors) =>
-                logger.warn(s"Invalid node parameters: $errors")
-            }
-            .flatMap {
-              case Valid(signed)   => mkCell(signed).run()
-              case Invalid(errors) => CellError(errors.show).asLeft[Ω].pure[F]
-            }
-            .flatMap {
-              case Left(err) => BadRequest(err.reason)
-              case Right(_)  => Ok()
-            }
         case None => ServiceUnavailable()
+        case Some((_, info)) =>
+          for {
+            signed <- req.as[Signed[UpdateNodeParameters]]
+            result <- validator.validate(signed, info)
+            response <- result match {
+              case Valid(validSigned) =>
+                logger.info(s"Accepted node parameters from ${validSigned.proofs.map(_.id).map(PeerId.fromId)}") >>
+                  mkCell(validSigned).run().flatMap {
+                    case Right(_) =>
+                      validSigned.toHashed.flatMap(hashed => Ok(("hash" ->> hashed.hash) :: HNil))
+                    case Left(_) =>
+                      InternalServerError("Failed to update cell.")
+                  }
+
+              case Invalid(errors) =>
+                logger.warn(s"Invalid node parameters: $errors") >>
+                  BadRequest(errors.mkString_("\n"))
+            }
+          } yield response
       }
     case GET -> Root / PeerIdVar(nodeId) =>
       nodeStorage.getNodeState
