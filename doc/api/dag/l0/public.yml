@@ -341,6 +341,13 @@ paths:
               $ref: '../../models/headers/X-Session-Token.yml'
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hash:
+                    $ref: '../../models/schemas/Hash.yml'
         400:
           description: Invalid delegated stake create request
           headers:
@@ -350,6 +357,10 @@ paths:
               $ref: '../../models/headers/X-Session-Token.yml'
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/ErrorResponse.yml'
         503:
           description: Node is not Ready yet
           headers:
@@ -380,6 +391,13 @@ paths:
               $ref: '../../models/headers/X-Session-Token.yml'
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hash:
+                    $ref: '../../models/schemas/Hash.yml'
         400:
           description: Invalid delegated stake withdraw request
           headers:
@@ -389,6 +407,10 @@ paths:
               $ref: '../../models/headers/X-Session-Token.yml'
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/ErrorResponse.yml'
         503:
           description: Node is not Ready yet
           headers:
@@ -484,6 +506,13 @@ paths:
               $ref: '../../models/headers/X-Session-Token.yml'
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hash:
+                    $ref: '../../models/schemas/Hash.yml'
         400:
           description: Invalid node collateral create request
           headers:
@@ -493,6 +522,10 @@ paths:
               $ref: '../../models/headers/X-Session-Token.yml'
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/ErrorResponse.yml'
         503:
           description: Node is not Ready yet
           headers:
@@ -523,6 +556,13 @@ paths:
               $ref: '../../models/headers/X-Session-Token.yml'
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hash:
+                    $ref: '../../models/schemas/Hash.yml'
         400:
           description: Invalid node collateral withdraw request
           headers:
@@ -532,6 +572,10 @@ paths:
               $ref: '../../models/headers/X-Session-Token.yml'
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/ErrorResponse.yml'
         503:
           description: Node is not Ready yet
           headers:
@@ -656,6 +700,13 @@ paths:
               $ref: '../../models/headers/X-Session-Token.yml'
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hash:
+                    $ref: '../../models/schemas/Hash.yml'
         400:
           description: Invalid update node parameters request
           headers:
@@ -665,6 +716,10 @@ paths:
               $ref: '../../models/headers/X-Session-Token.yml'
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/ErrorResponse.yml'
         503:
           description: Node is not Ready yet
           headers:

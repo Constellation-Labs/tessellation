@@ -23,10 +23,13 @@ import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.all.NonNegLong
+import io.circe.shapes._
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import shapeless._
+import shapeless.syntax.singleton._
 
 final case class NodeCollateralRoutes[F[_]: Async: Hasher](
   mkCell: NodeCollateralOutput => Cell[F, StackF, _, Either[CellError, Ω], _],
@@ -92,48 +95,50 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root =>
       snapshotStorage.head.flatMap {
-        case Some((_, info)) =>
-          req
-            .as[Signed[UpdateNodeCollateral.Create]]
-            .flatMap(signed => validator.validateCreateNodeCollateral(signed, info))
-            .flatTap {
-              case Valid(signed) =>
-                logger.info(s"Accepted create node collateral from ${signed.proofs.map(_.id).map(PeerId.fromId(_))}")
-              case Invalid(errors) =>
-                logger.warn(s"Invalid create delegated stake: $errors")
-            }
-            .flatMap {
-              case Valid(signed)   => mkCell(CreateNodeCollateralOutput(signed)).run()
-              case Invalid(errors) => CellError(errors.toString).asLeft[Ω].pure[F]
-            }
-            .flatMap {
-              case Left(_)  => BadRequest()
-              case Right(_) => Ok()
-            }
         case None => ServiceUnavailable()
+        case Some((_, info)) =>
+          for {
+            signed <- req.as[Signed[UpdateNodeCollateral.Create]]
+            result <- validator.validateCreateNodeCollateral(signed, info)
+            response <- result match {
+              case Valid(validSigned) =>
+                logger.info(s"Accepted create node collateral from ${validSigned.proofs.map(_.id).map(PeerId.fromId)}") >>
+                  mkCell(CreateNodeCollateralOutput(validSigned)).run().flatMap {
+                    case Right(_) =>
+                      validSigned.toHashed.flatMap(hashed => Ok(("hash" ->> hashed.hash) :: HNil))
+                    case Left(_) =>
+                      InternalServerError("Failed to update cell.")
+                  }
+
+              case Invalid(errors) =>
+                logger.warn(s"Invalid create delegated stake: $errors") >>
+                  BadRequest(errors.mkString_("\n"))
+            }
+          } yield response
       }
 
     case req @ PUT -> Root =>
       snapshotStorage.head.flatMap {
-        case Some((_, info)) =>
-          req
-            .as[Signed[UpdateNodeCollateral.Withdraw]]
-            .flatMap(signed => validator.validateWithdrawNodeCollateral(signed, info))
-            .flatTap {
-              case Valid(signed) =>
-                logger.info(s"Accepted withdraw node collateral from ${signed.proofs.map(_.id).map(PeerId.fromId(_))}")
-              case Invalid(errors) =>
-                logger.warn(s"Invalid withdraw delegated stake: $errors")
-            }
-            .flatMap {
-              case Valid(signed)   => mkCell(WithdrawNodeCollateralOutput(signed)).run()
-              case Invalid(errors) => CellError(errors.toString).asLeft[Ω].pure[F]
-            }
-            .flatMap {
-              case Left(_)  => BadRequest()
-              case Right(_) => Ok()
-            }
         case None => ServiceUnavailable()
+        case Some((_, info)) =>
+          for {
+            signed <- req.as[Signed[UpdateNodeCollateral.Withdraw]]
+            result <- validator.validateWithdrawNodeCollateral(signed, info)
+            response <- result match {
+              case Valid(validSigned) =>
+                logger.info(s"Accepted withdraw node collateral from ${validSigned.proofs.map(_.id).map(PeerId.fromId)}") >>
+                  mkCell(WithdrawNodeCollateralOutput(validSigned)).run().flatMap {
+                    case Right(_) =>
+                      validSigned.toHashed.flatMap(hashed => Ok(("hash" ->> hashed.hash) :: HNil))
+                    case Left(_) =>
+                      InternalServerError("Failed to update cell.")
+                  }
+
+              case Invalid(errors) =>
+                logger.warn(s"Invalid withdraw delegated stake: $errors") >>
+                  BadRequest(errors.mkString_("\n"))
+            }
+          } yield response
       }
 
     case GET -> Root / AddressVar(address) / "info" =>
