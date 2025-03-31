@@ -553,27 +553,28 @@ object GlobalSnapshotAcceptanceManager {
       expiredWithdrawalsDelegatedStaking: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Withdraw], EpochProgress)]],
       expiredCreatedDelegatesStakingByRef: Map[Hash, Signed[delegatedStake.UpdateDelegatedStake.Create]],
       globalActiveTokenLocksByRef: Map[Hash, Signed[TokenLock]]
-    ): Either[DelegatedStakeError, List[TokenUnlock]] =
-      expiredWithdrawalsDelegatedStaking.values.toList.traverse { withdrawals =>
-        withdrawals.traverse {
-          case (withdraw, _) =>
-            for {
-              delegatedStaking <- expiredCreatedDelegatesStakingByRef
-                .get(withdraw.stakeRef)
-                .toRight(MissingDelegatedStaking(s"Missing TokenLock for stakeRef: ${withdraw.stakeRef}"))
+    ): Either[DelegatedStakeError, Map[Address, List[TokenUnlock]]] =
+      expiredWithdrawalsDelegatedStaking.toList.traverse {
+        case (address, withdrawals) =>
+          withdrawals.traverse {
+            case (withdraw, _) =>
+              for {
+                delegatedStaking <- expiredCreatedDelegatesStakingByRef
+                  .get(withdraw.stakeRef)
+                  .toRight(MissingDelegatedStaking(s"Missing delegated stake for stakeRef: ${withdraw.stakeRef}"))
 
-              activeTokenLock <- globalActiveTokenLocksByRef
-                .get(delegatedStaking.tokenLockRef)
-                .toRight(MissingTokenLock(s"Missing TokenLock for stakeRef: ${withdraw.stakeRef}"))
-            } yield
-              TokenUnlock(
-                delegatedStaking.tokenLockRef,
-                activeTokenLock.amount,
-                activeTokenLock.currencyId,
-                activeTokenLock.source
-              )
-        }
-      }.map(_.flatten)
+                activeTokenLock <- globalActiveTokenLocksByRef
+                  .get(delegatedStaking.tokenLockRef)
+                  .toRight(MissingTokenLock(s"Missing TokenLock for tokenLockRef: ${delegatedStaking.tokenLockRef}"))
+              } yield
+                TokenUnlock(
+                  delegatedStaking.tokenLockRef,
+                  activeTokenLock.amount,
+                  activeTokenLock.currencyId,
+                  activeTokenLock.source
+                )
+          }.map(tokenUnlocks => address -> tokenUnlocks)
+      }.map(_.toMap)
 
     private def acceptDelegatedStakes(
       lastSnapshotContext: GlobalSnapshotInfo,
@@ -820,7 +821,7 @@ object GlobalSnapshotAcceptanceManager {
       epochProgress: EpochProgress,
       acceptedGlobalTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
       lastActiveGlobalTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
-      generatedTokenUnlocks: List[TokenUnlock]
+      generatedTokenUnlocksByAddress: Map[Address, List[TokenUnlock]]
     )(implicit hasher: Hasher[F]): F[SortedMap[Address, SortedSet[Signed[TokenLock]]]] = {
       val expiredGlobalTokenLocks = filterExpiredTokenLocks(lastActiveGlobalTokenLocks, epochProgress)
 
@@ -829,7 +830,8 @@ object GlobalSnapshotAcceptanceManager {
           case (acc, (address, tokenLocks)) =>
             val lastAddressTokenLocks = acc.getOrElse(address, SortedSet.empty[Signed[TokenLock]])
             val unexpired = (lastAddressTokenLocks ++ tokenLocks).filter(_.unlockEpoch.forall(_ >= epochProgress))
-            val unlocksRefs = generatedTokenUnlocks.map(_.tokenLockRef)
+            val addressTokenUnlocks = generatedTokenUnlocksByAddress.getOrElse(address, List.empty)
+            val unlocksRefs = addressTokenUnlocks.map(_.tokenLockRef)
 
             unexpired
               .foldM(SortedSet.empty[Signed[TokenLock]]) { (acc, tokenLock) =>
@@ -979,7 +981,7 @@ object GlobalSnapshotAcceptanceManager {
       currentBalances: SortedMap[Address, Balance],
       acceptedGlobalTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
       lastActiveGlobalTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
-      generatedTokenUnlocks: List[TokenUnlock]
+      generatedTokenUnlocksByAddress: Map[Address, List[TokenUnlock]]
     ): Either[BalanceArithmeticError, SortedMap[Address, Balance]] = {
       val expiredGlobalTokenLocks = filterExpiredTokenLocks(lastActiveGlobalTokenLocks, epochProgress)
 
@@ -1013,8 +1015,9 @@ object GlobalSnapshotAcceptanceManager {
                 } yield balanceAfterExpiredAmount
               }
             }
+            addressTokenUnlocks = generatedTokenUnlocksByAddress.getOrElse(address, List.empty)
             finalBalance <-
-              generatedTokenUnlocks.foldLeft[Either[BalanceArithmeticError, Balance]](Right(expiredBalance)) {
+              addressTokenUnlocks.foldLeft[Either[BalanceArithmeticError, Balance]](Right(expiredBalance)) {
                 case (currentBalanceEither, tokenUnlock) =>
                   for {
                     currentBalance <- currentBalanceEither
