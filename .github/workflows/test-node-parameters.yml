@@ -28,7 +28,7 @@ jobs:
           npm i axios
           npm i brotli
           npm i zod
-          npm i node-forge
+          npm i elliptic
 
       - name: Download shared_jars artifacts
         uses: actions/download-artifact@v4
@@ -73,13 +73,13 @@ jobs:
       - name: Check
         run: |
           cd .github/action_scripts/node_parameters
-          node staking.js 90 91 80 81 82 check
+          node node_parameters.js 90 91 80 81 82 checkNodeParameters
 
       - name: Upload log files
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: currency-transactions-node-log-files-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}-${{ inputs.tessellation_version }}
+          name: node-parameters-node-log-files-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}-${{ inputs.tessellation_version }}
           path: .github/code/**/*.log
           if-no-files-found: warn
           retention-days: 3

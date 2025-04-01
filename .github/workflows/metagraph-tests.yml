@@ -29,55 +29,55 @@ jobs:
       tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
     secrets: inherit
 
-#  call-test-currency-transactions:
-#    needs: [calculate-version, call-workflow-setup-environment]
-#    uses: ./.github/workflows/test-currency-transactions.yml
-#    with:
-#      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
-#    secrets: inherit
-#
-#  call-test-data-transactions:
-#    needs: [calculate-version, call-workflow-setup-environment]
-#    uses: ./.github/workflows/test-data-transactions.yml
-#    with:
-#      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
-#    secrets: inherit
-#
-#  call-test-fee-transactions:
-#    needs: [calculate-version, call-workflow-setup-environment]
-#    uses: ./.github/workflows/test-fee-transactions.yml
-#    with:
-#      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
-#    secrets: inherit
-#
-#  call-test-metagraph-rewards:
-#    needs: [calculate-version, call-workflow-setup-environment]
-#    uses: ./.github/workflows/test-metagraph-rewards.yml
-#    with:
-#      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
-#    secrets: inherit
-#
-#  call-test-allow-spends:
-#    needs: [calculate-version, call-workflow-setup-environment]
-#    uses: ./.github/workflows/test-allow-spends.yml
-#    with:
-#      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
-#    secrets: inherit
-#
-#  call-test-spend-transactions:
-#    needs: [calculate-version, call-workflow-setup-environment]
-#    uses: ./.github/workflows/test-spend-transactions.yml
-#    with:
-#      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
-#    secrets: inherit
-#
-#  call-test-token-locks:
-#    needs: [calculate-version, call-workflow-setup-environment]
-#    uses: ./.github/workflows/test-token-locks.yml
-#    with:
-#      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
-#    secrets: inherit
-#
+  call-test-currency-transactions:
+    needs: [calculate-version, call-workflow-setup-environment]
+    uses: ./.github/workflows/test-currency-transactions.yml
+    with:
+      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
+    secrets: inherit
+
+  call-test-data-transactions:
+    needs: [calculate-version, call-workflow-setup-environment]
+    uses: ./.github/workflows/test-data-transactions.yml
+    with:
+      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
+    secrets: inherit
+
+  call-test-fee-transactions:
+    needs: [calculate-version, call-workflow-setup-environment]
+    uses: ./.github/workflows/test-fee-transactions.yml
+    with:
+      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
+    secrets: inherit
+
+  call-test-metagraph-rewards:
+    needs: [calculate-version, call-workflow-setup-environment]
+    uses: ./.github/workflows/test-metagraph-rewards.yml
+    with:
+      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
+    secrets: inherit
+
+  call-test-allow-spends:
+    needs: [calculate-version, call-workflow-setup-environment]
+    uses: ./.github/workflows/test-allow-spends.yml
+    with:
+      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
+    secrets: inherit
+
+  call-test-spend-transactions:
+    needs: [calculate-version, call-workflow-setup-environment]
+    uses: ./.github/workflows/test-spend-transactions.yml
+    with:
+      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
+    secrets: inherit
+
+  call-test-token-locks:
+    needs: [calculate-version, call-workflow-setup-environment]
+    uses: ./.github/workflows/test-token-locks.yml
+    with:
+      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
+    secrets: inherit
+
   call-test-node-parameters:
     needs: [calculate-version, call-workflow-setup-environment]
     uses: ./.github/workflows/test-node-parameters.yml
