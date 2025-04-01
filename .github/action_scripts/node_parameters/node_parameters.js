@@ -1,24 +1,15 @@
 const { dag4 } = require('@stardust-collective/dag4');
 const axios = require('axios');
-const jsSha256 = require('js-sha256');
 const fs = require("fs");
-const forge = require("node-forge");
 const elliptic = require('elliptic');
-const { compress } = require("brotli");
 
 const {
     parseSharedArgs,
     CONSTANTS: sharedConstants,
-    PRIVATE_KEYS,
     sleep,
-    withRetry,
     generateProof,
     SerializerType,
-    createAndConnectAccount,
     createNetworkConfig,
-    getEpochProgress,
-    createSerializer,
-    sortedJsonStringify,
     logWorkflow
 } = require('../shared');
 
@@ -35,33 +26,21 @@ const createConfig = () => {
     return { ...sharedArgs };
 };
 
-const logMessage = ( message ) => {
-    const formattedMessage = {
-        message
-    };
-    console.log( formattedMessage );
-};
 
-// Function to read the private key from the file and extract the public key
-function extractPublicKeyFromFile(filePath) {
-    // Read the private key from the file in hex format
-    const privateKeyHex = fs.readFileSync(filePath, 'utf8').trim(); // Read and trim the hex string
+function getPrivateKeyAndNodeIdFromFile(filePath) {
+    const privateKeyHex = fs.readFileSync(filePath, 'utf8').trim();
 
-    // Convert the hex string to raw bytes
     const privateKeyBuffer = Buffer.from(privateKeyHex, 'hex');
 
     try {
         const ec = new elliptic.ec('secp256k1'); 
 
         const privateKeyString = privateKeyBuffer.toString('hex')
-        // Create the EC keypair from the private key bytes
         const keyPair = ec.keyFromPrivate(privateKeyBuffer);
 
-        // Extract the public key in compressed hex format
         const uncompressedPublicKey = keyPair.getPublic(false, 'hex'); // Uncompressed format
         const nodeId = uncompressedPublicKey.slice(2); // Remove the '0x04' prefix
 
-        // Output the public key in hex
         return { privateKeyString, nodeId }
     } catch (error) {
         console.error('Error processing the private key:', error);
@@ -88,41 +67,11 @@ const createNodeParams = async (account, parametersName, rewardFraction, parent)
     }
   };
 
-  const brotliSerialize = async (content, compressionLevel = 2) => {
-    const jsonString = sortedJsonStringify(content);
-    const encoder = new TextEncoder();
-    const utf8Bytes = encoder.encode(jsonString);
-    return compress(utf8Bytes, { quality: compressionLevel });
-  };
-
-  const generateProofWithSerializer = async (message, walletPrivateKey, account) => {
-    try {
-      const serializedTx = await brotliSerialize(message);
-      
-      if (!serializedTx) {
-        throw new Error('Serialization returned null or undefined');
-      }
-  
-      // Convert compressed buffer to hex string for hashing
-      const messageHash = jsSha256.sha256(serializedTx);
-      const signature = await dag4.keyStore.sign(walletPrivateKey, messageHash);
-  
-      const publicKey = account.publicKey;
-      const cleanPublicKey = publicKey.length === 130 ? publicKey.substring(2) : publicKey;
-  
-      return { id: cleanPublicKey, signature };
-    } catch (error) {
-      console.error('Proof generation error:', error);
-      throw error;
-    }
-  };
-
-
-const checkOk = async (response) => {
+const checkOk = (response) => {
     if (response.status !== 200) throw new Error(`Node returned ${response.status} instead of 200`);
 }
 
-const checkbadRequest = async (response) => {
+const checkBadRequest = (response) => {
     if (response.status !== 400) throw new Error(`Node returned ${response.status} instead of 400`);
 }
 
@@ -139,13 +88,13 @@ const getNodeParams = async (urls) => {
     return response.data;
 };
 
-const verifyInitialNodeParams = async (response) => {
+const verifyInitialNodeParams = (response) => {
     if (response.length !== 0) throw new Error(`Initial node parameters shall be empty but received ${initialNodeParams}`);
 
 }
 
 const extractKeysAndAccount = (filePath) => {
-    const { privateKeyString, nodeId } = extractPublicKeyFromFile(filePath);
+    const { privateKeyString, nodeId } = getPrivateKeyAndNodeIdFromFile(filePath);
     logWorkflow.info(`Extracted node id: ${nodeId}`);
     logWorkflow.info(`Extracted private key: ${privateKeyString}`);
     const account = dag4.createAccount(privateKeyString);
@@ -172,8 +121,9 @@ const postNodeParamsNodeId = async (urls, nodeId, account, privateKeyString, par
     }
         
     const unsignedNodeParams = await createNodeParams(account, parameterName, rewardFaction, parent);
-    const proof1 = await generateProofWithSerializer(unsignedNodeParams, privateKeyString, account);
-    const content = { value: unsignedNodeParams, proofs: [{ ...proof1 }] };
+    //const proof = await generateProofWithSerializer(unsignedNodeParams, privateKeyString, account);
+    const proof = await generateProof(unsignedNodeParams, privateKeyString, account, SerializerType.BROTLI);
+    const content = { value: unsignedNodeParams, proofs: [{ ...proof }] };
 
     try {
         const updateResponse = await axios.post(`${urls.globalL0Url}/node-params`, content);
@@ -191,7 +141,7 @@ const postNodeParamsNodeId = async (urls, nodeId, account, privateKeyString, par
 
 const checkInitialNodeParamsNode = async (urls, nodeId) => {
     try {
-        const response = await axios.get(`${urls.globalL0Url}/node-params/${nodeId}?t=${Date.now()}`, {
+        await axios.get(`${urls.globalL0Url}/node-params/${nodeId}?t=${Date.now()}`, {
             headers: {
                 'Cache-Control': 'no-cache, no-store, must-revalidate',
                 'Pragma': 'no-cache',
@@ -247,7 +197,7 @@ const firstNodeFraction2 = 5000000;
 const secondNodeParameterName1 = "SecondNode1";
 const secondNodeFraction1 = 6000000;
 
-const executeWorkflow2 = async (urls) => {
+const checkNodeParameters = async (urls) => {
     logWorkflow.info('Start');
     const initialNodeParams = await getNodeParams(urls);
     await verifyInitialNodeParams(initialNodeParams)
@@ -282,7 +232,7 @@ const executeWorkflow2 = async (urls) => {
 
     //Send incorrect amount
     const ur3 = await postNodeParamsNodeId(urls, nodeId1, account1, privateKeyString1, firstNodeParameterName2, 10000001);
-    checkbadRequest(ur3)
+    checkBadRequest(ur3)
 
     getNodeParamsNodeIdVerify(urls, nodeId1, firstNodeParameterName2, firstNodeFraction2, 1);
     logWorkflow.info('Check updating node with incorrect params is OK');
@@ -305,8 +255,8 @@ const executeWorkflowByType = async (workflowType) => {
     const urls = createNetworkConfig(config);
 
     switch (workflowType) {
-        case 'check':
-            await executeWorkflow2(urls);
+        case 'checkNodeParameters':
+            await checkNodeParameters(urls);
             break;
         default:
             throw new Error(`Unknown workflow type: ${workflowType}`);
