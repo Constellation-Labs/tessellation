@@ -6,7 +6,7 @@ import cats.data._
 import cats.effect.Async
 import cats.effect.syntax.concurrent._
 import cats.syntax.all._
-import cats.{Applicative, Show}
+import cats.{Applicative, Parallel, Show}
 
 import scala.collection.immutable.SortedSet
 import scala.util.Random
@@ -32,21 +32,29 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait GlobalL0Service[F[_]] {
   type LatestSnapshotTuple = (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)
+
   def pullLatestSnapshot: F[LatestSnapshotTuple]
+
   def pullLatestSnapshotFromRandomPeer: F[LatestSnapshotTuple]
+
   def pullGlobalSnapshots: F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]]
+
   def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalIncrementalSnapshot]]]
+
   def pullGlobalSnapshot(hash: Hash): F[Option[Hashed[GlobalIncrementalSnapshot]]]
 }
 
 object GlobalL0Service {
   case object NoMajorityPeers extends Exception("No majority peers found in storage") with NoStackTrace
+
   case object NoPeersWithMajorityHash extends Exception("No peers returned snapshot with hash in the majority") with NoStackTrace
+
   case object NoMajoritySnapshotData extends Exception("Unable to determine latest snapshot data for majority") with NoStackTrace
+
   case object NoPeerAlignedWithMajority extends Exception("No peer available that is aligned with majority") with NoStackTrace
 
   def make[
-    F[_]: Async: SecurityProvider: HasherSelector
+    F[_]: Async: Parallel: SecurityProvider: HasherSelector
   ](
     l0GlobalSnapshotClient: L0GlobalSnapshotClient[F],
     globalL0ClusterStorage: L0ClusterStorage[F],
@@ -216,7 +224,7 @@ object GlobalL0Service {
               latestOrdinal <- l0GlobalSnapshotClient.getLatestOrdinal.run(l0Peer)
               nextOrdinal = lastStoredOrdinal.next
               lastOrdinal = calculateLastOrdinal(nextOrdinal, latestOrdinal)
-              pulled <- pullSnapshots(l0Peer, nextOrdinal, lastOrdinal)
+              pulled <- pullSnapshots(SortedSet(l0Peer), nextOrdinal, lastOrdinal)
             } yield pulled.toList.asRight[LatestSnapshotTuple]
           }
         }.handleErrorWith { e =>
@@ -236,33 +244,39 @@ object GlobalL0Service {
         )
 
       private def pullSnapshots(
-        l0Peer: L0Peer,
+        l0Peers: SortedSet[L0Peer],
         nextOrdinal: SnapshotOrdinal,
         lastOrdinal: SnapshotOrdinal
       )(implicit hasherSelector: HasherSelector[F]): F[Chain[Hashed[GlobalIncrementalSnapshot]]] = {
         val ordinals = LazyList
           .range(nextOrdinal.value.value, lastOrdinal.value.value + 1)
           .map(SnapshotOrdinal.unsafeApply)
+          .toList
 
         type Success = Hashed[GlobalIncrementalSnapshot]
-        type Result = Chain[Success]
-        type Agg = (LazyList[SnapshotOrdinal], Result)
-        (ordinals, Chain.empty[Success]).tailRecM[F, Result] {
-          case (ordinal #:: nextOrdinals, snapshots) =>
-            l0GlobalSnapshotClient
-              .get(ordinal)(l0Peer)
-              .flatMap(snapshot =>
-                hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashedWithSignatureCheck).flatMap(_.liftTo[F])
-              )
-              .map(s => (nextOrdinals, snapshots :+ s).asLeft[Result])
-              .handleErrorWith { e =>
-                logger
-                  .warn(e)(s"Failure pulling snapshot with ordinal=${ordinal.show}")
-                  .as(snapshots.asRight[Agg])
-              }
 
-          case (_, snapshots) => snapshots.asRight[Agg].pure[F]
+        // Process all ordinals in parallel at once
+        ordinals.parTraverse { ordinal =>
+          // Properly lift the random selection into the effect context
+          Async[F].delay {
+            val peersList = l0Peers.toList
+            val randomIndex = scala.util.Random.nextInt(peersList.size)
+            peersList(randomIndex)
+          }.flatMap { l0Peer =>
+            logger.info(s"Starting to get ordinal: ${ordinal}. From peer: ${l0Peer.show}") >>
+              l0GlobalSnapshotClient
+                .get(ordinal)(l0Peer)
+                .flatMap(snapshot =>
+                  hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashedWithSignatureCheck).flatMap(_.liftTo[F])
+                )
+          }
         }
+          .map(Chain.fromSeq)
+          .handleErrorWith { e =>
+            logger
+              .warn(e)(s"Failure processing snapshots: ${e.getMessage}")
+              .as(Chain.empty[Success])
+          }
       }
 
       private case class MajoritySnapshotData(ordinal: SnapshotOrdinal, hash: Hash)
@@ -305,7 +319,13 @@ object GlobalL0Service {
               NoPeerAlignedWithMajority.raiseError[F, Either[Agg, Result]]
             } { peer =>
               for {
-                sc <- pullSnapshots(peer, nextOrdinal, msd.ordinal)
+                _ <- logger.info(
+                  s"Pulling snapshots from majority from ordinal: ${nextOrdinal.show} to ${msd.ordinal.show}. With peers: ${peers}"
+                )
+                sc <- pullSnapshots(peers, nextOrdinal, msd.ordinal)
+                _ <- logger.info(
+                  s"Pulling finished"
+                )
                 verified <- verifySnapshotChain(sc, msd, peer)
               } yield Either.cond(verified, sc.toList, peers.tail)
             }

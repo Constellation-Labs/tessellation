@@ -1,5 +1,6 @@
 package org.tessellation.currency.l1.modules
 
+import cats.Parallel
 import cats.data.NonEmptySet
 import cats.effect.kernel.Async
 
@@ -22,7 +23,7 @@ import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.security.{Hasher, HasherSelector, SecurityProvider}
 
 object Services {
-  def make[F[_]: Async: HasherSelector: SecurityProvider](
+  def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider](
     storages: Storages[
       F,
       CurrencySnapshotStateProof,
