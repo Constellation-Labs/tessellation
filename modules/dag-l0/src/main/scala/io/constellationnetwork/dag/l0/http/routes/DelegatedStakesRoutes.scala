@@ -46,21 +46,23 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
   protected val prefixPath: InternalUrlPrefix = "/delegated-stakes"
 
   private def getDelegatedStakesInfo(address: Address, info: GlobalSnapshotInfo): F[DelegatedStakesInfo] = {
-    val lastStakes: List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)] =
+    val lastStakes: List[DelegatedStakeRecord] =
       info.activeDelegatedStakes
-        .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
+        .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
         .getOrElse(address, List.empty)
-    val lastWithdrawals: List[(Signed[UpdateDelegatedStake.Withdraw], EpochProgress)] =
+    val lastWithdrawals: List[PendingWithdrawal] =
       info.delegatedStakesWithdrawals
-        .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Withdraw], EpochProgress)]])
+        .getOrElse(SortedMap.empty[Address, List[PendingWithdrawal]])
         .getOrElse(address, List.empty)
 
     for {
       stakes <- lastStakes.traverse {
-        case (stake, ord) =>
+        case DelegatedStakeRecord(stake, _, ord) =>
           DelegatedStakeReference
             .of(stake)
-            .map(ref => ((stake, ord, ref), lastWithdrawals.find { case (withdrawal, _) => withdrawal.stakeRef === ref.hash }))
+            .map(ref =>
+              ((stake, ord, ref), lastWithdrawals.find { case PendingWithdrawal(withdrawal, _, _) => withdrawal.stakeRef === ref.hash })
+            )
       }
       infos = stakes.map {
         case ((stake, acceptedOrdinal, delegatedStakeRef), maybeWithdraw) =>
@@ -71,8 +73,8 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
             amount = stake.amount,
             fee = stake.fee,
             hash = delegatedStakeRef.hash,
-            withdrawalStartEpoch = maybeWithdraw.map { case (_, epochProgress) => epochProgress },
-            withdrawalEndEpoch = maybeWithdraw.map { case (_, epochProgress) => epochProgress |+| withdrawalTimeLimit }
+            withdrawalStartEpoch = maybeWithdraw.map { case PendingWithdrawal(_, _, epochProgress) => epochProgress },
+            withdrawalEndEpoch = maybeWithdraw.map { case PendingWithdrawal(_, _, epochProgress) => epochProgress |+| withdrawalTimeLimit }
           )
       }
     } yield
@@ -88,10 +90,12 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
     info: GlobalSnapshotInfo
   ): F[DelegatedStakeReference] =
     info.activeDelegatedStakes
-      .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
+      .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
       .get(address)
-      .flatMap(stakes => Option.when(stakes.nonEmpty)(stakes.maxBy { case (delegatedStaking, _) => delegatedStaking.ordinal }))
-      .traverse { case (delegatedStaking, _) => DelegatedStakeReference.of(delegatedStaking) }
+      .flatMap(stakes =>
+        Option.when(stakes.nonEmpty)(stakes.maxBy { case DelegatedStakeRecord(delegatedStaking, _, _) => delegatedStaking.ordinal })
+      )
+      .traverse { case DelegatedStakeRecord(delegatedStaking, _, _) => DelegatedStakeReference.of(delegatedStaking) }
       .map(_.getOrElse(DelegatedStakeReference.empty))
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {

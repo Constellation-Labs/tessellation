@@ -5,12 +5,14 @@ import cats.effect.kernel.Async
 import cats.syntax.functor._
 import cats.syntax.semigroup._
 
+import scala.collection.immutable.SortedSet
+import scala.math.Ordered.orderingToOrdered
 import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.balance.Amount
+import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
@@ -104,6 +106,22 @@ object delegatedStake {
     activeDelegatedStakes: List[DelegatedStakeInfo],
     pendingWithdrawals: List[DelegatedStakeInfo]
   )
+
+  @derive(decoder, encoder, eqv, show)
+  case class DelegatedStakeRecord(event: Signed[UpdateDelegatedStake.Create], rewards: Balance, createdAt: SnapshotOrdinal)
+
+  object DelegatedStakeRecord {
+    implicit val delegatedStakeAcctOrdering: Ordering[DelegatedStakeRecord] =
+      (x: DelegatedStakeRecord, y: DelegatedStakeRecord) => Ordering[SnapshotOrdinal].compare(x.createdAt, y.createdAt)
+  }
+
+  @derive(decoder, encoder, eqv, show)
+  case class PendingWithdrawal(event: Signed[UpdateDelegatedStake.Withdraw], rewards: Amount, createdAt: EpochProgress)
+
+  object PendingWithdrawal {
+    implicit val pendingWithdrawalOrdering: Ordering[PendingWithdrawal] =
+      (x: PendingWithdrawal, y: PendingWithdrawal) => Ordering[EpochProgress].compare(x.createdAt, y.createdAt)
+  }
 
   @derive(eqv, show)
   sealed trait DelegatedStakeError extends NoStackTrace

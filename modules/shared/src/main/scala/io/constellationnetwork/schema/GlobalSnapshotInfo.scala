@@ -12,7 +12,7 @@ import io.constellationnetwork.merkletree.{MerkleRoot, MerkleTree, Proof}
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
-import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
+import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, PendingWithdrawal, UpdateDelegatedStake}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
@@ -52,8 +52,8 @@ object GlobalSnapshotInfoV1 {
       Some(SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]),
       Some(SortedMap.empty[Address, SortedSet[Signed[TokenLock]]]),
       Some(SortedMap.empty),
-      Some(SortedMap.empty[Address, AllowSpendReference]),
-      Some(SortedMap.empty[Address, TokenLockReference]),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
@@ -215,8 +215,8 @@ case class GlobalSnapshotInfo(
   lastAllowSpendRefs: Option[SortedMap[Address, AllowSpendReference]],
   lastTokenLockRefs: Option[SortedMap[Address, TokenLockReference]],
   updateNodeParameters: Option[SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)]],
-  activeDelegatedStakes: Option[SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]]],
-  delegatedStakesWithdrawals: Option[SortedMap[Address, List[(Signed[UpdateDelegatedStake.Withdraw], EpochProgress)]]],
+  activeDelegatedStakes: Option[SortedMap[Address, List[DelegatedStakeRecord]]],
+  delegatedStakesWithdrawals: Option[SortedMap[Address, List[PendingWithdrawal]]],
   activeNodeCollaterals: Option[SortedMap[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]]],
   nodeCollateralWithdrawals: Option[SortedMap[Address, List[(Signed[UpdateNodeCollateral.Withdraw], EpochProgress)]]]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
