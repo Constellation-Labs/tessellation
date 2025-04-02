@@ -10,7 +10,7 @@ import io.constellationnetwork.ext.cats.syntax.validated._
 import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralValidator.UpdateNodeCollateralValidationErrorOr
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
+import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, UpdateDelegatedStake}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.nodeCollateral._
 import io.constellationnetwork.schema.peer.PeerId
@@ -207,10 +207,10 @@ object UpdateNodeCollateralValidator {
 
         def tokenLockAvailable(address: Address): Boolean = {
           val maybeExistingStake = lastContext.activeDelegatedStakes
-            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
-            .getOrElse(address, List.empty[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)])
-            .find(_._1.tokenLockRef === signed.tokenLockRef)
-            .map(_._1)
+            .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
+            .getOrElse(signed.source, List.empty)
+            .find(_.event.tokenLockRef === signed.tokenLockRef)
+            .map(_.event)
 
           val maybeExistingCollateral = lastContext.activeNodeCollaterals
             .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])

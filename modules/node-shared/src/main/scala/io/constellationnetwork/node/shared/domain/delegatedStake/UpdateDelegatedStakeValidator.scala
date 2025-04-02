@@ -10,7 +10,7 @@ import io.constellationnetwork.ext.cats.syntax.validated._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator.UpdateDelegatedStakeValidationErrorOr
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeReference, UpdateDelegatedStake}
+import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.peer.PeerId
@@ -107,10 +107,10 @@ object UpdateDelegatedStakeValidator {
       ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]] =
         for {
           lastRef <- lastContext.activeDelegatedStakes
-            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
+            .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
             .get(signed.source)
-            .flatMap(stakes => Option.when(stakes.nonEmpty)(stakes.maxBy(_._1.ordinal)))
-            .traverse(stake => DelegatedStakeReference.of(stake._1))
+            .flatMap(stakes => Option.when(stakes.nonEmpty)(stakes.maxBy(_.createdAt)))
+            .traverse(stake => DelegatedStakeReference.of(stake.event))
             .map(_.getOrElse(DelegatedStakeReference.empty))
         } yield
           if (lastRef == signed.parent) {
@@ -133,9 +133,9 @@ object UpdateDelegatedStakeValidator {
         lastContext: GlobalSnapshotInfo
       ): UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]] = {
         val activeDelegatedStakes = lastContext.activeDelegatedStakes
-          .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
-          .getOrElse(signed.source, List.empty[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)])
-        if (activeDelegatedStakes.exists(s => s._1.nodeId == signed.nodeId)) {
+          .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
+          .getOrElse(signed.source, List.empty)
+        if (activeDelegatedStakes.exists(s => s.event.nodeId == signed.nodeId)) {
           StakeExistsForNode(signed.nodeId).invalidNec
         } else {
           signed.validNec
@@ -148,14 +148,14 @@ object UpdateDelegatedStakeValidator {
       ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]] =
         for {
           stakeRef <- lastContext.activeDelegatedStakes
-            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
+            .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
             .getOrElse(signed.source, List.empty)
-            .traverse { case (stake, _) => DelegatedStakeReference.of(stake) }
+            .traverse { case DelegatedStakeRecord(stake, _, _) => DelegatedStakeReference.of(stake) }
             .map(_.find(_ === signed.parent))
           withdrawalRef = lastContext.delegatedStakesWithdrawals
-            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Withdraw], EpochProgress)]])
+            .getOrElse(SortedMap.empty[Address, List[PendingWithdrawal]])
             .getOrElse(signed.source, List.empty)
-            .find { case (w, _) => stakeRef.map(_.hash).contains(w.stakeRef) }
+            .find { case PendingWithdrawal(w, _, _) => stakeRef.map(_.hash).contains(w.stakeRef) }
         } yield
           if (withdrawalRef.isEmpty) {
             signed.validNec
@@ -170,9 +170,9 @@ object UpdateDelegatedStakeValidator {
 
         def validateUniqueness(address: Address): UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Withdraw]] = {
           val withdrawals = lastContext.delegatedStakesWithdrawals
-            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Withdraw], SnapshotOrdinal)]])
+            .getOrElse(SortedMap.empty[Address, List[PendingWithdrawal]])
             .getOrElse(address, List.empty)
-          if (withdrawals.exists(_._1.stakeRef === signed.stakeRef)) {
+          if (withdrawals.exists(_.event.stakeRef === signed.stakeRef)) {
             AlreadyWithdrawn(signed.stakeRef).invalidNec
           } else {
             signed.validNec
@@ -180,7 +180,11 @@ object UpdateDelegatedStakeValidator {
         }
 
         def validateCreate(address: Address): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Withdraw]]] =
-          getParent(address, lastContext.activeDelegatedStakes.getOrElse(SortedMap.empty), signed).map {
+          getParent(
+            address,
+            lastContext.activeDelegatedStakes.getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]]),
+            signed
+          ).map {
             case Some(delegatedStaking) =>
               if (delegatedStaking.source =!= signed.source)
                 InvalidSourceAddress(signed.stakeRef).invalidNec
@@ -203,10 +207,10 @@ object UpdateDelegatedStakeValidator {
 
         def tokenLockAvailable(address: Address): Boolean = {
           val maybeExistingStake = lastContext.activeDelegatedStakes
-            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
-            .getOrElse(address, List.empty[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)])
-            .find(_._1.tokenLockRef === signed.tokenLockRef)
-            .map(_._1)
+            .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
+            .getOrElse(address, List.empty)
+            .find(_.event.tokenLockRef === signed.tokenLockRef)
+            .map(_.event)
 
           val maybeExistingCollateral = lastContext.activeNodeCollaterals
             .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
@@ -239,14 +243,14 @@ object UpdateDelegatedStakeValidator {
 
       private def getParent(
         address: Address,
-        delegatedStakes: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]],
+        delegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
         signed: Signed[UpdateDelegatedStake.Withdraw]
       ): F[Option[Signed[UpdateDelegatedStake.Create]]] =
         for {
           maybeParent <- delegatedStakes.getOrElse(address, List.empty).findM { s =>
-            DelegatedStakeReference.of(s._1).map(_.hash === signed.stakeRef)
+            DelegatedStakeReference.of(s.event).map(_.hash === signed.stakeRef)
           }
-        } yield maybeParent.map(_._1)
+        } yield maybeParent.map(_.event)
     }
 
   @derive(eqv, show)

@@ -15,7 +15,7 @@ import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeAmount, UpdateDelegatedStake}
+import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeAmount, DelegatedStakeRecord, UpdateDelegatedStake}
 import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.peer.{PeerId, PeerInfo}
 import io.constellationnetwork.security.signature.Signed
@@ -25,6 +25,7 @@ import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.encoder
 import derevo.derive
 import eu.timepit.refined.auto._
+import eu.timepit.refined.internal.Adjacent.integralAdjacent
 import eu.timepit.refined.types.all.NonNegLong
 import io.circe.shapes._
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
@@ -178,10 +179,10 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
                     .map(
                       _._2.activeDelegatedStakes
                         .getOrElse(
-                          SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]]
+                          SortedMap.empty[Address, List[DelegatedStakeRecord]]
                         )
-                        .toList
-                        .flatMap { case (address, stakes) => stakes.map(s => (s._1.value, address)) }
+                        .map { case (addr, recs) => recs.map { case DelegatedStakeRecord(ev, _, _) => ev.value -> addr } }
+                        .flatten
                         .groupBy {
                           case (stake, _) => stake.nodeId
                         }
@@ -196,7 +197,8 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
                           .get(node.id)
                           .map(stakes => stakes.map(_._1.amount).foldLeft(zero)((acc, x) => acc.plus(x)))
                           .getOrElse(zero)
-                        val totalAddresses = activeDelegatedStakes.get(node.id).map(stakes => stakes.map(_._2).distinct.size).getOrElse(0)
+                        val totalAddresses =
+                          activeDelegatedStakes.get(node.id).map(stakes => stakes.toList.map(_._2).distinct.size).getOrElse(0)
                         NodeParametersInfo(
                           node = node,
                           delegatedStakeRewardParameters = params.latest.delegatedStakeRewardParameters,

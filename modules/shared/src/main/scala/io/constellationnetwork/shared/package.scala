@@ -8,15 +8,16 @@ import io.constellationnetwork.currency.dataApplication.DataCancellationReason
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.kryo._
 import io.constellationnetwork.merkletree.{MerkleRoot, Proof, ProofEntry}
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.{Address, AddressCache}
 import io.constellationnetwork.schema.block.Tips
+import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, PendingWithdrawal}
 import io.constellationnetwork.schema.gossip._
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.SignRequest
 import io.constellationnetwork.schema.snapshot.StateProof
 import io.constellationnetwork.schema.transaction._
 import io.constellationnetwork.schema.trust.PublicTrust
-import io.constellationnetwork.schema.{Block, _}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.Signed.SignedOrdering
 import io.constellationnetwork.security.signature.signature.SignatureProof
