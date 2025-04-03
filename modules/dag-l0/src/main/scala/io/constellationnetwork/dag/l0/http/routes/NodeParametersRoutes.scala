@@ -15,6 +15,7 @@ import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.delegatedStake.DelegatedStakeAmount._
 import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeAmount, DelegatedStakeRecord, UpdateDelegatedStake}
 import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.peer.{PeerId, PeerInfo}
@@ -25,8 +26,6 @@ import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.encoder
 import derevo.derive
 import eu.timepit.refined.auto._
-import eu.timepit.refined.internal.Adjacent.integralAdjacent
-import eu.timepit.refined.types.all.NonNegLong
 import io.circe.shapes._
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
@@ -69,9 +68,60 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
       }
     } yield info
 
+  private def getNodeParameters(snapshotWithInfo: SnapshotWithInfo): F[List[NodeParametersInfo]] =
+    for {
+      peerIdToNodeParams <- getAllLatestNodeParameters(snapshotWithInfo)
+      peerIdToPeerInfo <- cluster.info.map(_.toList.map(peerInfo => peerInfo.id -> peerInfo).toMap)
+      peerIdToStake <- activeDelegatedStakesAndAddressesWithDefault(snapshotWithInfo)
+      peerIdToNodeParameters <- peerIdToNodeParams.map {
+        case (peerId, nodeParams) =>
+          val (totalAmount, totalAddresses) = peerIdToStake(peerId)
+          NodeParametersInfo(
+            peerId = peerId,
+            node = peerIdToPeerInfo.get(peerId),
+            delegatedStakeRewardParameters = nodeParams.latest.delegatedStakeRewardParameters,
+            nodeMetadataParameters = nodeParams.latest.nodeMetadataParameters,
+            totalAmountDelegated = totalAmount,
+            totalAddressesAssigned = totalAddresses
+          )
+      }.toList.pure[F]
+    } yield peerIdToNodeParameters
+
+  private def getAllLatestNodeParameters(snapshotWithInfo: SnapshotWithInfo): F[Map[PeerId, NodeParamsInfo]] =
+    for {
+      idToNodeParametersData <- snapshotWithInfo._2.updateNodeParameters.getOrElse(Map.empty).pure[F]
+      idToNodeParamsInfo <- idToNodeParametersData.toList.traverse {
+        case (id, (signed, ord)) =>
+          UpdateNodeParametersReference.of(signed).map { ref =>
+            val peerId = PeerId.fromId(id)
+            val nodeParamsInfo = NodeParamsInfo(latest = signed, lastRef = ref, acceptedOrdinal = ord)
+            peerId -> nodeParamsInfo
+          }
+      }
+    } yield idToNodeParamsInfo.toMap
+
+  private def activeDelegatedStakesAndAddressesWithDefault(snapshotWithInfo: SnapshotWithInfo) =
+    snapshotWithInfo._2.activeDelegatedStakes
+      .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
+      .toList
+      .flatMap { case (address, stakes) => stakes.map(s => (s.event.value, address)) }
+      .groupBy {
+        case (stake, _) => stake.nodeId
+      }
+      .map {
+        case (peerId, stakesAndAddresses) =>
+          val (stakes, addresses) = stakesAndAddresses.unzip
+          val totalAmount = stakes.map(_.amount).combineAll
+          val totalAddresses = addresses.size
+          peerId -> (totalAmount, totalAddresses)
+      }
+      .withDefaultValue((emptyAmount, 0))
+      .pure[F]
+
   @derive(eqv, show, encoder)
   case class NodeParametersInfo(
-    node: PeerInfo,
+    peerId: PeerId,
+    node: Option[PeerInfo],
     delegatedStakeRewardParameters: DelegatedStakeRewardParameters,
     nodeMetadataParameters: NodeMetadataParameters,
     totalAmountDelegated: DelegatedStakeAmount,
@@ -113,10 +163,14 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
         }
 
       (sort match {
-        case Sort.Address => list.traverse(info => info.node.id.toAddress.map(addr => (info, addr))).map(_.sortBy(_._2).map(_._1))
-        case Sort.Name    => list.sortBy(_.nodeMetadataParameters.name).pure[F]
-        case Sort.PeerId  => list.sortBy(_.node.id.value.value).pure[F]
-        case _            => list.pure[F] // default case for any unexpected values
+        case Sort.Address =>
+          list.traverse(info => info.peerId.toAddress.map(addr => (info, addr))).map(_.sortBy(_._2).map(_._1))
+        case Sort.Name =>
+          list.sortBy(_.nodeMetadataParameters.name).pure[F]
+        case Sort.PeerId =>
+          list.sortBy(_.peerId.value.value).pure[F]
+        case _ =>
+          list.pure[F] // default case for any unexpected values
 
       }).map(sorted => applyOrder(sorted))
     }
@@ -124,8 +178,10 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
 
   private def filter(list: List[NodeParametersInfo], search: Option[String]): List[NodeParametersInfo] = search match {
     case None    => list
-    case Some(s) => list.filter(info => info.nodeMetadataParameters.name.contains(s) || info.node.id.value.value.contains(s))
+    case Some(s) => list.filter(info => info.nodeMetadataParameters.name.contains(s) || info.peerId.value.value.contains(s))
   }
+
+  type SnapshotWithInfo = (Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root =>
@@ -171,46 +227,14 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
           } yield (sortOrder, sort)) match {
             case Left(err) => BadRequest(err)
             case Right((sortOrder, sort)) =>
-              cluster.info.flatMap { clusterInfo =>
-                clusterInfo.toList.traverse(peerInfo => getLatestNodeParameters(peerInfo.id.toId).map(_.map(params => (peerInfo, params))))
-              }.flatMap { infoWithNodeParams =>
-                snapshotStorage.head.flatMap { lastSnapshot =>
-                  val activeDelegatedStakes = lastSnapshot
-                    .map(
-                      _._2.activeDelegatedStakes
-                        .getOrElse(
-                          SortedMap.empty[Address, List[DelegatedStakeRecord]]
-                        )
-                        .map { case (addr, recs) => recs.map { case DelegatedStakeRecord(ev, _, _) => ev.value -> addr } }
-                        .flatten
-                        .groupBy {
-                          case (stake, _) => stake.nodeId
-                        }
-                    )
-                    .getOrElse(Map.empty[PeerId, List[(UpdateDelegatedStake.Create, Address)]])
-
-                  val filtered = filter(
-                    infoWithNodeParams.collect {
-                      case Some((node, params)) =>
-                        val zero = DelegatedStakeAmount(NonNegLong(0L))
-                        val totalAmount = activeDelegatedStakes
-                          .get(node.id)
-                          .map(stakes => stakes.map(_._1.amount).foldLeft(zero)((acc, x) => acc.plus(x)))
-                          .getOrElse(zero)
-                        val totalAddresses =
-                          activeDelegatedStakes.get(node.id).map(stakes => stakes.toList.map(_._2).distinct.size).getOrElse(0)
-                        NodeParametersInfo(
-                          node = node,
-                          delegatedStakeRewardParameters = params.latest.delegatedStakeRewardParameters,
-                          nodeMetadataParameters = params.latest.nodeMetadataParameters,
-                          totalAmountDelegated = totalAmount,
-                          totalAddressesAssigned = totalAddresses
-                        )
-                    },
-                    req.params.get("search")
-                  )
-                  Ok(Sort.sort(filtered, sortOrder, sort))
-                }
+              snapshotStorage.head.flatMap {
+                case Some(snapshot) =>
+                  for {
+                    nodeParameters <- getNodeParameters(snapshot)
+                    filtered = filter(nodeParameters, req.params.get("search"))
+                    response <- Ok(Sort.sort(filtered, sortOrder, sort))
+                  } yield response
+                case None => Ok()
               }
           },
           ServiceUnavailable()

@@ -121,7 +121,6 @@ const postNodeParamsNodeId = async (urls, nodeId, account, privateKeyString, par
     }
         
     const unsignedNodeParams = await createNodeParams(account, parameterName, rewardFaction, parent);
-    //const proof = await generateProofWithSerializer(unsignedNodeParams, privateKeyString, account);
     const proof = await generateProof(unsignedNodeParams, privateKeyString, account, SerializerType.BROTLI);
     const content = { value: unsignedNodeParams, proofs: [{ ...proof }] };
 
@@ -155,13 +154,15 @@ const checkInitialNodeParamsNode = async (urls, nodeId) => {
 };
 
 const verifyNodeParamsResponse = (nodeParams, nodeId, expectedName, expectedRewardFraction) => {
-    const data = nodeParams.find(item => item.node.id === nodeId);
+    const data = nodeParams.find(item => item.peerId === nodeId);
     if (!data)
-        throw new Error(`Node id is not correct`);
+        throw new Error(`PeerId is not correct`);
     if (data.nodeMetadataParameters.name !== expectedName)
         throw new Error(`Node parameters name expected ${expectedName} but received ${data.nodeMetadataParameters.name}`);
     if (data.delegatedStakeRewardParameters.rewardFraction !== expectedRewardFraction)
         throw new Error(`Node parameters rewardFraction expected ${expectedRewardFraction} but received ${data.delegatedStakeRewardParameters.rewardFraction}`);
+    if (data.node && data.node.id != nodeId)
+        throw new Error(`Node id is not correct`);
 };
 
 

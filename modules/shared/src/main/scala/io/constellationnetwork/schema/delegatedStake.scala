@@ -2,6 +2,7 @@ package io.constellationnetwork.schema
 
 import cats.Order._
 import cats.effect.kernel.Async
+import cats.kernel.Monoid
 import cats.syntax.functor._
 import cats.syntax.semigroup._
 
@@ -35,7 +36,12 @@ object delegatedStake {
   }
   object DelegatedStakeAmount {
     implicit def toAmount(amount: DelegatedStakeAmount): Amount = Amount(amount.value)
-    val empty = DelegatedStakeAmount(NonNegLong(0L))
+    val emptyAmount: DelegatedStakeAmount = DelegatedStakeAmount(NonNegLong(0L))
+
+    implicit val stakeMonoid: Monoid[DelegatedStakeAmount] = new Monoid[DelegatedStakeAmount] {
+      override def empty: DelegatedStakeAmount = emptyAmount
+      override def combine(x: DelegatedStakeAmount, y: DelegatedStakeAmount): DelegatedStakeAmount = x.plus(y)
+    }
   }
 
   @derive(decoder, encoder, order, show)
