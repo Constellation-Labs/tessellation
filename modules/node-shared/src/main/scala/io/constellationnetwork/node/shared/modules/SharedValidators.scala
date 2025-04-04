@@ -67,7 +67,8 @@ object SharedValidators {
     val updateNodeParametersValidator = UpdateNodeParametersValidator.make(
       signedValidator,
       delegatedStaking.minRewardFraction,
-      delegatedStaking.maxRewardFraction
+      delegatedStaking.maxRewardFraction,
+      l0Seedlist
     )
     val updateDelegatedStakeValidator =
       UpdateDelegatedStakeValidator.make[F](signedValidator, l0Seedlist)

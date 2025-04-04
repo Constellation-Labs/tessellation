@@ -4,7 +4,7 @@ import cats.data.NonEmptySet
 import cats.data.Validated.{Invalid, Valid}
 import cats.effect.IO
 import cats.effect.kernel.Resource
-import cats.implicits.catsSyntaxValidatedIdBinCompat0
+import cats.implicits.{catsSyntaxOptionId, catsSyntaxValidatedIdBinCompat0}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
@@ -12,9 +12,11 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersValidator.InvalidSigned
+import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.node._
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed.forAsyncHasher
@@ -54,9 +56,10 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
       validTestUpdateNodeParameters = testUpdateNodeParameters(source)
       signedUpdateNodeParameters <- forAsyncHasher(validTestUpdateNodeParameters, keyPair)
-      validator = mkValidator()
+      validator = mkValidator(Set(peerId))
       result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
     } yield expect.same(Valid(signedUpdateNodeParameters), result)
   }
@@ -67,13 +70,14 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
       validTestUpdateNodeParameters = testUpdateNodeParameters(source).copy(delegatedStakeRewardParameters =
         DelegatedStakeRewardParameters(
           rewardFraction = RewardFraction(10_000_000)
         )
       )
       signedUpdateNodeParameters <- forAsyncHasher(validTestUpdateNodeParameters, keyPair)
-      validator = mkValidator()
+      validator = mkValidator(Set(peerId))
       result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
     } yield expect.same(Valid(signedUpdateNodeParameters), result)
   }
@@ -84,15 +88,30 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
       validTestUpdateNodeParameters = testUpdateNodeParameters(source).copy(delegatedStakeRewardParameters =
         DelegatedStakeRewardParameters(
           rewardFraction = RewardFraction(8_000_000)
         )
       )
       signedUpdateNodeParameters <- forAsyncHasher(validTestUpdateNodeParameters, keyPair)
-      validator = mkValidator()
+      validator = mkValidator(Set(peerId))
       result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
     } yield expect.same(Valid(signedUpdateNodeParameters), result)
+  }
+
+  test("should fail when the node is absent in seed list") { res =>
+    implicit val (json, h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
+      validTestUpdateNodeParameters = testUpdateNodeParameters(source)
+      signedUpdateNodeParameters <- forAsyncHasher(validTestUpdateNodeParameters, keyPair)
+      validator = mkValidator(Set.empty)
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
+    } yield expect.same(UpdateNodeParametersValidator.NodeNotInSeedList(peerId).invalidNec, result)
   }
 
   test("should fail when the signature is wrong") { res =>
@@ -102,6 +121,8 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
       source = keyPair1.getPublic.toAddress
+      peerId1 = PeerId.fromId(keyPair1.getPublic.toId)
+      peerId2 = PeerId.fromId(keyPair2.getPublic.toId)
       signedUpdateNodeParameters <- forAsyncHasher(testUpdateNodeParameters(source), keyPair1).map(signed =>
         signed.copy(proofs =
           NonEmptySet.fromSetUnsafe(
@@ -109,7 +130,7 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
           )
         )
       )
-      validator = mkValidator()
+      validator = mkValidator(Set(peerId1, peerId2))
       result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
     } yield
       expect.all(result match {
@@ -129,13 +150,14 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
       invalidTtestUpdateNodeParameters = testUpdateNodeParameters(source).copy(delegatedStakeRewardParameters =
         DelegatedStakeRewardParameters(
           rewardFraction = RewardFraction(10_000_001)
         )
       )
       signedUpdateNodeParameters <- forAsyncHasher(invalidTtestUpdateNodeParameters, keyPair)
-      validator = mkValidator()
+      validator = mkValidator(Set(peerId))
       result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
     } yield expect.same(UpdateNodeParametersValidator.InvalidRewardValue(10_000_001).invalidNec, result)
   }
@@ -146,13 +168,14 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
       invalidTtestUpdateNodeParameters = testUpdateNodeParameters(source).copy(delegatedStakeRewardParameters =
         DelegatedStakeRewardParameters(
           rewardFraction = RewardFraction(4_999_999)
         )
       )
       signedUpdateNodeParameters <- forAsyncHasher(invalidTtestUpdateNodeParameters, keyPair)
-      validator = mkValidator()
+      validator = mkValidator(Set(peerId))
       result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
     } yield expect.same(UpdateNodeParametersValidator.InvalidRewardValue(4_999_999).invalidNec, result)
   }
@@ -163,9 +186,10 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
       validTestUpdateNodeParameters = testUpdateNodeParameters(source)
       signedUpdateNodeParameters <- forAsyncHasher(validTestUpdateNodeParameters, keyPair)
-      validator = mkValidator()
+      validator = mkValidator(Set(peerId))
       result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
     } yield expect.same(Valid(signedUpdateNodeParameters), result)
   }
@@ -177,9 +201,10 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       lastRef = UpdateNodeParametersReference(UpdateNodeParametersReference.empty.ordinal.next, UpdateNodeParametersReference.empty.hash)
       source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
       invalidTestUpdateNodeParameters = testUpdateNodeParameters(source).copy(parent = lastRef)
       signedUpdateNodeParameters <- forAsyncHasher(invalidTestUpdateNodeParameters, keyPair)
-      validator = mkValidator()
+      validator = mkValidator(Set(peerId))
       result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
     } yield expect.same(UpdateNodeParametersValidator.InvalidParent(lastRef).invalidNec, result)
   }
@@ -190,13 +215,14 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
       parent = testUpdateNodeParameters(source)
       signedParent <- forAsyncHasher(parent, keyPair)
       context = mkGlobalContext(SortedMap(signedParent.proofs.head.id -> (signedParent, SnapshotOrdinal.MinValue)))
       lastRef <- h.hash(parent).map(hash => UpdateNodeParametersReference(parent.ordinal, hash))
       validTestUpdateNodeParameters = testUpdateNodeParameters(source).copy(parent = lastRef)
       signedUpdateNodeParameters <- forAsyncHasher(validTestUpdateNodeParameters, keyPair)
-      validator = mkValidator()
+      validator = mkValidator(Set(peerId))
       result <- validator.validate(signedUpdateNodeParameters, context)
     } yield expect.same(Valid(signedUpdateNodeParameters), result)
   }
@@ -207,27 +233,30 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
       parent = testUpdateNodeParameters(source)
       signedParent <- forAsyncHasher(parent, keyPair)
       context = mkGlobalContext(SortedMap(signedParent.proofs.head.id -> (signedParent, SnapshotOrdinal.MinValue)))
       lastRef <- h.hash(parent).map(hash => UpdateNodeParametersReference(parent.ordinal.next, hash))
       invalidTestUpdateNodeParameters = testUpdateNodeParameters(source).copy(parent = lastRef)
       signedUpdateNodeParameters <- forAsyncHasher(invalidTestUpdateNodeParameters, keyPair)
-      validator = mkValidator()
+      validator = mkValidator(Set(peerId))
       result <- validator.validate(signedUpdateNodeParameters, context)
     } yield expect.same(UpdateNodeParametersValidator.InvalidParent(lastRef).invalidNec, result)
   }
 
-  private def mkValidator()(
+  private def mkValidator(peersList: Set[PeerId])(
     implicit S: SecurityProvider[IO],
     J: JsonSerializer[IO],
     H: Hasher[IO]
   ): UpdateNodeParametersValidator[IO] = {
+    val seedList = peersList.map(peerId => SeedlistEntry(peerId, None, None, None, None))
     val signedValidator = SignedValidator.make[IO]
     UpdateNodeParametersValidator.make[IO](
       signedValidator,
       RewardFraction(5_000_000),
-      RewardFraction(10_000_000)
+      RewardFraction(10_000_000),
+      seedList.some
     )
   }
 

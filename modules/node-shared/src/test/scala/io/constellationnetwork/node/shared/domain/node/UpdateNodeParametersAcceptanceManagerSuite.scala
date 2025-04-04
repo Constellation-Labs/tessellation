@@ -2,16 +2,18 @@ package io.constellationnetwork.node.shared.domain.node
 
 import cats.effect.IO
 import cats.effect.kernel.Resource
-import cats.implicits.toTraverseOps
+import cats.implicits.{catsSyntaxOptionId, toTraverseOps}
 
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.node._
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed.forAsyncHasher
@@ -38,24 +40,27 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
       signedValidList <- validList(source).traverse(params => forAsyncHasher(params, keyPair))
       signedInvalidList <- invalidList(source).traverse(params => forAsyncHasher(params, keyPair))
-      acceptanceManager = mkAcceptanceManager()
+      acceptanceManager = mkAcceptanceManager(Set(peerId))
       acceptanceResult <- acceptanceManager.acceptUpdateNodeParameters(signedInvalidList ++ signedValidList, mkGlobalContext())
     } yield
       expect.same((signedValidList.reverse, signedInvalidList.reverse), (acceptanceResult.accepted, acceptanceResult.notAccepted.map(_._1)))
   }
 
-  private def mkAcceptanceManager()(
+  private def mkAcceptanceManager(peersList: Set[PeerId])(
     implicit S: SecurityProvider[IO],
     J: JsonSerializer[IO],
     H: Hasher[IO]
   ): UpdateNodeParametersAcceptanceManager[IO] = {
     val signedValidator = SignedValidator.make[IO]
+    val seedList = peersList.map(peerId => SeedlistEntry(peerId, None, None, None, None))
     val updateNodeParametersValidator = UpdateNodeParametersValidator.make[IO](
       signedValidator,
       RewardFraction(5_000_000),
-      RewardFraction(10_000_000)
+      RewardFraction(10_000_000),
+      seedList.some
     )
     UpdateNodeParametersAcceptanceManager.make[IO](updateNodeParametersValidator)
   }

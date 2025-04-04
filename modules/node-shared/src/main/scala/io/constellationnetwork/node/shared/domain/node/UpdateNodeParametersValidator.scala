@@ -8,8 +8,10 @@ import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.ext.cats.syntax.validated._
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersValidator.UpdateNodeParametersValidationErrorOr
+import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.node.{RewardFraction, UpdateNodeParameters, UpdateNodeParametersReference}
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
@@ -33,7 +35,8 @@ object UpdateNodeParametersValidator {
   def make[F[_]: Async: Hasher](
     signedValidator: SignedValidator[F],
     minRewardValue: RewardFraction,
-    maxRewardValue: RewardFraction
+    maxRewardValue: RewardFraction,
+    seedList: Option[Set[SeedlistEntry]]
   ): UpdateNodeParametersValidator[F] =
     new UpdateNodeParametersValidator[F] {
       override def validate(
@@ -49,11 +52,29 @@ object UpdateNodeParametersValidator {
             .map(_.errorMap[UpdateNodeParametersValidationError](InvalidSigned))
           parentV <- validateParent(signed, lastSnapshotContext)
           rewardFractionV = validateRewardFraction(signed)
+          nodeV = validateNode(signed)
         } yield
           signaturesV
             .productR(isSignedExclusivelyBySource)
             .productR(parentV)
             .productR(rewardFractionV)
+            .productR(nodeV)
+
+      private def validateNode(
+        signed: Signed[UpdateNodeParameters]
+      ): UpdateNodeParametersValidationErrorOr[Signed[UpdateNodeParameters]] = {
+        val nodeIds = signed.proofs.map(_.id).map(PeerId.fromId).toList
+
+        nodeIds match {
+          case nodeId :: Nil =>
+            if (seedList.forall(_.exists(_.peerId === nodeId)))
+              signed.validNec[UpdateNodeParametersValidationError]
+            else
+              NodeNotInSeedList(nodeId).invalidNec[Signed[UpdateNodeParameters]]
+          case _ =>
+            InvalidProofsCount(nodeIds.size).invalidNec[Signed[UpdateNodeParameters]]
+        }
+      }
 
       private def validateRewardFraction(
         signed: Signed[UpdateNodeParameters]
@@ -109,6 +130,8 @@ object UpdateNodeParametersValidator {
   case class InvalidSigned(error: SignedValidationError) extends UpdateNodeParametersValidationError
   case class InvalidRewardValue(rewardFraction: Int) extends UpdateNodeParametersValidationError
   case class InvalidParent(parent: UpdateNodeParametersReference) extends UpdateNodeParametersValidationError
+  case class InvalidProofsCount(proofCount: Int) extends UpdateNodeParametersValidationError
+  case class NodeNotInSeedList(nodeId: PeerId) extends UpdateNodeParametersValidationError
 
   type UpdateNodeParametersValidationErrorOr[A] = ValidatedNec[UpdateNodeParametersValidationError, A]
 }
