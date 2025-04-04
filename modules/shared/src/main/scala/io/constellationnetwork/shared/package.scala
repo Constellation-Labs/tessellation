@@ -104,7 +104,9 @@ package object shared {
     DataCancellationReason.MissingRoundPeers.getClass -> 634,
     DataCancellationReason.CreatedInvalidBlock.getClass -> 635,
     DataCancellationReason.CreatedEmptyBlock.getClass -> 636,
-    DataCancellationReason.PeerCancelled.getClass -> 637
+    DataCancellationReason.PeerCancelled.getClass -> 637,
+    classOf[DelegatedStakeRecord] -> 640,
+    classOf[PendingWithdrawal] -> 641
   )
 
 }

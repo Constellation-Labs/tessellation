@@ -6,15 +6,18 @@ import scala.collection.immutable.SortedMap
 import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.env.AppEnvironment
+import io.constellationnetwork.node.shared.config.types.DelegatedRewardsConfig
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculatorConfig
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.{NodeState, RewardFraction}
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.{NonNegFraction, SnapshotOrdinal}
 
 import com.comcast.ip4s.{Host, Port}
+import derevo.cats.eqv
+import derevo.derive
 import eu.timepit.refined.types.numeric._
 import fs2.io.file.Path
 
@@ -24,6 +27,7 @@ object types {
     globalSyncView: Map[AppEnvironment, SnapshotOrdinal],
     globalTokenLocks: Map[AppEnvironment, SnapshotOrdinal],
     delegatedStaking: Map[AppEnvironment, SnapshotOrdinal],
+    delegatedRewards: Map[AppEnvironment, SnapshotOrdinal],
     nodeCollateral: Map[AppEnvironment, SnapshotOrdinal]
   )
 
@@ -125,6 +129,7 @@ object types {
     incrementalTmpSnapshotPath: Path,
     incrementalPersistedSnapshotPath: Path
   )
+
   case class HttpClientConfig(
     timeout: FiniteDuration,
     idleTimeInPool: FiniteDuration
@@ -155,6 +160,22 @@ object types {
     withdrawalTimeLimit: Map[AppEnvironment, EpochProgress]
   )
 
+  case class EmissionConfigEntry(
+    epochsPerYear: PosLong,
+    asOfEpoch: EpochProgress,
+    iTarget: NonNegFraction,
+    iInitial: NonNegFraction,
+    lambda: NonNegFraction,
+    iImpact: NonNegFraction,
+    totalSupply: Amount,
+    dagPrices: Map[EpochProgress, NonNegFraction]
+  )
+
+  case class DelegatedRewardsConfig(
+    flatInflationRate: NonNegFraction,
+    emissionConfig: Map[AppEnvironment, EmissionConfigEntry]
+  )
+
   case class TrustStorageConfig(
     ordinalTrustUpdateInterval: NonNegLong,
     ordinalTrustUpdateDelay: NonNegLong,
@@ -176,6 +197,7 @@ object types {
   case class AddressesConfig(locked: Set[Address])
 
   case class MinMax(min: NonNegLong, max: NonNegLong)
+
   case class AllowSpendsConfig(lastValidEpochProgress: MinMax)
 
   case class TokenLocksConfig(minEpochProgressesToLock: NonNegLong)

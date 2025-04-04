@@ -16,7 +16,7 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralValidator._
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.balance.Balance
+import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.nodeCollateral._
@@ -284,7 +284,11 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeDelegatedStakes =
-        Some(SortedMap(address -> List(DelegatedStakeRecord(signedParent, Balance.empty, SnapshotOrdinal.MinValue))))
+        Some(
+          SortedMap(
+            address -> List(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, Amount(NonNegLong.unsafeFrom(0L))))
+          )
+        )
       )
       validCreate = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)

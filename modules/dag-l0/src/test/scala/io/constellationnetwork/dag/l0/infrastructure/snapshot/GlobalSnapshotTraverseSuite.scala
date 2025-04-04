@@ -342,6 +342,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           SnapshotOrdinal.MinValue,
           SnapshotOrdinal.MinValue,
           SnapshotOrdinal.MinValue,
+          SnapshotOrdinal.MinValue,
           blockAcceptanceManager,
           allowSpendBlockAcceptanceManager,
           tokenLockBlockAcceptanceManager,

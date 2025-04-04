@@ -114,7 +114,12 @@ object delegatedStake {
   )
 
   @derive(decoder, encoder, eqv, show)
-  case class DelegatedStakeRecord(event: Signed[UpdateDelegatedStake.Create], rewards: Balance, createdAt: SnapshotOrdinal)
+  case class DelegatedStakeRecord(
+    event: Signed[UpdateDelegatedStake.Create],
+    createdAt: SnapshotOrdinal,
+    rewards: Balance,
+    latestRewardChange: Amount
+  )
 
   object DelegatedStakeRecord {
     implicit val delegatedStakeAcctOrdering: Ordering[DelegatedStakeRecord] =

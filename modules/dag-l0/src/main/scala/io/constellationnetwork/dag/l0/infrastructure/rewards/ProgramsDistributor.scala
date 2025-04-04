@@ -1,11 +1,12 @@
 package io.constellationnetwork.dag.l0.infrastructure.rewards
 
 import cats.data.StateT
+import cats.implicits.catsSyntaxEitherId
 import cats.syntax.foldable._
 
 import io.constellationnetwork.dag.l0.config.types.ProgramsDistributionConfig
 import io.constellationnetwork.ext.refined._
-import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.address.{Address, DAGAddressRefined}
 import io.constellationnetwork.schema.balance.Amount
 
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -27,15 +28,15 @@ object ProgramsDistributor {
             (acc, item) match {
               case (rewards, (address, weight)) =>
                 for {
-                  numerator <- amount.coerce * weight.coerce
+                  numerator <- amount.coerce * weight.numerator
                   reward <- numerator / denominator
                 } yield (address -> reward) :: rewards
             }
           }
 
         for {
-          weightSum <- config.weights.toList.map(_._2.coerce).sumAll
-          denominator <- weightSum + config.remainingWeight.coerce
+          weightSum <- config.weights.toList.map(_._2.numerator).sumAll
+          denominator <- weightSum + config.validatorsWeight.numerator
 
           rewards <- calculateRewards(denominator)
           rewardsSum <- rewards.map(_._2).sumAll

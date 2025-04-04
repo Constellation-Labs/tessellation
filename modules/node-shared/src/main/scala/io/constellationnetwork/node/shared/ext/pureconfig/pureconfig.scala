@@ -7,21 +7,21 @@ import cats.data.NonEmptySet
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.http4s.AddressVar
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculatorConfig
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.transaction.TransactionFee
+import io.constellationnetwork.schema.{NonNegFraction, SnapshotOrdinal}
 import io.constellationnetwork.security.hex.Hex
 
-import _root_.pureconfig.ConfigReader
 import _root_.pureconfig.ConvertHelpers.catchReadError
 import _root_.pureconfig.configurable.genericMapReader
 import _root_.pureconfig.generic.auto._
 import _root_.pureconfig.module.cats.nonEmptySetReader
+import _root_.pureconfig.{ConfigReader, ConfigWriter}
 import eu.timepit.refined.pureconfig._
-import eu.timepit.refined.types.numeric.NonNegLong
+import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import fs2.io.file.Path
 
 package object pureconfig {

@@ -6,6 +6,7 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.UpdateNodeParametersCutter
+import io.constellationnetwork.dag.l0.infrastructure.rewards.DelegatedRewardsDistributor
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.json.JsonSerializer
@@ -18,13 +19,13 @@ import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Serv
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.schema.ID.Id
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{nodeCollateral, _}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelValidationType}
@@ -46,7 +47,7 @@ object GlobalSnapshotConsensusFunctions {
   def make[F[_]: Async: SecurityProvider: JsonSerializer: KryoSerializer](
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
-    rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
+    delegatedRewardsDistributor: DelegatedRewardsDistributor[F],
     eventCutter: EventCutter[F, StateChannelEvent, DAGEvent],
     updateNodeParametersCutter: UpdateNodeParametersCutter[F]
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
@@ -211,7 +212,7 @@ object GlobalSnapshotConsensusFunctions {
               snapshotContext,
               lastActiveTips,
               lastDeprecatedTips,
-              rewards.distribute(lastArtifact, snapshotContext.balances, _, trigger, events),
+              delegatedRewardsDistributor,
               StateChannelValidationType.Full,
               lastGlobalSnapshots,
               getGlobalSnapshotByOrdinal

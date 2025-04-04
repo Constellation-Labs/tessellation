@@ -73,7 +73,7 @@ object Rewards {
             facilitatorRewards <- facilitatorDistributor.distribute(random, facilitators)
           } yield programRewards ++ facilitatorRewards
 
-          val mintedAmount = getAmountByEpoch(epochProgress, config.rewardsPerEpoch)
+          val mintedAmount = getAmountByEpoch(epochProgress, config.rewardsPerEpoch.toSortedMap)
 
           val rewards: F[SortedSet[RewardTransaction]] = allRewardsState
             .run(mintedAmount)
