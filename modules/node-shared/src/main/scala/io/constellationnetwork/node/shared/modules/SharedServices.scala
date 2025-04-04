@@ -126,6 +126,7 @@ object SharedServices {
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         cfg.fieldsAddedOrdinals.globalTokenLocks.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
         cfg.fieldsAddedOrdinals.delegatedStaking.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
+        cfg.fieldsAddedOrdinals.delegatedRewards.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
         cfg.fieldsAddedOrdinals.nodeCollateral.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
         BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
         AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlockValidator),

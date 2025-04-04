@@ -197,7 +197,11 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeDelegatedStakes =
-        Some(SortedMap(address -> List(DelegatedStakeRecord(signedParent, Balance.empty, SnapshotOrdinal.MinValue))))
+        Some(
+          SortedMap(
+            address -> List(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, Amount(NonNegLong.unsafeFrom(0L))))
+          )
+        )
       )
       lastRef <- DelegatedStakeReference.of(signedParent)
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference, lastRef)
@@ -219,7 +223,11 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       lastRef <- DelegatedStakeReference.of(signedParent)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeDelegatedStakes =
-        Some(SortedMap(address -> List(DelegatedStakeRecord(signedParent, Balance.empty, SnapshotOrdinal.MinValue))))
+        Some(
+          SortedMap(
+            address -> List(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, Amount(NonNegLong.unsafeFrom(0L))))
+          )
+        )
       )
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference, lastRef)
       signed <- forAsyncHasher(validCreate, keyPair)
@@ -242,8 +250,11 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       signedWithdraw <- forAsyncHasher(validWithdraw, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(
-        activeDelegatedStakes =
-          Some(SortedMap(address -> List(DelegatedStakeRecord(signedParent, Balance.empty, SnapshotOrdinal.MinValue)))),
+        activeDelegatedStakes = Some(
+          SortedMap(
+            address -> List(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, Amount(NonNegLong.unsafeFrom(0L))))
+          )
+        ),
         delegatedStakesWithdrawals =
           Some(SortedMap(address -> List(PendingWithdrawal(signedWithdraw, Amount.empty, EpochProgress.MinValue))))
       )
@@ -265,7 +276,11 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       signedParent <- forAsyncHasher(parent.copy(nodeId = nodeId1), keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeDelegatedStakes =
-        Some(SortedMap(address -> List(DelegatedStakeRecord(signedParent, Balance.empty, SnapshotOrdinal.MinValue))))
+        Some(
+          SortedMap(
+            address -> List(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, Amount(NonNegLong.unsafeFrom(0L))))
+          )
+        )
       )
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
@@ -333,7 +348,11 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     for {
       signedParent <- forAsyncHasher(validParent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
-      context = mkGlobalContext(SortedMap(address -> List(DelegatedStakeRecord(signedParent, Balance.empty, SnapshotOrdinal.MinValue))))
+      context = mkGlobalContext(
+        SortedMap(
+          address -> List(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, Amount(NonNegLong.unsafeFrom(0L))))
+        )
+      )
       lastRef <- DelegatedStakeReference.of(signedParent)
       validWithdraw = testWithdrawDelegatedStake(keyPair, sourceAddress).copy(stakeRef = lastRef.hash)
       signed <- forAsyncHasher(validWithdraw, keyPair)
@@ -350,7 +369,11 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     for {
       signedParent <- forAsyncHasher(validParent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
-      context = mkGlobalContext(SortedMap(address -> List(DelegatedStakeRecord(signedParent, Balance.empty, SnapshotOrdinal.MinValue))))
+      context = mkGlobalContext(
+        SortedMap(
+          address -> List(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, Amount(NonNegLong.unsafeFrom(0L))))
+        )
+      )
       lastRef <- DelegatedStakeReference.of(signedParent)
       validWithdraw = testWithdrawDelegatedStake(keyPair, sourceAddress).copy(stakeRef = lastRef.hash)
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -381,7 +404,11 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     for {
       signedParent <- forAsyncHasher(validParent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
-      context = mkGlobalContext(SortedMap(address -> List(DelegatedStakeRecord(signedParent, Balance.empty, SnapshotOrdinal.MinValue))))
+      context = mkGlobalContext(
+        SortedMap(
+          address -> List(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, Amount(NonNegLong.unsafeFrom(0L))))
+        )
+      )
       lastRef <- DelegatedStakeReference.of(signedParent)
       validWithdraw = testWithdrawDelegatedStake(keyPair, sourceAddress).copy(stakeRef = lastRef.hash)
       signed1 <- forAsyncHasher(validWithdraw, keyPair)
@@ -433,7 +460,11 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     for {
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
-      context = mkGlobalContext(SortedMap(address -> List(DelegatedStakeRecord(signedParent, Balance.empty, SnapshotOrdinal.MinValue))))
+      context = mkGlobalContext(
+        SortedMap(
+          address -> List(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, Amount(NonNegLong.unsafeFrom(0L))))
+        )
+      )
       lastRef <- DelegatedStakeReference.of(signedParent)
       validWithdraw = testWithdrawDelegatedStake(keyPair, sourceAddress).copy(stakeRef = lastRef.hash)
       signed <- forAsyncHasher(validWithdraw, keyPair)
@@ -469,7 +500,11 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
         keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
         signedParent <- forAsyncHasher(parent, keyPair1)
         address <- signedParent.proofs.head.id.toAddress
-        context = mkGlobalContext(SortedMap(address -> List(DelegatedStakeRecord(signedParent, Balance.empty, SnapshotOrdinal.MinValue))))
+        context = mkGlobalContext(
+          SortedMap(
+            address -> List(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, Amount(NonNegLong.unsafeFrom(0L))))
+          )
+        )
         lastRef <- DelegatedStakeReference.of(signedParent)
         invalidWithdraw = testWithdrawDelegatedStake(keyPair, sourceAddress).copy(stakeRef = lastRef.hash)
         signed <- forAsyncHasher(invalidWithdraw, keyPair)
@@ -490,7 +525,9 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       validWithdraw = testWithdrawDelegatedStake(keyPair, sourceAddress).copy(stakeRef = lastRef.hash)
       signed <- forAsyncHasher(validWithdraw, keyPair)
       context = mkGlobalContext(
-        SortedMap(address -> List(DelegatedStakeRecord(signedParent, Balance.empty, SnapshotOrdinal.MinValue))),
+        SortedMap(
+          address -> List(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, Amount(NonNegLong.unsafeFrom(0L))))
+        ),
         withdrawals = SortedMap(address -> List(PendingWithdrawal(signed, Amount.empty, EpochProgress.MinValue)))
       )
       seedlist <- mkSeedlist(validParent.nodeId)

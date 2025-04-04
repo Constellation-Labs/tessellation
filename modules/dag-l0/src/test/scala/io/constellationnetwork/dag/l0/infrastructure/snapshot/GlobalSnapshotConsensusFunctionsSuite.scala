@@ -18,6 +18,7 @@ import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
   SnapshotBinaryFeeCalculator,
   UpdateNodeParametersCutter
 }
+import io.constellationnetwork.dag.l0.infrastructure.rewards.DelegatedRewardsDistributor
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.{GlobalSnapshotEvent, StateChannelEvent}
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
@@ -37,11 +38,7 @@ import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
 import io.constellationnetwork.node.shared.domain.swap.block._
 import io.constellationnetwork.node.shared.domain.tokenlock.block._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
-import io.constellationnetwork.node.shared.infrastructure.snapshot.{
-  GlobalSnapshotAcceptanceManager,
-  GlobalSnapshotStateChannelEventsProcessor,
-  SnapshotConsensusFunctions
-}
+import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -236,8 +233,30 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   val collateral: Amount = Amount.empty
 
-  val rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent] =
-    (_, _, _, _, _, _) => IO(SortedSet.empty)
+  val delegatorRewards: DelegatedRewardsDistributor[F] = new DelegatedRewardsDistributor[F] {
+    def calculateTotalRewardsToMint(epochProgress: EpochProgress): GlobalSnapshotConsensusFunctionsSuite.F[Amount] = Amount(100L).pure[F]
+
+    def calculateDelegatorRewards(
+      activeDelegatedStakes: SortedMap[Address, List[delegatedStake.DelegatedStakeRecord]],
+      nodeParametersMap: SortedMap[ID.Id, (Signed[node.UpdateNodeParameters], GlobalSnapshotKey)],
+      epochProgress: EpochProgress,
+      totalRewards: Amount
+    ): GlobalSnapshotConsensusFunctionsSuite.F[Map[Address, Map[ID.Id, Amount]]] = Map.empty[Address, Map[ID.Id, Amount]].pure[F]
+
+    def calculateNodeOperatorRewards(
+      delegatorRewards: Map[Address, Map[ID.Id, Amount]],
+      nodeParametersMap: SortedMap[ID.Id, (Signed[node.UpdateNodeParameters], GlobalSnapshotKey)],
+      nodesInConsensus: SortedSet[ID.Id],
+      epochProgress: EpochProgress,
+      totalRewards: Amount
+    ): GlobalSnapshotConsensusFunctionsSuite.F[SortedSet[transaction.RewardTransaction]] =
+      SortedSet.empty[transaction.RewardTransaction].pure[F]
+
+    def calculateWithdrawalRewardTransactions(
+      withdrawingBalances: Map[Address, Amount]
+    ): GlobalSnapshotConsensusFunctionsSuite.F[SortedSet[transaction.RewardTransaction]] =
+      SortedSet.empty[transaction.RewardTransaction].pure[F]
+  }
 
   def mkGlobalSnapshotConsensusFunctions(
     implicit ks: KryoSerializer[IO],
@@ -252,6 +271,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
       GlobalSnapshotAcceptanceManager
         .make[IO](
+          SnapshotOrdinal.MinValue,
           SnapshotOrdinal.MinValue,
           SnapshotOrdinal.MinValue,
           SnapshotOrdinal.MinValue,
@@ -279,7 +299,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       .make[IO](
         snapshotAcceptanceManager,
         collateral,
-        rewards,
+        delegatorRewards,
         GlobalSnapshotEventCutter.make[IO](20_000_000, feeCalculator),
         UpdateNodeParametersCutter.make(100)
       )

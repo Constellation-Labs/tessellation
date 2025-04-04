@@ -150,7 +150,7 @@ object UpdateDelegatedStakeValidator {
           stakeRef <- lastContext.activeDelegatedStakes
             .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
             .getOrElse(signed.source, List.empty)
-            .traverse { case DelegatedStakeRecord(stake, _, _) => DelegatedStakeReference.of(stake) }
+            .traverse { case DelegatedStakeRecord(stake, _, _, _) => DelegatedStakeReference.of(stake) }
             .map(_.find(_ === signed.parent))
           withdrawalRef = lastContext.delegatedStakesWithdrawals
             .getOrElse(SortedMap.empty[Address, List[PendingWithdrawal]])

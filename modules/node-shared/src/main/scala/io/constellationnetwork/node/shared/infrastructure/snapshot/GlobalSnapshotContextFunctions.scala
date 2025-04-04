@@ -15,10 +15,10 @@ import scala.util.control.NoStackTrace
 import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
-import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
@@ -29,6 +29,7 @@ import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelVal
 
 import derevo.cats.{eqv, show}
 import derevo.derive
+import eu.timepit.refined.types.all.NonNegLong
 
 abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
@@ -82,13 +83,38 @@ object GlobalSnapshotContextFunctions {
           .toList
           .flatten
 
+        delegatedRewardsDist = new DelegatedRewardsDistributor[F] {
+          override def calculateTotalRewardsToMint(epochProgress: epoch.EpochProgress): F[Amount] =
+            Amount(NonNegLong.unsafeFrom(100L)).pure[F]
+
+          override def calculateWithdrawalRewardTransactions(withdrawingBalances: Map[Address, Amount]): F[SortedSet[RewardTransaction]] =
+            SortedSet.empty[RewardTransaction].pure[F]
+
+          override def calculateDelegatorRewards(
+            activeDelegatedStakes: SortedMap[Address, List[delegatedStake.DelegatedStakeRecord]],
+            nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
+            epochProgress: epoch.EpochProgress,
+            totalAmount: Amount
+          ): F[Map[Address, Map[Id, Amount]]] =
+            Map.empty[Address, Map[Id, Amount]].pure[F]
+
+          override def calculateNodeOperatorRewards(
+            delegatorRewards: Map[Address, Map[Id, Amount]],
+            nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
+            nodesInConsensus: SortedSet[Id],
+            epochProgress: epoch.EpochProgress,
+            totalRewards: Amount
+          ): F[SortedSet[RewardTransaction]] =
+            SortedSet.empty[RewardTransaction].pure[F]
+        }
+
         (
           acceptanceResult,
-          allowSpendBlockAcceptanceResult,
-          tokenLockBlockAcceptanceResult,
-          delegatedStakeAcceptanceResult,
-          nodeCollateralAcceptanceResult,
-          scSnapshots,
+          _,
+          _,
+          _,
+          _,
+          _,
           returnedSCEvents,
           acceptedRewardTxs,
           snapshotInfo,
@@ -112,11 +138,12 @@ object GlobalSnapshotContextFunctions {
             context,
             lastActiveTips,
             lastDeprecatedTips,
-            _ => signedArtifact.rewards.pure[F],
+            delegatedRewardsDist,
             StateChannelValidationType.Historical,
             lastGlobalSnapshots,
             getGlobalSnapshotByOrdinal
           )
+
         _ <- CannotApplyBlocksError(acceptanceResult.notAccepted.map { case (_, reason) => reason })
           .raiseError[F, Unit]
           .whenA(acceptanceResult.notAccepted.nonEmpty)

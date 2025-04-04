@@ -32,7 +32,7 @@ import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.SignatureProof
 import io.constellationnetwork.shared.sharedKryoRegistrar
-import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
+import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedSetSyntax}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -56,7 +56,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   val config: RewardsConfig = RewardsConfig()
   val singleEpochRewardsConfig: RewardsConfig = config.copy(rewardsPerEpoch = SortedMap(EpochProgress.MaxValue -> Amount(100L)))
   val totalSupply: Amount = Amount(1599999999_74784000L) // approx because of rounding
-  val expectedWeightsSum: Weight = Weight(100L)
+  val expectedWeightsSum: BigDecimal = BigDecimal(1.0)
 
   val lowerBound: NonNegLong = EpochProgress.MinValue.value
   val upperBound: NonNegLong = config.rewardsPerEpoch.keySet.max.value
@@ -122,7 +122,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   }
 
   def getAmountByEpoch(epochProgress: EpochProgress): Amount =
-    config.rewardsPerEpoch
+    config.rewardsPerEpoch.toSortedMap
       .minAfter(epochProgress)
       .map { case (_, reward) => reward }
       .getOrElse(Amount.empty)
@@ -160,10 +160,11 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   test("all program weights sum up to the expected value") {
     forall(meaningfulEpochProgressGen) { epochProgress =>
       val configForEpoch = config.programs(epochProgress)
-      val weightSum = configForEpoch.weights.toList.map(_._2.value.value).sum +
-        configForEpoch.remainingWeight.value
+      val weightSum = configForEpoch.weights.toList.map(_._2.toBigDecimal).sum +
+        configForEpoch.validatorsWeight.toBigDecimal +
+        configForEpoch.delegatorsWeight.toBigDecimal
 
-      expect.eql(expectedWeightsSum.value.value, weightSum)
+      expect.eql(expectedWeightsSum, weightSum)
     }
   }
 
@@ -308,39 +309,6 @@ object RewardsSuite extends MutableIOSuite with Checkers {
           RewardTransaction(dataPool, TransactionAmount(55L)),
           RewardTransaction(integrationNet, TransactionAmount(15L)),
           RewardTransaction(facilitatorAddress, TransactionAmount(17L))
-        )
-      } yield expect.eql(expected, txs)
-    }
-  }
-
-  test("minted rewards for the logic at epoch progress 1947530 and later are as expected") { res =>
-    implicit val (h, sp, makeIdFn) = res
-
-    val facilitator = makeIdFn.apply()
-
-    val gen = for {
-      epochProgress <- fourthMintingLogicEpochProgressGen
-      signature <- signatureGen
-      signatures = NonEmptySet.fromSetUnsafe(SortedSet(SignatureProof(facilitator, signature)))
-      snapshot <- snapshotWithoutTransactionsGen(signatures.some)
-    } yield snapshot.focus(_.value.epochProgress).replace(epochProgress)
-
-    forall(gen) { snapshot =>
-      for {
-        oneTimeRewards <- // one-time reward in another epoch should not show up in results
-          List(OneTimeReward(snapshot.epochProgress.next, stardustNewPrimary, TransactionAmount(12345L))).pure[F]
-
-        rewards = makeRewards(singleEpochRewardsConfig.copy(oneTimeRewards = oneTimeRewards))
-
-        txs <- rewards.distribute(snapshot, SortedMap.empty, SortedSet.empty, TimeTrigger, Set.empty)
-
-        facilitatorAddress <- facilitator.toAddress
-        expected = SortedSet(
-          RewardTransaction(stardustNewPrimary, TransactionAmount(7L)),
-          RewardTransaction(testnet, TransactionAmount(7L)),
-          RewardTransaction(dataPool, TransactionAmount(42L)),
-          RewardTransaction(integrationNet, TransactionAmount(20L)),
-          RewardTransaction(facilitatorAddress, TransactionAmount(24L))
         )
       } yield expect.eql(expected, txs)
     }

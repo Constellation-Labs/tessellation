@@ -60,11 +60,10 @@ object Services {
     txHasher: Hasher[F]
   ): F[Services[F, R]] =
     for {
-      rewards <- Rewards
+      delegatorRewards <- DelegatedRewardsDistributor
         .make[F](
           cfg.rewards,
-          ProgramsDistributor.make,
-          FacilitatorDistributor.make
+          cfg.environment
         )
         .pure[F]
 
@@ -89,7 +88,7 @@ object Services {
             feeConfigs = cfg.shared.feeConfigs,
             client,
             session,
-            rewards,
+            delegatorRewards,
             txHasher,
             sharedServices.restart,
             storages.globalSnapshot.getHashed
@@ -119,7 +118,6 @@ object Services {
         consensus = consensus,
         address = addressService,
         collateral = collateralService,
-        rewards = rewards,
         stateChannel = stateChannelService,
         trustStorageUpdater = trustUpdaterService,
         restart = sharedServices.restart
@@ -134,7 +132,6 @@ sealed abstract class Services[F[_], R <: CliMethod] private (
   val consensus: GlobalSnapshotConsensus[F],
   val address: AddressService[F, GlobalIncrementalSnapshot],
   val collateral: Collateral[F],
-  val rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
   val stateChannel: StateChannelService[F],
   val trustStorageUpdater: TrustStorageUpdater[F],
   val restart: RestartService[F, R]

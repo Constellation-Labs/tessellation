@@ -175,6 +175,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               SnapshotOrdinal.MinValue,
               SnapshotOrdinal.MinValue,
               SnapshotOrdinal.MinValue,
+              SnapshotOrdinal.MinValue,
               BlockAcceptanceManager.make[IO](validators.blockValidator, Hasher.forKryo[IO]),
               AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
               TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),

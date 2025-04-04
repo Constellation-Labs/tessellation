@@ -6,6 +6,7 @@ import cats.Parallel
 import cats.data.NonEmptySet
 import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
+import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
@@ -17,6 +18,7 @@ import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
   SnapshotBinaryFeeCalculator,
   UpdateNodeParametersCutter
 }
+import io.constellationnetwork.dag.l0.infrastructure.rewards._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome}
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
@@ -38,11 +40,7 @@ import io.constellationnetwork.node.shared.infrastructure.block.processing.Block
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
-import io.constellationnetwork.node.shared.infrastructure.snapshot.{
-  GlobalSnapshotAcceptanceManager,
-  GlobalSnapshotStateChannelAcceptanceManager,
-  GlobalSnapshotStateChannelEventsProcessor
-}
+import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedValidators}
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
@@ -77,7 +75,7 @@ object GlobalSnapshotConsensus {
     feeConfigs: SortedMap[SnapshotOrdinal, FeeCalculatorConfig],
     client: Client[F],
     session: Session[F],
-    rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
+    delegatorRewards: DelegatedRewardsDistributor[F],
     txHasher: Hasher[F],
     restartService: RestartService[F, R],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
@@ -90,6 +88,7 @@ object GlobalSnapshotConsensus {
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         sharedCfg.fieldsAddedOrdinals.globalTokenLocks.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
         sharedCfg.fieldsAddedOrdinals.delegatedStaking.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
+        sharedCfg.fieldsAddedOrdinals.delegatedRewards.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
         sharedCfg.fieldsAddedOrdinals.nodeCollateral.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
         BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
         AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlockValidator),
@@ -127,13 +126,14 @@ object GlobalSnapshotConsensus {
       consensusFunctions = GlobalSnapshotConsensusFunctions.make[F](
         snapshotAcceptanceManager,
         collateral,
-        rewards,
+        delegatorRewards,
         GlobalSnapshotEventCutter.make[F](
           appConfig.snapshot.consensus.eventCutter.maxBinarySizeBytes,
           SnapshotBinaryFeeCalculator.make(appConfig.shared.feeConfigs)
         ),
         updateNodeParametersCutter
       )
+
       consensusStateAdvancer = GlobalSnapshotConsensusStateAdvancer
         .make[F](
           sharedCfg.lastGlobalSnapshotsSync,

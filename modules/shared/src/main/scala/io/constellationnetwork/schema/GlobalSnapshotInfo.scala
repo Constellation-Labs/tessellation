@@ -1,7 +1,7 @@
 package io.constellationnetwork.schema
 
 import cats.Parallel
-import cats.effect.kernel.Sync
+import cats.effect.Sync
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
@@ -224,14 +224,9 @@ case class GlobalSnapshotInfo(
   def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
 
-  implicit val optionAddressKeyEncoder: KeyEncoder[Option[Address]] = new KeyEncoder[Option[Address]] {
-    def apply(key: Option[Address]): String = key match {
-      case None          => KeyEncoder[String].apply("")
-      case Some(address) => KeyEncoder[Address].apply(address)
-    }
-  }
+  def stateProof[F[_]: Parallel: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] = {
+    import GlobalSnapshotInfo._
 
-  def stateProof[F[_]: Parallel: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
     (
       lastStateChannelSnapshotHashes.hash,
       lastTxRefs.hash,
@@ -247,6 +242,7 @@ case class GlobalSnapshotInfo(
       activeNodeCollaterals.traverse(_.hash),
       nodeCollateralWithdrawals.traverse(_.hash)
     ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _))
+  }
 
 }
 

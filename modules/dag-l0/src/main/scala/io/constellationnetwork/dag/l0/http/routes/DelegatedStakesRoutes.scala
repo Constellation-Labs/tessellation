@@ -57,7 +57,7 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
 
     for {
       stakes <- lastStakes.traverse {
-        case DelegatedStakeRecord(stake, _, ord) =>
+        case DelegatedStakeRecord(stake, ord, _, _) =>
           DelegatedStakeReference
             .of(stake)
             .map(ref =>
@@ -93,9 +93,9 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
       .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
       .get(address)
       .flatMap(stakes =>
-        Option.when(stakes.nonEmpty)(stakes.maxBy { case DelegatedStakeRecord(delegatedStaking, _, _) => delegatedStaking.ordinal })
+        Option.when(stakes.nonEmpty)(stakes.maxBy { case DelegatedStakeRecord(delegatedStaking, _, _, _) => delegatedStaking.ordinal })
       )
-      .traverse { case DelegatedStakeRecord(delegatedStaking, _, _) => DelegatedStakeReference.of(delegatedStaking) }
+      .traverse { case DelegatedStakeRecord(delegatedStaking, _, _, _) => DelegatedStakeReference.of(delegatedStaking) }
       .map(_.getOrElse(DelegatedStakeReference.empty))
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
