@@ -1,9 +1,9 @@
 package io.constellationnetwork.dag.l0.domain.snapshot.programs
 
-import cats.Applicative
 import cats.effect.Async
 import cats.effect.std.Random
 import cats.syntax.all._
+import cats.{Applicative, Parallel}
 
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
@@ -35,7 +35,7 @@ import retry.RetryPolicies._
 import retry._
 
 object Download {
-  def make[F[_]: Async: Random: KryoSerializer](
+  def make[F[_]: Async: Parallel: Random: KryoSerializer](
     snapshotStorage: SnapshotDownloadStorage[F],
     p2pClient: P2PClient[F],
     clusterStorage: ClusterStorage[F],

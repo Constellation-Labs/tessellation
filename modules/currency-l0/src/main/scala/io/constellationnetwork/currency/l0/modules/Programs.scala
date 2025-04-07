@@ -2,6 +2,7 @@ package io.constellationnetwork.currency.l0.modules
 
 import java.security.KeyPair
 
+import cats.Parallel
 import cats.effect.Async
 import cats.effect.std.Random
 
@@ -25,7 +26,7 @@ import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
 object Programs {
 
-  def make[F[_]: Async: Random: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector, R <: CliMethod](
+  def make[F[_]: Async: Parallel: Random: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector, R <: CliMethod](
     sharedCfg: SharedConfig,
     keyPair: KeyPair,
     nodeId: PeerId,

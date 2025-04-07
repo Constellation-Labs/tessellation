@@ -2,6 +2,7 @@ package io.constellationnetwork.currency.l0.modules
 
 import java.security.KeyPair
 
+import cats.Parallel
 import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.effect.std.{Random, Supervisor}
@@ -42,7 +43,7 @@ import org.http4s.client.Client
 
 object Services {
 
-  def make[F[_]: Async: Random: JsonSerializer: KryoSerializer: SecurityProvider: HasherSelector: Metrics: Supervisor, R <: CliMethod](
+  def make[F[_]: Async: Parallel: Random: JsonSerializer: KryoSerializer: SecurityProvider: HasherSelector: Metrics: Supervisor, R <: CliMethod](
     sharedCfg: SharedConfig,
     p2PClient: P2PClient[F],
     sharedServices: SharedServices[F, R],

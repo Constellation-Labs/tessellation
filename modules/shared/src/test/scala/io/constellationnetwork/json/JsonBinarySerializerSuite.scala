@@ -1,5 +1,6 @@
 package io.constellationnetwork.json
 
+import cats.Parallel
 import cats.data.NonEmptySet
 import cats.effect.kernel.Sync
 import cats.effect.{IO, Resource}
@@ -57,7 +58,7 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
     }
   }
 
-  private[json] def currencyIncrementalSnapshot[F[_]: Sync: Hasher](
+  private[json] def currencyIncrementalSnapshot[F[_]: Parallel: Sync: Hasher](
     hash: Hash,
     currencySnapshotInfo: CurrencySnapshotInfo
   ): F[Signed[CurrencyIncrementalSnapshot]] =

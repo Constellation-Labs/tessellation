@@ -2,6 +2,7 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot.programs
 
 import java.security.KeyPair
 
+import cats.Parallel
 import cats.effect.Async
 import cats.syntax.all._
 
@@ -26,7 +27,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object RollbackLoader {
 
-  def make[F[_]: Async: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector](
+  def make[F[_]: Async: Parallel: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector](
     keyPair: KeyPair,
     snapshotConfig: SnapshotConfig,
     incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
@@ -48,7 +49,7 @@ object RollbackLoader {
     ) {}
 }
 
-sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider] private (
+sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider] private (
   keyPair: KeyPair,
   snapshotConfig: SnapshotConfig,
   incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],

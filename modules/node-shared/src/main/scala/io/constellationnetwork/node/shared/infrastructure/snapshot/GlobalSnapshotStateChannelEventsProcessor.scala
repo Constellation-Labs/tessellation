@@ -1,5 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
+import cats.Parallel
 import cats.data._
 import cats.effect.Async
 import cats.syntax.all._
@@ -54,7 +55,7 @@ trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
 }
 
 object GlobalSnapshotStateChannelEventsProcessor {
-  def make[F[_]: Async](
+  def make[F[_]: Async: Parallel](
     stateChannelValidator: StateChannelValidator[F],
     stateChannelManager: GlobalSnapshotStateChannelAcceptanceManager[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
@@ -193,8 +194,8 @@ object GlobalSnapshotStateChannelEventsProcessor {
       )(implicit hasher: Hasher[F]): F[SortedMap[Address, MetagraphAcceptanceResult]] = {
         val isFeeRequired = feeCalculator.isFeeRequired(snapshotOrdinal)
 
-        events.toList.foldLeftM(SortedMap.empty[Address, MetagraphAcceptanceResult]) {
-          case (agg, (address, binaries)) =>
+        events.toList.parTraverse {
+          case (address, binaries) =>
             type Result = Option[MetagraphAcceptanceResult]
             type Agg = (Result, List[Signed[StateChannelSnapshotBinary]])
 
@@ -304,10 +305,12 @@ object GlobalSnapshotStateChannelEventsProcessor {
                   case None    => maybeProcessed
                 }
               }
-              .map {
-                case Some(updates) => agg + (address -> updates)
-                case None          => agg
-              }
+              .map(result => address -> result)
+        }.map { results =>
+          results.foldLeft(SortedMap.empty[Address, MetagraphAcceptanceResult]) {
+            case (acc, (address, Some(result))) => acc + (address -> result)
+            case (acc, (_, None))               => acc
+          }
         }
       }
 

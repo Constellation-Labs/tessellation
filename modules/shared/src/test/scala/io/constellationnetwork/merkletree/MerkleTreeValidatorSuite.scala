@@ -1,5 +1,6 @@
 package io.constellationnetwork.merkletree
 
+import cats.Parallel
 import cats.data.{NonEmptyList, NonEmptySet, Validated}
 import cats.effect._
 import cats.syntax.flatMap._
@@ -86,7 +87,7 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
     } yield expect.same(Validated.Invalid(StateProofValidator.StateBroken(SnapshotOrdinal(NonNegLong(1L)), snapshot.hash)), result)
   }
 
-  private def globalIncrementalSnapshot[F[_]: Async: Hasher](
+  private def globalIncrementalSnapshot[F[_]: Async: Parallel: Hasher](
     globalSnapshotInfo: GlobalSnapshotInfo
   ): F[Hashed[GlobalIncrementalSnapshot]] =
     globalSnapshotInfo.stateProof[F](SnapshotOrdinal(NonNegLong(1L))).flatMap { sp =>

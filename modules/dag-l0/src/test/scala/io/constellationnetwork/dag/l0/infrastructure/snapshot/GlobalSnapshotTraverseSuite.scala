@@ -160,7 +160,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         lastTxRefs = lastTxRefs,
         balances = balances
       )
-      newSnapshotInfoStateProof <- newSnapshotInfo.stateProof(lastSnapshot.ordinal.next)
+      newSnapshotInfoStateProof <- newSnapshotInfo.stateProof[IO](lastSnapshot.ordinal.next)
       snapshot = GlobalIncrementalSnapshot(
         lastSnapshot.ordinal.next,
         Height.MinValue,
