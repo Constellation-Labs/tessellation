@@ -1007,7 +1007,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           lastSnapshotStateProof <- {
             implicit val hasher = currentHasher
 
-            lastSnapshotInfo.stateProof(snapshotOrdinal10)
+            lastSnapshotInfo.stateProof[IO](snapshotOrdinal10)
           }
           hashedLastSnapshot <- {
             implicit val hasher = currentHasher
@@ -1046,7 +1046,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           newSnapshotInfoStateProof <- {
             implicit val hasher = currentHasher
 
-            newSnapshotInfo.stateProof(snapshotOrdinal11)
+            newSnapshotInfo.stateProof[IO](snapshotOrdinal11)
           }
           hashedNextSnapshot <- {
             implicit val hasher = currentHasher
@@ -1284,7 +1284,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             Some(SortedMap.empty),
             Some(SortedMap.empty)
           )
-          lastSnapshotInfoStateProof <- lastSnapshotInfo.stateProof(snapshotOrdinal10)
+          lastSnapshotInfoStateProof <- lastSnapshotInfo.stateProof[IO](snapshotOrdinal10)
           hashedLastSnapshot <- forAsyncHasher(
             generateSnapshot(peerId).copy(
               tips = SnapshotTips(
@@ -1315,7 +1315,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               balances = balances
             )
           }
-          newSnapshotInfoStateProof <- newSnapshotInfo.stateProof(snapshotOrdinal11)
+          newSnapshotInfoStateProof <- newSnapshotInfo.stateProof[IO](snapshotOrdinal11)
           hashedNextSnapshot <- forAsyncHasher(
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal11,

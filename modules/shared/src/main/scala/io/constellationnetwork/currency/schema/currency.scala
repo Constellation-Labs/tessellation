@@ -1,5 +1,6 @@
 package io.constellationnetwork.currency.schema
 
+import cats.Parallel
 import cats.effect.kernel.Sync
 import cats.syntax.all._
 
@@ -93,17 +94,17 @@ object currency {
     lastTokenLockRefs: Option[SortedMap[Address, TokenLockReference]],
     activeTokenLocks: Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]
   ) extends SnapshotInfo[CurrencySnapshotStateProof] {
-    def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[CurrencySnapshotStateProof] =
+    def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[CurrencySnapshotStateProof] =
       (
         lastTxRefs.hash,
         balances.hash,
-        lastMessages.traverse(_.hash),
-        lastFeeTxRefs.traverse(_.hash),
-        lastAllowSpendRefs.traverse(_.hash),
-        activeAllowSpends.traverse(_.hash),
-        globalSnapshotSyncView.traverse(_.hash),
-        lastTokenLockRefs.traverse(_.hash),
-        activeTokenLocks.traverse(_.hash)
+        lastMessages.parTraverse(_.hash),
+        lastFeeTxRefs.parTraverse(_.hash),
+        lastAllowSpendRefs.parTraverse(_.hash),
+        activeAllowSpends.parTraverse(_.hash),
+        globalSnapshotSyncView.parTraverse(_.hash),
+        lastTokenLockRefs.parTraverse(_.hash),
+        activeTokenLocks.parTraverse(_.hash)
       ).tupled
         .map(CurrencySnapshotStateProof.apply)
   }
@@ -113,7 +114,7 @@ object currency {
     lastTxRefs: SortedMap[Address, TransactionReference],
     balances: SortedMap[Address, Balance]
   ) extends SnapshotInfo[CurrencySnapshotStateProofV1] {
-    def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[CurrencySnapshotStateProofV1] =
+    def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[CurrencySnapshotStateProofV1] =
       (lastTxRefs.hash, balances.hash).tupled.map(CurrencySnapshotStateProofV1.apply)
 
     def toCurrencySnapshotInfo: CurrencySnapshotInfo =
@@ -187,7 +188,7 @@ object currency {
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
 
   object CurrencyIncrementalSnapshot {
-    def fromCurrencySnapshot[F[_]: Sync: Hasher](snapshot: CurrencySnapshot): F[CurrencyIncrementalSnapshot] =
+    def fromCurrencySnapshot[F[_]: Parallel: Sync: Hasher](snapshot: CurrencySnapshot): F[CurrencyIncrementalSnapshot] =
       snapshot.info.stateProof[F](snapshot.ordinal).map { stateProof =>
         CurrencyIncrementalSnapshot(
           snapshot.ordinal,
@@ -281,7 +282,7 @@ object currency {
         dataApplicationPart
       )
 
-    def mkFirstIncrementalSnapshot[F[_]: Sync: Hasher](
+    def mkFirstIncrementalSnapshot[F[_]: Parallel: Sync: Hasher](
       genesis: Hashed[CurrencySnapshot]
     ): F[CurrencyIncrementalSnapshot] =
       genesis.info.stateProof[F](genesis.ordinal).map { stateProof =>

@@ -1,5 +1,6 @@
 package io.constellationnetwork.dag.l0.modules
 
+import cats.Parallel
 import cats.effect.Async
 import cats.effect.std.Supervisor
 import cats.syntax.all._
@@ -27,7 +28,7 @@ import io.constellationnetwork.security.{HashSelect, HasherSelector}
 
 object Storages {
 
-  def make[F[+_]: Async: KryoSerializer: JsonSerializer: HasherSelector: Supervisor](
+  def make[F[+_]: Async: Parallel: KryoSerializer: JsonSerializer: HasherSelector: Supervisor](
     sharedStorages: SharedStorages[F],
     sharedConfig: SharedConfig,
     seedlist: Option[Set[SeedlistEntry]],

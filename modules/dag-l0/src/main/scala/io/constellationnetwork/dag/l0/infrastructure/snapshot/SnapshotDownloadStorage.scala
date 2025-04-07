@@ -1,5 +1,6 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
+import cats.Parallel
 import cats.effect.Async
 import cats.effect.syntax.all._
 import cats.syntax.all._
@@ -20,7 +21,7 @@ import io.constellationnetwork.security.signature.Signed
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object SnapshotDownloadStorage {
-  def make[F[_]: Async: HasherSelector: KryoSerializer](
+  def make[F[_]: Async: Parallel: HasherSelector: KryoSerializer](
     tmpStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     persistedStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     fullGlobalSnapshotStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
