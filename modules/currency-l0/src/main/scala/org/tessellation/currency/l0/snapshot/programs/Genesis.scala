@@ -2,6 +2,7 @@ package org.tessellation.currency.l0.snapshot.programs
 
 import java.security.KeyPair
 
+import cats.Parallel
 import cats.effect.Async
 import cats.syntax.all._
 
@@ -44,7 +45,7 @@ trait Genesis[F[_]] {
 }
 
 object Genesis {
-  def make[F[_]: Async: SecurityProvider](
+  def make[F[_]: Async: Parallel: SecurityProvider](
     keyPair: KeyPair,
     collateral: Collateral[F],
     stateChannelSnapshotService: StateChannelSnapshotService[F],

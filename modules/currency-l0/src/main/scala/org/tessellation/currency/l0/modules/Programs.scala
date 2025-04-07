@@ -2,6 +2,7 @@ package org.tessellation.currency.l0.modules
 
 import java.security.KeyPair
 
+import cats.Parallel
 import cats.effect.Async
 import cats.effect.std.Random
 
@@ -23,7 +24,7 @@ import org.tessellation.security.{HasherSelector, SecurityProvider}
 
 object Programs {
 
-  def make[F[_]: Async: Random: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector](
+  def make[F[_]: Async: Parallel: Random: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector](
     keyPair: KeyPair,
     nodeId: PeerId,
     globalL0Peer: L0Peer,

@@ -1,5 +1,6 @@
 package org.tessellation.dag.l0.infrastructure.snapshot
 
+import cats.Parallel
 import cats.data.NonEmptyChain
 import cats.effect.kernel.Async
 import cats.syntax.all._
@@ -22,7 +23,7 @@ trait GlobalSnapshotTraverse[F[_]] {
 
 object GlobalSnapshotTraverse {
 
-  def make[F[_]: Async: HasherSelector](
+  def make[F[_]: Async: Parallel: HasherSelector](
     loadInc: Hash => F[Option[Signed[GlobalIncrementalSnapshot]]],
     loadFull: Hash => F[Option[Signed[GlobalSnapshot]]],
     loadInfo: SnapshotOrdinal => F[Option[GlobalSnapshotInfo]],

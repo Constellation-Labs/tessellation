@@ -2,6 +2,7 @@ package org.tessellation.dag.l0.modules
 
 import java.security.KeyPair
 
+import cats.Parallel
 import cats.effect.Async
 import cats.effect.std.Random
 
@@ -22,7 +23,7 @@ import org.tessellation.security.{HashSelect, HasherSelector, SecurityProvider}
 
 object Programs {
 
-  def make[F[_]: Async: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Random](
+  def make[F[_]: Async: Parallel: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Random](
     sharedPrograms: SharedPrograms[F],
     storages: Storages[F],
     services: Services[F],

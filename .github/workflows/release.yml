@@ -11,7 +11,7 @@ jobs:
     name: Create Release
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Check if project version is release version
         run:  test "v$(cut -d \" -f 2 version.sbt)" = "${{ github.ref_name }}"

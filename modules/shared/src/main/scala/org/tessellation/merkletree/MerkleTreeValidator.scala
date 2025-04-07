@@ -1,11 +1,11 @@
 package org.tessellation.merkletree
 
-import cats.Show
 import cats.data.Validated
 import cats.effect.Async
 import cats.effect.kernel.Sync
 import cats.kernel.Eq
 import cats.syntax.all._
+import cats.{Parallel, Show}
 
 import scala.util.control.NoStackTrace
 
@@ -21,7 +21,7 @@ import io.circe.Encoder
 
 object StateProofValidator {
 
-  def validate[F[_]: Async: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]: Encoder](
+  def validate[F[_]: Async: Parallel: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]: Encoder](
     snapshot: Signed[A],
     si: SnapshotInfo[P]
   ): F[Validated[StateBroken, Unit]] = {
@@ -30,7 +30,7 @@ object StateProofValidator {
     (snapshot.toHashed, stateProof).mapN(validate(_, _))
   }
 
-  def validate[F[_]: Sync: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
+  def validate[F[_]: Sync: Parallel: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
     snapshot: Hashed[A],
     si: SnapshotInfo[P]
   ): F[Validated[StateBroken, Unit]] = {
