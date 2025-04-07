@@ -1,5 +1,6 @@
 package org.tessellation.dag.l1.modules
 
+import cats.Parallel
 import cats.data.NonEmptySet
 import cats.effect.kernel.Async
 
@@ -25,7 +26,7 @@ import org.tessellation.security.{Hasher, HasherSelector, SecurityProvider}
 object Services {
 
   def make[
-    F[_]: Async: SecurityProvider: HasherSelector,
+    F[_]: Async: Parallel: SecurityProvider: HasherSelector,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P]

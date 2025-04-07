@@ -1,5 +1,6 @@
 package org.tessellation.schema
 
+import cats.Parallel
 import cats.effect.kernel.Sync
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
@@ -29,7 +30,7 @@ case class GlobalSnapshotInfoV1(
   lastTxRefs: SortedMap[Address, TransactionReference],
   balances: SortedMap[Address, Balance]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
-  def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
+  def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     GlobalSnapshotInfoV1.toGlobalSnapshotInfo(this).stateProof[F](ordinal)
 }
 
@@ -79,7 +80,7 @@ case class GlobalSnapshotInfoV2(
       lastCurrencySnapshotsProofs
     )
 
-  def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
+  def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
 
   def stateProof[F[_]: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
@@ -118,7 +119,7 @@ case class GlobalSnapshotInfo(
   lastCurrencySnapshots: SortedMap[Address, Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]],
   lastCurrencySnapshotsProofs: SortedMap[Address, Proof]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
-  def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
+  def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
 
   def stateProof[F[_]: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =

@@ -1,11 +1,13 @@
 package org.tessellation.node.shared.infrastructure.snapshot
 
+import cats.Parallel
 import cats.data.Validated
 import cats.effect.Async
 import cats.kernel.Order
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
+import scala.collection.mutable
 
 import org.tessellation.currency.schema.currency._
 import org.tessellation.node.shared.domain.block.processing._
@@ -19,6 +21,7 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection._
 
 import eu.timepit.refined.types.numeric.NonNegLong
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 case class CurrencyMessagesAcceptanceResult(
   contextUpdate: SortedMap[MessageType, Signed[CurrencyMessage]],
@@ -44,14 +47,21 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
       CurrencySnapshotStateProof
     )
   ]
+
+  def acceptRewardTxs(
+    baseBalances: SortedMap[Address, Balance],
+    newUpdatedBalance: Map[Address, Balance],
+    rewards: SortedSet[RewardTransaction]
+  ): F[(SortedMap[Address, Balance], SortedSet[RewardTransaction])]
 }
 
 object CurrencySnapshotAcceptanceManager {
-  def make[F[_]: Async](
+  def make[F[_]: Async: Parallel](
     blockAcceptanceManager: BlockAcceptanceManager[F],
     collateral: Amount,
     messageValidator: CurrencyMessageValidator[F]
   ) = new CurrencySnapshotAcceptanceManager[F] {
+    val logger = Slf4jLogger.getLoggerFromName("CurrencySnapshotAcceptanceManager")
 
     def accept(
       blocksForAcceptance: List[Signed[Block]],
@@ -87,8 +97,9 @@ object CurrencySnapshotAcceptanceManager {
 
       rewards <- calculateRewardsFn(acceptedTransactions)
 
-      (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
-        lastSnapshotContext.snapshotInfo.balances ++ acceptanceResult.contextUpdate.balances,
+      (updatedBalancesByRewards, acceptedRewardTxs) <- acceptRewardTxs(
+        lastSnapshotContext.snapshotInfo.balances,
+        acceptanceResult.contextUpdate.balances,
         rewards
       )
 
@@ -155,19 +166,36 @@ object CurrencySnapshotAcceptanceManager {
       blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, snapshotOrdinal)
     }
 
-    private def acceptRewardTxs(
-      balances: SortedMap[Address, Balance],
-      txs: SortedSet[RewardTransaction]
-    ): (SortedMap[Address, Balance], SortedSet[RewardTransaction]) =
-      txs.foldLeft((balances, SortedSet.empty[RewardTransaction])) { (acc, tx) =>
-        val (updatedBalances, acceptedTxs) = acc
-
-        updatedBalances
-          .getOrElse(tx.destination, Balance.empty)
-          .plus(tx.amount)
-          .map(balance => (updatedBalances.updated(tx.destination, balance), acceptedTxs + tx))
-          .getOrElse(acc)
+    def acceptRewardTxs(
+      baseBalances: SortedMap[Address, Balance],
+      newUpdatedBalance: Map[Address, Balance],
+      rewards: SortedSet[RewardTransaction]
+    ): F[(SortedMap[Address, Balance], SortedSet[RewardTransaction])] = {
+      val mutableBalances = mutable.Map.from(baseBalances)
+      newUpdatedBalance.foreach {
+        case (addr, delta) =>
+          mutableBalances.update(addr, delta)
       }
+
+      val acceptedRewards = mutable.Set.empty[RewardTransaction]
+      rewards.foreach { tx =>
+        val current = mutableBalances.getOrElse(tx.destination, Balance.empty)
+        current.plus(tx.amount) match {
+          case Right(newBal) =>
+            mutableBalances.update(tx.destination, newBal)
+            acceptedRewards += tx
+          case Left(error) =>
+            logger
+              .warn(error)(s"Invalid balance update. Current Balance: $current}, RewardTransaction: $tx}")
+              .as(())
+        }
+      }
+
+      val finalBalances = SortedMap.from(mutableBalances)
+      val acceptedTxs = SortedSet.from(acceptedRewards)
+
+      (finalBalances, acceptedTxs).pure
+    }
 
     def getTipsUsages(
       lastActive: Set[ActiveTip],

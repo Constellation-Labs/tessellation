@@ -1,5 +1,6 @@
 package org.tessellation.node.shared.infrastructure.snapshot
 
+import cats.Parallel
 import cats.data.{NonEmptyChain, Validated}
 import cats.effect.Async
 import cats.syntax.applicative._
@@ -24,7 +25,7 @@ abstract class CurrencySnapshotContextFunctions[F[_]]
     extends SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext]
 
 object CurrencySnapshotContextFunctions {
-  def make[F[_]: Async](validator: CurrencySnapshotValidator[F]) =
+  def make[F[_]: Async: Parallel](validator: CurrencySnapshotValidator[F]) =
     new CurrencySnapshotContextFunctions[F] {
       def createContext(
         context: CurrencySnapshotContext,

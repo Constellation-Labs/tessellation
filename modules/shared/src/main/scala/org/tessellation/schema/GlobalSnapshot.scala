@@ -1,5 +1,6 @@
 package org.tessellation.schema
 
+import cats.Parallel
 import cats.data.NonEmptyList
 import cats.effect.kernel.Sync
 import cats.syntax.functor._
@@ -45,7 +46,7 @@ case class GlobalIncrementalSnapshot(
 ) extends IncrementalSnapshot[GlobalSnapshotStateProof]
 
 object GlobalIncrementalSnapshot {
-  def fromGlobalSnapshot[F[_]: Sync: Hasher](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshot] =
+  def fromGlobalSnapshot[F[_]: Sync: Parallel: Hasher](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshot] =
     snapshot.info.stateProof(snapshot.ordinal).map { stateProof =>
       GlobalIncrementalSnapshot(
         snapshot.ordinal,
@@ -98,7 +99,7 @@ object GlobalSnapshot {
       )
     )
 
-  def mkFirstIncrementalSnapshot[F[_]: Sync: Hasher](
+  def mkFirstIncrementalSnapshot[F[_]: Sync: Parallel: Hasher](
     genesis: Hashed[GlobalSnapshot]
   ): F[GlobalIncrementalSnapshot] =
     genesis.info.stateProof(genesis.ordinal).map { stateProof =>

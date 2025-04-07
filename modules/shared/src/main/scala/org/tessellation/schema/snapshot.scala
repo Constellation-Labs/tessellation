@@ -1,5 +1,6 @@
 package org.tessellation.schema
 
+import cats.Parallel
 import cats.effect.Async
 import cats.effect.kernel.Sync
 import cats.syntax.functor._
@@ -56,7 +57,7 @@ object snapshot {
     val lastTxRefs: SortedMap[Address, TransactionReference]
     val balances: SortedMap[Address, Balance]
 
-    def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[P]
+    def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[P]
   }
 
   @derive(encoder, decoder, show)

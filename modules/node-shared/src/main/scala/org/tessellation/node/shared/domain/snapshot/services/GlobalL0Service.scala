@@ -6,7 +6,7 @@ import cats.data._
 import cats.effect.Async
 import cats.effect.syntax.concurrent._
 import cats.syntax.all._
-import cats.{Applicative, Show}
+import cats.{Applicative, Parallel, Show}
 
 import scala.collection.immutable.SortedSet
 import scala.util.Random
@@ -46,7 +46,7 @@ object GlobalL0Service {
   case object NoPeerAlignedWithMajority extends Exception("No peer available that is aligned with majority") with NoStackTrace
 
   def make[
-    F[_]: Async: SecurityProvider: HasherSelector
+    F[_]: Async: Parallel: SecurityProvider: HasherSelector
   ](
     l0GlobalSnapshotClient: L0GlobalSnapshotClient[F],
     globalL0ClusterStorage: L0ClusterStorage[F],
