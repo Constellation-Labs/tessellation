@@ -98,13 +98,13 @@ object currency {
       (
         lastTxRefs.hash,
         balances.hash,
-        lastMessages.parTraverse(_.hash),
-        lastFeeTxRefs.parTraverse(_.hash),
-        lastAllowSpendRefs.parTraverse(_.hash),
-        activeAllowSpends.parTraverse(_.hash),
-        globalSnapshotSyncView.parTraverse(_.hash),
-        lastTokenLockRefs.parTraverse(_.hash),
-        activeTokenLocks.parTraverse(_.hash)
+        lastMessages.traverse(_.hash),
+        lastFeeTxRefs.traverse(_.hash),
+        lastAllowSpendRefs.traverse(_.hash),
+        activeAllowSpends.traverse(_.hash),
+        globalSnapshotSyncView.traverse(_.hash),
+        lastTokenLockRefs.traverse(_.hash),
+        activeTokenLocks.traverse(_.hash)
       ).tupled
         .map(CurrencySnapshotStateProof.apply)
   }

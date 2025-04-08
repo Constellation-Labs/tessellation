@@ -236,16 +236,16 @@ case class GlobalSnapshotInfo(
       lastStateChannelSnapshotHashes.hash,
       lastTxRefs.hash,
       balances.hash,
-      activeAllowSpends.parTraverse(_.hash),
-      activeTokenLocks.parTraverse(_.hash),
-      tokenLockBalances.parTraverse(_.hash),
-      lastAllowSpendRefs.parTraverse(_.hash),
-      lastTokenLockRefs.parTraverse(_.hash),
-      updateNodeParameters.parTraverse(_.hash),
-      activeDelegatedStakes.parTraverse(_.hash),
-      delegatedStakesWithdrawals.parTraverse(_.hash),
-      activeNodeCollaterals.parTraverse(_.hash),
-      nodeCollateralWithdrawals.parTraverse(_.hash)
+      activeAllowSpends.traverse(_.hash),
+      activeTokenLocks.traverse(_.hash),
+      tokenLockBalances.traverse(_.hash),
+      lastAllowSpendRefs.traverse(_.hash),
+      lastTokenLockRefs.traverse(_.hash),
+      updateNodeParameters.traverse(_.hash),
+      activeDelegatedStakes.traverse(_.hash),
+      delegatedStakesWithdrawals.traverse(_.hash),
+      activeNodeCollaterals.traverse(_.hash),
+      nodeCollateralWithdrawals.traverse(_.hash)
     ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _))
 
 }
