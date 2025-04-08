@@ -151,6 +151,7 @@ object types {
   case class DelegatedStakingConfig(
     minRewardFraction: RewardFraction,
     maxRewardFraction: RewardFraction,
+    maxMetadataFieldsChars: PosInt,
     withdrawalTimeLimit: Map[AppEnvironment, EpochProgress]
   )
 

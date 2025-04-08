@@ -21,6 +21,7 @@ import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
+import eu.timepit.refined.types.numeric.PosInt
 import weaver.MutableIOSuite
 
 object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
@@ -60,6 +61,7 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
       signedValidator,
       RewardFraction(5_000_000),
       RewardFraction(10_000_000),
+      PosInt(140),
       seedList.some
     )
     UpdateNodeParametersAcceptanceManager.make[IO](updateNodeParametersValidator)

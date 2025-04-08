@@ -25,6 +25,7 @@ import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
+import eu.timepit.refined.types.numeric.PosInt
 import weaver.MutableIOSuite
 
 object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
@@ -245,6 +246,50 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
     } yield expect.same(UpdateNodeParametersValidator.InvalidParent(lastRef).invalidNec, result)
   }
 
+  test("should fail when the metadata name is greater than config 'maxMetadataFieldsChars'") { res =>
+    implicit val (json, h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
+      validTestUpdateNodeParameters = testUpdateNodeParameters(source)
+      invalidName =
+        "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus efficitur, nisl eu volutpat feugiat, urna sapien pretium justo, ac mollis nulla."
+      updatedParametersInvalidName = validTestUpdateNodeParameters.copy(nodeMetadataParameters =
+        NodeMetadataParameters(
+          name = invalidName,
+          description = "VALID DESCRIPTION"
+        )
+      )
+      signedUpdateNodeParameters <- forAsyncHasher(updatedParametersInvalidName, keyPair)
+      validator = mkValidator(Set(peerId))
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
+    } yield expect.same(UpdateNodeParametersValidator.TooLargeName(invalidName, 140).invalidNec, result)
+  }
+
+  test("should fail when the metadata description is greater than config 'maxMetadataFieldsChars'") { res =>
+    implicit val (json, h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
+      validTestUpdateNodeParameters = testUpdateNodeParameters(source)
+      invalidDescription =
+        "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus efficitur, nisl eu volutpat feugiat, urna sapien pretium justo, ac mollis nulla."
+      updatedParametersInvalidName = validTestUpdateNodeParameters.copy(nodeMetadataParameters =
+        NodeMetadataParameters(
+          name = "Valid Name",
+          description = invalidDescription
+        )
+      )
+      signedUpdateNodeParameters <- forAsyncHasher(updatedParametersInvalidName, keyPair)
+      validator = mkValidator(Set(peerId))
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
+    } yield expect.same(UpdateNodeParametersValidator.TooLargeDescription(invalidDescription, 140).invalidNec, result)
+  }
+
   private def mkValidator(peersList: Set[PeerId])(
     implicit S: SecurityProvider[IO],
     J: JsonSerializer[IO],
@@ -256,6 +301,7 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
       signedValidator,
       RewardFraction(5_000_000),
       RewardFraction(10_000_000),
+      PosInt(140),
       seedList.some
     )
   }

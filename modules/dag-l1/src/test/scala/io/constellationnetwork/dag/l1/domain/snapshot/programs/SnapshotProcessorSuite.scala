@@ -112,6 +112,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 DelegatedStakingConfig(
                   RewardFraction(5_000_000),
                   RewardFraction(10_000_000),
+                  PosInt(140),
                   Map(Dev -> EpochProgress(NonNegLong(7338977L)))
                 )
               )

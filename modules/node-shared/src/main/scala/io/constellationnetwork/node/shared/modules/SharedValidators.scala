@@ -68,6 +68,7 @@ object SharedValidators {
       signedValidator,
       delegatedStaking.minRewardFraction,
       delegatedStaking.maxRewardFraction,
+      delegatedStaking.maxMetadataFieldsChars,
       l0Seedlist
     )
     val updateDelegatedStakeValidator =
