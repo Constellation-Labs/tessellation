@@ -1,10 +1,10 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
-import cats.MonadThrow
 import cats.data.NonEmptyList
 import cats.data.Validated.{Invalid, Valid}
 import cats.effect.Async
 import cats.syntax.all._
+import cats.{MonadThrow, Parallel}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
@@ -103,7 +103,7 @@ object GlobalSnapshotAcceptanceManager {
 
   case object InvalidMerkleTree extends NoStackTrace
 
-  def make[F[_]: Async: HasherSelector: SecurityProvider](
+  def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider](
     tokenLocksAddedToGl0Ordinal: SnapshotOrdinal,
     delegatedStakingAddedToGl0Ordinal: SnapshotOrdinal,
     nodeCollateralsAddedToGl0Ordinal: SnapshotOrdinal,

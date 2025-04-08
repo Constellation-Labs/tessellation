@@ -93,7 +93,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         .forAsyncHasher[IO, GlobalSnapshot](GlobalSnapshot.mkGenesis(initBalances, EpochProgress.MinValue), keyPair)
         .flatMap(_.toHashed)
         .flatMap { genesis =>
-          GlobalIncrementalSnapshot.fromGlobalSnapshot(genesis).flatMap { incremental =>
+          GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](genesis).flatMap { incremental =>
             mkSnapshot(genesis.hash, incremental, genesis.info, keyPair, SortedSet.empty, Hasher.forKryo[IO]).flatMap {
               snapshotWithContext =>
                 dags

@@ -110,7 +110,7 @@ object NetworkApiServiceSuite extends MutableIOSuite with Checkers {
           ).flatMap(_.toHashed[IO])
 
           incrementalSnapshot <- GlobalSnapshot
-            .mkFirstIncrementalSnapshot(genesis)
+            .mkFirstIncrementalSnapshot[IO](genesis)
             .flatMap(forAsyncHasher(_, keyPair))
             .flatMap(_.toHashed[IO])
 

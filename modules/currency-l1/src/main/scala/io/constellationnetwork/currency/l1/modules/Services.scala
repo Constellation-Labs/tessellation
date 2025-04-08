@@ -1,5 +1,6 @@
 package io.constellationnetwork.currency.l1.modules
 
+import cats.Parallel
 import cats.data.NonEmptySet
 import cats.effect.kernel.Async
 
@@ -30,7 +31,7 @@ import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshot
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
 object Services {
-  def make[F[_]: Async: HasherSelector: SecurityProvider, R <: CliMethod](
+  def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider, R <: CliMethod](
     storages: Storages[
       F,
       CurrencySnapshotStateProof,

@@ -110,7 +110,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     epochProgress <- epochProgressGen
     proofs <- withSignatures.map(Gen.delay(_)).getOrElse(signatureProofsGen)
     snapshot = Signed(GlobalSnapshot.mkGenesis(Map.empty, epochProgress), proofs)
-    incremental = Signed(GlobalIncrementalSnapshot.fromGlobalSnapshot(snapshot).unsafeRunSync(), proofs)
+    incremental = Signed(GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](snapshot).unsafeRunSync(), proofs)
   } yield incremental
 
   def makeRewards(config: RewardsConfig)(

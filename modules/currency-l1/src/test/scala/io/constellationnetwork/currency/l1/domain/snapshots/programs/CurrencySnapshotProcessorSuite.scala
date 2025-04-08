@@ -1,26 +1,32 @@
-package org.tessellation.currency.l1.domain.snapshots.programs
+package io.constellationnetwork.currency.l1.domain.snapshots.programs
 
 import cats.effect._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.Random
 
-import org.tessellation.dag.l1.Main
-import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.json.JsonSerializer
-import org.tessellation.kryo.KryoSerializer
-import org.tessellation.node.shared.infrastructure.block.processing.BlockAcceptanceManager
-import org.tessellation.node.shared.infrastructure.snapshot._
-import org.tessellation.node.shared.modules.SharedValidators
-import org.tessellation.node.shared.nodeSharedKryoRegistrar
-import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.transaction.{RewardTransaction, TransactionAmount}
-import org.tessellation.security._
-import org.tessellation.transaction.TransactionGenerator
+import io.constellationnetwork.dag.l1.Main
+import io.constellationnetwork.env.AppEnvironment.Dev
+import io.constellationnetwork.ext.cats.effect.ResourceIO
+import io.constellationnetwork.json.JsonSerializer
+import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.config.types.{AddressesConfig, DelegatedStakingConfig, LastGlobalSnapshotsSyncConfig}
+import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
+import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
+import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
+import io.constellationnetwork.node.shared.infrastructure.snapshot._
+import io.constellationnetwork.node.shared.modules.SharedValidators
+import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
+import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.node.RewardFraction
+import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
+import io.constellationnetwork.security._
+import io.constellationnetwork.transaction.TransactionGenerator
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.PosLong
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
 import weaver.SimpleIOSuite
 
 object CurrencySnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
@@ -32,11 +38,26 @@ object CurrencySnapshotProcessorSuite extends SimpleIOSuite with TransactionGene
       KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar).flatMap { implicit kp =>
         for {
           implicit0(jhs: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-          validators = SharedValidators.make[IO](None, None, Some(Map.empty), SortedMap.empty, Long.MaxValue, Hasher.forKryo[IO])
+          implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
+          validators = SharedValidators.make[IO](
+            AddressesConfig(Set.empty),
+            None,
+            None,
+            Some(Map.empty),
+            SortedMap.empty,
+            Long.MaxValue,
+            Hasher.forKryo[IO],
+            DelegatedStakingConfig(RewardFraction(5_000_000), RewardFraction(10_000_000), Map(Dev -> EpochProgress(NonNegLong(7338977L))))
+          )
           currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
+            LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
             BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
+            TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
+            AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
             Amount(0L),
-            validators.currencyMessageValidator
+            validators.currencyMessageValidator,
+            validators.feeTransactionValidator,
+            validators.globalSnapshotSyncValidator
           )
         } yield currencySnapshotAcceptanceManager
       }

@@ -1,11 +1,11 @@
 package io.constellationnetwork.merkletree
 
-import cats.Show
 import cats.data.Validated
 import cats.data.Validated.Invalid
 import cats.effect.{Async, Sync}
 import cats.kernel.Eq
 import cats.syntax.all._
+import cats.{Parallel, Show}
 
 import scala.util.control.NoStackTrace
 
@@ -23,7 +23,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object StateProofValidator {
 
-  def validate[F[_]: Async: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]: Encoder](
+  def validate[F[_]: Async: Parallel: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]: Encoder](
     snapshot: Signed[A],
     snapshotInfo: SnapshotInfo[P]
   ): F[Validated[StateBroken, Unit]] =
@@ -32,13 +32,13 @@ object StateProofValidator {
         validate(hashedSnapshot, stateProof)
     }
 
-  def validate[F[_]: Sync: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
+  def validate[F[_]: Sync: Parallel: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
     snapshot: Hashed[A],
     snapshotInfo: SnapshotInfo[P]
   ): F[Validated[StateBroken, Unit]] =
     snapshotInfo.stateProof(snapshot.ordinal).flatMap(validate(snapshot, _))
 
-  def validate[F[_]: Sync, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
+  def validate[F[_]: Sync: Parallel, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
     snapshot: Hashed[A],
     stateProof: P
   ): F[Validated[StateBroken, Unit]] = {

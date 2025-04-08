@@ -2,6 +2,7 @@ package io.constellationnetwork.node.shared.modules
 
 import java.security.KeyPair
 
+import cats.Parallel
 import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.effect.std.Supervisor
@@ -43,7 +44,7 @@ import fs2.concurrent.SignallingRef
 
 object SharedServices {
 
-  def make[F[_]: Async: HasherSelector: SecurityProvider: Metrics: Supervisor: JsonSerializer: KryoSerializer, A <: CliMethod](
+  def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider: Metrics: Supervisor: JsonSerializer: KryoSerializer, A <: CliMethod](
     cfg: SharedConfig,
     nodeId: PeerId,
     generation: Generation,

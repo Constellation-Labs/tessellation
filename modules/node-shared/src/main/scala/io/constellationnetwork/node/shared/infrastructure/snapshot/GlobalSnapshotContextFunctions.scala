@@ -1,5 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
+import cats.Parallel
 import cats.data.Validated
 import cats.effect.Async
 import cats.syntax.applicative._
@@ -32,7 +33,7 @@ import derevo.derive
 abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
 object GlobalSnapshotContextFunctions {
-  def make[F[_]: Async: HasherSelector](snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F]) =
+  def make[F[_]: Async: Parallel: HasherSelector](snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F]) =
     new GlobalSnapshotContextFunctions[F] {
       def createContext(
         context: GlobalSnapshotInfo,
