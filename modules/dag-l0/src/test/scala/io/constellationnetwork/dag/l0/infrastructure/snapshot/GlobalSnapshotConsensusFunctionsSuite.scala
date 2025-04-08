@@ -87,7 +87,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
     signedGenesis <- Signed.forAsyncHasher[IO, GlobalSnapshot](genesis, keyPair)
 
-    lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot(signedGenesis.value)
+    lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](signedGenesis.value)
     signedLastArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair)
   } yield (signedLastArtifact, signedGenesis)
 
@@ -300,7 +300,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
       signedGenesis <- Signed.forAsyncHasher[F, GlobalSnapshot](genesis, keyPair)
 
-      lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot(signedGenesis.value)
+      lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](signedGenesis.value)
       signedLastArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair)
 
       scEvent <- mkStateChannelEvent()

@@ -2,6 +2,7 @@ package io.constellationnetwork.dag.l0.modules
 
 import java.security.KeyPair
 
+import cats.Parallel
 import cats.effect.Async
 import cats.effect.std.Random
 import cats.implicits.none
@@ -25,7 +26,7 @@ import io.constellationnetwork.security.{HashSelect, HasherSelector, SecurityPro
 
 object Programs {
 
-  def make[F[_]: Async: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Random, R <: CliMethod](
+  def make[F[_]: Async: Parallel: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Random, R <: CliMethod](
     sharedPrograms: SharedPrograms[F, R],
     storages: Storages[F],
     services: Services[F, R],

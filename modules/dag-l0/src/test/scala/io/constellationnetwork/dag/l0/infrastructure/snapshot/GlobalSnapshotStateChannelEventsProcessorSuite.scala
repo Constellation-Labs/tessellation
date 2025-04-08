@@ -2,6 +2,7 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
 import java.security.KeyPair
 
+import cats.Parallel
 import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.std.Random
 import cats.effect.{Async, IO, Resource}
@@ -135,7 +136,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       address = keyPair.getPublic().toAddress
       output <- mkStateChannelOutput(keyPair, serializer = serializer)
       snapshotInfo = mkGlobalSnapshotInfo()
-      snapshot <- mkGlobalIncrementalSnapshot(snapshotInfo)
+      snapshot <- mkGlobalIncrementalSnapshot[IO](snapshotInfo)
       service <- mkProcessor(Map(address -> output.snapshotBinary.proofs.map(_.id.toPeerId)))
       expected = StateChannelAcceptanceResult(
         SortedMap((address, NonEmptyList.one(output.snapshotBinary))),
@@ -167,7 +168,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       address2 = keyPair2.getPublic().toAddress
       output2 <- mkStateChannelOutput(keyPair2, serializer = serializer)
       snapshotInfo = mkGlobalSnapshotInfo()
-      snapshot <- mkGlobalIncrementalSnapshot(snapshotInfo)
+      snapshot <- mkGlobalIncrementalSnapshot[IO](snapshotInfo)
       service <- mkProcessor(
         Map(address1 -> output1.snapshotBinary.proofs.map(_.id.toPeerId), address2 -> output2.snapshotBinary.proofs.map(_.id.toPeerId))
       )
@@ -201,7 +202,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       address2 = keyPair2.getPublic().toAddress
       output2 <- mkStateChannelOutput(keyPair2, serializer = serializer)
       snapshotInfo = mkGlobalSnapshotInfo()
-      snapshot <- mkGlobalIncrementalSnapshot(snapshotInfo)
+      snapshot <- mkGlobalIncrementalSnapshot[IO](snapshotInfo)
       service <- mkProcessor(
         Map(address1 -> output1.snapshotBinary.proofs.map(_.id.toPeerId), address2 -> output2.snapshotBinary.proofs.map(_.id.toPeerId)),
         Some(address1 -> StateChannelValidator.NotSignedExclusivelyByStateChannelOwner)
@@ -235,7 +236,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
     signedSC <- forAsyncHasher(binary, keyPair)
   } yield StateChannelOutput(keyPair.getPublic.toAddress, signedSC)
 
-  def mkGlobalIncrementalSnapshot[F[_]: Async: Hasher](
+  def mkGlobalIncrementalSnapshot[F[_]: Parallel: Async: Hasher](
     globalSnapshotInfo: GlobalSnapshotInfo
   ): F[Hashed[GlobalIncrementalSnapshot]] =
     globalSnapshotInfo.stateProof[F](SnapshotOrdinal(NonNegLong(1L))).flatMap { sp =>

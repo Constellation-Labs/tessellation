@@ -1,5 +1,6 @@
 package io.constellationnetwork.schema
 
+import cats.Parallel
 import cats.effect.kernel.Sync
 import cats.syntax.all._
 
@@ -37,7 +38,7 @@ case class GlobalSnapshotInfoV1(
   lastTxRefs: SortedMap[Address, TransactionReference],
   balances: SortedMap[Address, Balance]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
-  def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
+  def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     GlobalSnapshotInfoV1.toGlobalSnapshotInfo(this).stateProof[F](ordinal)
 }
 
@@ -175,10 +176,10 @@ case class GlobalSnapshotInfoV2(
       None
     )
 
-  def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
+  def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
 
-  def stateProof[F[_]: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
+  def stateProof[F[_]: Parallel: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
     toGlobalSnapshotInfo.stateProof[F](lastCurrencySnapshots)
 
 }
@@ -220,7 +221,7 @@ case class GlobalSnapshotInfo(
   activeNodeCollaterals: Option[SortedMap[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]]],
   nodeCollateralWithdrawals: Option[SortedMap[Address, List[(Signed[UpdateNodeCollateral.Withdraw], EpochProgress)]]]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
-  def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
+  def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
 
   implicit val optionAddressKeyEncoder: KeyEncoder[Option[Address]] = new KeyEncoder[Option[Address]] {
@@ -230,21 +231,21 @@ case class GlobalSnapshotInfo(
     }
   }
 
-  def stateProof[F[_]: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
+  def stateProof[F[_]: Parallel: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
     (
       lastStateChannelSnapshotHashes.hash,
       lastTxRefs.hash,
       balances.hash,
-      activeAllowSpends.traverse(_.hash),
-      activeTokenLocks.traverse(_.hash),
-      tokenLockBalances.traverse(_.hash),
-      lastAllowSpendRefs.traverse(_.hash),
-      lastTokenLockRefs.traverse(_.hash),
-      updateNodeParameters.traverse(_.hash),
-      activeDelegatedStakes.traverse(_.hash),
-      delegatedStakesWithdrawals.traverse(_.hash),
-      activeNodeCollaterals.traverse(_.hash),
-      nodeCollateralWithdrawals.traverse(_.hash)
+      activeAllowSpends.parTraverse(_.hash),
+      activeTokenLocks.parTraverse(_.hash),
+      tokenLockBalances.parTraverse(_.hash),
+      lastAllowSpendRefs.parTraverse(_.hash),
+      lastTokenLockRefs.parTraverse(_.hash),
+      updateNodeParameters.parTraverse(_.hash),
+      activeDelegatedStakes.parTraverse(_.hash),
+      delegatedStakesWithdrawals.parTraverse(_.hash),
+      activeNodeCollaterals.parTraverse(_.hash),
+      nodeCollateralWithdrawals.parTraverse(_.hash)
     ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _))
 
 }
