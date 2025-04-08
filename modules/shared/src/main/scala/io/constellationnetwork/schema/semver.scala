@@ -20,7 +20,7 @@ object semver {
 
   @derive(encoder, decoder, show, order)
   @newtype
-  case class SnapshotVersion(version: String Refined (SemVer And Equal["1.0.0"]))
+  case class SnapshotVersion(version: String Refined MatchesRegex["^(0\\.0\\.1|1\\.0\\.0)$"])
 
   @derive(encoder, decoder, show, order)
   @newtype
