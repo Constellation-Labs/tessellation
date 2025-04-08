@@ -98,13 +98,13 @@ object currency {
       (
         lastTxRefs.hash,
         balances.hash,
-        lastMessages.parTraverse(_.hash),
-        lastFeeTxRefs.parTraverse(_.hash),
-        lastAllowSpendRefs.parTraverse(_.hash),
-        activeAllowSpends.parTraverse(_.hash),
-        globalSnapshotSyncView.parTraverse(_.hash),
-        lastTokenLockRefs.parTraverse(_.hash),
-        activeTokenLocks.parTraverse(_.hash)
+        lastMessages.traverse(_.hash),
+        lastFeeTxRefs.traverse(_.hash),
+        lastAllowSpendRefs.traverse(_.hash),
+        activeAllowSpends.traverse(_.hash),
+        globalSnapshotSyncView.traverse(_.hash),
+        lastTokenLockRefs.traverse(_.hash),
+        activeTokenLocks.traverse(_.hash)
       ).tupled
         .map(CurrencySnapshotStateProof.apply)
   }
@@ -162,7 +162,7 @@ object currency {
     info: CurrencySnapshotInfoV1,
     epochProgress: EpochProgress,
     dataApplication: Option[DataApplicationPart] = None,
-    version: SnapshotVersion = SnapshotVersion("1.0.0")
+    version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends FullSnapshot[CurrencySnapshotStateProofV1, CurrencySnapshotInfoV1]
 
   @derive(eqv, show, encoder, decoder)
@@ -184,7 +184,7 @@ object currency {
     allowSpendBlocks: Option[SortedSet[Signed[AllowSpendBlock]]],
     tokenLockBlocks: Option[SortedSet[Signed[TokenLockBlock]]],
     globalSyncView: Option[GlobalSyncView],
-    version: SnapshotVersion = SnapshotVersion("1.0.0")
+    version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
 
   object CurrencyIncrementalSnapshot {
@@ -225,7 +225,7 @@ object currency {
     stateProof: CurrencySnapshotStateProofV1,
     epochProgress: EpochProgress,
     dataApplication: Option[DataApplicationPart] = None,
-    version: SnapshotVersion = SnapshotVersion("1.0.0")
+    version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends IncrementalSnapshot[CurrencySnapshotStateProofV1] {
     def toCurrencyIncrementalSnapshot: CurrencyIncrementalSnapshot =
       CurrencyIncrementalSnapshot(

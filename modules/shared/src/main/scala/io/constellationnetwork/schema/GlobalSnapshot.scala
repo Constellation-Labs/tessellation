@@ -58,7 +58,7 @@ case class GlobalIncrementalSnapshot(
   delegatedStakesWithdrawals: Option[SortedMap[Address, List[Signed[UpdateDelegatedStake.Withdraw]]]],
   activeNodeCollaterals: Option[SortedMap[Address, List[Signed[UpdateNodeCollateral.Create]]]],
   nodeCollateralWithdrawals: Option[SortedMap[Address, List[Signed[UpdateNodeCollateral.Withdraw]]]],
-  version: SnapshotVersion = SnapshotVersion("1.0.0")
+  version: SnapshotVersion = SnapshotVersion("0.0.1")
 ) extends IncrementalSnapshot[GlobalSnapshotStateProof]
 
 object GlobalIncrementalSnapshot {
@@ -102,7 +102,7 @@ case class GlobalIncrementalSnapshotV1(
   nextFacilitators: NonEmptyList[PeerId],
   tips: SnapshotTips,
   stateProof: GlobalSnapshotStateProofV1,
-  version: SnapshotVersion = SnapshotVersion("1.0.0")
+  version: SnapshotVersion = SnapshotVersion("0.0.1")
 ) extends IncrementalSnapshot[GlobalSnapshotStateProofV1] {
   def toGlobalIncrementalSnapshot: GlobalIncrementalSnapshot =
     GlobalIncrementalSnapshot(
