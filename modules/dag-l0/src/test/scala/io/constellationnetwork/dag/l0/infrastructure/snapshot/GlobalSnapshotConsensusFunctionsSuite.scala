@@ -218,7 +218,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   def updateNodeParametersAcceptanceManager(implicit txHasher: Hasher[IO]) = {
     val updateNodeParametersValidator =
-      UpdateNodeParametersValidator.make(signedValidator, RewardFraction(5_000_000), RewardFraction(10_000_000), None)
+      UpdateNodeParametersValidator.make(signedValidator, RewardFraction(5_000_000), RewardFraction(10_000_000), PosInt(140), None)
     UpdateNodeParametersAcceptanceManager.make(updateNodeParametersValidator)
   }
 

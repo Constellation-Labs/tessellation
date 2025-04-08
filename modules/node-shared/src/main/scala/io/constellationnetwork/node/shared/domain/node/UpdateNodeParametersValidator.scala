@@ -20,6 +20,7 @@ import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import derevo.cats.{eqv, show}
 import derevo.derive
 import eu.timepit.refined.cats.refTypeOrder
+import eu.timepit.refined.types.numeric.PosInt
 
 trait UpdateNodeParametersValidator[F[_]] {
 
@@ -36,6 +37,7 @@ object UpdateNodeParametersValidator {
     signedValidator: SignedValidator[F],
     minRewardValue: RewardFraction,
     maxRewardValue: RewardFraction,
+    maxMetadataFieldsChars: PosInt,
     seedList: Option[Set[SeedlistEntry]]
   ): UpdateNodeParametersValidator[F] =
     new UpdateNodeParametersValidator[F] {
@@ -53,12 +55,14 @@ object UpdateNodeParametersValidator {
           parentV <- validateParent(signed, lastSnapshotContext)
           rewardFractionV = validateRewardFraction(signed)
           nodeV = validateNode(signed)
+          nodeMetadataParamsV = validateNodeMetadataParams(signed, maxMetadataFieldsChars.value)
         } yield
           signaturesV
             .productR(isSignedExclusivelyBySource)
             .productR(parentV)
             .productR(rewardFractionV)
             .productR(nodeV)
+            .productR(nodeMetadataParamsV)
 
       private def validateNode(
         signed: Signed[UpdateNodeParameters]
@@ -73,6 +77,21 @@ object UpdateNodeParametersValidator {
               NodeNotInSeedList(nodeId).invalidNec[Signed[UpdateNodeParameters]]
           case _ =>
             InvalidProofsCount(nodeIds.size).invalidNec[Signed[UpdateNodeParameters]]
+        }
+      }
+
+      private def validateNodeMetadataParams(
+        signed: Signed[UpdateNodeParameters],
+        maxChars: Int
+      ): UpdateNodeParametersValidationErrorOr[Signed[UpdateNodeParameters]] = {
+        val name = signed.nodeMetadataParameters.name
+        val description = signed.nodeMetadataParameters.description
+        if (name.length > maxChars) {
+          TooLargeName(name, maxChars).invalidNec[Signed[UpdateNodeParameters]]
+        } else if (description.length > maxChars) {
+          TooLargeDescription(description, maxChars).invalidNec[Signed[UpdateNodeParameters]]
+        } else {
+          signed.validNec[UpdateNodeParametersValidationError]
         }
       }
 
@@ -132,6 +151,8 @@ object UpdateNodeParametersValidator {
   case class InvalidParent(parent: UpdateNodeParametersReference) extends UpdateNodeParametersValidationError
   case class InvalidProofsCount(proofCount: Int) extends UpdateNodeParametersValidationError
   case class NodeNotInSeedList(nodeId: PeerId) extends UpdateNodeParametersValidationError
+  case class TooLargeName(name: String, maxChars: Int) extends UpdateNodeParametersValidationError
+  case class TooLargeDescription(description: String, maxChars: Int) extends UpdateNodeParametersValidationError
 
   type UpdateNodeParametersValidationErrorOr[A] = ValidatedNec[UpdateNodeParametersValidationError, A]
 }

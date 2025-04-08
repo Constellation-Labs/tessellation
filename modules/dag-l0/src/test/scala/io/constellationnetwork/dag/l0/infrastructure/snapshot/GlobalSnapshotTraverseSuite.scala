@@ -282,7 +282,12 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           SortedMap.empty,
           Long.MaxValue,
           txHasher,
-          DelegatedStakingConfig(RewardFraction(5_000_000), RewardFraction(10_000_000), Map(Dev -> EpochProgress(NonNegLong(7338977L))))
+          DelegatedStakingConfig(
+            RewardFraction(5_000_000),
+            RewardFraction(10_000_000),
+            PosInt(140),
+            Map(Dev -> EpochProgress(NonNegLong(7338977L)))
+          )
         )
 
     val currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
