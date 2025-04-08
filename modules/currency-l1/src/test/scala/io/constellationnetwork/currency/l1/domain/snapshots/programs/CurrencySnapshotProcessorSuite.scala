@@ -47,7 +47,12 @@ object CurrencySnapshotProcessorSuite extends SimpleIOSuite with TransactionGene
             SortedMap.empty,
             Long.MaxValue,
             Hasher.forKryo[IO],
-            DelegatedStakingConfig(RewardFraction(5_000_000), RewardFraction(10_000_000), PosInt(140), Map(Dev -> EpochProgress(NonNegLong(7338977L))))
+            DelegatedStakingConfig(
+              RewardFraction(5_000_000),
+              RewardFraction(10_000_000),
+              PosInt(140),
+              Map(Dev -> EpochProgress(NonNegLong(7338977L)))
+            )
           )
           currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
             LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),

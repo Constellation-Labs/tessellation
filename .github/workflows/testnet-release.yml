@@ -12,7 +12,7 @@ permissions:
 jobs:
   build:
     name: Testnet release
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     environment: testnet
     steps:
       - uses: actions/checkout@v4
