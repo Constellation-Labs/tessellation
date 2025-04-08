@@ -161,7 +161,7 @@ object currency {
     info: CurrencySnapshotInfoV1,
     epochProgress: EpochProgress,
     dataApplication: Option[DataApplicationPart] = None,
-    version: SnapshotVersion = SnapshotVersion("0.0.1")
+    version: SnapshotVersion = SnapshotVersion("1.0.0")
   ) extends FullSnapshot[CurrencySnapshotStateProofV1, CurrencySnapshotInfoV1]
 
   @derive(eqv, show, encoder, decoder)
@@ -183,7 +183,7 @@ object currency {
     allowSpendBlocks: Option[SortedSet[Signed[AllowSpendBlock]]],
     tokenLockBlocks: Option[SortedSet[Signed[TokenLockBlock]]],
     globalSyncView: Option[GlobalSyncView],
-    version: SnapshotVersion = SnapshotVersion("0.0.1")
+    version: SnapshotVersion = SnapshotVersion("1.0.0")
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
 
   object CurrencyIncrementalSnapshot {
@@ -224,7 +224,7 @@ object currency {
     stateProof: CurrencySnapshotStateProofV1,
     epochProgress: EpochProgress,
     dataApplication: Option[DataApplicationPart] = None,
-    version: SnapshotVersion = SnapshotVersion("0.0.1")
+    version: SnapshotVersion = SnapshotVersion("1.0.0")
   ) extends IncrementalSnapshot[CurrencySnapshotStateProofV1] {
     def toCurrencyIncrementalSnapshot: CurrencyIncrementalSnapshot =
       CurrencyIncrementalSnapshot(
