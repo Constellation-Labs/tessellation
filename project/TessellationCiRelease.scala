@@ -28,8 +28,8 @@ object TessellationCiRelease extends AutoPlugin {
   override def requires = JvmPlugin && SbtPgp && GitVersioningPlugin && GitPlugin && Sonatype
 
   def isSecure: Boolean = System.getenv("PGP_SECRET") != null
-  def isTag: Boolean = Option(System.getenv("GITHUB_REF")).exists(_.startsWith("refs/tags"))
-  def releaseTag: String = Option(System.getenv("GITHUB_REF")).getOrElse("<unknown>")
+  def isTag: Boolean = Option(System.getenv("RELEASE_TAG")).exists(_.nonEmpty) ||
+    Option(System.getenv("GITHUB_REF")).exists(_.startsWith("refs/tags"))
   def currentBranch: String = Option(System.getenv("GITHUB_REF")).getOrElse("<unknown>")
 
   def setupGpg(): Unit = {
