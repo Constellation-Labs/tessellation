@@ -67,7 +67,8 @@ case class CurrencySnapshotAcceptanceResult(
   feeTransactions: Option[SortedSet[Signed[FeeTransaction]]],
   info: CurrencySnapshotInfo,
   stateProof: CurrencySnapshotStateProof,
-  globalSyncView: GlobalSyncView
+  globalSyncView: GlobalSyncView,
+  syncGlobalSnapshotOrdinal: SnapshotOrdinal
 )
 
 trait CurrencySnapshotAcceptanceManager[F[_]] {
@@ -223,7 +224,7 @@ object CurrencySnapshotAcceptanceManager {
       lastGlobalSnapshotEpochProgress <-
         if (maybeLastGlobalSnapshot.isEmpty)
           logger
-            .warn("Could not find lastGlobalSnapshot")
+            .warn("Could not find lastGlobalSnapshot to extract epochProgress")
             .as(
               EpochProgress.MinValue
             )
@@ -233,7 +234,7 @@ object CurrencySnapshotAcceptanceManager {
       lastGlobalSnapshotOrdinal <-
         if (maybeLastGlobalSnapshot.isEmpty)
           logger
-            .warn("Could not find lastGlobalSnapshot")
+            .warn("Could not find lastGlobalSnapshot to extract ordinal")
             .as(
               SnapshotOrdinal.MinValue
             )
@@ -400,7 +401,8 @@ object CurrencySnapshotAcceptanceManager {
         acceptedFeeTxs,
         csi,
         stateProof,
-        globalSyncView
+        globalSyncView,
+        lastGlobalSnapshotOrdinal
       )
 
     private def acceptMessages(

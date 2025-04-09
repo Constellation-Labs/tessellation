@@ -26,7 +26,6 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.SnapshotSizeConfig
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
-import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.infrastructure.consensus.ValidationErrorStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.snapshot.currency._
@@ -72,6 +71,7 @@ trait CurrencySnapshotCreator[F[_]] {
 object CurrencySnapshotCreator {
 
   def make[F[_]: Async: JsonSerializer](
+    tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
     currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
     dataApplicationSnapshotAcceptanceManager: Option[DataApplicationSnapshotAcceptanceManager[F]],
     snapshotSizeConfig: SnapshotSizeConfig,
@@ -267,12 +267,16 @@ object CurrencySnapshotCreator {
             Option.when(currencySnapshotAcceptanceResult.info.lastMessages.nonEmpty)(
               currencySnapshotAcceptanceResult.messages.accepted.toSortedSet
             ),
-            currencySnapshotAcceptanceResult.globalSnapshotSync.accepted.toSortedSet.some,
+            if (currencySnapshotAcceptanceResult.syncGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none
+            else currencySnapshotAcceptanceResult.globalSnapshotSync.accepted.toSortedSet.some,
             currencySnapshotAcceptanceResult.feeTransactions,
             currencySnapshotAcceptanceResult.sharedArtifacts.some,
-            currencySnapshotAcceptanceResult.allowSpendBlock.accepted.toSortedSet.some,
-            currencySnapshotAcceptanceResult.tokenLockBlock.accepted.toSortedSet.some,
-            currencySnapshotAcceptanceResult.globalSyncView.some
+            if (currencySnapshotAcceptanceResult.syncGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none
+            else currencySnapshotAcceptanceResult.allowSpendBlock.accepted.toSortedSet.some,
+            if (currencySnapshotAcceptanceResult.syncGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none
+            else currencySnapshotAcceptanceResult.tokenLockBlock.accepted.toSortedSet.some,
+            if (currencySnapshotAcceptanceResult.syncGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none
+            else currencySnapshotAcceptanceResult.globalSyncView.some
           )
 
           artifactSize: Int <- JsonSerializer[F].serialize(artifact).map(_.length)
