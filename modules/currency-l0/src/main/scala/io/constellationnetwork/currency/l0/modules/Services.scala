@@ -98,6 +98,7 @@ object Services {
         .pure[F]
 
       creator = CurrencySnapshotCreator.make[F](
+        sharedCfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
         sharedServices.currencySnapshotAcceptanceManager,
         dataApplicationAcceptanceManager,
         cfg.snapshotSize,
