@@ -17,6 +17,7 @@ import io.constellationnetwork.node.shared.infrastructure.block.processing.Block
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
@@ -55,6 +56,7 @@ object CurrencySnapshotProcessorSuite extends SimpleIOSuite with TransactionGene
             )
           )
           currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
+            SnapshotOrdinal.MinValue,
             LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
             BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
             TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),

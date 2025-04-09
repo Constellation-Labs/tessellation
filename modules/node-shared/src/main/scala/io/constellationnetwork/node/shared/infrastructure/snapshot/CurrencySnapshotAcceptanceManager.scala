@@ -100,6 +100,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
 
 object CurrencySnapshotAcceptanceManager {
   def make[F[_]: Async: Parallel](
+    tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
     lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
     blockAcceptanceManager: BlockAcceptanceManager[F],
     tokenLockBlockAcceptanceManager: TokenLockBlockAcceptanceManager[F],
@@ -229,6 +230,16 @@ object CurrencySnapshotAcceptanceManager {
         else
           maybeLastGlobalSnapshot.get.epochProgress.pure
 
+      lastGlobalSnapshotOrdinal <-
+        if (maybeLastGlobalSnapshot.isEmpty)
+          logger
+            .warn("Could not find lastGlobalSnapshot")
+            .as(
+              SnapshotOrdinal.MinValue
+            )
+        else
+          maybeLastGlobalSnapshot.get.ordinal.pure
+
       lastGlobalSnapshotsSpendActions <- getLastSpendActions(
         lastGlobalSyncView,
         maybeLastGlobalSnapshot,
@@ -354,11 +365,12 @@ object CurrencySnapshotAcceptanceManager {
         updatedBalancesBySpendTransactions,
         Option.when(messagesAcceptanceResult.contextUpdate.nonEmpty)(messagesAcceptanceResult.contextUpdate),
         None,
-        updatedAllowSpendRefs.some,
-        updatedAllowSpends.some,
-        globalSnapshotSyncAcceptanceResult.contextUpdate.some,
-        tokenLockRefs.some,
-        if (updatedActiveTokenLocks.nonEmpty) Some(updatedActiveTokenLocks) else None
+        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none else updatedAllowSpendRefs.some,
+        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none else updatedAllowSpends.some,
+        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none
+        else globalSnapshotSyncAcceptanceResult.contextUpdate.some,
+        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none else tokenLockRefs.some,
+        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none else updatedActiveTokenLocks.some
       )
 
       stateProof <- csi.stateProof(snapshotOrdinal)
