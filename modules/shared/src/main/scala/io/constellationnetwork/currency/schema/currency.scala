@@ -100,10 +100,10 @@ object currency {
         balances.hash,
         lastMessages.traverse(_.hash),
         lastFeeTxRefs.traverse(_.hash),
-        lastAllowSpendRefs.traverse(_.hash),
-        activeAllowSpends.traverse(_.hash),
-        globalSnapshotSyncView.traverse(_.hash),
-        lastTokenLockRefs.traverse(_.hash),
+        lastAllowSpendRefs.filter(_.nonEmpty).traverse(_.hash),
+        activeAllowSpends.filter(_.nonEmpty).traverse(_.hash),
+        globalSnapshotSyncView.filter(_.nonEmpty).traverse(_.hash),
+        lastTokenLockRefs.filter(_.nonEmpty).traverse(_.hash),
         activeTokenLocks.traverse(_.hash)
       ).tupled
         .map(CurrencySnapshotStateProof.apply)

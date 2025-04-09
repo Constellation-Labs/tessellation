@@ -5,6 +5,7 @@ import cats.kernel.{Next, PartialOrder, PartialPrevious}
 import cats.syntax.semigroup._
 
 import io.constellationnetwork.currency.schema.currency.CurrencySnapshotInfo
+import io.constellationnetwork.ext.cats.data.OrderBasedOrdering
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.schema.address.Address
@@ -29,6 +30,8 @@ object currencyMessage {
 
     case object Owner extends MessageType("Owner")
     case object Staking extends MessageType("Staking")
+
+    implicit object OrderingInstance extends OrderBasedOrdering[MessageType]
   }
 
   @derive(order, ordering, show)
@@ -60,6 +63,10 @@ object currencyMessage {
   @derive(eqv, show, encoder, decoder, order, ordering)
   case class CurrencyMessage(messageType: MessageType, address: Address, metagraphId: Address, parentOrdinal: MessageOrdinal) {
     def ordinal: MessageOrdinal = parentOrdinal.next
+  }
+
+  object CurrencyMessage {
+    implicit object OrderingInstance extends OrderBasedOrdering[CurrencyMessage]
   }
 
   def fetchStakingAddress(state: CurrencySnapshotInfo): Option[Address] =
