@@ -22,7 +22,7 @@ jobs:
       - name: Check if the commit already has a tag starting with "v"
         id: check_tag
         run: |
-          TAG=$(git tag --contains HEAD | grep -E '^v')
+          TAG=$(git tag --contains HEAD | grep -E '^v' || true)
           if [ -n "$TAG" ]; then
             echo "This commit has a tag starting with 'v': $TAG"
             echo "TAG_EXISTS=true" >> "$GITHUB_ENV"
