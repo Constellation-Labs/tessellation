@@ -77,7 +77,7 @@ object currency {
     lastFeeTxRefs: Option[SortedMap[Address, TransactionReference]] = None
   ) extends SnapshotInfo[CurrencySnapshotStateProof] {
     def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[CurrencySnapshotStateProof] =
-      (lastTxRefs.hash, balances.hash, lastMessages.parTraverse(_.hash), lastFeeTxRefs.parTraverse(_.hash)).tupled
+      (lastTxRefs.hash, balances.hash, lastMessages.traverse(_.hash), lastFeeTxRefs.traverse(_.hash)).tupled
         .map(CurrencySnapshotStateProof.apply)
   }
 
