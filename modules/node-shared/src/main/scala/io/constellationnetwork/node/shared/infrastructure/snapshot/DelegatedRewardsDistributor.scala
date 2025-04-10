@@ -49,7 +49,7 @@ trait DelegatedRewardsDistributor[F[_]] {
     lastSnapshotContext: GlobalSnapshotInfo,
     trigger: ConsensusTrigger,
     epochProgress: EpochProgress,
-    facilitators: NonEmptySet[Id],
+    facilitators: List[(Id, Address)],
     delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
     partitionedRecords: PartitionedStakeUpdates
   ): F[DelegationRewardsResult]

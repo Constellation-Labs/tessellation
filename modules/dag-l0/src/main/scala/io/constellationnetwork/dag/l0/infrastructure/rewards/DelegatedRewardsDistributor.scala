@@ -6,10 +6,8 @@ import cats.implicits.catsSyntaxOrder
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
-import scala.math.BigDecimal
 import scala.math.BigDecimal.{RoundingMode, double2bigDecimal}
 
-import io.constellationnetwork.dag.l0.config.types.{AppConfig, MainnetRewardsConfig}
 import io.constellationnetwork.dag.l0.config.{DefaultDelegatedRewardsConfigProvider, DelegatedRewardsConfigProvider}
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalSnapshotContext
 import io.constellationnetwork.env.AppEnvironment
@@ -31,7 +29,7 @@ import io.constellationnetwork.schema.node.{DelegatedStakeRewardParameters, Rewa
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedSetSyntax}
+import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 
 import eu.timepit.refined.auto.autoUnwrap
 import eu.timepit.refined.types.all.PosLong
@@ -98,7 +96,7 @@ object DelegatedRewardsDistributor {
         lastSnapshotContext: GlobalSnapshotInfo,
         trigger: ConsensusTrigger,
         epochProgress: EpochProgress,
-        facilitators: NonEmptySet[Id],
+        facilitators: List[(Id, Address)],
         delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
         partitionedRecords: PartitionedStakeUpdates
       ): F[DelegationRewardsResult] = trigger match {
@@ -268,7 +266,7 @@ object DelegatedRewardsDistributor {
 
       private def calculateNodeOperatorRewards(
         nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
-        facilitators: NonEmptySet[Id],
+        facilitators: List[(Id, Address)],
         epochProgress: EpochProgress,
         totalRewards: Amount,
         lastSnapshotContext: GlobalSnapshotInfo
@@ -293,18 +291,18 @@ object DelegatedRewardsDistributor {
           else staticValidatorRewardPool / BigDecimal(facilitators.size)
 
         // Static rewards for all facilitators
-        val staticRewardsList = facilitators.toList.flatMap { nodeId =>
-          nodeParametersMap.get(nodeId).flatMap { case (params, _) =>
-                val staticReward = perValidatorStaticReward.setScale(0, RoundingMode.HALF_UP).toLong
-                if (staticReward > 0)
-                  Some(
-                    RewardTransaction(
-                      params.value.source,
-                      TransactionAmount(PosLong.unsafeFrom(staticReward))
-                    )
-                  )
-                else None
-          }
+        val staticRewardsList = facilitators.flatMap {
+          case (_, address) =>
+            val staticReward = perValidatorStaticReward.setScale(0, RoundingMode.HALF_UP).toLong
+            if (staticReward > 0)
+              Some(
+                RewardTransaction(
+                  address,
+                  TransactionAmount(PosLong.unsafeFrom(staticReward))
+                )
+              )
+            else None
+
         }
 
         // Get activeDelegatedStakes from the facilitators to calculate stake proportions
@@ -312,15 +310,16 @@ object DelegatedRewardsDistributor {
           lastSnapshotContext.activeDelegatedStakes.getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
 
         // Calculate stake amount for each facilitator
-        val facilitatorStakes = facilitators.toList.flatMap { nodeId =>
-          val nodeStakeAmount = activeDelegatedStakes.values.flatten.filter { record =>
-            record.event.value.nodeId.toId == nodeId
-          }.map(_.event.value.amount.value.value).sum
+        val facilitatorStakes = facilitators.flatMap {
+          case (nodeId, _) =>
+            val nodeStakeAmount = activeDelegatedStakes.values.flatten.filter { record =>
+              record.event.value.nodeId.toId == nodeId
+            }.map(_.event.value.amount.value.value).sum
 
-          nodeParametersMap.get(nodeId).map {
-            case (params, _) =>
-              (nodeId, params.value, nodeStakeAmount)
-          }
+            nodeParametersMap.get(nodeId).map {
+              case (params, _) =>
+                (nodeId, params.value, nodeStakeAmount)
+            }
         }
 
         // Calculate total stake across all facilitators
@@ -382,7 +381,7 @@ object DelegatedRewardsDistributor {
       private def applyDistribution(
         lastSnapshotContext: GlobalSnapshotInfo,
         epochProgress: EpochProgress,
-        facilitators: NonEmptySet[Id],
+        facilitators: List[(Id, Address)],
         delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
         partitionedRecords: PartitionedStakeUpdates
       ): F[DelegationRewardsResult] =

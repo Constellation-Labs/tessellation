@@ -397,7 +397,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
         context,
         TimeTrigger,
         EpochProgress(100L),
-        NonEmptySet.of(nodeId1, nodeId2),
+        List((nodeId1, address1), (nodeId2, address2)),
         stakeAcceptanceResult,
         partitionedUpdates
       )
@@ -463,7 +463,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
         context,
         EventTrigger,
         EpochProgress(100L),
-        NonEmptySet.of(nodeId1),
+        List((nodeId1, address1)),
         stakeAcceptanceResult,
         partitionedUpdates
       )
@@ -558,7 +558,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
         initialContext,
         TimeTrigger,
         EpochProgress(100L),
-        NonEmptySet.of(nodeId1),
+        List((nodeId1, address1)),
         emptyAcceptanceResult,
         initialPartitionedUpdates
       )
@@ -584,7 +584,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
         context2,
         TimeTrigger,
         EpochProgress(200L),
-        NonEmptySet.of(nodeId1),
+        List((nodeId1, address1)),
         emptyAcceptanceResult,
         partitionedUpdates2
       )
@@ -702,7 +702,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
         context,
         TimeTrigger,
         EpochProgress(50L), // Before delegated rewards transition
-        NonEmptySet.of(nodeId1),
+        List((nodeId1, address1)),
         emptyAcceptanceResult,
         partitionedUpdates
       )
@@ -712,7 +712,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
         context,
         TimeTrigger,
         EpochProgress(100L), // At delegated rewards transition
-        NonEmptySet.of(nodeId1),
+        List((nodeId1, address1)),
         emptyAcceptanceResult,
         partitionedUpdates
       )
@@ -722,7 +722,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
         context,
         TimeTrigger,
         EpochProgress(150L), // After delegated rewards transition
-        NonEmptySet.of(nodeId1),
+        List((nodeId1, address1)),
         emptyAcceptanceResult,
         partitionedUpdates
       )
@@ -893,7 +893,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
         context,
         TimeTrigger,
         EpochProgress(150L),
-        NonEmptySet.of(nodeId1),
+        List((nodeId1, address1)),
         emptyAcceptanceResult,
         partitionedUpdates
       )
@@ -903,7 +903,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
         emptyContext,
         TimeTrigger,
         EpochProgress(150L),
-        NonEmptySet.of(nodeId1),
+        List((nodeId1, address1)),
         emptyAcceptanceResult,
         PartitionedStakeUpdates(SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty)
       )

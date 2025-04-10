@@ -174,43 +174,6 @@ object GlobalSnapshotConsensusFunctions {
         currentOrdinal.value >= v3MigrationOrdinal.value &&
           currentEpochProgress.value.value >= asOfEpoch.value.value
 
-      val rewards: RewardsInput => F[DelegationRewardsResult] = {
-            case ClassicRewardsInput(txs) =>
-              classicRewards
-                .distribute(lastArtifact, snapshotContext.balances, txs, trigger, events)
-                .map { rewardTxs =>
-                  DelegationRewardsResult(
-                    delegatorRewardsMap = Map.empty,
-                    updatedCreateDelegatedStakes = SortedMap.empty,
-                    updatedWithdrawDelegatedStakes = SortedMap.empty,
-                    nodeOperatorRewards = rewardTxs,
-                    withdrawalRewardTxs = SortedSet.empty,
-                    totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
-                  )
-                }
-
-            case DelegateRewardsInput(udsar, psu, ep) =>
-              val currentOrdinal = lastArtifact.ordinal.next
-
-              if (shouldUseDelegatedRewards(currentOrdinal, ep)) {
-                delegatedRewards
-                  .distribute(snapshotContext, trigger, ep, lastArtifact.proofs.map(_.id), udsar, psu)
-              } else {
-                classicRewards
-                  .distribute(lastArtifact, snapshotContext.balances, SortedSet.empty, trigger, events)
-                  .map { rewardTxs =>
-                    DelegationRewardsResult(
-                      delegatorRewardsMap = Map.empty,
-                      updatedCreateDelegatedStakes = SortedMap.empty,
-                      updatedWithdrawDelegatedStakes = SortedMap.empty,
-                      nodeOperatorRewards = rewardTxs,
-                      withdrawalRewardTxs = SortedSet.empty,
-                      totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
-                    )
-                  }
-              }
-          }
-
       def getLastArtifactHash = lastArtifactHasher.getLogic(lastArtifact.value.ordinal) match {
         case JsonHash => lastArtifactHasher.hash(lastArtifact.value)
         case KryoHash => lastArtifactHasher.hash(GlobalIncrementalSnapshotV1.fromGlobalIncrementalSnapshot(lastArtifact.value))
@@ -218,6 +181,46 @@ object GlobalSnapshotConsensusFunctions {
 
       for {
         lastArtifactHash <- getLastArtifactHash
+        facilitators <- lastArtifact.proofs.map(_.id).toList.traverse { peerId =>
+          peerId.toAddress.map(address => peerId -> address)
+        }
+        rewards = { (input: RewardsInput) =>
+          input match {
+            case ClassicRewardsInput(txs) =>
+              for {
+                rewardTxs <- classicRewards.distribute(lastArtifact, snapshotContext.balances, txs, trigger, events)
+                total = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
+              } yield
+                DelegationRewardsResult(
+                  delegatorRewardsMap = Map.empty,
+                  updatedCreateDelegatedStakes = SortedMap.empty,
+                  updatedWithdrawDelegatedStakes = SortedMap.empty,
+                  nodeOperatorRewards = rewardTxs,
+                  withdrawalRewardTxs = SortedSet.empty,
+                  totalEmittedRewardsAmount = total
+                )
+
+            case DelegateRewardsInput(udsar, psu, ep) =>
+              val currentOrdinal = lastArtifact.ordinal.next
+
+              if (shouldUseDelegatedRewards(currentOrdinal, ep)) {
+                delegatedRewards.distribute(snapshotContext, trigger, ep, facilitators, udsar, psu)
+              } else {
+                for {
+                  rewardTxs <- classicRewards.distribute(lastArtifact, snapshotContext.balances, SortedSet.empty, trigger, events)
+                  total = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
+                } yield
+                  DelegationRewardsResult(
+                    delegatorRewardsMap = Map.empty,
+                    updatedCreateDelegatedStakes = SortedMap.empty,
+                    updatedWithdrawDelegatedStakes = SortedMap.empty,
+                    nodeOperatorRewards = rewardTxs,
+                    withdrawalRewardTxs = SortedSet.empty,
+                    totalEmittedRewardsAmount = total
+                  )
+              }
+          }
+        }
         currentOrdinal = lastArtifact.ordinal.next
         currentEpochProgress = trigger match {
           case EventTrigger => lastArtifact.epochProgress
