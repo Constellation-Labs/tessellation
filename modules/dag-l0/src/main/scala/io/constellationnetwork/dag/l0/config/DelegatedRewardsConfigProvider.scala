@@ -55,7 +55,7 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
       ),
       AppEnvironment.Integrationnet -> EmissionConfigEntry(
         epochsPerYear = PosLong(732000L),
-        asOfEpoch = EpochProgress(752475L),
+        asOfEpoch = EpochProgress(752477L),
         iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target inflation
         iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial inflation
         lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda parameter

@@ -267,21 +267,12 @@ object DelegatedRewardsDistributor {
           } yield result
 
       private def calculateNodeOperatorRewards(
-        delegatorRewardsMap: Map[Address, Map[Id, Amount]],
         nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
-        nodesInConsensus: NonEmptySet[Id],
+        facilitators: NonEmptySet[Id],
         epochProgress: EpochProgress,
-        totalRewards: Amount
+        totalRewards: Amount,
+        lastSnapshotContext: GlobalSnapshotInfo
       ): F[SortedSet[RewardTransaction]] = {
-        // Collect total delegator rewards by node ID
-        val totalRewardsByNode = delegatorRewardsMap.values.foldLeft(Map.empty[Id, Long]) { (acc, nodeRewards) =>
-          nodeRewards.foldLeft(acc) {
-            case (nodeAcc, (nodeId, amount)) =>
-              val current = nodeAcc.getOrElse(nodeId, 0L)
-              nodeAcc.updated(nodeId, current + amount.value.value)
-          }
-        }
-
         // Get the configuration for this epoch
         val programsDistributionConfig = rewardCfg.programs(epochProgress)
         val reservedAddressWeights = programsDistributionConfig.weights.values.map(_.toBigDecimal)
@@ -291,60 +282,88 @@ object DelegatedRewardsDistributor {
         // Calculate the total weight for weight-based distribution
         val totalWeight = reservedAddressWeights.sum + validatorsWeight + delegatorsWeight
 
-        // Calculate the total reward pool for validator static rewards
+        // Calculate the total reward pool for validator static rewards - this is distributed evenly
         val staticValidatorRewardPool =
           if (totalWeight <= 0) BigDecimal(0)
           else BigDecimal(totalRewards.value.value) * validatorsWeight / totalWeight
 
-        // Calculate per-validator static rewards based on equal distribution among validators in consensus
+        // Calculate per-validator static rewards based on equal distribution among facilitators
         val perValidatorStaticReward =
-          if (nodesInConsensus.isEmpty) BigDecimal(0)
-          else staticValidatorRewardPool / BigDecimal(nodesInConsensus.size)
+          if (facilitators.isEmpty) BigDecimal(0)
+          else staticValidatorRewardPool / BigDecimal(facilitators.size)
 
-        // Calculate dynamic rewards based on network config settings and node parameters
-        val operatorRewardsList = totalRewardsByNode.toList.flatMap {
-          case (nodeId, totalDelegatorReward) =>
-            // Only process nodes that have parameters in the map and are in consensus
-            if (!nodesInConsensus.contains(nodeId)) None
-            else
-              nodeParametersMap.get(nodeId).flatMap {
-                case (params, _) =>
-                  // Get the operator percentage from node parameters
-                  val operatorPercentage = BigDecimal(params.value.delegatedStakeRewardParameters.reward)
-
-                  if (operatorPercentage <= 0 || totalDelegatorReward <= 0) None
-                  else {
-                    // Calculate dynamic reward component proportional to delegator rewards:
-                    val dynamicReward = (BigDecimal(totalDelegatorReward) * operatorPercentage)
-                      .setScale(0, RoundingMode.HALF_UP)
-                      .toLong
-
-                    // Calculate static reward component (each validator gets equal share)
-                    val staticReward = perValidatorStaticReward.setScale(0, RoundingMode.HALF_UP).toLong
-
-                    val transactions = Seq(
-                      // Static reward - base validator reward distributed evenly
-                      Option.when(staticReward > 0)(
-                        RewardTransaction(
-                          params.value.source,
-                          TransactionAmount(PosLong.unsafeFrom(staticReward))
-                        )
-                      ),
-                      // Dynamic reward - based on node parameters
-                      Option.when(dynamicReward > 0)(
-                        RewardTransaction(
-                          params.value.source,
-                          TransactionAmount(PosLong.unsafeFrom(dynamicReward))
-                        )
-                      )
-                    ).flatten
-
-                    if (transactions.nonEmpty) Some(transactions) else None
-                  }
-              }
+        // Static rewards for all facilitators
+        val staticRewardsList = facilitators.toList.flatMap { nodeId =>
+          nodeParametersMap.get(nodeId).flatMap { case (params, _) =>
+                val staticReward = perValidatorStaticReward.setScale(0, RoundingMode.HALF_UP).toLong
+                if (staticReward > 0)
+                  Some(
+                    RewardTransaction(
+                      params.value.source,
+                      TransactionAmount(PosLong.unsafeFrom(staticReward))
+                    )
+                  )
+                else None
+          }
         }
 
-        SortedSet.from(operatorRewardsList.flatten).pure[F]
+        // Get activeDelegatedStakes from the facilitators to calculate stake proportions
+        val activeDelegatedStakes =
+          lastSnapshotContext.activeDelegatedStakes.getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
+
+        // Calculate stake amount for each facilitator
+        val facilitatorStakes = facilitators.toList.flatMap { nodeId =>
+          val nodeStakeAmount = activeDelegatedStakes.values.flatten.filter { record =>
+            record.event.value.nodeId.toId == nodeId
+          }.map(_.event.value.amount.value.value).sum
+
+          nodeParametersMap.get(nodeId).map {
+            case (params, _) =>
+              (nodeId, params.value, nodeStakeAmount)
+          }
+        }
+
+        // Calculate total stake across all facilitators
+        val totalFacilitatorStake = facilitatorStakes.map(_._3).sum
+
+        // Calculate dynamic rewards for node operators proportional to their stake
+        val dynamicValidatorRewardPool =
+          if (totalWeight <= 0) BigDecimal(0)
+          else BigDecimal(totalRewards.value.value) * validatorsWeight / totalWeight
+
+        // Dynamic rewards - distributed proportionally based on stake and operator percentage
+        val dynamicRewardsList =
+          if (facilitatorStakes.isEmpty || totalFacilitatorStake <= 0) List.empty
+          else {
+            facilitatorStakes.flatMap {
+              case (nodeId, params, stakeAmount) =>
+                // Get the operator percentage from node parameters
+                val operatorPercentage = BigDecimal(params.delegatedStakeRewardParameters.reward)
+
+                // Calculate stake proportion
+                val stakeRatio = BigDecimal(stakeAmount) / BigDecimal(totalFacilitatorStake)
+
+                if (operatorPercentage <= 0 || stakeAmount <= 0) None
+                else {
+                  // Calculate dynamic reward based on stake proportion and operator percentage
+                  val dynamicReward = (dynamicValidatorRewardPool * stakeRatio * operatorPercentage)
+                    .setScale(0, RoundingMode.HALF_UP)
+                    .toLong
+
+                  if (dynamicReward > 0)
+                    Some(
+                      RewardTransaction(
+                        params.source,
+                        TransactionAmount(PosLong.unsafeFrom(dynamicReward))
+                      )
+                    )
+                  else None
+                }
+            }
+          }
+
+        // Combine static and dynamic rewards
+        SortedSet.from(staticRewardsList ++ dynamicRewardsList).pure[F]
       }
 
       private def calculateWithdrawalRewardTransactions(
@@ -420,11 +439,11 @@ object DelegatedRewardsDistributor {
 
           nodeOperatorRewards <-
             calculateNodeOperatorRewards(
-              delegatorRewardsMap,
               lastSnapshotContext.updateNodeParameters.getOrElse(SortedMap.empty),
               facilitators,
               epochProgress,
-              totalEmittedRewardsAmount
+              totalEmittedRewardsAmount,
+              lastSnapshotContext
             )
 
           withdrawalRewardTxs <-

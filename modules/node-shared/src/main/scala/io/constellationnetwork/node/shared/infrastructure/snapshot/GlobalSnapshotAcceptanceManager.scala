@@ -247,6 +247,14 @@ object GlobalSnapshotAcceptanceManager {
           withdrawalRewardTxs ++ nodeOperatorRewards
         )
 
+        currencyBalances = currencySnapshots.toList.map {
+          case (_, Left(_))              => Map.empty[Option[Address], SortedMap[Address, Balance]]
+          case (address, Right((_, si))) => Map(address.some -> si.balances)
+        }
+          .foldLeft(Map.empty[Option[Address], SortedMap[Address, Balance]])(_ ++ _)
+
+        globalBalances = Map(none[Address] -> updatedBalancesByRewards)
+
         spendActions = incomingCurrencySnapshots.toList.map {
           case (_, Left(_))             => Map.empty[Address, List[SharedArtifact]]
           case (address, Right((s, _))) => Map(address -> (s.artifacts.getOrElse(SortedSet.empty[SharedArtifact]).toList))
@@ -256,13 +264,6 @@ object GlobalSnapshotAcceptanceManager {
           .mapValues(_.collect { case sa: SpendAction => sa })
           .filter { case (_, actions) => actions.nonEmpty }
           .toMap
-
-        currencyBalances = currencySnapshots.toList.map {
-          case (_, Left(_))              => Map.empty[Option[Address], SortedMap[Address, Balance]]
-          case (address, Right((_, si))) => Map(address.some -> si.balances)
-        }
-          .foldLeft(Map.empty[Option[Address], SortedMap[Address, Balance]])(_ ++ _)
-        globalBalances = Map(none[Address] -> updatedBalancesByRewards)
 
         lastActiveAllowSpends = lastSnapshotContext.activeAllowSpends.getOrElse(
           SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
