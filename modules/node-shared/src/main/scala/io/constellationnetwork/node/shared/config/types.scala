@@ -13,6 +13,7 @@ import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.{NodeState, RewardFraction}
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.transaction.TransactionAmount
 import io.constellationnetwork.schema.{NonNegFraction, SnapshotOrdinal}
 
 import com.comcast.ip4s.{Host, Port}
@@ -167,10 +168,27 @@ object types {
     dagPrices: Map[EpochProgress, NonNegFraction]
   )
 
+  case class ProgramsDistributionConfig(
+    weights: Map[Address, NonNegFraction],
+    validatorsWeight: NonNegFraction,
+    delegatorsWeight: NonNegFraction
+  )
+
+  case class OneTimeReward(epoch: EpochProgress, address: Address, amount: TransactionAmount)
+
+  sealed trait RewardsConfig
+
+  case class ClassicRewardsConfig(
+    programs: EpochProgress => ProgramsDistributionConfig,
+    rewardsPerEpoch: Map[EpochProgress, Amount],
+    oneTimeRewards: List[OneTimeReward]
+  ) extends RewardsConfig
+
   case class DelegatedRewardsConfig(
     flatInflationRate: NonNegFraction,
-    emissionConfig: Map[AppEnvironment, EmissionConfigEntry]
-  )
+    emissionConfig: Map[AppEnvironment, EmissionConfigEntry],
+    percentDistribution: Map[AppEnvironment, ProgramsDistributionConfig]
+  ) extends RewardsConfig
 
   case class TrustStorageConfig(
     ordinalTrustUpdateInterval: NonNegLong,

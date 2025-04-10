@@ -1,7 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
-import cats.data.NonEmptyList
 import cats.data.Validated.{Invalid, Valid}
+import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.Async
 import cats.syntax.all._
 import cats.{MonadThrow, Parallel}
@@ -13,6 +13,7 @@ import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnap
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.merkletree.syntax._
+import io.constellationnetwork.node.shared.config.types.RewardsConfig
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
   UpdateDelegatedStakeAcceptanceManager,
@@ -37,6 +38,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.{
   TokenLockBlockAcceptanceManager,
   TokenLockBlockAcceptanceResult
 }
+import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -76,7 +78,7 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
     lastSnapshotContext: GlobalSnapshotInfo,
     lastActiveTips: SortedSet[ActiveTip],
     lastDeprecatedTips: SortedSet[DeprecatedTip],
-    delegatedRewardsDistributor: DelegatedRewardsDistributor[F],
+    calculateRewardsFn: RewardsInput => F[DelegationRewardsResult],
     validationType: StateChannelValidationType,
     lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
@@ -132,7 +134,7 @@ object GlobalSnapshotAcceptanceManager {
       lastSnapshotContext: GlobalSnapshotInfo,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
-      delegatedRewardsDistributor: DelegatedRewardsDistributor[F],
+      calculateRewardsFn: RewardsInput => F[DelegationRewardsResult],
       validationType: StateChannelValidationType,
       lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
@@ -183,8 +185,8 @@ object GlobalSnapshotAcceptanceManager {
         ) ++ acceptedUpdateNodeParameters.view.mapValues(unp => (unp, ordinal))
 
         acceptedTransactions = acceptanceResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
-        nodesInConsensus = SortedSet.from(acceptedTransactions.map(_.proofs.head.id))
         updatedGlobalBalances = lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances
+
         StateChannelAcceptanceResult(
           scSnapshots,
           currencySnapshots,
@@ -208,9 +210,6 @@ object GlobalSnapshotAcceptanceManager {
           acceptedTransactions
         )
 
-        // Calculate total rewards to mint for this snapshot
-        totalEmittedRewardsAmount <- delegatedRewardsDistributor.calculateTotalRewardsToMint(epochProgress)
-
         (
           unexpiredCreateDelegatedStakes,
           expiredCreateDelegatedStakes,
@@ -218,95 +217,30 @@ object GlobalSnapshotAcceptanceManager {
           expiredWithdrawalsDelegatedStaking
         ) <- acceptDelegatedStakes(lastSnapshotContext, epochProgress)
 
-        // Calculate delegator rewards for all active and newly accepted delegated stakes
-        delegatorRewardsMap <-
-          if (ordinal < tessellation3MigrationStartingOrdinal) Map.empty[Address, Map[Id, Amount]].pure[F]
-          else {
-            val allActiveDelegatorRecordsBeforeRewards =
-              unexpiredCreateDelegatedStakes |+| delegatedStakeAcceptanceResult.acceptedCreates.map {
-                case (addr, st) =>
-                  addr -> st.map { case (ev, ord) => DelegatedStakeRecord(ev, ord, Balance.empty, Amount(NonNegLong.unsafeFrom(0L))) }
-              }
-
-            delegatedRewardsDistributor
-              .calculateDelegatorRewards(
-                allActiveDelegatorRecordsBeforeRewards,
-                updatedUpdateNodeParameters,
-                epochProgress,
-                totalEmittedRewardsAmount
+        DelegationRewardsResult(
+          delegatorRewardsMap,
+          updatedCreateDelegatedStakes,
+          updatedWithdrawDelegatedStakes,
+          nodeOperatorRewards,
+          withdrawalRewardTxs,
+          totalEmittedRewardsAmount
+        ) <-
+          if (ordinal.value < tessellation3MigrationStartingOrdinal.value) {
+            calculateRewardsFn(ClassicRewardsInput(acceptedTransactions))
+          } else {
+            calculateRewardsFn(
+              DelegateRewardsInput(
+                delegatedStakeAcceptanceResult,
+                PartitionedStakeUpdates(
+                  unexpiredCreateDelegatedStakes,
+                  expiredCreateDelegatedStakes,
+                  unexpiredWithdrawalsDelegatedStaking,
+                  expiredWithdrawalsDelegatedStaking
+                ),
+                epochProgress
               )
-          }
-
-        // Apply the calculated rewards to delegated stake records
-        updatedCreateDelegatedStakes <-
-          if (ordinal < tessellation3MigrationStartingOrdinal) SortedMap.empty[Address, List[DelegatedStakeRecord]].pure[F]
-          else {
-            val allActiveDelegatorRecordsBeforeRewards =
-              unexpiredCreateDelegatedStakes |+| delegatedStakeAcceptanceResult.acceptedCreates.map {
-                case (addr, st) =>
-                  addr -> st.map { case (ev, ord) => DelegatedStakeRecord(ev, ord, Balance.empty, Amount(NonNegLong.unsafeFrom(0L))) }
-              }
-
-            allActiveDelegatorRecordsBeforeRewards.map {
-              case (addr, recs) =>
-                addr -> recs.map {
-                  case DelegatedStakeRecord(event, ord, bal, _) =>
-                    val nodeSpecificReward = delegatorRewardsMap
-                      .get(addr)
-                      .flatMap(_.get(event.value.nodeId.toId))
-                      .getOrElse(Amount.empty)
-
-                    val disbursedBalance = bal.plus(nodeSpecificReward).toOption.getOrElse(Balance.empty)
-
-                    DelegatedStakeRecord(event, ord, disbursedBalance, nodeSpecificReward)
-                }
-            }.pure[F]
-          }
-
-        // pull reward balance from last snapshot active delegation for each accepted withdrawal
-        updatedWithdrawDelegatedStakes <-
-          if (ordinal < tessellation3MigrationStartingOrdinal) SortedMap.empty[Address, List[PendingWithdrawal]].pure[F]
-          else
-            delegatedStakeAcceptanceResult.acceptedWithdrawals.toList.traverse {
-              case (addr, acceptedWithdrawls) =>
-                acceptedWithdrawls.traverse {
-                  case (ev, ep) =>
-                    lastSnapshotContext.activeDelegatedStakes
-                      .flatTraverse(_.get(addr).flatTraverse {
-                        _.findM { s =>
-                          DelegatedStakeReference.of(s.event).map(_.hash === ev.stakeRef)
-                        }.map(_.map(rec => PendingWithdrawal(ev, rec.rewards, ep)))
-                      })
-                      .flatMap(Async[F].fromOption(_, new RuntimeException("Unexpected None when processing user delegations")))
-                }.map(addr -> _)
-            }.map(_.toSortedMap).map(unexpiredWithdrawalsDelegatedStaking |+| _)
-
-        // Calculate node operator rewards based on delegator rewards, this includes both static and dynamic node rewards
-        nodeOperatorRewards <-
-          if (ordinal < tessellation3MigrationStartingOrdinal) SortedSet.empty[RewardTransaction].pure[F]
-          else
-            delegatedRewardsDistributor.calculateNodeOperatorRewards(
-              delegatorRewardsMap,
-              updatedUpdateNodeParameters,
-              nodesInConsensus,
-              epochProgress,
-              totalEmittedRewardsAmount
             )
-
-        // Generate reward transactions for expiring withdrawals
-        withdrawalRewardTxs <-
-          if (ordinal < tessellation3MigrationStartingOrdinal) SortedSet.empty[RewardTransaction].pure[F]
-          else
-            delegatedRewardsDistributor.calculateWithdrawalRewardTransactions(
-              expiredWithdrawalsDelegatedStaking.toList.flatMap {
-                case (address, withdrawals) =>
-                  withdrawals.mapFilter { withdrawal =>
-                    Option.when(withdrawal.rewards.value > Balance.empty.value) {
-                      (address, Amount(NonNegLong.unsafeFrom(withdrawal.rewards.value.value)))
-                    }
-                  }
-              }.toMap
-            )
+          }
 
         (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
           updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,

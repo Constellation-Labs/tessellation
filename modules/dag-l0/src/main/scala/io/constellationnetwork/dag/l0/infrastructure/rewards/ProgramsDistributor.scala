@@ -4,8 +4,8 @@ import cats.data.StateT
 import cats.implicits.catsSyntaxEitherId
 import cats.syntax.foldable._
 
-import io.constellationnetwork.dag.l0.config.types.ProgramsDistributionConfig
 import io.constellationnetwork.ext.refined._
+import io.constellationnetwork.node.shared.config.types.ProgramsDistributionConfig
 import io.constellationnetwork.schema.address.{Address, DAGAddressRefined}
 import io.constellationnetwork.schema.balance.Amount
 
