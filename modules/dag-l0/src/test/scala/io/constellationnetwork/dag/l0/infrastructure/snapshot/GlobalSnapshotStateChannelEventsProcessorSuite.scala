@@ -108,6 +108,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       validationErrorStorage <- CurrencySnapshotEventValidationErrorStorage.make(TestValidationErrorStorageMaxSize)
       creator = CurrencySnapshotCreator
         .make[IO](
+          SnapshotOrdinal.MinValue,
           currencySnapshotAcceptanceManager,
           None,
           SnapshotSizeConfig(Long.MaxValue, Long.MaxValue),

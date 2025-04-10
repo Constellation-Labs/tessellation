@@ -10,7 +10,7 @@ import cats.syntax.option._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.dag.l0.config.types.RewardsConfig._
+import io.constellationnetwork.dag.l0.config.types.MainnetRewardsConfig._
 import io.constellationnetwork.dag.l0.config.types._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.ext.cats.effect.ResourceIO
@@ -18,6 +18,7 @@ import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.kryo._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.config.types.ClassicRewardsConfig
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
@@ -53,8 +54,8 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     h = Hasher.forJson[IO]
   } yield (h, sp, mkKeyPair)
 
-  val config: RewardsConfig = RewardsConfig()
-  val singleEpochRewardsConfig: RewardsConfig = config.copy(rewardsPerEpoch = SortedMap(EpochProgress.MaxValue -> Amount(100L)))
+  val config: ClassicRewardsConfig = classicMainnetRewardsConfig
+  val singleEpochRewardsConfig: ClassicRewardsConfig = config.copy(rewardsPerEpoch = SortedMap(EpochProgress.MaxValue -> Amount(100L)))
   val totalSupply: Amount = Amount(1599999999_74784000L) // approx because of rounding
   val expectedWeightsSum: BigDecimal = BigDecimal(1.0)
 
@@ -113,7 +114,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     incremental = Signed(GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](snapshot).unsafeRunSync(), proofs)
   } yield incremental
 
-  def makeRewards(config: RewardsConfig)(
+  def makeRewards(config: ClassicRewardsConfig)(
     implicit sp: SecurityProvider[IO]
   ): Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent] = {
     val programsDistributor = ProgramsDistributor.make

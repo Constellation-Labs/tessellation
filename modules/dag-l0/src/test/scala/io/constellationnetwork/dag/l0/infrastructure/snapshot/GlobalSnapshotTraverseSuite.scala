@@ -310,6 +310,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       currencySnapshotCreator =
         CurrencySnapshotCreator
           .make[IO](
+            SnapshotOrdinal.MinValue,
             currencySnapshotAcceptanceManager,
             None,
             SnapshotSizeConfig(Long.MaxValue, Long.MaxValue),
