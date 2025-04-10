@@ -12,6 +12,7 @@ import cats.syntax.functor._
 
 import scala.collection.immutable.SortedMap
 
+import io.constellationnetwork.dag.l0.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
   GlobalSnapshotEventCutter,
@@ -75,6 +76,7 @@ object GlobalSnapshotConsensus {
     feeConfigs: SortedMap[SnapshotOrdinal, FeeCalculatorConfig],
     client: Client[F],
     session: Session[F],
+    classicRewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
     delegatorRewards: DelegatedRewardsDistributor[F],
     txHasher: Hasher[F],
     restartService: RestartService[F, R],
@@ -123,12 +125,16 @@ object GlobalSnapshotConsensus {
       consensusFunctions = GlobalSnapshotConsensusFunctions.make[F](
         snapshotAcceptanceManager,
         collateral,
+        classicRewards,
         delegatorRewards,
         GlobalSnapshotEventCutter.make[F](
           appConfig.snapshot.consensus.eventCutter.maxBinarySizeBytes,
           SnapshotBinaryFeeCalculator.make(appConfig.shared.feeConfigs)
         ),
-        updateNodeParametersCutter
+        updateNodeParametersCutter,
+        appConfig.environment,
+        DefaultDelegatedRewardsConfigProvider,
+        sharedCfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue)
       )
 
       consensusStateAdvancer = GlobalSnapshotConsensusStateAdvancer

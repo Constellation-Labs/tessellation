@@ -60,12 +60,22 @@ object Services {
     txHasher: Hasher[F]
   ): F[Services[F, R]] =
     for {
-      delegatorRewards <- DelegatedRewardsDistributor
+      classicRewards <- Rewards
         .make[F](
           cfg.rewards,
-          cfg.environment
+          ProgramsDistributor.make,
+          FacilitatorDistributor.make
         )
         .pure[F]
+
+      delegatorRewards <- HasherSelector[F].withCurrent { implicit hasher =>
+        DelegatedRewardsDistributor
+          .make[F](
+            cfg.rewards,
+            cfg.environment
+          )
+          .pure[F]
+      }
 
       consensus <- HasherSelector[F].withCurrent { implicit hs =>
         GlobalSnapshotConsensus
@@ -88,6 +98,7 @@ object Services {
             feeConfigs = cfg.shared.feeConfigs,
             client,
             session,
+            classicRewards,
             delegatorRewards,
             txHasher,
             sharedServices.restart,

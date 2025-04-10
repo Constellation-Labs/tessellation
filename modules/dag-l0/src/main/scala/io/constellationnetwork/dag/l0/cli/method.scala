@@ -29,7 +29,7 @@ object method {
 
     def appConfig(c: AppConfigReader, shared: SharedConfig): AppConfig = AppConfig(
       trust = c.trust,
-      rewards = RewardsConfig(),
+      rewards = MainnetRewardsConfig.classicMainnetRewardsConfig,
       snapshot = c.snapshot,
       stateChannel = c.stateChannel,
       peerDiscovery = c.peerDiscovery,
