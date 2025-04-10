@@ -252,7 +252,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       lastSnapshotContext: GlobalSnapshotContext,
       trigger: ConsensusTrigger,
       epochProgress: EpochProgress,
-      facilitators: NonEmptySet[ID.Id],
+      facilitators: List[(Address, ID.Id)],
       delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
       partitionedRecords: PartitionedStakeUpdates
     ): GlobalSnapshotConsensusFunctionsSuite.F[DelegationRewardsResult] =

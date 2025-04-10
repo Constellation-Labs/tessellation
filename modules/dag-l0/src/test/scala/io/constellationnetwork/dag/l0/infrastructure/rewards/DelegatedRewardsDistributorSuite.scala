@@ -141,27 +141,23 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
   )
 
   test("calculateTotalRewardsToMint should calculate total rewards correctly with emission formula") {
-    val configProvider = new DelegatedRewardsConfigProvider {
-      def getConfig(): DelegatedRewardsConfig = simpleEmissionConfig
-    }
-
     for {
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Test with epoch before emission formula kicks in
       beforeEmission <- DelegatedRewardsDistributor
-        .make[IO](rewardsConfig, AppEnvironment.Dev, configProvider)
+        .make[IO](rewardsConfig, AppEnvironment.Dev, simpleEmissionConfig)
         .calculateTotalRewardsToMint(EpochProgress(50L))
 
       // Test with epoch at transition point
       atTransition <- DelegatedRewardsDistributor
-        .make[IO](rewardsConfig, AppEnvironment.Dev, configProvider)
+        .make[IO](rewardsConfig, AppEnvironment.Dev, simpleEmissionConfig)
         .calculateTotalRewardsToMint(EpochProgress(100L))
 
       // Test with epoch after transition with price change
       afterTransition1 <- DelegatedRewardsDistributor
-        .make[IO](rewardsConfig, AppEnvironment.Dev, configProvider)
+        .make[IO](rewardsConfig, AppEnvironment.Dev, simpleEmissionConfig)
         .calculateTotalRewardsToMint(EpochProgress(125L))
     } yield {
       // Before emission: should use fixed amount from config
@@ -217,23 +213,18 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
       )
     )
 
-    // Create provider for this test
-    val configProvider = new DelegatedRewardsConfigProvider {
-      def getConfig(): DelegatedRewardsConfig = testConfig
-    }
-
     for {
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Initial emission at epoch 100
       initialEmission <- DelegatedRewardsDistributor
-        .make[IO](rewardsConfig, AppEnvironment.Dev, configProvider)
+        .make[IO](rewardsConfig, AppEnvironment.Dev, testConfig)
         .calculateTotalRewardsToMint(EpochProgress(100L))
 
       // Emission after 6 months (0.5 years) with price doubling
       laterEmission <- DelegatedRewardsDistributor
-        .make[IO](rewardsConfig, AppEnvironment.Dev, configProvider)
+        .make[IO](rewardsConfig, AppEnvironment.Dev, testConfig)
         .calculateTotalRewardsToMint(EpochProgress(106L))
     } yield
       // With higher price and time decay, emissions should decrease
@@ -244,10 +235,6 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
   }
 
   test("calculateTotalRewardsToMint should follow the emission formula with deterministic precision") {
-    // Create config provider for this test
-    val configProvider = new DelegatedRewardsConfigProvider {
-      def getConfig(): DelegatedRewardsConfig = delegatedRewardsConfig
-    }
 
     for {
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
@@ -255,17 +242,17 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
 
       // Test with epoch before emission formula kicks in - should use rewardsPerEpoch
       beforeEmission <- DelegatedRewardsDistributor
-        .make[IO](rewardsConfig, AppEnvironment.Dev, configProvider)
+        .make[IO](rewardsConfig, AppEnvironment.Dev, delegatedRewardsConfig)
         .calculateTotalRewardsToMint(EpochProgress(4999500L))
 
       // Test with epoch just at transition - should use formula
       atTransition <- DelegatedRewardsDistributor
-        .make[IO](rewardsConfig, AppEnvironment.Dev, configProvider)
+        .make[IO](rewardsConfig, AppEnvironment.Dev, delegatedRewardsConfig)
         .calculateTotalRewardsToMint(EpochProgress(5000000L))
 
       // Test with epoch after transition - should use formula with time decay
       afterTransition <- DelegatedRewardsDistributor
-        .make[IO](rewardsConfig, AppEnvironment.Dev, configProvider)
+        .make[IO](rewardsConfig, AppEnvironment.Dev, delegatedRewardsConfig)
         .calculateTotalRewardsToMint(EpochProgress(5100000L))
     } yield {
       // Before emission formula: should return configured amount from config
@@ -288,9 +275,6 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
   }
 
   test("distribute should correctly distribute rewards") {
-    val configProvider = new DelegatedRewardsConfigProvider {
-      def getConfig(): DelegatedRewardsConfig = delegatedRewardsConfig
-    }
 
     val stakeCreate1 = Signed(
       UpdateDelegatedStake.Create(
@@ -390,14 +374,14 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Create distributor
-      distributor = DelegatedRewardsDistributor.make[IO](rewardsConfig, AppEnvironment.Dev, configProvider)
+      distributor = DelegatedRewardsDistributor.make[IO](rewardsConfig, AppEnvironment.Dev, delegatedRewardsConfig)
 
       // Test with time trigger
       result <- distributor.distribute(
         context,
         TimeTrigger,
         EpochProgress(100L),
-        NonEmptySet.of(nodeId1, nodeId2),
+        List(address1 -> nodeId1, address2 -> nodeId2),
         stakeAcceptanceResult,
         partitionedUpdates
       )
@@ -412,9 +396,6 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
   }
 
   test("distribute should return empty result on EventTrigger") {
-    val configProvider = new DelegatedRewardsConfigProvider {
-      def getConfig(): DelegatedRewardsConfig = delegatedRewardsConfig
-    }
 
     // Create mock context
     val context = GlobalSnapshotInfo(
@@ -456,14 +437,14 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Create distributor
-      distributor = DelegatedRewardsDistributor.make[IO](rewardsConfig, AppEnvironment.Dev, configProvider)
+      distributor = DelegatedRewardsDistributor.make[IO](rewardsConfig, AppEnvironment.Dev, delegatedRewardsConfig)
 
       // Test with event trigger - should return empty result
       result <- distributor.distribute(
         context,
         EventTrigger,
         EpochProgress(100L),
-        NonEmptySet.of(nodeId1),
+        List(address1 -> nodeId1),
         stakeAcceptanceResult,
         partitionedUpdates
       )
@@ -477,10 +458,6 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
   }
 
   test("rewards should accumulate across epochs in distribute") {
-    val configProvider = new DelegatedRewardsConfigProvider {
-      def getConfig(): DelegatedRewardsConfig = delegatedRewardsConfig
-    }
-
     val stakeCreate1 = Signed(
       UpdateDelegatedStake.Create(
         source = address1,
@@ -551,14 +528,14 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Create distributor
-      distributor = DelegatedRewardsDistributor.make[IO](rewardsConfig, AppEnvironment.Dev, configProvider)
+      distributor = DelegatedRewardsDistributor.make[IO](rewardsConfig, AppEnvironment.Dev, delegatedRewardsConfig)
 
       // First epoch distribution
       result1 <- distributor.distribute(
         initialContext,
         TimeTrigger,
         EpochProgress(100L),
-        NonEmptySet.of(nodeId1),
+        List(address1 -> nodeId1),
         emptyAcceptanceResult,
         initialPartitionedUpdates
       )
@@ -584,7 +561,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
         context2,
         TimeTrigger,
         EpochProgress(200L),
-        NonEmptySet.of(nodeId1),
+        List(address1 -> nodeId1),
         emptyAcceptanceResult,
         partitionedUpdates2
       )
@@ -621,9 +598,6 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
   }
 
   test("distribute should handle both distribution mechanisms when migrating from classic to delegated") {
-    val configProvider = new DelegatedRewardsConfigProvider {
-      def getConfig(): DelegatedRewardsConfig = delegatedRewardsConfig
-    }
 
     val stakeCreate1 = Signed(
       UpdateDelegatedStake.Create(
@@ -695,14 +669,14 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Create distributor
-      distributor = DelegatedRewardsDistributor.make[IO](rewardsConfig, AppEnvironment.Dev, configProvider)
+      distributor = DelegatedRewardsDistributor.make[IO](rewardsConfig, AppEnvironment.Dev, delegatedRewardsConfig)
 
       // Test with time trigger at an epoch before transition
       resultBeforeTransition <- distributor.distribute(
         context,
         TimeTrigger,
         EpochProgress(50L), // Before delegated rewards transition
-        NonEmptySet.of(nodeId1),
+        List(address1 -> nodeId1),
         emptyAcceptanceResult,
         partitionedUpdates
       )
@@ -712,7 +686,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
         context,
         TimeTrigger,
         EpochProgress(100L), // At delegated rewards transition
-        NonEmptySet.of(nodeId1),
+        List(address1 -> nodeId1),
         emptyAcceptanceResult,
         partitionedUpdates
       )
@@ -722,7 +696,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
         context,
         TimeTrigger,
         EpochProgress(150L), // After delegated rewards transition
-        NonEmptySet.of(nodeId1),
+        List(address1 -> nodeId1),
         emptyAcceptanceResult,
         partitionedUpdates
       )
@@ -762,15 +736,11 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
       )
     )
 
-    val configProvider = new DelegatedRewardsConfigProvider {
-      def getConfig(): DelegatedRewardsConfig = customConfig
-    }
-
     for {
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
-      distributor = DelegatedRewardsDistributor.make[IO](rewardsConfig, AppEnvironment.Dev, configProvider)
+      distributor = DelegatedRewardsDistributor.make[IO](rewardsConfig, AppEnvironment.Dev, customConfig)
 
       // Test rewards calculation at different epochs relative to transition
       beforeTransition <- distributor.calculateTotalRewardsToMint(EpochProgress(999L))
@@ -792,10 +762,6 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
   }
 
   test("distribute should correctly handle edge cases including zero stakes and rewards") {
-    val configProvider = new DelegatedRewardsConfigProvider {
-      def getConfig(): DelegatedRewardsConfig = delegatedRewardsConfig
-    }
-
     val stakeCreate1 = Signed(
       UpdateDelegatedStake.Create(
         source = address1,
@@ -886,14 +852,14 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Create distributor
-      distributor = DelegatedRewardsDistributor.make[IO](rewardsConfig, AppEnvironment.Dev, configProvider)
+      distributor = DelegatedRewardsDistributor.make[IO](rewardsConfig, AppEnvironment.Dev, delegatedRewardsConfig)
 
       // Test with zero stakes and zero rewards configuration
       resultZeroStakes <- distributor.distribute(
         context,
         TimeTrigger,
         EpochProgress(150L),
-        NonEmptySet.of(nodeId1),
+        List(address1 -> nodeId1),
         emptyAcceptanceResult,
         partitionedUpdates
       )
@@ -903,7 +869,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
         emptyContext,
         TimeTrigger,
         EpochProgress(150L),
-        NonEmptySet.of(nodeId1),
+        List(address1 -> nodeId1),
         emptyAcceptanceResult,
         PartitionedStakeUpdates(SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty)
       )
@@ -914,9 +880,9 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
 
       expect(resultZeroStakes.totalEmittedRewardsAmount.value.value > 0) &&
         expect(resultZeroStakes.delegatorRewardsMap.isEmpty) &&
-        expect(resultZeroStakes.nodeOperatorRewards.isEmpty) &&
+        expect(resultZeroStakes.nodeOperatorRewards.nonEmpty) &&
         expect(resultEmptyContext.totalEmittedRewardsAmount.value.value > 0) &&
         expect(resultEmptyContext.delegatorRewardsMap.isEmpty) &&
-        expect(resultEmptyContext.nodeOperatorRewards.isEmpty)
+        expect(resultEmptyContext.nodeOperatorRewards.nonEmpty)
   }
 }
