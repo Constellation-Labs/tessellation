@@ -164,7 +164,6 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             currencySnapshotValidator = CurrencySnapshotValidator
               .make[IO](SnapshotOrdinal.MinValue, currencySnapshotCreator, validators.signedValidator, None, None)
 
-
             currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
             globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L)).asResource
             jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[IO].asResource

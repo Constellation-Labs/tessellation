@@ -19,7 +19,7 @@ import eu.timepit.refined.types.numeric._
 import eu.timepit.refined.types.string.NonEmptyString
 import io.estatico.newtype.macros.newtype
 
-import types.RewardsConfig._
+import types.MainnetRewardsConfig._
 
 object types {
   case class AppConfigReader(
@@ -33,7 +33,7 @@ object types {
   case class AppConfig(
     trust: TrustConfig,
     snapshot: SnapshotConfig,
-    rewards: RewardsConfig,
+    rewards: ClassicRewardsConfig,
     stateChannel: StateChannelConfig,
     peerDiscovery: PeerDiscoveryConfig,
     incremental: IncrementalConfig,
@@ -74,32 +74,7 @@ object types {
     daemon: TrustDaemonConfig
   )
 
-  @newtype
-  case class Weight(value: NonNegLong)
-
-  case class ProgramsDistributionConfig(
-    weights: Map[Address, NonNegFraction],
-    validatorsWeight: NonNegFraction,
-    delegatorsWeight: NonNegFraction
-  )
-
-  case class OneTimeReward(epoch: EpochProgress, address: Address, amount: TransactionAmount)
-
-  case class RewardsConfig(
-    programs: EpochProgress => ProgramsDistributionConfig = mainnetProgramsDistributionConfig,
-    rewardsPerEpoch: Map[EpochProgress, Amount] = mainnetRewardsPerEpoch,
-    oneTimeRewards: List[OneTimeReward] = List(
-      // Transferring final balance of 4,343,029,488,479,231 from DAGSTARDUSTCOLLECTIVEHZOIPHXZUBFGNXWJETZVSPAPAHMLXS
-      // as of the last minting it received awards (Epoch 1352274)
-      OneTimeReward(EpochProgress(1353745L), stardustNewPrimary, TransactionAmount(4_343_029_488_479_231L)),
-      // One-time minting to treasure wallets according to new metanomics
-      OneTimeReward(EpochProgress(1928500L), treasureWalletMetanomics1, TransactionAmount(150_000_000_000_000_00L)),
-      OneTimeReward(EpochProgress(1928500L), protocolWalletMetanomics, TransactionAmount(150_000_000_000_000_00L)),
-      OneTimeReward(EpochProgress(1928500L), treasureWalletMetanomics3, TransactionAmount(150_000_000_000_000_00L))
-    )
-  )
-
-  object RewardsConfig {
+  object MainnetRewardsConfig {
     val stardustPrimary: Address = Address("DAGSTARDUSTCOLLECTIVEHZOIPHXZUBFGNXWJETZVSPAPAHMLXS")
     val stardustNewPrimary: Address = Address("DAG8vD8BUhCpTnYXEadQVGhHjgxEZZiafbzwmKKh")
     val stardustSecondary: Address = Address("DAG8VT7bxjs1XXBAzJGYJDaeyNxuThikHeUTp9XY")
@@ -177,6 +152,20 @@ object types {
       EpochProgress(2592000L) -> Amount(329_21810694L),
       EpochProgress(3888000L) -> Amount(164_60905347L),
       EpochProgress(5184000L) -> Amount(82_30452674L)
+    )
+
+    val classicMainnetRewardsConfig: ClassicRewardsConfig = ClassicRewardsConfig(
+      mainnetProgramsDistributionConfig,
+      mainnetRewardsPerEpoch,
+      List(
+        // Transferring final balance of 4,343,029,488,479,231 from DAGSTARDUSTCOLLECTIVEHZOIPHXZUBFGNXWJETZVSPAPAHMLXS
+        // as of the last minting it received awards (Epoch 1352274)
+        OneTimeReward(EpochProgress(1353745L), stardustNewPrimary, TransactionAmount(4_343_029_488_479_231L)),
+        // One-time minting to treasure wallets according to new metanomics
+        OneTimeReward(EpochProgress(1928500L), treasureWalletMetanomics1, TransactionAmount(150_000_000_000_000_00L)),
+        OneTimeReward(EpochProgress(1928500L), protocolWalletMetanomics, TransactionAmount(150_000_000_000_000_00L)),
+        OneTimeReward(EpochProgress(1928500L), treasureWalletMetanomics3, TransactionAmount(150_000_000_000_000_00L))
+      )
     )
   }
 }
