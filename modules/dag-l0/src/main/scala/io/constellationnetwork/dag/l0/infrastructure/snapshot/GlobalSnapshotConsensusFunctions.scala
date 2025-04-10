@@ -38,6 +38,7 @@ import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.all.NonNegLong
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
     extends SnapshotConsensusFunctions[
@@ -174,41 +175,41 @@ object GlobalSnapshotConsensusFunctions {
           currentEpochProgress.value.value >= asOfEpoch.value.value
 
       val rewards: RewardsInput => F[DelegationRewardsResult] = {
-        case ClassicRewardsInput(txs) =>
-          classicRewards
-            .distribute(lastArtifact, snapshotContext.balances, txs, trigger, events)
-            .map { rewardTxs =>
-              DelegationRewardsResult(
-                delegatorRewardsMap = Map.empty,
-                updatedCreateDelegatedStakes = SortedMap.empty,
-                updatedWithdrawDelegatedStakes = SortedMap.empty,
-                nodeOperatorRewards = rewardTxs,
-                withdrawalRewardTxs = SortedSet.empty,
-                totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
-              )
-            }
+            case ClassicRewardsInput(txs) =>
+              classicRewards
+                .distribute(lastArtifact, snapshotContext.balances, txs, trigger, events)
+                .map { rewardTxs =>
+                  DelegationRewardsResult(
+                    delegatorRewardsMap = Map.empty,
+                    updatedCreateDelegatedStakes = SortedMap.empty,
+                    updatedWithdrawDelegatedStakes = SortedMap.empty,
+                    nodeOperatorRewards = rewardTxs,
+                    withdrawalRewardTxs = SortedSet.empty,
+                    totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
+                  )
+                }
 
-        case DelegateRewardsInput(udsar, psu, ep) =>
-          val currentOrdinal = lastArtifact.ordinal.next
+            case DelegateRewardsInput(udsar, psu, ep) =>
+              val currentOrdinal = lastArtifact.ordinal.next
 
-          if (shouldUseDelegatedRewards(currentOrdinal, ep)) {
-            delegatedRewards
-              .distribute(snapshotContext, trigger, ep, lastArtifact.proofs.map(_.id), udsar, psu)
-          } else {
-            classicRewards
-              .distribute(lastArtifact, snapshotContext.balances, SortedSet.empty, trigger, events)
-              .map { rewardTxs =>
-                DelegationRewardsResult(
-                  delegatorRewardsMap = Map.empty,
-                  updatedCreateDelegatedStakes = SortedMap.empty,
-                  updatedWithdrawDelegatedStakes = SortedMap.empty,
-                  nodeOperatorRewards = rewardTxs,
-                  withdrawalRewardTxs = SortedSet.empty,
-                  totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
-                )
+              if (shouldUseDelegatedRewards(currentOrdinal, ep)) {
+                delegatedRewards
+                  .distribute(snapshotContext, trigger, ep, lastArtifact.proofs.map(_.id), udsar, psu)
+              } else {
+                classicRewards
+                  .distribute(lastArtifact, snapshotContext.balances, SortedSet.empty, trigger, events)
+                  .map { rewardTxs =>
+                    DelegationRewardsResult(
+                      delegatorRewardsMap = Map.empty,
+                      updatedCreateDelegatedStakes = SortedMap.empty,
+                      updatedWithdrawDelegatedStakes = SortedMap.empty,
+                      nodeOperatorRewards = rewardTxs,
+                      withdrawalRewardTxs = SortedSet.empty,
+                      totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
+                    )
+                  }
               }
           }
-      }
 
       def getLastArtifactHash = lastArtifactHasher.getLogic(lastArtifact.value.ordinal) match {
         case JsonHash => lastArtifactHasher.hash(lastArtifact.value)

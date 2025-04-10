@@ -114,14 +114,18 @@ object GlobalSnapshotContextFunctions {
             lastActiveTips,
             lastDeprecatedTips,
             _ =>
-              DelegationRewardsResult(
-                Map.empty,
-                SortedMap.empty,
-                SortedMap.empty,
-                SortedSet.empty,
-                SortedSet.empty,
-                Amount.empty
-              ).pure[F],
+              signedArtifact.rewards
+                .pure[F]
+                .map(txs =>
+                  DelegationRewardsResult(
+                    delegatorRewardsMap = Map.empty,
+                    updatedCreateDelegatedStakes = SortedMap.empty,
+                    updatedWithdrawDelegatedStakes = SortedMap.empty,
+                    nodeOperatorRewards = txs,
+                    withdrawalRewardTxs = SortedSet.empty,
+                    totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(txs.map(_.amount.value.value).sum))
+                  )
+                ),
             StateChannelValidationType.Historical,
             lastGlobalSnapshots,
             getGlobalSnapshotByOrdinal
