@@ -88,6 +88,10 @@ jobs:
           git push origin v$VERSION -f
           echo "RELEASE_TAG=v$VERSION" >> $GITHUB_ENV
 
+      - name: Set output
+        id: set_output
+        run: echo "release_tag=${{ env.RELEASE_TAG }}" >> $GITHUB_OUTPUT
+
       - name: Assembly 🚀
         run: sbt 'keytool/assembly;wallet/assembly;dagL0/assembly;dagL1/assembly'
         env:
@@ -146,9 +150,25 @@ jobs:
             ./cl-dag-l1.sha256
             ./mainnet/mainnet-seedlist
 
+  sonatype-publish:
+    name: Publish SDK artifact to Sonatype Central
+    runs-on: ubuntu-22.04
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java and scala
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          JAVA_VERSION: 11
+        uses: "./.github/templates/actions/setup_java_and_scala"
+
       - name: Publish SDK module to Sonatype Central
         run: |
-          echo "Publishing with tag: $RELEASE_TAG"
+          echo "Publishing with tag: ${{ needs.build.outputs.release_tag }}"
           sbt tessellation-ci-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -156,4 +176,4 @@ jobs:
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
           SONATYPE_PASSWORD: ${{ secrets.MVN_PASSWORD }}
           SONATYPE_USERNAME: ${{ secrets.MVN_USERNAME }}
-          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
