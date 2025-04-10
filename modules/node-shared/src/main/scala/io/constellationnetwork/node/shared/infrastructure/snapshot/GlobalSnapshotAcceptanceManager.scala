@@ -244,8 +244,16 @@ object GlobalSnapshotAcceptanceManager {
         updatedCreateDelegatedStakes <-
           if (ordinal < delegatedStakingAddedToGl0Ordinal) SortedMap.empty[Address, List[DelegatedStakeRecord]].pure[F]
           else {
+            val acceptedTokenLockRefs = delegatedStakeAcceptanceResult.acceptedCreates.map {
+              case (addr, creates) => (addr, creates.map(_._1.tokenLockRef).toSet)
+            }
+            val filteredUnexpiredCreateDelegatedStakes = unexpiredCreateDelegatedStakes.map {
+              case (addr, recs) =>
+                val tokenLocks = acceptedTokenLockRefs.getOrElse(addr, Set.empty)
+                (addr, recs.filterNot(record => tokenLocks(record.event.tokenLockRef)))
+            }
             val allActiveDelegatorRecordsBeforeRewards =
-              unexpiredCreateDelegatedStakes |+| delegatedStakeAcceptanceResult.acceptedCreates.map {
+              filteredUnexpiredCreateDelegatedStakes |+| delegatedStakeAcceptanceResult.acceptedCreates.map {
                 case (addr, st) =>
                   addr -> st.map { case (ev, ord) => DelegatedStakeRecord(ev, ord, Balance.empty, Amount(NonNegLong.unsafeFrom(0L))) }
               }
@@ -458,7 +466,17 @@ object GlobalSnapshotAcceptanceManager {
         )
         updatedCreateNodeCollaterals =
           if (ordinal < nodeCollateralsAddedToGl0Ordinal) None
-          else (unexpiredCreateNodeCollaterals |+| nodeCollateralAcceptanceResult.acceptedCreates).some
+          else {
+            val acceptedTokenLockRefs = nodeCollateralAcceptanceResult.acceptedCreates.map {
+              case (addr, creates) => (addr, creates.map(_._1.tokenLockRef).toSet)
+            }
+            val filteredUnexpiredCreateNodeCollaterals = unexpiredCreateNodeCollaterals.map {
+              case (addr, creates) =>
+                val tokenLocks = acceptedTokenLockRefs.getOrElse(addr, Set.empty)
+                (addr, creates.filterNot(c => tokenLocks(c._1.tokenLockRef)))
+            }
+            (filteredUnexpiredCreateNodeCollaterals |+| nodeCollateralAcceptanceResult.acceptedCreates).some
+          }
         updatedWithdrawNodeCollaterals =
           if (ordinal < nodeCollateralsAddedToGl0Ordinal) None
           else (unexpiredWithdrawNodeCollaterals |+| nodeCollateralAcceptanceResult.acceptedWithdrawals).some
