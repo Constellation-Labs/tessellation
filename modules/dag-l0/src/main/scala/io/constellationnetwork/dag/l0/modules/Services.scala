@@ -10,6 +10,7 @@ import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import io.constellationnetwork.dag.l0.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.cell.L0Cell
 import io.constellationnetwork.dag.l0.domain.statechannel.StateChannelService
@@ -73,7 +74,8 @@ object Services {
         DelegatedRewardsDistributor
           .make[F](
             cfg.rewards,
-            cfg.environment
+            cfg.environment,
+            DefaultDelegatedRewardsConfigProvider.getConfig()
           )
           .pure[F]
       }
