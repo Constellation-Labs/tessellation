@@ -19,7 +19,6 @@ object CurrencyInvalidAddresses {
   )
 
   val metagraphIdMainnet: Address = Address("DAG7ChnhUF7uKgn8tXy45aj4zn9AFuhaZr8VXY43")
-  val metagraphIdTestnet: Address = Address("DAG6YFZLJP8eswniw5SBHgjXZLbk6zoUFK5Ec9qr")
   val metagraphsInvalidAddresses: Map[Address, AddressesInvalidAtOrdinal] = Map(
     metagraphIdMainnet -> AddressesInvalidAtOrdinal(
       SnapshotOrdinal(NonNegLong.unsafeFrom(1268980)),
@@ -27,14 +26,6 @@ object CurrencyInvalidAddresses {
         currentBalances.filterNot {
           case (address, balance) =>
             balance.value.value === (1L * 1e8).toLong && !currentTransactionsReferences.contains(address)
-        }
-    ),
-    metagraphIdTestnet -> AddressesInvalidAtOrdinal(
-      SnapshotOrdinal(NonNegLong.unsafeFrom(15345)),
-      (currentBalances, _) =>
-        currentBalances.filterNot {
-          case (address, _) =>
-            address =!= Address("DAG5sz69nNwGF8ypn1yukFpg2pVJpdx5mnf1PJVc")
         }
     )
   )
