@@ -83,31 +83,6 @@ object GlobalSnapshotContextFunctions {
           .toList
           .flatten
 
-        delegatedRewardsDist = new DelegatedRewardsDistributor[F] {
-          override def calculateTotalRewardsToMint(epochProgress: epoch.EpochProgress): F[Amount] =
-            Amount(NonNegLong.unsafeFrom(100L)).pure[F]
-
-          override def calculateWithdrawalRewardTransactions(withdrawingBalances: Map[Address, Amount]): F[SortedSet[RewardTransaction]] =
-            SortedSet.empty[RewardTransaction].pure[F]
-
-          override def calculateDelegatorRewards(
-            activeDelegatedStakes: SortedMap[Address, List[delegatedStake.DelegatedStakeRecord]],
-            nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
-            epochProgress: epoch.EpochProgress,
-            totalAmount: Amount
-          ): F[Map[Address, Map[Id, Amount]]] =
-            Map.empty[Address, Map[Id, Amount]].pure[F]
-
-          override def calculateNodeOperatorRewards(
-            delegatorRewards: Map[Address, Map[Id, Amount]],
-            nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
-            nodesInConsensus: SortedSet[Id],
-            epochProgress: epoch.EpochProgress,
-            totalRewards: Amount
-          ): F[SortedSet[RewardTransaction]] =
-            SortedSet.empty[RewardTransaction].pure[F]
-        }
-
         (
           acceptanceResult,
           _,
@@ -138,7 +113,19 @@ object GlobalSnapshotContextFunctions {
             context,
             lastActiveTips,
             lastDeprecatedTips,
-            delegatedRewardsDist,
+            _ =>
+              signedArtifact.rewards
+                .pure[F]
+                .map(txs =>
+                  DelegationRewardsResult(
+                    delegatorRewardsMap = Map.empty,
+                    updatedCreateDelegatedStakes = SortedMap.empty,
+                    updatedWithdrawDelegatedStakes = SortedMap.empty,
+                    nodeOperatorRewards = txs,
+                    withdrawalRewardTxs = SortedSet.empty,
+                    totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(txs.map(_.amount.value.value).sum))
+                  )
+                ),
             StateChannelValidationType.Historical,
             lastGlobalSnapshots,
             getGlobalSnapshotByOrdinal

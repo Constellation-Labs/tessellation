@@ -67,7 +67,8 @@ case class CurrencySnapshotAcceptanceResult(
   feeTransactions: Option[SortedSet[Signed[FeeTransaction]]],
   info: CurrencySnapshotInfo,
   stateProof: CurrencySnapshotStateProof,
-  globalSyncView: GlobalSyncView
+  globalSyncView: GlobalSyncView,
+  syncGlobalSnapshotOrdinal: SnapshotOrdinal
 )
 
 trait CurrencySnapshotAcceptanceManager[F[_]] {
@@ -100,6 +101,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
 
 object CurrencySnapshotAcceptanceManager {
   def make[F[_]: Async: Parallel](
+    tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
     lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
     blockAcceptanceManager: BlockAcceptanceManager[F],
     tokenLockBlockAcceptanceManager: TokenLockBlockAcceptanceManager[F],
@@ -222,12 +224,22 @@ object CurrencySnapshotAcceptanceManager {
       lastGlobalSnapshotEpochProgress <-
         if (maybeLastGlobalSnapshot.isEmpty)
           logger
-            .warn("Could not find lastGlobalSnapshot")
+            .warn("Could not find lastGlobalSnapshot to extract epochProgress")
             .as(
               EpochProgress.MinValue
             )
         else
           maybeLastGlobalSnapshot.get.epochProgress.pure
+
+      lastGlobalSnapshotOrdinal <-
+        if (maybeLastGlobalSnapshot.isEmpty)
+          logger
+            .warn("Could not find lastGlobalSnapshot to extract ordinal")
+            .as(
+              SnapshotOrdinal.MinValue
+            )
+        else
+          maybeLastGlobalSnapshot.get.ordinal.pure
 
       lastGlobalSnapshotsSpendActions <- getLastSpendActions(
         lastGlobalSyncView,
@@ -354,11 +366,12 @@ object CurrencySnapshotAcceptanceManager {
         updatedBalancesBySpendTransactions,
         Option.when(messagesAcceptanceResult.contextUpdate.nonEmpty)(messagesAcceptanceResult.contextUpdate),
         None,
-        updatedAllowSpendRefs.some,
-        updatedAllowSpends.some,
-        globalSnapshotSyncAcceptanceResult.contextUpdate.some,
-        tokenLockRefs.some,
-        if (updatedActiveTokenLocks.nonEmpty) Some(updatedActiveTokenLocks) else None
+        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none else updatedAllowSpendRefs.some,
+        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none else updatedAllowSpends.some,
+        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none
+        else globalSnapshotSyncAcceptanceResult.contextUpdate.some,
+        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none else tokenLockRefs.some,
+        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none else updatedActiveTokenLocks.some
       )
 
       stateProof <- csi.stateProof(snapshotOrdinal)
@@ -388,7 +401,8 @@ object CurrencySnapshotAcceptanceManager {
         acceptedFeeTxs,
         csi,
         stateProof,
-        globalSyncView
+        globalSyncView,
+        lastGlobalSnapshotOrdinal
       )
 
     private def acceptMessages(

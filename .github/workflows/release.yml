@@ -86,6 +86,7 @@ jobs:
 
           git tag -a v$VERSION -m "Release $VERSION"
           git push origin v$VERSION -f
+          echo "RELEASE_TAG=v$VERSION" >> $GITHUB_ENV
 
       - name: Assembly 🚀
         run: sbt 'keytool/assembly;wallet/assembly;dagL0/assembly;dagL1/assembly'
@@ -146,10 +147,13 @@ jobs:
             ./mainnet/mainnet-seedlist
 
       - name: Publish SDK module to Sonatype Central
-        run: sbt tessellation-ci-release
+        run: |
+          echo "Publishing with tag: $RELEASE_TAG"
+          sbt tessellation-ci-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
-          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
-          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.MVN_PASSWORD }}
+          SONATYPE_USERNAME: ${{ secrets.MVN_USERNAME }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}

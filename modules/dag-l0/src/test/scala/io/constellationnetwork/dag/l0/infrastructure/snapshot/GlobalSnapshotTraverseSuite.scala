@@ -291,6 +291,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         )
 
     val currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
+      SnapshotOrdinal.MinValue,
       LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
       BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, txHasher),
       TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
@@ -309,6 +310,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       currencySnapshotCreator =
         CurrencySnapshotCreator
           .make[IO](
+            SnapshotOrdinal.MinValue,
             currencySnapshotAcceptanceManager,
             None,
             SnapshotSizeConfig(Long.MaxValue, Long.MaxValue),
@@ -339,9 +341,6 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       )
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager
         .make[IO](
-          SnapshotOrdinal.MinValue,
-          SnapshotOrdinal.MinValue,
-          SnapshotOrdinal.MinValue,
           SnapshotOrdinal.MinValue,
           blockAcceptanceManager,
           allowSpendBlockAcceptanceManager,

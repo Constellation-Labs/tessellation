@@ -1,37 +1,46 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
+import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.dag.l0.config.DelegatedRewardsConfigProvider
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.UpdateNodeParametersCutter
 import io.constellationnetwork.dag.l0.infrastructure.rewards.DelegatedRewardsDistributor
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
+import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions.InvalidArtifact
+import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.domain.event.EventCutter
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
-import io.constellationnetwork.node.shared.infrastructure.snapshot._
+import io.constellationnetwork.node.shared.infrastructure.snapshot.{RewardsInput, _}
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.transaction.Transaction
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.signature.SignatureProof
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelValidationType}
 import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.all.NonNegLong
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
     extends SnapshotConsensusFunctions[
@@ -47,9 +56,13 @@ object GlobalSnapshotConsensusFunctions {
   def make[F[_]: Async: SecurityProvider: JsonSerializer: KryoSerializer](
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
-    delegatedRewardsDistributor: DelegatedRewardsDistributor[F],
+    classicRewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
+    delegatedRewards: DelegatedRewardsDistributor[F],
     eventCutter: EventCutter[F, StateChannelEvent, DAGEvent],
-    updateNodeParametersCutter: UpdateNodeParametersCutter[F]
+    updateNodeParametersCutter: UpdateNodeParametersCutter[F],
+    environment: AppEnvironment,
+    delegatedRewardsConfigProvider: DelegatedRewardsConfigProvider,
+    v3MigrationOrdinal: SnapshotOrdinal
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
     def getRequiredCollateral: Amount = collateral
@@ -156,6 +169,52 @@ object GlobalSnapshotConsensusFunctions {
 
       val dagEvents = dagEventsBeforeCut.filter(_.value.height > lastArtifact.height)
 
+      val delegatedConfig = delegatedRewardsConfigProvider.getConfig()
+      val asOfEpoch = delegatedConfig.emissionConfig.get(environment).map(_.asOfEpoch).getOrElse(EpochProgress.MaxValue)
+
+      def shouldUseDelegatedRewards(currentOrdinal: SnapshotOrdinal, currentEpochProgress: EpochProgress): Boolean =
+        currentOrdinal.value >= v3MigrationOrdinal.value &&
+          currentEpochProgress.value.value >= asOfEpoch.value.value
+
+      val rewardsWithFacilitators: List[(Address, Id)] => RewardsInput => F[DelegationRewardsResult] = { faciltators: List[(Address, Id)] =>
+        {
+          case ClassicRewardsInput(txs) =>
+            classicRewards
+              .distribute(lastArtifact, snapshotContext.balances, txs, trigger, events)
+              .map { rewardTxs =>
+                DelegationRewardsResult(
+                  delegatorRewardsMap = Map.empty,
+                  updatedCreateDelegatedStakes = SortedMap.empty,
+                  updatedWithdrawDelegatedStakes = SortedMap.empty,
+                  nodeOperatorRewards = rewardTxs,
+                  withdrawalRewardTxs = SortedSet.empty,
+                  totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
+                )
+              }
+
+          case DelegateRewardsInput(udsar, psu, ep) =>
+            val currentOrdinal = lastArtifact.ordinal.next
+
+            if (shouldUseDelegatedRewards(currentOrdinal, ep)) {
+              delegatedRewards
+                .distribute(snapshotContext, trigger, ep, faciltators, udsar, psu)
+            } else {
+              classicRewards
+                .distribute(lastArtifact, snapshotContext.balances, SortedSet.empty, trigger, events)
+                .map { rewardTxs =>
+                  DelegationRewardsResult(
+                    delegatorRewardsMap = Map.empty,
+                    updatedCreateDelegatedStakes = SortedMap.empty,
+                    updatedWithdrawDelegatedStakes = SortedMap.empty,
+                    nodeOperatorRewards = rewardTxs,
+                    withdrawalRewardTxs = SortedSet.empty,
+                    totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
+                  )
+                }
+            }
+        }
+      }
+
       def getLastArtifactHash = lastArtifactHasher.getLogic(lastArtifact.value.ordinal) match {
         case JsonHash => lastArtifactHasher.hash(lastArtifact.value)
         case KryoHash => lastArtifactHasher.hash(GlobalIncrementalSnapshotV1.fromGlobalIncrementalSnapshot(lastArtifact.value))
@@ -180,6 +239,10 @@ object GlobalSnapshotConsensusFunctions {
 
         lastActiveTips <- lastArtifact.activeTips(Async[F], lastArtifactHasher)
         lastDeprecatedTips = lastArtifact.tips.deprecated
+
+        lastFacilitators <- lastArtifact.proofs.toList.traverse {
+          case SignatureProof(id, _) => id.toAddress.map(_ -> id)
+        }
 
         (
           acceptanceResult,
@@ -212,7 +275,7 @@ object GlobalSnapshotConsensusFunctions {
               snapshotContext,
               lastActiveTips,
               lastDeprecatedTips,
-              delegatedRewardsDistributor,
+              rewardsWithFacilitators(lastFacilitators),
               StateChannelValidationType.Full,
               lastGlobalSnapshots,
               getGlobalSnapshotByOrdinal

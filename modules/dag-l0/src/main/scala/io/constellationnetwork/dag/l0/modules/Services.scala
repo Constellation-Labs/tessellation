@@ -10,6 +10,7 @@ import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import io.constellationnetwork.dag.l0.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.cell.L0Cell
 import io.constellationnetwork.dag.l0.domain.statechannel.StateChannelService
@@ -39,6 +40,7 @@ import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshot
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
 import org.http4s.client.Client
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object Services {
 
@@ -60,12 +62,23 @@ object Services {
     txHasher: Hasher[F]
   ): F[Services[F, R]] =
     for {
-      delegatorRewards <- DelegatedRewardsDistributor
+      classicRewards <- Rewards
         .make[F](
           cfg.rewards,
-          cfg.environment
+          ProgramsDistributor.make,
+          FacilitatorDistributor.make
         )
         .pure[F]
+
+      delegatorRewards <- HasherSelector[F].withCurrent { implicit hasher =>
+        DelegatedRewardsDistributor
+          .make[F](
+            cfg.rewards,
+            cfg.environment,
+            DefaultDelegatedRewardsConfigProvider.getConfig()
+          )
+          .pure[F]
+      }
 
       consensus <- HasherSelector[F].withCurrent { implicit hs =>
         GlobalSnapshotConsensus
@@ -88,6 +101,7 @@ object Services {
             feeConfigs = cfg.shared.feeConfigs,
             client,
             session,
+            classicRewards,
             delegatorRewards,
             txHasher,
             sharedServices.restart,

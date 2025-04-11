@@ -94,6 +94,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           )
         )
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
+        SnapshotOrdinal.MinValue,
         LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
         BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
         TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
@@ -107,6 +108,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       validationErrorStorage <- CurrencySnapshotEventValidationErrorStorage.make(TestValidationErrorStorageMaxSize)
       creator = CurrencySnapshotCreator
         .make[IO](
+          SnapshotOrdinal.MinValue,
           currencySnapshotAcceptanceManager,
           None,
           SnapshotSizeConfig(Long.MaxValue, Long.MaxValue),
