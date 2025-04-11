@@ -11,6 +11,7 @@ import scala.collection.mutable
 
 import org.tessellation.currency.schema.currency._
 import org.tessellation.node.shared.domain.block.processing._
+import org.tessellation.node.shared.infrastructure.snapshot.CurrencyInvalidAddresses.metagraphsInvalidAddresses
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
@@ -137,9 +138,19 @@ object CurrencySnapshotAcceptanceManager {
         messagesToReject
       )
 
+      updatedBalancesByInvalidAddressChecks = metagraphsInvalidAddresses
+        .get(lastSnapshotContext.address)
+        .map { info =>
+          if (info.snapshotOrdinal === snapshotOrdinal)
+            info.filterFunction(updatedBalancesByRewards, transactionsRefs)
+          else
+            updatedBalancesByRewards
+        }
+        .getOrElse(updatedBalancesByRewards)
+
       csi = CurrencySnapshotInfo(
         transactionsRefs,
-        updatedBalancesByRewards,
+        updatedBalancesByInvalidAddressChecks,
         Option.when(messagesForContextUpdate.nonEmpty)(messagesForContextUpdate)
       )
       stateProof <- csi.stateProof(snapshotOrdinal)
