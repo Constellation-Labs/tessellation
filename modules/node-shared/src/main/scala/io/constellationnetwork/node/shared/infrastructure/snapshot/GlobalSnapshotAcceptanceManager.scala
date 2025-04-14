@@ -228,11 +228,19 @@ object GlobalSnapshotAcceptanceManager {
           if (ordinal.value < tessellation3MigrationStartingOrdinal.value) {
             calculateRewardsFn(ClassicRewardsInput(acceptedTransactions))
           } else {
+            val acceptedTokenLockRefs = delegatedStakeAcceptanceResult.acceptedCreates.map {
+              case (addr, creates) => (addr, creates.map(_._1.tokenLockRef).toSet)
+            }
+            val filteredUnexpiredCreateDelegatedStakes = unexpiredCreateDelegatedStakes.map {
+              case (addr, recs) =>
+                val tokenLocks = acceptedTokenLockRefs.getOrElse(addr, Set.empty)
+                (addr, recs.filterNot(record => tokenLocks(record.event.tokenLockRef)))
+            }
             calculateRewardsFn(
               DelegateRewardsInput(
                 delegatedStakeAcceptanceResult,
                 PartitionedStakeUpdates(
-                  unexpiredCreateDelegatedStakes,
+                  filteredUnexpiredCreateDelegatedStakes,
                   expiredCreateDelegatedStakes,
                   unexpiredWithdrawalsDelegatedStaking,
                   expiredWithdrawalsDelegatedStaking
@@ -388,7 +396,17 @@ object GlobalSnapshotAcceptanceManager {
           lastSnapshotContext,
           epochProgress
         )
-        updatedCreateNodeCollaterals = unexpiredCreateNodeCollaterals |+| nodeCollateralAcceptanceResult.acceptedCreates
+        updatedCreateNodeCollaterals = {
+          val acceptedTokenLockRefs = nodeCollateralAcceptanceResult.acceptedCreates.map {
+            case (addr, creates) => (addr, creates.map(_._1.tokenLockRef).toSet)
+          }
+          val filteredUnexpiredCreateNodeCollaterals = unexpiredCreateNodeCollaterals.map {
+            case (addr, creates) =>
+              val tokenLocks = acceptedTokenLockRefs.getOrElse(addr, Set.empty)
+              (addr, creates.filterNot(c => tokenLocks(c._1.tokenLockRef)))
+          }
+          filteredUnexpiredCreateNodeCollaterals |+| nodeCollateralAcceptanceResult.acceptedCreates
+        }
         updatedWithdrawNodeCollaterals = unexpiredWithdrawNodeCollaterals |+| nodeCollateralAcceptanceResult.acceptedWithdrawals
 
         expiredCreateDelegatedStakesByRef <- expiredCreateDelegatedStakes.values.flatten.toList.traverse {
