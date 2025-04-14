@@ -24,6 +24,7 @@ import org.tessellation.node.shared.domain.rewards.Rewards
 import org.tessellation.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import org.tessellation.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import org.tessellation.node.shared.infrastructure.consensus.trigger.EventTrigger
+import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.node.shared.infrastructure.snapshot.{
   GlobalSnapshotAcceptanceManager,
   GlobalSnapshotStateChannelEventsProcessor,
@@ -51,7 +52,7 @@ import weaver.scalacheck.Checkers
 
 object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checkers {
 
-  type Res = (Supervisor[IO], KryoSerializer[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO])
+  type Res = (Supervisor[IO], KryoSerializer[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO])
 
   def mkMockGossip[B](spreadRef: Ref[IO, List[B]]): Gossip[IO] =
     new Gossip[IO] {
@@ -81,7 +82,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     sp <- SecurityProvider.forAsync[IO]
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
     h = Hasher.forJson[IO]
-  } yield (supervisor, ks, j, h, sp)
+    metrics <- Metrics.forAsync[IO](Seq.empty)
+  } yield (supervisor, ks, j, h, sp, metrics)
 
   val bam: BlockAcceptanceManager[IO] = new BlockAcceptanceManager[IO] {
 
@@ -137,12 +139,10 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     implicit ks: KryoSerializer[IO],
     j: JsonSerializer[IO],
     sp: SecurityProvider[IO],
-    h: Hasher[IO]
-  ): GlobalSnapshotConsensusFunctions[IO] = {
+    h: Hasher[IO],
+    m: Metrics[IO]
+  ): IO[GlobalSnapshotConsensusFunctions[IO]] = {
     implicit val hs = HasherSelector.forSyncAlwaysCurrent(h)
-
-    val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
-      GlobalSnapshotAcceptanceManager.make[IO](bam, scProcessor, collateral)
 
     val feeCalculator = new SnapshotBinaryFeeCalculator[IO] {
       override def calculateFee(
@@ -152,25 +152,31 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       ): IO[NonNegLong] =
         event.snapshotBinary.value.fee.value.pure[IO]
     }
-    GlobalSnapshotConsensusFunctions
-      .make[IO](
-        snapshotAcceptanceManager,
-        collateral,
-        rewards,
-        GlobalSnapshotEventCutter.make[IO](20_000_000, feeCalculator)
-      )
+
+    GlobalSnapshotAcceptanceManager.make[IO](bam, scProcessor, collateral).flatMap { gsam =>
+      GlobalSnapshotEventCutter.make[IO](20_000_000, feeCalculator).map { gsec =>
+        GlobalSnapshotConsensusFunctions
+          .make[IO](
+            gsam,
+            collateral,
+            rewards,
+            gsec
+          )
+      }
+    }
   }
 
   def getTestData(
     implicit sp: SecurityProvider[F],
     kryo: KryoSerializer[F],
     j: JsonSerializer[F],
-    h: Hasher[IO]
+    h: Hasher[IO],
+    m: Metrics[IO]
   ): IO[(GlobalSnapshotConsensusFunctions[IO], Set[PeerId], Signed[GlobalSnapshotArtifact], Signed[GlobalSnapshot], StateChannelEvent)] =
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[F]
 
-      gscf = mkGlobalSnapshotConsensusFunctions
+      gscf <- mkGlobalSnapshotConsensusFunctions
       facilitators = Set.empty[PeerId]
 
       genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
@@ -183,7 +189,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     } yield (gscf, facilitators, signedLastArtifact, signedGenesis, scEvent)
 
   test("validateArtifact - returns artifact for correct data") { res =>
-    implicit val (_, ks, j, h, sp) = res
+    implicit val (_, ks, j, h, sp, m) = res
 
     for {
       (gscf, facilitators, signedLastArtifact, signedGenesis, scEvent) <- getTestData
@@ -212,7 +218,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   }
 
   test("validateArtifact - returns invalid artifact error for incorrect data") { res =>
-    implicit val (_, ks, j, h, sp) = res
+    implicit val (_, ks, j, h, sp, m) = res
 
     for {
       (gscf, facilitators, signedLastArtifact, signedGenesis, scEvent) <- getTestData
@@ -237,7 +243,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   }
 
   test("gossip signed artifacts") { res =>
-    implicit val (_, _, j, h, sp) = res
+    implicit val (_, _, j, h, sp, m) = res
 
     for {
       gossiped <- Ref.of(List.empty[ForkInfo])

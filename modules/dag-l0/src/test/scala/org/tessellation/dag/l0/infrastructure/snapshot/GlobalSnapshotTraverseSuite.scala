@@ -200,7 +200,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     globalSnapshot: Hashed[GlobalSnapshot],
     incrementalSnapshots: List[Hashed[GlobalIncrementalSnapshot]],
     rollbackHash: Hash
-  )(implicit J: JsonSerializer[IO], H: Hasher[IO], S: SecurityProvider[IO], K: KryoSerializer[IO]) = {
+  )(implicit J: JsonSerializer[IO], H: Hasher[IO], S: SecurityProvider[IO], K: KryoSerializer[IO], M: Metrics[IO]) = {
     def loadGlobalSnapshot(hash: Hash): IO[Option[Signed[GlobalSnapshot]]] =
       hash match {
         case h if h === globalSnapshot.hash => Some(globalSnapshot.signed).pure[IO]
@@ -249,7 +249,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       stateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L))
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       feeCalculator = FeeCalculator.make(SortedMap.empty)
-      stateChannelProcessor = GlobalSnapshotStateChannelEventsProcessor
+      stateChannelProcessor <- GlobalSnapshotStateChannelEventsProcessor
         .make[IO](
           validators.stateChannelValidator,
           stateChannelManager,
@@ -257,7 +257,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           jsonBrotliBinarySerializer,
           feeCalculator
         )
-      snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make[IO](blockAcceptanceManager, stateChannelProcessor, Amount.empty)
+      snapshotAcceptanceManager <- GlobalSnapshotAcceptanceManager.make[IO](blockAcceptanceManager, stateChannelProcessor, Amount.empty)
       snapshotContextFunctions = GlobalSnapshotContextFunctions.make[IO](snapshotAcceptanceManager)
     } yield
       GlobalSnapshotTraverse
@@ -265,7 +265,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   }
 
   test("can compute state for given incremental global snapshot") { res =>
-    implicit val (ks, h, j, sp, _, _) = res
+    implicit val (ks, h, j, sp, m, _) = res
 
     for {
       snapshots <- mkSnapshots(List.empty, balances)
@@ -275,64 +275,64 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       expect.eql(GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances), SortedMap.empty, SortedMap.empty), state._1)
   }
 
-  test("computed state contains last refs and preserve total amount of balances when no fees or rewards ") {
-    case (ks, h, j, sp, _, random) =>
-      implicit val (a, b, c, d) = (ks, j, sp, random)
+  test("computed state contains last refs and preserve total amount of balances when no fees or rewards ") { res =>
+    val (_, h, _, _, _, _) = res
+    implicit val (ks, _, j, sp, m, r) = res
 
-      forall(dagBlockChainGen(currentHasher = h)) { output: IO[DAGS] =>
-        for {
-          (addresses, _, lastTxns, chunkedDags) <- output
-          (global, incrementals) <- {
-            implicit val hasher = h
-            mkSnapshots(
-              chunkedDags,
-              addresses.map(address => address -> Balance(NonNegLong(1000L))).toMap
-            )
-          }
-          traverser <- {
-            implicit val hasher = h
-            gst(global, incrementals.toList, incrementals.last.hash)
-          }
-          (info, _) <- traverser.loadChain()
-          totalBalance = info.balances.values.map(Balance.toAmount(_)).reduce(_.plus(_).toOption.get)
-          lastTxRefs <- {
-            implicit val hasher = Hasher.forKryo[IO]
+    forall(dagBlockChainGen(currentHasher = h)) { output: IO[DAGS] =>
+      for {
+        (addresses, _, lastTxns, chunkedDags) <- output
+        (global, incrementals) <- {
+          implicit val hasher = h
+          mkSnapshots(
+            chunkedDags,
+            addresses.map(address => address -> Balance(NonNegLong(1000L))).toMap
+          )
+        }
+        traverser <- {
+          implicit val hasher = h
+          gst(global, incrementals.toList, incrementals.last.hash)
+        }
+        (info, _) <- traverser.loadChain()
+        totalBalance = info.balances.values.map(Balance.toAmount(_)).reduce(_.plus(_).toOption.get)
+        lastTxRefs <- {
+          implicit val hasher = Hasher.forKryo[IO]
 
-            lastTxns.traverse(TransactionReference.of(_))
-          }
-        } yield expect.eql((info.lastTxRefs, Amount(NonNegLong.unsafeFrom(addresses.size * 1000L))), (lastTxRefs, totalBalance))
+          lastTxns.traverse(TransactionReference.of(_))
+        }
+      } yield expect.eql((info.lastTxRefs, Amount(NonNegLong.unsafeFrom(addresses.size * 1000L))), (lastTxRefs, totalBalance))
 
-      }
+    }
   }
 
-  test("computed state contains last refs and include fees in total amount of balances") {
-    case (ks, h, j, sp, _, random) =>
-      implicit val (a, b, c, d) = (ks, j, sp, random)
+  test("computed state contains last refs and include fees in total amount of balances") { res =>
+    val (_, h, _, _, _, _) = res
+    implicit val (ks, _, j, sp, m, r) = res
 
-      forall(dagBlockChainGen(1L, currentHasher = h)) { output: IO[DAGS] =>
-        for {
-          (addresses, txnsSize, lastTxns, chunkedDags) <- output
-          (global, incrementals) <- {
-            implicit val hasher = h
-            mkSnapshots(
-              chunkedDags,
-              addresses.map(address => address -> Balance(NonNegLong(1000L))).toMap
-            )
-          }
-          traverser <- {
-            implicit val hasher = h
-            gst(global, incrementals.toList, incrementals.last.hash)
-          }
-          (info, _) <- traverser.loadChain()
-          totalBalance = info.balances.values.map(Balance.toAmount(_)).reduce(_.plus(_).toOption.get)
-          lastTxRefs <- {
-            implicit val hasher = Hasher.forKryo[IO]
-            lastTxns.traverse(TransactionReference.of(_))
-          }
-        } yield
-          expect.eql((info.lastTxRefs, Amount(NonNegLong.unsafeFrom(addresses.size * 1000L - txnsSize * 1L))), (lastTxRefs, totalBalance))
+    forall(dagBlockChainGen(1L, currentHasher = h)) { output: IO[DAGS] =>
+      for {
+        (addresses, txnsSize, lastTxns, chunkedDags) <- output
+        (global, incrementals) <- {
+          implicit val hasher = h
+          mkSnapshots(
+            chunkedDags,
+            addresses.map(address => address -> Balance(NonNegLong(1000L))).toMap
+          )
+        }
+        traverser <- {
+          implicit val hasher = h
+          gst(global, incrementals.toList, incrementals.last.hash)
+        }
+        (info, _) <- traverser.loadChain()
+        totalBalance = info.balances.values.map(Balance.toAmount(_)).reduce(_.plus(_).toOption.get)
+        lastTxRefs <- {
+          implicit val hasher = Hasher.forKryo[IO]
+          lastTxns.traverse(TransactionReference.of(_))
+        }
+      } yield
+        expect.eql((info.lastTxRefs, Amount(NonNegLong.unsafeFrom(addresses.size * 1000L - txnsSize * 1L))), (lastTxRefs, totalBalance))
 
-      }
+    }
   }
 
   private def initialReferences() =

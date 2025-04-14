@@ -70,16 +70,17 @@ object GlobalSnapshotConsensus {
         .make[F](stateChannelAllowanceLists, pullDelay = stateChannelPullDelay, purgeDelay = stateChannelPurgeDelay)
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       feeCalculator = FeeCalculator.make(feeConfigs)
-      snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
+      globalSnapshotStateChannelEventsProcessor <- GlobalSnapshotStateChannelEventsProcessor
+        .make[F](
+          validators.stateChannelValidator,
+          globalSnapshotStateChannelManager,
+          sharedServices.currencySnapshotContextFns,
+          jsonBrotliBinarySerializer,
+          feeCalculator
+        )
+      snapshotAcceptanceManager <- GlobalSnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
-        GlobalSnapshotStateChannelEventsProcessor
-          .make[F](
-            validators.stateChannelValidator,
-            globalSnapshotStateChannelManager,
-            sharedServices.currencySnapshotContextFns,
-            jsonBrotliBinarySerializer,
-            feeCalculator
-          ),
+        globalSnapshotStateChannelEventsProcessor,
         collateral
       )
       consensusStorage <- ConsensusStorage
@@ -95,16 +96,17 @@ object GlobalSnapshotConsensus {
         ](
           appConfig.snapshot.consensus
         )
+      globalSnapshotEventCutter <- GlobalSnapshotEventCutter.make[F](
+        appConfig.snapshot.consensus.eventCutter.maxBinarySizeBytes,
+        SnapshotBinaryFeeCalculator.make(appConfig.shared.feeConfigs)
+      )
       consensusFunctions = GlobalSnapshotConsensusFunctions.make[F](
         snapshotAcceptanceManager,
         collateral,
         rewards,
-        GlobalSnapshotEventCutter.make[F](
-          appConfig.snapshot.consensus.eventCutter.maxBinarySizeBytes,
-          SnapshotBinaryFeeCalculator.make(appConfig.shared.feeConfigs)
-        )
+        globalSnapshotEventCutter
       )
-      consensusStateAdvancer = GlobalSnapshotConsensusStateAdvancer
+      consensusStateAdvancer <- GlobalSnapshotConsensusStateAdvancer
         .make[F](keyPair, consensusStorage, globalSnapshotStorage, consensusFunctions, gossip)
       consensusStateCreator = GlobalSnapshotConsensusStateCreator.make[F](consensusFunctions, consensusStorage, gossip, selfId, seedlist)
       consensusStateRemover = GlobalSnapshotConsensusStateRemover.make[F](consensusStorage, gossip)

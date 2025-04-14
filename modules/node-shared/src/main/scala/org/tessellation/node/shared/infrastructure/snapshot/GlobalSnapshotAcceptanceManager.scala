@@ -14,6 +14,7 @@ import org.tessellation.merkletree.Proof
 import org.tessellation.merkletree.syntax._
 import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.node.shared.domain.statechannel.StateChannelAcceptanceResult
+import org.tessellation.node.shared.infrastructure.metrics.{ConsensusMetricsLogger, Metrics}
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
@@ -53,168 +54,179 @@ object GlobalSnapshotAcceptanceManager {
 
   case object InvalidMerkleTree extends NoStackTrace
 
-  def make[F[_]: Async: HasherSelector](
+  def make[F[_]: Async: HasherSelector: Metrics](
     blockAcceptanceManager: BlockAcceptanceManager[F],
     stateChannelEventsProcessor: GlobalSnapshotStateChannelEventsProcessor[F],
     collateral: Amount
-  ) = new GlobalSnapshotAcceptanceManager[F] {
+  ) =
+    ConsensusMetricsLogger.make[F].map { metricsLogger =>
+      new GlobalSnapshotAcceptanceManager[F] {
 
-    def accept(
-      ordinal: SnapshotOrdinal,
-      blocksForAcceptance: List[Signed[Block]],
-      scEvents: List[StateChannelOutput],
-      lastSnapshotContext: GlobalSnapshotInfo,
-      lastActiveTips: SortedSet[ActiveTip],
-      lastDeprecatedTips: SortedSet[DeprecatedTip],
-      calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
-      validationType: StateChannelValidationType
-    ) = {
-      implicit val hasher = HasherSelector[F].getForOrdinal(ordinal)
+        def accept(
+          ordinal: SnapshotOrdinal,
+          blocksForAcceptance: List[Signed[Block]],
+          scEvents: List[StateChannelOutput],
+          lastSnapshotContext: GlobalSnapshotInfo,
+          lastActiveTips: SortedSet[ActiveTip],
+          lastDeprecatedTips: SortedSet[DeprecatedTip],
+          calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
+          validationType: StateChannelValidationType
+        ) = {
+          implicit val hasher = HasherSelector[F].getForOrdinal(ordinal)
 
-      for {
-        acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips, ordinal)
+          for {
+            acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips, ordinal)
 
-        StateChannelAcceptanceResult(scSnapshots, currencySnapshots, returnedSCEvents, currencyAcceptanceBalanceUpdate) <-
-          stateChannelEventsProcessor
-            .process(
-              ordinal,
-              lastSnapshotContext.copy(balances = lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances),
-              scEvents,
-              validationType
-            )
-        sCSnapshotHashes <- scSnapshots.toList.traverse {
-          case (address, nel) => nel.last.toHashed.map(address -> _.hash)
-        }
-          .map(_.toMap)
-        updatedLastStateChannelSnapshotHashes = lastSnapshotContext.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
-        updatedLastCurrencySnapshots = lastSnapshotContext.lastCurrencySnapshots ++ currencySnapshots
-
-        transactionsRefs = lastSnapshotContext.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
-
-        acceptedTransactions = acceptanceResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
-
-        rewards <- calculateRewardsFn(acceptedTransactions)
-
-        (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
-          lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances ++ currencyAcceptanceBalanceUpdate,
-          rewards
-        )
-
-        (maybeMerkleTree, updatedLastCurrencySnapshotProofs) <- hasher.getLogic(ordinal) match {
-          case JsonHash =>
-            val maybeMerkleTree = updatedLastCurrencySnapshots.merkleTree[F]
-
-            val updatedLastCurrencySnapshotProofs = maybeMerkleTree.flatMap {
-              _.traverse { merkleTree =>
-                updatedLastCurrencySnapshots.toList.traverse {
-                  case (address, state) =>
-                    (address, state).hash
-                      .map(merkleTree.findPath(_))
-                      .flatMap(MonadThrow[F].fromOption(_, InvalidMerkleTree))
-                      .map((address, _))
-                }
-              }.map(_.map(SortedMap.from(_)).getOrElse(SortedMap.empty[Address, Proof]))
-            }
-
-            (maybeMerkleTree, updatedLastCurrencySnapshotProofs).tupled
-
-          case KryoHash =>
-            val updatedLastCurrencySnapshotsCompatible = updatedLastCurrencySnapshots.map {
-              case (address, Left(snapshot)) => (address, Left(snapshot))
-              case (address, Right((Signed(incrementalSnapshot, proofs), info))) =>
-                (
-                  address,
-                  Right(
-                    (
-                      Signed(CurrencyIncrementalSnapshotV1.fromCurrencyIncrementalSnapshot(incrementalSnapshot), proofs),
-                      CurrencySnapshotInfoV1.fromCurrencySnapshotInfo(info)
-                    )
-                  )
+            StateChannelAcceptanceResult(scSnapshots, currencySnapshots, returnedSCEvents, currencyAcceptanceBalanceUpdate) <-
+              stateChannelEventsProcessor
+                .process(
+                  ordinal,
+                  lastSnapshotContext.copy(balances = lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances),
+                  scEvents,
+                  validationType
                 )
-            }
-
-            val maybeMerkleTree = updatedLastCurrencySnapshotsCompatible.merkleTree[F]
-
-            val updatedLastCurrencySnapshotProofs = maybeMerkleTree.flatMap {
-              _.traverse { merkleTree =>
-                updatedLastCurrencySnapshotsCompatible.toList.traverse {
-                  case (address, state) =>
-                    hasher
-                      .hash((address, state))
-                      .map(merkleTree.findPath(_))
-                      .flatMap(MonadThrow[F].fromOption(_, InvalidMerkleTree))
-                      .map((address, _))
+                .flatTap { result =>
+                  result.accepted.toList.traverse_ {
+                    case (address, snapshots) =>
+                      snapshots.traverse_ { snapshot =>
+                        metricsLogger.logStateChannelSize(address, snapshot.value.content.length.toLong)
+                      }
+                  }
                 }
-              }.map(_.map(SortedMap.from(_)).getOrElse(SortedMap.empty[Address, Proof]))
+            sCSnapshotHashes <- scSnapshots.toList.traverse {
+              case (address, nel) => nel.last.toHashed.map(address -> _.hash)
+            }
+              .map(_.toMap)
+            updatedLastStateChannelSnapshotHashes = lastSnapshotContext.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
+            updatedLastCurrencySnapshots = lastSnapshotContext.lastCurrencySnapshots ++ currencySnapshots
+
+            transactionsRefs = lastSnapshotContext.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
+
+            acceptedTransactions = acceptanceResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
+
+            rewards <- calculateRewardsFn(acceptedTransactions)
+
+            (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
+              lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances ++ currencyAcceptanceBalanceUpdate,
+              rewards
+            )
+
+            (maybeMerkleTree, updatedLastCurrencySnapshotProofs) <- hasher.getLogic(ordinal) match {
+              case JsonHash =>
+                val maybeMerkleTree = updatedLastCurrencySnapshots.merkleTree[F]
+
+                val updatedLastCurrencySnapshotProofs = maybeMerkleTree.flatMap {
+                  _.traverse { merkleTree =>
+                    updatedLastCurrencySnapshots.toList.traverse {
+                      case (address, state) =>
+                        (address, state).hash
+                          .map(merkleTree.findPath(_))
+                          .flatMap(MonadThrow[F].fromOption(_, InvalidMerkleTree))
+                          .map((address, _))
+                    }
+                  }.map(_.map(SortedMap.from(_)).getOrElse(SortedMap.empty[Address, Proof]))
+                }
+
+                (maybeMerkleTree, updatedLastCurrencySnapshotProofs).tupled
+
+              case KryoHash =>
+                val updatedLastCurrencySnapshotsCompatible = updatedLastCurrencySnapshots.map {
+                  case (address, Left(snapshot)) => (address, Left(snapshot))
+                  case (address, Right((Signed(incrementalSnapshot, proofs), info))) =>
+                    (
+                      address,
+                      Right(
+                        (
+                          Signed(CurrencyIncrementalSnapshotV1.fromCurrencyIncrementalSnapshot(incrementalSnapshot), proofs),
+                          CurrencySnapshotInfoV1.fromCurrencySnapshotInfo(info)
+                        )
+                      )
+                    )
+                }
+
+                val maybeMerkleTree = updatedLastCurrencySnapshotsCompatible.merkleTree[F]
+
+                val updatedLastCurrencySnapshotProofs = maybeMerkleTree.flatMap {
+                  _.traverse { merkleTree =>
+                    updatedLastCurrencySnapshotsCompatible.toList.traverse {
+                      case (address, state) =>
+                        hasher
+                          .hash((address, state))
+                          .map(merkleTree.findPath(_))
+                          .flatMap(MonadThrow[F].fromOption(_, InvalidMerkleTree))
+                          .map((address, _))
+                    }
+                  }.map(_.map(SortedMap.from(_)).getOrElse(SortedMap.empty[Address, Proof]))
+                }
+
+                (maybeMerkleTree, updatedLastCurrencySnapshotProofs).tupled
             }
 
-            (maybeMerkleTree, updatedLastCurrencySnapshotProofs).tupled
+            gsi = GlobalSnapshotInfo(
+              updatedLastStateChannelSnapshotHashes,
+              transactionsRefs,
+              updatedBalancesByRewards,
+              updatedLastCurrencySnapshots,
+              updatedLastCurrencySnapshotProofs
+            )
+
+            stateProof <- gsi.stateProof(maybeMerkleTree)
+
+          } yield
+            (
+              acceptanceResult,
+              scSnapshots,
+              returnedSCEvents,
+              acceptedRewardTxs,
+              gsi,
+              stateProof
+            )
         }
 
-        gsi = GlobalSnapshotInfo(
-          updatedLastStateChannelSnapshotHashes,
-          transactionsRefs,
-          updatedBalancesByRewards,
-          updatedLastCurrencySnapshots,
-          updatedLastCurrencySnapshotProofs
-        )
+        private def acceptBlocks(
+          blocksForAcceptance: List[Signed[Block]],
+          lastSnapshotContext: GlobalSnapshotInfo,
+          lastActiveTips: SortedSet[ActiveTip],
+          lastDeprecatedTips: SortedSet[DeprecatedTip],
+          ordinal: SnapshotOrdinal
+        )(implicit hasher: Hasher[F]) = {
+          val tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
+          val context = BlockAcceptanceContext.fromStaticData(
+            lastSnapshotContext.balances,
+            lastSnapshotContext.lastTxRefs,
+            tipUsages,
+            collateral,
+            TransactionReference.empty
+          )
 
-        stateProof <- gsi.stateProof(maybeMerkleTree)
+          blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, ordinal)
+        }
 
-      } yield
-        (
-          acceptanceResult,
-          scSnapshots,
-          returnedSCEvents,
-          acceptedRewardTxs,
-          gsi,
-          stateProof
-        )
-    }
+        private def acceptRewardTxs(
+          balances: SortedMap[Address, Balance],
+          txs: SortedSet[RewardTransaction]
+        ): (SortedMap[Address, Balance], SortedSet[RewardTransaction]) =
+          txs.foldLeft((balances, SortedSet.empty[RewardTransaction])) { (acc, tx) =>
+            val (updatedBalances, acceptedTxs) = acc
 
-    private def acceptBlocks(
-      blocksForAcceptance: List[Signed[Block]],
-      lastSnapshotContext: GlobalSnapshotInfo,
-      lastActiveTips: SortedSet[ActiveTip],
-      lastDeprecatedTips: SortedSet[DeprecatedTip],
-      ordinal: SnapshotOrdinal
-    )(implicit hasher: Hasher[F]) = {
-      val tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
-      val context = BlockAcceptanceContext.fromStaticData(
-        lastSnapshotContext.balances,
-        lastSnapshotContext.lastTxRefs,
-        tipUsages,
-        collateral,
-        TransactionReference.empty
-      )
+            updatedBalances
+              .getOrElse(tx.destination, Balance.empty)
+              .plus(tx.amount)
+              .map(balance => (updatedBalances.updated(tx.destination, balance), acceptedTxs + tx))
+              .getOrElse(acc)
+          }
 
-      blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, ordinal)
-    }
+        def getTipsUsages(
+          lastActive: Set[ActiveTip],
+          lastDeprecated: Set[DeprecatedTip]
+        ): Map[BlockReference, NonNegLong] = {
+          val activeTipsUsages = lastActive.map(at => (at.block, at.usageCount)).toMap
+          val deprecatedTipsUsages = lastDeprecated.map(dt => (dt.block, deprecationThreshold)).toMap
 
-    private def acceptRewardTxs(
-      balances: SortedMap[Address, Balance],
-      txs: SortedSet[RewardTransaction]
-    ): (SortedMap[Address, Balance], SortedSet[RewardTransaction]) =
-      txs.foldLeft((balances, SortedSet.empty[RewardTransaction])) { (acc, tx) =>
-        val (updatedBalances, acceptedTxs) = acc
+          activeTipsUsages ++ deprecatedTipsUsages
+        }
 
-        updatedBalances
-          .getOrElse(tx.destination, Balance.empty)
-          .plus(tx.amount)
-          .map(balance => (updatedBalances.updated(tx.destination, balance), acceptedTxs + tx))
-          .getOrElse(acc)
       }
 
-    def getTipsUsages(
-      lastActive: Set[ActiveTip],
-      lastDeprecated: Set[DeprecatedTip]
-    ): Map[BlockReference, NonNegLong] = {
-      val activeTipsUsages = lastActive.map(at => (at.block, at.usageCount)).toMap
-      val deprecatedTipsUsages = lastDeprecated.map(dt => (dt.block, deprecationThreshold)).toMap
-
-      activeTipsUsages ++ deprecatedTipsUsages
     }
-
-  }
-
 }

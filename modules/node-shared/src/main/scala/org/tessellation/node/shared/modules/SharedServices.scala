@@ -97,16 +97,17 @@ object SharedServices {
       feeCalculator = FeeCalculator.make(cfg.feeConfigs)
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(stateChannelAllowanceLists)
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
-      globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
+      globalSnapshotStateChannelEventsProcessor <- GlobalSnapshotStateChannelEventsProcessor
+        .make[F](
+          validators.stateChannelValidator,
+          globalSnapshotStateChannelManager,
+          currencySnapshotContextFns,
+          jsonBrotliBinarySerializer,
+          feeCalculator
+        )
+      globalSnapshotAcceptanceManager <- GlobalSnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
-        GlobalSnapshotStateChannelEventsProcessor
-          .make[F](
-            validators.stateChannelValidator,
-            globalSnapshotStateChannelManager,
-            currencySnapshotContextFns,
-            jsonBrotliBinarySerializer,
-            feeCalculator
-          ),
+        globalSnapshotStateChannelEventsProcessor,
         collateral.amount
       )
       globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(globalSnapshotAcceptanceManager)

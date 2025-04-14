@@ -16,6 +16,7 @@ import org.tessellation.ext.kryo.RefinedSerializer
 import org.tessellation.generators.nonEmptyStringGen
 import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.schema.Block._
 import org.tessellation.schema.generators._
 import org.tessellation.schema.transaction.TransactionFee
@@ -33,7 +34,7 @@ import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
 object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
-  type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO])
+  type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO])
 
   override def sharedResource: Resource[IO, Res] =
     for {
@@ -41,31 +42,33 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
       sp <- SecurityProvider.forAsync[IO]
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
       h = Hasher.forJson[IO]
-    } yield (ks, h, sp)
+      m <- Metrics.forAsync[IO](Seq.empty)
+    } yield (ks, h, sp, m)
 
   test("no events should not raise error") { res =>
-    implicit val (ks, h, _) = res
+    implicit val (ks, h, _, m) = res
 
-    makeCutter(PosInt.MaxValue)
-      .cut(Nil, Nil, makeSnapshotInfo(), SnapshotOrdinal.MinValue)
-      .map(actual => expect.all((Nil, Nil) == actual))
+    makeCutter(PosInt.MaxValue).flatMap { c =>
+      c.cut(Nil, Nil, makeSnapshotInfo(), SnapshotOrdinal.MinValue)
+        .map(actual => expect.all((Nil, Nil) == actual))
+    }
   }
 
   test("all events cut because max size too small") { res =>
-    implicit val (ks, h, _) = res
+    implicit val (ks, h, _, m) = res
 
     val gen = eventsGen(5, 10)
     forall(gen) {
       case (scEvents, dagEvents) =>
         for {
-          cutter <- makeCutter(PosInt.MinValue).pure[F]
+          cutter <- makeCutter(PosInt.MinValue)
           actual <- cutter.cut(scEvents, dagEvents, makeSnapshotInfo(), SnapshotOrdinal.MinValue)
         } yield expect.all(actual == (Nil, Nil))
     }
   }
 
   test("no events cut") { res =>
-    implicit val (ks, h, _) = res
+    implicit val (ks, h, _, m) = res
 
     val gen = eventsGen(5, 15)
     forall(gen) {
@@ -73,14 +76,14 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
         for {
           scEventsSize <- scEvents.toBinary.liftTo[IO].map(_.length)
           dagEventsSize <- dagEvents.toBinary.liftTo[IO].map(_.length)
-          cutter = makeCutter(PosInt.unsafeFrom(scEventsSize + dagEventsSize))
+          cutter <- makeCutter(PosInt.unsafeFrom(scEventsSize + dagEventsSize))
           (scEventsAfterCut, dagEventsAfterCut) <- cutter.cut(scEvents, dagEvents, makeSnapshotInfo(), SnapshotOrdinal.MinValue)
         } yield expect.all(scEvents == scEventsAfterCut, dagEvents == dagEventsAfterCut)
     }
   }
 
   test("remove lowest fees but not parents") { res =>
-    implicit val (ks, h, _) = res
+    implicit val (ks, h, _, m) = res
 
     val gen = for {
       scEvents <- listOfN(5, 10, stateChannelOutputGenWithFee(posLongGen))
@@ -123,7 +126,7 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
             expectedDagEvents.toBinary.liftTo[IO].map(_.length)
           ).mapN(_ + _)
 
-          cutter = makeCutter(PosInt.unsafeFrom(expectedSize))
+          cutter <- makeCutter(PosInt.unsafeFrom(expectedSize))
           (actualScEvents, actualDagEvents) <- cutter.cut(
             scParent :: adjustedScEvents,
             dagParent :: adjustedDagEvents,
@@ -150,7 +153,7 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
       event.snapshotBinary.value.fee.value.pure[IO]
   }
 
-  def makeCutter(maxSize: PosInt)(implicit K: KryoSerializer[IO], H: Hasher[IO]) =
+  def makeCutter(maxSize: PosInt)(implicit K: KryoSerializer[IO], H: Hasher[IO], M: Metrics[IO]) =
     GlobalSnapshotEventCutter.make[IO](maxSize, feeCalculator)
 
   val zeroLongGen: Gen[Long] = Gen.const(0L)

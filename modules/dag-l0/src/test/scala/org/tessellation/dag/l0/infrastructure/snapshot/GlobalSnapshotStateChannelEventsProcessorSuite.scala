@@ -18,6 +18,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.SnapshotSizeConfig
 import org.tessellation.node.shared.domain.statechannel._
 import org.tessellation.node.shared.infrastructure.block.processing.BlockAcceptanceManager
+import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.node.shared.infrastructure.snapshot._
 import org.tessellation.node.shared.modules.SharedValidators
 import org.tessellation.schema.address.Address
@@ -36,7 +37,7 @@ import eu.timepit.refined.auto._
 import weaver.MutableIOSuite
 object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
 
-  type Res = (KryoSerializer[IO], Hasher[IO], JsonSerializer[IO], SecurityProvider[IO], JsonBrotliBinarySerializer[IO])
+  type Res = (KryoSerializer[IO], Hasher[IO], JsonSerializer[IO], SecurityProvider[IO], JsonBrotliBinarySerializer[IO], Metrics[IO])
 
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
@@ -44,12 +45,13 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
     h = Hasher.forJson[IO]
     serializer <- JsonBrotliBinarySerializer.forSync[IO].asResource
-  } yield (ks, h, j, sp, serializer)
+    metrics <- Metrics.forAsync[IO](Seq.empty)
+  } yield (ks, h, j, sp, serializer, metrics)
 
   def mkProcessor(
     stateChannelAllowanceLists: Map[Address, NonEmptySet[PeerId]],
     failed: Option[(Address, StateChannelValidator.StateChannelValidationError)] = None
-  )(implicit H: Hasher[IO], S: SecurityProvider[IO], J: JsonSerializer[IO], K: KryoSerializer[IO]) = {
+  )(implicit H: Hasher[IO], S: SecurityProvider[IO], J: JsonSerializer[IO], K: KryoSerializer[IO], M: Metrics[IO]) = {
     implicit val hs = HasherSelector.forSyncAlwaysCurrent(H)
 
     for {
@@ -91,13 +93,13 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       }
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       feeCalculator = FeeCalculator.make(SortedMap.empty)
-      processor = GlobalSnapshotStateChannelEventsProcessor
+      processor <- GlobalSnapshotStateChannelEventsProcessor
         .make[IO](validator, manager, currencySnapshotContextFns, jsonBrotliBinarySerializer, feeCalculator)
     } yield processor
   }
 
   test("return new sc event") { res =>
-    implicit val (ks, h, j, sp, serializer) = res
+    implicit val (ks, h, j, sp, serializer, m) = res
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
@@ -117,7 +119,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
   }
 
   test("return sc events for different addresses") { res =>
-    implicit val (ks, h, j, sp, serializer) = res
+    implicit val (ks, h, j, sp, serializer, m) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -142,7 +144,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
   }
 
   test("return only valid sc events") { res =>
-    implicit val (ks, h, j, sp, serializer) = res
+    implicit val (ks, h, j, sp, serializer, m) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
