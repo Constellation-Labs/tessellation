@@ -34,8 +34,7 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedSetSyntax}
 
 import eu.timepit.refined.auto.autoUnwrap
-import eu.timepit.refined.types.all.PosLong
-import eu.timepit.refined.types.numeric.NonNegLong
+import eu.timepit.refined.types.all.{NonNegLong, PosLong}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object DelegatedRewardsDistributor {
@@ -100,9 +99,18 @@ object DelegatedRewardsDistributor {
       partitionedRecords: PartitionedStakeUpdates
     ): F[DelegationRewardsResult] = trigger match {
       case EventTrigger =>
-        DelegationRewardsResult(Map.empty, SortedMap.empty, SortedMap.empty, SortedSet.empty, SortedSet.empty, Amount.empty).pure[F]
+        applyDistribution(
+          lastSnapshotContext,
+          epochProgress,
+          facilitators,
+          delegatedStakeDiffs,
+          partitionedRecords,
+          Amount(NonNegLong.unsafeFrom(0L))
+        )
       case TimeTrigger =>
-        applyDistribution(lastSnapshotContext, epochProgress, facilitators, delegatedStakeDiffs, partitionedRecords)
+        calculateTotalRewardsToMint(epochProgress).flatMap(
+          applyDistribution(lastSnapshotContext, epochProgress, facilitators, delegatedStakeDiffs, partitionedRecords, _)
+        )
     }
 
     /** Calculate rewards using the new emission formula with deterministic precision: i(t) = i_initial + (i_initial - i_target) * e^{ -λ *
@@ -388,19 +396,17 @@ object DelegatedRewardsDistributor {
       epochProgress: EpochProgress,
       facilitators: List[(Address, Id)],
       delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
-      partitionedRecords: PartitionedStakeUpdates
+      partitionedRecords: PartitionedStakeUpdates,
+      totalReward: Amount
     ): F[DelegationRewardsResult] =
       for {
-        // Calculate total rewards to mint for this snapshot
-        totalEmittedRewardsAmount <- calculateTotalRewardsToMint(epochProgress)
-
         // Calculate delegator rewards for all active and newly accepted delegated stakes
         delegatorRewardsMap <-
           calculateDelegatorRewards(
             lastSnapshotContext.activeDelegatedStakes.getOrElse(SortedMap.empty),
             lastSnapshotContext.updateNodeParameters.getOrElse(SortedMap.empty),
             epochProgress,
-            totalEmittedRewardsAmount
+            totalReward
           )
 
         updatedCreateDelegatedStakes <-
@@ -446,7 +452,7 @@ object DelegatedRewardsDistributor {
             lastSnapshotContext.updateNodeParameters.getOrElse(SortedMap.empty),
             facilitators,
             epochProgress,
-            totalEmittedRewardsAmount,
+            totalReward,
             lastSnapshotContext
           )
 
@@ -469,7 +475,7 @@ object DelegatedRewardsDistributor {
           updatedWithdrawDelegatedStakes,
           nodeOperatorRewards,
           withdrawalRewardTxs,
-          totalEmittedRewardsAmount
+          totalReward
         )
   }
 }
