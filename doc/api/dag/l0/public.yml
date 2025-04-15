@@ -319,11 +319,15 @@ paths:
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
 
-  /delegated-stake:
+  /delegated-stakes:
     post:
       tags:
         - Delegated stakes
-      description: Post delegated stake create request
+      description: 
+        Create or update a delegated stake. <br/> <br/> 
+        To create a delegated stake, provide a tokenLockRef for a TokenLock with a null unlockEpoch value. <br/> <br/> 
+        To update an existing delegated stake record, you must provide the same tokenLockRef as the original stake with a new nodeId. 
+        The lock and rewards will be transferred to the new node without waiting for the unlock period. 
       requestBody:
         description: Signed delegated stake create request
         required: true
@@ -373,7 +377,10 @@ paths:
     put:
       tags:
         - Delegated stakes
-      description: Put delegated stake withdraw request
+      description: 
+        Withdraw a delegated stake. <br/> <br/> 
+      
+        Withdraws the TokenLock balance and all available rewards after the unlock period. 
       requestBody:
         description: Signed delegated stake withdraw request
         required: true
@@ -421,7 +428,7 @@ paths:
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
 
-  /delegated-stake/{address}/info:
+  /delegated-stakes/{address}/info:
     get:
       tags:
         - Delegated stakes
@@ -448,7 +455,7 @@ paths:
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
 
-  /delegated-stake/last-reference/{address}:
+  /delegated-stakes/last-reference/{address}:
     get:
       tags:
         - Delegated stakes
@@ -739,19 +746,19 @@ paths:
           description: Filter by name or peer ID
           required: false
           schema:
-            type: String
+            type: string
         - name: sort
           in: query
           description: Sort by (name | peerID | address | totalAddressesAssigned | totalAmountDelegated)
           required: false
           schema:
-            type: String
+            type: string
         - name: sortOrder
           in: query
           description: Sort order (ASC|DESC)
           required: false
           schema:
-            type: String
+            type: string
       responses:
         200:
           description: List of node parameters
@@ -831,4 +838,3 @@ paths:
               $ref: '../../models/headers/X-Session-Token.yml'
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
-
