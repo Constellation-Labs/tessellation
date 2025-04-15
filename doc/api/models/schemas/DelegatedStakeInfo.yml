@@ -24,3 +24,13 @@ properties:
   withdrawalEndEpoch:
     $ref: 'EpochProgress.yml'
     nullable: true
+  rewardAmount:
+    type: integer
+    format: int64
+    example: 125000
+    minimum: 0
+  totalBalance:
+    type: integer
+    format: int64
+    example: 125000
+    minimum: 0

@@ -15,6 +15,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStora
 import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
@@ -22,6 +23,7 @@ import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.shapes._
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
@@ -57,31 +59,47 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
 
     for {
       stakes <- lastStakes.traverse {
-        case DelegatedStakeRecord(stake, ord, _, _) =>
+        case DelegatedStakeRecord(stake, ord, bal, _) =>
           DelegatedStakeReference
             .of(stake)
             .map(ref =>
-              ((stake, ord, ref), lastWithdrawals.find { case PendingWithdrawal(withdrawal, _, _) => withdrawal.stakeRef === ref.hash })
+              (
+                (stake, ord, bal, ref),
+                lastWithdrawals.find { case PendingWithdrawal(withdrawal, _, _) => withdrawal.stakeRef === ref.hash }
+              )
             )
       }
-      infos = stakes.map {
-        case ((stake, acceptedOrdinal, delegatedStakeRef), maybeWithdraw) =>
-          DelegatedStakeInfo(
-            nodeId = stake.nodeId,
-            acceptedOrdinal = acceptedOrdinal,
-            tokenLockRef = stake.tokenLockRef,
-            amount = stake.amount,
-            fee = stake.fee,
-            hash = delegatedStakeRef.hash,
-            withdrawalStartEpoch = maybeWithdraw.map { case PendingWithdrawal(_, _, epochProgress) => epochProgress },
-            withdrawalEndEpoch = maybeWithdraw.map { case PendingWithdrawal(_, _, epochProgress) => epochProgress |+| withdrawalTimeLimit }
+      infosResult <- stakes.traverse {
+        case ((stake, acceptedOrdinal, rewardsBalance, delegatedStakeRef), maybeWithdraw) =>
+          val totalAmountF = Async[F].fromEither(
+            NonNegLong
+              .from(rewardsBalance.value + stake.amount.value)
+              .leftMap(err => new IllegalArgumentException(s"Failed to create non-negative total: $err"))
+              .map(Amount(_))
           )
+
+          totalAmountF.map { total =>
+            DelegatedStakeInfo(
+              nodeId = stake.nodeId,
+              acceptedOrdinal = acceptedOrdinal,
+              tokenLockRef = stake.tokenLockRef,
+              amount = stake.amount,
+              fee = stake.fee,
+              hash = delegatedStakeRef.hash,
+              withdrawalStartEpoch = maybeWithdraw.map { case PendingWithdrawal(_, _, epochProgress) => epochProgress },
+              withdrawalEndEpoch = maybeWithdraw.map {
+                case PendingWithdrawal(_, _, epochProgress) => epochProgress |+| withdrawalTimeLimit
+              },
+              rewardAmount = rewardsBalance,
+              totalBalance = total
+            )
+          }
       }
     } yield
       DelegatedStakesInfo(
         address = address,
-        activeDelegatedStakes = infos,
-        pendingWithdrawals = infos.filter(_.withdrawalStartEpoch.nonEmpty)
+        activeDelegatedStakes = infosResult,
+        pendingWithdrawals = infosResult.filter(_.withdrawalStartEpoch.nonEmpty)
       )
   }
 
