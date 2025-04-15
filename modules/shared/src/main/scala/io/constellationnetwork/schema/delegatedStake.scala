@@ -103,7 +103,9 @@ object delegatedStake {
     fee: DelegatedStakeFee,
     hash: Hash,
     withdrawalStartEpoch: Option[EpochProgress],
-    withdrawalEndEpoch: Option[EpochProgress]
+    withdrawalEndEpoch: Option[EpochProgress],
+    rewardAmount: Balance,
+    totalBalance: Amount
   )
 
   @derive(eqv, show, encoder)
