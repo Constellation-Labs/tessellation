@@ -170,7 +170,8 @@ abstract class CurrencyL1App(
         .start(storages, services)
         .asResource
 
-      implicit0(nodeContext: L1NodeContext[IO]) = L1NodeContext.make[IO](storages.lastGlobalSnapshot, storages.lastSnapshot)
+      implicit0(nodeContext: L1NodeContext[IO]) = L1NodeContext
+        .make[IO](storages.lastGlobalSnapshot, storages.lastSnapshot, storages.identifier)
 
       api = HttpApi
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
@@ -221,7 +222,8 @@ abstract class CurrencyL1App(
       _ <- {
         method match {
           case cfg: RunInitialValidator =>
-            gossipDaemon.startAsInitialValidator >>
+            storages.identifier.setInitial(cfg.identifier) >>
+              gossipDaemon.startAsInitialValidator >>
               programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
               programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
               storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
@@ -246,13 +248,15 @@ abstract class CurrencyL1App(
               )
 
           case cfg: RunValidator =>
-            gossipDaemon.startAsRegularValidator >>
+            storages.identifier.setInitial(cfg.identifier) >>
+              gossipDaemon.startAsRegularValidator >>
               programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
               programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
               storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
 
           case cfg: RunValidatorWithJoinAttempt =>
-            gossipDaemon.startAsRegularValidator >>
+            storages.identifier.setInitial(cfg.identifier) >>
+              gossipDaemon.startAsRegularValidator >>
               programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
               programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
               storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>

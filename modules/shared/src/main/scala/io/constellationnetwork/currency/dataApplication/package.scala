@@ -791,6 +791,7 @@ trait L1NodeContext[F[_]] {
   def getLastCurrencySnapshot: F[Option[Hashed[CurrencyIncrementalSnapshot]]]
   def getLastCurrencySnapshotCombined: F[Option[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]
   def securityProvider: SecurityProvider[F]
+  def getCurrencyId: F[CurrencyId]
 }
 
 trait L0NodeContext[F[_]] {

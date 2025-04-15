@@ -6,12 +6,12 @@ import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
 
-import io.constellationnetwork.currency.l0.node.IdentifierStorage
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.kernel._
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.getFeeAddresses
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencyMessageValidator
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
 import io.constellationnetwork.node.shared.snapshot.currency.{CurrencyMessageEvent, CurrencySnapshotEvent}
 import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema.address.Address

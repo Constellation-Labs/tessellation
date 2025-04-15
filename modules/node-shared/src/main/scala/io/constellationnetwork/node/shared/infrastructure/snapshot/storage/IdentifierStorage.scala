@@ -1,4 +1,4 @@
-package io.constellationnetwork.currency.l0.node
+package io.constellationnetwork.node.shared.infrastructure.snapshot.storage
 
 import cats.effect.kernel.{Async, Ref}
 import cats.syntax.flatMap._

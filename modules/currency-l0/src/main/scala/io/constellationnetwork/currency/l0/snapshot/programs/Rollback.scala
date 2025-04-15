@@ -9,7 +9,6 @@ import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataApplicationTraverse, L0NodeContext}
-import io.constellationnetwork.currency.l0.node.IdentifierStorage
 import io.constellationnetwork.currency.l0.snapshot.CurrencyConsensusManager
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotContext, CurrencySnapshotInfo}
@@ -20,6 +19,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Serv
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security._
