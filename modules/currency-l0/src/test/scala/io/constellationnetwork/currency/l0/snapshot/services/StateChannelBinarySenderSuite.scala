@@ -8,7 +8,6 @@ import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
 
-import io.constellationnetwork.currency.l0.node.IdentifierStorage
 import io.constellationnetwork.currency.schema.currency.SnapshotFee
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.generators.nonEmptyStringGen
@@ -19,6 +18,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotS
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.StateChannelValidationError
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse.PeerResponse
 import io.constellationnetwork.node.shared.http.p2p.clients.StateChannelSnapshotClient
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.epoch.EpochProgress

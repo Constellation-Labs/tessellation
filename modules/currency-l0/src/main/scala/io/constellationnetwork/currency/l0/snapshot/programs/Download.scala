@@ -18,7 +18,6 @@ import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataCalculatedState, L0NodeContext}
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
-import io.constellationnetwork.currency.l0.node.IdentifierStorage
 import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotConsensus
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
@@ -30,6 +29,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Serv
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotContextFunctions
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.Peer

@@ -27,6 +27,7 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
 import io.constellationnetwork.node.shared.domain.queue.ViewableQueue
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
@@ -89,7 +90,9 @@ object DataApplicationRoutesSuite extends HttpSuite {
       implicit val (sp, h, sv, r, js) = res
       for {
         consensusQueue <- Queue.unbounded[IO, Signed[ConsensusInput.PeerConsensusInput]]
-        implicit0(ctx: L1NodeContext[IO]) = L1NodeContext.make[IO](lastGlobalSnapshotStorage, lastCurrencySnapshotStorage)
+        identifierStorage <- IdentifierStorage.make[IO]
+        implicit0(ctx: L1NodeContext[IO]) = L1NodeContext
+          .make[IO](lastGlobalSnapshotStorage, lastCurrencySnapshotStorage, identifierStorage)
         l0ClusterStorage <- mockL0ClusterStorage
         dataApi = DataApplicationRoutes(
           consensusQueue,

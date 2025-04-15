@@ -7,7 +7,6 @@ import cats.effect.Async
 import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
-import io.constellationnetwork.currency.l0.node.IdentifierStorage
 import io.constellationnetwork.currency.l0.snapshot.CurrencyConsensusManager
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
 import io.constellationnetwork.currency.l0.snapshot.services.StateChannelSnapshotService
@@ -19,6 +18,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStora
 import io.constellationnetwork.node.shared.http.p2p.clients.StateChannelSnapshotClient
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
 import io.constellationnetwork.schema.peer.{L0Peer, PeerId}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
