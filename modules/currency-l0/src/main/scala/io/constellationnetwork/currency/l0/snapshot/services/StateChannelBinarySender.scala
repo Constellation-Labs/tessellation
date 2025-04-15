@@ -7,11 +7,11 @@ import cats.syntax.all._
 
 import scala.collection.immutable.Queue
 
-import io.constellationnetwork.currency.l0.node.IdentifierStorage
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.StateChannelValidationError
 import io.constellationnetwork.node.shared.http.p2p.clients.StateChannelSnapshotClient
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
