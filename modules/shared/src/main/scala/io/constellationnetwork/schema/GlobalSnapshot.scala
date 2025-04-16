@@ -11,7 +11,7 @@ import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{SharedArtifact, SpendAction}
-import io.constellationnetwork.schema.balance.Balance
+import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
@@ -45,6 +45,7 @@ case class GlobalIncrementalSnapshot(
   blocks: SortedSet[BlockAsActiveTip],
   stateChannelSnapshots: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
   rewards: SortedSet[RewardTransaction],
+  delegateRewards: Option[SortedMap[Address, Map[PeerId, Amount]]],
   epochProgress: EpochProgress,
   nextFacilitators: NonEmptyList[PeerId],
   tips: SnapshotTips,
@@ -72,6 +73,7 @@ object GlobalIncrementalSnapshot {
         snapshot.blocks,
         snapshot.stateChannelSnapshots,
         snapshot.rewards,
+        None,
         snapshot.epochProgress,
         snapshot.nextFacilitators,
         snapshot.tips,
@@ -113,6 +115,7 @@ case class GlobalIncrementalSnapshotV1(
       blocks,
       stateChannelSnapshots,
       rewards,
+      None,
       epochProgress,
       nextFacilitators,
       tips,
@@ -195,6 +198,7 @@ object GlobalSnapshot {
         SortedSet.empty,
         SortedMap.empty,
         SortedSet.empty,
+        None,
         genesis.epochProgress.next,
         nextFacilitators,
         genesis.tips,

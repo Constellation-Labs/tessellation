@@ -6,9 +6,9 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.currency.dataApplication.DataCalculatedState
 import io.constellationnetwork.dag.l0.config.DelegatedRewardsConfigProvider
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.UpdateNodeParametersCutter
-import io.constellationnetwork.dag.l0.infrastructure.rewards.DelegatedRewardsDistributor
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.cats.syntax.next._
@@ -176,43 +176,40 @@ object GlobalSnapshotConsensusFunctions {
         currentOrdinal.value >= v3MigrationOrdinal.value &&
           currentEpochProgress.value.value >= asOfEpoch.value.value
 
-      val rewardsWithFacilitators: List[(Address, Id)] => RewardsInput => F[DelegationRewardsResult] = { faciltators: List[(Address, Id)] =>
-        {
-          case ClassicRewardsInput(txs) =>
-            classicRewards
-              .distribute(lastArtifact, snapshotContext.balances, txs, trigger, events)
-              .map { rewardTxs =>
-                DelegationRewardsResult(
-                  delegatorRewardsMap = Map.empty,
-                  updatedCreateDelegatedStakes = SortedMap.empty,
-                  updatedWithdrawDelegatedStakes = SortedMap.empty,
-                  nodeOperatorRewards = rewardTxs,
-                  withdrawalRewardTxs = SortedSet.empty,
-                  totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
-                )
-              }
-
-          case DelegateRewardsInput(udsar, psu, ep) =>
-            val currentOrdinal = lastArtifact.ordinal.next
-
-            if (shouldUseDelegatedRewards(currentOrdinal, ep)) {
-              delegatedRewards
-                .distribute(snapshotContext, trigger, ep, faciltators, udsar, psu)
-            } else {
-              classicRewards
-                .distribute(lastArtifact, snapshotContext.balances, SortedSet.empty, trigger, events)
-                .map { rewardTxs =>
-                  DelegationRewardsResult(
-                    delegatorRewardsMap = Map.empty,
-                    updatedCreateDelegatedStakes = SortedMap.empty,
-                    updatedWithdrawDelegatedStakes = SortedMap.empty,
-                    nodeOperatorRewards = rewardTxs,
-                    withdrawalRewardTxs = SortedSet.empty,
-                    totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
-                  )
-                }
-            }
+      val classicRewardsFn = classicRewards
+        .distribute(
+          _: Signed[GlobalIncrementalSnapshot],
+          _: SortedMap[Address, Balance],
+          _: SortedSet[Signed[Transaction]],
+          _: ConsensusTrigger,
+          _: Set[GlobalSnapshotEvent],
+          _: Option[DataCalculatedState]
+        )
+        .map { rewardTxs =>
+          DelegationRewardsResult(
+            delegatorRewardsMap = Map.empty,
+            updatedCreateDelegatedStakes = SortedMap.empty,
+            updatedWithdrawDelegatedStakes = SortedMap.empty,
+            nodeOperatorRewards = rewardTxs,
+            reservedAddressRewards = SortedSet.empty,
+            withdrawalRewardTxs = SortedSet.empty,
+            totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
+          )
         }
+
+      val rewardsWithFacilitators: List[(Address, PeerId)] => RewardsInput => F[DelegationRewardsResult] = {
+        faciltators: List[(Address, PeerId)] =>
+          {
+            case ClassicRewardsInput(txs) =>
+              classicRewardsFn(lastArtifact, snapshotContext.balances, txs, trigger, events, None)
+
+            case DelegateRewardsInput(udsar, psu, ep) =>
+              if (shouldUseDelegatedRewards(lastArtifact.ordinal.next, ep)) {
+                delegatedRewards.distribute(snapshotContext, trigger, ep, faciltators, udsar, psu)
+              } else {
+                classicRewardsFn(lastArtifact, snapshotContext.balances, SortedSet.empty, trigger, events, None)
+              }
+          }
       }
 
       def getLastArtifactHash = lastArtifactHasher.getLogic(lastArtifact.value.ordinal) match {
@@ -241,7 +238,7 @@ object GlobalSnapshotConsensusFunctions {
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
         lastFacilitators <- lastArtifact.proofs.toList.traverse {
-          case SignatureProof(id, _) => id.toAddress.map(_ -> id)
+          case SignatureProof(id, _) => id.toAddress.map(_ -> id.toPeerId)
         }
 
         (
@@ -257,7 +254,8 @@ object GlobalSnapshotConsensusFunctions {
           stateProof,
           spendActions,
           updateNodeParameters,
-          sharedArtifacts
+          sharedArtifacts,
+          delegatorRewardsMap
         ) <-
           globalSnapshotAcceptanceManager
             .accept(
@@ -304,6 +302,7 @@ object GlobalSnapshotConsensusFunctions {
           accepted,
           scSnapshots,
           acceptedRewardTxs,
+          if (delegatorRewardsMap.nonEmpty) Some(SortedMap.from(delegatorRewardsMap)) else None,
           currentEpochProgress,
           GlobalSnapshot.nextFacilitators,
           SnapshotTips(

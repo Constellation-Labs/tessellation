@@ -49,6 +49,7 @@ import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralReference, UpdateNodeCollateral}
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction._
@@ -96,7 +97,8 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
       GlobalSnapshotStateProof,
       Map[Address, List[SpendAction]],
       SortedMap[Id, Signed[UpdateNodeParameters]],
-      SortedSet[SharedArtifact]
+      SortedSet[SharedArtifact],
+      Map[Address, Map[PeerId, Amount]]
     )
   ]
 }
@@ -152,7 +154,8 @@ object GlobalSnapshotAcceptanceManager {
         GlobalSnapshotStateProof,
         Map[Address, List[SpendAction]],
         SortedMap[Id, Signed[UpdateNodeParameters]],
-        SortedSet[SharedArtifact]
+        SortedSet[SharedArtifact],
+        Map[Address, Map[PeerId, Amount]]
       )
     ] = {
       implicit val hasher = HasherSelector[F].getForOrdinal(ordinal)
@@ -222,8 +225,9 @@ object GlobalSnapshotAcceptanceManager {
           updatedCreateDelegatedStakes,
           updatedWithdrawDelegatedStakes,
           nodeOperatorRewards,
+          reservedAddressRewards,
           withdrawalRewardTxs,
-          totalEmittedRewardsAmount
+          _
         ) <-
           if (ordinal.value < tessellation3MigrationStartingOrdinal.value) {
             calculateRewardsFn(ClassicRewardsInput(acceptedTransactions))
@@ -252,7 +256,7 @@ object GlobalSnapshotAcceptanceManager {
 
         (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
           updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
-          withdrawalRewardTxs ++ nodeOperatorRewards
+          withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards
         )
 
         currencyBalances = currencySnapshots.toList.map {
@@ -569,7 +573,8 @@ object GlobalSnapshotAcceptanceManager {
           stateProof,
           acceptedSpendActions,
           acceptedUpdateNodeParameters,
-          allowSpendsExpiredEvents ++ tokenUnlocksEvents
+          allowSpendsExpiredEvents ++ tokenUnlocksEvents,
+          delegatorRewardsMap
         )
     }
 
@@ -1174,7 +1179,5 @@ object GlobalSnapshotAcceptanceManager {
 
       activeTipsUsages ++ deprecatedTipsUsages
     }
-
   }
-
 }

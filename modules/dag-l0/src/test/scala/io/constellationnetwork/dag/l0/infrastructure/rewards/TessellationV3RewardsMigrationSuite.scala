@@ -87,6 +87,7 @@ object TessellationV3RewardsMigrationSuite extends SimpleIOSuite with Checkers {
       updatedCreateDelegatedStakes = SortedMap.empty,
       updatedWithdrawDelegatedStakes = SortedMap.empty,
       nodeOperatorRewards = rewardTxs,
+      reservedAddressRewards = SortedSet.empty,
       withdrawalRewardTxs = SortedSet.empty,
       totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(amount))
     )
@@ -95,7 +96,7 @@ object TessellationV3RewardsMigrationSuite extends SimpleIOSuite with Checkers {
   test("classic and delegated rewards should both generate reward transactions") {
     // Create and use a mock version of the rewards calculator
     val mockClassicRewards = createClassicRewardsResult(1000L)
-    val mockDelegatedRewards = DelegatedRewardsDistributorSuite.createTestDelegationRewardsResult(Amount(1000L))
+    val mockDelegatedRewards = GlobalDelegatedRewardsDistributorSuite.createTestDelegationRewardsResult(Amount(1000L))
 
     // Verify classic rewards focus on facilitator and system addresses
     val classicAddresses = mockClassicRewards.nodeOperatorRewards.map(_.destination).toSet

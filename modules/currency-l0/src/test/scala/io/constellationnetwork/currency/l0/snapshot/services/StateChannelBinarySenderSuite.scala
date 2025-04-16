@@ -61,7 +61,8 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         _.copy(
           ordinal = ordinal,
           stateChannelSnapshots =
-            NonEmptyList.fromList(confirmedBinaries).map(nel => SortedMap(identifier -> nel)).getOrElse(SortedMap.empty)
+            NonEmptyList.fromList(confirmedBinaries).map(nel => SortedMap(identifier -> nel)).getOrElse(SortedMap.empty),
+          delegateRewards = None
         )
       )
       .flatMap(snapshot => Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](snapshot, keyPair))

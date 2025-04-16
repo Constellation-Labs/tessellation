@@ -122,7 +122,7 @@ object types {
           validatorsWeight = NonNegFraction.unsafeFrom(17L, 100L),
           delegatorsWeight = NonNegFraction.unsafeFrom(0L, 100L)
         )
-      case epoch if epoch < EpochProgress(2000000L) => // TODO - change value at launch - Marks transition to new base case
+      case _ =>
         ProgramsDistributionConfig(
           weights = Map(
             stardustNewPrimary -> NonNegFraction.unsafeFrom(7L, 100L),
@@ -132,17 +132,6 @@ object types {
           ),
           validatorsWeight = NonNegFraction.unsafeFrom(24L, 100L),
           delegatorsWeight = NonNegFraction.unsafeFrom(0L, 100L)
-        )
-      case _ =>
-        ProgramsDistributionConfig(
-          weights = Map(
-            stardustNewPrimary -> NonNegFraction.unsafeFrom(5L, 100L),
-            testnet -> NonNegFraction.unsafeFrom(24L, 1000L),
-            integrationNet -> NonNegFraction.unsafeFrom(88L, 1000L),
-            protocolWalletMetanomics -> NonNegFraction.unsafeFrom(30L, 100L)
-          ),
-          validatorsWeight = NonNegFraction.unsafeFrom(88L, 1000L),
-          delegatorsWeight = NonNegFraction.unsafeFrom(45L, 100L)
         )
     }
 
