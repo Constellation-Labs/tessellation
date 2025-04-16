@@ -19,7 +19,6 @@ import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
   SnapshotBinaryFeeCalculator,
   UpdateNodeParametersCutter
 }
-import io.constellationnetwork.dag.l0.infrastructure.rewards.DelegatedRewardsDistributor
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.{GlobalSnapshotEvent, StateChannelEvent}
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.cats.effect.ResourceIO
@@ -67,6 +66,7 @@ import io.constellationnetwork.syntax.sortedCollection._
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import io.circe.Encoder
+import io.constellationnetwork.node.shared.infrastructure.rewards.DelegatedRewardsDistributor
 import org.scalacheck.Gen
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers

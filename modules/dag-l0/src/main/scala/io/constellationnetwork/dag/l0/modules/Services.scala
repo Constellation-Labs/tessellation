@@ -1,7 +1,6 @@
 package io.constellationnetwork.dag.l0.modules
 
 import java.security.KeyPair
-
 import cats.Parallel
 import cats.data.NonEmptySet
 import cats.effect.kernel.Async
@@ -9,7 +8,6 @@ import cats.effect.std.{Random, Supervisor}
 import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
-
 import io.constellationnetwork.dag.l0.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.cell.L0Cell
@@ -32,13 +30,13 @@ import io.constellationnetwork.node.shared.domain.snapshot.services.AddressServi
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
+import io.constellationnetwork.node.shared.infrastructure.rewards.DelegatedRewardsDistributor
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedValidators}
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
-
 import org.http4s.client.Client
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 

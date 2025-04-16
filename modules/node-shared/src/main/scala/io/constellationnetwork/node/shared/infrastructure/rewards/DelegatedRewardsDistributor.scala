@@ -1,26 +1,15 @@
-package io.constellationnetwork.dag.l0.infrastructure.rewards
+package io.constellationnetwork.node.shared.infrastructure.rewards
 
-import cats.data.NonEmptySet
 import cats.effect.{Async, Sync}
 import cats.implicits.catsSyntaxOrder
 import cats.syntax.all._
-
-import scala.collection.immutable.{SortedMap, SortedSet}
-import scala.math.BigDecimal
-import scala.math.BigDecimal.{RoundingMode, double2bigDecimal}
-
-import io.constellationnetwork.dag.l0.config.types.{AppConfig, MainnetRewardsConfig}
-import io.constellationnetwork.dag.l0.config.{DefaultDelegatedRewardsConfigProvider, DelegatedRewardsConfigProvider}
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalSnapshotContext
+import eu.timepit.refined.auto.autoUnwrap
+import eu.timepit.refined.types.all.{NonNegLong, PosLong}
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
-import io.constellationnetwork.node.shared.infrastructure.snapshot.{
-  DelegatedRewardsDistributor,
-  DelegationRewardsResult,
-  PartitionedStakeUpdates
-}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.{DelegatedRewardsDistributor, DelegationRewardsResult, PartitionedStakeUpdates}
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -31,26 +20,73 @@ import io.constellationnetwork.schema.node.{DelegatedStakeRewardParameters, Rewa
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedSetSyntax}
-
-import eu.timepit.refined.auto.autoUnwrap
-import eu.timepit.refined.types.all.{NonNegLong, PosLong}
+import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+
+import scala.collection.immutable.{SortedMap, SortedSet}
 
 object DelegatedRewardsDistributor {
 
-  def make[F[_]: Async: Hasher](
-    classicRewardsConfig: ClassicRewardsConfig,
-    environment: AppEnvironment,
+  def getUpdatedCreateDelegatedStakes[F[_]: Async](
+    delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
+    delegatorRewardsMap: Map[Address, Map[Id, Amount]],
+    partitionedRecords : PartitionedStakeUpdates,
+  ): F[SortedMap[Address, List[DelegatedStakeRecord]]] = {
+    delegatedStakeDiffs.acceptedCreates.map {
+        case (addr, st) =>
+          addr -> st.map {
+            case (ev, ord) => DelegatedStakeRecord(ev, ord, Balance.empty, Amount(NonNegLong.unsafeFrom(0L)))
+          }
+      }.pure[F]
+      .map(partitionedRecords.unexpiredCreateDelegatedStakes |+| _)
+      .map(_.map {
+        case (addr, recs) =>
+          addr -> recs.map {
+            case DelegatedStakeRecord(event, ord, bal, _) =>
+              val nodeSpecificReward = delegatorRewardsMap
+                .get(addr)
+                .flatMap(_.get(event.value.nodeId.toId))
+                .getOrElse(Amount.empty)
+
+              val disbursedBalance = bal.plus(nodeSpecificReward).toOption.getOrElse(Balance.empty)
+
+              DelegatedStakeRecord(event, ord, disbursedBalance, nodeSpecificReward)
+          }
+      })
+  }
+
+  def getUpdatedWithdrawalDelegatedStakes[F[_]: Async: Hasher](
+    delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
+    lastSnapshotContext: GlobalSnapshotInfo,
+    partitionedRecords : PartitionedStakeUpdates,
+  ): F[SortedMap[Address, List[PendingWithdrawal]]] = {
+    delegatedStakeDiffs.acceptedWithdrawals.toList.traverse {
+      case (addr, acceptedWithdrawls) =>
+        acceptedWithdrawls.traverse {
+          case (ev, ep) =>
+            lastSnapshotContext.activeDelegatedStakes
+              .flatTraverse(_.get(addr).flatTraverse {
+                _.findM { s =>
+                  DelegatedStakeReference.of(s.event).map(_.hash === ev.stakeRef)
+                }.map(_.map(rec => PendingWithdrawal(ev, rec.rewards, ep)))
+              })
+              .flatMap(Async[F].fromOption(_, new RuntimeException("Unexpected None when processing user delegations")))
+        }.map(addr -> _)
+    }.map(_.toSortedMap).map(partitionedRecords.unexpiredWithdrawalsDelegatedStaking |+| _)
+  }
+
+  def make[F[_] : Async : Hasher](
+    classicRewardsConfig  : ClassicRewardsConfig,
+    environment           : AppEnvironment,
     delegatedRewardsConfig: DelegatedRewardsConfig
   ): DelegatedRewardsDistributor[F] = new DelegatedRewardsDistributor[F] {
 
     /** Calculate the total rewards to mint for this epoch based on appropriate rewards mechanism. The calculation follows this priority:
-      *   1. Use the emission formula + pre-configured rewards (if configured) and epoch is past the transition point
-      *   1. Use the emission formula and epoch is past the transition point
-      *   1. Use preconfigured rewards per epoch mapping for epochs before the emission formula transition (v1 & v2)
-      *   1. Return zero rewards if no configuration is available
-      */
+     *   1. Use the emission formula + pre-configured rewards (if configured) and epoch is past the transition point
+     *   1. Use the emission formula and epoch is past the transition point
+     *   1. Use preconfigured rewards per epoch mapping for epochs before the emission formula transition (v1 & v2)
+     *   1. Return zero rewards if no configuration is available
+     */
     def calculateTotalRewardsToMint(epochProgress: EpochProgress): F[Amount] = {
 
       implicit val rewardOrdering: Ordering[(EpochProgress, Amount)] =
@@ -88,15 +124,15 @@ object DelegatedRewardsDistributor {
     }
 
     /** Implements the distribute method that encapsulates all reward calculation logic for a consensus cycle. This method replaces the
-      * reward calculation functionality that was previously spread across the GlobalSnapshotAcceptanceManager.
-      */
+     * reward calculation functionality that was previously spread across the GlobalSnapshotAcceptanceManager.
+     */
     def distribute(
       lastSnapshotContext: GlobalSnapshotInfo,
-      trigger: ConsensusTrigger,
-      epochProgress: EpochProgress,
-      facilitators: List[(Address, Id)],
+      trigger            : ConsensusTrigger,
+      epochProgress      : EpochProgress,
+      facilitators       : List[(Address, Id)],
       delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
-      partitionedRecords: PartitionedStakeUpdates
+      partitionedRecords : PartitionedStakeUpdates
     ): F[DelegationRewardsResult] = trigger match {
       case EventTrigger =>
         applyDistribution(
@@ -114,11 +150,11 @@ object DelegatedRewardsDistributor {
     }
 
     /** Calculate rewards using the new emission formula with deterministic precision: i(t) = i_initial + (i_initial - i_target) * e^{ -λ *
-      * (Y_current - Y_initial) * (P_initial / P_current)^i_impact }
-      */
+     * (Y_current - Y_initial) * (P_initial / P_current)^i_impact }
+     */
     private def calculateEmissionRewards(
       epochProgress: EpochProgress,
-      emConfig: EmissionConfigEntry
+      emConfig     : EmissionConfigEntry
     ): F[Amount] = Sync[F].defer {
       val iTarget = emConfig.iTarget
       val iInitial = emConfig.iInitial
@@ -145,7 +181,7 @@ object DelegatedRewardsDistributor {
           // Price ratio calculation
           priceRatio = initialPrice.toBigDecimal / currentPrice.toBigDecimal match {
             case ratio if ratio < 0 => 0.0
-            case ratio              => ratio.toDouble
+            case ratio => ratio.toDouble
           }
 
           // Price impact: (P_initial / P_current)^i_impact
@@ -179,7 +215,7 @@ object DelegatedRewardsDistributor {
 
     private def getCurrentDagPrice(
       epochProgress: EpochProgress,
-      dagPrices: Map[EpochProgress, NonNegFraction]
+      dagPrices    : Map[EpochProgress, NonNegFraction]
     ): NonNegFraction =
       dagPrices.filter { case (epoch, _) => epoch.value <= epochProgress.value }
         .maxByOption(_._1.value.value)
@@ -188,9 +224,9 @@ object DelegatedRewardsDistributor {
 
     private def calculateDelegatorRewards(
       activeDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
-      nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
-      epochProgress: EpochProgress,
-      totalRewards: Amount
+      nodeParametersMap    : SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
+      epochProgress        : EpochProgress,
+      totalRewards         : Amount
     ): F[Map[Address, Map[Id, Amount]]] =
       if (activeDelegatedStakes.isEmpty) Map.empty[Address, Map[Id, Amount]].pure[F]
       else
@@ -272,10 +308,10 @@ object DelegatedRewardsDistributor {
         } yield result
 
     private def calculateNodeOperatorRewards(
-      nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
-      facilitators: List[(Address, Id)],
-      epochProgress: EpochProgress,
-      totalRewards: Amount,
+      nodeParametersMap  : SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
+      facilitators       : List[(Address, Id)],
+      epochProgress      : EpochProgress,
+      totalRewards       : Amount,
       lastSnapshotContext: GlobalSnapshotInfo
     ): F[SortedSet[RewardTransaction]] = {
       // Get the configuration for this epoch
@@ -393,11 +429,11 @@ object DelegatedRewardsDistributor {
 
     private def applyDistribution(
       lastSnapshotContext: GlobalSnapshotInfo,
-      epochProgress: EpochProgress,
-      facilitators: List[(Address, Id)],
+      epochProgress      : EpochProgress,
+      facilitators       : List[(Address, Id)],
       delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
-      partitionedRecords: PartitionedStakeUpdates,
-      totalReward: Amount
+      partitionedRecords : PartitionedStakeUpdates,
+      totalReward        : Amount
     ): F[DelegationRewardsResult] =
       for {
         // Calculate delegator rewards for all active and newly accepted delegated stakes
@@ -409,43 +445,17 @@ object DelegatedRewardsDistributor {
             totalReward
           )
 
-        updatedCreateDelegatedStakes <-
-          delegatedStakeDiffs.acceptedCreates.map {
-            case (addr, st) =>
-              addr -> st.map {
-                case (ev, ord) => DelegatedStakeRecord(ev, ord, Balance.empty, Amount(NonNegLong.unsafeFrom(0L)))
-              }
-          }.pure[F]
-            .map(partitionedRecords.unexpiredCreateDelegatedStakes |+| _)
-            .map(_.map {
-              case (addr, recs) =>
-                addr -> recs.map {
-                  case DelegatedStakeRecord(event, ord, bal, _) =>
-                    val nodeSpecificReward = delegatorRewardsMap
-                      .get(addr)
-                      .flatMap(_.get(event.value.nodeId.toId))
-                      .getOrElse(Amount.empty)
+        updatedCreateDelegatedStakes <- getUpdatedCreateDelegatedStakes(
+          delegatedStakeDiffs,
+          delegatorRewardsMap,
+          partitionedRecords
+        )
 
-                    val disbursedBalance = bal.plus(nodeSpecificReward).toOption.getOrElse(Balance.empty)
-
-                    DelegatedStakeRecord(event, ord, disbursedBalance, nodeSpecificReward)
-                }
-            })
-
-        updatedWithdrawDelegatedStakes <-
-          delegatedStakeDiffs.acceptedWithdrawals.toList.traverse {
-            case (addr, acceptedWithdrawls) =>
-              acceptedWithdrawls.traverse {
-                case (ev, ep) =>
-                  lastSnapshotContext.activeDelegatedStakes
-                    .flatTraverse(_.get(addr).flatTraverse {
-                      _.findM { s =>
-                        DelegatedStakeReference.of(s.event).map(_.hash === ev.stakeRef)
-                      }.map(_.map(rec => PendingWithdrawal(ev, rec.rewards, ep)))
-                    })
-                    .flatMap(Async[F].fromOption(_, new RuntimeException("Unexpected None when processing user delegations")))
-              }.map(addr -> _)
-          }.map(_.toSortedMap).map(partitionedRecords.unexpiredWithdrawalsDelegatedStaking |+| _)
+        updatedWithdrawDelegatedStakes <- getUpdatedWithdrawalDelegatedStakes(
+          delegatedStakeDiffs,
+          lastSnapshotContext,
+          partitionedRecords
+        )
 
         nodeOperatorRewards <-
           calculateNodeOperatorRewards(

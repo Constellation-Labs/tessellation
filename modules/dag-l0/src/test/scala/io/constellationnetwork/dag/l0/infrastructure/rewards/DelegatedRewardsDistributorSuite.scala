@@ -5,7 +5,6 @@ import cats.effect.IO
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
-
 import io.constellationnetwork.dag.l0.config.DelegatedRewardsConfigProvider
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.JsonSerializer
@@ -26,9 +25,9 @@ import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
-
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
+import io.constellationnetwork.node.shared.infrastructure.rewards.DelegatedRewardsDistributor
 import org.scalacheck.Gen
 import weaver.SimpleIOSuite
 import weaver.scalacheck.Checkers

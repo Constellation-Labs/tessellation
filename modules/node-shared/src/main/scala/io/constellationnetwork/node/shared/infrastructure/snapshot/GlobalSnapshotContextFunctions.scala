@@ -11,7 +11,6 @@ import cats.syntax.show._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
-
 import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
@@ -26,15 +25,23 @@ import io.constellationnetwork.schema.transaction.RewardTransaction
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelValidationType}
-
 import derevo.cats.{eqv, show}
 import derevo.derive
 import eu.timepit.refined.types.all.NonNegLong
+import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceManager
+import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAcceptanceManager
+import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralAcceptanceManager
+import io.constellationnetwork.node.shared.infrastructure.rewards.DelegatedRewardsDistributor.getUpdatedCreateDelegatedStakes
 
 abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
 object GlobalSnapshotContextFunctions {
-  def make[F[_]: Async: Parallel: HasherSelector](snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F]) =
+  def make[F[_]: Async: Parallel: HasherSelector](
+    snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
+    updateNodeParametersAcceptanceManager: UpdateNodeParametersAcceptanceManager[F],
+    updateDelegatedStakeAcceptanceManager: UpdateDelegatedStakeAcceptanceManager[F],
+    updateNodeCollateralAcceptanceManager: UpdateNodeCollateralAcceptanceManager[F],
+  ) =
     new GlobalSnapshotContextFunctions[F] {
       def createContext(
         context: GlobalSnapshotInfo,
@@ -83,6 +90,17 @@ object GlobalSnapshotContextFunctions {
           .toList
           .flatten
 
+        delegatedStakeAcceptanceResult <- updateDelegatedStakeAcceptanceManager.accept(
+          cdsEventsForAcceptance,
+          wdsEventsForAcceptance,
+          context,
+          signedArtifact.epochProgress,
+          signedArtifact.ordinal
+        )
+
+        updatedDelegatedStakes <- getUpdatedCreateDelegatedStakes(
+          delegatedStakeAcceptanceResult,
+        )
         (
           acceptanceResult,
           _,
