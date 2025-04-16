@@ -16,7 +16,12 @@ import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
-import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, DelegatedStakeReference, PendingWithdrawal, UpdateDelegatedStake}
+import io.constellationnetwork.schema.delegatedStake.{
+  DelegatedStakeRecord,
+  DelegatedStakeReference,
+  PendingWithdrawal,
+  UpdateDelegatedStake
+}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
@@ -32,25 +37,25 @@ import scala.util.control.NoStackTrace
 abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
 object GlobalSnapshotContextFunctions {
-  def make[F[_] : Async : Parallel : HasherSelector : SecurityProvider](
-    snapshotAcceptanceManager            : GlobalSnapshotAcceptanceManager[F],
-    delegateRewardsDistributor           : DelegatedRewardsDistributor[F],
+  def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider](
+    snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
+    delegateRewardsDistributor: DelegatedRewardsDistributor[F],
     updateDelegatedStakeAcceptanceManager: UpdateDelegatedStakeAcceptanceManager[F],
-    withdrawalTimeLimit                  : EpochProgress,
-    tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
+    withdrawalTimeLimit: EpochProgress,
+    tessellation3MigrationStartingOrdinal: SnapshotOrdinal
   ) =
     new GlobalSnapshotContextFunctions[F] {
 
       private def acceptDelegatedStakes(
         lastSnapshotContext: GlobalSnapshotInfo,
-        epochProgress      : EpochProgress
+        epochProgress: EpochProgress
       )(implicit h: Hasher[F]): F[
         (
           SortedMap[Address, List[DelegatedStakeRecord]],
-            SortedMap[Address, List[DelegatedStakeRecord]],
-            SortedMap[Address, List[PendingWithdrawal]],
-            SortedMap[Address, List[PendingWithdrawal]]
-          )
+          SortedMap[Address, List[DelegatedStakeRecord]],
+          SortedMap[Address, List[PendingWithdrawal]],
+          SortedMap[Address, List[PendingWithdrawal]]
+        )
       ] = {
         val existingDelegatedStakes = lastSnapshotContext.activeDelegatedStakes.getOrElse(
           SortedMap.empty[Address, List[DelegatedStakeRecord]]
@@ -70,7 +75,7 @@ object GlobalSnapshotContextFunctions {
           val addressWithdrawals = existingWithdrawals.getOrElse(address, List.empty)
 
           addressCreates.traverse {
-            case record@DelegatedStakeRecord(createStake, _, _, _) =>
+            case record @ DelegatedStakeRecord(createStake, _, _, _) =>
               DelegatedStakeReference.of(createStake).map { createRef =>
                 val isExpired = addressWithdrawals.exists {
                   case PendingWithdrawal(withdrawalStake, _, withdrawalEpoch) =>
@@ -126,15 +131,16 @@ object GlobalSnapshotContextFunctions {
       }
 
       def createContext(
-        context                   : GlobalSnapshotInfo,
-        lastArtifact              : Signed[GlobalIncrementalSnapshot],
-        signedArtifact            : Signed[GlobalIncrementalSnapshot],
-        lastGlobalSnapshots       : Option[List[Hashed[GlobalIncrementalSnapshot]]],
+        context: GlobalSnapshotInfo,
+        lastArtifact: Signed[GlobalIncrementalSnapshot],
+        signedArtifact: Signed[GlobalIncrementalSnapshot],
+        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
         getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = for {
         lastActiveTips <- HasherSelector[F].forOrdinal(lastArtifact.ordinal)(implicit hasher => lastArtifact.activeTips)
-        lastFacilitators <- lastArtifact.proofs.toList.traverse { case SignatureProof(id, _) =>
-          id.toAddress.map((_, id))
+        lastFacilitators <- lastArtifact.proofs.toList.traverse {
+          case SignatureProof(id, _) =>
+            id.toAddress.map((_, id))
         }
 
         lastDeprecatedTips = lastArtifact.tips.deprecated
@@ -189,7 +195,7 @@ object GlobalSnapshotContextFunctions {
           expiredCreateDelegatedStakes,
           unexpiredWithdrawalsDelegatedStaking,
           expiredWithdrawalsDelegatedStaking
-          ) <- acceptDelegatedStakes(context, signedArtifact.epochProgress)
+        ) <- acceptDelegatedStakes(context, signedArtifact.epochProgress)
 
         (
           acceptanceResult,
@@ -205,7 +211,7 @@ object GlobalSnapshotContextFunctions {
           _,
           _,
           _
-          ) <-
+        ) <-
           snapshotAcceptanceManager.accept(
             signedArtifact.ordinal,
             signedArtifact.epochProgress,
@@ -256,7 +262,7 @@ object GlobalSnapshotContextFunctions {
                         expiredCreateDelegatedStakes,
                         unexpiredWithdrawalsDelegatedStaking,
                         expiredWithdrawalsDelegatedStaking
-                      ),
+                      )
                     )
                   }
                 },
@@ -280,7 +286,7 @@ object GlobalSnapshotContextFunctions {
         }
         validation <- StateProofValidator.validate(hashedArtifact, calculatedStateProof)
         _ = validation match {
-          case Validated.Valid(_) => Async[F].unit
+          case Validated.Valid(_)   => Async[F].unit
           case Validated.Invalid(e) => e.raiseError[F, Unit]
         }
 

@@ -32,52 +32,6 @@ import scala.math.BigDecimal.RoundingMode
 
 object DelegatedRewardsDistributor {
 
-  def getUpdatedCreateDelegatedStakes[F[_]: Async](
-    delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
-    delegatorRewardsMap: Map[Address, Map[Id, Amount]],
-    partitionedRecords: PartitionedStakeUpdates
-  ): F[SortedMap[Address, List[DelegatedStakeRecord]]] =
-    delegatedStakeDiffs.acceptedCreates.map {
-      case (addr, st) =>
-        addr -> st.map {
-          case (ev, ord) => DelegatedStakeRecord(ev, ord, Balance.empty, Amount(NonNegLong.unsafeFrom(0L)))
-        }
-    }.pure[F]
-      .map(partitionedRecords.unexpiredCreateDelegatedStakes |+| _)
-      .map(_.map {
-        case (addr, recs) =>
-          addr -> recs.map {
-            case DelegatedStakeRecord(event, ord, bal, _) =>
-              val nodeSpecificReward = delegatorRewardsMap
-                .get(addr)
-                .flatMap(_.get(event.value.nodeId.toId))
-                .getOrElse(Amount.empty)
-
-              val disbursedBalance = bal.plus(nodeSpecificReward).toOption.getOrElse(Balance.empty)
-
-              DelegatedStakeRecord(event, ord, disbursedBalance, nodeSpecificReward)
-          }
-      })
-
-  def getUpdatedWithdrawalDelegatedStakes[F[_]: Async: Hasher](
-    delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
-    lastSnapshotContext: GlobalSnapshotInfo,
-    partitionedRecords: PartitionedStakeUpdates
-  ): F[SortedMap[Address, List[PendingWithdrawal]]] =
-    delegatedStakeDiffs.acceptedWithdrawals.toList.traverse {
-      case (addr, acceptedWithdrawls) =>
-        acceptedWithdrawls.traverse {
-          case (ev, ep) =>
-            lastSnapshotContext.activeDelegatedStakes
-              .flatTraverse(_.get(addr).flatTraverse {
-                _.findM { s =>
-                  DelegatedStakeReference.of(s.event).map(_.hash === ev.stakeRef)
-                }.map(_.map(rec => PendingWithdrawal(ev, rec.rewards, ep)))
-              })
-              .flatMap(Async[F].fromOption(_, new RuntimeException("Unexpected None when processing user delegations")))
-        }.map(addr -> _)
-    }.map(_.toSortedMap).map(partitionedRecords.unexpiredWithdrawalsDelegatedStaking |+| _)
-
   def make[F[_]: Async: Hasher](
     environment: AppEnvironment,
     delegatedRewardsConfig: DelegatedRewardsConfig
@@ -420,6 +374,52 @@ object DelegatedRewardsDistributor {
         })
         .pure[F]
 
+    private def getUpdatedCreateDelegatedStakes(
+      delegatorRewardsMap: Map[Address, Map[Id, Amount]],
+      delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
+      partitionedRecords: PartitionedStakeUpdates
+    ): F[SortedMap[Address, List[DelegatedStakeRecord]]] =
+      delegatedStakeDiffs.acceptedCreates.map {
+        case (addr, st) =>
+          addr -> st.map {
+            case (ev, ord) => DelegatedStakeRecord(ev, ord, Balance.empty, Amount(NonNegLong.unsafeFrom(0L)))
+          }
+      }.pure[F]
+        .map(partitionedRecords.unexpiredCreateDelegatedStakes |+| _)
+        .map(_.map {
+          case (addr, recs) =>
+            addr -> recs.map {
+              case DelegatedStakeRecord(event, ord, bal, _) =>
+                val nodeSpecificReward = delegatorRewardsMap
+                  .get(addr)
+                  .flatMap(_.get(event.value.nodeId.toId))
+                  .getOrElse(Amount.empty)
+
+                val disbursedBalance = bal.plus(nodeSpecificReward).toOption.getOrElse(Balance.empty)
+
+                DelegatedStakeRecord(event, ord, disbursedBalance, nodeSpecificReward)
+            }
+        })
+
+    private def getUpdatedWithdrawalDelegatedStakes(
+      lastSnapshotContext: GlobalSnapshotInfo,
+      delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
+      partitionedRecords: PartitionedStakeUpdates
+    ): F[SortedMap[Address, List[PendingWithdrawal]]] =
+      delegatedStakeDiffs.acceptedWithdrawals.toList.traverse {
+        case (addr, acceptedWithdrawls) =>
+          acceptedWithdrawls.traverse {
+            case (ev, ep) =>
+              lastSnapshotContext.activeDelegatedStakes
+                .flatTraverse(_.get(addr).flatTraverse {
+                  _.findM { s =>
+                    DelegatedStakeReference.of(s.event).map(_.hash === ev.stakeRef)
+                  }.map(_.map(rec => PendingWithdrawal(ev, rec.rewards, ep)))
+                })
+                .flatMap(Async[F].fromOption(_, new RuntimeException("Unexpected None when processing user delegations")))
+          }.map(addr -> _)
+      }.map(_.toSortedMap).map(partitionedRecords.unexpiredWithdrawalsDelegatedStaking |+| _)
+
     private def applyDistribution(
       lastSnapshotContext: GlobalSnapshotInfo,
       epochProgress: EpochProgress,
@@ -455,14 +455,14 @@ object DelegatedRewardsDistributor {
 
         // Calculate output values that will be integrated into consensus state / snapshot
         updatedCreateDelegatedStakes <- getUpdatedCreateDelegatedStakes(
-          delegatedStakeDiffs,
           delegatorRewardsMap,
+          delegatedStakeDiffs,
           partitionedRecords
         )
 
         updatedWithdrawDelegatedStakes <- getUpdatedWithdrawalDelegatedStakes(
-          delegatedStakeDiffs,
           lastSnapshotContext,
+          delegatedStakeDiffs,
           partitionedRecords
         )
 
