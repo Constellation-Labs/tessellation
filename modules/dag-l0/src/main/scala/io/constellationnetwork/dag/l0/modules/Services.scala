@@ -32,6 +32,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.services.AddressServi
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
+import io.constellationnetwork.node.shared.infrastructure.rewards.GlobalDelegatedRewardsDistributor
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedValidators}
 import io.constellationnetwork.schema.address.Address
@@ -71,9 +72,8 @@ object Services {
         .pure[F]
 
       delegatorRewards <- HasherSelector[F].withCurrent { implicit hasher =>
-        DelegatedRewardsDistributor
+        GlobalDelegatedRewardsDistributor
           .make[F](
-            cfg.rewards,
             cfg.environment,
             DefaultDelegatedRewardsConfigProvider.getConfig()
           )

@@ -100,6 +100,7 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
           SortedSet.empty,
           SortedMap.empty,
           SortedSet.empty,
+          None,
           EpochProgress.MinValue,
           NonEmptyList.of(PeerId(Hex(""))),
           SnapshotTips(SortedSet.empty, SortedSet.empty),

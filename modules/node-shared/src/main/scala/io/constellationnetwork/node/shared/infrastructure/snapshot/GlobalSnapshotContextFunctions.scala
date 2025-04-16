@@ -3,28 +3,28 @@ package io.constellationnetwork.node.shared.infrastructure.snapshot
 import cats.Parallel
 import cats.data.Validated
 import cats.effect.Async
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.show._
+import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.block.processing._
+import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceManager
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
+import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.TimeTrigger
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
-import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
+import io.constellationnetwork.schema.delegatedStake._
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.transaction.RewardTransaction
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.signature.SignatureProof
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelValidationType}
 
 import derevo.cats.{eqv, show}
@@ -34,8 +34,98 @@ import eu.timepit.refined.types.all.NonNegLong
 abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
 object GlobalSnapshotContextFunctions {
-  def make[F[_]: Async: Parallel: HasherSelector](snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F]) =
+  def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider](
+    snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
+    updateDelegatedStakeAcceptanceManager: UpdateDelegatedStakeAcceptanceManager[F],
+    withdrawalTimeLimit: EpochProgress,
+    tessellation3MigrationStartingOrdinal: SnapshotOrdinal
+  ) =
     new GlobalSnapshotContextFunctions[F] {
+
+      private def acceptDelegatedStakes(
+        lastSnapshotContext: GlobalSnapshotInfo,
+        epochProgress: EpochProgress
+      )(implicit h: Hasher[F]): F[
+        (
+          SortedMap[Address, List[DelegatedStakeRecord]],
+          SortedMap[Address, List[DelegatedStakeRecord]],
+          SortedMap[Address, List[PendingWithdrawal]],
+          SortedMap[Address, List[PendingWithdrawal]]
+        )
+      ] = {
+        val existingDelegatedStakes = lastSnapshotContext.activeDelegatedStakes.getOrElse(
+          SortedMap.empty[Address, List[DelegatedStakeRecord]]
+        )
+
+        val existingWithdrawals = lastSnapshotContext.delegatedStakesWithdrawals.getOrElse(
+          SortedMap.empty[Address, List[PendingWithdrawal]]
+        )
+
+        def isWithdrawalExpired(withdrawalEpoch: EpochProgress): Boolean =
+          (withdrawalEpoch |+| withdrawalTimeLimit) <= epochProgress
+
+        def filterCreatesWithExpiredWithdrawals(
+          address: Address
+        ): F[Option[(Address, List[DelegatedStakeRecord])]] = {
+          val addressCreates = existingDelegatedStakes.getOrElse(address, List.empty)
+          val addressWithdrawals = existingWithdrawals.getOrElse(address, List.empty)
+
+          addressCreates.traverse {
+            case record @ DelegatedStakeRecord(createStake, _, _, _) =>
+              DelegatedStakeReference.of(createStake).map { createRef =>
+                val isExpired = addressWithdrawals.exists {
+                  case PendingWithdrawal(withdrawalStake, _, withdrawalEpoch) =>
+                    withdrawalStake.stakeRef == createRef.hash && isWithdrawalExpired(withdrawalEpoch)
+                }
+                (record, isExpired)
+              }
+          }.map { processedCreates =>
+            val unexpiredCreates = processedCreates.filterNot { case (_, isExpired) => isExpired }.map { case (r, _) => r }
+
+            if (unexpiredCreates.isEmpty) None
+            else Some(address -> unexpiredCreates)
+          }
+        }
+
+        for {
+          filteredResults <- existingDelegatedStakes.keys.toList
+            .traverse(filterCreatesWithExpiredWithdrawals)
+            .map(_.flatten)
+
+          filteredUnexpired = SortedMap.empty[Address, List[DelegatedStakeRecord]] ++ filteredResults
+
+          filteredExpired = SortedMap.empty[Address, List[DelegatedStakeRecord]] ++
+            existingDelegatedStakes.keys.map { address =>
+              val original = existingDelegatedStakes.getOrElse(address, List.empty)
+              val unexpired = filteredUnexpired.getOrElse(address, List.empty)
+              address -> original.diff(unexpired)
+            }.filter(_._2.nonEmpty)
+
+          unexpiredWithdrawals = existingWithdrawals.map {
+            case (address, withdrawals) =>
+              address -> withdrawals.filterNot {
+                case PendingWithdrawal(_, _, withdrawalEpoch) =>
+                  isWithdrawalExpired(withdrawalEpoch)
+              }
+          }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
+
+          expiredWithdrawals = existingWithdrawals.map {
+            case (address, withdrawals) =>
+              address -> withdrawals.filter {
+                case PendingWithdrawal(_, _, withdrawalEpoch) =>
+                  isWithdrawalExpired(withdrawalEpoch)
+              }
+          }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
+
+        } yield
+          (
+            filteredUnexpired,
+            filteredExpired,
+            unexpiredWithdrawals,
+            expiredWithdrawals
+          )
+      }
+
       def createContext(
         context: GlobalSnapshotInfo,
         lastArtifact: Signed[GlobalIncrementalSnapshot],
@@ -44,6 +134,7 @@ object GlobalSnapshotContextFunctions {
         getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = for {
         lastActiveTips <- HasherSelector[F].forOrdinal(lastArtifact.ordinal)(implicit hasher => lastArtifact.activeTips)
+
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
         blocksForAcceptance = signedArtifact.blocks.toList.map(_.block)
@@ -83,6 +174,51 @@ object GlobalSnapshotContextFunctions {
           .toList
           .flatten
 
+        delegatedStakeAcceptanceResult <- updateDelegatedStakeAcceptanceManager.accept(
+          cdsEventsForAcceptance,
+          wdsEventsForAcceptance,
+          context,
+          signedArtifact.epochProgress,
+          signedArtifact.ordinal
+        )
+
+        (
+          unexpiredCreateDelegatedStakes,
+          expiredCreateDelegatedStakes,
+          unexpiredWithdrawalsDelegatedStaking,
+          expiredWithdrawalsDelegatedStaking
+        ) <- acceptDelegatedStakes(context, signedArtifact.epochProgress)
+
+        filteredUnexpiredCreateDelegatedStakes = unexpiredCreateDelegatedStakes.map {
+          case (addr, recs) =>
+            val tokenLocks = delegatedStakeAcceptanceResult.acceptedCreates.map {
+              case (addr, creates) => (addr, creates.map(_._1.tokenLockRef).toSet)
+            }.getOrElse(addr, Set.empty)
+            (addr, recs.filterNot(record => tokenLocks(record.event.tokenLockRef)))
+        }
+
+        updatedCreateDelegatedStakes <- DelegatedRewardsDistributor.getUpdatedCreateDelegatedStakes(
+          signedArtifact.delegateRewards.getOrElse(SortedMap.empty),
+          delegatedStakeAcceptanceResult,
+          PartitionedStakeUpdates(
+            filteredUnexpiredCreateDelegatedStakes,
+            expiredCreateDelegatedStakes,
+            unexpiredWithdrawalsDelegatedStaking,
+            expiredWithdrawalsDelegatedStaking
+          )
+        )
+
+        updatedWithdrawDelegatedStakes <- DelegatedRewardsDistributor.getUpdatedWithdrawalDelegatedStakes(
+          context,
+          delegatedStakeAcceptanceResult,
+          PartitionedStakeUpdates(
+            filteredUnexpiredCreateDelegatedStakes,
+            expiredCreateDelegatedStakes,
+            unexpiredWithdrawalsDelegatedStaking,
+            expiredWithdrawalsDelegatedStaking
+          )
+        )
+
         (
           acceptanceResult,
           _,
@@ -93,6 +229,7 @@ object GlobalSnapshotContextFunctions {
           returnedSCEvents,
           acceptedRewardTxs,
           snapshotInfo,
+          _,
           _,
           _,
           _,
@@ -116,16 +253,29 @@ object GlobalSnapshotContextFunctions {
             _ =>
               signedArtifact.rewards
                 .pure[F]
-                .map(txs =>
-                  DelegationRewardsResult(
-                    delegatorRewardsMap = Map.empty,
-                    updatedCreateDelegatedStakes = SortedMap.empty,
-                    updatedWithdrawDelegatedStakes = SortedMap.empty,
-                    nodeOperatorRewards = txs,
-                    withdrawalRewardTxs = SortedSet.empty,
-                    totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(txs.map(_.amount.value.value).sum))
-                  )
-                ),
+                .map { txs =>
+                  if (signedArtifact.ordinal.value < tessellation3MigrationStartingOrdinal.value) {
+                    DelegationRewardsResult(
+                      delegatorRewardsMap = Map.empty,
+                      updatedCreateDelegatedStakes = SortedMap.empty,
+                      updatedWithdrawDelegatedStakes = SortedMap.empty,
+                      nodeOperatorRewards = txs,
+                      reservedAddressRewards = SortedSet.empty,
+                      withdrawalRewardTxs = SortedSet.empty,
+                      totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(txs.map(_.amount.value.value).sum))
+                    )
+                  } else {
+                    DelegationRewardsResult(
+                      delegatorRewardsMap = signedArtifact.delegateRewards.getOrElse(SortedMap.empty),
+                      updatedCreateDelegatedStakes = updatedCreateDelegatedStakes,
+                      updatedWithdrawDelegatedStakes = updatedWithdrawDelegatedStakes,
+                      nodeOperatorRewards = txs,
+                      reservedAddressRewards = SortedSet.empty,
+                      withdrawalRewardTxs = SortedSet.empty,
+                      totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(txs.map(_.amount.value.value).sum))
+                    )
+                  }
+                },
             StateChannelValidationType.Historical,
             lastGlobalSnapshots,
             getGlobalSnapshotByOrdinal

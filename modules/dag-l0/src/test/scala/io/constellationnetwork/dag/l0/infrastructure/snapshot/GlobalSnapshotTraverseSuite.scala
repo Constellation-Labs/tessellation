@@ -169,6 +169,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         blocks.toSortedSet,
         SortedMap.empty,
         SortedSet.empty,
+        None,
         lastSnapshot.epochProgress,
         NonEmptyList.of(PeerId(Hex("peer1"))),
         lastSnapshot.tips.copy(remainedActive = activeTips),
@@ -353,7 +354,12 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           Amount.empty,
           EpochProgress(NonNegLong(136080L))
         )
-      snapshotContextFunctions = GlobalSnapshotContextFunctions.make[IO](snapshotAcceptanceManager)
+      snapshotContextFunctions = GlobalSnapshotContextFunctions.make[IO](
+        snapshotAcceptanceManager,
+        updateDelegatedStakeAcceptanceManager,
+        EpochProgress(NonNegLong.unsafeFrom(1L)),
+        SnapshotOrdinal.MinValue
+      )
     } yield
       GlobalSnapshotTraverse
         .make[IO](loadGlobalIncrementalSnapshot, loadGlobalSnapshot, loadInfo, snapshotContextFunctions, rollbackHash, _ => None.pure[IO])
