@@ -218,12 +218,13 @@ object GlobalSnapshotAcceptanceManager {
         ) <- acceptDelegatedStakes(lastSnapshotContext, epochProgress)
 
         DelegationRewardsResult(
-          delegatorRewardsMap,
+          _,
           updatedCreateDelegatedStakes,
           updatedWithdrawDelegatedStakes,
           nodeOperatorRewards,
+          reservedAddressRewards,
           withdrawalRewardTxs,
-          totalEmittedRewardsAmount
+          _
         ) <-
           if (ordinal.value < tessellation3MigrationStartingOrdinal.value) {
             calculateRewardsFn(ClassicRewardsInput(acceptedTransactions))
@@ -252,7 +253,7 @@ object GlobalSnapshotAcceptanceManager {
 
         (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
           updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
-          withdrawalRewardTxs ++ nodeOperatorRewards
+          withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards
         )
 
         currencyBalances = currencySnapshots.toList.map {

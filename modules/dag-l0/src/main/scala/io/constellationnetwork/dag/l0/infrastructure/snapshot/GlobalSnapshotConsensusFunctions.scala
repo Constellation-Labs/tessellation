@@ -176,41 +176,30 @@ object GlobalSnapshotConsensusFunctions {
         currentOrdinal.value >= v3MigrationOrdinal.value &&
           currentEpochProgress.value.value >= asOfEpoch.value.value
 
+      val classicRewardsFn = classicRewards
+        .distribute(_, _, _, _, _)
+        .map { rewardTxs =>
+          DelegationRewardsResult(
+            delegatorRewardsMap = Map.empty,
+            updatedCreateDelegatedStakes = SortedMap.empty,
+            updatedWithdrawDelegatedStakes = SortedMap.empty,
+            nodeOperatorRewards = rewardTxs,
+            reservedAddressRewards = SortedSet.empty,
+            withdrawalRewardTxs = SortedSet.empty,
+            totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
+          )
+        }
+
       val rewardsWithFacilitators: List[(Address, Id)] => RewardsInput => F[DelegationRewardsResult] = { faciltators: List[(Address, Id)] =>
         {
           case ClassicRewardsInput(txs) =>
-            classicRewards
-              .distribute(lastArtifact, snapshotContext.balances, txs, trigger, events)
-              .map { rewardTxs =>
-                DelegationRewardsResult(
-                  delegatorRewardsMap = Map.empty,
-                  updatedCreateDelegatedStakes = SortedMap.empty,
-                  updatedWithdrawDelegatedStakes = SortedMap.empty,
-                  nodeOperatorRewards = rewardTxs,
-                  withdrawalRewardTxs = SortedSet.empty,
-                  totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
-                )
-              }
+            classicRewardsFn(lastArtifact, snapshotContext.balances, txs, trigger, events)
 
           case DelegateRewardsInput(udsar, psu, ep) =>
-            val currentOrdinal = lastArtifact.ordinal.next
-
-            if (shouldUseDelegatedRewards(currentOrdinal, ep)) {
-              delegatedRewards
-                .distribute(snapshotContext, trigger, ep, faciltators, udsar, psu)
+            if (shouldUseDelegatedRewards(lastArtifact.ordinal.next, ep)) {
+              delegatedRewards.distribute(snapshotContext, trigger, ep, faciltators, udsar, psu)
             } else {
-              classicRewards
-                .distribute(lastArtifact, snapshotContext.balances, SortedSet.empty, trigger, events)
-                .map { rewardTxs =>
-                  DelegationRewardsResult(
-                    delegatorRewardsMap = Map.empty,
-                    updatedCreateDelegatedStakes = SortedMap.empty,
-                    updatedWithdrawDelegatedStakes = SortedMap.empty,
-                    nodeOperatorRewards = rewardTxs,
-                    withdrawalRewardTxs = SortedSet.empty,
-                    totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
-                  )
-                }
+              classicRewardsFn(lastArtifact, snapshotContext.balances, SortedSet.empty, trigger, events)
             }
         }
       }

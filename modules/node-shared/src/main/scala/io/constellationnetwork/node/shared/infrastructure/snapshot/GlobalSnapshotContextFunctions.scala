@@ -18,7 +18,7 @@ import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
-import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
+import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, UpdateDelegatedStake}
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.transaction.RewardTransaction
@@ -40,7 +40,7 @@ object GlobalSnapshotContextFunctions {
     snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     updateNodeParametersAcceptanceManager: UpdateNodeParametersAcceptanceManager[F],
     updateDelegatedStakeAcceptanceManager: UpdateDelegatedStakeAcceptanceManager[F],
-    updateNodeCollateralAcceptanceManager: UpdateNodeCollateralAcceptanceManager[F],
+    updateNodeCollateralAcceptanceManager: UpdateNodeCollateralAcceptanceManager[F]
   ) =
     new GlobalSnapshotContextFunctions[F] {
       def createContext(
@@ -99,7 +99,7 @@ object GlobalSnapshotContextFunctions {
         )
 
         updatedDelegatedStakes <- getUpdatedCreateDelegatedStakes(
-          delegatedStakeAcceptanceResult,
+          delegatedStakeAcceptanceResult
         )
         (
           acceptanceResult,
@@ -137,9 +137,12 @@ object GlobalSnapshotContextFunctions {
                 .map(txs =>
                   DelegationRewardsResult(
                     delegatorRewardsMap = Map.empty,
-                    updatedCreateDelegatedStakes = SortedMap.empty,
-                    updatedWithdrawDelegatedStakes = SortedMap.empty,
+                    updatedCreateDelegatedStakes = signedArtifact.activeDelegatedStakes
+                      .map(_.map(_._2.map(_.value)))
+                      .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]]),
+                    updatedWithdrawDelegatedStakes = signedArtifact.delegatedStakesWithdrawals,
                     nodeOperatorRewards = txs,
+                    reservedAddressRewards = SortedSet.empty,
                     withdrawalRewardTxs = SortedSet.empty,
                     totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(txs.map(_.amount.value.value).sum))
                   )
@@ -148,6 +151,112 @@ object GlobalSnapshotContextFunctions {
             lastGlobalSnapshots,
             getGlobalSnapshotByOrdinal
           )
+
+//        val classicRewardsFn =               classicRewards
+//          .distribute(_, _, _, _, _)
+//          .map { rewardTxs =>
+//            DelegationRewardsResult(
+//              delegatorRewardsMap = Map.empty,
+//              updatedCreateDelegatedStakes = SortedMap.empty,
+//              updatedWithdrawDelegatedStakes = SortedMap.empty,
+//              nodeOperatorRewards = rewardTxs,
+//              reservedAddressRewards = SortedSet.empty,
+//              withdrawalRewardTxs = SortedSet.empty,
+//              totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
+//            )
+//          }
+//
+//        val rewardsWithFacilitators: List[(Address, Id)] => RewardsInput => F[DelegationRewardsResult] = { faciltators: List[(Address, Id)] =>
+//      {
+//        case ClassicRewardsInput(txs) =>
+//        classicRewardsFn(lastArtifact, snapshotContext.balances, txs, trigger, events)
+//
+//        case DelegateRewardsInput(udsar, psu, ep) =>
+//        if (shouldUseDelegatedRewards(lastArtifact.ordinal.next, ep)) {
+//        delegatedRewards.distribute(snapshotContext, trigger, ep, faciltators, udsar, psu)
+//      } else {
+//      classicRewardsFn(lastArtifact, snapshotContext.balances, SortedSet.empty, trigger, events)
+//      }
+//      }
+//      }
+
+//        DelegationRewardsResult(
+//        _,
+//        updatedCreateDelegatedStakes,
+//        updatedWithdrawDelegatedStakes,
+//        nodeOperatorRewards,
+//        reservedAddressRewards,
+//        withdrawalRewardTxs,
+//        _
+//        ) <-
+//          if (ordinal.value < tessellation3MigrationStartingOrdinal.value) {
+//            calculateRewardsFn(ClassicRewardsInput(acceptedTransactions))
+//          } else {
+//            val acceptedTokenLockRefs = delegatedStakeAcceptanceResult.acceptedCreates.map {
+//              case (addr, creates) => (addr, creates.map(_._1.tokenLockRef).toSet)
+//            }
+//            val filteredUnexpiredCreateDelegatedStakes = unexpiredCreateDelegatedStakes.map {
+//              case (addr, recs) =>
+//                val tokenLocks = acceptedTokenLockRefs.getOrElse(addr, Set.empty)
+//                (addr, recs.filterNot(record => tokenLocks(record.event.tokenLockRef)))
+//            }
+//            calculateRewardsFn(
+//              DelegateRewardsInput(
+//                delegatedStakeAcceptanceResult,
+//                PartitionedStakeUpdates(
+//                  filteredUnexpiredCreateDelegatedStakes,
+//                  expiredCreateDelegatedStakes,
+//                  unexpiredWithdrawalsDelegatedStaking,
+//                  expiredWithdrawalsDelegatedStaking
+//                ),
+//                epochProgress
+//              )
+//            )
+//          }
+//
+//        (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
+//          updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
+//          withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards
+//        )
+
+//        // Calculate output values that will be integrated into consensus state / snapshot
+//        updatedCreateDelegatedStakes <-
+//          delegatedStakeDiffs.acceptedCreates.map {
+//              case (addr, st) =>
+//                addr -> st.map {
+//                  case (ev, ord) => DelegatedStakeRecord(ev, ord, Balance.empty, Amount(NonNegLong.unsafeFrom(0L)))
+//                }
+//            }.pure[F]
+//            .map(partitionedRecords.unexpiredCreateDelegatedStakes |+| _)
+//            .map(_.map {
+//              case (addr, recs) =>
+//                addr -> recs.map {
+//                  case DelegatedStakeRecord(event, ord, bal, _) =>
+//                    val nodeSpecificReward = delegatorRewardsMap
+//                      .get(addr)
+//                      .flatMap(_.get(event.value.nodeId.toId))
+//                      .getOrElse(Amount.empty)
+//
+//                    val disbursedBalance = bal.plus(nodeSpecificReward).toOption.getOrElse(Balance.empty)
+//
+//                    DelegatedStakeRecord(event, ord, disbursedBalance, nodeSpecificReward)
+//                }
+//            })
+//
+//        updatedWithdrawDelegatedStakes <-
+//          delegatedStakeDiffs.acceptedWithdrawals.toList.traverse {
+//            case (addr, acceptedWithdrawls) =>
+//              acceptedWithdrawls.traverse {
+//                case (ev, ep) =>
+//                  lastSnapshotContext.activeDelegatedStakes
+//                    .flatTraverse(_.get(addr).flatTraverse {
+//                      _.findM { s =>
+//                        DelegatedStakeReference.of(s.event).map(_.hash === ev.stakeRef)
+//                      }.map(_.map(rec => PendingWithdrawal(ev, rec.rewards, ep)))
+//                    })
+//                    .flatMap(Async[F].fromOption(_, new RuntimeException("Unexpected None when processing user delegations")))
+//              }.map(addr -> _)
+//          }.map(_.toSortedMap).map(partitionedRecords.unexpiredWithdrawalsDelegatedStaking |+| _)
 
         _ <- CannotApplyBlocksError(acceptanceResult.notAccepted.map { case (_, reason) => reason })
           .raiseError[F, Unit]

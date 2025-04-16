@@ -30,6 +30,7 @@ case class DelegationRewardsResult(
   updatedCreateDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
   updatedWithdrawDelegatedStakes: SortedMap[Address, List[PendingWithdrawal]],
   nodeOperatorRewards: SortedSet[RewardTransaction],
+  reservedAddressRewards: SortedSet[RewardTransaction],
   withdrawalRewardTxs: SortedSet[RewardTransaction],
   totalEmittedRewardsAmount: Amount
 )
