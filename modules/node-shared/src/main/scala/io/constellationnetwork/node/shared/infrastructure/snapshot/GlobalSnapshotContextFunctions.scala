@@ -72,7 +72,7 @@ object GlobalSnapshotContextFunctions {
           val addressWithdrawals = existingWithdrawals.getOrElse(address, List.empty)
 
           addressCreates.traverse {
-            case record @ DelegatedStakeRecord(createStake, _, _, _) =>
+            case record @ DelegatedStakeRecord(createStake, _, _) =>
               DelegatedStakeReference.of(createStake).map { createRef =>
                 val isExpired = addressWithdrawals.exists {
                   case PendingWithdrawal(withdrawalStake, _, withdrawalEpoch) =>

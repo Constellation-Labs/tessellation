@@ -65,8 +65,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
               NonEmptySet.one[SignatureProof](SignatureProof(nodeId1, Signature(Hex(Hash.empty.value))))
             ),
             SnapshotOrdinal(1L),
-            Balance(NonNegLong.unsafeFrom(amount.value.value * 10 / 100)),
-            Amount(NonNegLong.unsafeFrom(amount.value.value * 10 / 100))
+            Balance(NonNegLong.unsafeFrom(amount.value.value * 10 / 100))
           )
         )
       ),
@@ -288,8 +287,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     val stakes = SortedMap(
-      address1 -> List(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L), Amount(NonNegLong.unsafeFrom(0L)))),
-      address2 -> List(DelegatedStakeRecord(stakeCreate2, SnapshotOrdinal(1L), Balance(200L), Amount(NonNegLong.unsafeFrom(0L))))
+      address1 -> List(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L))),
+      address2 -> List(DelegatedStakeRecord(stakeCreate2, SnapshotOrdinal(1L), Balance(200L)))
     )
 
     val nodeParams = SortedMap(
@@ -494,7 +493,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     val initialStakes = SortedMap(
-      address1 -> List(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L), Amount(NonNegLong.unsafeFrom(0L))))
+      address1 -> List(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L)))
     )
 
     val nodeParams = SortedMap(
@@ -627,7 +626,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     val stakes = SortedMap(
-      address1 -> List(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L), Amount(NonNegLong.unsafeFrom(0L))))
+      address1 -> List(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L)))
     )
 
     val nodeParams = SortedMap(
@@ -788,7 +787,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
 
     // Zero-stake records
     val zeroStakes = SortedMap(
-      address1 -> List(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance.empty, Amount(NonNegLong.unsafeFrom(0L))))
+      address1 -> List(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance.empty))
     )
 
     val nodeParams = SortedMap(

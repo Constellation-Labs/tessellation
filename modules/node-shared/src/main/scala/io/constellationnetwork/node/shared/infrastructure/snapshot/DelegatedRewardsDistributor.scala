@@ -68,14 +68,14 @@ object DelegatedRewardsDistributor {
     delegatedStakeDiffs.acceptedCreates.map {
       case (addr, st) =>
         addr -> st.map {
-          case (ev, ord) => DelegatedStakeRecord(ev, ord, Balance.empty, Amount(NonNegLong.unsafeFrom(0L)))
+          case (ev, ord) => DelegatedStakeRecord(ev, ord, Balance.empty)
         }
     }.pure[F]
       .map(partitionedRecords.unexpiredCreateDelegatedStakes |+| _)
       .map(_.map {
         case (addr, recs) =>
           addr -> recs.map {
-            case DelegatedStakeRecord(event, ord, bal, _) =>
+            case DelegatedStakeRecord(event, ord, bal) =>
               val nodeSpecificReward = delegatorRewardsMap
                 .get(addr)
                 .flatMap(_.get(event.value.nodeId))
@@ -83,7 +83,7 @@ object DelegatedRewardsDistributor {
 
               val disbursedBalance = bal.plus(nodeSpecificReward).toOption.getOrElse(Balance.empty)
 
-              DelegatedStakeRecord(event, ord, disbursedBalance, nodeSpecificReward)
+              DelegatedStakeRecord(event, ord, disbursedBalance)
           }
       })
 
