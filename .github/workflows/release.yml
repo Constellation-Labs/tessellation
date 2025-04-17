@@ -13,6 +13,8 @@ permissions:
 jobs:
   build:
     name: Release
+    outputs:
+      release_tag: ${{ steps.set_output.outputs.release_tag }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
