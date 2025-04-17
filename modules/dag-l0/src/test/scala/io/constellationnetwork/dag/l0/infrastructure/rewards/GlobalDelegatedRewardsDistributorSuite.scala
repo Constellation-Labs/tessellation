@@ -12,7 +12,6 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
-import io.constellationnetwork.node.shared.infrastructure.rewards.GlobalDelegatedRewardsDistributor
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{DelegationRewardsResult, PartitionedStakeUpdates}
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
@@ -48,7 +47,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     DelegationRewardsResult(
-      delegatorRewardsMap = Map(
+      delegatorRewardsMap = SortedMap(
         address1 -> Map(nodeId1.toPeerId -> Amount(NonNegLong.unsafeFrom(amount.value.value * 10 / 100))),
         address2 -> Map(nodeId2.toPeerId -> Amount(NonNegLong.unsafeFrom(amount.value.value * 15 / 100)))
       ),
@@ -101,7 +100,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       AppEnvironment.Dev -> ProgramsDistributionConfig(
         Map.empty,
         NonNegFraction.one,
-        NonNegFraction.zero
+        NonNegFraction.one
       )
     )
   )

@@ -187,7 +187,7 @@ object GlobalSnapshotConsensusFunctions {
         )
         .map { rewardTxs =>
           DelegationRewardsResult(
-            delegatorRewardsMap = Map.empty,
+            delegatorRewardsMap = SortedMap.empty,
             updatedCreateDelegatedStakes = SortedMap.empty,
             updatedWithdrawDelegatedStakes = SortedMap.empty,
             nodeOperatorRewards = rewardTxs,
@@ -302,7 +302,7 @@ object GlobalSnapshotConsensusFunctions {
           accepted,
           scSnapshots,
           acceptedRewardTxs,
-          if (delegatorRewardsMap.nonEmpty) Some(SortedMap.from(delegatorRewardsMap)) else None,
+          delegatorRewardsMap.some,
           currentEpochProgress,
           GlobalSnapshot.nextFacilitators,
           SnapshotTips(

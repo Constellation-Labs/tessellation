@@ -1,7 +1,6 @@
-package io.constellationnetwork.node.shared.infrastructure.rewards
+package io.constellationnetwork.dag.l0.infrastructure.rewards
 
 import cats.effect.{Async, Sync}
-import cats.implicits.catsSyntaxOrder
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
@@ -20,7 +19,7 @@ import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
-import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, DelegatedStakeReference, PendingWithdrawal}
+import io.constellationnetwork.schema.delegatedStake.DelegatedStakeRecord
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.{DelegatedStakeRewardParameters, RewardFraction, UpdateNodeParameters}
 import io.constellationnetwork.schema.peer.PeerId
@@ -107,15 +106,15 @@ object GlobalDelegatedRewardsDistributor {
       val delegatorFlatInflationPercentage = delegatedRewardsConfig.flatInflationRate.toBigDecimal
 
       val reservedAddressRewards =
-        if (totalWeight <= 0) List.empty
+        if (totalRewards.value.value <= 0 || totalWeight <= 0) List.empty
         else reservedAddressWeights.map { case (addr, pct) => addr -> (pct * BigDecimal(totalRewards.value.value)) }
 
       val staticValidatorRewardPool =
-        if (totalWeight <= 0) BigDecimal(0)
+        if (totalRewards.value.value <= 0 || totalWeight <= 0) BigDecimal(0)
         else BigDecimal(totalRewards.value.value) * validatorsWeight / totalWeight
 
       val totalDelegationRewardPool =
-        if (totalWeight <= 0) BigDecimal(0)
+        if (totalRewards.value.value <= 0 || totalWeight <= 0) BigDecimal(0)
         else
           BigDecimal(totalRewards.value.value) *
             (1 + delegatorFlatInflationPercentage) *
@@ -207,7 +206,7 @@ object GlobalDelegatedRewardsDistributor {
       nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
       totalDelegationRewardPool: BigDecimal
     ): F[Map[Address, Map[PeerId, Amount]]] =
-      if (activeDelegatedStakes.isEmpty) Map.empty[Address, Map[PeerId, Amount]].pure[F]
+      if (activeDelegatedStakes.isEmpty || totalDelegationRewardPool === BigDecimal(0)) Map.empty[Address, Map[PeerId, Amount]].pure[F]
       else {
         val activeStakes = activeDelegatedStakes.flatMap {
           case (address, records) =>
@@ -292,7 +291,8 @@ object GlobalDelegatedRewardsDistributor {
       val activeDelegatedStakes =
         lastSnapshotContext.activeDelegatedStakes.getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
 
-      if (activeDelegatedStakes.isEmpty) SortedSet.from(staticRewardsList).pure[F]
+      if (activeDelegatedStakes.isEmpty || (delegatorRewardPool === BigDecimal(0) && facilitatorRewardPool === BigDecimal(0)))
+        SortedSet.from(staticRewardsList).pure[F]
       else {
         val nodeStakes = activeDelegatedStakes.values.flatten
           .groupBy(_.event.value.nodeId.toId)
@@ -444,7 +444,7 @@ object GlobalDelegatedRewardsDistributor {
 
       } yield
         DelegationRewardsResult(
-          delegatorRewardsMap,
+          delegatorRewardsMap.toSortedMap,
           updatedCreateDelegatedStakes,
           updatedWithdrawDelegatedStakes,
           nodeOperatorRewards,

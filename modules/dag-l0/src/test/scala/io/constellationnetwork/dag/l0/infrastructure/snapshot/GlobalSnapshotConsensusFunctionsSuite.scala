@@ -19,6 +19,7 @@ import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
   SnapshotBinaryFeeCalculator,
   UpdateNodeParametersCutter
 }
+import io.constellationnetwork.dag.l0.infrastructure.rewards.GlobalDelegatedRewardsDistributor
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.{GlobalSnapshotEvent, StateChannelEvent}
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.cats.effect.ResourceIO
@@ -45,7 +46,6 @@ import io.constellationnetwork.node.shared.domain.swap.block._
 import io.constellationnetwork.node.shared.domain.tokenlock.block._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger}
-import io.constellationnetwork.node.shared.infrastructure.rewards.GlobalDelegatedRewardsDistributor
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
 import io.constellationnetwork.schema._
@@ -257,7 +257,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       partitionedRecords: PartitionedStakeUpdates
     ): GlobalSnapshotConsensusFunctionsSuite.F[DelegationRewardsResult] =
       DelegationRewardsResult(
-        Map.empty,
+        SortedMap.empty,
         SortedMap.empty,
         SortedMap.empty,
         SortedSet.empty,

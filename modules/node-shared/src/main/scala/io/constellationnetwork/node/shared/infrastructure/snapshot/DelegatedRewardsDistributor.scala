@@ -29,7 +29,7 @@ import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 /** Result container for delegation rewards calculation
   */
 case class DelegationRewardsResult(
-  delegatorRewardsMap: Map[Address, Map[PeerId, Amount]],
+  delegatorRewardsMap: SortedMap[Address, Map[PeerId, Amount]],
   updatedCreateDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
   updatedWithdrawDelegatedStakes: SortedMap[Address, List[PendingWithdrawal]],
   nodeOperatorRewards: SortedSet[RewardTransaction],
