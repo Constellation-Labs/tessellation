@@ -145,7 +145,12 @@ object SharedServices {
         collateral.amount,
         cfg.delegatedStaking.withdrawalTimeLimit.getOrElse(cfg.environment, EpochProgress.MinValue)
       )
-      globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(globalSnapshotAcceptanceManager)
+      globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(
+        globalSnapshotAcceptanceManager,
+        updateDelegatedStakeAcceptanceManager,
+        cfg.delegatedStaking.withdrawalTimeLimit.getOrElse(cfg.environment, EpochProgress.MinValue),
+        cfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(cfg.environment, SnapshotOrdinal.MinValue)
+      )
     } yield
       new SharedServices[F, A](
         localHealthcheck = localHealthcheck,

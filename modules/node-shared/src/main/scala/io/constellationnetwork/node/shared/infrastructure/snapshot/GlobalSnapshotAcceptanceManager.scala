@@ -49,6 +49,7 @@ import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralReference, UpdateNodeCollateral}
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction._
@@ -96,7 +97,8 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
       GlobalSnapshotStateProof,
       Map[Address, List[SpendAction]],
       SortedMap[Id, Signed[UpdateNodeParameters]],
-      SortedSet[SharedArtifact]
+      SortedSet[SharedArtifact],
+      Map[Address, Map[PeerId, Amount]]
     )
   ]
 }
@@ -152,7 +154,8 @@ object GlobalSnapshotAcceptanceManager {
         GlobalSnapshotStateProof,
         Map[Address, List[SpendAction]],
         SortedMap[Id, Signed[UpdateNodeParameters]],
-        SortedSet[SharedArtifact]
+        SortedSet[SharedArtifact],
+        Map[Address, Map[PeerId, Amount]]
       )
     ] = {
       implicit val hasher = HasherSelector[F].getForOrdinal(ordinal)
@@ -218,7 +221,7 @@ object GlobalSnapshotAcceptanceManager {
         ) <- acceptDelegatedStakes(lastSnapshotContext, epochProgress)
 
         DelegationRewardsResult(
-          _,
+          delegatorRewardsMap,
           updatedCreateDelegatedStakes,
           updatedWithdrawDelegatedStakes,
           nodeOperatorRewards,
@@ -570,7 +573,8 @@ object GlobalSnapshotAcceptanceManager {
           stateProof,
           acceptedSpendActions,
           acceptedUpdateNodeParameters,
-          allowSpendsExpiredEvents ++ tokenUnlocksEvents
+          allowSpendsExpiredEvents ++ tokenUnlocksEvents,
+          delegatorRewardsMap
         )
     }
 
@@ -1175,7 +1179,5 @@ object GlobalSnapshotAcceptanceManager {
 
       activeTipsUsages ++ deprecatedTipsUsages
     }
-
   }
-
 }

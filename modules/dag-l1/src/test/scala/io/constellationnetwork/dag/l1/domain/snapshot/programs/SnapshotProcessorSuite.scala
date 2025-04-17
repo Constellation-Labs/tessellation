@@ -193,7 +193,12 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               Amount(0L),
               EpochProgress(NonNegLong(136080L))
             )
-            globalSnapshotContextFns = GlobalSnapshotContextFunctions.make[IO](globalSnapshotAcceptanceManager)
+            globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(
+              globalSnapshotAcceptanceManager,
+              updateDelegatedStakeAcceptanceManager,
+              EpochProgress(NonNegLong.unsafeFrom(1L)),
+              SnapshotOrdinal.MinValue
+            )
             snapshotProcessor = {
               val addressStorage = new AddressStorage[IO] {
                 def getState: IO[Map[Address, Balance]] =
@@ -308,6 +313,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       SortedSet.empty,
       SortedMap.empty,
       SortedSet.empty,
+      None,
       EpochProgress.MinValue,
       NonEmptyList.one(peerId),
       SnapshotTips(SortedSet.empty, SortedSet.empty),
@@ -378,6 +384,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             generateSnapshot(peerId)
               .copy(
                 blocks = SortedSet(BlockAsActiveTip(hashedBlock.signed, NonNegLong.MinValue)),
+                delegateRewards = None,
                 tips = SnapshotTips(
                   SortedSet(DeprecatedTip(parent1, snapshotOrdinal8)),
                   SortedSet(ActiveTip(parent2, 2L, snapshotOrdinal9))
@@ -530,6 +537,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           hashedSnapshot <- forAsyncHasher(
             generateSnapshot(peerId).copy(
               blocks = SortedSet(BlockAsActiveTip(majorityInRangeBlock.signed, NonNegLong(1L))),
+              delegateRewards = None,
               tips = SnapshotTips(
                 SortedSet(
                   DeprecatedTip(parent3, snapshotOrdinal9),
@@ -718,6 +726,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           hashedSnapshot <- forAsyncHasher(
             generateSnapshot(peerId).copy(
               blocks = SortedSet(BlockAsActiveTip(majorityInRangeBlock.signed, NonNegLong(1L))),
+              delegateRewards = None,
               tips = SnapshotTips(
                 SortedSet(
                   DeprecatedTip(parent3, snapshotOrdinal9),
@@ -855,7 +864,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal11,
               subHeight = snapshotSubHeight1,
-              lastSnapshotHash = hashedLastSnapshot.hash
+              lastSnapshotHash = hashedLastSnapshot.hash,
+              delegateRewards = None
             ),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
@@ -1014,6 +1024,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
             forAsyncHasher(
               generateSnapshot(peerId).copy(
+                delegateRewards = None,
                 tips = SnapshotTips(
                   SortedSet(
                     DeprecatedTip(parent1, snapshotOrdinal9),
@@ -1057,6 +1068,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 height = snapshotHeight8,
                 lastSnapshotHash = hashedLastSnapshot.hash,
                 blocks = SortedSet(BlockAsActiveTip(majorityInRangeBlock.signed, 1L), BlockAsActiveTip(aboveRangeMajorityBlock.signed, 2L)),
+                delegateRewards = None,
                 tips = SnapshotTips(
                   SortedSet(
                     DeprecatedTip(parent3, snapshotOrdinal11)
@@ -1287,6 +1299,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           lastSnapshotInfoStateProof <- lastSnapshotInfo.stateProof[IO](snapshotOrdinal10)
           hashedLastSnapshot <- forAsyncHasher(
             generateSnapshot(peerId).copy(
+              delegateRewards = None,
               tips = SnapshotTips(
                 SortedSet(
                   DeprecatedTip(parent1, snapshotOrdinal9),
@@ -1329,6 +1342,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 BlockAsActiveTip(aboveRangeAcceptedMajorityBlock.signed, 0L),
                 BlockAsActiveTip(aboveRangeUnknownMajorityBlock.signed, 0L)
               ),
+              delegateRewards = None,
               tips = SnapshotTips(
                 SortedSet(
                   DeprecatedTip(parent3, snapshotOrdinal11)
@@ -1481,10 +1495,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           hashedNextSnapshot <- forAsyncHasher(
-            generateSnapshot(peerId).copy(
-              ordinal = snapshotOrdinal12,
-              lastSnapshotHash = hashedLastSnapshot.hash
-            ),
+            generateSnapshot(peerId).copy(ordinal = snapshotOrdinal12, lastSnapshotHash = hashedLastSnapshot.hash, delegateRewards = None),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set((hashedLastSnapshot, GlobalSnapshotInfo.empty).some)
@@ -1529,6 +1540,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               ordinal = snapshotOrdinal11,
               height = snapshotHeight8,
               lastSnapshotHash = hashedLastSnapshot.hash,
+              delegateRewards = None,
               tips = SnapshotTips(
                 SortedSet(
                   DeprecatedTip(parent1, snapshotOrdinal11)

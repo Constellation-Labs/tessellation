@@ -45,6 +45,7 @@ import io.constellationnetwork.node.shared.domain.swap.block._
 import io.constellationnetwork.node.shared.domain.tokenlock.block._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger}
+import io.constellationnetwork.node.shared.infrastructure.rewards.GlobalDelegatedRewardsDistributor
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
 import io.constellationnetwork.schema._
@@ -66,7 +67,6 @@ import io.constellationnetwork.syntax.sortedCollection._
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import io.circe.Encoder
-import io.constellationnetwork.node.shared.infrastructure.rewards.DelegatedRewardsDistributor
 import org.scalacheck.Gen
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
@@ -252,19 +252,19 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       lastSnapshotContext: GlobalSnapshotContext,
       trigger: ConsensusTrigger,
       epochProgress: EpochProgress,
-      facilitators: List[(Address, ID.Id)],
+      facilitators: List[(Address, PeerId)],
       delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
       partitionedRecords: PartitionedStakeUpdates
     ): GlobalSnapshotConsensusFunctionsSuite.F[DelegationRewardsResult] =
-      io.constellationnetwork.node.shared.infrastructure.snapshot
-        .DelegationRewardsResult(
-          Map.empty,
-          SortedMap.empty,
-          SortedMap.empty,
-          SortedSet.empty,
-          SortedSet.empty,
-          Amount.empty
-        )
+      DelegationRewardsResult(
+        Map.empty,
+        SortedMap.empty,
+        SortedMap.empty,
+        SortedSet.empty,
+        SortedSet.empty,
+        SortedSet.empty,
+        Amount.empty
+      )
         .pure[F]
   }
 
