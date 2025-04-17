@@ -414,7 +414,7 @@ object GlobalSnapshotAcceptanceManager {
         updatedWithdrawNodeCollaterals = unexpiredWithdrawNodeCollaterals |+| nodeCollateralAcceptanceResult.acceptedWithdrawals
 
         expiredCreateDelegatedStakesByRef <- expiredCreateDelegatedStakes.values.flatten.toList.traverse {
-          case DelegatedStakeRecord(value, _, _, _) =>
+          case DelegatedStakeRecord(value, _, _) =>
             value.toHashed.map(hashed => hashed.hash -> value)
         }.map(_.toMap)
 
@@ -634,7 +634,7 @@ object GlobalSnapshotAcceptanceManager {
         val addressWithdrawals = existingWithdrawals.getOrElse(address, List.empty)
 
         addressCreates.traverse {
-          case record @ DelegatedStakeRecord(createStake, _, _, _) =>
+          case record @ DelegatedStakeRecord(createStake, _, _) =>
             DelegatedStakeReference.of(createStake).map { createRef =>
               val isExpired = addressWithdrawals.exists {
                 case PendingWithdrawal(withdrawalStake, _, withdrawalEpoch) =>

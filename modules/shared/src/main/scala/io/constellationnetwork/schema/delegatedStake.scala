@@ -119,8 +119,7 @@ object delegatedStake {
   case class DelegatedStakeRecord(
     event: Signed[UpdateDelegatedStake.Create],
     createdAt: SnapshotOrdinal,
-    rewards: Balance,
-    latestRewardChange: Amount
+    rewards: Balance
   )
 
   object DelegatedStakeRecord {

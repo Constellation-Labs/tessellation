@@ -286,7 +286,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       context = lastContext.copy(activeDelegatedStakes =
         Some(
           SortedMap(
-            address -> List(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, Amount(NonNegLong.unsafeFrom(0L))))
+            address -> List(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty))
           )
         )
       )
