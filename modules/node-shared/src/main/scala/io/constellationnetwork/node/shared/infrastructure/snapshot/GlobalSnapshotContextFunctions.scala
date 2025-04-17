@@ -42,6 +42,7 @@ object GlobalSnapshotContextFunctions {
   ) =
     new GlobalSnapshotContextFunctions[F] {
 
+      // todo - avoid duplication of this function here and in GlobalSnapshotConsensusFunctions
       private def acceptDelegatedStakes(
         lastSnapshotContext: GlobalSnapshotInfo,
         epochProgress: EpochProgress
@@ -256,7 +257,7 @@ object GlobalSnapshotContextFunctions {
                 .map { txs =>
                   if (signedArtifact.ordinal.value < tessellation3MigrationStartingOrdinal.value) {
                     DelegationRewardsResult(
-                      delegatorRewardsMap = Map.empty,
+                      delegatorRewardsMap = SortedMap.empty,
                       updatedCreateDelegatedStakes = SortedMap.empty,
                       updatedWithdrawDelegatedStakes = SortedMap.empty,
                       nodeOperatorRewards = txs,

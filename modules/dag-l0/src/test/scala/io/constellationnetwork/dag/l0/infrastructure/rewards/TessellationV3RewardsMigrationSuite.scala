@@ -83,7 +83,7 @@ object TessellationV3RewardsMigrationSuite extends SimpleIOSuite with Checkers {
     )
 
     DelegationRewardsResult(
-      delegatorRewardsMap = Map.empty,
+      delegatorRewardsMap = SortedMap.empty,
       updatedCreateDelegatedStakes = SortedMap.empty,
       updatedWithdrawDelegatedStakes = SortedMap.empty,
       nodeOperatorRewards = rewardTxs,

@@ -35,22 +35,19 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
         iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
         totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
         dagPrices = SortedMap(
-          // DAG per USD format (higher number = lower DAG price)
-          EpochProgress(0L) -> NonNegFraction.unsafeFrom(45, 1) // 45 DAG per USD ($0.022 per DAG)
+          EpochProgress(0L) -> NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
         )
       ),
       AppEnvironment.Testnet -> EmissionConfigEntry(
         epochsPerYear = PosLong(732000L),
-        asOfEpoch = EpochProgress(5000000L),
+        asOfEpoch = EpochProgress(997094L),
         iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target inflation
         iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial inflation
         lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda parameter
         iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
         totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
         dagPrices = SortedMap(
-          // DAG per USD format (higher number = lower DAG price)
-          EpochProgress(5000000L) -> NonNegFraction.unsafeFrom(45, 1), // 45 DAG per USD ($0.022 per DAG)
-          EpochProgress(5100000L) -> NonNegFraction.unsafeFrom(40, 1) // 40 DAG per USD ($0.025 per DAG)
+          EpochProgress(0L) -> NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
         )
       ),
       AppEnvironment.Integrationnet -> EmissionConfigEntry(
@@ -62,9 +59,7 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
         iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
         totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
         dagPrices = SortedMap(
-          // DAG per USD format (higher number = lower DAG price)
-          EpochProgress(5000000L) -> NonNegFraction.unsafeFrom(45, 1), // 45 DAG per USD ($0.022 per DAG)
-          EpochProgress(5100000L) -> NonNegFraction.unsafeFrom(40, 1) // 40 DAG per USD ($0.025 per DAG)
+          EpochProgress(0L) -> NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
         )
       ),
       AppEnvironment.Mainnet -> EmissionConfigEntry(
@@ -76,9 +71,7 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
         iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
         totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
         dagPrices = SortedMap(
-          // DAG per USD format (higher number = lower DAG price)
-          EpochProgress(5000000L) -> NonNegFraction.unsafeFrom(45, 1), // 45 DAG per USD ($0.022 per DAG)
-          EpochProgress(5100000L) -> NonNegFraction.unsafeFrom(40, 1) // 40 DAG per USD ($0.025 per DAG)
+          EpochProgress(0L) -> NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
         )
       )
     ),
