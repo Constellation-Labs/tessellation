@@ -4,9 +4,8 @@ on:
       - release/mainnet
       - release/testnet
       - release/integrationnet
+      - alex/fix-intnet-api-doc-deploy
       - develop
-    paths:
-      - 'doc/api/**'
   pull_request:
     paths:
       - 'doc/api/**'
@@ -24,7 +23,7 @@ jobs:
   terraform:
     name: Terraform
     environment:
-      name: ${{ (github.ref == 'refs/heads/release/mainnet' && 'mainnet') || (github.ref == 'refs/heads/release/integrationnnet' && 'integrationnet') || (github.ref == 'refs/heads/release/testnet' && 'testnet') || 'dev' }}
+      name: ${{ (github.ref == 'refs/heads/release/mainnet' && 'mainnet') || (github.ref == 'refs/heads/release/integrationnnet' && 'integretionnet') || (github.ref == 'refs/heads/alex/fix-intnet-api-doc-deploy' && 'integretionnet') || (github.ref == 'refs/heads/release/testnet' && 'testnet') || 'dev' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -68,7 +67,7 @@ jobs:
       - name: Terraform workspace select
         working-directory: doc/api/terraform
         id: workspace
-        run: terraform workspace select ${{ (github.ref == 'refs/heads/release/mainnet' && 'mainnet') || (github.ref == 'refs/heads/release/integrationnnet' && 'integrationnet') || (github.ref == 'refs/heads/release/testnet' && 'testnet') || 'dev' }}
+        run: terraform workspace select ${{ (github.ref == 'refs/heads/release/mainnet' && 'mainnet') || (github.ref == 'refs/heads/release/integrationnnet' && 'integrationnet') || (github.ref == 'refs/heads/alex/fix-intnet-api-doc-deploy' && 'integrationnet') || (github.ref == 'refs/heads/release/testnet' && 'testnet') || 'dev' }}
 
 
       - name: Terraform Validate
@@ -124,6 +123,6 @@ jobs:
 
       - name: Terraform Apply
         working-directory: doc/api/terraform
-        if: (github.ref == 'refs/heads/release/mainnet' || github.ref == 'refs/heads/release/integrationnet' || github.ref == 'refs/heads/release/testnet' || github.ref == 'refs/heads/develop' ) && github.event_name == 'push'
+        if: (github.ref == 'refs/heads/release/mainnet' || github.ref == 'refs/heads/release/integrationnet' || github.ref == 'refs/heads/release/testnet' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/alex/fix-intnet-api-doc-deploy' ) && github.event_name == 'push'
         run: terraform apply -auto-approve -var="bucket=${{ env.AWS_BUCKET }}"
 
