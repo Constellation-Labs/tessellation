@@ -22,6 +22,7 @@ import io.constellationnetwork.schema.transaction.{RewardTransaction, Transactio
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
@@ -40,7 +41,6 @@ case class DelegationRewardsResult(
 
 case class PartitionedStakeUpdates(
   unexpiredCreateDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
-  expiredCreateDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
   unexpiredWithdrawalsDelegatedStaking: SortedMap[Address, List[PendingWithdrawal]],
   expiredWithdrawalsDelegatedStaking: SortedMap[Address, List[PendingWithdrawal]]
 )
@@ -72,6 +72,16 @@ object DelegatedRewardsDistributor {
         }
     }.pure[F]
       .map(partitionedRecords.unexpiredCreateDelegatedStakes |+| _)
+      .flatMap { activeStakes =>
+        // remove withdrawn stakes from the active list
+        val withdrawnStakes = delegatedStakeDiffs.acceptedWithdrawals.flatMap(_._2.map(_._1.stakeRef)).toSet
+        activeStakes.toList.traverse {
+          case (addr, records) =>
+            records.traverse { record =>
+              DelegatedStakeReference.of(record.event).map(ref => (record, withdrawnStakes(ref.hash)))
+            }.map(records => (addr, records.filterNot(_._2).map(_._1)))
+        }
+      }
       .map(_.map {
         case (addr, recs) =>
           addr -> recs.map {
@@ -86,6 +96,7 @@ object DelegatedRewardsDistributor {
               DelegatedStakeRecord(event, ord, disbursedBalance)
           }
       })
+      .map(_.toSortedMap)
 
   def getUpdatedWithdrawalDelegatedStakes[F[_]: Async: Hasher](
     lastSnapshotContext: GlobalSnapshotInfo,
@@ -100,7 +111,7 @@ object DelegatedRewardsDistributor {
               .flatTraverse(_.get(addr).flatTraverse {
                 _.findM { s =>
                   DelegatedStakeReference.of(s.event).map(_.hash === ev.stakeRef)
-                }.map(_.map(rec => PendingWithdrawal(ev, rec.rewards, ep)))
+                }.map(_.map(rec => PendingWithdrawal(rec.event, rec.rewards, ep)))
               })
               .flatMap(Async[F].fromOption(_, new RuntimeException("Unexpected None when processing user delegations")))
         }.map(addr -> _)

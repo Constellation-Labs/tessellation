@@ -60,7 +60,7 @@ object UpdateDelegatedStakeValidator {
           nodeIdV = validateNodeId(signed, lastContext)
           parentV <- validateParent(signed, lastContext)
           tokenLockV <- validateTokenLock(signed, lastContext)
-          pendingWithdrawalV <- validatePendingWithdrawal(signed, lastContext)
+          pendingWithdrawalV = validatePendingWithdrawal(signed, lastContext)
         } yield
           numberOfSignaturesV
             .productR(signaturesV)
@@ -145,38 +145,35 @@ object UpdateDelegatedStakeValidator {
       private def validatePendingWithdrawal(
         signed: Signed[UpdateDelegatedStake.Create],
         lastContext: GlobalSnapshotInfo
-      ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]] =
-        for {
-          stakeRef <- lastContext.activeDelegatedStakes
-            .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
-            .getOrElse(signed.source, List.empty)
-            .traverse { case DelegatedStakeRecord(stake, _, _) => DelegatedStakeReference.of(stake) }
-            .map(_.find(_ === signed.parent))
-          withdrawalRef = lastContext.delegatedStakesWithdrawals
-            .getOrElse(SortedMap.empty[Address, List[PendingWithdrawal]])
-            .getOrElse(signed.source, List.empty)
-            .find { case PendingWithdrawal(w, _, _) => stakeRef.map(_.hash).contains(w.stakeRef) }
-        } yield
-          if (withdrawalRef.isEmpty) {
-            signed.validNec
-          } else {
-            AlreadyWithdrawn(signed.parent.hash).invalidNec
-          }
+      ): UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]] = {
+        val withdrawalRef = lastContext.delegatedStakesWithdrawals
+          .getOrElse(SortedMap.empty[Address, List[PendingWithdrawal]])
+          .getOrElse(signed.source, List.empty)
+          .find { case PendingWithdrawal(w, _, _) => signed.tokenLockRef == w.tokenLockRef }
+        if (withdrawalRef.isEmpty) {
+          signed.validNec
+        } else {
+          AlreadyWithdrawn(signed.parent.hash).invalidNec
+        }
+      }
 
       private def validateWithdrawal(
         signed: Signed[UpdateDelegatedStake.Withdraw],
         lastContext: GlobalSnapshotInfo
       ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Withdraw]]] = {
 
-        def validateUniqueness(address: Address): UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Withdraw]] = {
+        def validateUniqueness(address: Address): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Withdraw]]] = {
           val withdrawals = lastContext.delegatedStakesWithdrawals
             .getOrElse(SortedMap.empty[Address, List[PendingWithdrawal]])
             .getOrElse(address, List.empty)
-          if (withdrawals.exists(_.event.stakeRef === signed.stakeRef)) {
-            AlreadyWithdrawn(signed.stakeRef).invalidNec
-          } else {
-            signed.validNec
-          }
+          for {
+            stakeRefs <- withdrawals.traverse(w => DelegatedStakeReference.of(w.event))
+          } yield
+            if (stakeRefs.exists(ref => ref.hash === signed.stakeRef)) {
+              AlreadyWithdrawn(signed.stakeRef).invalidNec
+            } else {
+              signed.validNec
+            }
         }
 
         def validateCreate(address: Address): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Withdraw]]] =
@@ -196,7 +193,7 @@ object UpdateDelegatedStakeValidator {
 
         for {
           parentV <- validateCreate(signed.source)
-          uniqueV = validateUniqueness(signed.source)
+          uniqueV <- validateUniqueness(signed.source)
         } yield uniqueV.productR(parentV)
       }
 

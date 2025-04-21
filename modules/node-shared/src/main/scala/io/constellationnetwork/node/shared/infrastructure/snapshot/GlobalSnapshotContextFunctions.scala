@@ -46,14 +46,11 @@ object GlobalSnapshotContextFunctions {
       private def acceptDelegatedStakes(
         lastSnapshotContext: GlobalSnapshotInfo,
         epochProgress: EpochProgress
-      )(implicit h: Hasher[F]): F[
-        (
-          SortedMap[Address, List[DelegatedStakeRecord]],
-          SortedMap[Address, List[DelegatedStakeRecord]],
-          SortedMap[Address, List[PendingWithdrawal]],
-          SortedMap[Address, List[PendingWithdrawal]]
-        )
-      ] = {
+      )(implicit h: Hasher[F]): (
+        SortedMap[Address, List[DelegatedStakeRecord]],
+        SortedMap[Address, List[PendingWithdrawal]],
+        SortedMap[Address, List[PendingWithdrawal]]
+      ) = {
         val existingDelegatedStakes = lastSnapshotContext.activeDelegatedStakes.getOrElse(
           SortedMap.empty[Address, List[DelegatedStakeRecord]]
         )
@@ -65,66 +62,27 @@ object GlobalSnapshotContextFunctions {
         def isWithdrawalExpired(withdrawalEpoch: EpochProgress): Boolean =
           (withdrawalEpoch |+| withdrawalTimeLimit) <= epochProgress
 
-        def filterCreatesWithExpiredWithdrawals(
-          address: Address
-        ): F[Option[(Address, List[DelegatedStakeRecord])]] = {
-          val addressCreates = existingDelegatedStakes.getOrElse(address, List.empty)
-          val addressWithdrawals = existingWithdrawals.getOrElse(address, List.empty)
+        val unexpiredWithdrawals = existingWithdrawals.map {
+          case (address, withdrawals) =>
+            address -> withdrawals.filterNot {
+              case PendingWithdrawal(_, _, withdrawalEpoch) =>
+                isWithdrawalExpired(withdrawalEpoch)
+            }
+        }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
 
-          addressCreates.traverse {
-            case record @ DelegatedStakeRecord(createStake, _, _) =>
-              DelegatedStakeReference.of(createStake).map { createRef =>
-                val isExpired = addressWithdrawals.exists {
-                  case PendingWithdrawal(withdrawalStake, _, withdrawalEpoch) =>
-                    withdrawalStake.stakeRef == createRef.hash && isWithdrawalExpired(withdrawalEpoch)
-                }
-                (record, isExpired)
-              }
-          }.map { processedCreates =>
-            val unexpiredCreates = processedCreates.filterNot { case (_, isExpired) => isExpired }.map { case (r, _) => r }
+        val expiredWithdrawals = existingWithdrawals.map {
+          case (address, withdrawals) =>
+            address -> withdrawals.filter {
+              case PendingWithdrawal(_, _, withdrawalEpoch) =>
+                isWithdrawalExpired(withdrawalEpoch)
+            }
+        }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
 
-            if (unexpiredCreates.isEmpty) None
-            else Some(address -> unexpiredCreates)
-          }
-        }
-
-        for {
-          filteredResults <- existingDelegatedStakes.keys.toList
-            .traverse(filterCreatesWithExpiredWithdrawals)
-            .map(_.flatten)
-
-          filteredUnexpired = SortedMap.empty[Address, List[DelegatedStakeRecord]] ++ filteredResults
-
-          filteredExpired = SortedMap.empty[Address, List[DelegatedStakeRecord]] ++
-            existingDelegatedStakes.keys.map { address =>
-              val original = existingDelegatedStakes.getOrElse(address, List.empty)
-              val unexpired = filteredUnexpired.getOrElse(address, List.empty)
-              address -> original.diff(unexpired)
-            }.filter(_._2.nonEmpty)
-
-          unexpiredWithdrawals = existingWithdrawals.map {
-            case (address, withdrawals) =>
-              address -> withdrawals.filterNot {
-                case PendingWithdrawal(_, _, withdrawalEpoch) =>
-                  isWithdrawalExpired(withdrawalEpoch)
-              }
-          }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
-
-          expiredWithdrawals = existingWithdrawals.map {
-            case (address, withdrawals) =>
-              address -> withdrawals.filter {
-                case PendingWithdrawal(_, _, withdrawalEpoch) =>
-                  isWithdrawalExpired(withdrawalEpoch)
-              }
-          }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
-
-        } yield
-          (
-            filteredUnexpired,
-            filteredExpired,
-            unexpiredWithdrawals,
-            expiredWithdrawals
-          )
+        (
+          existingDelegatedStakes,
+          unexpiredWithdrawals,
+          expiredWithdrawals
+        )
       }
 
       def createContext(
@@ -185,10 +143,9 @@ object GlobalSnapshotContextFunctions {
 
         (
           unexpiredCreateDelegatedStakes,
-          expiredCreateDelegatedStakes,
           unexpiredWithdrawalsDelegatedStaking,
           expiredWithdrawalsDelegatedStaking
-        ) <- acceptDelegatedStakes(context, signedArtifact.epochProgress)
+        ) = acceptDelegatedStakes(context, signedArtifact.epochProgress)
 
         filteredUnexpiredCreateDelegatedStakes = unexpiredCreateDelegatedStakes.map {
           case (addr, recs) =>
@@ -203,7 +160,6 @@ object GlobalSnapshotContextFunctions {
           delegatedStakeAcceptanceResult,
           PartitionedStakeUpdates(
             filteredUnexpiredCreateDelegatedStakes,
-            expiredCreateDelegatedStakes,
             unexpiredWithdrawalsDelegatedStaking,
             expiredWithdrawalsDelegatedStaking
           )
@@ -214,7 +170,6 @@ object GlobalSnapshotContextFunctions {
           delegatedStakeAcceptanceResult,
           PartitionedStakeUpdates(
             filteredUnexpiredCreateDelegatedStakes,
-            expiredCreateDelegatedStakes,
             unexpiredWithdrawalsDelegatedStaking,
             expiredWithdrawalsDelegatedStaking
           )

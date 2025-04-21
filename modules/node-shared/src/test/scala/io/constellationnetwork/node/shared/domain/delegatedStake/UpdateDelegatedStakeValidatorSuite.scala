@@ -52,11 +52,12 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     keyPair: KeyPair,
     sourceAddress: Address,
     tokenLockReference: Hash = Hash.empty,
-    parent: DelegatedStakeReference = DelegatedStakeReference.empty
+    parent: DelegatedStakeReference = DelegatedStakeReference.empty,
+    amount: Long = 100L
   ): UpdateDelegatedStake.Create = UpdateDelegatedStake.Create(
     source = sourceAddress,
     nodeId = PeerId.fromPublic(keyPair.getPublic),
-    amount = DelegatedStakeAmount(NonNegLong(100L)),
+    amount = DelegatedStakeAmount(NonNegLong.unsafeFrom(amount)),
     tokenLockRef = tokenLockReference,
     parent = parent
   )
@@ -66,7 +67,12 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     stakeRef = DelegatedStakeReference.empty.hash
   )
 
-  def testTokenLocks(keyPair: KeyPair, amount: Long = 100L, tokenLockUnlockEpoch: Option[EpochProgress] = None)(
+  def testTokenLocks(
+    keyPair: KeyPair,
+    amount: Long = 100L,
+    tokenLockUnlockEpoch: Option[EpochProgress] = None,
+    parent: TokenLockReference = TokenLockReference.empty
+  )(
     implicit sp: SecurityProvider[IO],
     h: Hasher[IO]
   ) = {
@@ -74,7 +80,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       source = keyPair.getPublic.toAddress,
       amount = TokenLockAmount(PosLong.unsafeFrom(amount)),
       fee = TokenLockFee(NonNegLong(0L)),
-      parent = TokenLockReference.empty,
+      parent = parent,
       currencyId = None,
       unlockEpoch = tokenLockUnlockEpoch
     )
@@ -246,8 +252,6 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       parent = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signedParent <- forAsyncHasher(parent.copy(nodeId = nodeId1), keyPair)
       lastRef <- DelegatedStakeReference.of(signedParent)
-      validWithdraw = testWithdrawDelegatedStake(keyPair, sourceAddress).copy(stakeRef = lastRef.hash)
-      signedWithdraw <- forAsyncHasher(validWithdraw, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(
         activeDelegatedStakes = Some(
@@ -255,8 +259,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
             address -> List(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty))
           )
         ),
-        delegatedStakesWithdrawals =
-          Some(SortedMap(address -> List(PendingWithdrawal(signedWithdraw, Amount.empty, EpochProgress.MinValue))))
+        delegatedStakesWithdrawals = Some(SortedMap(address -> List(PendingWithdrawal(signedParent, Amount.empty, EpochProgress.MinValue))))
       )
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference, lastRef)
       signed <- forAsyncHasher(validCreate, keyPair)
@@ -528,7 +531,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
         SortedMap(
           address -> List(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty))
         ),
-        withdrawals = SortedMap(address -> List(PendingWithdrawal(signed, Amount.empty, EpochProgress.MinValue)))
+        withdrawals = SortedMap(address -> List(PendingWithdrawal(signedParent, Amount.empty, EpochProgress.MinValue)))
       )
       seedlist <- mkSeedlist(validParent.nodeId)
       validator = mkValidator(seedlist)

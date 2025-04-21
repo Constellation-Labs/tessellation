@@ -97,7 +97,7 @@ object delegatedStake {
   @derive(eqv, show, encoder)
   case class DelegatedStakeInfo(
     nodeId: PeerId,
-    acceptedOrdinal: SnapshotOrdinal,
+    acceptedOrdinal: Option[SnapshotOrdinal],
     tokenLockRef: Hash,
     amount: DelegatedStakeAmount,
     fee: DelegatedStakeFee,
@@ -128,7 +128,7 @@ object delegatedStake {
   }
 
   @derive(decoder, encoder, eqv, show)
-  case class PendingWithdrawal(event: Signed[UpdateDelegatedStake.Withdraw], rewards: Amount, createdAt: EpochProgress)
+  case class PendingWithdrawal(event: Signed[UpdateDelegatedStake.Create], rewards: Amount, createdAt: EpochProgress)
 
   object PendingWithdrawal {
     implicit val pendingWithdrawalOrdering: Ordering[PendingWithdrawal] =
