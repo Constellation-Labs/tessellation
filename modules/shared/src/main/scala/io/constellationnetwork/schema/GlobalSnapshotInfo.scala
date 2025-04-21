@@ -13,10 +13,10 @@ import io.constellationnetwork.merkletree.{MerkleRoot, MerkleTree, Proof}
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
-import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, PendingWithdrawal, UpdateDelegatedStake}
+import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, PendingDelegatedStakeWithdrawal, UpdateDelegatedStake}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
-import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
+import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralRecord, PendingNodeCollateralWithdrawal, UpdateNodeCollateral}
 import io.constellationnetwork.schema.snapshot.{SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendReference}
 import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockReference}
@@ -217,9 +217,9 @@ case class GlobalSnapshotInfo(
   lastTokenLockRefs: Option[SortedMap[Address, TokenLockReference]],
   updateNodeParameters: Option[SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)]],
   activeDelegatedStakes: Option[SortedMap[Address, List[DelegatedStakeRecord]]],
-  delegatedStakesWithdrawals: Option[SortedMap[Address, List[PendingWithdrawal]]],
-  activeNodeCollaterals: Option[SortedMap[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]]],
-  nodeCollateralWithdrawals: Option[SortedMap[Address, List[(Signed[UpdateNodeCollateral.Withdraw], EpochProgress)]]]
+  delegatedStakesWithdrawals: Option[SortedMap[Address, List[PendingDelegatedStakeWithdrawal]]],
+  activeNodeCollaterals: Option[SortedMap[Address, List[NodeCollateralRecord]]],
+  nodeCollateralWithdrawals: Option[SortedMap[Address, List[PendingNodeCollateralWithdrawal]]]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
   def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
