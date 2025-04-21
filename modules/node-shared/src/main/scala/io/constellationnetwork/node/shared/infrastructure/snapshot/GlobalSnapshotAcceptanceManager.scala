@@ -48,7 +48,7 @@ import io.constellationnetwork.schema.balance.{Amount, Balance, BalanceArithmeti
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
-import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralReference, UpdateNodeCollateral}
+import io.constellationnetwork.schema.nodeCollateral._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock._
@@ -215,10 +215,9 @@ object GlobalSnapshotAcceptanceManager {
 
         (
           unexpiredCreateDelegatedStakes,
-          expiredCreateDelegatedStakes,
           unexpiredWithdrawalsDelegatedStaking,
           expiredWithdrawalsDelegatedStaking
-        ) <- acceptDelegatedStakes(lastSnapshotContext, epochProgress)
+        ) = acceptDelegatedStakes(lastSnapshotContext, epochProgress)
 
         DelegationRewardsResult(
           delegatorRewardsMap,
@@ -245,7 +244,6 @@ object GlobalSnapshotAcceptanceManager {
                 delegatedStakeAcceptanceResult,
                 PartitionedStakeUpdates(
                   filteredUnexpiredCreateDelegatedStakes,
-                  expiredCreateDelegatedStakes,
                   unexpiredWithdrawalsDelegatedStaking,
                   expiredWithdrawalsDelegatedStaking
                 ),
@@ -396,31 +394,20 @@ object GlobalSnapshotAcceptanceManager {
           ).leftMap(ex => new RuntimeException(s"Balance arithmetic error updating balances by allow spends: $ex"))
         )
 
-        (unexpiredCreateNodeCollaterals, _, unexpiredWithdrawNodeCollaterals, _) <- acceptNodeCollaterals(
+        (unexpiredCreateNodeCollaterals, unexpiredWithdrawNodeCollaterals, _) = acceptNodeCollaterals(
           lastSnapshotContext,
           epochProgress
         )
-        updatedCreateNodeCollaterals = {
-          val acceptedTokenLockRefs = nodeCollateralAcceptanceResult.acceptedCreates.map {
-            case (addr, creates) => (addr, creates.map(_._1.tokenLockRef).toSet)
-          }
-          val filteredUnexpiredCreateNodeCollaterals = unexpiredCreateNodeCollaterals.map {
-            case (addr, creates) =>
-              val tokenLocks = acceptedTokenLockRefs.getOrElse(addr, Set.empty)
-              (addr, creates.filterNot(c => tokenLocks(c._1.tokenLockRef)))
-          }
-          filteredUnexpiredCreateNodeCollaterals |+| nodeCollateralAcceptanceResult.acceptedCreates
-        }
-        updatedWithdrawNodeCollaterals = unexpiredWithdrawNodeCollaterals |+| nodeCollateralAcceptanceResult.acceptedWithdrawals
+        updatedCreateNodeCollaterals <- getUpdatedCreateNodeCollaterals(nodeCollateralAcceptanceResult, unexpiredCreateNodeCollaterals)
 
-        expiredCreateDelegatedStakesByRef <- expiredCreateDelegatedStakes.values.flatten.toList.traverse {
-          case DelegatedStakeRecord(value, _, _) =>
-            value.toHashed.map(hashed => hashed.hash -> value)
-        }.map(_.toMap)
+        updatedWithdrawNodeCollaterals <- getUpdatedWithdrawNodeCollaterals(
+          nodeCollateralAcceptanceResult,
+          unexpiredWithdrawNodeCollaterals,
+          lastSnapshotContext
+        )
 
         generatedTokenUnlocks = generateTokenUnlocks(
           expiredWithdrawalsDelegatedStaking,
-          expiredCreateDelegatedStakesByRef,
           globalActiveTokenLocksByRef
         ) match {
           case Right(tokenUnlocks) => tokenUnlocks
@@ -578,20 +565,65 @@ object GlobalSnapshotAcceptanceManager {
         )
     }
 
+    private def getUpdatedCreateNodeCollaterals(
+      nodeCollateralAcceptanceResult: UpdateNodeCollateralAcceptanceResult,
+      unexpiredCreateNodeCollaterals: SortedMap[Address, List[NodeCollateralRecord]]
+    )(implicit hasher: Hasher[F]): F[SortedMap[Address, List[NodeCollateralRecord]]] = {
+
+      val acceptedTokenLockRefs = nodeCollateralAcceptanceResult.acceptedCreates.map {
+        case (addr, creates) => (addr, creates.map(_._1.tokenLockRef).toSet)
+      }
+      val filteredUnexpiredCreateNodeCollaterals = unexpiredCreateNodeCollaterals.map {
+        case (addr, creates) =>
+          val tokenLocks = acceptedTokenLockRefs.getOrElse(addr, Set.empty)
+          (addr, creates.filterNot(c => tokenLocks(c.event.tokenLockRef)))
+      }
+      val acceptedCreates = nodeCollateralAcceptanceResult.acceptedCreates.map {
+        case (addr, cs) => addr -> cs.map(c => NodeCollateralRecord(c._1, c._2))
+      }
+      val activeCollaterals: SortedMap[Address, List[NodeCollateralRecord]] = filteredUnexpiredCreateNodeCollaterals |+| acceptedCreates
+      // remove withdrawn stakes from the active list
+      val withdrawnCollaterals = nodeCollateralAcceptanceResult.acceptedWithdrawals.flatMap(_._2.map(_._1.collateralRef)).toSet
+      activeCollaterals.toList.traverse {
+        case (addr, records) =>
+          records.traverse { record =>
+            NodeCollateralReference.of(record.event).map(ref => (record, withdrawnCollaterals(ref.hash)))
+          }.map(records => (addr, records.filterNot(_._2).map(_._1)))
+      }
+        .map(_.filterNot(_._2.isEmpty))
+        .map(SortedMap.from(_))
+    }
+
+    private def getUpdatedWithdrawNodeCollaterals(
+      nodeCollateralAcceptanceResult: UpdateNodeCollateralAcceptanceResult,
+      unexpiredWithdrawNodeCollaterals: SortedMap[Address, List[PendingNodeCollateralWithdrawal]],
+      lastSnapshotContext: GlobalSnapshotInfo
+    )(implicit hasher: Hasher[F]): F[SortedMap[Address, List[PendingNodeCollateralWithdrawal]]] =
+      nodeCollateralAcceptanceResult.acceptedWithdrawals.toList.traverse {
+        case (addr, acceptedWithdrawls) =>
+          acceptedWithdrawls.traverse {
+            case (ev, ep) =>
+              lastSnapshotContext.activeNodeCollaterals
+                .flatTraverse(_.get(addr).flatTraverse {
+                  _.findM { s =>
+                    NodeCollateralReference.of(s.event).map(_.hash === ev.collateralRef)
+                  }.map(_.map(rec => PendingNodeCollateralWithdrawal(rec.event, rec.createdAt, ep)))
+                })
+                .flatMap(Async[F].fromOption(_, new RuntimeException("Unexpected None when processing node collaterals")))
+          }.map(addr -> _)
+      }.map(SortedMap.from(_))
+        .map(unexpiredWithdrawNodeCollaterals |+| _)
+        .map(_.filterNot(_._2.isEmpty))
+
     private def generateTokenUnlocks(
-      expiredWithdrawalsDelegatedStaking: SortedMap[Address, List[PendingWithdrawal]],
-      expiredCreatedDelegatesStakingByRef: Map[Hash, Signed[delegatedStake.UpdateDelegatedStake.Create]],
+      expiredWithdrawalsDelegatedStaking: SortedMap[Address, List[PendingDelegatedStakeWithdrawal]],
       globalActiveTokenLocksByRef: Map[Hash, Signed[TokenLock]]
     ): Either[DelegatedStakeError, Map[Address, List[TokenUnlock]]] =
       expiredWithdrawalsDelegatedStaking.toList.traverse {
         case (address, withdrawals) =>
           withdrawals.traverse {
-            case PendingWithdrawal(withdraw, _, _) =>
+            case PendingDelegatedStakeWithdrawal(delegatedStaking, _, _, _) =>
               for {
-                delegatedStaking <- expiredCreatedDelegatesStakingByRef
-                  .get(withdraw.stakeRef)
-                  .toRight(MissingDelegatedStaking(s"Missing delegated stake for stakeRef: ${withdraw.stakeRef}"))
-
                 activeTokenLock <- globalActiveTokenLocksByRef
                   .get(delegatedStaking.tokenLockRef)
                   .toRight(MissingTokenLock(s"Missing TokenLock for tokenLockRef: ${delegatedStaking.tokenLockRef}"))
@@ -608,162 +640,74 @@ object GlobalSnapshotAcceptanceManager {
     private def acceptDelegatedStakes(
       lastSnapshotContext: GlobalSnapshotInfo,
       epochProgress: EpochProgress
-    )(implicit h: Hasher[F]): F[
-      (
-        SortedMap[Address, List[DelegatedStakeRecord]],
-        SortedMap[Address, List[DelegatedStakeRecord]],
-        SortedMap[Address, List[PendingWithdrawal]],
-        SortedMap[Address, List[PendingWithdrawal]]
-      )
-    ] = {
+    )(implicit h: Hasher[F]): (
+      SortedMap[Address, List[DelegatedStakeRecord]],
+      SortedMap[Address, List[PendingDelegatedStakeWithdrawal]],
+      SortedMap[Address, List[PendingDelegatedStakeWithdrawal]]
+    ) = {
       val existingDelegatedStakes = lastSnapshotContext.activeDelegatedStakes.getOrElse(
         SortedMap.empty[Address, List[DelegatedStakeRecord]]
       )
 
       val existingWithdrawals = lastSnapshotContext.delegatedStakesWithdrawals.getOrElse(
-        SortedMap.empty[Address, List[PendingWithdrawal]]
+        SortedMap.empty[Address, List[PendingDelegatedStakeWithdrawal]]
       )
 
       def isWithdrawalExpired(withdrawalEpoch: EpochProgress): Boolean =
         (withdrawalEpoch |+| withdrawalTimeLimit) <= epochProgress
 
-      def filterCreatesWithExpiredWithdrawals(
-        address: Address
-      ): F[Option[(Address, List[DelegatedStakeRecord])]] = {
-        val addressCreates = existingDelegatedStakes.getOrElse(address, List.empty)
-        val addressWithdrawals = existingWithdrawals.getOrElse(address, List.empty)
+      val unexpiredWithdrawals = existingWithdrawals.map {
+        case (address, withdrawals) =>
+          address -> withdrawals.filterNot {
+            case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch) =>
+              isWithdrawalExpired(withdrawalEpoch)
+          }
+      }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
 
-        addressCreates.traverse {
-          case record @ DelegatedStakeRecord(createStake, _, _) =>
-            DelegatedStakeReference.of(createStake).map { createRef =>
-              val isExpired = addressWithdrawals.exists {
-                case PendingWithdrawal(withdrawalStake, _, withdrawalEpoch) =>
-                  withdrawalStake.stakeRef == createRef.hash && isWithdrawalExpired(withdrawalEpoch)
-              }
-              (record, isExpired)
-            }
-        }.map { processedCreates =>
-          val unexpiredCreates = processedCreates.filterNot { case (_, isExpired) => isExpired }.map { case (r, _) => r }
+      val expiredWithdrawals = existingWithdrawals.map {
+        case (address, withdrawals) =>
+          address -> withdrawals.filter {
+            case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch) =>
+              isWithdrawalExpired(withdrawalEpoch)
+          }
+      }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
 
-          if (unexpiredCreates.isEmpty) None
-          else Some(address -> unexpiredCreates)
-        }
-      }
-
-      for {
-        filteredResults <- existingDelegatedStakes.keys.toList
-          .traverse(filterCreatesWithExpiredWithdrawals)
-          .map(_.flatten)
-
-        filteredUnexpired = SortedMap.empty[Address, List[DelegatedStakeRecord]] ++ filteredResults
-
-        filteredExpired = SortedMap.empty[Address, List[DelegatedStakeRecord]] ++
-          existingDelegatedStakes.keys.map { address =>
-            val original = existingDelegatedStakes.getOrElse(address, List.empty)
-            val unexpired = filteredUnexpired.getOrElse(address, List.empty)
-            address -> original.diff(unexpired)
-          }.filter(_._2.nonEmpty)
-
-        unexpiredWithdrawals = existingWithdrawals.map {
-          case (address, withdrawals) =>
-            address -> withdrawals.filterNot {
-              case PendingWithdrawal(_, _, withdrawalEpoch) =>
-                isWithdrawalExpired(withdrawalEpoch)
-            }
-        }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
-
-        expiredWithdrawals = existingWithdrawals.map {
-          case (address, withdrawals) =>
-            address -> withdrawals.filter {
-              case PendingWithdrawal(_, _, withdrawalEpoch) =>
-                isWithdrawalExpired(withdrawalEpoch)
-            }
-        }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
-
-      } yield
-        (
-          filteredUnexpired,
-          filteredExpired,
-          unexpiredWithdrawals,
-          expiredWithdrawals
-        )
+      (
+        existingDelegatedStakes,
+        unexpiredWithdrawals,
+        expiredWithdrawals
+      )
     }
 
-    private def acceptNodeCollaterals(lastSnapshotContext: GlobalSnapshotInfo, epochProgress: EpochProgress)(implicit h: Hasher[F]): F[
-      (
-        SortedMap[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]],
-        SortedMap[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]],
-        SortedMap[Address, List[(Signed[UpdateNodeCollateral.Withdraw], EpochProgress)]],
-        SortedMap[Address, List[(Signed[UpdateNodeCollateral.Withdraw], EpochProgress)]]
-      )
-    ] = {
-      val existingCreates = lastSnapshotContext.activeNodeCollaterals.getOrElse(
-        SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]]
-      )
-      val existingWithdrawals = lastSnapshotContext.nodeCollateralWithdrawals.getOrElse(
-        SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Withdraw], EpochProgress)]]
-      )
+    private def acceptNodeCollaterals(lastSnapshotContext: GlobalSnapshotInfo, epochProgress: EpochProgress)(implicit h: Hasher[F]): (
+      SortedMap[Address, List[NodeCollateralRecord]],
+      SortedMap[Address, List[PendingNodeCollateralWithdrawal]],
+      SortedMap[Address, List[PendingNodeCollateralWithdrawal]]
+    ) = {
+      val existingNodeCollaterals =
+        lastSnapshotContext.activeNodeCollaterals.getOrElse(SortedMap.empty[Address, List[NodeCollateralRecord]])
+      val existingWithdrawals =
+        lastSnapshotContext.nodeCollateralWithdrawals.getOrElse(SortedMap.empty[Address, List[PendingNodeCollateralWithdrawal]])
 
       def isWithdrawalExpired(withdrawalEpoch: EpochProgress): Boolean =
         (withdrawalEpoch |+| withdrawalTimeLimit) <= epochProgress
 
-      def processAddressCreate(address: Address): F[Option[(Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)])]] = {
-        val addressNodeCollaterals = existingCreates.getOrElse(address, List.empty)
-
-        addressNodeCollaterals.traverse {
-          case nodeCollateralTuples @ (signed, _) =>
-            NodeCollateralReference.of(signed).map { ref =>
-              val isExpired = existingWithdrawals.exists {
-                case (_, withdrawals) =>
-                  withdrawals.exists {
-                    case (withdrawal, withdrawalEpoch) =>
-                      withdrawal.collateralRef == ref.hash && isWithdrawalExpired(withdrawalEpoch)
-                  }
-              }
-              (nodeCollateralTuples, isExpired)
-            }
-        }.map { processedNodeCollaterals =>
-          val unexpiredNodeCollaterals = processedNodeCollaterals.filterNot { case (_, isExpired) => isExpired }.map {
-            case (tuple, _) => tuple
+      val unexpiredWithdrawals = existingWithdrawals.map {
+        case (address, withdrawals) =>
+          address -> withdrawals.filterNot {
+            case PendingNodeCollateralWithdrawal(_, _, withdrawalEpoch) =>
+              isWithdrawalExpired(withdrawalEpoch)
           }
+      }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
 
-          if (unexpiredNodeCollaterals.nonEmpty) {
-            Some(address -> unexpiredNodeCollaterals)
-          } else None
-        }
-      }
-
-      for {
-        filteredResults <- existingCreates.keys.toList
-          .traverse(processAddressCreate)
-          .map(_.flatten)
-
-        filteredUnexpired = SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]] ++
-          filteredResults
-
-        filteredExpired = SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]] ++
-          existingCreates.keys.map { address =>
-            val original = existingCreates.getOrElse(address, List.empty)
-            val unexpired = filteredUnexpired.getOrElse(address, List.empty)
-            address -> (original.diff(unexpired))
-          }.filter(_._2.nonEmpty)
-
-        unexpiredWithdrawals = existingWithdrawals.map {
-          case (address, withdrawals) =>
-            address -> withdrawals.filterNot {
-              case (_, withdrawalEpoch) =>
-                isWithdrawalExpired(withdrawalEpoch)
-            }
-        }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
-
-        expiredWithdrawals = existingWithdrawals.map {
-          case (address, withdrawals) =>
-            address -> withdrawals.filter {
-              case (_, withdrawalEpoch) =>
-                isWithdrawalExpired(withdrawalEpoch)
-            }
-        }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
-      } yield (filteredUnexpired, filteredExpired, unexpiredWithdrawals, expiredWithdrawals)
+      val expiredWithdrawals = existingWithdrawals.map {
+        case (address, withdrawals) =>
+          address -> withdrawals.filter {
+            case PendingNodeCollateralWithdrawal(_, _, withdrawalEpoch) =>
+              isWithdrawalExpired(withdrawalEpoch)
+          }
+      }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
+      (existingNodeCollaterals, unexpiredWithdrawals, expiredWithdrawals)
     }
 
     private def acceptAllowSpends(

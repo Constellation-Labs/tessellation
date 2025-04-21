@@ -11,7 +11,7 @@ import io.constellationnetwork.merkletree.{MerkleRoot, Proof, ProofEntry}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.{Address, AddressCache}
 import io.constellationnetwork.schema.block.Tips
-import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, PendingWithdrawal}
+import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, PendingDelegatedStakeWithdrawal}
 import io.constellationnetwork.schema.gossip._
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.SignRequest
@@ -106,7 +106,7 @@ package object shared {
     DataCancellationReason.CreatedEmptyBlock.getClass -> 636,
     DataCancellationReason.PeerCancelled.getClass -> 637,
     classOf[DelegatedStakeRecord] -> 640,
-    classOf[PendingWithdrawal] -> 641
+    classOf[PendingDelegatedStakeWithdrawal] -> 641
   )
 
 }
