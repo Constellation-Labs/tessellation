@@ -46,39 +46,45 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
 
   protected val prefixPath: InternalUrlPrefix = "/node-collateral"
 
-  private def getNodeCollateralInfo(address: Address, info: GlobalSnapshotInfo): F[NodeCollateralsInfo] = {
-    val lastCollaterals: List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)] =
+  private def getNodeCollateralInfo(address: Address, info: GlobalSnapshotInfo): NodeCollateralsInfo = {
+    val lastCollaterals: List[NodeCollateralRecord] =
       info.activeNodeCollaterals
-        .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
+        .getOrElse(SortedMap.empty[Address, List[NodeCollateralRecord]])
         .getOrElse(address, List.empty)
-    val lastWithdrawals: List[(Signed[UpdateNodeCollateral.Withdraw], EpochProgress)] =
+    val lastWithdrawals: List[PendingNodeCollateralWithdrawal] =
       info.nodeCollateralWithdrawals
-        .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Withdraw], EpochProgress)]])
+        .getOrElse(SortedMap.empty[Address, List[PendingNodeCollateralWithdrawal]])
         .getOrElse(address, List.empty)
 
-    for {
-      collaterals <- lastCollaterals.traverse {
-        case (collateral, ord) =>
-          NodeCollateralReference.of(collateral).map(ref => ((collateral, ord), lastWithdrawals.find(_._1.collateralRef === ref.hash)))
-      }
-      infos = collaterals.map {
-        case ((collateral, acceptedOrdinal), maybeWithdraw) =>
-          NodeCollateralInfo(
-            nodeId = collateral.nodeId,
-            acceptedOrdinal = acceptedOrdinal,
-            tokenLockRef = collateral.tokenLockRef,
-            amount = collateral.amount,
-            fee = collateral.fee,
-            withdrawalStartEpoch = maybeWithdraw.map(_._2),
-            withdrawalEndEpoch = maybeWithdraw.map(_._2 |+| withdrawalTimeLimit)
-          )
-      }
-    } yield
-      NodeCollateralsInfo(
-        address = address,
-        activeNodeCollaterals = infos,
-        pendingWithdrawals = infos.filter(_.withdrawalStartEpoch.nonEmpty)
-      )
+    val active = lastCollaterals.map {
+      case NodeCollateralRecord(collateral, acceptedOrdinal) =>
+        NodeCollateralInfo(
+          nodeId = collateral.nodeId,
+          acceptedOrdinal = acceptedOrdinal,
+          tokenLockRef = collateral.tokenLockRef,
+          amount = collateral.amount,
+          fee = collateral.fee,
+          withdrawalStartEpoch = None,
+          withdrawalEndEpoch = None
+        )
+    }
+    val pending = lastWithdrawals.map {
+      case PendingNodeCollateralWithdrawal(collateral, acceptedOrdinal, createdAt) =>
+        NodeCollateralInfo(
+          nodeId = collateral.nodeId,
+          acceptedOrdinal = acceptedOrdinal,
+          tokenLockRef = collateral.tokenLockRef,
+          amount = collateral.amount,
+          fee = collateral.fee,
+          withdrawalStartEpoch = createdAt.some,
+          withdrawalEndEpoch = (createdAt |+| withdrawalTimeLimit).some
+        )
+    }
+    NodeCollateralsInfo(
+      address = address,
+      activeNodeCollaterals = active,
+      pendingWithdrawals = pending
+    )
   }
 
   private def getLastReference(
@@ -86,10 +92,10 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
     info: GlobalSnapshotInfo
   ): F[NodeCollateralReference] =
     info.activeNodeCollaterals
-      .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
+      .getOrElse(SortedMap.empty[Address, List[NodeCollateralRecord]])
       .get(address)
-      .flatMap(collaterals => Option.when(collaterals.nonEmpty)(collaterals.maxBy(_._1.ordinal)))
-      .traverse(collateral => NodeCollateralReference.of(collateral._1))
+      .flatMap(collaterals => Option.when(collaterals.nonEmpty)(collaterals.maxBy(_.event.ordinal)))
+      .traverse(collateral => NodeCollateralReference.of(collateral.event))
       .map(_.getOrElse(NodeCollateralReference.empty))
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {

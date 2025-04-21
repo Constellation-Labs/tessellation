@@ -128,11 +128,16 @@ object delegatedStake {
   }
 
   @derive(decoder, encoder, eqv, show)
-  case class PendingWithdrawal(event: Signed[UpdateDelegatedStake.Withdraw], rewards: Amount, createdAt: EpochProgress)
+  case class PendingDelegatedStakeWithdrawal(
+    event: Signed[UpdateDelegatedStake.Create],
+    rewards: Amount,
+    acceptedOrdinal: SnapshotOrdinal,
+    createdAt: EpochProgress
+  )
 
-  object PendingWithdrawal {
-    implicit val pendingWithdrawalOrdering: Ordering[PendingWithdrawal] =
-      (x: PendingWithdrawal, y: PendingWithdrawal) => Ordering[EpochProgress].compare(x.createdAt, y.createdAt)
+  object PendingDelegatedStakeWithdrawal {
+    implicit val pendingWithdrawalOrdering: Ordering[PendingDelegatedStakeWithdrawal] =
+      (x: PendingDelegatedStakeWithdrawal, y: PendingDelegatedStakeWithdrawal) => Ordering[EpochProgress].compare(x.createdAt, y.createdAt)
   }
 
   @derive(eqv, show)
