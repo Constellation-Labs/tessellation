@@ -52,6 +52,8 @@ object CurrencySnapshotProcessorSuite extends SimpleIOSuite with TransactionGene
               RewardFraction(5_000_000),
               RewardFraction(10_000_000),
               PosInt(140),
+              PosInt(10),
+              PosLong((5000 * 1e8).toLong),
               Map(Dev -> EpochProgress(NonNegLong(7338977L)))
             )
           )

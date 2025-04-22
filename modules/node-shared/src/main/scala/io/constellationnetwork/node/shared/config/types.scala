@@ -154,6 +154,8 @@ object types {
     minRewardFraction: RewardFraction,
     maxRewardFraction: RewardFraction,
     maxMetadataFieldsChars: PosInt,
+    maxTokenLocksPerAddress: PosInt,
+    minTokenLockAmount: PosLong,
     withdrawalTimeLimit: Map[AppEnvironment, EpochProgress]
   )
 

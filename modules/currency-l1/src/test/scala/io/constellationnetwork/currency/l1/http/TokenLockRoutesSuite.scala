@@ -7,13 +7,17 @@ import cats.effect.std.{Queue, Random, Supervisor}
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.currency.l1.http.DataApplicationRoutesSuite.mockLastSnapshotStorage
 import io.constellationnetwork.currency.tokenlock.ConsensusInput
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
-import io.constellationnetwork.node.shared.config.types.TokenLocksConfig
+import io.constellationnetwork.node.shared.config.types
+import io.constellationnetwork.node.shared.config.types.{DelegatedStakingConfig, TokenLocksConfig}
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
+import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
+import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.tokenlock.TokenLockValidator.{TokenLockValidationError, TokenLockValidationErrorOr}
 import io.constellationnetwork.node.shared.domain.tokenlock._
 import io.constellationnetwork.node.shared.http.routes.TokenLockRoutes
@@ -21,6 +25,7 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.L0Peer
+import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo}
 import io.constellationnetwork.schema.swap.CurrencyId
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.security._
@@ -53,12 +58,22 @@ object TokenLockRoutesSuite extends HttpSuite {
         l0ClusterStorage <- mockL0ClusterStorage
         tokenLockStorage <- mockTokenLockStorage(maybeHashedTokenLock)
         tokenLockService <- mockTokenLockService
+        tokenLockValidator <- mockTokenLockValidator
+        lastSnapshotStorage = mockLastSnapshotStorage[GlobalIncrementalSnapshot, GlobalSnapshotInfo]()
 
-        tokenRoutesApi = TokenLockRoutes(
+        tokenRoutesApi = TokenLockRoutes[
+          IO,
+          GlobalSnapshotStateProof,
+          GlobalIncrementalSnapshot,
+          GlobalSnapshotInfo
+        ](
           consensusQueue,
           l0ClusterStorage,
           tokenLockService,
-          tokenLockStorage
+          tokenLockStorage,
+          lastSnapshotStorage,
+          tokenLockValidator,
+          none
         )
       } yield tokenRoutesApi.publicRoutes
     }
@@ -84,6 +99,30 @@ object TokenLockRoutesSuite extends HttpSuite {
       override def setPeers(l0Peers: NonEmptySet[L0Peer]): IO[Unit] = ???
     }
   )
+
+  def mockLastSnapshotStorage[A <: Snapshot, B <: SnapshotInfo[_]](
+    getOrdinalFn: IO[Option[SnapshotOrdinal]] = SnapshotOrdinal.MinValue.some.pure[IO],
+    getCombinedFn: IO[Option[(Hashed[A], B)]] = IO.none
+  ): LastSnapshotStorage[IO, A, B] with LatestBalances[IO] =
+    new LastSnapshotStorage[IO, A, B] with LatestBalances[IO] {
+      override def set(snapshot: Hashed[A], state: B): IO[Unit] = ???
+
+      override def setInitial(snapshot: Hashed[A], state: B): IO[Unit] = ???
+
+      override def get: IO[Option[Hashed[A]]] = ???
+
+      override def getCombined: IO[Option[(Hashed[A], B)]] = getCombinedFn
+
+      override def getCombinedStream: fs2.Stream[IO, Option[(Hashed[A], B)]] = ???
+
+      override def getOrdinal: IO[Option[SnapshotOrdinal]] = getOrdinalFn
+
+      override def getHeight: IO[Option[height.Height]] = ???
+
+      override def getLatestBalances: IO[Option[Map[Address, balance.Balance]]] = ???
+
+      override def getLatestBalancesStream: fs2.Stream[IO, Map[Address, balance.Balance]] = ???
+    }
 
   def mockTokenLockService: IO[TokenLockService[IO]] = IO.pure(
     new TokenLockService[IO] {
@@ -123,6 +162,13 @@ object TokenLockRoutesSuite extends HttpSuite {
     override def validate(signedTokenLock: Signed[TokenLock])(
       implicit hasher: Hasher[IO]
     ): IO[TokenLockValidationErrorOr[Signed[TokenLock]]] =
+      IO.pure(signedTokenLock.validNec[TokenLockValidationError])
+
+    override def validateWithDelegatedStakeInfo(
+      signedTokenLock: Signed[TokenLock],
+      delegatedStakingCfg: DelegatedStakingConfig,
+      maybeCurrentTokenLocks: Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]
+    )(implicit hasher: Hasher[IO]): IO[TokenLockValidationErrorOr[Signed[TokenLock]]] =
       IO.pure(signedTokenLock.validNec[TokenLockValidationError])
   })
 

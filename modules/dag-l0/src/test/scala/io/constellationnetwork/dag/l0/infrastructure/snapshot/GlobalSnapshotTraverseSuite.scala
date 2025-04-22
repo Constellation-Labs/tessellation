@@ -60,6 +60,7 @@ import io.constellationnetwork.tools.TransactionGenerator._
 import io.constellationnetwork.tools.{DAGBlockGenerator, TransactionGenerator}
 
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.all.PosLong
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import org.scalacheck.Gen
 import weaver._
@@ -287,6 +288,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
             RewardFraction(5_000_000),
             RewardFraction(10_000_000),
             PosInt(140),
+            PosInt(10),
+            PosLong((5000 * 1e8).toLong),
             Map(Dev -> EpochProgress(NonNegLong(7338977L)))
           )
         )

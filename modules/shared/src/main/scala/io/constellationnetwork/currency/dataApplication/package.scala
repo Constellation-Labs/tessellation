@@ -94,7 +94,7 @@ object DataUpdate {
       case dataUpdate: DataUpdate => dataUpdate
     }
 }
-@derive(decoder, encoder, order, ordering, show)
+@derive(decoder, encoder, ordering, show)
 case class FeeTransaction(
   source: Address,
   destination: Address,
@@ -103,6 +103,8 @@ case class FeeTransaction(
 ) extends DataTransaction
 
 object FeeTransaction {
+  implicit val orderFeeTransaction: Order[FeeTransaction] = Order.by(_.amount)
+
   def serialize[F[_]: Async](feeTransaction: FeeTransaction)(implicit jsonSerializer: JsonSerializer[F]): F[Array[Byte]] =
     jsonSerializer.serialize(feeTransaction)
 
