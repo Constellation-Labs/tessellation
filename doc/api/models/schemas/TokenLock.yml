@@ -1,0 +1,30 @@
+type: object
+description: A token lock transaction
+required:
+  - source
+  - amount
+  - fee
+  - parent
+properties:
+  source:
+    $ref: './Address.yml'
+    description: The source wallet address
+  amount:
+    type: integer
+    format: int64
+  fee:
+    type: integer
+    format: int64
+  parent:
+    $ref: './TokenLockReference.yml'
+    description: Reference to the parent token lock transaction
+  currencyId:
+    type: string
+    description: Optional currency identifier for the token lock. NULL for DAG. 
+    nullable: true
+  unlockEpoch:
+    type: integer
+    format: int64
+    minimum: 0
+    description: Optional epoch progress value when the tokens will be unlocked. NULL for indefinite lock. 
+    nullable: true

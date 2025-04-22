@@ -10,6 +10,7 @@ tags:
   - name: Cluster
   - name: DAG
   - name: Metric
+  - name: TokenLock
 
 paths:
   /cluster/info:
@@ -168,3 +169,109 @@ paths:
             text/html:
               schema:
                 type: string
+
+  /token-locks:
+    post:
+      tags:
+        - TokenLock
+      description: Post token lock transaction
+      requestBody:
+        description: Signed token lock transaction
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../../models/schemas/SignedTokenLock.yml'
+      responses:
+        200:
+          description: Token lock transaction has been accepted for processing. Returned hash of the transaction.
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hash:
+                    $ref: '../../models/schemas/Hash.yml'
+        400:
+          description: Token lock transaction has been rejected.
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/ErrorResponse.yml'
+
+  /token-locks/{hash}:
+    get:
+      tags:
+        - TokenLock
+      description: View a TokenLock in the L1 mempool. If transaction has already been processed then this endpoint will return 404.
+      parameters:
+        - name: hash
+          in: path
+          description: Token lock transaction hash
+          required: true
+          schema:
+            $ref: '../../models/schemas/Hash.yml'
+      responses:
+        200:
+          description: Found the token lock transaction with given hash. Returned the view of the transaction.
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/TokenLockView.yml'
+        404:
+          description: Token lock transaction with the given hash not found in mempool of the node - either already processed or rejected. 
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
+  /token-locks/last-reference/{address}:
+    get:
+      tags:
+        - TokenLock
+      description: Get last token lock reference of the given address for use as a parent reference in new requests. 
+      parameters:
+        - name: address
+          in: path
+          description: Wallet address
+          required: true
+          schema:
+            $ref: '../../models/schemas/Address.yml'
+      responses:
+        200:
+          description: Last token lock reference for given wallet address
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/TokenLockReference.yml'

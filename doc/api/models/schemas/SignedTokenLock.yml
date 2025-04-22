@@ -1,0 +1,14 @@
+type: object
+description: A signed token lock transaction
+required:
+  - value
+  - proofs
+properties:
+  value:
+    $ref: './TokenLock.yml'
+    description: The token lock transaction
+  proofs:
+    type: array
+    description: List of cryptographic proofs for the transaction
+    items:
+      $ref: 'SignatureProof.yml'
