@@ -41,7 +41,7 @@ import io.constellationnetwork.shared.sharedKryoRegistrar
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
 import weaver.MutableIOSuite
 object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
   val TestValidationErrorStorageMaxSize: PosInt = PosInt(16)
@@ -90,6 +90,8 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
             RewardFraction(5_000_000),
             RewardFraction(10_000_000),
             PosInt(140),
+            PosInt(10),
+            PosLong((5000 * 1e8).toLong),
             Map(Dev -> EpochProgress(NonNegLong(7338977L)))
           )
         )

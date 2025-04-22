@@ -98,7 +98,7 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
       Map[Address, List[SpendAction]],
       SortedMap[Id, Signed[UpdateNodeParameters]],
       SortedSet[SharedArtifact],
-      SortedMap[Address, Map[PeerId, Amount]]
+      SortedMap[PeerId, Map[Address, Amount]]
     )
   ]
 }
@@ -155,7 +155,7 @@ object GlobalSnapshotAcceptanceManager {
         Map[Address, List[SpendAction]],
         SortedMap[Id, Signed[UpdateNodeParameters]],
         SortedSet[SharedArtifact],
-        SortedMap[Address, Map[PeerId, Amount]]
+        SortedMap[PeerId, Map[Address, Amount]]
       )
     ] = {
       implicit val hasher = HasherSelector[F].getForOrdinal(ordinal)
