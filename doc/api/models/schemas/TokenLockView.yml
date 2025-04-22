@@ -1,0 +1,19 @@
+type: object
+description: A view of a token lock transaction with its status
+required:
+  - transaction
+  - hash
+  - status
+properties:
+  transaction:
+    $ref: './TokenLock.yml'
+    description: The token lock transaction
+  hash:
+    $ref: './Hash.yml'
+    description: The hash of the token lock transaction
+  status:
+    type: string
+    description: The status of the token lock transaction
+    enum:
+      - Waiting
+    example: "Waiting"
