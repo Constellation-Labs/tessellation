@@ -197,10 +197,12 @@ class TransactionStorage[F[_]: Async](
             case None          => (maybeStored, none)
           }
         }
-      }.map(_.flatten)
+      }
+        .map(_.flatten)
+        .map(_.flatMap(_.toList))
 
       selected = takeFirstNHighestFeeTxs(allPulled, count)
-      toReturn = allPulled.flatMap(_.toList).toSet.diff(selected.toSet)
+      toReturn = allPulled.toSet.diff(selected.toSet)
       _ <- logger.debug(s"Pulled transactions to return: ${toReturn.size}")
       _ <- transactionLogger.debug(s"Pulled transactions to return: ${toReturn.size}, returned: ${toReturn.map(_.hash).show}")
       _ <- putBack(toReturn)
@@ -209,35 +211,27 @@ class TransactionStorage[F[_]: Async](
     } yield NonEmptyList.fromList(selected)
 
   private def takeFirstNHighestFeeTxs(
-    txs: List[NonEmptyList[Hashed[Transaction]]],
+    txs: List[Hashed[Transaction]],
     count: NonNegLong
   ): List[Hashed[Transaction]] = {
-    @tailrec
-    def go(
-      txs: SortedSet[NonEmptyList[Hashed[Transaction]]],
-      acc: List[Hashed[Transaction]]
-    ): List[Hashed[Transaction]] =
-      if (acc.size == count.value)
-        acc.reverse
-      else {
-        txs.headOption match {
-          case Some(txsNel) =>
-            val updatedAcc = txsNel.head :: acc
+    val order: Order[Hashed[Transaction]] =
+      Order.whenEqual(Order.by(-_.fee.value.value), Order[Hashed[Transaction]])
 
-            NonEmptyList.fromList(txsNel.tail) match {
-              case Some(remainingTxs) => go(txs.tail + remainingTxs, updatedAcc)
-              case None               => go(txs.tail, updatedAcc)
-            }
-
-          case None => acc.reverse
-        }
-      }
-
-    val order: Order[NonEmptyList[Hashed[Transaction]]] =
-      Order.whenEqual(Order.by(-_.head.fee.value.value), Order[NonEmptyList[Hashed[Transaction]]])
     val sortedTxs = SortedSet.from(txs)(order.toOrdering)
 
-    go(sortedTxs, List.empty)
+    @tailrec
+    def go(
+      txs: SortedSet[Hashed[Transaction]],
+      acc: List[Hashed[Transaction]]
+    ): List[Hashed[Transaction]] =
+      if (acc.size >= count.value) acc.reverse
+      else
+        txs.headOption match {
+          case Some(tx) => go(txs.tail, tx :: acc)
+          case None     => acc.reverse
+        }
+
+    go(sortedTxs, Nil)
   }
 
   def findWaiting(hash: Hash): F[Option[WaitingTx]] =
