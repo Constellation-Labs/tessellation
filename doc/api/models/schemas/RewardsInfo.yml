@@ -1,0 +1,53 @@
+type: object
+description: Information about rewards configuration on the network for calculating APY
+properties:
+  epochsPerYear:
+    type: integer
+    format: int64
+    description: Number of epochs per year (based on current GS epoch configuration)
+  currentDagPrice:
+    type: integer
+    format: int64
+    description: Current DAG price (in the same format as used internally in configuration)
+  nextDagPrice:
+    $ref: './NextDagPrice.yml'
+    description: Information about the next DAG price and when it will take effect
+  totalDelegatedAmount:
+    type: integer
+    format: int64
+    description: Total amount delegated across all active delegated stakes, including accrued rewards
+  averageRewardRatePerDagEpoch:
+    type: integer
+    format: int64
+    description: Average reward rate per DAG per epoch in datums
+  rewardTotalRatePerDagEpoch:
+    type: integer
+    format: int64
+    description: Total reward rate per DAG per epoch in datums (normalized by node parameters)
+  totalDagAmount:
+    type: integer
+    format: int64
+    description: Current total supply of all DAG balances in datums
+  totalRewardPerEpoch:
+    type: integer
+    format: int64
+    description: Last total incremental rewards addition in datums
+  totalRewardAPYPerDag:
+    type: integer
+    format: int64
+    description: Total reward APY per DAG in datums (averageRewardRatePerDagEpoch * epochsPerYear)
+  totalInflationAPY:
+    type: integer
+    format: int64
+    description: Total inflation APY in datums (totalRewardAPYPerDag * totalSupply)
+required:
+  - epochsPerYear
+  - currentDagPrice
+  - nextDagPrice
+  - totalDelegatedAmount
+  - averageRewardRatePerDagEpoch
+  - rewardTotalRatePerDagEpoch
+  - totalDagAmount
+  - totalRewardPerEpoch
+  - totalRewardAPYPerDag
+  - totalInflationAPY

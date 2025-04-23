@@ -490,6 +490,35 @@ paths:
               $ref: '../../models/headers/X-Session-Token.yml'
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
+            
+  /delegated-stakes/rewards-info:
+    get:
+      tags:
+        - Delegated stakes
+      description: Get rewards configuration information
+      responses:
+        200:
+          description: Rewards configuration information
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/RewardsInfo.yml'
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
 
   /node-collateral:
     post:
