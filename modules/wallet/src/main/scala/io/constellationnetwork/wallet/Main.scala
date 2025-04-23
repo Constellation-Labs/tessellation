@@ -14,10 +14,18 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.keytool.KeyStoreUtils
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.address.{Address, DAGAddressRefined}
 import io.constellationnetwork.schema.currencyMessage.{CurrencyMessage, MessageOrdinal, MessageType}
+import io.constellationnetwork.schema.delegatedStake._
+import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.node._
+import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.swap.CurrencyId
+import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction.{Transaction, TransactionAmount, TransactionFee}
 import io.constellationnetwork.security._
+import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.key.ops._
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.shared.sharedKryoRegistrar
@@ -28,6 +36,7 @@ import io.constellationnetwork.wallet.transaction.createTransaction
 
 import com.monovore.decline._
 import com.monovore.decline.effect._
+import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.io.file.Path
 import io.circe.Encoder
 import io.circe.syntax._
@@ -50,6 +59,9 @@ object Main
           KryoSerializer.forAsync[IO](sharedKryoRegistrar).use { implicit kryo =>
             JsonSerializer.forSync[IO].asResource.use { implicit jsonSerializer =>
               loadKeyPair[IO](envs).flatMap { keyPair =>
+                val selfAddress = keyPair.getPublic.toAddress
+                val selfId = keyPair.getPublic.toId
+
                 method match {
                   case ShowAddress() =>
                     toExitCode("Error while showing address.") {
@@ -64,12 +76,12 @@ object Main
                       showPublicKey[IO](keyPair)
                     }
                   case CreateTransaction(destination, fee, amount, prevTxPath, nextTxPath) =>
-                    implicit val hasher = Hasher.forKryo[IO]
+                    implicit val hasher: Hasher[IO] = Hasher.forKryo[IO]
                     toExitCode("Error while creating transaction.") {
                       createAndStoreTransaction[IO](keyPair, destination, fee, amount, prevTxPath, nextTxPath)
                     }
                   case CreateOwnerSigningMessage(address, metagraphId, parentOrdinal, outputPath) =>
-                    implicit val hasher = Hasher.forJson[IO]
+                    implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
                     toExitCode("Error while creating owner signing message.") {
                       createCurrencyMessage[IO](
                         keyPair,
@@ -81,7 +93,7 @@ object Main
                       )
                     }
                   case CreateStakingSigningMessage(address, metagraphId, parentOrdinal, outputPath) =>
-                    implicit val hasher = Hasher.forJson[IO]
+                    implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
                     toExitCode("Error while creating staking signing message.") {
                       createCurrencyMessage[IO](
                         keyPair,
@@ -93,10 +105,92 @@ object Main
                       )
                     }
                   case MergeSigningMessages(files, outputPath: Option[Path]) =>
-                    implicit val hasher = Hasher.forJson[IO]
+                    implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
                     toExitCode("Error merging currency messages.") {
                       mergeMessages[IO](files)
                         .flatMap(writeJson[IO, Signed[CurrencyMessage]](outputPath))
+                    }
+                  case CreateDelegatedStake(nodeId, fee, amount, parent, tokenLockRef) =>
+                    implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
+                    toExitCode("Error while creating or signing event") {
+                      val lastRef = parent match {
+                        case Some(path) =>
+                          readFromJsonFile[IO, DelegatedStakeReference](path)
+                            .map(x => x.get)
+                        case None => IO.pure(DelegatedStakeReference.empty)
+                      }
+                      for {
+                        p <- lastRef
+                        sign <- Signed
+                          .forAsyncHasher[IO, UpdateDelegatedStake.Create](
+                            UpdateDelegatedStake.Create(
+                              selfAddress,
+                              nodeId.map(n => PeerId(Hex(n))).getOrElse(selfId.toPeerId),
+                              DelegatedStakeAmount(NonNegLong.unsafeFrom(amount.value.value)),
+                              DelegatedStakeFee(fee.value),
+                              Hash(tokenLockRef),
+                              p
+                            ),
+                            keyPair
+                          )
+                        _ <- writeJson[IO, Signed[UpdateDelegatedStake.Create]](Some(Path.apply("event")))(sign)
+                      } yield ()
+                    }
+                  case CreateUpdateNodeParameters(rewardFraction, name, description, parent) =>
+                    implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
+                    toExitCode("Error while creating or signing event") {
+                      val lastRef = parent match {
+                        case Some(path) =>
+                          readFromJsonFile[IO, UpdateNodeParametersReference](path)
+                            .map(x => x.get)
+                        case None => IO.pure(UpdateNodeParametersReference.empty)
+                      }
+                      for {
+                        p <- lastRef
+                        sign <- Signed
+                          .forAsyncHasher[IO, UpdateNodeParameters](
+                            UpdateNodeParameters(
+                              selfAddress,
+                              DelegatedStakeRewardParameters(
+                                RewardFraction.unsafeFrom((rewardFraction * 1e8).toInt)
+                              ),
+                              NodeMetadataParameters(
+                                name,
+                                description
+                              ),
+                              p
+                            ),
+                            keyPair
+                          )
+                        _ <- writeJson[IO, Signed[UpdateNodeParameters]](Some(Path.apply("event")))(sign)
+                      } yield ()
+                    }
+                  case CreateTokenLock(fee, amount, parent, cur, unlock) =>
+                    implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
+                    toExitCode("Error while creating or signing event") {
+                      val lastRef = parent match {
+                        case Some(path) =>
+                          readFromJsonFile[IO, TokenLockReference](path)
+                            .map(x => x.get)
+                        case None => IO.pure(TokenLockReference.empty)
+                      }
+                      for {
+                        p <- lastRef
+                        sign <- Signed
+                          .forAsyncHasher[IO, TokenLock](
+                            TokenLock(
+                              selfAddress,
+                              TokenLockAmount(amount.value),
+                              TokenLockFee(fee.value),
+                              p,
+                              cur.map(x => x.toCurrencyId),
+                              unlock.map(x => EpochProgress.apply(NonNegLong.unsafeFrom(x)))
+                            ),
+                            keyPair
+                          )
+                        _ <- writeJson[IO, Signed[TokenLock]](Some(Path.apply("event")))(sign)
+                        hash <- hasher.hash(sign.value)
+                      } yield println(hash.value)
                     }
                 }
               }
