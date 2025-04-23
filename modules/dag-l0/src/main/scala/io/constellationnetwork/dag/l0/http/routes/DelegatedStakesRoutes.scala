@@ -5,10 +5,13 @@ import cats.effect.Async
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
+import scala.math.BigDecimal.RoundingMode
 
 import io.constellationnetwork.dag.l0.domain.delegatedStake.{CreateDelegatedStakeOutput, DelegatedStakeOutput, WithdrawDelegatedStakeOutput}
+import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.http4s.AddressVar
 import io.constellationnetwork.kernel._
+import io.constellationnetwork.node.shared.config.types.{DelegatedRewardsConfig, EmissionConfigEntry}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
@@ -37,7 +40,9 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
   validator: UpdateDelegatedStakeValidator[F],
   snapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   nodeStorage: NodeStorage[F],
-  withdrawalTimeLimit: EpochProgress
+  withdrawalTimeLimit: EpochProgress,
+  environment: AppEnvironment,
+  delegatedRewardsConfig: DelegatedRewardsConfig
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {
 
@@ -140,6 +145,131 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
       .traverse { case DelegatedStakeRecord(delegatedStaking, _, _) => DelegatedStakeReference.of(delegatedStaking) }
       .map(_.getOrElse(DelegatedStakeReference.empty))
 
+  private def getRewardsInfo: F[RewardsInfo] =
+    for {
+      emConfig <- delegatedRewardsConfig.emissionConfig
+        .get(environment)
+        .pure[F]
+        .flatMap(Async[F].fromOption(_, new RuntimeException(s"Could not retrieve emission config for env: $environment")))
+
+      lastSnapshotInfo <- snapshotStorage.head.flatMap {
+        case Some((_, info)) => info.pure[F]
+        case None            => Async[F].raiseError[GlobalSnapshotInfo](new RuntimeException("No snapshot available"))
+      }
+
+      currentPrice = getCurrentDagPrice(emConfig)
+      nextPrice = getNextDagPrice(emConfig)
+
+      totalDelegated = calculateTotalDelegatedAmount(lastSnapshotInfo)
+
+      avgRewardRate = calculateAverageRewardRate(lastSnapshotInfo)
+      totalRewardPerEpoch = calculateTotalRewardPerEpoch(lastSnapshotInfo)
+
+      totalRewardAPY = calculateTotalRewardAPYPerDag(emConfig, avgRewardRate)
+      totalInflationAPY = calculateTotalInflationAPY(emConfig, totalRewardAPY)
+
+    } yield
+      RewardsInfo(
+        epochsPerYear = emConfig.epochsPerYear.value,
+        currentDagPrice = currentPrice,
+        nextDagPrice = nextPrice,
+        totalDelegatedAmount = totalDelegated,
+        averageRewardRatePerDagEpoch = avgRewardRate,
+        totalDagAmount = emConfig.totalSupply.value.value,
+        totalRewardPerEpoch = totalRewardPerEpoch,
+        totalRewardAPYPerDag = totalRewardAPY,
+        totalInflationAPY = totalInflationAPY
+      )
+
+  private def getCurrentDagPrice(emConfig: EmissionConfigEntry): Long = {
+    val dagPrices = emConfig.dagPrices
+    val currentPrice = dagPrices.values.headOption.getOrElse(dagPrices.head._2)
+    (currentPrice.toBigDecimal * 100000000).longValue // Convert to datum format
+  }
+
+  private def getNextDagPrice(emConfig: EmissionConfigEntry): NextDagPrice = {
+    val dagPrices = emConfig.dagPrices
+
+    if (dagPrices.size > 1) {
+      val sortedPrices = dagPrices.toList.sortBy(_._1.value.value)
+      val currentAndFuturePrices = sortedPrices.dropWhile {
+        case (epoch, _) =>
+          epoch.value.value <= sortedPrices.head._1.value.value
+      }
+
+      currentAndFuturePrices.headOption.map {
+        case (epoch, price) =>
+          NextDagPrice(
+            price = (price.toBigDecimal * 100000000).longValue,
+            asOfEpoch = epoch
+          )
+      }.getOrElse(
+        NextDagPrice(
+          price = (dagPrices.head._2.toBigDecimal * 100000000).longValue,
+          asOfEpoch = dagPrices.head._1
+        )
+      )
+    } else {
+      NextDagPrice(
+        price = (dagPrices.head._2.toBigDecimal * 100000000).longValue,
+        asOfEpoch = dagPrices.head._1
+      )
+    }
+  }
+
+  // todo - is this actually the formula used? I think I may just use the stake balance and not add the rewards (check compounding)
+  private def calculateTotalDelegatedAmount(info: GlobalSnapshotInfo): Long = {
+    val activeDelegatedStakes = info.activeDelegatedStakes
+      .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
+
+    activeDelegatedStakes.values.flatten.foldLeft(0L) {
+      case (acc, record) =>
+        val stakeAmount = record.event.value.amount.value.value
+        val rewardsAmount = record.rewards.value
+        acc + stakeAmount + rewardsAmount
+    }
+  }
+
+  private def calculateAverageRewardRate(info: GlobalSnapshotInfo): Long = {
+    val activeDelegatedStakes = info.activeDelegatedStakes
+      .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
+
+    if (activeDelegatedStakes.isEmpty) 0L
+    else {
+      val totalStakeAmount = activeDelegatedStakes.values.flatten.foldLeft(0L) {
+        case (acc, record) =>
+          acc + record.event.value.amount.value.value
+      }
+
+      val totalRewards = activeDelegatedStakes.values.flatten.foldLeft(0L) {
+        case (acc, record) =>
+          acc + record.rewards.value
+      }
+
+      if (totalStakeAmount == 0) 0L
+      else (BigDecimal(totalRewards) / BigDecimal(totalStakeAmount)).setScale(0, RoundingMode.HALF_UP).longValue
+    }
+  }
+
+  private def calculateTotalRewardPerEpoch(info: GlobalSnapshotInfo): Long = {
+    val totalDelegated = calculateTotalDelegatedAmount(info)
+    val avgRewardRate = calculateAverageRewardRate(info)
+
+    if (totalDelegated < 0) 0L
+    else (BigDecimal(totalDelegated) * BigDecimal(avgRewardRate)).setScale(8, RoundingMode.HALF_UP).longValue
+  }
+
+  private def calculateTotalRewardAPYPerDag(emConfig: EmissionConfigEntry, averageRewardRate: Long): Long =
+    averageRewardRate * emConfig.epochsPerYear.value
+
+  private def calculateTotalInflationAPY(emConfig: EmissionConfigEntry, totalRewardAPYPerDag: Long): Long = {
+    // (Total reward APY + flat inflation rate ) * total supply
+    val result = BigDecimal(emConfig.totalSupply.value.value) *
+      (BigDecimal(totalRewardAPYPerDag) + delegatedRewardsConfig.flatInflationRate.toBigDecimal)
+
+    result.setScale(8, RoundingMode.HALF_UP).longValue
+  }
+
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root =>
       snapshotStorage.head.flatMap {
@@ -198,6 +328,13 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
       snapshotStorage.head.flatMap {
         case Some((_, info)) =>
           Ok(getLastReference(address, info))
+        case None => ServiceUnavailable()
+      }
+
+    case GET -> Root / "rewards-info" =>
+      snapshotStorage.head.flatMap {
+        case Some(_) =>
+          getRewardsInfo.flatMap(Ok(_))
         case None => ServiceUnavailable()
       }
   }

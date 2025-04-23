@@ -177,7 +177,7 @@ object GlobalDelegatedRewardsDistributor {
       val totalSupply = BigDecimal(emConfig.totalSupply.value, mc)
 
       if (emConfig.dagPrices.values.isEmpty) {
-        Slf4jLogger.getLogger[F].error("Empty DAG price configuration").as(Amount(NonNegLong.unsafeFrom(0L)))
+        Slf4jLogger.getLogger[F].error("Empty DAG price configuration").as(Amount.empty)
       } else {
         val dagPrices = emConfig.dagPrices
         val initialPrice = dagPrices.head._2.toBigDecimal

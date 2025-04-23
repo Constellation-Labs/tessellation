@@ -144,4 +144,23 @@ object delegatedStake {
   sealed trait DelegatedStakeError extends NoStackTrace
   case class MissingDelegatedStaking(message: String) extends DelegatedStakeError
   case class MissingTokenLock(message: String) extends DelegatedStakeError
+
+  @derive(encoder, decoder, eqv, show)
+  case class NextDagPrice(
+    price: Long,
+    asOfEpoch: EpochProgress
+  )
+
+  @derive(encoder, decoder, eqv, show)
+  case class RewardsInfo(
+    epochsPerYear: Long,
+    currentDagPrice: Long,
+    nextDagPrice: NextDagPrice,
+    totalDelegatedAmount: Long,
+    averageRewardRatePerDagEpoch: Long,
+    totalDagAmount: Long,
+    totalRewardPerEpoch: Long,
+    totalRewardAPYPerDag: Long,
+    totalInflationAPY: Long
+  )
 }

@@ -1,0 +1,12 @@
+type: object
+description: Information about the next DAG price and when it will take effect
+properties:
+  price:
+    type: integer
+    format: int64
+    description: The next DAG price (in the same format as used internally in configuration)
+  asOfEpoch:
+    $ref: './EpochProgress.yml'
+required:
+  - price
+  - asOfEpoch
