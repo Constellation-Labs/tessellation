@@ -10,6 +10,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{SpendAction, SpendTransaction}
 import io.constellationnetwork.schema.balance.Balance
@@ -292,5 +293,156 @@ object SpendActionValidatorSuite extends MutableIOSuite {
         case SpendActionValidator.NotEnoughCurrencyIdBalance(_) => true
         case _                                                  => false
       }))
+  }
+
+  test("Should get accepted and rejected SpendTransactions - All accepted") { res =>
+    implicit val (_, hs, sp) = res
+
+    val validator = SpendActionValidator.make
+
+    for {
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
+
+      address = keyPair1.getPublic.toAddress
+      ammAddress = keyPair2.getPublic.toAddress
+
+      allowSpend = AllowSpend(
+        address,
+        ammAddress,
+        None,
+        SwapAmount(1L),
+        AllowSpendFee(1L),
+        AllowSpendReference.empty,
+        EpochProgress(20L),
+        List(ammAddress)
+      )
+      signedAllowSpend <- Signed.forAsyncHasher(allowSpend, keyPair1)
+      hashedAllowSpend <- signedAllowSpend.toHashed
+
+      activeAllowSpends = SortedMap(none[Address] -> SortedMap(address -> SortedSet(signedAllowSpend)))
+
+      metagraphSpendTx = SpendTransaction(none, None, SwapAmount(2L), ammAddress, ammAddress)
+      userSpendTx = SpendTransaction(hashedAllowSpend.hash.some, None, SwapAmount(1L), address, ammAddress)
+      spendAction = SpendAction(NonEmptyList.of(metagraphSpendTx, userSpendTx))
+      spendActions = Map(ammAddress -> List(spendAction))
+      balances = Map(none[Address] -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
+
+      (acceptedSpendActions, rejectedSpendActions) <- validator.validateReturningAcceptedAndRejected(
+        spendActions,
+        activeAllowSpends,
+        balances
+      )
+    } yield
+      expect.all(
+        rejectedSpendActions.isEmpty,
+        acceptedSpendActions.nonEmpty,
+        acceptedSpendActions.contains(ammAddress),
+        acceptedSpendActions(ammAddress) === List(spendAction)
+      )
+  }
+
+  test("Should get accepted and rejected SpendTransactions - Accept only first SpendAction when referencing the same allow spend") { res =>
+    implicit val (_, hs, sp) = res
+
+    val validator = SpendActionValidator.make
+
+    for {
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
+
+      address = keyPair1.getPublic.toAddress
+      ammAddress = keyPair2.getPublic.toAddress
+
+      allowSpend = AllowSpend(
+        address,
+        ammAddress,
+        None,
+        SwapAmount(1L),
+        AllowSpendFee(1L),
+        AllowSpendReference.empty,
+        EpochProgress(20L),
+        List(ammAddress)
+      )
+      signedAllowSpend <- Signed.forAsyncHasher(allowSpend, keyPair1)
+      hashedAllowSpend <- signedAllowSpend.toHashed
+
+      activeAllowSpends = SortedMap(none[Address] -> SortedMap(address -> SortedSet(signedAllowSpend)))
+
+      metagraphSpendTx = SpendTransaction(none, None, SwapAmount(2L), ammAddress, ammAddress)
+      userSpendTx = SpendTransaction(hashedAllowSpend.hash.some, None, SwapAmount(1L), address, ammAddress)
+      spendAction = SpendAction(NonEmptyList.of(metagraphSpendTx, userSpendTx))
+      duplicatedAction = SpendAction(NonEmptyList.of(userSpendTx))
+      spendActions = Map(ammAddress -> List(spendAction, duplicatedAction))
+      balances = Map(none[Address] -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
+
+      (acceptedSpendActions, rejectedSpendActions) <- validator.validateReturningAcceptedAndRejected(
+        spendActions,
+        activeAllowSpends,
+        balances
+      )
+    } yield
+      expect.all(
+        rejectedSpendActions.nonEmpty,
+        rejectedSpendActions.size === 1,
+        acceptedSpendActions.nonEmpty,
+        acceptedSpendActions.size === 1,
+        acceptedSpendActions.contains(ammAddress),
+        rejectedSpendActions.contains(ammAddress),
+        acceptedSpendActions(ammAddress) === List(spendAction),
+        rejectedSpendActions(ammAddress)._1 === duplicatedAction,
+        rejectedSpendActions(ammAddress)._2 === List(NoActiveAllowSpends("Currency None not found in active allow spends"))
+      )
+  }
+
+  test("Should get accepted and rejected SpendTransactions - Reject entire SpendAction when 2 SpendTxn references same allowSpend") { res =>
+    implicit val (_, hs, sp) = res
+
+    val validator = SpendActionValidator.make
+
+    for {
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
+
+      address = keyPair1.getPublic.toAddress
+      ammAddress = keyPair2.getPublic.toAddress
+
+      allowSpend = AllowSpend(
+        address,
+        ammAddress,
+        None,
+        SwapAmount(1L),
+        AllowSpendFee(1L),
+        AllowSpendReference.empty,
+        EpochProgress(20L),
+        List(ammAddress)
+      )
+      signedAllowSpend <- Signed.forAsyncHasher(allowSpend, keyPair1)
+      hashedAllowSpend <- signedAllowSpend.toHashed
+
+      activeAllowSpends = SortedMap(none[Address] -> SortedMap(address -> SortedSet(signedAllowSpend)))
+
+      metagraphSpendTx = SpendTransaction(none, None, SwapAmount(2L), ammAddress, ammAddress)
+      userSpendTx = SpendTransaction(hashedAllowSpend.hash.some, None, SwapAmount(1L), address, ammAddress)
+      spendAction = SpendAction(NonEmptyList.of(metagraphSpendTx, userSpendTx, userSpendTx))
+      spendActions = Map(ammAddress -> List(spendAction))
+      balances = Map(none[Address] -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
+
+      (acceptedSpendActions, rejectedSpendActions) <- validator.validateReturningAcceptedAndRejected(
+        spendActions,
+        activeAllowSpends,
+        balances
+      )
+    } yield
+      expect.all(
+        acceptedSpendActions.isEmpty,
+        rejectedSpendActions.nonEmpty,
+        rejectedSpendActions.size === 1,
+        rejectedSpendActions.contains(ammAddress),
+        rejectedSpendActions(ammAddress)._1 === spendAction,
+        rejectedSpendActions(ammAddress)._2 === List(
+          DuplicatedAllowSpendReference("Duplicated allow spend reference in the same SpendAction")
+        )
+      )
   }
 }
