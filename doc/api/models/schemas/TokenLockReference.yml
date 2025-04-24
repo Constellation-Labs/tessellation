@@ -1,0 +1,14 @@
+type: object
+description: A reference to a token lock transaction
+required:
+  - ordinal
+  - hash
+properties:
+  ordinal:
+    type: integer
+    format: int64
+    minimum: 0
+    description: The ordinal number of the token lock transaction
+  hash:
+    $ref: './Hash.yml'
+    description: The hash of the token lock transaction

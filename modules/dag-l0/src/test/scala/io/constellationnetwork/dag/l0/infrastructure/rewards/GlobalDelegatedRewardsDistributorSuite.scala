@@ -48,8 +48,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
 
     DelegationRewardsResult(
       delegatorRewardsMap = SortedMap(
-        address1 -> Map(nodeId1.toPeerId -> Amount(NonNegLong.unsafeFrom(amount.value.value * 10 / 100))),
-        address2 -> Map(nodeId2.toPeerId -> Amount(NonNegLong.unsafeFrom(amount.value.value * 15 / 100)))
+        nodeId1.toPeerId -> Map(address1 -> Amount(NonNegLong.unsafeFrom(amount.value.value * 10 / 100))),
+        nodeId2.toPeerId -> Map(address2 -> Amount(NonNegLong.unsafeFrom(amount.value.value * 15 / 100)))
       ),
       updatedCreateDelegatedStakes = SortedMap(
         address1 -> List(

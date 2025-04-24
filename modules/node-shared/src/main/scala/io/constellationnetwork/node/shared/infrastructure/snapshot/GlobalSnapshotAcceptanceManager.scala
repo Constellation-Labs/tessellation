@@ -98,7 +98,7 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
       Map[Address, List[SpendAction]],
       SortedMap[Id, Signed[UpdateNodeParameters]],
       SortedSet[SharedArtifact],
-      SortedMap[Address, Map[PeerId, Amount]]
+      SortedMap[PeerId, Map[Address, Amount]]
     )
   ]
 }
@@ -155,7 +155,7 @@ object GlobalSnapshotAcceptanceManager {
         Map[Address, List[SpendAction]],
         SortedMap[Id, Signed[UpdateNodeParameters]],
         SortedSet[SharedArtifact],
-        SortedMap[Address, Map[PeerId, Amount]]
+        SortedMap[PeerId, Map[Address, Amount]]
       )
     ] = {
       implicit val hasher = HasherSelector[F].getForOrdinal(ordinal)
@@ -565,31 +565,6 @@ object GlobalSnapshotAcceptanceManager {
         )
     }
 
-    private def getUpdatedWithdrawNodeCollaterals(
-      nodeCollateralAcceptanceResult: UpdateNodeCollateralAcceptanceResult,
-      unexpiredWithdrawNodeCollaterals: SortedMap[Address, List[PendingNodeCollateralWithdrawal]],
-      lastSnapshotContext: GlobalSnapshotInfo
-    )(implicit hasher: Hasher[F]): F[SortedMap[Address, List[PendingNodeCollateralWithdrawal]]] = {
-
-      val xs: F[SortedMap[Address, List[PendingNodeCollateralWithdrawal]]] =
-        nodeCollateralAcceptanceResult.acceptedWithdrawals.toList.traverse {
-          case (addr, acceptedWithdrawls) =>
-            acceptedWithdrawls.traverse {
-              case (ev, ep) =>
-                lastSnapshotContext.activeNodeCollaterals
-                  .flatTraverse(_.get(addr).flatTraverse {
-                    _.findM { s =>
-                      NodeCollateralReference.of(s.event).map(_.hash === ev.collateralRef)
-                    }.map(_.map(rec => PendingNodeCollateralWithdrawal(rec.event, rec.createdAt, ep)))
-                  })
-                  .flatMap(Async[F].fromOption(_, new RuntimeException("Unexpected None when processing node collaterals")))
-            }.map(addr -> _)
-        }.map(x => SortedMap.from(x))
-          .map(y => unexpiredWithdrawNodeCollaterals |+| y)
-      xs
-
-    }
-
     private def getUpdatedCreateNodeCollaterals(
       nodeCollateralAcceptanceResult: UpdateNodeCollateralAcceptanceResult,
       unexpiredCreateNodeCollaterals: SortedMap[Address, List[NodeCollateralRecord]]
@@ -614,9 +589,31 @@ object GlobalSnapshotAcceptanceManager {
           records.traverse { record =>
             NodeCollateralReference.of(record.event).map(ref => (record, withdrawnCollaterals(ref.hash)))
           }.map(records => (addr, records.filterNot(_._2).map(_._1)))
-      }.map(x => SortedMap.from(x))
-
+      }
+        .map(_.filterNot(_._2.isEmpty))
+        .map(SortedMap.from(_))
     }
+
+    private def getUpdatedWithdrawNodeCollaterals(
+      nodeCollateralAcceptanceResult: UpdateNodeCollateralAcceptanceResult,
+      unexpiredWithdrawNodeCollaterals: SortedMap[Address, List[PendingNodeCollateralWithdrawal]],
+      lastSnapshotContext: GlobalSnapshotInfo
+    )(implicit hasher: Hasher[F]): F[SortedMap[Address, List[PendingNodeCollateralWithdrawal]]] =
+      nodeCollateralAcceptanceResult.acceptedWithdrawals.toList.traverse {
+        case (addr, acceptedWithdrawls) =>
+          acceptedWithdrawls.traverse {
+            case (ev, ep) =>
+              lastSnapshotContext.activeNodeCollaterals
+                .flatTraverse(_.get(addr).flatTraverse {
+                  _.findM { s =>
+                    NodeCollateralReference.of(s.event).map(_.hash === ev.collateralRef)
+                  }.map(_.map(rec => PendingNodeCollateralWithdrawal(rec.event, rec.createdAt, ep)))
+                })
+                .flatMap(Async[F].fromOption(_, new RuntimeException("Unexpected None when processing node collaterals")))
+          }.map(addr -> _)
+      }.map(SortedMap.from(_))
+        .map(unexpiredWithdrawNodeCollaterals |+| _)
+        .map(_.filterNot(_._2.isEmpty))
 
     private def generateTokenUnlocks(
       expiredWithdrawalsDelegatedStaking: SortedMap[Address, List[PendingDelegatedStakeWithdrawal]],

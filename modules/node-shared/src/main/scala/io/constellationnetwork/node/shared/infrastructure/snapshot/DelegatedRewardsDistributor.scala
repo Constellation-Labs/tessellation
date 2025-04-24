@@ -30,7 +30,7 @@ import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 /** Result container for delegation rewards calculation
   */
 case class DelegationRewardsResult(
-  delegatorRewardsMap: SortedMap[Address, Map[PeerId, Amount]],
+  delegatorRewardsMap: SortedMap[PeerId, Map[Address, Amount]],
   updatedCreateDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
   updatedWithdrawDelegatedStakes: SortedMap[Address, List[PendingDelegatedStakeWithdrawal]],
   nodeOperatorRewards: SortedSet[RewardTransaction],
@@ -61,7 +61,7 @@ trait DelegatedRewardsDistributor[F[_]] {
 
 object DelegatedRewardsDistributor {
   def getUpdatedCreateDelegatedStakes[F[_]: Async: Hasher](
-    delegatorRewardsMap: Map[Address, Map[PeerId, Amount]],
+    delegatorRewardsMap: Map[PeerId, Map[Address, Amount]],
     delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
     partitionedRecords: PartitionedStakeUpdates
   ): F[SortedMap[Address, List[DelegatedStakeRecord]]] =
@@ -87,8 +87,8 @@ object DelegatedRewardsDistributor {
           addr -> recs.map {
             case DelegatedStakeRecord(event, ord, bal) =>
               val nodeSpecificReward = delegatorRewardsMap
-                .get(addr)
-                .flatMap(_.get(event.value.nodeId))
+                .get(event.value.nodeId)
+                .flatMap(_.get(addr))
                 .getOrElse(Amount.empty)
 
               val disbursedBalance = bal.plus(nodeSpecificReward).toOption.getOrElse(Balance.empty)
@@ -96,6 +96,7 @@ object DelegatedRewardsDistributor {
               DelegatedStakeRecord(event, ord, disbursedBalance)
           }
       })
+      .map(_.filterNot(_._2.isEmpty))
       .map(_.toSortedMap)
 
   def getUpdatedWithdrawalDelegatedStakes[F[_]: Async: Hasher](
@@ -117,11 +118,12 @@ object DelegatedRewardsDistributor {
         }.map(addr -> _)
     }.map(SortedMap.from(_))
       .map(partitionedRecords.unexpiredWithdrawalsDelegatedStaking |+| _)
+      .map(_.filterNot(_._2.isEmpty))
 
   def sumMintedAmount[F[_]: Async](
     reservedAddressRewards: SortedSet[RewardTransaction],
     nodeOperatorRewards: SortedSet[RewardTransaction],
-    delegatorRewardsMap: Map[Address, Map[PeerId, Amount]]
+    delegatorRewardsMap: Map[PeerId, Map[Address, Amount]]
   ): F[Amount] = {
     val reservedEmittedAmount = reservedAddressRewards.map(_.amount.value.value).sum
     val validatorsEmittedAmount = nodeOperatorRewards.map(_.amount.value.value).sum

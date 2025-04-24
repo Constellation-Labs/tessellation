@@ -55,7 +55,7 @@ import io.constellationnetwork.security.signature.Signed.forAsyncHasher
 import io.constellationnetwork.transaction.TransactionGenerator
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
 import fs2.concurrent.SignallingRef
 import io.chrisdavenport.mapref.MapRef
 import org.scalacheck.Gen.Parameters
@@ -113,6 +113,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   RewardFraction(5_000_000),
                   RewardFraction(10_000_000),
                   PosInt(140),
+                  PosInt(10),
+                  PosLong((5000 * 1e8).toLong),
                   Map(Dev -> EpochProgress(NonNegLong(7338977L)))
                 )
               )

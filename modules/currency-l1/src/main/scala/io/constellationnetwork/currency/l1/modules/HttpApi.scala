@@ -4,13 +4,14 @@ import java.security.PrivateKey
 
 import cats.effect.Async
 import cats.effect.std.Supervisor
-import cats.syntax.semigroupk._
+import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL1Service, L1NodeContext}
 import io.constellationnetwork.currency.l1.http.{DataApplicationRoutes, TransactionRoutes}
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.dag.l1.http.{Routes => DAGRoutes}
+import io.constellationnetwork.dag.l1.modules.Validators
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.HttpConfig
@@ -20,6 +21,7 @@ import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
@@ -62,7 +64,8 @@ object HttpApi {
     nodeVersion: TessellationVersion,
     httpCfg: HttpConfig,
     maybeMetagraphVersion: Option[MetagraphVersion],
-    txHasher: Hasher[F]
+    txHasher: Hasher[F],
+    validators: Validators[F]
   ): HttpApi[F, R] =
     new HttpApi[F, R](
       maybeDataApplication,
@@ -75,7 +78,8 @@ object HttpApi {
       nodeVersion,
       httpCfg,
       maybeMetagraphVersion,
-      txHasher
+      txHasher,
+      validators
     ) {}
 }
 
@@ -93,7 +97,8 @@ sealed abstract class HttpApi[
   nodeVersion: TessellationVersion,
   httpCfg: HttpConfig,
   maybeMetagraphVersion: Option[MetagraphVersion],
-  txHasher: Hasher[F]
+  txHasher: Hasher[F],
+  validators: Validators[F]
 ) {
 
   private val clusterRoutes =
@@ -124,13 +129,16 @@ sealed abstract class HttpApi[
       )
     }
 
-  private val tokenLockRoutes =
+  private val tokenLockRoutes: TokenLockRoutes[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] =
     HasherSelector[F].withCurrent { implicit hasher =>
-      TokenLockRoutes[F](
+      TokenLockRoutes(
         queues.tokenLockPeerConsensusInput,
         storages.l0Cluster,
         services.tokenLock,
-        storages.tokenLock
+        storages.tokenLock,
+        storages.lastSnapshot,
+        validators.tokenLock,
+        none
       )
     }
 

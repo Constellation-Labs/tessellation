@@ -205,8 +205,8 @@ object GlobalDelegatedRewardsDistributor {
       activeDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
       nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
       totalDelegationRewardPool: BigDecimal
-    ): F[Map[Address, Map[PeerId, Amount]]] =
-      if (activeDelegatedStakes.isEmpty || totalDelegationRewardPool === BigDecimal(0)) Map.empty[Address, Map[PeerId, Amount]].pure[F]
+    ): F[Map[PeerId, Map[Address, Amount]]] =
+      if (activeDelegatedStakes.isEmpty || totalDelegationRewardPool === BigDecimal(0)) Map.empty[PeerId, Map[Address, Amount]].pure[F]
       else {
         val activeStakes = activeDelegatedStakes.flatMap {
           case (address, records) =>
@@ -216,7 +216,7 @@ object GlobalDelegatedRewardsDistributor {
         }
         val totalStakeAmount = BigDecimal(activeStakes.map(_._3.event.value.amount.value.value).sum)
 
-        if (totalStakeAmount <= 0) Map.empty[Address, Map[PeerId, Amount]].pure[F]
+        if (totalStakeAmount <= 0) Map.empty[PeerId, Map[Address, Amount]].pure[F]
         else {
           activeStakes
             .groupBy(_._1)
@@ -255,7 +255,7 @@ object GlobalDelegatedRewardsDistributor {
                           nodePortionOfTotalStake *
                           delegatorPortionOfNodeStake
 
-                      address -> (nodeId.toPeerId -> Amount(NonNegLong.unsafeFrom(math.max(0, delegatorReward.toLong))))
+                      nodeId.toPeerId -> (address -> Amount(NonNegLong.unsafeFrom(math.max(0, delegatorReward.toLong))))
                   }
                 } yield addressRewards
             }
