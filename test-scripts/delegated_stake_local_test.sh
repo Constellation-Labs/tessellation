@@ -351,12 +351,28 @@ curl -i -X PUT --header 'Content-Type: application/json' --data @withdraw-delega
 # Await accepted, may require adjustment
 cd ../../..
 
-sleep 60
 
-curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
-jq -e '.[0].delegatedStakesWithdrawals.length == 1' > /dev/null || \
-{ echo "ERROR: delegatedStakesWithdrawals is empty in snapshot combined"; exit 1; }
+MAX_RETRIES=30  # 5 minutes with 10-second intervals
+RETRY_COUNT=0
+SUCCESS=false
 
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+  if curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | jq -e '.[0].delegatedStakesWithdrawals.length == 1' > /dev/null; then
+    SUCCESS=true
+    break
+  fi
+
+  echo "Waiting for delegatedStakesWithdrawals to have length 1 (attempt $((RETRY_COUNT+1))/$MAX_RETRIES)..."
+  sleep 10
+  RETRY_COUNT=$((RETRY_COUNT+1))
+done
+
+if [ "$SUCCESS" = true ]; then
+  echo "Success: delegatedStakesWithdrawals has length 1"
+else
+  echo "ERROR: delegatedStakesWithdrawals did not reach length 1 after 5 minutes"
+  exit 1
+fi
 # First error, after withdrawal, not removing empty list for address in snapshot info
 # activeDelegatedStakes":{"DAG1vmb6wbdKgMRite7nTmp5Di8mT5ZqjRw6KNTc":[]}
 # uncomment to reproduce error
@@ -370,8 +386,6 @@ jq -e '.[1].activeDelegatedStakes'
 #{ echo "ERROR: activeDelegatedStakes is not empty in snapshot combined"; exit 1; }
 
 
-# These all fail currently
-
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[0].delegateRewards'
 
@@ -383,13 +397,28 @@ curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
 jq -e '.activeDelegatedStakes | length == 0' > /dev/null || \
 { echo "ERROR: activeDelegatedStakes is not empty in DS info endpoint"; exit 1; }
 
-sleep 300
 
+MAX_RETRIES=30  # 5 minutes with 10-second intervals
+RETRY_COUNT=0
+SUCCESS=false
 
-curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
-jq -e '.[0].delegatedStakesWithdrawals.length == 0' > /dev/null || \
-{ echo "ERROR: delegatedStakesWithdrawals is empty in snapshot combined"; exit 1; }
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+  if curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | jq -e '.[0].delegatedStakesWithdrawals.length == 0' > /dev/null; then
+    SUCCESS=true
+    break
+  fi
 
+  echo "Waiting for delegatedStakesWithdrawals to have length 0 (attempt $((RETRY_COUNT+1))/$MAX_RETRIES)..."
+  sleep 10
+  RETRY_COUNT=$((RETRY_COUNT+1))
+done
+
+if [ "$SUCCESS" = true ]; then
+  echo "Success: delegatedStakesWithdrawals has length 0"
+else
+  echo "ERROR: delegatedStakesWithdrawals is not empty in snapshot combined"
+  exit 1
+fi
 
 # Check if we should kill processes based on KEEP_ALIVE flag
 if [ "$KEEP_ALIVE" = "false" ]; then
