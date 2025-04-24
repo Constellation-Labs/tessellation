@@ -12,7 +12,7 @@ import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
-import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
+import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralRecord, UpdateNodeCollateral}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockReference}
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
@@ -147,9 +147,9 @@ object UpdateDelegatedStakeValidator {
         lastContext: GlobalSnapshotInfo
       ): UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]] = {
         val withdrawalRef = lastContext.delegatedStakesWithdrawals
-          .getOrElse(SortedMap.empty[Address, List[PendingWithdrawal]])
+          .getOrElse(SortedMap.empty[Address, List[PendingDelegatedStakeWithdrawal]])
           .getOrElse(signed.source, List.empty)
-          .find { case PendingWithdrawal(w, _, _) => signed.tokenLockRef == w.tokenLockRef }
+          .find { case PendingDelegatedStakeWithdrawal(w, _, _, _) => signed.tokenLockRef == w.tokenLockRef }
         if (withdrawalRef.isEmpty) {
           signed.validNec
         } else {
@@ -164,7 +164,7 @@ object UpdateDelegatedStakeValidator {
 
         def validateUniqueness(address: Address): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Withdraw]]] = {
           val withdrawals = lastContext.delegatedStakesWithdrawals
-            .getOrElse(SortedMap.empty[Address, List[PendingWithdrawal]])
+            .getOrElse(SortedMap.empty[Address, List[PendingDelegatedStakeWithdrawal]])
             .getOrElse(address, List.empty)
           for {
             stakeRefs <- withdrawals.traverse(w => DelegatedStakeReference.of(w.event))
@@ -210,10 +210,9 @@ object UpdateDelegatedStakeValidator {
             .map(_.event)
 
           val maybeExistingCollateral = lastContext.activeNodeCollaterals
-            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
-            .getOrElse(address, List.empty[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)])
-            .find(_._1.tokenLockRef === signed.tokenLockRef)
-            .map(_._1)
+            .getOrElse(SortedMap.empty[Address, List[NodeCollateralRecord]])
+            .getOrElse(address, List.empty[NodeCollateralRecord])
+            .find(_.event.tokenLockRef === signed.tokenLockRef)
           maybeExistingCollateral.isEmpty && maybeExistingStake.forall(_.nodeId != signed.nodeId)
         }
 

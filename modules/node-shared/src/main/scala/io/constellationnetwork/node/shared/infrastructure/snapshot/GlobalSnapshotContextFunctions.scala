@@ -48,15 +48,15 @@ object GlobalSnapshotContextFunctions {
         epochProgress: EpochProgress
       )(implicit h: Hasher[F]): (
         SortedMap[Address, List[DelegatedStakeRecord]],
-        SortedMap[Address, List[PendingWithdrawal]],
-        SortedMap[Address, List[PendingWithdrawal]]
+        SortedMap[Address, List[PendingDelegatedStakeWithdrawal]],
+        SortedMap[Address, List[PendingDelegatedStakeWithdrawal]]
       ) = {
         val existingDelegatedStakes = lastSnapshotContext.activeDelegatedStakes.getOrElse(
           SortedMap.empty[Address, List[DelegatedStakeRecord]]
         )
 
         val existingWithdrawals = lastSnapshotContext.delegatedStakesWithdrawals.getOrElse(
-          SortedMap.empty[Address, List[PendingWithdrawal]]
+          SortedMap.empty[Address, List[PendingDelegatedStakeWithdrawal]]
         )
 
         def isWithdrawalExpired(withdrawalEpoch: EpochProgress): Boolean =
@@ -65,7 +65,7 @@ object GlobalSnapshotContextFunctions {
         val unexpiredWithdrawals = existingWithdrawals.map {
           case (address, withdrawals) =>
             address -> withdrawals.filterNot {
-              case PendingWithdrawal(_, _, withdrawalEpoch) =>
+              case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch) =>
                 isWithdrawalExpired(withdrawalEpoch)
             }
         }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
@@ -73,7 +73,7 @@ object GlobalSnapshotContextFunctions {
         val expiredWithdrawals = existingWithdrawals.map {
           case (address, withdrawals) =>
             address -> withdrawals.filter {
-              case PendingWithdrawal(_, _, withdrawalEpoch) =>
+              case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch) =>
                 isWithdrawalExpired(withdrawalEpoch)
             }
         }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }

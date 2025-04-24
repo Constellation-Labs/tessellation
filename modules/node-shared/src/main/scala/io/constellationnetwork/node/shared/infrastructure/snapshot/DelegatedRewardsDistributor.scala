@@ -14,7 +14,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{Con
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
-import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, DelegatedStakeReference, PendingWithdrawal}
+import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, DelegatedStakeReference, PendingDelegatedStakeWithdrawal}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.{DelegatedStakeRewardParameters, RewardFraction, UpdateNodeParameters}
 import io.constellationnetwork.schema.peer.PeerId
@@ -32,7 +32,7 @@ import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 case class DelegationRewardsResult(
   delegatorRewardsMap: SortedMap[Address, Map[PeerId, Amount]],
   updatedCreateDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
-  updatedWithdrawDelegatedStakes: SortedMap[Address, List[PendingWithdrawal]],
+  updatedWithdrawDelegatedStakes: SortedMap[Address, List[PendingDelegatedStakeWithdrawal]],
   nodeOperatorRewards: SortedSet[RewardTransaction],
   reservedAddressRewards: SortedSet[RewardTransaction],
   withdrawalRewardTxs: SortedSet[RewardTransaction],
@@ -41,8 +41,8 @@ case class DelegationRewardsResult(
 
 case class PartitionedStakeUpdates(
   unexpiredCreateDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
-  unexpiredWithdrawalsDelegatedStaking: SortedMap[Address, List[PendingWithdrawal]],
-  expiredWithdrawalsDelegatedStaking: SortedMap[Address, List[PendingWithdrawal]]
+  unexpiredWithdrawalsDelegatedStaking: SortedMap[Address, List[PendingDelegatedStakeWithdrawal]],
+  expiredWithdrawalsDelegatedStaking: SortedMap[Address, List[PendingDelegatedStakeWithdrawal]]
 )
 
 trait DelegatedRewardsDistributor[F[_]] {
@@ -102,7 +102,7 @@ object DelegatedRewardsDistributor {
     lastSnapshotContext: GlobalSnapshotInfo,
     delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
     partitionedRecords: PartitionedStakeUpdates
-  ): F[SortedMap[Address, List[PendingWithdrawal]]] =
+  ): F[SortedMap[Address, List[PendingDelegatedStakeWithdrawal]]] =
     delegatedStakeDiffs.acceptedWithdrawals.toList.traverse {
       case (addr, acceptedWithdrawls) =>
         acceptedWithdrawls.traverse {
@@ -111,7 +111,7 @@ object DelegatedRewardsDistributor {
               .flatTraverse(_.get(addr).flatTraverse {
                 _.findM { s =>
                   DelegatedStakeReference.of(s.event).map(_.hash === ev.stakeRef)
-                }.map(_.map(rec => PendingWithdrawal(rec.event, rec.rewards, ep)))
+                }.map(_.map(rec => PendingDelegatedStakeWithdrawal(rec.event, rec.rewards, rec.createdAt, ep)))
               })
               .flatMap(Async[F].fromOption(_, new RuntimeException("Unexpected None when processing user delegations")))
         }.map(addr -> _)

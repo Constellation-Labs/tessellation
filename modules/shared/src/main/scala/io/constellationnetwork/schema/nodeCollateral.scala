@@ -85,6 +85,17 @@ object nodeCollateral {
       collateralRef: Hash
     ) extends UpdateNodeCollateral
   }
+
+  @derive(decoder, encoder, eqv, show)
+  case class NodeCollateralRecord(event: Signed[UpdateNodeCollateral.Create], createdAt: SnapshotOrdinal)
+
+  @derive(decoder, encoder, eqv, show)
+  case class PendingNodeCollateralWithdrawal(
+    event: Signed[UpdateNodeCollateral.Create],
+    acceptedOrdinal: SnapshotOrdinal,
+    createdAt: EpochProgress
+  )
+
   @derive(eqv, show, encoder)
   case class NodeCollateralInfo(
     nodeId: PeerId,

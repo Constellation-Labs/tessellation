@@ -52,9 +52,9 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
       info.activeDelegatedStakes
         .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
         .getOrElse(address, List.empty)
-    val lastWithdrawals: List[PendingWithdrawal] =
+    val lastWithdrawals: List[PendingDelegatedStakeWithdrawal] =
       info.delegatedStakesWithdrawals
-        .getOrElse(SortedMap.empty[Address, List[PendingWithdrawal]])
+        .getOrElse(SortedMap.empty[Address, List[PendingDelegatedStakeWithdrawal]])
         .getOrElse(address, List.empty)
 
     for {
@@ -76,7 +76,7 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
           totalAmountF.map { total =>
             DelegatedStakeInfo(
               nodeId = stake.nodeId,
-              acceptedOrdinal = acceptedOrdinal.some,
+              acceptedOrdinal = acceptedOrdinal,
               tokenLockRef = stake.tokenLockRef,
               amount = stake.amount,
               fee = stake.fee,
@@ -90,13 +90,13 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
       }
 
       withdrawals <- lastWithdrawals.traverse {
-        case PendingWithdrawal(stake, bal, epochProgress) =>
+        case PendingDelegatedStakeWithdrawal(stake, bal, acceptedOrdinal, epochProgress) =>
           DelegatedStakeReference
             .of(stake)
-            .map(ref => (stake, epochProgress, bal, ref))
+            .map(ref => (stake, epochProgress, bal, ref, acceptedOrdinal))
       }
       pending <- withdrawals.traverse {
-        case (stake, epochProgress, rewardsBalance, delegatedStakeRef) =>
+        case (stake, epochProgress, rewardsBalance, delegatedStakeRef, acceptedOrdinal) =>
           val totalAmountF = Async[F].fromEither(
             NonNegLong
               .from(rewardsBalance.value + stake.amount.value)
@@ -107,7 +107,7 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
           totalAmountF.map { total =>
             DelegatedStakeInfo(
               nodeId = stake.nodeId,
-              acceptedOrdinal = None,
+              acceptedOrdinal = acceptedOrdinal,
               tokenLockRef = stake.tokenLockRef,
               amount = stake.amount,
               fee = stake.fee,

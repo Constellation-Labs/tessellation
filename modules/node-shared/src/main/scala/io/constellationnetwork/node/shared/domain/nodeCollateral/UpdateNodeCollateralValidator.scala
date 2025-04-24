@@ -63,7 +63,7 @@ object UpdateNodeCollateralValidator {
           nodeIdV = validateNodeId(signed, lastContext)
           parentV <- validateParent(signed, lastContext)
           tokenLockV <- validateTokenLock(signed, lastContext)
-          pendingWithdrawalV <- validatePendingWithdrawal(signed, lastContext)
+          pendingWithdrawalV = validatePendingWithdrawal(signed, lastContext)
         } yield
           numberOfSignaturesV
             .productR(signaturesV)
@@ -109,9 +109,9 @@ object UpdateNodeCollateralValidator {
         lastContext: GlobalSnapshotInfo
       ): UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Create]] = {
         val activeNodeCollaterals = lastContext.activeNodeCollaterals
-          .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
-          .getOrElse(signed.source, List.empty[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)])
-        if (activeNodeCollaterals.exists(s => s._1.nodeId == signed.nodeId)) {
+          .getOrElse(SortedMap.empty[Address, List[NodeCollateralRecord]])
+          .getOrElse(signed.source, List.empty[NodeCollateralRecord])
+        if (activeNodeCollaterals.exists(s => s.event.nodeId == signed.nodeId)) {
           StakeExistsForNode(signed.nodeId).invalidNec
         } else {
           signed.validNec
@@ -124,10 +124,10 @@ object UpdateNodeCollateralValidator {
       ): F[UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Create]]] =
         for {
           lastRef <- lastContext.activeNodeCollaterals
-            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
+            .getOrElse(SortedMap.empty[Address, List[NodeCollateralRecord]])
             .get(signed.source)
-            .flatMap(collaterals => Option.when(collaterals.nonEmpty)(collaterals.maxBy(_._1.ordinal)))
-            .traverse(collateral => NodeCollateralReference.of(collateral._1))
+            .flatMap(collaterals => Option.when(collaterals.nonEmpty)(collaterals.maxBy(_.event.ordinal)))
+            .traverse(collateral => NodeCollateralReference.of(collateral.event))
             .map(_.getOrElse(NodeCollateralReference.empty))
 
         } yield
@@ -149,38 +149,35 @@ object UpdateNodeCollateralValidator {
       private def validatePendingWithdrawal(
         signed: Signed[UpdateNodeCollateral.Create],
         lastContext: GlobalSnapshotInfo
-      ): F[UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Create]]] =
-        for {
-          stakeRef <- lastContext.activeNodeCollaterals
-            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
-            .getOrElse(signed.source, List.empty)
-            .traverse { case (stake, _) => NodeCollateralReference.of(stake) }
-            .map(_.find(_ === signed.parent))
-          withdrawalRef = lastContext.nodeCollateralWithdrawals
-            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Withdraw], EpochProgress)]])
-            .getOrElse(signed.source, List.empty)
-            .find { case (w, _) => stakeRef.map(_.hash).contains(w.collateralRef) }
-        } yield
-          if (withdrawalRef.isEmpty) {
-            signed.validNec
-          } else {
-            AlreadyWithdrawn(signed.parent.hash).invalidNec
-          }
+      ): UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Create]] = {
+        val withdrawalRef = lastContext.nodeCollateralWithdrawals
+          .getOrElse(SortedMap.empty[Address, List[PendingNodeCollateralWithdrawal]])
+          .getOrElse(signed.source, List.empty)
+          .find(w => w.event.tokenLockRef == signed.value.tokenLockRef)
+        if (withdrawalRef.isEmpty) {
+          signed.validNec
+        } else {
+          AlreadyWithdrawn(signed.parent.hash).invalidNec
+        }
+      }
 
       private def validateWithdrawal(
         signed: Signed[UpdateNodeCollateral.Withdraw],
         lastContext: GlobalSnapshotInfo
       ): F[UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Withdraw]]] = {
 
-        def validateUniqueness(address: Address): UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Withdraw]] = {
+        def validateUniqueness(address: Address): F[UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Withdraw]]] = {
           val withdrawals = lastContext.nodeCollateralWithdrawals
-            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Withdraw], SnapshotOrdinal)]])
+            .getOrElse(SortedMap.empty[Address, List[PendingNodeCollateralWithdrawal]])
             .getOrElse(address, List.empty)
-          if (withdrawals.exists(_._1.collateralRef === signed.collateralRef)) {
-            AlreadyWithdrawn(signed.collateralRef).invalidNec
-          } else {
-            signed.validNec
-          }
+          for {
+            refs <- withdrawals.traverse(w => NodeCollateralReference.of(w.event))
+          } yield
+            if (refs.exists(_.hash === signed.collateralRef)) {
+              AlreadyWithdrawn(signed.collateralRef).invalidNec
+            } else {
+              signed.validNec
+            }
         }
 
         def validateCreate(address: Address): F[UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Withdraw]]] =
@@ -196,7 +193,7 @@ object UpdateNodeCollateralValidator {
 
         for {
           parentV <- validateCreate(signed.source)
-          uniqueV = validateUniqueness(signed.source)
+          uniqueV <- validateUniqueness(signed.source)
         } yield uniqueV.productR(parentV)
       }
 
@@ -213,10 +210,10 @@ object UpdateNodeCollateralValidator {
             .map(_.event)
 
           val maybeExistingCollateral = lastContext.activeNodeCollaterals
-            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
-            .getOrElse(address, List.empty[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)])
-            .find(_._1.tokenLockRef === signed.tokenLockRef)
-            .map(_._1)
+            .getOrElse(SortedMap.empty[Address, List[NodeCollateralRecord]])
+            .getOrElse(address, List.empty)
+            .find(_.event.tokenLockRef === signed.tokenLockRef)
+            .map(_.event)
           maybeExistingStake.isEmpty && maybeExistingCollateral.forall(_.nodeId != signed.nodeId)
         }
 
@@ -243,14 +240,14 @@ object UpdateNodeCollateralValidator {
 
       private def getParent(
         address: Address,
-        nodeCollaterals: SortedMap[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]],
+        nodeCollaterals: SortedMap[Address, List[NodeCollateralRecord]],
         signed: Signed[UpdateNodeCollateral.Withdraw]
       ): F[Option[Signed[UpdateNodeCollateral.Create]]] =
         for {
           maybeParent <- nodeCollaterals.getOrElse(address, List.empty).findM { s =>
-            NodeCollateralReference.of(s._1).map(_.hash === signed.collateralRef)
+            NodeCollateralReference.of(s.event).map(_.hash === signed.collateralRef)
           }
-        } yield maybeParent.map(_._1)
+        } yield maybeParent.map(_.event)
 
     }
 
