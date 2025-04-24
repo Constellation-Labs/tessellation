@@ -186,7 +186,7 @@ object GlobalSnapshotConsensusFunctions {
           _: Option[DataCalculatedState]
         )
         .map { rewardTxs =>
-          DelegationRewardsResult(
+          DelegatedRewardsResult(
             delegatorRewardsMap = SortedMap.empty,
             updatedCreateDelegatedStakes = SortedMap.empty,
             updatedWithdrawDelegatedStakes = SortedMap.empty,
@@ -197,7 +197,7 @@ object GlobalSnapshotConsensusFunctions {
           )
         }
 
-      val rewardsWithFacilitators: List[(Address, PeerId)] => RewardsInput => F[DelegationRewardsResult] = {
+      val rewardsWithFacilitators: List[(Address, PeerId)] => RewardsInput => F[DelegatedRewardsResult] = {
         faciltators: List[(Address, PeerId)] =>
           {
             case ClassicRewardsInput(txs) =>

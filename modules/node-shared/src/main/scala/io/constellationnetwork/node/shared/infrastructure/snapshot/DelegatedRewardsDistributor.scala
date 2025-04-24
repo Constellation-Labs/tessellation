@@ -5,7 +5,7 @@ import cats.data.NonEmptySet
 import cats.effect.{Async, Sync}
 import cats.syntax.all._
 
-import scala.collection.immutable.{SortedMap, SortedSet}
+import scala.collection.immutable.{SortedMap, SortedSet, TreeSet}
 
 import io.constellationnetwork.currency.dataApplication.DataCalculatedState
 import io.constellationnetwork.node.shared.config.types.{DelegatedRewardsConfig, SharedConfig}
@@ -29,7 +29,7 @@ import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 
 /** Result container for delegation rewards calculation
   */
-case class DelegationRewardsResult(
+case class DelegatedRewardsResult(
   delegatorRewardsMap: SortedMap[PeerId, Map[Address, Amount]],
   updatedCreateDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
   updatedWithdrawDelegatedStakes: SortedMap[Address, List[PendingDelegatedStakeWithdrawal]],
@@ -47,7 +47,7 @@ case class PartitionedStakeUpdates(
 
 trait DelegatedRewardsDistributor[F[_]] {
 
-  def calculateTotalRewardsToMint(epochProgress: EpochProgress): F[Amount]
+  def calculateVariableInflation(epochProgress: EpochProgress): F[Amount]
 
   def distribute(
     lastSnapshotContext: GlobalSnapshotInfo,
@@ -56,7 +56,7 @@ trait DelegatedRewardsDistributor[F[_]] {
     facilitators: List[(Address, PeerId)],
     delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
     partitionedRecords: PartitionedStakeUpdates
-  ): F[DelegationRewardsResult]
+  ): F[DelegatedRewardsResult]
 }
 
 object DelegatedRewardsDistributor {
@@ -125,8 +125,8 @@ object DelegatedRewardsDistributor {
     nodeOperatorRewards: SortedSet[RewardTransaction],
     delegatorRewardsMap: Map[PeerId, Map[Address, Amount]]
   ): F[Amount] = {
-    val reservedEmittedAmount = reservedAddressRewards.map(_.amount.value.value).sum
-    val validatorsEmittedAmount = nodeOperatorRewards.map(_.amount.value.value).sum
+    val reservedEmittedAmount = reservedAddressRewards.toList.map(_.amount.value.value).sum
+    val validatorsEmittedAmount = nodeOperatorRewards.toList.map(_.amount.value.value).sum
     val delegatorsEmittedAmount = delegatorRewardsMap.map(_._2.values.map(_.value.value).sum).sum
     val totalEmitted = reservedEmittedAmount + validatorsEmittedAmount + delegatorsEmittedAmount
     NonNegLong
