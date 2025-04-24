@@ -382,6 +382,9 @@ sleep 30
 # First error, after withdrawal, not removing empty list for address in snapshot info
 # activeDelegatedStakes":{"DAG1vmb6wbdKgMRite7nTmp5Di8mT5ZqjRw6KNTc":[]}
 # uncomment to reproduce error
+
+echo "Verifying activeDelegatedStakes output"
+
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[1].activeDelegatedStakes'
 
@@ -391,18 +394,25 @@ jq -e '.[1].activeDelegatedStakes'
 #jq -e '.[1].activeDelegatedStakes | length == 0' > /dev/null || \
 #{ echo "ERROR: activeDelegatedStakes is not empty in snapshot combined"; exit 1; }
 
+echo "Verifying delegateRewards output"
 
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[0].delegateRewards'
+
+echo "Verifying delegateRewards null"
+
 
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[0].delegateRewards == null' > /dev/null || \
 { echo "ERROR: delegateRewards is not empty in snapshot combined"; exit 1; }
 
+echo "Verifying delegated stake info"
+
 curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
 jq -e '.activeDelegatedStakes | length == 0' > /dev/null || \
 { echo "ERROR: activeDelegatedStakes is not empty in DS info endpoint"; exit 1; }
 
+echo "Checking withdrawals empty"
 
 MAX_RETRIES=30  # 5 minutes with 10-second intervals
 RETRY_COUNT=0
