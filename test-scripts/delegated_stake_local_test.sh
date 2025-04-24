@@ -88,14 +88,14 @@ out=$(
 export GL0_GENERATED_WALLET_PEER_ID=$out
 echo "Generated GL0 wallet peer id $GL0_GENERATED_WALLET_PEER_ID"
 
-export GL0_GENERATED_WALLET_ADDRESS=$(
+export ADDRESS=$(
   source .envrc
   java -jar ../../wallet.jar show-address
 )
-echo "Generated GL0 wallet address $GL0_GENERATED_WALLET_ADDRESS"
+echo "Generated GL0 wallet address $ADDRESS"
 
 # 1000000 * 1e8
-echo "$GL0_GENERATED_WALLET_ADDRESS,100000000000000" > genesis.csv
+echo "$ADDRESS,100000000000000" > genesis.csv
 
 echo "Generated genesis file:"
 cat genesis.csv
@@ -237,15 +237,34 @@ curl -i -X POST --header 'Content-Type: application/json' \
   -d "{\"id\":\"$PEER_ID\",\"ip\":\"127.0.0.1\",\"p2pPort\":19991}" \
   localhost:29992/cluster/join
 
+# Await joined.
+# Bug in L1 joining, latter two peers do not recognize / acknowledge each other.
+# 21:35:32.707 [io-compute-8] [31mWARN [0;39m [36mi.c.n.s.h.p.c.S.$anon[0;39m - Join request rejected due to: Node is not part of the cluster.
+# If this sleep is not present, two peers cannot join at the exact same time, despite
+# using the same coordinator node.
+sleep 20
+
 # Second join
 curl -i -X POST --header 'Content-Type: application/json' \
   -d "{\"id\":\"$PEER_ID\",\"ip\":\"127.0.0.1\",\"p2pPort\":19991}" \
   localhost:39992/cluster/join
 
-
 # Await joined.
 sleep 20
 
+for i in 1 2 3; do
+    port="${i}9990"
+    curl -s http://localhost:${port}/cluster/info | \
+    jq -e 'length > 2' > /dev/null || { echo "ERROR: dag-l1 $i doesn't have 3 nodes"; exit 1; }
+done
+
+
+
+### CLUSTER SPECIFIC TESTING BELOW
+echo "Starting cluster test"
+
+export DAG_L0_URL="http://localhost:9000"
+export DAG_L1_URL="http://localhost:29990"
 
 # Create node update params for gl0 kp
 cd ./nodes/global-l0/0/
@@ -257,13 +276,12 @@ out=$(
 echo "Create node params output $out"
 cat event
 cp event initial-node-params.json
-curl -i -X POST --header 'Content-Type: application/json' --data @initial-node-params.json localhost:9000/node-params
+curl -i -X POST --header 'Content-Type: application/json' --data @initial-node-params.json "$DAG_L0_URL"/node-params
 # Await accepted
-# NEED ASSERTIONS HERE TO VERIFY ACCEPTED
 sleep 30
 cd ../../..
 
-curl -s http://localhost:9000/global-snapshots/latest/combined | \
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[1].updateNodeParameters | length > 0' > /dev/null || \
 { echo "ERROR: updateNodeParameters is empty in snapshot combined"; exit 1; }
 
@@ -279,29 +297,99 @@ cat event
 cp event initial-token-lock.json
 export TOKEN_LOCK_HASH=$out
 echo "Initial token lock hash reference $TOKEN_LOCK_HASH"
-curl -i -X POST --header 'Content-Type: application/json' --data @initial-token-lock.json localhost:29990/token-locks
+curl -i -X POST --header 'Content-Type: application/json' --data @initial-token-lock.json "$DAG_L1_URL"/token-locks
 # Await accepted, may require adjustment
-# NEED ASSERTIONS HERE TO VERIFY ACCEPTED
-sleep 30
+sleep 60
 cd ../../..
 
-## Test is currently broken here with token-lock in stage: WAITING
-#
-## Create delegated stake for gl0 kp
-#
-#cd ./nodes/global-l0/0/
-#out=$(
-#  source .envrc
-#  java -jar ../../wallet.jar create-delegated-stake --amount 6000 --token-lock $TOKEN_LOCK_HASH
-#)
-#echo "Create delegated stake output $out"
-#cat event
-#cp event initial-delegated-stake.json
-#curl -i -X POST --header 'Content-Type: application/json' --data @initial-delegated-stake.json localhost:9000/delegated-stakes
-## Await accepted, may require adjustment
-## NEED ASSERTIONS HERE TO VERIFY ACCEPTED
-#cd ../../..
-#sleep 30
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e '.[1].activeTokenLocks | length == 1' > /dev/null || \
+{ echo "ERROR: activeTokenLocks is empty in snapshot combined"; exit 1; }
+
+
+# Create delegated stake for gl0 kp
+
+cd ./nodes/global-l0/0/
+out=$(
+  source .envrc
+  java -jar ../../wallet.jar create-delegated-stake --amount 6000 --token-lock $TOKEN_LOCK_HASH
+)
+echo "Create delegated stake hash $out"
+export DELEGATED_STAKE_HASH=$out
+cat event
+cp event initial-delegated-stake.json
+curl -i -X POST --header 'Content-Type: application/json' --data @initial-delegated-stake.json "$DAG_L0_URL"/delegated-stakes
+# Await accepted, may require adjustment
+cd ../../..
+sleep 30
+
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e '.[1].activeDelegatedStakes | length == 1' > /dev/null || \
+{ echo "ERROR: activeDelegatedStakes is empty in snapshot combined"; exit 1; }
+
+sleep 30
+
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e '.[0].delegateRewards != {}' > /dev/null || \
+{ echo "ERROR: delegateRewards is empty in snapshot combined"; exit 1; }
+
+curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
+jq -e '.activeDelegatedStakes | length == 1' > /dev/null || \
+{ echo "ERROR: activeDelegatedStakes is empty in DS info endpoint"; exit 1; }
+
+
+# initiate withdraw
+cd ./nodes/global-l0/0/
+out=$(
+  source .envrc
+  java -jar ../../wallet.jar withdraw-delegated-stake --stake-ref "$DELEGATED_STAKE_HASH"
+)
+echo "Withdraw delegated stake output $out"
+cat event
+cp event withdraw-delegated-stake.json
+curl -i -X PUT --header 'Content-Type: application/json' --data @withdraw-delegated-stake.json "$DAG_L0_URL"/delegated-stakes
+# Await accepted, may require adjustment
+cd ../../..
+
+sleep 30
+
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e '.[0].delegatedStakesWithdrawals.length == 1' > /dev/null || \
+{ echo "ERROR: delegatedStakesWithdrawals is empty in snapshot combined"; exit 1; }
+
+# First error, after withdrawal, not removing empty list for address in snapshot info
+# activeDelegatedStakes":{"DAG1vmb6wbdKgMRite7nTmp5Di8mT5ZqjRw6KNTc":[]}
+# uncomment to reproduce error
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e '.[1].activeDelegatedStakes'
+
+# Active token locks has same issue, looks like above
+
+#curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+#jq -e '.[1].activeDelegatedStakes | length == 0' > /dev/null || \
+#{ echo "ERROR: activeDelegatedStakes is not empty in snapshot combined"; exit 1; }
+
+
+# These all fail currently
+
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e '.[0].delegateRewards'
+
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e '.[0].delegateRewards == null' > /dev/null || \
+{ echo "ERROR: delegateRewards is not empty in snapshot combined"; exit 1; }
+
+curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
+jq -e '.activeDelegatedStakes | length == 0' > /dev/null || \
+{ echo "ERROR: activeDelegatedStakes is not empty in DS info endpoint"; exit 1; }
+
+sleep 300
+
+
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e '.[0].delegatedStakesWithdrawals.length == 0' > /dev/null || \
+{ echo "ERROR: delegatedStakesWithdrawals is empty in snapshot combined"; exit 1; }
+
 
 # Check if we should kill processes based on KEEP_ALIVE flag
 if [ "$KEEP_ALIVE" = "false" ]; then

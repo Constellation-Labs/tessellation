@@ -134,7 +134,25 @@ object Main
                             keyPair
                           )
                         _ <- writeJson[IO, Signed[UpdateDelegatedStake.Create]](Some(Path.apply("event")))(sign)
-                      } yield ()
+                        hash <- hasher.hash(sign.value)
+                      } yield println(hash.value)
+                    }
+                  case w: WithdrawDelegatedStake =>
+                    implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
+                    toExitCode("Error while creating or signing event") {
+                      val hash = Hash(w.stakeRef)
+                      for {
+                        sign <- Signed
+                          .forAsyncHasher[IO, UpdateDelegatedStake.Withdraw](
+                            UpdateDelegatedStake.Withdraw(
+                              selfAddress,
+                              hash
+                            ),
+                            keyPair
+                          )
+                        _ <- writeJson[IO, Signed[UpdateDelegatedStake.Withdraw]](Some(Path.apply("event")))(sign)
+                        hash <- hasher.hash(sign.value)
+                      } yield println(hash.value)
                     }
                   case CreateUpdateNodeParameters(rewardFraction, name, description, parent) =>
                     implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
@@ -192,6 +210,7 @@ object Main
                         hash <- hasher.hash(sign.value)
                       } yield println(hash.value)
                     }
+
                 }
               }
             }

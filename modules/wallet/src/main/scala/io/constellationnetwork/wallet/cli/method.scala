@@ -155,6 +155,17 @@ object method {
     }
   }
 
+  case class WithdrawDelegatedStake(
+    stakeRef: String
+  ) extends CliMethod
+
+  object WithdrawDelegatedStake extends WithOpts[WithdrawDelegatedStake] {
+    val opts: Opts[WithdrawDelegatedStake] = Opts.subcommand("withdraw-delegated-stake", "Withdraw delegated lock") {
+      Opts
+        .option[String]("stake-ref", "Hash ref to active delegated stake")
+        .map(WithdrawDelegatedStake.apply)
+    }
+  }
   case class CreateUpdateNodeParameters(
     rewardFraction: Double,
     name: String,
@@ -234,4 +245,5 @@ object method {
       .orElse(CreateUpdateNodeParameters.opts)
       .orElse(CreateTokenLock.opts)
       .orElse(CreateDelegatedStake.opts)
+      .orElse(WithdrawDelegatedStake.opts)
 }
