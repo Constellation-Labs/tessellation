@@ -351,7 +351,7 @@ curl -i -X PUT --header 'Content-Type: application/json' --data @withdraw-delega
 # Await accepted, may require adjustment
 cd ../../..
 
-sleep 30
+sleep 60
 
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[0].delegatedStakesWithdrawals.length == 1' > /dev/null || \
