@@ -246,7 +246,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     (_, _, _, _, _, _) => IO(SortedSet.empty)
 
   val delegatorRewards: DelegatedRewardsDistributor[F] = new DelegatedRewardsDistributor[F] {
-    def calculateTotalRewardsToMint(epochProgress: EpochProgress): GlobalSnapshotConsensusFunctionsSuite.F[Amount] = Amount(100L).pure[F]
+    def calculateVariableInflation(epochProgress: EpochProgress): GlobalSnapshotConsensusFunctionsSuite.F[Amount] = Amount(100L).pure[F]
 
     def distribute(
       lastSnapshotContext: GlobalSnapshotContext,
@@ -255,8 +255,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       facilitators: List[(Address, PeerId)],
       delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
       partitionedRecords: PartitionedStakeUpdates
-    ): GlobalSnapshotConsensusFunctionsSuite.F[DelegationRewardsResult] =
-      DelegationRewardsResult(
+    ): GlobalSnapshotConsensusFunctionsSuite.F[DelegatedRewardsResult] =
+      DelegatedRewardsResult(
         SortedMap.empty,
         SortedMap.empty,
         SortedMap.empty,

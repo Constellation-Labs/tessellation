@@ -10,7 +10,7 @@ import io.constellationnetwork.dag.l0.config.DelegatedRewardsConfigProvider
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
-import io.constellationnetwork.node.shared.infrastructure.snapshot.DelegationRewardsResult
+import io.constellationnetwork.node.shared.infrastructure.snapshot.DelegatedRewardsResult
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
@@ -76,13 +76,13 @@ object TessellationV3RewardsMigrationSuite extends SimpleIOSuite with Checkers {
     Map.empty
   )
 
-  def createClassicRewardsResult(amount: Long): DelegationRewardsResult = {
+  def createClassicRewardsResult(amount: Long): DelegatedRewardsResult = {
     val rewardTxs = SortedSet(
       RewardTransaction(protocolDevAddress, TransactionAmount(PosLong.unsafeFrom(amount * 30 / 100))),
       RewardTransaction(stardustAddress, TransactionAmount(PosLong.unsafeFrom(amount * 5 / 100)))
     )
 
-    DelegationRewardsResult(
+    DelegatedRewardsResult(
       delegatorRewardsMap = SortedMap.empty,
       updatedCreateDelegatedStakes = SortedMap.empty,
       updatedWithdrawDelegatedStakes = SortedMap.empty,

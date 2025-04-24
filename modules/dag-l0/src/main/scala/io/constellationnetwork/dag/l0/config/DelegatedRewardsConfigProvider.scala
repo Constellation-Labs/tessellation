@@ -76,22 +76,40 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
       )
     ),
     percentDistribution = Map(
-      AppEnvironment.Dev -> ProgramsDistributionConfig(
+      AppEnvironment.Dev -> devnetDistributionProgram,
+      AppEnvironment.Testnet -> testnetDistributionProgram,
+      AppEnvironment.Integrationnet -> intnetDistributionProgram,
+      AppEnvironment.Mainnet -> mainnetDistributionProgram
+    )
+  )
+
+  private val devnetDistributionProgram: EpochProgress => ProgramsDistributionConfig =
+    _ =>
+      ProgramsDistributionConfig(
         weights = Map.empty,
         validatorsWeight = NonNegFraction.unsafeFrom(50L, 100L),
         delegatorsWeight = NonNegFraction.unsafeFrom(50L, 100L)
-      ),
-      AppEnvironment.Testnet -> ProgramsDistributionConfig(
+      )
+
+  private val testnetDistributionProgram: EpochProgress => ProgramsDistributionConfig =
+    _ =>
+      ProgramsDistributionConfig(
         weights = Map.empty,
         validatorsWeight = NonNegFraction.unsafeFrom(50L, 100L),
         delegatorsWeight = NonNegFraction.unsafeFrom(50L, 100L)
-      ),
-      AppEnvironment.Integrationnet -> ProgramsDistributionConfig(
+      )
+
+  private val intnetDistributionProgram: EpochProgress => ProgramsDistributionConfig =
+    _ =>
+      ProgramsDistributionConfig(
         weights = Map.empty,
         validatorsWeight = NonNegFraction.unsafeFrom(50L, 100L),
         delegatorsWeight = NonNegFraction.unsafeFrom(50L, 100L)
-      ),
-      AppEnvironment.Mainnet -> ProgramsDistributionConfig(
+      )
+
+  private val mainnetDistributionProgram: EpochProgress => ProgramsDistributionConfig =
+    _ =>
+      ProgramsDistributionConfig(
         weights = Map(
           stardustNewPrimary -> NonNegFraction.unsafeFrom(5L, 100L),
           testnet -> NonNegFraction.unsafeFrom(24L, 1000L),
@@ -101,6 +119,4 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
         validatorsWeight = NonNegFraction.unsafeFrom(88L, 1000L),
         delegatorsWeight = NonNegFraction.unsafeFrom(45L, 100L)
       )
-    )
-  )
 }

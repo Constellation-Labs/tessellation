@@ -1,5 +1,7 @@
 package io.constellationnetwork.schema
 
+import java.math.MathContext
+
 import cats.syntax.all._
 import cats.{ApplicativeThrow, MonadThrow}
 

@@ -189,7 +189,7 @@ object types {
   case class DelegatedRewardsConfig(
     flatInflationRate: NonNegFraction,
     emissionConfig: Map[AppEnvironment, EmissionConfigEntry],
-    percentDistribution: Map[AppEnvironment, ProgramsDistributionConfig]
+    percentDistribution: Map[AppEnvironment, EpochProgress => ProgramsDistributionConfig]
   ) extends RewardsConfig
 
   case class TrustStorageConfig(
