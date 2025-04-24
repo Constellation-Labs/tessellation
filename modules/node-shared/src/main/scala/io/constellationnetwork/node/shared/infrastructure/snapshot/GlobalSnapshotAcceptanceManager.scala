@@ -1,7 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
-import cats.data.Validated.{Invalid, Valid}
-import cats.data.{NonEmptyList, NonEmptySet}
+import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.syntax.all._
 import cats.{MonadThrow, Parallel}
@@ -13,7 +12,6 @@ import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnap
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.merkletree.syntax._
-import io.constellationnetwork.node.shared.config.types.RewardsConfig
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
   UpdateDelegatedStakeAcceptanceManager,
@@ -27,7 +25,6 @@ import io.constellationnetwork.node.shared.domain.nodeCollateral.{
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
-import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator.SpendActionValidationError
 import io.constellationnetwork.node.shared.domain.swap.block.{
   AllowSpendBlockAcceptanceContext,
   AllowSpendBlockAcceptanceManager,
@@ -38,12 +35,10 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.{
   TokenLockBlockAcceptanceManager,
   TokenLockBlockAcceptanceResult
 }
-import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact._
-import io.constellationnetwork.schema.balance.Balance._
 import io.constellationnetwork.schema.balance.{Amount, Balance, BalanceArithmeticError}
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
@@ -281,36 +276,11 @@ object GlobalSnapshotAcceptanceManager {
           SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
         )
 
-        spendTransactionsValidations <- spendActions.toList.traverse {
-          case (address, actions) =>
-            actions.traverse { action =>
-              spendActionValidator
-                .validate(
-                  action,
-                  lastActiveAllowSpends,
-                  currencyBalances ++ globalBalances,
-                  address
-                )
-                .map {
-                  case Valid(validAction) => Right(validAction)
-                  case Invalid(errors)    => Left((action, errors.toNonEmptyList.toList))
-                }
-            }.map(address -> _.partitionMap(identity))
-        }
-
-        acceptedSpendActions = spendTransactionsValidations.map {
-          case (address, (_, accepted)) => address -> accepted
-        }.filter {
-          case (_, spendAction) => spendAction.nonEmpty
-        }.toMap
-
-        rejectedSpendActions = spendTransactionsValidations.flatMap {
-          case (address, (rejected, _)) =>
-            rejected.map {
-              case (action: SpendAction, errors: List[SpendActionValidationError]) =>
-                address -> (action, errors)
-            }
-        }
+        (acceptedSpendActions, rejectedSpendActions) <- spendActionValidator.validateReturningAcceptedAndRejected(
+          spendActions,
+          lastActiveAllowSpends,
+          currencyBalances ++ globalBalances
+        )
 
         _ <- Slf4jLogger.getLogger[F].debug(s"--- Accepted spend actions: ${acceptedSpendActions.show}")
         _ <- Slf4jLogger.getLogger[F].debug(s"--- Rejected spend actions: ${rejectedSpendActions.show}")

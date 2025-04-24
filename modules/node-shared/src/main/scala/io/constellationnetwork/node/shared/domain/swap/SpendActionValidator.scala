@@ -1,18 +1,20 @@
 package io.constellationnetwork.node.shared.domain.swap
 
 import cats.Applicative
+import cats.data.Validated.{Invalid, Valid}
 import cats.data.ValidatedNec
 import cats.effect.kernel.Async
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator.SpendActionValidationErrorOr
+import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator.{SpendActionValidationError, SpendActionValidationErrorOr}
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{SpendAction, SpendTransaction}
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.swap.AllowSpend
 import io.constellationnetwork.security.Hasher
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
 import derevo.cats.{eqv, show}
@@ -25,24 +27,157 @@ trait SpendActionValidator[F[_]] {
     allBalances: Map[Option[Address], SortedMap[Address, Balance]],
     currencyId: Address
   ): F[SpendActionValidationErrorOr[SpendAction]]
+
+  def validateReturningAcceptedAndRejected(
+    spendActions: Map[Address, List[SpendAction]],
+    activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
+    allBalances: Map[Option[Address], SortedMap[Address, Balance]]
+  ): F[(Map[Address, List[SpendAction]], Map[Address, (SpendAction, List[SpendActionValidationError])])]
 }
 
 object SpendActionValidator {
   def make[F[_]: Async: Hasher]: SpendActionValidator[F] = new SpendActionValidator[F] {
+
+    def validateReturningAcceptedAndRejected(
+      spendActions: Map[Address, List[SpendAction]],
+      activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
+      allBalances: Map[Option[Address], SortedMap[Address, Balance]]
+    ): F[
+      (
+        Map[Address, List[SpendAction]],
+        Map[Address, (SpendAction, List[SpendActionValidationError])]
+      )
+    ] = {
+      def processActionsForCurrency(
+        currencyId: Address,
+        currencySpendActions: List[SpendAction],
+        currentAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+      ): F[
+        (
+          SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
+          (Address, (List[(SpendAction, List[SpendActionValidationError])], List[SpendAction]))
+        )
+      ] =
+        currencySpendActions
+          .foldLeftM(
+            (currentAllowSpends, List.empty[(SpendAction, List[SpendActionValidationError])], List.empty[SpendAction])
+          ) {
+            case ((allowSpendsAcc, rejectedSpendActions, acceptedSpendActions), action) =>
+              validate(action, allowSpendsAcc, allBalances, currencyId).flatMap {
+                case Valid(validAction) =>
+                  updateCurrentAllowSpendsForValidation(validAction, allowSpendsAcc).map { updated =>
+                    (updated, rejectedSpendActions, validAction :: acceptedSpendActions)
+                  }
+                case Invalid(errors) =>
+                  Async[F].pure((allowSpendsAcc, (action -> errors.toNonEmptyList.toList) :: rejectedSpendActions, acceptedSpendActions))
+              }
+          }
+          .map {
+            case (updatedAllowSpends, rejected, accepted) =>
+              updatedAllowSpends -> (currencyId -> (rejected.reverse, accepted.reverse))
+          }
+
+      spendActions.toList
+        .foldLeftM(
+          (activeAllowSpends, List.empty[(Address, (List[(SpendAction, List[SpendActionValidationError])], List[SpendAction]))])
+        ) {
+          case ((allowSpendsAcc, results), (currencyId, currencySpendActions)) =>
+            processActionsForCurrency(currencyId, currencySpendActions, allowSpendsAcc).map {
+              case (updatedAllowSpends, result) =>
+                (updatedAllowSpends, result :: results)
+            }
+        }
+        .map {
+          case (_, spendTransactionsValidations) =>
+            val acceptedSpendActions = spendTransactionsValidations.map {
+              case (address, (_, accepted)) => address -> accepted
+            }.filter {
+              case (_, spendAction) => spendAction.nonEmpty
+            }.toMap
+
+            val rejectedSpendActions = spendTransactionsValidations.flatMap {
+              case (address, (rejected, _)) =>
+                rejected.map {
+                  case (action: SpendAction, errors: List[SpendActionValidationError]) =>
+                    address -> (action, errors)
+                }
+            }.toMap
+
+            (acceptedSpendActions, rejectedSpendActions)
+        }
+    }
+
     def validate(
       spendAction: SpendAction,
       activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
       allBalances: Map[Option[Address], SortedMap[Address, Balance]],
       currencyId: Address
     ): F[SpendActionValidationErrorOr[SpendAction]] = {
-      val validations = spendAction.spendTransactions.traverse { spendTransaction =>
-        validateSpendTx(spendTransaction, activeAllowSpends, allBalances, currencyId)
-      }
+      val hasDuplicatedAllowSpendReference = spendAction.spendTransactions
+        .groupBy(_.allowSpendRef)
+        .collect { case (Some(hash), value) => (hash, value) }
+        .exists { case (_, value) => value.size > 1 }
 
-      validations.map(_.sequence.as(spendAction))
+      if (hasDuplicatedAllowSpendReference) {
+        (DuplicatedAllowSpendReference(
+          s"Duplicated allow spend reference in the same SpendAction"
+        ): SpendActionValidationError).invalidNec[SpendAction].pure[F]
+      } else {
+        val validations = spendAction.spendTransactions.traverse { spendTransaction =>
+          validateSpendTx(spendTransaction, activeAllowSpends, allBalances, currencyId)
+        }
+
+        validations.map(_.sequence.as(spendAction))
+      }
     }
 
-    def validateSpendTx(
+    private def updateCurrentAllowSpendsForValidation(
+      validAction: SpendAction,
+      currentActiveAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+    ): F[SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]] = {
+      def removeAllowSpendRef(
+        acc: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
+        currencyId: Option[Address],
+        source: Address,
+        ref: Hash
+      ): F[SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]] = {
+        val currencyActiveAllowSpends = acc.get(currencyId)
+        currencyActiveAllowSpends.flatMap(_.get(source)) match {
+          case Some(allowSpends) =>
+            allowSpends.toList.filterA(_.toHashed.map(_.hash =!= ref)).map { filtered =>
+              val updatedSet = SortedSet.from(filtered)
+
+              val updatedCurrencyMap =
+                if (updatedSet.nonEmpty)
+                  acc(currencyId) + (source -> updatedSet)
+                else
+                  acc(currencyId) - source
+
+              val updatedAllowSpends =
+                if (updatedCurrencyMap.nonEmpty)
+                  acc + (currencyId -> updatedCurrencyMap)
+                else
+                  acc - currencyId
+
+              updatedAllowSpends
+            }
+
+          case None => acc.pure[F]
+        }
+      }
+
+      val txnsToRemove = validAction.spendTransactions.collect {
+        case txn if txn.allowSpendRef.isDefined =>
+          (txn.currencyId.map(_.value), txn.source, txn.allowSpendRef.get)
+      }
+
+      txnsToRemove.foldM(currentActiveAllowSpends) {
+        case (acc, (currencyId, source, ref)) =>
+          removeAllowSpendRef(acc, currencyId, source, ref)
+      }
+    }
+
+    private def validateSpendTx(
       tx: SpendTransaction,
       activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
       allBalances: Map[Option[Address], SortedMap[Address, Balance]],
@@ -56,7 +191,7 @@ object SpendActionValidator {
             .pure(NoActiveAllowSpends(s"Currency ${tx.currencyId} not found in active allow spends").invalidNec[SpendTransaction])
         )
 
-    def validateAllowSpendRef(
+    private def validateAllowSpendRef(
       spendTransaction: SpendTransaction,
       activeAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
       allBalances: Map[Option[Address], SortedMap[Address, Balance]],
@@ -136,6 +271,7 @@ object SpendActionValidator {
   case class SpendAmountGreaterThanAllowed(error: String) extends SpendActionValidationError
   case class NotEnoughCurrencyIdBalance(error: String) extends SpendActionValidationError
   case class InvalidCurrencyId(error: String) extends SpendActionValidationError
+  case class DuplicatedAllowSpendReference(error: String) extends SpendActionValidationError
 
   type SpendActionValidationErrorOr[A] = ValidatedNec[SpendActionValidationError, A]
 }
