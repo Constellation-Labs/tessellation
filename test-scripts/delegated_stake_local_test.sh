@@ -4,12 +4,23 @@
 set -e
 
 export KEEP_ALIVE=true
+export CLEANUP_ON_FAILURE=true
+export CLEAN_BUILD=true
 
 # Remove extra clean if needed
 pkill -f dag-l1 || true
 pkill -f global-l0 || true
 # Function to clean up processes
 cleanup() {
+
+  # Skip cleanup if it's a failure exit and CLEANUP_ON_FAILURE is false
+  if [ "$1" = "failure" ] && [ "$CLEANUP_ON_FAILURE" = "false" ]; then
+    echo "------------------------------------------------"
+    echo "Error occurred, skipping cleanup as CLEANUP_ON_FAILURE=false"
+    echo "------------------------------------------------"
+    exit 1
+  fi
+
   echo "------------------------------------------------"
   echo "Shutting down all processes"
   echo "------------------------------------------------"
@@ -47,6 +58,16 @@ cleanup() {
 # Register the cleanup function to be called on interrupt (SIGINT)
 trap 'cleanup signal' INT TERM
 
+# Override the default error handler to pass "failure" to cleanup
+function error_handler() {
+  local exit_code=$?
+  cleanup "failure"
+  exit $exit_code
+}
+
+# Set the error handler
+trap error_handler ERR
+
 
 # Ensure clean setup
 rm -rf ./nodes
@@ -56,8 +77,11 @@ mkdir -p ./nodes/dag-l1/0
 mkdir -p ./nodes/dag-l1/1
 mkdir -p ./nodes/dag-l1/2
 
-# Build jars, disable clean if necessary (may be required for some changes)
-sbt clean
+# Build jars, run clean only if CLEAN_BUILD is true
+if [ "$CLEAN_BUILD" = "true" ]; then
+  sbt clean
+fi
+
 sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
 
 cp modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly-*.jar ./nodes/global-l0.jar
@@ -400,7 +424,6 @@ curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[0].delegateRewards'
 
 echo "Verifying delegateRewards null"
-
 
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[0].delegateRewards == null' > /dev/null || \
