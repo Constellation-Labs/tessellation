@@ -4,7 +4,7 @@
 set -e
 
 export KEEP_ALIVE=true
-export CLEANUP_ON_FAILURE=true
+export CLEANUP_ON_FAILURE=false
 export CLEAN_BUILD=true
 
 # Remove extra clean if needed
@@ -361,7 +361,6 @@ curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
 jq -e '.activeDelegatedStakes | length == 1' > /dev/null || \
 { echo "ERROR: activeDelegatedStakes is empty in DS info endpoint"; exit 1; }
 
-
 # initiate withdraw
 cd ./nodes/global-l0/0/
 out=$(
@@ -376,32 +375,7 @@ curl -i -X PUT --header 'Content-Type: application/json' --data @withdraw-delega
 cd ../../..
 
 
-# Test is not long enough to detect this
 sleep 30
-
-#
-#MAX_RETRIES=30  # 5 minutes with 10-second intervals
-#RETRY_COUNT=0
-#SUCCESS=false
-#
-#while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-#  if curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | jq -e '.[0].delegatedStakesWithdrawals.length == 1' > /dev/null; then
-#    SUCCESS=true
-#    break
-#  fi
-#
-#  echo "Waiting for delegatedStakesWithdrawals to have length 1 (attempt $((RETRY_COUNT+1))/$MAX_RETRIES)..."
-#  sleep 10
-#  RETRY_COUNT=$((RETRY_COUNT+1))
-#done
-#
-#if [ "$SUCCESS" = true ]; then
-#  echo "Success: delegatedStakesWithdrawals has length 1"
-#else
-#  echo "ERROR: delegatedStakesWithdrawals did not reach length 1 after 5 minutes"
-#  exit 1
-#fi
-#
 
 # First error, after withdrawal, not removing empty list for address in snapshot info
 # activeDelegatedStakes":{"DAG1vmb6wbdKgMRite7nTmp5Di8mT5ZqjRw6KNTc":[]}
