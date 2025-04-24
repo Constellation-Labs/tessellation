@@ -3,9 +3,9 @@ package io.constellationnetwork.node.shared.infrastructure.metrics
 import java.util.concurrent.atomic.AtomicReference
 import java.util.{List => JList}
 
-import cats.Applicative
 import cats.effect.{Async, Resource}
 import cats.syntax.all._
+import cats.{Applicative, Monad}
 
 import scala.concurrent.duration.FiniteDuration
 import scala.jdk.CollectionConverters._
@@ -67,6 +67,26 @@ trait Metrics[F[_]] {
 
 object Metrics {
 
+  implicit class MetricsMapOps(map: Map[String, Any]) {
+    def updateGauges[F[_]](prefix: String)(implicit M: Metrics[F], F: Monad[F]): F[Unit] = {
+      // Start with unit
+      val empty: F[Unit] = F.pure(())
+
+      // Process only numeric values
+      map.foldLeft(empty) {
+        case (acc, (k, v)) =>
+          val key: MetricKey = Refined.unsafeApply(s"dag_${prefix}_$k")
+          v match {
+            case v: Int    => acc.flatMap(_ => M.updateGauge(key, v))
+            case v: Long   => acc.flatMap(_ => M.updateGauge(key, v))
+            case v: Float  => acc.flatMap(_ => M.updateGauge(key, v))
+            case v: Double => acc.flatMap(_ => M.updateGauge(key, v))
+            case v: Number => acc.flatMap(_ => M.updateGauge(key, v.doubleValue()))
+            case _         => acc // Skip non-numeric values
+          }
+      }
+    }
+  }
   type MetricKey = String Refined MatchesRegex["dag_[a-z0-9]+(?:_[a-z0-9]+)*"]
   type LabelName = String Refined MatchesRegex["[a-z0-9]+(?:_[a-z0-9]+)*"]
   type TagSeq = Seq[(LabelName, String)]

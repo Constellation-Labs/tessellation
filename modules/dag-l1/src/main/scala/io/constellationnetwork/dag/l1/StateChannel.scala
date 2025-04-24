@@ -28,6 +28,7 @@ import io.constellationnetwork.dag.l1.modules._
 import io.constellationnetwork.ext.fs2.StreamOps
 import io.constellationnetwork.kernel.CellError
 import io.constellationnetwork.node.shared.cli.CliMethod
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.height.Height
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
@@ -90,7 +91,8 @@ class StateChannel[
         storages.block,
         storages.transaction,
         appConfig.consensus.peersCount,
-        appConfig.consensus.tipsCount
+        appConfig.consensus.tipsCount,
+        storages.tokenLock
       ).handleErrorWith { e =>
         logger.warn(e)("Failure checking if own consensus can be kicked off!").map(_ => false)
       }

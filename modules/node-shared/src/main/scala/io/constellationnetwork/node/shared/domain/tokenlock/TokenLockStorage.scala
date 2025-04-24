@@ -183,6 +183,8 @@ class TokenLockStorage[F[_]: Async](
   def areWaiting: F[Boolean] =
     tokenLocksR.toMap.map(_.values.toList.collectFirstSome(_.collectFirst { case (_, w: WaitingTokenLock) => w }).nonEmpty)
 
+  def count: F[Int] = tokenLocksR.toMap.map(x => x.size)
+
   def pull(count: NonNegLong): F[Option[NonEmptyList[Hashed[TokenLock]]]] =
     for {
       addresses <- tokenLocksR.keys
