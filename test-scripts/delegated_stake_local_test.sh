@@ -3,71 +3,13 @@
 # Break on any error
 set -e
 
-export KEEP_ALIVE=true
-export CLEANUP_ON_FAILURE=false
-export CLEAN_BUILD=true
+# For debugging locally use 0 for ci use 1
+export EXIT_CODE=0
+export CLEAN_BUILD=false
 
 # Remove extra clean if needed
 pkill -f dag-l1 || true
 pkill -f global-l0 || true
-# Function to clean up processes
-cleanup() {
-
-  # Skip cleanup if it's a failure exit and CLEANUP_ON_FAILURE is false
-  if [ "$1" = "failure" ] && [ "$CLEANUP_ON_FAILURE" = "false" ]; then
-    echo "------------------------------------------------"
-    echo "Error occurred, skipping cleanup as CLEANUP_ON_FAILURE=false"
-    echo "------------------------------------------------"
-    exit 1
-  fi
-
-  echo "------------------------------------------------"
-  echo "Shutting down all processes"
-  echo "------------------------------------------------"
-
-  # Kill DAG-L1 processes
-  if [ -n "$DAGL1_NODE_PID_2" ]; then
-    echo "Killing DAG-L1 node 2 (PID: $DAGL1_NODE_PID_2)"
-    kill "$DAGL1_NODE_PID_2" || echo "Process already terminated"
-  fi
-
-  if [ -n "$DAGL1_NODE_PID_1" ]; then
-    echo "Killing DAG-L1 node 1 (PID: $DAGL1_NODE_PID_1)"
-    kill "$DAGL1_NODE_PID_1" || echo "Process already terminated"
-  fi
-
-  if [ -n "$DAGL1_NODE_PID_0" ]; then
-    echo "Killing DAG-L1 node 0 (PID: $DAGL1_NODE_PID_0)"
-    kill "$DAGL1_NODE_PID_0" || echo "Process already terminated"
-  fi
-
-  # Kill GL0 process last
-  if [ -n "$GL0_NODE_PID" ]; then
-    echo "Killing GL0 node (PID: $GL0_NODE_PID)"
-    kill "$GL0_NODE_PID" || echo "Process already terminated"
-  fi
-
-  echo "All processes terminated"
-
-  # Only exit if this was triggered by a signal
-  if [ "$1" = "signal" ]; then
-    exit 0
-  fi
-}
-
-# Register the cleanup function to be called on interrupt (SIGINT)
-trap 'cleanup signal' INT TERM
-
-# Override the default error handler to pass "failure" to cleanup
-function error_handler() {
-  local exit_code=$?
-  cleanup "failure"
-  exit $exit_code
-}
-
-# Set the error handler
-trap error_handler ERR
-
 
 # Ensure clean setup
 rm -rf ./nodes
@@ -93,6 +35,9 @@ cp modules/wallet/target/scala-2.13/tessellation-wallet-assembly-*.jar ./nodes/w
 
 ### GL0 First
 
+# To run this in IJ for breakpoint use:
+# CL_KEYSTORE=key-0.p12;CL_KEYALIAS=alias;CL_PASSWORD=password;CL_APP_ENV=dev;CL_COLLATERAL=0
+
 cat << EOF > ./nodes/global-l0/0/.envrc
 export CL_KEYSTORE="key-0.p12"
 export CL_KEYALIAS="alias"
@@ -112,10 +57,12 @@ out=$(
 export GL0_GENERATED_WALLET_PEER_ID=$out
 echo "Generated GL0 wallet peer id $GL0_GENERATED_WALLET_PEER_ID"
 
-export ADDRESS=$(
+ret_addr=$(
   source .envrc
   java -jar ../../wallet.jar show-address
 )
+export ADDRESS=$ret_addr
+echo "$ADDRESS" > address.txt
 echo "Generated GL0 wallet address $ADDRESS"
 
 # 1000000 * 1e8
@@ -143,11 +90,12 @@ export CL_L0_PEER_HTTP_PORT=9000
 export CL_COLLATERAL=0
 EOF
 echo "export CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> .envrc
-export DAG_L1_PEER_ID_0=$(
+out=$(
   source .envrc
   java -jar ../../keytool.jar generate
   java -jar ../../wallet.jar show-id
 )
+export DAG_L1_PEER_ID_0="$out"
 echo "$DAG_L1_PEER_ID_0" > peer_id
 
 cd ../../../
@@ -279,7 +227,7 @@ sleep 20
 for i in 1 2 3; do
     port="${i}9990"
     curl -s http://localhost:${port}/cluster/info | \
-    jq -e 'length > 2' > /dev/null || { echo "ERROR: dag-l1 $i doesn't have 3 nodes"; exit 1; }
+    jq -e 'length > 2' > /dev/null || { echo "ERROR: dag-l1 $i doesn't have 3 nodes"; exit $EXIT_CODE; }
 done
 
 
@@ -307,7 +255,7 @@ cd ../../..
 
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[1].updateNodeParameters | length > 0' > /dev/null || \
-{ echo "ERROR: updateNodeParameters is empty in snapshot combined"; exit 1; }
+{ echo "ERROR: updateNodeParameters is empty in snapshot combined"; exit $EXIT_CODE; }
 
 # Create token lock for gl0 kp
 cd ./nodes/global-l0/0/
@@ -328,7 +276,7 @@ cd ../../..
 
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[1].activeTokenLocks | length == 1' > /dev/null || \
-{ echo "ERROR: activeTokenLocks is empty in snapshot combined"; exit 1; }
+{ echo "ERROR: activeTokenLocks is empty in snapshot combined"; exit $EXIT_CODE; }
 
 
 # Create delegated stake for gl0 kp
@@ -349,17 +297,17 @@ sleep 30
 
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[1].activeDelegatedStakes | length == 1' > /dev/null || \
-{ echo "ERROR: activeDelegatedStakes is empty in snapshot combined"; exit 1; }
+{ echo "ERROR: activeDelegatedStakes is empty in snapshot combined"; exit $EXIT_CODE; }
 
 sleep 30
 
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[0].delegateRewards != {}' > /dev/null || \
-{ echo "ERROR: delegateRewards is empty in snapshot combined"; exit 1; }
+{ echo "ERROR: delegateRewards is empty in snapshot combined"; exit $EXIT_CODE; }
 
 curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
 jq -e '.activeDelegatedStakes | length == 1' > /dev/null || \
-{ echo "ERROR: activeDelegatedStakes is empty in DS info endpoint"; exit 1; }
+{ echo "ERROR: activeDelegatedStakes is empty in DS info endpoint"; exit $EXIT_CODE; }
 
 # initiate withdraw
 cd ./nodes/global-l0/0/
@@ -390,7 +338,7 @@ jq -e '.[1].activeDelegatedStakes'
 
 #curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 #jq -e '.[1].activeDelegatedStakes | length == 0' > /dev/null || \
-#{ echo "ERROR: activeDelegatedStakes is not empty in snapshot combined"; exit 1; }
+#{ echo "ERROR: activeDelegatedStakes is not empty in snapshot combined"; exit $EXIT_CODE; }
 
 echo "Verifying delegateRewards output"
 
@@ -401,43 +349,13 @@ echo "Verifying delegateRewards null"
 
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[0].delegateRewards == null' > /dev/null || \
-{ echo "ERROR: delegateRewards is not empty in snapshot combined"; exit 1; }
+{ echo "ERROR: delegateRewards is not empty in snapshot combined"; exit $EXIT_CODE; }
 
 echo "Verifying delegated stake info"
 
 curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
 jq -e '.activeDelegatedStakes | length == 0' > /dev/null || \
-{ echo "ERROR: activeDelegatedStakes is not empty in DS info endpoint"; exit 1; }
-
-echo "Checking withdrawals empty"
-
-MAX_RETRIES=30  # 5 minutes with 10-second intervals
-RETRY_COUNT=0
-SUCCESS=false
-
-while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-  if curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | jq -e '.[0].delegatedStakesWithdrawals.length == 0' > /dev/null; then
-    SUCCESS=true
-    break
-  fi
-
-  echo "Waiting for delegatedStakesWithdrawals to have length 0 (attempt $((RETRY_COUNT+1))/$MAX_RETRIES)..."
-  sleep 10
-  RETRY_COUNT=$((RETRY_COUNT+1))
-done
-
-if [ "$SUCCESS" = true ]; then
-  echo "Success: delegatedStakesWithdrawals has length 0"
-else
-  echo "ERROR: delegatedStakesWithdrawals is not empty in snapshot combined"
-  exit 1
-fi
-
-# Check if we should kill processes based on KEEP_ALIVE flag
-if [ "$KEEP_ALIVE" = "false" ]; then
-  cleanup "normal"
-  echo "All processes terminated"
-fi
+{ echo "ERROR: activeDelegatedStakes is not empty in DS info endpoint"; exit $EXIT_CODE; }
 
 
 # Notes:

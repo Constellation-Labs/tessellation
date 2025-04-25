@@ -24,6 +24,7 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.syntax.LogMetricsHelpers.LoggableMap
 import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 
 import eu.timepit.refined.auto.autoUnwrap
@@ -155,10 +156,13 @@ object GlobalDelegatedRewardsDistributor {
       val iImpact = emConfig.iImpact.toBigDecimal
       val epochsPerYear = BigDecimal(emConfig.epochsPerYear.value, mc)
       val transitionEpoch = BigDecimal(emConfig.asOfEpoch.value.value, mc)
-      val totalSupply = BigDecimal(emConfig.totalSupply.value, mc)
 
+      // Configuration is same for all environments.
+      // totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
+      val totalSupply = BigDecimal(emConfig.totalSupply.value, mc)
+      val logger = Slf4jLogger.getLogger[F]
       if (emConfig.dagPrices.values.isEmpty) {
-        Slf4jLogger.getLogger[F].error("Empty DAG price configuration").as(Amount(NonNegLong.unsafeFrom(0L)))
+        logger.error("Empty DAG price configuration").as(Amount(NonNegLong.unsafeFrom(0L)))
       } else {
         val dagPrices = emConfig.dagPrices
         val initialPrice = dagPrices.head._2.toBigDecimal
@@ -194,13 +198,44 @@ object GlobalDelegatedRewardsDistributor {
           annualInflationRate = if (uncappedInflationRate > maxInflation) maxInflation else uncappedInflationRate
 
           // Annual emission calculation with full precision
+          // eg: totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
+          // * annualInflationRate ~~ annualInflationRate=0.0597804394139195325 near start
           annualEmissionValue = totalSupply * annualInflationRate
 
           // Per epoch emission with precision
+          // Again this is still denominated in datum
           perEpochEmissionValue = annualEmissionValue / epochsPerYear
 
           // Convert to Amount with consistent rounding
-          emissionLong = (perEpochEmissionValue * BigDecimal(100_000_000, mc)).setScale(0, RoundingMode.HALF_UP).toLong
+//          emissionLong = (perEpochEmissionValue * BigDecimal(100_000_000, mc)).setScale(0, RoundingMode.HALF_UP).toLong
+          emissionLong = perEpochEmissionValue.setScale(0, RoundingMode.HALF_UP).toLong
+          info = Map(
+            "epochProgress" -> epochProgress.value.value.toString,
+            "iTarget" -> iTarget.toString,
+            "iInitial" -> iInitial.toString,
+            "lambda" -> lambda.toString,
+            "iImpact" -> iImpact.toString,
+            "epochsPerYear" -> epochsPerYear.toString,
+            "transitionEpoch" -> transitionEpoch.toString,
+            "totalSupply" -> totalSupply.toString,
+            "initialPrice" -> initialPrice.toString,
+            "currentPrice" -> currentPrice.toString,
+            "yearDiff" -> currentYearFraction.toString,
+            "priceRatio" -> priceRatio.toString,
+            "priceImpactValue" -> priceImpactValue.toString,
+            "lambdaTimesTDiff" -> lambdaTimesTDiff.toString,
+            "expArgValue" -> expArgValue.toString,
+            "expTimesPriceImpact" -> expTimesPriceImpact.toString,
+            "iInitialMinusTarget" -> iInitialMinusTarget.toString,
+            "diffTerm" -> diffTerm.toString,
+            "uncappedInflationRate" -> uncappedInflationRate.toString,
+            "maxInflation" -> maxInflation.toString,
+            "annualInflationRate" -> annualInflationRate.toString,
+            "annualEmissionValue" -> annualEmissionValue.toString,
+            "perEpochEmissionValue" -> perEpochEmissionValue.toString,
+            "emissionLong" -> emissionLong.toString
+          )
+          _ <- logger.info(s"Reward info ${info.toLogString}")
 
           amount <- NonNegLong
             .from(emissionLong)

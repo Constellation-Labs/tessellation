@@ -47,7 +47,7 @@ object internal {
     )
   }
 
-  private type InternalUrlPrefixes = AnyOf[
+  type InternalUrlPrefixes = AnyOf[
     Equal["/"]
       :: Equal["/cluster"]
       :: Equal["/targets"]

@@ -4,7 +4,6 @@ import java.security.KeyStore
 
 import cats.effect.{Async, ExitCode, IO}
 
-import io.constellationnetwork.BuildInfo
 import io.constellationnetwork.env.env._
 import io.constellationnetwork.keytool.cert.DistinguishedName
 import io.constellationnetwork.keytool.cli.method.{ExportPrivateKeyHex, GenerateWallet, MigrateExistingKeyStoreToStorePassOnly}
@@ -20,8 +19,8 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 object Main
     extends CommandIOApp(
       name = "",
-      header = "Constellation Keytool",
-      version = BuildInfo.version
+      header = "Constellation Keytool"
+//      version = BuildInfo.version
     ) {
   implicit val logger: SelfAwareStructuredLogger[IO] = Slf4jLogger.getLogger[IO]
 
