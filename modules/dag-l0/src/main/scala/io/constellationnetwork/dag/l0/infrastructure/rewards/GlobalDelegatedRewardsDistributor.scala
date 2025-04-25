@@ -200,7 +200,7 @@ object GlobalDelegatedRewardsDistributor {
           perEpochEmissionValue = annualEmissionValue / epochsPerYear
 
           // Convert to Amount with consistent rounding
-          emissionLong = (perEpochEmissionValue * BigDecimal(100_000_000, mc)).setScale(0, RoundingMode.HALF_UP).toLong
+          emissionLong = perEpochEmissionValue.setScale(0, RoundingMode.HALF_UP).toLong
 
           amount <- NonNegLong
             .from(emissionLong)
