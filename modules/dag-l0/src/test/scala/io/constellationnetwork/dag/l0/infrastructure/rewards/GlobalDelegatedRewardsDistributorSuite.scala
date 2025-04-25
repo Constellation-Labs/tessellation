@@ -22,6 +22,7 @@ import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node._
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, NonNegFraction, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
@@ -860,7 +861,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     *   - Distribution: reserved 35%, nodes static 20%, delegates 45%
     *   - Reserved breakdown: stardust 5%, protocol 30%
     */
-  test("Verify all values from the reference table are correctly maintained") {
+  test("Verify all values from the reference are correctly maintained") {
     // Setup implicit JSON serializer
     JsonSerializer.forSync[IO].flatMap { implicit j: JsonSerializer[IO] =>
       implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
@@ -918,7 +919,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         UpdateDelegatedStake.Create(
           source = nodeAAddress,
           nodeId = nodeAId.toPeerId,
-          amount = DelegatedStakeAmount(1000L),
+          amount = DelegatedStakeAmount(1000_00000000L),
           fee = DelegatedStakeFee(0L),
           tokenLockRef = Hash.empty
         ),
@@ -929,7 +930,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         UpdateDelegatedStake.Create(
           source = nodeBAddress,
           nodeId = nodeAId.toPeerId,
-          amount = DelegatedStakeAmount(10000L),
+          amount = DelegatedStakeAmount(10000_00000000L),
           fee = DelegatedStakeFee(0L),
           tokenLockRef = Hash.empty
         ),
@@ -940,7 +941,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         UpdateDelegatedStake.Create(
           source = nodeCAddress,
           nodeId = nodeAId.toPeerId,
-          amount = DelegatedStakeAmount(10000L),
+          amount = DelegatedStakeAmount(10000_00000000L),
           fee = DelegatedStakeFee(0L),
           tokenLockRef = Hash.empty
         ),
@@ -952,7 +953,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         UpdateDelegatedStake.Create(
           source = userXAddress,
           nodeId = nodeBId.toPeerId,
-          amount = DelegatedStakeAmount(5000L),
+          amount = DelegatedStakeAmount(5000_00000000L),
           fee = DelegatedStakeFee(0L),
           tokenLockRef = Hash.empty
         ),
@@ -963,7 +964,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         UpdateDelegatedStake.Create(
           source = userYAddress,
           nodeId = nodeBId.toPeerId,
-          amount = DelegatedStakeAmount(50000L),
+          amount = DelegatedStakeAmount(50000_00000000L),
           fee = DelegatedStakeFee(0L),
           tokenLockRef = Hash.empty
         ),
@@ -974,7 +975,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         UpdateDelegatedStake.Create(
           source = userZAddress,
           nodeId = nodeBId.toPeerId,
-          amount = DelegatedStakeAmount(500000L),
+          amount = DelegatedStakeAmount(500000_00000000L),
           fee = DelegatedStakeFee(0L),
           tokenLockRef = Hash.empty
         ),
@@ -986,7 +987,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         UpdateDelegatedStake.Create(
           source = userYAddress,
           nodeId = nodeCId.toPeerId,
-          amount = DelegatedStakeAmount(10000L),
+          amount = DelegatedStakeAmount(10000_00000000L),
           fee = DelegatedStakeFee(0L),
           tokenLockRef = Hash.empty
         ),
@@ -1107,76 +1108,68 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
           emptyAcceptanceResult,
           partitionedUpdates
         )
-        .map { result =>
-          // 8. Extract values from result for verification
-          val totalEmitted = result.totalEmittedRewardsAmount.value.value * 1e-8
+        .map {
+          case DelegatedRewardsResult(
+                delegatorRewardsMap,
+                _,
+                _,
+                nodeOperatorRewards,
+                reservedAddressRewards,
+                _,
+                totalEmittedRewardsAmount
+              ) =>
+            val getReservedReward =
+              (addr: Address) => reservedAddressRewards.find(_.destination == addr).map(_.amount.value.value).getOrElse(0L)
 
-          // Find reserved rewards
-          val stardustReward =
-            result.reservedAddressRewards.find(_.destination == stardustAddress).map(_.amount.value.value).getOrElse(0L) * 1e-8
-          val protocolReward =
-            result.reservedAddressRewards.find(_.destination == protocolAddress).map(_.amount.value.value).getOrElse(0L) * 1e-8
+            val getNodeOperatorRewards = (addr: Address) =>
+              nodeOperatorRewards.toList.collect {
+                case RewardTransaction(destination, amount) if destination == addr => amount.value.value
+              }
 
-          // Get delegator rewards
-          val userXNodeAReward = result.delegatorRewardsMap
-            .get(nodeAId.toPeerId)
-            .flatMap(_.get(userXAddress))
-            .map(_.value.value)
-            .getOrElse(0L) * 1e-8
+            val getDelegateReward = (id: Id, addr: Address) =>
+              delegatorRewardsMap
+                .get(id.toPeerId)
+                .flatMap(_.get(addr))
+                .map(_.value.value)
+                .getOrElse(0L)
 
-          val userYNodeAReward = result.delegatorRewardsMap
-            .get(nodeAId.toPeerId)
-            .flatMap(_.get(userYAddress))
-            .map(_.value.value)
-            .getOrElse(0L) * 1e-8
+            val withinErrorMargin = (actual: Long, expected: Long) => {
+              val diff = Math.abs(actual - expected)
+              val pctDiff = if (expected > 0) BigDecimal(diff) / BigDecimal(expected) else BigDecimal(0)
 
-          val userZNodeAReward = result.delegatorRewardsMap
-            .get(nodeAId.toPeerId)
-            .flatMap(_.get(userZAddress))
-            .map(_.value.value)
-            .getOrElse(0L) * 1e-8
+              pctDiff <= 0.0000001
+            }
 
-          val userXNodeBReward = result.delegatorRewardsMap
-            .get(nodeBId.toPeerId)
-            .flatMap(_.get(userXAddress))
-            .map(_.value.value)
-            .getOrElse(0L) * 1e-8
+            val totalEmitted = totalEmittedRewardsAmount.value.value
 
-          val userYNodeBReward = result.delegatorRewardsMap
-            .get(nodeBId.toPeerId)
-            .flatMap(_.get(userYAddress))
-            .map(_.value.value)
-            .getOrElse(0L) * 1e-8
+            val stardustReward = getReservedReward(stardustAddress)
+            val protocolReward = getReservedReward(protocolAddress)
 
-          val userZNodeBReward = result.delegatorRewardsMap
-            .get(nodeBId.toPeerId)
-            .flatMap(_.get(userZAddress))
-            .map(_.value.value)
-            .getOrElse(0L) * 1e-8
+            val nodeAReward = getNodeOperatorRewards(nodeAAddress).sum
+            val nodeBReward = getNodeOperatorRewards(nodeBAddress).sum
+            val nodeCReward = getNodeOperatorRewards(nodeCAddress).sum
 
-          val userYNodeCReward = result.delegatorRewardsMap
-            .get(nodeCId.toPeerId)
-            .flatMap(_.get(userYAddress))
-            .map(_.value.value)
-            .getOrElse(0L) * 1e-8
+            val userXNodeAReward = getDelegateReward(nodeAId, userXAddress)
+            val userYNodeAReward = getDelegateReward(nodeAId, userYAddress)
+            val userZNodeAReward = getDelegateReward(nodeAId, userZAddress)
+            val userXNodeBReward = getDelegateReward(nodeBId, userXAddress)
+            val userYNodeBReward = getDelegateReward(nodeBId, userYAddress)
+            val userZNodeBReward = getDelegateReward(nodeBId, userZAddress)
+            val userYNodeCReward = getDelegateReward(nodeCId, userYAddress)
 
-          // 9. Compare with expected values
-          val withinErrorMargin = (actual: Double, expected: Double) => {
-            val diff = Math.abs(actual.toLong - expected.toLong)
-            val pctDiff = if (expected > 0) diff.toDouble / expected else 0.0
-            pctDiff <= 0.0001 // 0.01% tolerance
-          }
-
-          expect(withinErrorMargin(totalEmitted, 303.99028945))
-            .and(expect(withinErrorMargin(stardustReward, 14.75681017)))
-            .and(expect(withinErrorMargin(protocolReward, 88.54086100)))
-            .and(expect(withinErrorMargin(userXNodeAReward, 0.21757481)))
-            .and(expect(withinErrorMargin(userYNodeAReward, 2.17574812)))
-            .and(expect(withinErrorMargin(userZNodeAReward, 2.17574812)))
-            .and(expect(withinErrorMargin(userXNodeBReward, 1.14831151)))
-            .and(expect(withinErrorMargin(userYNodeBReward, 11.48311508)))
-            .and(expect(withinErrorMargin(userZNodeBReward, 114.83115079)))
-            .and(expect(withinErrorMargin(userYNodeCReward, 2.33288548)))
+            expect(withinErrorMargin(totalEmitted, 29516015766L))
+              .and(expect(withinErrorMargin(stardustReward, 1475681017L)))
+              .and(expect(withinErrorMargin(protocolReward, 8854086100L)))
+              .and(expect(withinErrorMargin(nodeAReward, 2015177763L)))
+              .and(expect(withinErrorMargin(nodeBReward, 2596615316L)))
+              .and(expect(withinErrorMargin(nodeCReward, 1975508535L)))
+              .and(expect(withinErrorMargin(userXNodeAReward, 20401318L)))
+              .and(expect(withinErrorMargin(userYNodeAReward, 204013176L)))
+              .and(expect(withinErrorMargin(userZNodeAReward, 204013176L)))
+              .and(expect(withinErrorMargin(userXNodeBReward, 107673621L)))
+              .and(expect(withinErrorMargin(userYNodeBReward, 1076736208L)))
+              .and(expect(withinErrorMargin(userZNodeBReward, 10767362076L)))
+              .and(expect(withinErrorMargin(userYNodeCReward, 218747461L)))
         }
     }
   }
