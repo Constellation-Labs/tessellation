@@ -90,7 +90,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         iInitial = NonNegFraction.unsafeFrom(6, 100),
         lambda = NonNegFraction.unsafeFrom(1, 10),
         iImpact = NonNegFraction.unsafeFrom(35, 100),
-        totalSupply = Amount(3693588685L),
+        totalSupply = Amount(3693588685_00000000L),
         dagPrices = SortedMap(
           // DAG per USD format (higher number = lower DAG price)
           EpochProgress(5000000L) -> NonNegFraction.unsafeFrom(45, 1), // 45 DAG per USD ($0.022 per DAG)
@@ -892,7 +892,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
             iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial
             lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda
             iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact
-            totalSupply = Amount(3693588685L), // Total supply
+            totalSupply = Amount(3693588685_00000000L), // Total supply
             dagPrices = SortedMap(
               EpochProgress(0L) -> NonNegFraction.unsafeFrom(25, 1) // 25 DAG per USD
             )
