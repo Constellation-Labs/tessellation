@@ -24,7 +24,6 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.syntax.LogMetricsHelpers.LoggableMap
 import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 
 import eu.timepit.refined.auto.autoUnwrap
@@ -81,7 +80,17 @@ object GlobalDelegatedRewardsDistributor {
             .pure[F]
             .flatMap(Async[F].fromOption(_, new RuntimeException(s"Could not retrieve program distribution config for env: $environment")))
             .map(f => f(epochProgress))
-          (reservedRewards, facilitatorRewardPool, delegatorRewardPool) <- calculateEmissionDistribution(emitFromFunction, pctConfig)
+          epochSPerYear <- delegatedRewardsConfig.emissionConfig
+            .get(environment)
+            .map(_.epochsPerYear.value)
+            .pure[F]
+            .flatMap(Async[F].fromOption(_, new RuntimeException(s"Could not retrieve emission config for env: $environment")))
+          (reservedRewards, facilitatorRewardPool, delegatorRewardPool) <- calculateEmissionDistribution(
+            lastSnapshotContext.activeDelegatedStakes.getOrElse(SortedMap.empty),
+            emitFromFunction,
+            pctConfig,
+            epochSPerYear
+          )
           result <- applyDistribution(
             lastSnapshotContext,
             epochProgress,
@@ -96,52 +105,58 @@ object GlobalDelegatedRewardsDistributor {
     }
 
     private def calculateEmissionDistribution(
+      activeDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
       totalRewards: Amount,
-      pctConfig: ProgramsDistributionConfig
-    ): F[(List[(Address, BigDecimal)], BigDecimal, BigDecimal)] = Async[F].delay {
-      val reservedAddressWeights = pctConfig.weights.toList.map {
-        case (addr, pct) => addr -> pct.toBigDecimal
-      }
-      val reservedWeight = reservedAddressWeights.map(_._2).sum
-      val validatorsWeight = pctConfig.validatorsWeight.toBigDecimal
-      val delegatorsWeight = pctConfig.delegatorsWeight.toBigDecimal
-      val totalWeight = reservedWeight + validatorsWeight + delegatorsWeight
-
-      val flatInflationRate = delegatedRewardsConfig.flatInflationRate.toBigDecimal
-
-      val reservedPercentage = reservedWeight / totalWeight
-      val validatorsPercentage = validatorsWeight / totalWeight
-      val delegatorsPercentage = delegatorsWeight / totalWeight
-
-      val variableRewardsBD = BigDecimal(totalRewards.value.value, mc) // in Datum
-
-      // Calculate individual portions from the variable amount
-      val reservedTotal = variableRewardsBD * reservedPercentage
-      val staticValidatorRewardPool = variableRewardsBD * validatorsPercentage
-      val baseDelegationRewardPool = variableRewardsBD * delegatorsPercentage
-
-      // Calculate inflation amount (applied only to delegators)
-      val flatInflationRewardPool = variableRewardsBD * flatInflationRate
-
-      // Total delegation pool includes base amount plus all inflation
-      val totalDelegationRewardPool = baseDelegationRewardPool + flatInflationRewardPool
-
-      // Calculate reserved rewards for each address based on their proportion of reserved weight
-      val reservedAddressRewards =
-        if (variableRewardsBD <= 0 || reservedWeight <= 0) List.empty
-        else {
-          reservedAddressWeights.map {
-            case (addr, pct) =>
-              // Calculate proportion of reserved amount
-              val proportion = pct / reservedWeight
-              // Calculate reward with high precision
-              val reward = proportion * reservedTotal
-              addr -> reward
-          }
+      pctConfig: ProgramsDistributionConfig,
+      epochsPerYear: Long
+    ): F[(List[(Address, BigDecimal)], BigDecimal, BigDecimal)] =
+      getTotalActiveStake(activeDelegatedStakes).map { totalStakedAmount =>
+        val reservedAddressWeights = pctConfig.weights.toList.map {
+          case (addr, pct) => addr -> pct.toBigDecimal
         }
+        val reservedWeight = reservedAddressWeights.map(_._2).sum
+        val validatorsWeight = pctConfig.validatorsWeight.toBigDecimal
+        val delegatorsWeight = pctConfig.delegatorsWeight.toBigDecimal
+        val totalWeight = reservedWeight + validatorsWeight + delegatorsWeight
 
-      (reservedAddressRewards, staticValidatorRewardPool, totalDelegationRewardPool)
-    }
+        val annualFlatInflationRate = delegatedRewardsConfig.flatInflationRate.toBigDecimal
+
+        val reservedPercentage = reservedWeight / totalWeight
+        val validatorsPercentage = validatorsWeight / totalWeight
+        val delegatorsPercentage = delegatorsWeight / totalWeight
+
+        // these values are in datum
+        val variableRewardsBD = BigDecimal(totalRewards.value.value, mc)
+        val totalStaked = BigDecimal(totalStakedAmount.value.value, mc)
+
+        // Calculate individual portions from the variable amount
+        val reservedTotal = variableRewardsBD * reservedPercentage
+        val staticValidatorRewardPool = variableRewardsBD * validatorsPercentage
+        val baseDelegationRewardPool = variableRewardsBD * delegatorsPercentage
+
+        // Calculate inflation amount (applied only to delegators)
+        val annualEmissionValue = totalStaked * annualFlatInflationRate
+        val flatInflationRewardPool = annualEmissionValue / BigDecimal(epochsPerYear, mc)
+
+        // Total delegation pool includes base amount plus all inflation
+        val totalDelegationRewardPool = baseDelegationRewardPool + flatInflationRewardPool
+
+        // Calculate reserved rewards for each address based on their proportion of reserved weight
+        val reservedAddressRewards =
+          if (variableRewardsBD <= 0 || reservedWeight <= 0) List.empty
+          else {
+            reservedAddressWeights.map {
+              case (addr, pct) =>
+                // Calculate proportion of reserved amount
+                val proportion = pct / reservedWeight
+                // Calculate reward with high precision
+                val reward = proportion * reservedTotal
+                addr -> reward
+            }
+          }
+
+        (reservedAddressRewards, staticValidatorRewardPool, totalDelegationRewardPool)
+      }
 
     /** Calculate rewards using the emission formula with deterministic precision: i(t) = i_initial + (i_initial - i_target) * e^{ -λ *
       * (Y_current - Y_initial) * (P_initial / P_current)^{i_impact} }
@@ -156,29 +171,25 @@ object GlobalDelegatedRewardsDistributor {
       val iImpact = emConfig.iImpact.toBigDecimal
       val epochsPerYear = BigDecimal(emConfig.epochsPerYear.value, mc)
       val transitionEpoch = BigDecimal(emConfig.asOfEpoch.value.value, mc)
-
-      // Configuration is same for all environments.
-      // totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
       val totalSupply = BigDecimal(emConfig.totalSupply.value, mc)
-      val logger = Slf4jLogger.getLogger[F]
+
       if (emConfig.dagPrices.values.isEmpty) {
-        logger.error("Empty DAG price configuration").as(Amount(NonNegLong.unsafeFrom(0L)))
+        Slf4jLogger.getLogger[F].error("Empty DAG price configuration").as(Amount(NonNegLong.unsafeFrom(0L)))
       } else {
         val dagPrices = emConfig.dagPrices
         val initialPrice = dagPrices.head._2.toBigDecimal
         val currentPrice = getCurrentDagPrice(epochProgress, dagPrices).toBigDecimal
 
-        // Years calculation with high precision
         val yearDiff = BigDecimal(epochProgress.value.value - transitionEpoch.toLong, mc) / epochsPerYear
 
         for {
-          // Current year as BigDecimal
+          // Current year
           currentYearFraction <- yearDiff.pure[F]
 
-          // Price ratio calculation with high precision
+          // Price ratio
           priceRatio = if (currentPrice <= 0) BigDecimal(0, mc) else initialPrice / currentPrice
 
-          // Price impact with high precision - use BigDecimal pow
+          // Price impact
           priceImpactValue = BigDecimal(Math.pow(priceRatio.toDouble, iImpact.toDouble), mc)
 
           // Lambda * year difference
@@ -188,54 +199,23 @@ object GlobalDelegatedRewardsDistributor {
           expArgValue = -lambdaTimesTDiff * priceImpactValue
           expTimesPriceImpact = BigDecimal(Math.exp(expArgValue.toDouble), mc)
 
-          // Calculate inflation rate components with precision
+          // Calculate inflation rate components
           iInitialMinusTarget <- (iInitial - iTarget).pure[F]
           diffTerm = iInitialMinusTarget * expTimesPriceImpact
           uncappedInflationRate = iTarget + diffTerm
 
-          // Cap annual inflation at 6% with precision
+          // Cap annual inflation at 6%
           maxInflation = BigDecimal("0.06", mc)
           annualInflationRate = if (uncappedInflationRate > maxInflation) maxInflation else uncappedInflationRate
 
-          // Annual emission calculation with full precision
-          // eg: totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
-          // * annualInflationRate ~~ annualInflationRate=0.0597804394139195325 near start
+          // Annual emission calculation
           annualEmissionValue = totalSupply * annualInflationRate
 
-          // Per epoch emission with precision
-          // Again this is still denominated in datum
+          // Per epoch emission
           perEpochEmissionValue = annualEmissionValue / epochsPerYear
 
           // Convert to Amount with consistent rounding
-//          emissionLong = (perEpochEmissionValue * BigDecimal(100_000_000, mc)).setScale(0, RoundingMode.HALF_UP).toLong
           emissionLong = perEpochEmissionValue.setScale(0, RoundingMode.HALF_UP).toLong
-          info = Map(
-            "epochProgress" -> epochProgress.value.value.toString,
-            "iTarget" -> iTarget.toString,
-            "iInitial" -> iInitial.toString,
-            "lambda" -> lambda.toString,
-            "iImpact" -> iImpact.toString,
-            "epochsPerYear" -> epochsPerYear.toString,
-            "transitionEpoch" -> transitionEpoch.toString,
-            "totalSupply" -> totalSupply.toString,
-            "initialPrice" -> initialPrice.toString,
-            "currentPrice" -> currentPrice.toString,
-            "yearDiff" -> currentYearFraction.toString,
-            "priceRatio" -> priceRatio.toString,
-            "priceImpactValue" -> priceImpactValue.toString,
-            "lambdaTimesTDiff" -> lambdaTimesTDiff.toString,
-            "expArgValue" -> expArgValue.toString,
-            "expTimesPriceImpact" -> expTimesPriceImpact.toString,
-            "iInitialMinusTarget" -> iInitialMinusTarget.toString,
-            "diffTerm" -> diffTerm.toString,
-            "uncappedInflationRate" -> uncappedInflationRate.toString,
-            "maxInflation" -> maxInflation.toString,
-            "annualInflationRate" -> annualInflationRate.toString,
-            "annualEmissionValue" -> annualEmissionValue.toString,
-            "perEpochEmissionValue" -> perEpochEmissionValue.toString,
-            "emissionLong" -> emissionLong.toString
-          )
-          _ <- logger.info(s"Reward info ${info.toLogString}")
 
           amount <- NonNegLong
             .from(emissionLong)
@@ -257,12 +237,10 @@ object GlobalDelegatedRewardsDistributor {
         .map(_._2)
         .getOrElse(dagPrices.head._2) // Default to initial price if no match found
 
-    private def calculateDelegatorRewards(
-      activeDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
-      nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
-      totalDelegationRewardPool: BigDecimal
-    ): F[Map[PeerId, Map[Address, Amount]]] =
-      if (activeDelegatedStakes.isEmpty || totalDelegationRewardPool === BigDecimal(0)) Map.empty[PeerId, Map[Address, Amount]].pure[F]
+    private def getTotalActiveStake(
+      activeDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]]
+    ): F[Amount] =
+      if (activeDelegatedStakes.isEmpty) Amount.empty.pure[F]
       else {
         val activeStakes = activeDelegatedStakes.flatMap {
           case (address, records) =>
@@ -271,19 +249,37 @@ object GlobalDelegatedRewardsDistributor {
             }
         }
 
-        // Calculate total stake with high precision
-        val totalStakeAmount = activeStakes.map(t => BigDecimal(t._3.event.value.amount.value.value, mc)).sum
+        NonNegLong
+          .from(activeStakes.map(s => s._3.event.value.amount.value.value + s._3.rewards.value.value).sum)
+          .pure[F]
+          .map(_.leftMap(new IllegalArgumentException(_)))
+          .flatMap(Async[F].fromEither(_))
+          .map(Amount(_))
+      }
 
-        if (totalStakeAmount <= 0) Map.empty[PeerId, Map[Address, Amount]].pure[F]
+    private def calculateDelegatorRewards(
+      activeDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
+      nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
+      totalDelegationRewardPool: BigDecimal
+    ): F[Map[PeerId, Map[Address, Amount]]] =
+      getTotalActiveStake(activeDelegatedStakes).flatMap { totalStakeAmount =>
+        val totalStakeBD = BigDecimal(totalStakeAmount.value.value, mc)
+
+        if (activeDelegatedStakes.isEmpty || totalStakeBD === 0) Map.empty[PeerId, Map[Address, Amount]].pure[F]
         else {
-          activeStakes
+          activeDelegatedStakes.flatMap {
+            case (address, records) =>
+              records.map { record =>
+                (record.event.value.nodeId.toId, address, record)
+              }
+          }
             .groupBy(_._1)
             .toList
             .flatTraverse {
               case (nodeId, nodeStakes) =>
                 for {
-                  nodeStakeAmount <- nodeStakes.map(t => BigDecimal(t._3.event.value.amount.value.value, mc)).sum.pure[F]
-                  nodePortionOfTotalStake = if (totalStakeAmount > 0) nodeStakeAmount / totalStakeAmount else BigDecimal(0, mc)
+                  nodeStakeAmount <- nodeStakes.map(t => BigDecimal(t._3.event.value.amount.value + t._3.rewards.value, mc)).sum.pure[F]
+                  nodePortionOfTotalStake = if (totalStakeBD > 0) nodeStakeAmount / totalStakeBD else BigDecimal(0, mc)
 
                   nodeRewardParams = nodeParametersMap
                     .get(nodeId)
@@ -306,10 +302,10 @@ object GlobalDelegatedRewardsDistributor {
 
                   addressRewards <- delegatorStakes.toList.traverse {
                     case (address, stakes) =>
-                      val delegatorStakeAmountToThisNode = stakes.map(s => BigDecimal(s.event.value.amount.value.value, mc)).sum
+                      val delegatorStakeAmountTotal = stakes.map(s => BigDecimal(s.event.value.amount.value + s.rewards.value, mc)).sum
                       val delegatorPortionOfNodeStake =
                         if (nodeStakeAmount <= 0) BigDecimal(0, mc)
-                        else delegatorStakeAmountToThisNode / nodeStakeAmount
+                        else delegatorStakeAmountTotal / nodeStakeAmount
 
                       val rewardBD = totalDelegationRewardPool *
                         delegatorRewardPercentage *
@@ -381,7 +377,7 @@ object GlobalDelegatedRewardsDistributor {
           else {
             facilitatorStakes.flatMap {
               case (nodeId, stakeAmount) =>
-                if (stakeAmount <= 0) None // Skip nodes with no stake
+                if (stakeAmount <= 0) None
                 else {
                   nodeParametersMap.get(nodeId.toId).flatMap {
                     case (params, _) =>
@@ -417,10 +413,8 @@ object GlobalDelegatedRewardsDistributor {
     ): F[SortedSet[RewardTransaction]] =
       reservedRewards.traverse {
         case (addr, amt) =>
-          val roundedAmount = amt.setScale(0, RoundingMode.HALF_UP).toLong
-
           PosLong
-            .from(roundedAmount)
+            .from(amt.setScale(0, RoundingMode.HALF_UP).toLong)
             .leftMap(new IllegalArgumentException(_))
             .pure[F]
             .flatMap(Async[F].fromEither)
