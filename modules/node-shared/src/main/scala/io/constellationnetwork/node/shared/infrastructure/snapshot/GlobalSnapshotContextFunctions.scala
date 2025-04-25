@@ -21,6 +21,7 @@ import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.transaction.RewardTransaction
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
@@ -211,7 +212,7 @@ object GlobalSnapshotContextFunctions {
                 .pure[F]
                 .map { txs =>
                   if (signedArtifact.ordinal.value < tessellation3MigrationStartingOrdinal.value) {
-                    DelegationRewardsResult(
+                    DelegatedRewardsResult(
                       delegatorRewardsMap = SortedMap.empty,
                       updatedCreateDelegatedStakes = SortedMap.empty,
                       updatedWithdrawDelegatedStakes = SortedMap.empty,
@@ -221,8 +222,9 @@ object GlobalSnapshotContextFunctions {
                       totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(txs.map(_.amount.value.value).sum))
                     )
                   } else {
-                    DelegationRewardsResult(
-                      delegatorRewardsMap = signedArtifact.delegateRewards.getOrElse(SortedMap.empty),
+                    DelegatedRewardsResult(
+                      delegatorRewardsMap = signedArtifact.delegateRewards
+                        .getOrElse(SortedMap.empty[PeerId, Map[Address, Amount]]),
                       updatedCreateDelegatedStakes = updatedCreateDelegatedStakes,
                       updatedWithdrawDelegatedStakes = updatedWithdrawDelegatedStakes,
                       nodeOperatorRewards = txs,

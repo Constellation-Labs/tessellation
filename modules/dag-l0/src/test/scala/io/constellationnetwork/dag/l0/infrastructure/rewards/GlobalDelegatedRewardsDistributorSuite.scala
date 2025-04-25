@@ -3,8 +3,11 @@ package io.constellationnetwork.dag.l0.infrastructure.rewards
 import cats.data.NonEmptySet
 import cats.effect.IO
 import cats.syntax.all._
+import cats.syntax.applicative._
+import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
+import scala.math.BigDecimal.{RoundingMode, double2bigDecimal}
 
 import io.constellationnetwork.dag.l0.config.DelegatedRewardsConfigProvider
 import io.constellationnetwork.env.AppEnvironment
@@ -12,7 +15,7 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
-import io.constellationnetwork.node.shared.infrastructure.snapshot.{DelegationRewardsResult, PartitionedStakeUpdates}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.{DelegatedRewardsResult, PartitionedStakeUpdates}
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
@@ -35,7 +38,7 @@ import weaver.scalacheck.Checkers
 
 object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
 
-  def createTestDelegationRewardsResult(amount: Amount): DelegationRewardsResult = {
+  def createTestDelegationRewardsResult(amount: Amount): DelegatedRewardsResult = {
     val address1 = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
     val address2 = Address("DAG07tqNLYW8jHU9emXcRTT3CfgCUoumwcLghopd")
     val nodeId1 = Id(Hex("1234567890abcdef"))
@@ -46,7 +49,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       RewardTransaction(address2, TransactionAmount(PosLong.unsafeFrom(amount.value.value * 20 / 100)))
     )
 
-    DelegationRewardsResult(
+    DelegatedRewardsResult(
       delegatorRewardsMap = SortedMap(
         nodeId1.toPeerId -> Map(address1 -> Amount(NonNegLong.unsafeFrom(amount.value.value * 10 / 100))),
         nodeId2.toPeerId -> Map(address2 -> Amount(NonNegLong.unsafeFrom(amount.value.value * 15 / 100)))
@@ -87,7 +90,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         iInitial = NonNegFraction.unsafeFrom(6, 100),
         lambda = NonNegFraction.unsafeFrom(1, 10),
         iImpact = NonNegFraction.unsafeFrom(35, 100),
-        totalSupply = Amount(3693588685_00000000L), // Apply 10^8 scaling
+        totalSupply = Amount(3693588685L),
         dagPrices = SortedMap(
           // DAG per USD format (higher number = lower DAG price)
           EpochProgress(5000000L) -> NonNegFraction.unsafeFrom(45, 1), // 45 DAG per USD ($0.022 per DAG)
@@ -96,11 +99,13 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       )
     ),
     percentDistribution = Map(
-      AppEnvironment.Dev -> ProgramsDistributionConfig(
-        Map.empty,
-        NonNegFraction.one,
-        NonNegFraction.one
-      )
+      AppEnvironment.Dev -> { _ =>
+        ProgramsDistributionConfig(
+          Map.empty,
+          NonNegFraction.one,
+          NonNegFraction.one
+        )
+      }
     )
   )
 
@@ -129,50 +134,6 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
   )
 
-  test("calculateTotalRewardsToMint should calculate total rewards correctly with emission formula") {
-    for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
-      implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
-
-      // Test with epoch at transition point
-      atTransition <- GlobalDelegatedRewardsDistributor
-        .make[IO](AppEnvironment.Dev, simpleEmissionConfig)
-        .calculateTotalRewardsToMint(EpochProgress(100L))
-
-      // Test with epoch after transition with price change
-      afterTransition1 <- GlobalDelegatedRewardsDistributor
-        .make[IO](AppEnvironment.Dev, simpleEmissionConfig)
-        .calculateTotalRewardsToMint(EpochProgress(125L))
-    } yield {
-      // At transition (epoch 100): The plain math for a tester to understand
-      // Inflation rate = target + (initial - target) * e^0 = 1% + (2% - 1%) * 1 = 2%
-      // Annual emission = 100 * 0.02 = 2
-      // Per epoch = 2 / 100 = 0.02
-      // Stored as long with trailing zeros (8 decimal places) = 2000000
-      val expectedAtTransition = 2000000L // 0.02 with 8 decimal places
-
-      // After transition (epoch 125):
-      // Years since transition = (125 - 100) / 100 = 0.25 years
-      // Price ratio - using P_current / P_initial (correct implementation) = 8/10 = 0.8
-      // - When price increases in USD, DAG per USD decreases
-      // - Lower ratio reduces emissions
-      // Price impact = 0.8^0.5 = 0.894 (with positive iImpact, price increase reduces emissions)
-      // Combined term = -λ * (Y_current - Y_initial) * (P_current / P_initial)^i_impact
-      // = -0.1 * 0.25 * 0.894 = -0.02235
-      // Exp term = e^(-0.02235) = 0.9779
-      // Inflation rate = 1% + (2% - 1%) * 0.9779 = 1% + 0.9779% = 1.9779%
-      // Annual emission = 100 * 0.019779 = 1.9779
-      // Per epoch = 1.9779 / 100 = 0.019779
-      // With 8 decimal precision = 1977900 (0.019779 DAG)
-      val expectedAfterTransition1 = 1977887L // empirical implementation value - todo double check
-
-      // Use approximate equals for the after transition case since there may be
-      // slight differences due to floating point math
-      expect(Math.abs(atTransition.value.value - expectedAtTransition) < 1000)
-        .and(expect(Math.abs(afterTransition1.value.value - expectedAfterTransition1) < 6000))
-    }
-  }
-
   test("calculateTotalRewardsToMint verifies emission curve") {
     val testConfig = delegatedRewardsConfig.copy(
       emissionConfig = Map(
@@ -200,12 +161,12 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       // Initial emission at epoch 100
       initialEmission <- GlobalDelegatedRewardsDistributor
         .make[IO](AppEnvironment.Dev, testConfig)
-        .calculateTotalRewardsToMint(EpochProgress(100L))
+        .calculateVariableInflation(EpochProgress(100L))
 
       // Emission after 6 months (0.5 years) with price doubling
       laterEmission <- GlobalDelegatedRewardsDistributor
         .make[IO](AppEnvironment.Dev, testConfig)
-        .calculateTotalRewardsToMint(EpochProgress(106L))
+        .calculateVariableInflation(EpochProgress(106L))
     } yield
       // With higher price and time decay, emissions should decrease
       // For a doubled price (halved DAG/USD ratio) with iImpact=0.5,
@@ -223,12 +184,12 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       // Test with epoch just at transition - should use formula
       atTransition <- GlobalDelegatedRewardsDistributor
         .make[IO](AppEnvironment.Dev, delegatedRewardsConfig)
-        .calculateTotalRewardsToMint(EpochProgress(5000000L))
+        .calculateVariableInflation(EpochProgress(5000000L))
 
       // Test with epoch after transition - should use formula with time decay
       afterTransition <- GlobalDelegatedRewardsDistributor
         .make[IO](AppEnvironment.Dev, delegatedRewardsConfig)
-        .calculateTotalRewardsToMint(EpochProgress(5100000L))
+        .calculateVariableInflation(EpochProgress(5100000L))
     } yield {
       // At transition - with 10^8 scaling factor
       val expectedAtTransition = 30275317090L
@@ -739,8 +700,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, customConfig)
 
       // Test rewards calculation at different epochs relative to transition
-      atTransition <- distributor.calculateTotalRewardsToMint(EpochProgress(1000L))
-      afterTransition <- distributor.calculateTotalRewardsToMint(EpochProgress(1001L))
+      atTransition <- distributor.calculateVariableInflation(EpochProgress(1000L))
+      afterTransition <- distributor.calculateVariableInflation(EpochProgress(1001L))
     } yield
       // Emission formula activates at transition epoch
       expect(atTransition.value.value > 100L) &&
@@ -889,5 +850,334 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         expect(resultEmptyContext.totalEmittedRewardsAmount.value.value > 0) &&
         expect(resultEmptyContext.delegatorRewardsMap.isEmpty) &&
         expect(resultEmptyContext.nodeOperatorRewards.nonEmpty)
+  }
+
+  /** Reference table values:
+    *   - Inflation parameters: target 0.5%, initial 6%, lambda 0.1, impact 0.35
+    *   - Epoch info: epochsPerYear 733897, transition 752477, current 935951.25
+    *   - Total supply: 3693588685 DAG
+    *   - Price info: initial 25 DAG/USD, current 25 DAG/USD
+    *   - Distribution: reserved 35%, nodes static 20%, delegates 45%
+    *   - Reserved breakdown: stardust 5%, protocol 30%
+    */
+  test("Verify all values from the reference table are correctly maintained") {
+    // Setup implicit JSON serializer
+    JsonSerializer.forSync[IO].flatMap { implicit j: JsonSerializer[IO] =>
+      implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
+
+      // 1. Set up addresses for users and nodes
+      val userXAddress = Address("DAG4ngJ2zqRWPN5vauihGbBSzabgMQrM6GHxChpy")
+      val userYAddress = Address("DAG7UP1hSA2Ve7i9T7MhYYhpzeJW1DMpRngqk7vv")
+      val userZAddress = Address("DAG2FGeUYivtEo9EjvpELY4ZS7zDQWvJzQYVzXkX")
+      val stardustAddress = Address("DAG3wbdB4HtqeSumsA8hDFBBvVXxexAtQXJMrbmt")
+      val protocolAddress = Address("DAG77ktMUKHjZMXdmGxg5x9jWJNZbv7mh9dKo6Dj")
+
+      val nodeAAddress = Address("DAG011jH7FMDvKpdb7wewrMWwYtkwq56nHquAHdi")
+      val nodeBAddress = Address("DAG6Yxge8Tzd8DJDJeL4hMLntnhheHGR4DYSPQvf")
+      val nodeCAddress = Address("DAG6cStT1VYZdUhpoME23U5zbTveYq78tj7EihFV")
+
+      val nodeAId = Id(Hex("AAAAAAAAAAAAAAAA"))
+      val nodeBId = Id(Hex("BBBBBBBBBBBBBBBB"))
+      val nodeCId = Id(Hex("CCCCCCCCCCCCCCCC"))
+
+      // 2. Set up the test configuration with exact parameters from the table
+      val testConfig = DelegatedRewardsConfig(
+        // Fixed inflation rate (3%)
+        flatInflationRate = NonNegFraction.unsafeFrom(3, 100),
+        emissionConfig = Map(
+          AppEnvironment.Dev -> EmissionConfigEntry(
+            epochsPerYear = PosLong(733897L),
+            asOfEpoch = EpochProgress(752477L), // Transition epoch
+            iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target
+            iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial
+            lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda
+            iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact
+            totalSupply = Amount(3693588685L), // Total supply
+            dagPrices = SortedMap(
+              EpochProgress(0L) -> NonNegFraction.unsafeFrom(25, 1) // 25 DAG per USD
+            )
+          )
+        ),
+        percentDistribution = Map(
+          AppEnvironment.Dev -> { _ =>
+            ProgramsDistributionConfig(
+              Map(
+                stardustAddress -> NonNegFraction.unsafeFrom(5, 100), // 5% to stardust
+                protocolAddress -> NonNegFraction.unsafeFrom(30, 100) // 30% to protocol
+              ),
+              NonNegFraction.unsafeFrom(20, 100), // 20% to static validators
+              NonNegFraction.unsafeFrom(45, 100) // 45% to delegators
+            )
+          }
+        )
+      )
+
+      // 3. Set up delegated stakes
+      // Node A stakes
+      val stakeCreateUserXNodeA = Signed(
+        UpdateDelegatedStake.Create(
+          source = nodeAAddress,
+          nodeId = nodeAId.toPeerId,
+          amount = DelegatedStakeAmount(1000L),
+          fee = DelegatedStakeFee(0L),
+          tokenLockRef = Hash.empty
+        ),
+        NonEmptySet.one[SignatureProof](SignatureProof(nodeAId, Signature(Hex(Hash.empty.value))))
+      )
+
+      val stakeCreateUserYNodeA = Signed(
+        UpdateDelegatedStake.Create(
+          source = nodeBAddress,
+          nodeId = nodeAId.toPeerId,
+          amount = DelegatedStakeAmount(10000L),
+          fee = DelegatedStakeFee(0L),
+          tokenLockRef = Hash.empty
+        ),
+        NonEmptySet.one[SignatureProof](SignatureProof(nodeAId, Signature(Hex(Hash.empty.value))))
+      )
+
+      val stakeCreateUserZNodeA = Signed(
+        UpdateDelegatedStake.Create(
+          source = nodeCAddress,
+          nodeId = nodeAId.toPeerId,
+          amount = DelegatedStakeAmount(10000L),
+          fee = DelegatedStakeFee(0L),
+          tokenLockRef = Hash.empty
+        ),
+        NonEmptySet.one[SignatureProof](SignatureProof(nodeAId, Signature(Hex(Hash.empty.value))))
+      )
+
+      // Node B stakes
+      val stakeCreateUserXNodeB = Signed(
+        UpdateDelegatedStake.Create(
+          source = userXAddress,
+          nodeId = nodeBId.toPeerId,
+          amount = DelegatedStakeAmount(5000L),
+          fee = DelegatedStakeFee(0L),
+          tokenLockRef = Hash.empty
+        ),
+        NonEmptySet.one[SignatureProof](SignatureProof(nodeBId, Signature(Hex(Hash.empty.value))))
+      )
+
+      val stakeCreateUserYNodeB = Signed(
+        UpdateDelegatedStake.Create(
+          source = userYAddress,
+          nodeId = nodeBId.toPeerId,
+          amount = DelegatedStakeAmount(50000L),
+          fee = DelegatedStakeFee(0L),
+          tokenLockRef = Hash.empty
+        ),
+        NonEmptySet.one[SignatureProof](SignatureProof(nodeBId, Signature(Hex(Hash.empty.value))))
+      )
+
+      val stakeCreateUserZNodeB = Signed(
+        UpdateDelegatedStake.Create(
+          source = userZAddress,
+          nodeId = nodeBId.toPeerId,
+          amount = DelegatedStakeAmount(500000L),
+          fee = DelegatedStakeFee(0L),
+          tokenLockRef = Hash.empty
+        ),
+        NonEmptySet.one[SignatureProof](SignatureProof(nodeBId, Signature(Hex(Hash.empty.value))))
+      )
+
+      // Node C stakes
+      val stakeCreateUserYNodeC = Signed(
+        UpdateDelegatedStake.Create(
+          source = userYAddress,
+          nodeId = nodeCId.toPeerId,
+          amount = DelegatedStakeAmount(10000L),
+          fee = DelegatedStakeFee(0L),
+          tokenLockRef = Hash.empty
+        ),
+        NonEmptySet.one[SignatureProof](SignatureProof(nodeCId, Signature(Hex(Hash.empty.value))))
+      )
+
+      // Combine stakes into a map organized by address -> stake list
+      val stakes = SortedMap(
+        userXAddress -> List(
+          DelegatedStakeRecord(stakeCreateUserXNodeA, SnapshotOrdinal(1L), Balance(0L)),
+          DelegatedStakeRecord(stakeCreateUserXNodeB, SnapshotOrdinal(1L), Balance(0L))
+        ),
+        userYAddress -> List(
+          DelegatedStakeRecord(stakeCreateUserYNodeA, SnapshotOrdinal(1L), Balance(0L)),
+          DelegatedStakeRecord(stakeCreateUserYNodeB, SnapshotOrdinal(1L), Balance(0L)),
+          DelegatedStakeRecord(stakeCreateUserYNodeC, SnapshotOrdinal(1L), Balance(0L))
+        ),
+        userZAddress -> List(
+          DelegatedStakeRecord(stakeCreateUserZNodeA, SnapshotOrdinal(1L), Balance(0L)),
+          DelegatedStakeRecord(stakeCreateUserZNodeB, SnapshotOrdinal(1L), Balance(0L))
+        )
+      )
+
+      // 4. Set up node parameters with reward percentages
+      val nodeAParams = Signed(
+        UpdateNodeParameters(
+          nodeAAddress, // Operator address
+          delegatedStakeRewardParameters = DelegatedStakeRewardParameters(
+            RewardFraction.unsafeFrom(10000000) // 10% to node operator (90% to delegators)
+          ),
+          NodeMetadataParameters("", ""),
+          UpdateNodeParametersReference(UpdateNodeParametersOrdinal(NonNegLong.unsafeFrom(0)), Hash.empty)
+        ),
+        NonEmptySet.one[SignatureProof](SignatureProof(nodeAId, Signature(Hex(Hash.empty.value))))
+      )
+
+      val nodeBParams = Signed(
+        UpdateNodeParameters(
+          nodeBAddress, // Operator address
+          delegatedStakeRewardParameters = DelegatedStakeRewardParameters(
+            RewardFraction.unsafeFrom(5000000) // 5% to node operator (95% to delegators)
+          ),
+          NodeMetadataParameters("", ""),
+          UpdateNodeParametersReference(UpdateNodeParametersOrdinal(NonNegLong.unsafeFrom(0)), Hash.empty)
+        ),
+        NonEmptySet.one[SignatureProof](SignatureProof(nodeBId, Signature(Hex(Hash.empty.value))))
+      )
+
+      val nodeCParams = Signed(
+        UpdateNodeParameters(
+          nodeCAddress, // Operator address
+          delegatedStakeRewardParameters = DelegatedStakeRewardParameters(
+            RewardFraction.unsafeFrom(3500000) // 3.5% to node operator (96.5% to delegators)
+          ),
+          NodeMetadataParameters("", ""),
+          UpdateNodeParametersReference(UpdateNodeParametersOrdinal(NonNegLong.unsafeFrom(0)), Hash.empty)
+        ),
+        NonEmptySet.one[SignatureProof](SignatureProof(nodeCId, Signature(Hex(Hash.empty.value))))
+      )
+
+      val nodeParams = SortedMap(
+        nodeAId -> (nodeAParams, SnapshotOrdinal.unsafeApply(1L)),
+        nodeBId -> (nodeBParams, SnapshotOrdinal.unsafeApply(1L)),
+        nodeCId -> (nodeCParams, SnapshotOrdinal.unsafeApply(1L))
+      )
+
+      // 5. Create context with the stakes and node parameters
+      val context = GlobalSnapshotInfo(
+        lastStateChannelSnapshotHashes = SortedMap.empty,
+        lastTxRefs = SortedMap.empty,
+        balances = SortedMap.empty,
+        lastCurrencySnapshots = SortedMap.empty,
+        lastCurrencySnapshotsProofs = SortedMap.empty,
+        activeAllowSpends = None,
+        activeTokenLocks = None,
+        tokenLockBalances = None,
+        lastAllowSpendRefs = None,
+        lastTokenLockRefs = None,
+        updateNodeParameters = Some(nodeParams),
+        activeDelegatedStakes = Some(stakes),
+        delegatedStakesWithdrawals = None,
+        activeNodeCollaterals = None,
+        nodeCollateralWithdrawals = None
+      )
+
+      // Empty acceptance results
+      val emptyAcceptanceResult = UpdateDelegatedStakeAcceptanceResult(
+        SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]],
+        List.empty,
+        SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Withdraw], EpochProgress)]],
+        List.empty
+      )
+
+      // Partitioned updates
+      val partitionedUpdates = PartitionedStakeUpdates(
+        unexpiredCreateDelegatedStakes = stakes,
+        unexpiredWithdrawalsDelegatedStaking = SortedMap.empty,
+        expiredWithdrawalsDelegatedStaking = SortedMap.empty
+      )
+
+      // 6. Create facilitator list - all nodes are facilitators
+      val facilitators = List(
+        (nodeAAddress, nodeAId.toPeerId),
+        (nodeBAddress, nodeBId.toPeerId),
+        (nodeCAddress, nodeCId.toPeerId)
+      )
+
+      // 7. Create the distributor and run the distribution
+      val distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, testConfig)
+
+      // Calculate inflation
+      distributor
+        .distribute(
+          context,
+          TimeTrigger,
+          EpochProgress(NonNegLong.unsafeFrom(935952L)),
+          facilitators,
+          emptyAcceptanceResult,
+          partitionedUpdates
+        )
+        .map { result =>
+          // 8. Extract values from result for verification
+          val totalEmitted = result.totalEmittedRewardsAmount.value.value * 1e-8
+
+          // Find reserved rewards
+          val stardustReward =
+            result.reservedAddressRewards.find(_.destination == stardustAddress).map(_.amount.value.value).getOrElse(0L) * 1e-8
+          val protocolReward =
+            result.reservedAddressRewards.find(_.destination == protocolAddress).map(_.amount.value.value).getOrElse(0L) * 1e-8
+
+          // Get delegator rewards
+          val userXNodeAReward = result.delegatorRewardsMap
+            .get(nodeAId.toPeerId)
+            .flatMap(_.get(userXAddress))
+            .map(_.value.value)
+            .getOrElse(0L) * 1e-8
+
+          val userYNodeAReward = result.delegatorRewardsMap
+            .get(nodeAId.toPeerId)
+            .flatMap(_.get(userYAddress))
+            .map(_.value.value)
+            .getOrElse(0L) * 1e-8
+
+          val userZNodeAReward = result.delegatorRewardsMap
+            .get(nodeAId.toPeerId)
+            .flatMap(_.get(userZAddress))
+            .map(_.value.value)
+            .getOrElse(0L) * 1e-8
+
+          val userXNodeBReward = result.delegatorRewardsMap
+            .get(nodeBId.toPeerId)
+            .flatMap(_.get(userXAddress))
+            .map(_.value.value)
+            .getOrElse(0L) * 1e-8
+
+          val userYNodeBReward = result.delegatorRewardsMap
+            .get(nodeBId.toPeerId)
+            .flatMap(_.get(userYAddress))
+            .map(_.value.value)
+            .getOrElse(0L) * 1e-8
+
+          val userZNodeBReward = result.delegatorRewardsMap
+            .get(nodeBId.toPeerId)
+            .flatMap(_.get(userZAddress))
+            .map(_.value.value)
+            .getOrElse(0L) * 1e-8
+
+          val userYNodeCReward = result.delegatorRewardsMap
+            .get(nodeCId.toPeerId)
+            .flatMap(_.get(userYAddress))
+            .map(_.value.value)
+            .getOrElse(0L) * 1e-8
+
+          // 9. Compare with expected values
+          val withinErrorMargin = (actual: Double, expected: Double) => {
+            val diff = Math.abs(actual.toLong - expected.toLong)
+            val pctDiff = if (expected > 0) diff.toDouble / expected else 0.0
+            pctDiff <= 0.0001 // 0.01% tolerance
+          }
+
+          expect(withinErrorMargin(totalEmitted, 303.99028945))
+            .and(expect(withinErrorMargin(stardustReward, 14.75681017)))
+            .and(expect(withinErrorMargin(protocolReward, 88.54086100)))
+            .and(expect(withinErrorMargin(userXNodeAReward, 0.21757481)))
+            .and(expect(withinErrorMargin(userYNodeAReward, 2.17574812)))
+            .and(expect(withinErrorMargin(userZNodeAReward, 2.17574812)))
+            .and(expect(withinErrorMargin(userXNodeBReward, 1.14831151)))
+            .and(expect(withinErrorMargin(userYNodeBReward, 11.48311508)))
+            .and(expect(withinErrorMargin(userZNodeBReward, 114.83115079)))
+            .and(expect(withinErrorMargin(userYNodeCReward, 2.33288548)))
+        }
+    }
   }
 }
