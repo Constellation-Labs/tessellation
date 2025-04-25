@@ -42,7 +42,7 @@ runs:
       nohup stdbuf -o0 -e0 java -Denvironment=dev -jar $ROOT_DIRECTORY/.github/code/metagraphs/${{inputs.METAGRAPH_NAME}}/metagraph-l0/metagraph-l0.jar create-genesis genesis.csv --ip 127.0.0.1 > metagraph-l0-create-genesis.log 2>&1 &
       
       # Wait for genesis.snapshot to be created
-      MAX_WAIT_TIME=60 
+      MAX_WAIT_TIME=180 
       elapsed_time=0
       while [ ! -f "genesis.snapshot" ]; do
         sleep 1

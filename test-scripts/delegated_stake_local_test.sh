@@ -26,6 +26,7 @@ fi
 
 sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
 
+# Note this copy command may fail if you recompile without clean due to the *dirty* suffix, fixable with env
 cp modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly-*.jar ./nodes/global-l0.jar
 cp modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly-*.jar ./nodes/dag-l1.jar
 cp modules/keytool/target/scala-2.13/tessellation-keytool-assembly-*.jar ./nodes/keytool.jar
