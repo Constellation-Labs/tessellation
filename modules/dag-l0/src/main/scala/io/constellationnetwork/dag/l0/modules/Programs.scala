@@ -5,7 +5,6 @@ import java.security.KeyPair
 import cats.Parallel
 import cats.effect.Async
 import cats.effect.std.Random
-import cats.implicits.none
 
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.cluster.programs.TrustPush

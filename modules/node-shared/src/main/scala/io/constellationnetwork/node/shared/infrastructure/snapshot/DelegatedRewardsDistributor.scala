@@ -14,7 +14,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{Con
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
-import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, DelegatedStakeReference, PendingWithdrawal}
+import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, DelegatedStakeReference, PendingDelegatedStakeWithdrawal}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.{DelegatedStakeRewardParameters, RewardFraction, UpdateNodeParameters}
 import io.constellationnetwork.schema.peer.PeerId
@@ -22,6 +22,7 @@ import io.constellationnetwork.schema.transaction.{RewardTransaction, Transactio
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
@@ -29,9 +30,9 @@ import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 /** Result container for delegation rewards calculation
   */
 case class DelegationRewardsResult(
-  delegatorRewardsMap: SortedMap[Address, Map[PeerId, Amount]],
+  delegatorRewardsMap: SortedMap[PeerId, Map[Address, Amount]],
   updatedCreateDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
-  updatedWithdrawDelegatedStakes: SortedMap[Address, List[PendingWithdrawal]],
+  updatedWithdrawDelegatedStakes: SortedMap[Address, List[PendingDelegatedStakeWithdrawal]],
   nodeOperatorRewards: SortedSet[RewardTransaction],
   reservedAddressRewards: SortedSet[RewardTransaction],
   withdrawalRewardTxs: SortedSet[RewardTransaction],
@@ -40,9 +41,8 @@ case class DelegationRewardsResult(
 
 case class PartitionedStakeUpdates(
   unexpiredCreateDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
-  expiredCreateDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
-  unexpiredWithdrawalsDelegatedStaking: SortedMap[Address, List[PendingWithdrawal]],
-  expiredWithdrawalsDelegatedStaking: SortedMap[Address, List[PendingWithdrawal]]
+  unexpiredWithdrawalsDelegatedStaking: SortedMap[Address, List[PendingDelegatedStakeWithdrawal]],
+  expiredWithdrawalsDelegatedStaking: SortedMap[Address, List[PendingDelegatedStakeWithdrawal]]
 )
 
 trait DelegatedRewardsDistributor[F[_]] {
@@ -61,7 +61,7 @@ trait DelegatedRewardsDistributor[F[_]] {
 
 object DelegatedRewardsDistributor {
   def getUpdatedCreateDelegatedStakes[F[_]: Async: Hasher](
-    delegatorRewardsMap: Map[Address, Map[PeerId, Amount]],
+    delegatorRewardsMap: Map[PeerId, Map[Address, Amount]],
     delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
     partitionedRecords: PartitionedStakeUpdates
   ): F[SortedMap[Address, List[DelegatedStakeRecord]]] =
@@ -72,13 +72,23 @@ object DelegatedRewardsDistributor {
         }
     }.pure[F]
       .map(partitionedRecords.unexpiredCreateDelegatedStakes |+| _)
+      .flatMap { activeStakes =>
+        // remove withdrawn stakes from the active list
+        val withdrawnStakes = delegatedStakeDiffs.acceptedWithdrawals.flatMap(_._2.map(_._1.stakeRef)).toSet
+        activeStakes.toList.traverse {
+          case (addr, records) =>
+            records.traverse { record =>
+              DelegatedStakeReference.of(record.event).map(ref => (record, withdrawnStakes(ref.hash)))
+            }.map(records => (addr, records.filterNot(_._2).map(_._1)))
+        }
+      }
       .map(_.map {
         case (addr, recs) =>
           addr -> recs.map {
             case DelegatedStakeRecord(event, ord, bal) =>
               val nodeSpecificReward = delegatorRewardsMap
-                .get(addr)
-                .flatMap(_.get(event.value.nodeId))
+                .get(event.value.nodeId)
+                .flatMap(_.get(addr))
                 .getOrElse(Amount.empty)
 
               val disbursedBalance = bal.plus(nodeSpecificReward).toOption.getOrElse(Balance.empty)
@@ -86,12 +96,14 @@ object DelegatedRewardsDistributor {
               DelegatedStakeRecord(event, ord, disbursedBalance)
           }
       })
+      .map(_.filterNot(_._2.isEmpty))
+      .map(_.toSortedMap)
 
   def getUpdatedWithdrawalDelegatedStakes[F[_]: Async: Hasher](
     lastSnapshotContext: GlobalSnapshotInfo,
     delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
     partitionedRecords: PartitionedStakeUpdates
-  ): F[SortedMap[Address, List[PendingWithdrawal]]] =
+  ): F[SortedMap[Address, List[PendingDelegatedStakeWithdrawal]]] =
     delegatedStakeDiffs.acceptedWithdrawals.toList.traverse {
       case (addr, acceptedWithdrawls) =>
         acceptedWithdrawls.traverse {
@@ -100,17 +112,18 @@ object DelegatedRewardsDistributor {
               .flatTraverse(_.get(addr).flatTraverse {
                 _.findM { s =>
                   DelegatedStakeReference.of(s.event).map(_.hash === ev.stakeRef)
-                }.map(_.map(rec => PendingWithdrawal(ev, rec.rewards, ep)))
+                }.map(_.map(rec => PendingDelegatedStakeWithdrawal(rec.event, rec.rewards, rec.createdAt, ep)))
               })
               .flatMap(Async[F].fromOption(_, new RuntimeException("Unexpected None when processing user delegations")))
         }.map(addr -> _)
     }.map(SortedMap.from(_))
       .map(partitionedRecords.unexpiredWithdrawalsDelegatedStaking |+| _)
+      .map(_.filterNot(_._2.isEmpty))
 
   def sumMintedAmount[F[_]: Async](
     reservedAddressRewards: SortedSet[RewardTransaction],
     nodeOperatorRewards: SortedSet[RewardTransaction],
-    delegatorRewardsMap: Map[Address, Map[PeerId, Amount]]
+    delegatorRewardsMap: Map[PeerId, Map[Address, Amount]]
   ): F[Amount] = {
     val reservedEmittedAmount = reservedAddressRewards.map(_.amount.value.value).sum
     val validatorsEmittedAmount = nodeOperatorRewards.map(_.amount.value.value).sum

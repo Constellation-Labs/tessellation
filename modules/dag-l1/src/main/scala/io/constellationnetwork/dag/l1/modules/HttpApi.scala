@@ -4,17 +4,20 @@ import java.security.PrivateKey
 
 import cats.effect.Async
 import cats.effect.std.Supervisor
-import cats.syntax.semigroupk._
+import cats.syntax.all._
 
 import io.constellationnetwork.dag.l1.http.Routes
 import io.constellationnetwork.node.shared.cli.CliMethod
-import io.constellationnetwork.node.shared.config.types.HttpConfig
+import io.constellationnetwork.node.shared.config.types.{DelegatedStakingConfig, HttpConfig}
+import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
+import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
@@ -38,9 +41,23 @@ object HttpApi {
     selfId: PeerId,
     nodeVersion: TessellationVersion,
     httpCfg: HttpConfig,
-    txHasher: Hasher[F]
+    txHasher: Hasher[F],
+    validators: Validators[F],
+    delegatedStakingCfg: DelegatedStakingConfig
   ): HttpApi[F, P, S, SI, R] =
-    new HttpApi[F, P, S, SI, R](storages, queues, privateKey, services, programs, selfId, nodeVersion, httpCfg, txHasher) {}
+    new HttpApi[F, P, S, SI, R](
+      storages,
+      queues,
+      privateKey,
+      services,
+      programs,
+      selfId,
+      nodeVersion,
+      httpCfg,
+      txHasher,
+      validators,
+      delegatedStakingCfg
+    ) {}
 }
 
 sealed abstract class HttpApi[
@@ -58,7 +75,9 @@ sealed abstract class HttpApi[
   selfId: PeerId,
   nodeVersion: TessellationVersion,
   httpCfg: HttpConfig,
-  txHasher: Hasher[F]
+  txHasher: Hasher[F],
+  validators: Validators[F],
+  delegatedStakingCfg: DelegatedStakingConfig
 ) {
   private val clusterRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>
@@ -75,15 +94,19 @@ sealed abstract class HttpApi[
         storages.allowSpend
       )
     }
-  private val tokenLockRoutes =
+  private val tokenLockRoutes: TokenLockRoutes[F, P, S, SI] =
     HasherSelector[F].withCurrent { implicit hasher =>
-      TokenLockRoutes[F](
+      TokenLockRoutes(
         queues.tokenLockConsensusInput,
         storages.l0Cluster,
         services.tokenLock,
-        storages.tokenLock
+        storages.tokenLock,
+        storages.lastSnapshot,
+        validators.tokenLock,
+        delegatedStakingCfg.some
       )
     }
+
   private val dagRoutes =
     Routes[F](
       services.transaction,

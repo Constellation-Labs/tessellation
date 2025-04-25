@@ -48,8 +48,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
 
     DelegationRewardsResult(
       delegatorRewardsMap = SortedMap(
-        address1 -> Map(nodeId1.toPeerId -> Amount(NonNegLong.unsafeFrom(amount.value.value * 10 / 100))),
-        address2 -> Map(nodeId2.toPeerId -> Amount(NonNegLong.unsafeFrom(amount.value.value * 15 / 100)))
+        nodeId1.toPeerId -> Map(address1 -> Amount(NonNegLong.unsafeFrom(amount.value.value * 10 / 100))),
+        nodeId2.toPeerId -> Map(address2 -> Amount(NonNegLong.unsafeFrom(amount.value.value * 15 / 100)))
       ),
       updatedCreateDelegatedStakes = SortedMap(
         address1 -> List(
@@ -352,7 +352,6 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     // Create partitioned updates - removed withdrawals
     val partitionedUpdates = PartitionedStakeUpdates(
       unexpiredCreateDelegatedStakes = stakes,
-      expiredCreateDelegatedStakes = SortedMap.empty,
       unexpiredWithdrawalsDelegatedStaking = SortedMap.empty, // No withdrawals
       expiredWithdrawalsDelegatedStaking = SortedMap.empty
     )
@@ -432,7 +431,6 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     // Empty partitioned updates
     val partitionedUpdates = PartitionedStakeUpdates(
       unexpiredCreateDelegatedStakes = SortedMap.empty,
-      expiredCreateDelegatedStakes = SortedMap.empty,
       unexpiredWithdrawalsDelegatedStaking = SortedMap.empty,
       expiredWithdrawalsDelegatedStaking = SortedMap.empty
     )
@@ -541,7 +539,6 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     // Initial partitioned updates
     val initialPartitionedUpdates = PartitionedStakeUpdates(
       unexpiredCreateDelegatedStakes = initialStakes,
-      expiredCreateDelegatedStakes = SortedMap.empty,
       unexpiredWithdrawalsDelegatedStaking = SortedMap.empty,
       expiredWithdrawalsDelegatedStaking = SortedMap.empty
     )
@@ -574,7 +571,6 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       // Update partitioned stakes for second epoch
       partitionedUpdates2 = PartitionedStakeUpdates(
         unexpiredCreateDelegatedStakes = updatedStakes1,
-        expiredCreateDelegatedStakes = SortedMap.empty,
         unexpiredWithdrawalsDelegatedStaking = SortedMap.empty,
         expiredWithdrawalsDelegatedStaking = SortedMap.empty
       )
@@ -674,7 +670,6 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     // Partitioned updates
     val partitionedUpdates = PartitionedStakeUpdates(
       unexpiredCreateDelegatedStakes = stakes,
-      expiredCreateDelegatedStakes = SortedMap.empty,
       unexpiredWithdrawalsDelegatedStaking = SortedMap.empty,
       expiredWithdrawalsDelegatedStaking = SortedMap.empty
     )
@@ -835,7 +830,6 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     // Partitioned updates
     val partitionedUpdates = PartitionedStakeUpdates(
       unexpiredCreateDelegatedStakes = zeroStakes,
-      expiredCreateDelegatedStakes = SortedMap.empty,
       unexpiredWithdrawalsDelegatedStaking = SortedMap.empty,
       expiredWithdrawalsDelegatedStaking = SortedMap.empty
     )
@@ -883,7 +877,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         EpochProgress(100L), // Use exactly the transition epoch
         List(address1 -> nodeId1),
         emptyAcceptanceResult,
-        PartitionedStakeUpdates(SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty)
+        PartitionedStakeUpdates(SortedMap.empty, SortedMap.empty, SortedMap.empty)
       )
     } yield
       // With zero stakes, there should be no delegator rewards
