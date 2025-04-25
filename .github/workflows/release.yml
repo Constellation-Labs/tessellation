@@ -88,11 +88,7 @@ jobs:
 
           git tag -a v$VERSION -m "Release $VERSION"
           git push origin v$VERSION -f
-          echo "RELEASE_TAG=v$VERSION" >> $GITHUB_ENV
-
-      - name: Set output
-        id: set_output
-        run: echo "release_tag=${{ env.RELEASE_TAG }}" >> $GITHUB_OUTPUT
+          echo "release_tag=v$VERSION" >> $GITHUB_OUTPUT
 
       - name: Assembly 🚀
         run: sbt 'keytool/assembly;wallet/assembly;dagL0/assembly;dagL1/assembly'
