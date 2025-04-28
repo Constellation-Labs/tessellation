@@ -817,7 +817,7 @@ object GlobalSnapshotAcceptanceManager {
                 acc.updated(address, updatedLocks)
               }
         }
-        .map(updateTokenLocks => updateTokenLocks)
+        .map(updateTokenLocks => updateTokenLocks.filterNot(_._2.isEmpty))
     }
 
     private def updateTokenLockBalances(
