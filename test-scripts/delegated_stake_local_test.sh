@@ -5,7 +5,7 @@ set -e
 
 # For debugging locally use 0 for ci use 1
 export EXIT_CODE=0
-export CLEAN_BUILD=false
+export CLEAN_BUILD=true
 
 # Remove extra clean if needed
 pkill -f dag-l1 || true
@@ -359,6 +359,7 @@ jq -e '.activeDelegatedStakes | length == 0' > /dev/null || \
 { echo "ERROR: activeDelegatedStakes is not empty in DS info endpoint"; exit $EXIT_CODE; }
 
 
+echo "success"
 # Notes:
 
 # Manual kill commands in case of script error:
