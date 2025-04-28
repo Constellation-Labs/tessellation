@@ -34,3 +34,52 @@ export TOKEN_LOCK_HASH=$out
 
 echo "Initial token lock hash reference $TOKEN_LOCK_HASH"
 curl -i -X POST --header 'Content-Type: application/json' --data @initial-token-lock.json "$DAG_L1_URL"/token-locks
+
+
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e '.[1].activeTokenLocks'
+
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e '.[1].activeTokenLocks["DAG4J6gixVGKYmcZs9Wmkyrv8ERp39vxtjwbjV5Q"]'
+
+# verified here
+# http://52.8.132.193:9000/delegated-stakes/last-reference/DAG4J6gixVGKYmcZs9Wmkyrv8ERp39vxtjwbjV5Q
+
+out=$(
+  java -jar ./nodes/wallet.jar create-delegated-stake --amount 6000 --token-lock $TOKEN_LOCK_HASH
+)
+echo "Create delegated stake hash $out"
+export DELEGATED_STAKE_HASH=$out
+cat event
+cp event initial-delegated-stake.json
+curl -i -X POST --header 'Content-Type: application/json' --data @initial-delegated-stake.json "$DAG_L0_URL"/delegated-stakes
+
+
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e '.[1].activeDelegatedStakes'
+
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e '.[1].activeDelegatedStakes["DAG4J6gixVGKYmcZs9Wmkyrv8ERp39vxtjwbjV5Q"]'
+
+curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
+jq -e '.activeDelegatedStakes'
+
+
+
+# initiate withdraw
+out=$(
+  java -jar ./nodes/wallet.jar withdraw-delegated-stake --stake-ref "$DELEGATED_STAKE_HASH"
+)
+echo "Withdraw delegated stake output $out"
+cat event
+cp event withdraw-delegated-stake.json
+
+curl -i -X PUT --header 'Content-Type: application/json' --data @withdraw-delegated-stake.json "$DAG_L0_URL"/delegated-stakes
+
+
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e '.[1].delegatedStakesWithdrawals["DAG4J6gixVGKYmcZs9Wmkyrv8ERp39vxtjwbjV5Q"]'
+
+
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e '.[0].value.epochProgress'

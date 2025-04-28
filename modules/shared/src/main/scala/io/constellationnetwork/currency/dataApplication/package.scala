@@ -19,7 +19,7 @@ import io.constellationnetwork.currency.schema.EstimatedFee
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.json.JsonSerializer
-import io.constellationnetwork.routes.internal.{ExternalUrlPrefix, InternalUrlPrefixes}
+import io.constellationnetwork.routes.internal.ExternalUrlPrefix
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{SharedArtifact, TokenUnlock}
 import io.constellationnetwork.schema.balance.Amount
@@ -35,8 +35,6 @@ import derevo.cats.{order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.auto._
-import eu.timepit.refined.boolean.Not
-import eu.timepit.refined.refineMV
 import io.circe._
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.syntax._
@@ -312,8 +310,7 @@ trait DataApplicationSharedContextualOps[F[
 
   def routes(implicit context: Context): HttpRoutes[F]
 
-  // Bypass error in IJ incremental recompilation macro expansion.
-  def routesPrefix: ExternalUrlPrefix = "/data-application".asInstanceOf[ExternalUrlPrefix]
+  def routesPrefix: ExternalUrlPrefix = "/data-application"
 }
 
 trait DataApplicationL0ContextualOps[F[_], D <: DataUpdate, DON <: DataOnChainState, DOF <: DataCalculatedState]
