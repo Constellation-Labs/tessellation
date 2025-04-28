@@ -556,8 +556,21 @@ object GlobalSnapshotAcceptanceManager {
         tokenUnlocksEvents <- emitTokenUnlocks(
           filterExpiredTokenLocks(globalActiveTokenLocks, epochProgress)
         )
+        generatedTokenUnlockArtifacts = SortedSet.from[SharedArtifact](
+          generatedTokenUnlocks.view.values.flatten
+            .filterNot(x =>
+              tokenUnlocksEvents.exists {
+                case t: TokenUnlock => t.tokenLockRef == x.tokenLockRef
+                case _              => false
+              }
+            )
+        )
 
-        _ <- Slf4jLogger.getLogger[F].debug(s"[TokenUnlock][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] Token unlocks events generated: $tokenUnlocksEvents")
+        _ <- Slf4jLogger
+          .getLogger[F]
+          .debug(
+            s"[TokenUnlock][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] Token unlocks events generated: $tokenUnlocksEvents generated token unlocks $generatedTokenUnlockArtifacts"
+          )
       } yield
         (
           acceptanceResult,
@@ -572,7 +585,7 @@ object GlobalSnapshotAcceptanceManager {
           stateProof,
           acceptedSpendActions,
           acceptedUpdateNodeParameters,
-          allowSpendsExpiredEvents ++ tokenUnlocksEvents,
+          allowSpendsExpiredEvents ++ tokenUnlocksEvents ++ generatedTokenUnlockArtifacts,
           delegatorRewardsMap
         )
     }
