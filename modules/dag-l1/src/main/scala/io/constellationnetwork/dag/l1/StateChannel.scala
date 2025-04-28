@@ -90,7 +90,8 @@ class StateChannel[
         storages.block,
         storages.transaction,
         appConfig.consensus.peersCount,
-        appConfig.consensus.tipsCount
+        appConfig.consensus.tipsCount,
+        storages.tokenLock
       ).handleErrorWith { e =>
         logger.warn(e)("Failure checking if own consensus can be kicked off!").map(_ => false)
       }
