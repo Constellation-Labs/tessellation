@@ -81,5 +81,43 @@ curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[1].delegatedStakesWithdrawals["DAG4J6gixVGKYmcZs9Wmkyrv8ERp39vxtjwbjV5Q"]'
 
 
+curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info"
+
+
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[0].value.epochProgress'
+
+
+curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
+jq -e '.pendingWithdrawals[0].withdrawalEndEpoch'
+
+# original on BE 1,016,802.13854941
+
+curl -s "$DAG_L0_URL/dag/$ADDRESS/balance" | \
+jq -e ".balance"
+
+
+
+export ADDRESS=DAG4J6gixVGKYmcZs9Wmkyrv8ERp39vxtjwbjV5Q
+
+
+# 28310824066204 balance oas of 1:41pm
+
+cat app.log | grep DAG4J6gixVGKYmcZs9Wmkyrv8ERp39vxtjwbjV5Q
+
+
+export ADDRESS=DAG1BcstMG5z71VbsjDGqR2u6P7fi5ee41b6ve2t
+
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e ".[1].activeDelegatedStakes[\"$ADDRESS\"]"
+
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e ".[1].activeTokenLocks[\"$ADDRESS\"]"
+
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e ".[1].delegatedStakesWithdrawals[\"$ADDRESS\"]"
+
+
+curl -s "$DAG_L1_URL/token-locks/20395c5ff83b707e40a7b22590cbc09e7d164fcb8586a5221ba02bfb8f746f1a"
+curl -s "$DAG_L1_URL/token-locks/last-reference/$ADDRESS"
+
