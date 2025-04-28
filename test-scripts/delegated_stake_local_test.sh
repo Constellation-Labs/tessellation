@@ -359,6 +359,17 @@ jq -e '.activeDelegatedStakes | length == 0' > /dev/null || \
 { echo "ERROR: activeDelegatedStakes is not empty in DS info endpoint"; exit $EXIT_CODE; }
 
 
+#active_token_locks=$(curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+#jq -e '.[1].activeTokenLocks | length')
+#
+#if [ "$active_token_locks" -eq 1 ]; then
+#  echo "Test passed: activeTokenLocks length is 1"
+#else
+#  echo "Test failed: activeTokenLocks length is not 1"
+##  exit 1
+#fi
+
+
 echo "success"
 # Notes:
 
