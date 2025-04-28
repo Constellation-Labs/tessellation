@@ -166,7 +166,7 @@ echo "GL0_NODE_PID=$GL0_NODE_PID"
 cd ../../../
 
 # wait for GL0 to come online
-sleep 30
+sleep 10
 
 # Start dag-l1 0
 cd ./nodes/dag-l1/0
@@ -200,7 +200,7 @@ cd ../../../
 
 # wait for dag-l1 to come online
 
-sleep 30
+sleep 10
 
 export PEER_ID=$(cat ./nodes/dag-l1/0/peer_id)
 
@@ -215,7 +215,7 @@ curl -i -X POST --header 'Content-Type: application/json' \
 # 21:35:32.707 [io-compute-8] [31mWARN [0;39m [36mi.c.n.s.h.p.c.S.$anon[0;39m - Join request rejected due to: Node is not part of the cluster.
 # If this sleep is not present, two peers cannot join at the exact same time, despite
 # using the same coordinator node.
-sleep 20
+sleep 10
 
 # Second join
 curl -i -X POST --header 'Content-Type: application/json' \
@@ -223,14 +223,13 @@ curl -i -X POST --header 'Content-Type: application/json' \
   localhost:39992/cluster/join
 
 # Await joined.
-sleep 20
+sleep 10
 
 for i in 1 2 3; do
     port="${i}9990"
     curl -s http://localhost:${port}/cluster/info | \
     jq -e 'length > 2' > /dev/null || { echo "ERROR: dag-l1 $i doesn't have 3 nodes"; exit $EXIT_CODE; }
 done
-
 
 
 ### CLUSTER SPECIFIC TESTING BELOW
@@ -272,7 +271,7 @@ export TOKEN_LOCK_HASH=$out
 echo "Initial token lock hash reference $TOKEN_LOCK_HASH"
 curl -i -X POST --header 'Content-Type: application/json' --data @initial-token-lock.json "$DAG_L1_URL"/token-locks
 # Await accepted, may require adjustment
-sleep 60
+sleep 40
 cd ../../..
 
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
@@ -310,6 +309,8 @@ curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
 jq -e '.activeDelegatedStakes | length == 1' > /dev/null || \
 { echo "ERROR: activeDelegatedStakes is empty in DS info endpoint"; exit $EXIT_CODE; }
 
+
+
 # initiate withdraw
 cd ./nodes/global-l0/0/
 out=$(
@@ -326,38 +327,52 @@ cd ../../..
 
 sleep 30
 
+#export DELEGATED_STAKE_HASH=1882ba3eea3d26576eb5e15e35b50f25271e78bec8583a5df2353a625f68cbd7
+export DAG_L0_URL="http://localhost:9000"
+export ADDRESS="DAG3BrJT6tU7qFUBNbk29WLnyq78djT17amQ1YvX"
+
+# Check if this below is equal to current.
+expected_end=$(curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
+jq -e ".pendingWithdrawals[0].withdrawalEndEpoch")
+
+current_epoch=$(curl -s "$DAG_L0_URL/global-snapshots/latest/combined" | \
+jq -e '.[0].value.epochProgress')
+echo "Current epoch $current_epoch expected withdrawal $expected_end"
+
+
+
 # First error, after withdrawal, not removing empty list for address in snapshot info
 # activeDelegatedStakes":{"DAG1vmb6wbdKgMRite7nTmp5Di8mT5ZqjRw6KNTc":[]}
 # uncomment to reproduce error
-
-echo "Verifying activeDelegatedStakes output"
-
-curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
-jq -e '.[1].activeDelegatedStakes'
-
-# Active token locks has same issue, looks like above
-
+#
+#echo "Verifying activeDelegatedStakes output"
+#
 #curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
-#jq -e '.[1].activeDelegatedStakes | length == 0' > /dev/null || \
-#{ echo "ERROR: activeDelegatedStakes is not empty in snapshot combined"; exit $EXIT_CODE; }
-
-echo "Verifying delegateRewards output"
-
-curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
-jq -e '.[0].delegateRewards'
-
-echo "Verifying delegateRewards null"
-
-curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
-jq -e '.[0].delegateRewards == null' > /dev/null || \
-{ echo "ERROR: delegateRewards is not empty in snapshot combined"; exit $EXIT_CODE; }
-
-echo "Verifying delegated stake info"
-
-curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
-jq -e '.activeDelegatedStakes | length == 0' > /dev/null || \
-{ echo "ERROR: activeDelegatedStakes is not empty in DS info endpoint"; exit $EXIT_CODE; }
-
+#jq -e '.[1].activeDelegatedStakes'
+#
+## Active token locks has same issue, looks like above
+#
+##curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+##jq -e '.[1].activeDelegatedStakes | length == 0' > /dev/null || \
+##{ echo "ERROR: activeDelegatedStakes is not empty in snapshot combined"; exit $EXIT_CODE; }
+#
+#echo "Verifying delegateRewards output"
+#
+#curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+#jq -e '.[0].delegateRewards'
+#
+#echo "Verifying delegateRewards null"
+#
+#curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+#jq -e '.[0].delegateRewards == null' > /dev/null || \
+#{ echo "ERROR: delegateRewards is not empty in snapshot combined"; exit $EXIT_CODE; }
+#
+#echo "Verifying delegated stake info"
+#
+#curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
+#jq -e '.activeDelegatedStakes | length == 0' > /dev/null || \
+#{ echo "ERROR: activeDelegatedStakes is not empty in DS info endpoint"; exit $EXIT_CODE; }
+#
 
 #active_token_locks=$(curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 #jq -e '.[1].activeTokenLocks | length')

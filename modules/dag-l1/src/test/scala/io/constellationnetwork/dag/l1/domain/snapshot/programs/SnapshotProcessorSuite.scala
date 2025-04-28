@@ -87,7 +87,6 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar).flatMap { implicit kp =>
         Random.scalaUtilRandom[IO].asResource.flatMap { implicit random =>
           Metrics.forAsync[IO](Seq(("application", name))).flatMap { implicit _metrics =>
-
             for {
               implicit0(jhs: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
               implicit0(h: Hasher[IO]) = Hasher.forJson[IO]
@@ -226,7 +225,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   override def pullLatestSnapshotFromRandomPeer: IO[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = ???
 
                   override def pullGlobalSnapshots
-                  : IO[Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]] = ???
+                    : IO[Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]] = ???
 
                   override def pullGlobalSnapshot(ordinal: SnapshotOrdinal): IO[Option[Hashed[GlobalIncrementalSnapshot]]] = none.pure[IO]
 
@@ -251,7 +250,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 KeyPairGenerator.makeKeyPair[IO],
                 KeyPairGenerator.makeKeyPair[IO],
                 KeyPairGenerator.makeKeyPair[IO]
-                ).tupled.asResource
+              ).tupled.asResource
               srcKey = keys._1
               dstKey <- KeyPairGenerator.makeKeyPair[IO].asResource
               srcAddress = srcKey.getPublic.toAddress

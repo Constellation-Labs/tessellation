@@ -13,7 +13,11 @@ import scala.reflect.runtime.universe.TypeTag
 import io.constellationnetwork.currency.schema.currency.SnapshotFee
 import io.constellationnetwork.dag.l0.config.DelegatedRewardsConfigProvider
 import io.constellationnetwork.dag.l0.dagL0KryoRegistrar
-import io.constellationnetwork.dag.l0.domain.snapshot.programs.{GlobalSnapshotEventCutter, SnapshotBinaryFeeCalculator, UpdateNodeParametersCutter}
+import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
+  GlobalSnapshotEventCutter,
+  SnapshotBinaryFeeCalculator,
+  UpdateNodeParametersCutter
+}
 import io.constellationnetwork.dag.l0.infrastructure.rewards.GlobalDelegatedRewardsDistributor
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.{GlobalSnapshotEvent, StateChannelEvent}
 import io.constellationnetwork.env.AppEnvironment
@@ -23,7 +27,11 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.config.types.{ClassicRewardsConfig, DelegatedRewardsConfig, EmissionConfigEntry}
 import io.constellationnetwork.node.shared.domain.block.processing._
-import io.constellationnetwork.node.shared.domain.delegatedStake.{UpdateDelegatedStakeAcceptanceManager, UpdateDelegatedStakeAcceptanceResult, UpdateDelegatedStakeValidator}
+import io.constellationnetwork.node.shared.domain.delegatedStake.{
+  UpdateDelegatedStakeAcceptanceManager,
+  UpdateDelegatedStakeAcceptanceResult,
+  UpdateDelegatedStakeValidator
+}
 import io.constellationnetwork.node.shared.domain.fork.ForkInfo
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.{UpdateNodeParametersAcceptanceManager, UpdateNodeParametersValidator}
