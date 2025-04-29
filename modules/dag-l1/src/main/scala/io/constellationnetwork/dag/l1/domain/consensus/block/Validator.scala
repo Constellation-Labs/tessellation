@@ -16,6 +16,7 @@ import io.constellationnetwork.schema.node.NodeState.Ready
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
+import io.constellationnetwork.syntax.LogMetricsHelpers.LoggableMap
 
 import eu.timepit.refined.auto.autoUnwrap
 import eu.timepit.refined.types.numeric.PosInt
@@ -58,10 +59,17 @@ object Validator {
     for {
       noOwnRoundInProgress <- consensusStorage.ownConsensus.get.map(_.isEmpty)
       stateReadyForConsensus <- nodeStorage.getNodeState.map(isReadyForBlockConsensus)
+      peers <- clusterStorage.getPeers
+      numResponsivePeers = peers.count(x => x.isResponsive)
+      numReadyPeers = peers.count(x => x.state == NodeState.Ready)
       enoughPeers <- enoughPeersForConsensus(clusterStorage, peersCount)
       enoughTips <- enoughTipsForConsensus(blockStorage, tipsCount)
       enoughTxs <- atLeastOneTransaction(transactionStorage)
-
+      stats: Map[String, Int] = Map(
+        "peers" -> peers.size,
+        "responsivePeers" -> numResponsivePeers,
+        "readyPeers" -> numReadyPeers,
+      )
       res = noOwnRoundInProgress && stateReadyForConsensus && enoughPeers && enoughTips && enoughTxs
       _ <-
         Applicative[F].whenA(!res) {
@@ -72,7 +80,7 @@ object Validator {
             if (!enoughTips) "Not enough tips" else "",
             if (!enoughTxs) "No transactions" else ""
           ).filter(_.nonEmpty).mkString(", ")
-          logger.debug(s"Cannot start own consensus: ${reason}")
+          logger.debug(s"Cannot start own consensus: ${reason} " + stats.toLogString)
         }
     } yield res
 
