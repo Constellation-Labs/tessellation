@@ -728,7 +728,7 @@ object CurrencySnapshotAcceptanceManager {
                 acc.updated(address, updatedLocks)
               }
         }
-        .map(updateTokenLocks => (updateTokenLocks, expiredTokenLocks))
+        .map(updateTokenLocks => (updateTokenLocks.filterNot(_._2.isEmpty), expiredTokenLocks))
     }
 
     private def updateBalancesByTokenLocks(
