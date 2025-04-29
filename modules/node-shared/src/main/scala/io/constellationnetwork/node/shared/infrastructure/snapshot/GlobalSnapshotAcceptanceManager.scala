@@ -214,22 +214,6 @@ object GlobalSnapshotAcceptanceManager {
           expiredWithdrawalsDelegatedStaking
         ) = acceptDelegatedStakes(lastSnapshotContext, epochProgress)
 
-        _ <- Slf4jLogger
-          .getLogger[F]
-          .debug(
-            s"[DelegatedStake][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] unexpiredCreateDelegatedStakes: ${unexpiredCreateDelegatedStakes}"
-          )
-        _ <- Slf4jLogger
-          .getLogger[F]
-          .debug(
-            s"[DelegatedStake][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] unexpiredWithdrawalsDelegatedStaking: ${unexpiredWithdrawalsDelegatedStaking}"
-          )
-        _ <- Slf4jLogger
-          .getLogger[F]
-          .debug(
-            s"[DelegatedStake][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] expiredWithdrawalsDelegatedStaking: ${expiredWithdrawalsDelegatedStaking}"
-          )
-
         DelegatedRewardsResult(
           delegatorRewardsMap,
           updatedCreateDelegatedStakes,
@@ -251,27 +235,17 @@ object GlobalSnapshotAcceptanceManager {
                 (addr, recs.filterNot(record => tokenLocks(record.event.tokenLockRef)))
             }
 
-            Slf4jLogger
-              .getLogger[F]
-              .debug(
-                s"[DelegatedStaking][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] acceptedTokenLockRefs: ${acceptedTokenLockRefs}"
-              ) >>
-              Slf4jLogger
-                .getLogger[F]
-                .debug(
-                  s"[DelegatedStaking][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] filteredUnexpiredCreateDelegatedStakes: ${filteredUnexpiredCreateDelegatedStakes}"
-                ) >>
-              calculateRewardsFn(
-                DelegateRewardsInput(
-                  delegatedStakeAcceptanceResult,
-                  PartitionedStakeUpdates(
-                    filteredUnexpiredCreateDelegatedStakes,
-                    unexpiredWithdrawalsDelegatedStaking,
-                    expiredWithdrawalsDelegatedStaking
-                  ),
-                  epochProgress
-                )
+            calculateRewardsFn(
+              DelegateRewardsInput(
+                delegatedStakeAcceptanceResult,
+                PartitionedStakeUpdates(
+                  filteredUnexpiredCreateDelegatedStakes,
+                  unexpiredWithdrawalsDelegatedStaking,
+                  expiredWithdrawalsDelegatedStaking
+                ),
+                epochProgress
               )
+            )
           }
 
         (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
@@ -511,22 +485,6 @@ object GlobalSnapshotAcceptanceManager {
 
             (maybeMerkleTree, updatedLastCurrencySnapshotProofs).tupled
         }
-
-        _ <- Slf4jLogger
-          .getLogger[F]
-          .debug(
-            s"[DelegatedStake][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] Updated create delegated stake: ${updatedCreateDelegatedStakes}"
-          )
-        _ <- Slf4jLogger
-          .getLogger[F]
-          .debug(
-            s"[DelegatedStake][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] Updated withdrawal delegated stake: ${updatedWithdrawDelegatedStakes}"
-          )
-        _ <- Slf4jLogger
-          .getLogger[F]
-          .debug(
-            s"[TokenLocks][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] Active token locks: ${updatedGlobalTokenLocks}"
-          )
 
         updatedAllowSpendsCleaned = updatedAllowSpends.map {
           case (outerKey, innerMap) =>
