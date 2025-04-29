@@ -9,9 +9,11 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import io.constellationnetwork.ext.cats.syntax.validated._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator.UpdateDelegatedStakeValidationErrorOr
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
+import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralRecord, UpdateNodeCollateral}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockReference}
@@ -24,6 +26,7 @@ import io.constellationnetwork.security.{Hasher, SecurityProvider}
 
 import derevo.cats.{eqv, show}
 import derevo.derive
+import eu.timepit.refined.internal.Adjacent.integralAdjacent
 
 trait UpdateDelegatedStakeValidator[F[_]] {
   def validateCreateDelegatedStake(
@@ -135,8 +138,14 @@ object UpdateDelegatedStakeValidator {
         val activeDelegatedStakes = lastContext.activeDelegatedStakes
           .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
           .getOrElse(signed.source, List.empty)
+        val nodeIdParams = lastContext.updateNodeParameters
+          .getOrElse(SortedMap.empty[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)])
+          .get(signed.nodeId.toId)
+
         if (activeDelegatedStakes.exists(s => s.event.nodeId == signed.nodeId)) {
           StakeExistsForNode(signed.nodeId).invalidNec
+        } else if (nodeIdParams.isEmpty) {
+          NodeIdParamsNotFilled(signed.nodeId).invalidNec
         } else {
           signed.validNec
         }
@@ -268,6 +277,8 @@ object UpdateDelegatedStakeValidator {
   case class AlreadyWithdrawn(parent: Hash) extends UpdateDelegatedStakeValidationError
 
   case class InvalidParent(parent: DelegatedStakeReference) extends UpdateDelegatedStakeValidationError
+
+  case class NodeIdParamsNotFilled(nodeId: PeerId) extends UpdateDelegatedStakeValidationError
 
   type UpdateDelegatedStakeValidationErrorOr[A] = ValidatedNec[UpdateDelegatedStakeValidationError, A]
 }

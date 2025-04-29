@@ -68,7 +68,7 @@ object Validator {
       stats: Map[String, Int] = Map(
         "peers" -> peers.size,
         "responsivePeers" -> numResponsivePeers,
-        "readyPeers" -> numReadyPeers,
+        "readyPeers" -> numReadyPeers
       )
       res = noOwnRoundInProgress && stateReadyForConsensus && enoughPeers && enoughTips && enoughTxs
       _ <-
