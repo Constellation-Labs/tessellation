@@ -11,8 +11,6 @@ import io.constellationnetwork.dag.l1.domain.consensus.block.storage.ConsensusSt
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionStorage
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.domain.tokenlock.TokenLockStorage
-import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.node.NodeState.Ready
 import io.constellationnetwork.schema.peer.PeerId
@@ -56,8 +54,7 @@ object Validator {
     blockStorage: BlockStorage[F],
     transactionStorage: TransactionStorage[F],
     peersCount: PosInt,
-    tipsCount: PosInt,
-    tokenLockStorage: TokenLockStorage[F]
+    tipsCount: PosInt
   ): F[Boolean] =
     for {
       noOwnRoundInProgress <- consensusStorage.ownConsensus.get.map(_.isEmpty)
@@ -68,12 +65,10 @@ object Validator {
       enoughPeers <- enoughPeersForConsensus(clusterStorage, peersCount)
       enoughTips <- enoughTipsForConsensus(blockStorage, tipsCount)
       enoughTxs <- atLeastOneTransaction(transactionStorage)
-      tokenLockCount <- tokenLockStorage.count
       stats: Map[String, Int] = Map(
         "peers" -> peers.size,
         "responsivePeers" -> numResponsivePeers,
         "readyPeers" -> numReadyPeers,
-        "tokenLockCount" -> tokenLockCount
       )
       res = noOwnRoundInProgress && stateReadyForConsensus && enoughPeers && enoughTips && enoughTxs
       _ <-
