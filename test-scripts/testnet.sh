@@ -22,10 +22,11 @@ out=$(
 export DAG_L1_PEER_ID_0="$out"
 echo $out
 
-# http://52.8.132.193:9010/token-locks/last-reference/DAG4J6gixVGKYmcZs9Wmkyrv8ERp39vxtjwbjV5Q
+wget http://52.8.132.193:9010/token-locks/last-reference/DAG4J6gixVGKYmcZs9Wmkyrv8ERp39vxtjwbjV5Q \
+-O token-lock-last-ref.json
 
 out=$(
-  java -jar ./nodes/wallet.jar create-token-lock --amount 6000
+  java -jar ./nodes/wallet.jar create-token-lock --amount 6000 --parent token-lock-last-ref.json
 )
 echo "Create token lock output hash $out"
 cat event
@@ -40,13 +41,18 @@ curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[1].activeTokenLocks'
 
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
-jq -e '.[1].activeTokenLocks["DAG4J6gixVGKYmcZs9Wmkyrv8ERp39vxtjwbjV5Q"]'
+jq -e ".[1].activeTokenLocks[\"$ADDRESS\"]"
 
 # verified here
 # http://52.8.132.193:9000/delegated-stakes/last-reference/DAG4J6gixVGKYmcZs9Wmkyrv8ERp39vxtjwbjV5Q
 
+
+wget "$DAG_L0_URL/delegated-stakes/last-reference/$ADDRESS" \
+-O delegated-stake-last-ref.json
+
 out=$(
-  java -jar ./nodes/wallet.jar create-delegated-stake --amount 6000 --token-lock $TOKEN_LOCK_HASH
+  java -jar ./nodes/wallet.jar create-delegated-stake --amount 6000 --token-lock $TOKEN_LOCK_HASH \
+  --parent delegated-stake-last-ref.json
 )
 echo "Create delegated stake hash $out"
 export DELEGATED_STAKE_HASH=$out
@@ -96,7 +102,8 @@ jq -e '.pendingWithdrawals[0].withdrawalEndEpoch'
 curl -s "$DAG_L0_URL/dag/$ADDRESS/balance" | \
 jq -e ".balance"
 
-
+# 101615848637358
+# 102261593212281
 
 export ADDRESS=DAG4J6gixVGKYmcZs9Wmkyrv8ERp39vxtjwbjV5Q
 
