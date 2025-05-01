@@ -14,13 +14,14 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{Con
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
-import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, DelegatedStakeReference, PendingDelegatedStakeWithdrawal}
+import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.{DelegatedStakeRewardParameters, RewardFraction, UpdateNodeParameters}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionAmount}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.Hasher
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 
@@ -60,44 +61,112 @@ trait DelegatedRewardsDistributor[F[_]] {
 }
 
 object DelegatedRewardsDistributor {
+
+  /** Identifies which stakes are being modified (have matching tokenLockRef in both existing records and acceptedCreates). Returns a Set of
+    * (Address, TokenLockRef) tuples representing the modified stakes.
+    */
+  def identifyModifiedStakes(
+    existingRecords: SortedMap[Address, List[DelegatedStakeRecord]],
+    acceptedCreates: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]]
+  ): Set[(Address, Hash)] =
+    acceptedCreates.flatMap {
+      case (addr, stakeList) =>
+        stakeList.flatMap {
+          case (ev, _) =>
+            val matchingRecords = existingRecords
+              .getOrElse(addr, List.empty)
+              .exists(_.event.value.tokenLockRef === ev.value.tokenLockRef)
+
+            if (matchingRecords) {
+              Some((addr, ev.value.tokenLockRef))
+            } else {
+              None
+            }
+        }
+    }.toSet
+
+  /** Returns a filtered version of existingRecords with modified stakes removed. This is used to exclude modified stakes from reward
+    * calculations.
+    */
+  def filterOutModifiedStakes(
+    existingRecords: SortedMap[Address, List[DelegatedStakeRecord]],
+    modifiedStakes: Set[(Address, Hash)]
+  ): SortedMap[Address, List[DelegatedStakeRecord]] =
+    existingRecords.flatMap {
+      case (address, records) =>
+        val filteredRecords = records.filterNot { record =>
+          modifiedStakes.contains((address, record.event.value.tokenLockRef))
+        }
+        if (filteredRecords.isEmpty) None else Some(address -> filteredRecords)
+    }
+
   def getUpdatedCreateDelegatedStakes[F[_]: Async: Hasher](
     delegatorRewardsMap: Map[PeerId, Map[Address, Amount]],
     delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
     partitionedRecords: PartitionedStakeUpdates
-  ): F[SortedMap[Address, List[DelegatedStakeRecord]]] =
-    delegatedStakeDiffs.acceptedCreates.map {
-      case (addr, st) =>
-        addr -> st.map {
-          case (ev, ord) => DelegatedStakeRecord(ev, ord, Balance.empty)
-        }
-    }.pure[F]
-      .map(partitionedRecords.unexpiredCreateDelegatedStakes |+| _)
-      .flatMap { activeStakes =>
-        // remove withdrawn stakes from the active list
+  ): F[SortedMap[Address, List[DelegatedStakeRecord]]] = {
+    val existingRecords = partitionedRecords.unexpiredCreateDelegatedStakes
+    val modifiedStakes = identifyModifiedStakes(existingRecords, delegatedStakeDiffs.acceptedCreates)
+
+    for {
+      newRecordsWithRewards <- delegatedStakeDiffs.acceptedCreates.toList.traverse {
+        case (addr, stakeList) =>
+          val existingRecordsForAddr = existingRecords.getOrElse(addr, List.empty)
+
+          stakeList.traverse {
+            case (ev, ord) =>
+              val matchingExistingRecord = existingRecordsForAddr.find { record =>
+                record.event.value.tokenLockRef === ev.value.tokenLockRef
+              }
+
+              DelegatedStakeRecord(
+                ev,
+                ord,
+                matchingExistingRecord.map(_.rewards).getOrElse(Balance.empty)
+              ).pure[F]
+          }.map(addr -> _)
+      }.map(_.toMap)
+
+      filteredExistingRecords = filterOutModifiedStakes(existingRecords, modifiedStakes)
+
+      mergedRecords = filteredExistingRecords ++ newRecordsWithRewards
+
+      activeStakes <- {
         val withdrawnStakes = delegatedStakeDiffs.acceptedWithdrawals.flatMap(_._2.map(_._1.stakeRef)).toSet
-        activeStakes.toList.traverse {
+
+        mergedRecords.toList.traverse {
           case (addr, records) =>
             records.traverse { record =>
-              DelegatedStakeReference.of(record.event).map(ref => (record, withdrawnStakes(ref.hash)))
-            }.map(records => (addr, records.filterNot(_._2).map(_._1)))
-        }
-      }
-      .map(_.map {
+              for {
+                ref <- DelegatedStakeReference.of[F](record.event)
+                isWithdrawn = withdrawnStakes.contains(ref.hash)
+              } yield (record, isWithdrawn)
+            }.map { recordsWithWithdrawnFlag =>
+              val keptRecords = recordsWithWithdrawnFlag
+                .filterNot(_._2) // Remove records that are withdrawn
+                .map(_._1) // Get just the records without the flags
+
+              (addr, keptRecords)
+            }
+        }.map(_.toMap)
+      }.map(_.map {
         case (addr, recs) =>
-          addr -> recs.map {
-            case DelegatedStakeRecord(event, ord, bal) =>
-              val nodeSpecificReward = delegatorRewardsMap
-                .get(event.value.nodeId)
-                .flatMap(_.get(addr))
-                .getOrElse(Amount.empty)
+          addr -> recs.map { record =>
+            val nodeSpecificReward =
+              if (modifiedStakes.contains((addr, record.event.value.tokenLockRef))) Amount.empty
+              else
+                delegatorRewardsMap
+                  .get(record.event.value.nodeId)
+                  .flatMap(_.get(addr))
+                  .getOrElse(Amount.empty)
 
-              val disbursedBalance = bal.plus(nodeSpecificReward).toOption.getOrElse(Balance.empty)
+            val disbursedBalance = record.rewards.plus(nodeSpecificReward).toOption.getOrElse(Balance.empty)
 
-              DelegatedStakeRecord(event, ord, disbursedBalance)
+            DelegatedStakeRecord(record.event, record.createdAt, disbursedBalance)
           }
-      })
-      .map(_.filterNot(_._2.isEmpty))
-      .map(_.toSortedMap)
+      }.filterNot(_._2.isEmpty).toSortedMap)
+    } yield activeStakes
+  }
 
   def getUpdatedWithdrawalDelegatedStakes[F[_]: Async: Hasher](
     lastSnapshotContext: GlobalSnapshotInfo,
