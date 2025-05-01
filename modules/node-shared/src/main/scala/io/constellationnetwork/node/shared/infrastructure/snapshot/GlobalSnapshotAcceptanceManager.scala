@@ -1,7 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
-import cats.data.Validated.{Invalid, Valid}
-import cats.data.{NonEmptyList, NonEmptySet}
+import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.syntax.all._
 import cats.{MonadThrow, Parallel}
@@ -13,7 +12,6 @@ import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnap
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.merkletree.syntax._
-import io.constellationnetwork.node.shared.config.types.RewardsConfig
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
   UpdateDelegatedStakeAcceptanceManager,
@@ -27,7 +25,6 @@ import io.constellationnetwork.node.shared.domain.nodeCollateral.{
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
-import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator.SpendActionValidationError
 import io.constellationnetwork.node.shared.domain.swap.block.{
   AllowSpendBlockAcceptanceContext,
   AllowSpendBlockAcceptanceManager,
@@ -38,13 +35,10 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.{
   TokenLockBlockAcceptanceManager,
   TokenLockBlockAcceptanceResult
 }
-import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
-import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact._
-import io.constellationnetwork.schema.balance.Balance._
 import io.constellationnetwork.schema.balance.{Amount, Balance, BalanceArithmeticError}
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
@@ -108,7 +102,7 @@ object GlobalSnapshotAcceptanceManager {
 
   case object InvalidMerkleTree extends NoStackTrace
 
-  def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider: Metrics](
+  def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider](
     tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
     blockAcceptanceManager: BlockAcceptanceManager[F],
     allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[F],
@@ -220,22 +214,6 @@ object GlobalSnapshotAcceptanceManager {
           expiredWithdrawalsDelegatedStaking
         ) = acceptDelegatedStakes(lastSnapshotContext, epochProgress)
 
-        _ <- Slf4jLogger
-          .getLogger[F]
-          .debug(
-            s"[DelegatedStake][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] unexpiredCreateDelegatedStakes: ${unexpiredCreateDelegatedStakes}"
-          )
-        _ <- Slf4jLogger
-          .getLogger[F]
-          .debug(
-            s"[DelegatedStake][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] unexpiredWithdrawalsDelegatedStaking: ${unexpiredWithdrawalsDelegatedStaking}"
-          )
-        _ <- Slf4jLogger
-          .getLogger[F]
-          .debug(
-            s"[DelegatedStake][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] expiredWithdrawalsDelegatedStaking: ${expiredWithdrawalsDelegatedStaking}"
-          )
-
         DelegatedRewardsResult(
           delegatorRewardsMap,
           updatedCreateDelegatedStakes,
@@ -257,27 +235,17 @@ object GlobalSnapshotAcceptanceManager {
                 (addr, recs.filterNot(record => tokenLocks(record.event.tokenLockRef)))
             }
 
-            Slf4jLogger
-              .getLogger[F]
-              .debug(
-                s"[DelegatedStaking][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] acceptedTokenLockRefs: ${acceptedTokenLockRefs}"
-              ) >>
-              Slf4jLogger
-                .getLogger[F]
-                .debug(
-                  s"[DelegatedStaking][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] filteredUnexpiredCreateDelegatedStakes: ${filteredUnexpiredCreateDelegatedStakes}"
-                ) >>
-              calculateRewardsFn(
-                DelegateRewardsInput(
-                  delegatedStakeAcceptanceResult,
-                  PartitionedStakeUpdates(
-                    filteredUnexpiredCreateDelegatedStakes,
-                    unexpiredWithdrawalsDelegatedStaking,
-                    expiredWithdrawalsDelegatedStaking
-                  ),
-                  epochProgress
-                )
+            calculateRewardsFn(
+              DelegateRewardsInput(
+                delegatedStakeAcceptanceResult,
+                PartitionedStakeUpdates(
+                  filteredUnexpiredCreateDelegatedStakes,
+                  unexpiredWithdrawalsDelegatedStaking,
+                  expiredWithdrawalsDelegatedStaking
+                ),
+                epochProgress
               )
+            )
           }
 
         (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
@@ -307,36 +275,11 @@ object GlobalSnapshotAcceptanceManager {
           SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
         )
 
-        spendTransactionsValidations <- spendActions.toList.traverse {
-          case (address, actions) =>
-            actions.traverse { action =>
-              spendActionValidator
-                .validate(
-                  action,
-                  lastActiveAllowSpends,
-                  currencyBalances ++ globalBalances,
-                  address
-                )
-                .map {
-                  case Valid(validAction) => Right(validAction)
-                  case Invalid(errors)    => Left((action, errors.toNonEmptyList.toList))
-                }
-            }.map(address -> _.partitionMap(identity))
-        }
-
-        acceptedSpendActions = spendTransactionsValidations.map {
-          case (address, (_, accepted)) => address -> accepted
-        }.filter {
-          case (_, spendAction) => spendAction.nonEmpty
-        }.toMap
-
-        rejectedSpendActions = spendTransactionsValidations.flatMap {
-          case (address, (rejected, _)) =>
-            rejected.map {
-              case (action: SpendAction, errors: List[SpendActionValidationError]) =>
-                address -> (action, errors)
-            }
-        }
+        (acceptedSpendActions, rejectedSpendActions) <- spendActionValidator.validateReturningAcceptedAndRejected(
+          spendActions,
+          lastActiveAllowSpends,
+          currencyBalances ++ globalBalances
+        )
 
         _ <- Slf4jLogger.getLogger[F].debug(s"--- Accepted spend actions: ${acceptedSpendActions.show}")
         _ <- Slf4jLogger.getLogger[F].debug(s"--- Rejected spend actions: ${rejectedSpendActions.show}")
@@ -543,21 +486,41 @@ object GlobalSnapshotAcceptanceManager {
             (maybeMerkleTree, updatedLastCurrencySnapshotProofs).tupled
         }
 
-        _ <- Slf4jLogger
-          .getLogger[F]
-          .debug(
-            s"[DelegatedStake][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] Updated create delegated stake: ${updatedCreateDelegatedStakes}"
-          )
-        _ <- Slf4jLogger
-          .getLogger[F]
-          .debug(
-            s"[DelegatedStake][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] Updated withdrawal delegated stake: ${updatedWithdrawDelegatedStakes}"
-          )
-        _ <- Slf4jLogger
-          .getLogger[F]
-          .debug(
-            s"[TokenLocks][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] Active token locks: ${updatedGlobalTokenLocks}"
-          )
+        updatedAllowSpendsCleaned = updatedAllowSpends.map {
+          case (outerKey, innerMap) =>
+            val cleanedInnerMap = innerMap.filter {
+              case (_, allowSpendSet) =>
+                allowSpendSet.nonEmpty
+            }
+            (outerKey, cleanedInnerMap)
+        }.filter {
+          case (_, innerMap) =>
+            innerMap.nonEmpty
+        }
+        updatedTokenLockBalancesCleaned = updatedTokenLockBalances.filter {
+          case (_, tokenLockBalances) =>
+            tokenLockBalances.nonEmpty
+        }
+        updatedGlobalTokenLocksCleaned = updatedGlobalTokenLocks.filter {
+          case (_, tokenLocks) =>
+            tokenLocks.nonEmpty
+        }
+        updatedCreateDelegatedStakesCleaned = updatedCreateDelegatedStakes.filter {
+          case (_, createDelegatedStakeRecords) =>
+            createDelegatedStakeRecords.nonEmpty
+        }
+        updatedWithdrawDelegatedStakesCleaned = updatedWithdrawDelegatedStakes.filter {
+          case (_, updatedDelegatedStakeRecords) =>
+            updatedDelegatedStakeRecords.nonEmpty
+        }
+        updatedCreateNodeCollateralsCleaned = updatedCreateNodeCollaterals.filter {
+          case (_, createNodeCollateralsRecords) =>
+            createNodeCollateralsRecords.nonEmpty
+        }
+        updatedWithdrawNodeCollateralsCleaned = updatedWithdrawNodeCollaterals.filter {
+          case (_, updatedNodeCollateralsRecords) =>
+            updatedNodeCollateralsRecords.nonEmpty
+        }
 
         gsi = GlobalSnapshotInfo(
           updatedLastStateChannelSnapshotHashes,
@@ -565,16 +528,16 @@ object GlobalSnapshotAcceptanceManager {
           updatedBalancesBySpendTransactions,
           updatedLastCurrencySnapshots,
           updatedLastCurrencySnapshotProofs,
-          if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedAllowSpends.some,
-          if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedGlobalTokenLocks.some,
-          if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedTokenLockBalances.some,
+          if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedAllowSpendsCleaned.some,
+          if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedGlobalTokenLocksCleaned.some,
+          if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedTokenLockBalancesCleaned.some,
           if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedAllowSpendRefs.some,
           if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedTokenLockRefs.some,
           if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedUpdateNodeParameters.some,
-          if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedCreateDelegatedStakes.some,
-          if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedWithdrawDelegatedStakes.some,
-          if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedCreateNodeCollaterals.some,
-          if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedWithdrawNodeCollaterals.some
+          if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedCreateDelegatedStakesCleaned.some,
+          if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedWithdrawDelegatedStakesCleaned.some,
+          if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedCreateNodeCollateralsCleaned.some,
+          if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedWithdrawNodeCollateralsCleaned.some
         )
 
         stateProof <- gsi.stateProof(maybeMerkleTree)
@@ -875,7 +838,7 @@ object GlobalSnapshotAcceptanceManager {
                 acc.updated(address, updatedLocks)
               }
         }
-        .map(updateTokenLocks => updateTokenLocks)
+        .map(updateTokenLocks => updateTokenLocks.filterNot(_._2.isEmpty))
     }
 
     private def updateTokenLockBalances(

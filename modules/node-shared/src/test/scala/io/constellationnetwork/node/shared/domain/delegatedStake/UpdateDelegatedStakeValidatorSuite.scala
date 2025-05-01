@@ -15,18 +15,22 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator._
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
+import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.nodeCollateral._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed.forAsyncHasher
 import io.constellationnetwork.security.signature.SignedValidator.{InvalidSignatures, NotSignedExclusivelyByAddressOwner}
+import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import io.constellationnetwork.shared.sharedKryoRegistrar
@@ -96,7 +100,25 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   ) =
     for {
       (ref, tokenLocks) <- testTokenLocks(keyPair, tokenLockAmount, tokenLockUnlockEpoch)
-    } yield (ref.hash, mkGlobalContext(tokenLocks = tokenLocks))
+      address = keyPair.getPublic.toAddress
+      nodeId = keyPair.getPublic.toId
+      nodeParams = SortedMap(
+        nodeId -> (
+          Signed(
+            UpdateNodeParameters(
+              address,
+              delegatedStakeRewardParameters = DelegatedStakeRewardParameters(
+                RewardFraction.unsafeFrom(80000000) // 80% to delegator
+              ),
+              NodeMetadataParameters("", ""),
+              UpdateNodeParametersReference(UpdateNodeParametersOrdinal(NonNegLong.unsafeFrom(0)), Hash.empty)
+            ),
+            NonEmptySet.one[SignatureProof](SignatureProof(nodeId, Signature(Hex(Hash.empty.value))))
+          ),
+          SnapshotOrdinal.unsafeApply(1L)
+        )
+      )
+    } yield (ref.hash, mkGlobalContext(tokenLocks = tokenLocks, nodeParams = nodeParams))
 
   test("should succeed when the create delegated stake is signed correctly, the node is authorized, and parents are valid") { res =>
     implicit val (json, h, sp, keyPair, sourceAddress) = res
@@ -568,9 +590,11 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   def mkGlobalContext(
     delegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]] = SortedMap.empty,
     withdrawals: SortedMap[Address, List[PendingDelegatedStakeWithdrawal]] = SortedMap.empty,
-    tokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = SortedMap.empty
+    tokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = SortedMap.empty,
+    nodeParams: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)] = SortedMap.empty
   ) =
     GlobalSnapshotInfo.empty.copy(
+      updateNodeParameters = Option.when(nodeParams.nonEmpty)(nodeParams),
       activeDelegatedStakes = Option.when(delegatedStakes.nonEmpty)(delegatedStakes),
       delegatedStakesWithdrawals = Option.when(withdrawals.nonEmpty)(withdrawals),
       activeTokenLocks = Option.when(tokenLocks.nonEmpty)(tokenLocks)

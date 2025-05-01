@@ -237,6 +237,9 @@ object GlobalDelegatedRewardsDistributor {
         .map(_._2)
         .getOrElse(dagPrices.head._2) // Default to initial price if no match found
 
+    private def getStakedAmount(stakeRecord: DelegatedStakeRecord): Long =
+      stakeRecord.event.value.amount.value.value + stakeRecord.rewards.value
+
     private def getTotalActiveStake(
       activeDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]]
     ): F[Amount] =
@@ -250,7 +253,7 @@ object GlobalDelegatedRewardsDistributor {
         }
 
         NonNegLong
-          .from(activeStakes.map(s => s._3.event.value.amount.value.value + s._3.rewards.value.value).sum)
+          .from(activeStakes.map(s => getStakedAmount(s._3)).sum)
           .pure[F]
           .map(_.leftMap(new IllegalArgumentException(_)))
           .flatMap(Async[F].fromEither(_))
@@ -278,7 +281,7 @@ object GlobalDelegatedRewardsDistributor {
             .flatTraverse {
               case (nodeId, nodeStakes) =>
                 for {
-                  nodeStakeAmount <- nodeStakes.map(t => BigDecimal(t._3.event.value.amount.value + t._3.rewards.value, mc)).sum.pure[F]
+                  nodeStakeAmount <- nodeStakes.map(t => BigDecimal(getStakedAmount(t._3), mc)).sum.pure[F]
                   nodePortionOfTotalStake = if (totalStakeBD > 0) nodeStakeAmount / totalStakeBD else BigDecimal(0, mc)
 
                   nodeRewardParams = nodeParametersMap
@@ -302,7 +305,7 @@ object GlobalDelegatedRewardsDistributor {
 
                   addressRewards <- delegatorStakes.toList.traverse {
                     case (address, stakes) =>
-                      val delegatorStakeAmountTotal = stakes.map(s => BigDecimal(s.event.value.amount.value + s.rewards.value, mc)).sum
+                      val delegatorStakeAmountTotal = stakes.map(s => BigDecimal(getStakedAmount(s), mc)).sum
                       val delegatorPortionOfNodeStake =
                         if (nodeStakeAmount <= 0) BigDecimal(0, mc)
                         else delegatorStakeAmountTotal / nodeStakeAmount
@@ -362,7 +365,7 @@ object GlobalDelegatedRewardsDistributor {
         val nodeStakes = activeDelegatedStakes.values.flatten
           .groupBy(_.event.value.nodeId.toId)
           .view
-          .mapValues(stakes => stakes.map(s => BigDecimal(s.event.value.amount.value.value, mc)).sum)
+          .mapValues(stakes => stakes.map(s => BigDecimal(getStakedAmount(s), mc)).sum)
           .toMap
 
         val facilitatorStakes = facilitators.map {

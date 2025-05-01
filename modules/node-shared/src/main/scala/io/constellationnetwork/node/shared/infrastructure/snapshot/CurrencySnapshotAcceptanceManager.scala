@@ -360,6 +360,8 @@ object CurrencySnapshotAcceptanceManager {
         case Right(balances) => balances
         case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by spend transactions: $error")
       }
+      updatedAllowSpendsCleaned = updatedAllowSpends.filter { case (_, allowSpends) => allowSpends.nonEmpty }
+      updatedActiveTokenLocksCleaned = updatedActiveTokenLocks.filter { case (_, tokenLocks) => tokenLocks.nonEmpty }
 
       csi = CurrencySnapshotInfo(
         transactionsRefs,
@@ -367,11 +369,11 @@ object CurrencySnapshotAcceptanceManager {
         Option.when(messagesAcceptanceResult.contextUpdate.nonEmpty)(messagesAcceptanceResult.contextUpdate),
         None,
         if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none else updatedAllowSpendRefs.some,
-        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none else updatedAllowSpends.some,
+        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none else updatedAllowSpendsCleaned.some,
         if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none
         else globalSnapshotSyncAcceptanceResult.contextUpdate.some,
         if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none else tokenLockRefs.some,
-        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none else updatedActiveTokenLocks.some
+        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none else updatedActiveTokenLocksCleaned.some
       )
 
       stateProof <- csi.stateProof(snapshotOrdinal)

@@ -282,7 +282,7 @@ const verifyTokenLockExpiration = async (address, hash, initialBalance, urls, un
     const { data: snapshot } = await axios.get(snapshotUrl);
 
     const activeTokenLocks = snapshot[1]?.activeTokenLocks?.[address]
-    if (activeTokenLocks.length > 0) {
+    if (activeTokenLocks && activeTokenLocks.length > 0) {
         const hasMatchingHash = await findMatchingHash(activeTokenLocks, hash);
         if (hasMatchingHash) {
             throw new Error('Token lock still active after expiration');
