@@ -1,4 +1,4 @@
-name: Metagraph Tests
+name: E2E Functionality Tests
 
 on:
   pull_request: {}
@@ -78,9 +78,9 @@ jobs:
       tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
     secrets: inherit
 
-  call-test-node-parameters:
+  call-test-delegated-staking:
     needs: [calculate-version, call-workflow-setup-environment]
-    uses: ./.github/workflows/test-node-parameters.yml
+    uses: ./.github/workflows/test-delegated-staking.yml
     with:
       tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
     secrets: inherit
