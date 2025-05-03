@@ -38,13 +38,12 @@ services:
       - .env
     environment:
       - CL_DAG_L1=true
-      - CL_L0_PEER_HOST=${CL_L0_PEER_HOST:-global-l0}
-      - CL_L0_PEER_HTTP_PORT=${CL_L0_PEER_HTTP_PORT:-9000}
+      - CL_L0_PEER_HTTP_HOST=${CL_L0_PEER_HTTP_HOST:-global-l0}
       - CL_KEYSTORE=/tessellation/key.p12
     ports:
-      - "${CL_DAG_L1_PUBLIC_PORT:-9010}:9010"  # Public HTTP
-      - "${CL_DAG_L1_PEER_PORT:-9011}:9011"  # P2P HTTP
-      - "${CL_DAG_L1_CLI_PORT:-9012}:9012"  # CLI
+      - "${CL_DAG_L1_PUBLIC_PORT:-9010}:9000"  # Public HTTP
+      - "${CL_DAG_L1_PEER_PORT:-9011}:9001"  # P2P HTTP
+      - "${CL_DAG_L1_CLI_PORT:-9012}:9002"  # CLI
     volumes:
       - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12:ro
       # If using docker volumes:  
@@ -55,7 +54,7 @@ services:
     #   global-l0:
     #     condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9010/node/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/node/health"]
       interval: 10s
       timeout: 5s
       retries: 5

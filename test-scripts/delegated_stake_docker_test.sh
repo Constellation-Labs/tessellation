@@ -35,7 +35,6 @@ cp modules/keytool/target/scala-2.13/tessellation-keytool-assembly-*.jar ./nodes
 cp modules/wallet/target/scala-2.13/tessellation-wallet-assembly-*.jar ./nodes/wallet.jar
 
 export TESSELLATION_DOCKER_VERSION=test
-
 docker build -t constellationnetwork/tessellation:$TESSELLATION_DOCKER_VERSION -f docker/Dockerfile .
 
 # Populate environment per node
@@ -82,7 +81,7 @@ export GL0_GENERATED_WALLET_PEER_ID=$out
 echo "Generated GL0 wallet peer id $GL0_GENERATED_WALLET_PEER_ID"
 echo $GL0_GENERATED_WALLET_PEER_ID > peer_id
 echo "CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> .env
-echo "CL_L0_PEER_HTTP_HOST=tessellation-network" >> .env
+echo "CL_L0_PEER_HTTP_HOST=global-l0" >> .env
 
 
 ret_addr=$(
@@ -148,7 +147,16 @@ echo "------------------------------------------------"
 cp docker/docker-compose.yaml ./nodes/global-l0/0/docker-compose.yaml
 cd ./nodes/global-l0/0
 
-docker compose --profile l0 up
+
+docker stop $(docker ps -a -q); \
+docker rm $(docker ps -a -q); \
+sudo rm -rf l0-data/ l1-data/; \
+docker compose down; docker compose rm; \
+cp ../../../docker/docker-compose.yaml . ; \
+docker compose --profile l0 up -d
+
+ docker exec -it dag-l1 /bin/bash -c 'apt install curl -y; curl global-l0:9000/cluster/info'
+docker exec -it dag-l1-1 /bin/bash
 
 cd ../
 
