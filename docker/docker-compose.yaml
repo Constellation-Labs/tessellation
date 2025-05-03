@@ -25,7 +25,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 15s
     networks:
       - tessellation-network
     profiles: ["l0"]
@@ -65,7 +65,7 @@ services:
       "host.docker.internal": "host-gateway"
 
   dag-l1-join-coordinator:
-    image: alpine:latest
+    image: constellationnetwork/tessellation:${TESSELLATION_DOCKER_VERSION:-latest}
     container_name: dag-l1${CONTAINER_NAME_SUFFIX:-}-join-coordinator
     env_file:
       - .env
@@ -75,23 +75,7 @@ services:
       - CL_DAG_L1_JOIN_ID=${CL_DAG_L1_JOIN_ID:-}
       - CL_DAG_L1_CLI_PORT=${CL_DAG_L1_CLI_PORT:-9012}
       - CL_DAG_L1_JOIN_ENABLED=${CL_DAG_L1_JOIN_ENABLED:-true}
-    command: >
-      sh -c "
-        apk --no-cache add curl
-
-        sleep 5
-
-        if [ "${CL_DAG_L1_JOIN_ENABLED}" = "true" ]; then
-          export l1_host=$(getent hosts dag-l1 | awk '{ print $1 }')
-          echo "L1 host: $l1_host"
-          curl -X POST -H 'Content-Type: application/json' \
-          -d "{\"id\":\"${CL_DAG_L1_JOIN_ID}\",\"ip\":\"${CL_DAG_L1_JOIN_IP}\",\"p2pPort\":${CL_DAG_L1_JOIN_PORT}}" \
-          http://$l1_host:${CL_DAG_L1_CLI_PORT}/cluster/join
-        fi
-
-        # Keep the container running
-        tail -f /dev/null
-      "
+    entrypoint: ["/tessellation/entrypoint-dag-l1-join-coordinator.sh"]
     depends_on:
       dag-l1:
         condition: service_healthy
