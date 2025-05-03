@@ -1,0 +1,120 @@
+version: '3.8'
+
+services:
+  gl0:
+    build:
+      context: ..
+      dockerfile: kubernetes/l0.Dockerfile
+      args:
+        BUILD_VERSION: ${BUILD_VERSION}
+    image: tessellation-gl0:${BUILD_VERSION}
+    container_name: gl0
+    environment:
+      - INITIAL_VALIDATOR=true
+      - CL_KEYALIAS=alias
+      - CL_PASSWORD=password
+      - CL_APP_ENV=dev
+      - CL_KEYSTORE=l0-initial-validator-key.p12
+      - JAVA_OPTS=-Dlogback.configurationFile=logback-kubernetes.xml -Dcats.effect.tracing.mode=full -Dcats.effect.tracing.buffer.size=64
+    ports:
+      - "9000:9000"  # Public HTTP
+      - "9001:9001"  # P2P HTTP
+      - "9002:9002"  # CLI HTTP
+    volumes:
+      - gl0-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/node/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks:
+      - tessellation-network
+
+  dag-l1:
+    build:
+      context: ..
+      dockerfile: kubernetes/l1.Dockerfile
+      args:
+        BUILD_VERSION: ${BUILD_VERSION}
+    image: tessellation-dag-l1:${BUILD_VERSION}
+    container_name: dag-l1
+    environment:
+      - INITIAL_VALIDATOR=true
+      - CL_KEYALIAS=alias
+      - CL_PASSWORD=password
+      - CL_APP_ENV=dev
+      - CL_KEYSTORE=l1-initial-validator-key.p12
+      - CL_L0_PEER_ID=${L0_PEER_ID}
+      - CL_L0_PEER_HTTP_HOST=gl0
+      - CL_L0_PEER_HTTP_PORT=9000
+      - L0_INITIAL_VALIDATOR_SERVICE_HOST=gl0
+      - L0_INITIAL_VALIDATOR_SERVICE_PORT_PUBLIC=9000
+      - JAVA_OPTS=-Dlogback.configurationFile=logback-kubernetes.xml -Dcats.effect.tracing.mode=full -Dcats.effect.tracing.buffer.size=64
+    ports:
+      - "19990:9000"  # Public HTTP
+      - "19991:9001"  # P2P HTTP
+      - "19992:9002"  # CLI HTTP
+    volumes:
+      - dag-l1-data:/app/data
+    depends_on:
+      gl0:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/node/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks:
+      - tessellation-network
+
+  join-coordinator:
+    image: alpine:latest
+    container_name: join-coordinator
+    command: >
+      sh -c "
+        apk --no-cache add curl jq
+        
+        echo 'Waiting for GL0 to be healthy...'
+        while ! curl -s http://gl0:9000/node/health; do
+          sleep 5
+        done
+        
+        echo 'GL0 is healthy!'
+        
+        # Get GL0 peer ID
+        GL0_PEER_ID=$(curl -s http://gl0:9000/wallet/id)
+        echo \"GL0 Peer ID: $${GL0_PEER_ID}\"
+        
+        echo 'Waiting for DAG-L1 to be healthy...'
+        while ! curl -s http://dag-l1:9000/node/health; do
+          sleep 5
+        done
+        
+        echo 'DAG-L1 is healthy!'
+        
+        # Get DAG-L1 peer ID
+        DAG_L1_PEER_ID=$(curl -s http://dag-l1:9000/wallet/id)
+        echo \"DAG-L1 Peer ID: $${DAG_L1_PEER_ID}\"
+        
+        echo 'Setup completed successfully!'
+        
+        # Keep the container running
+        tail -f /dev/null
+      "
+    depends_on:
+      gl0:
+        condition: service_healthy
+      dag-l1:
+        condition: service_healthy
+    networks:
+      - tessellation-network
+
+volumes:
+  gl0-data:
+  dag-l1-data:
+
+networks:
+  tessellation-network:
+    driver: bridge
