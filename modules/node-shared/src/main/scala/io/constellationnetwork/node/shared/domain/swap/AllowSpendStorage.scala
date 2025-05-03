@@ -206,10 +206,12 @@ class AllowSpendStorage[F[_]: Async](
             case None          => (maybeStored, none)
           }
         }
-      }.map(_.flatten)
+      }
+        .map(_.flatten)
+        .map(_.flatMap(_.toList))
 
       selected = takeFirstNHighestFeeTxs(allPulled, count)
-      toReturn = allPulled.flatMap(_.toList).toSet.diff(selected.toSet)
+      toReturn = allPulled.toSet.diff(selected.toSet)
       _ <- logger.debug(s"Pulled allow spends to return: ${toReturn.size}")
       _ <- allowSpendLogger.debug(s"Pulled allow spends to return: ${toReturn.size}, returned: ${toReturn.map(_.hash).show}")
       _ <- putBack(toReturn)
@@ -218,35 +220,27 @@ class AllowSpendStorage[F[_]: Async](
     } yield NonEmptyList.fromList(selected)
 
   private def takeFirstNHighestFeeTxs(
-    txs: List[NonEmptyList[Hashed[AllowSpend]]],
+    txs: List[Hashed[AllowSpend]],
     count: NonNegLong
   ): List[Hashed[AllowSpend]] = {
-    @tailrec
-    def go(
-      txs: SortedSet[NonEmptyList[Hashed[AllowSpend]]],
-      acc: List[Hashed[AllowSpend]]
-    ): List[Hashed[AllowSpend]] =
-      if (acc.size == count.value)
-        acc.reverse
-      else {
-        txs.headOption match {
-          case Some(txsNel) =>
-            val updatedAcc = txsNel.head :: acc
+    val order: Order[Hashed[AllowSpend]] =
+      Order.whenEqual(Order.by(-_.fee.value.value), Order[Hashed[AllowSpend]])
 
-            NonEmptyList.fromList(txsNel.tail) match {
-              case Some(remainingTxs) => go(txs.tail + remainingTxs, updatedAcc)
-              case None               => go(txs.tail, updatedAcc)
-            }
-
-          case None => acc.reverse
-        }
-      }
-
-    val order: Order[NonEmptyList[Hashed[AllowSpend]]] =
-      Order.whenEqual(Order.by(-_.head.fee.value.value), Order[NonEmptyList[Hashed[AllowSpend]]])
     val sortedTxs = SortedSet.from(txs)(order.toOrdering)
 
-    go(sortedTxs, List.empty)
+    @tailrec
+    def go(
+      txs: SortedSet[Hashed[AllowSpend]],
+      acc: List[Hashed[AllowSpend]]
+    ): List[Hashed[AllowSpend]] =
+      if (acc.size >= count.value) acc.reverse
+      else
+        txs.headOption match {
+          case Some(tx) => go(txs.tail, tx :: acc)
+          case None     => acc.reverse
+        }
+
+    go(sortedTxs, Nil)
   }
 
   def findWaiting(hash: Hash): F[Option[WaitingAllowSpend]] =

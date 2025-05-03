@@ -131,6 +131,43 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
     }
   }
 
+  test("pull should take transactions in correct order minding the fees - large amount of transactions") {
+    testResources.use {
+      case (transactionStorage, _, key1, address1, key2, address2, sp, h, txHasher, key3, address3) =>
+        implicit val securityProvider = sp
+        implicit val hasher = h
+
+        for {
+
+          txsA <- generateTransactions(address1, key1, address2, 1, TransactionFee(10L), txHasher = txHasher)
+
+          txsB <- generateTransactions(
+            address2,
+            key2,
+            address3,
+            100,
+            TransactionFee(1L),
+            txHasher = txHasher
+          )
+
+          txsBHigherFee <- generateTransactions(
+            address2,
+            key2,
+            address3,
+            1,
+            TransactionFee(8L),
+            Some(TransactionReference(txsB.last.ordinal, txsB.last.hash)),
+            txHasher = txHasher
+          )
+
+          _ <- (txsA.toList ::: txsB.toList ::: txsBHigherFee.toList).distinct
+            .traverse(transactionStorage.tryPut(_, SnapshotOrdinal.MinValue, Balance(NonNegLong.MaxValue)))
+
+          pulled <- transactionStorage.pull(50L)
+        } yield expect.same(NonEmptyList.fromList(txsA.toList ::: txsBHigherFee.toList ::: txsB.take(48)), pulled)
+    }
+  }
+
   test("pull should be able to take both fee and feeless transactions in one pull") {
     testResources.use {
       case (transactionStorage, _, key1, address1, key2, address2, sp, h, txHasher, _, _) =>
