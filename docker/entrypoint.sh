@@ -22,16 +22,25 @@ if [ -n "$CL_DAG_L1" ]; then
   fi
 
   echo "Starting L1 validator"
-  exec java -jar /tessellation/jars/dag-l1.jar run-validator
-
-elif [ -n "$CL_GENESIS_FILE" ]; then
-  # if you’ve provided a genesis file, run genesis
-  echo "Starting L0 validator genesis"
-  exec java -jar /tessellation/jars/dag-l0.jar run-genesis "/tessellation/genesis.csv"
-
+  echo "Using L0 peer HTTP host: $CL_L0_PEER_HTTP_HOST"
+  exec java -jar /tessellation/jars/dag-l1.jar run-validator --l0-peer-host $CL_L0_PEER_HTTP_HOST
 else
-  # otherwise, default to L0 validator
   echo "Starting L0 validator"
-  exec java -jar /tessellation/jars/dag-l0.jar run-validator
+  
+  # Only for tests
+  if [ -z "$CL_EXTERNAL_IP" ]; then
+    export CL_EXTERNAL_IP=$(getent hosts global-l0 | cut -d' ' -f1)
+    echo "Using external IP for gl0: $CL_EXTERNAL_IP"
+  fi
+
+  if [ -n "$CL_GENESIS_FILE" ]; then
+    # if you’ve provided a genesis file, run genesis
+    echo "Starting L0 validator genesis"
+    exec java -jar /tessellation/jars/dag-l0.jar run-genesis "/tessellation/genesis.csv"
+  else
+    # otherwise, default to L0 validator
+    echo "Starting L0 validator"
+    exec java -jar /tessellation/jars/dag-l0.jar run-validator
+  fi
 
 fi

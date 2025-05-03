@@ -2,6 +2,9 @@ FROM ubuntu:22.04
 
 RUN apt update && apt install -y openjdk-11-jre
 
+# Dev tools
+RUN apt install -y curl iproute2 iputils-ping jq
+
 RUN mkdir -p /tessellation/jars
 
 COPY modules/keytool/target/scala-2.13/tessellation-keytool-assembly-*.jar /tessellation/jars/keytool.jar
