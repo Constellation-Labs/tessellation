@@ -29,10 +29,10 @@ fi
 sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
 
 # Note this copy command may fail if you recompile without clean due to the *dirty* suffix, fixable with env
-# cp modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly-*.jar ./nodes/global-l0.jar
-# cp modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly-*.jar ./nodes/dag-l1.jar
-# cp modules/keytool/target/scala-2.13/tessellation-keytool-assembly-*.jar ./nodes/keytool.jar
-# cp modules/wallet/target/scala-2.13/tessellation-wallet-assembly-*.jar ./nodes/wallet.jar
+cp modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly-*.jar ./nodes/global-l0.jar
+cp modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly-*.jar ./nodes/dag-l1.jar
+cp modules/keytool/target/scala-2.13/tessellation-keytool-assembly-*.jar ./nodes/keytool.jar
+cp modules/wallet/target/scala-2.13/tessellation-wallet-assembly-*.jar ./nodes/wallet.jar
 
 export TESSELLATION_DOCKER_VERSION=test
 
@@ -57,8 +57,9 @@ export CL_EXTERNAL_IP=127.0.0.1
 EOF
 
 cat << EOF > ./nodes/.env
-export CL_APP_ENV="dev"
-export CL_COLLATERAL=0
+CL_APP_ENV="dev"
+CL_COLLATERAL=0
+TESSELLATION_DOCKER_VERSION=test
 EOF
 
 cp ./nodes/.envrc ./nodes/global-l0/0/.envrc
@@ -79,6 +80,10 @@ out=$(
 )
 export GL0_GENERATED_WALLET_PEER_ID=$out
 echo "Generated GL0 wallet peer id $GL0_GENERATED_WALLET_PEER_ID"
+echo $GL0_GENERATED_WALLET_PEER_ID > peer_id
+echo "CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> .env
+echo "CL_L0_PEER_HTTP_HOST=tessellation-network" >> .env
+
 
 ret_addr=$(
   source .envrc
@@ -99,6 +104,8 @@ cd ../../../
 
 
 
+export DAG_L1_PEER_ID_0=$GL0_GENERATED_WALLET_PEER_ID
+
 # dag-l1 1
 
 cd ./nodes/dag-l1/1
@@ -107,8 +114,8 @@ CL_DAG_L1_PUBLIC_PORT=19010
 CL_DAG_L1_PEER_PORT=19011
 CL_DAG_L1_CLI_PORT=19012
 EOF
-echo "export CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> .env
-echo "export CL_DAG_L1_JOIN_ID=$DAG_L1_PEER_ID_0" >> .env
+echo "CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> .env
+echo "CL_DAG_L1_JOIN_ID=$DAG_L1_PEER_ID_0" >> .env
 out=$(
   source .envrc
   java -jar ../../keytool.jar generate
@@ -123,8 +130,8 @@ CL_DAG_L1_PUBLIC_PORT=29010
 CL_DAG_L1_PEER_PORT=29011
 CL_DAG_L1_CLI_PORT=29012
 EOF
-echo "export CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> .env
-echo "export CL_DAG_L1_JOIN_ID=$DAG_L1_PEER_ID_0" >> .env
+echo "CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> .env
+echo "CL_DAG_L1_JOIN_ID=$DAG_L1_PEER_ID_0" >> .env
 
 out=$(
   source .envrc
@@ -137,11 +144,13 @@ echo "------------------------------------------------"
 echo "All deployment configurations now generated, proceeding to run cluster"
 echo "------------------------------------------------"
 
-
 # Start GL0 and dag-l1 0
+cp docker/docker-compose.yaml ./nodes/global-l0/0/docker-compose.yaml
 cd ./nodes/global-l0/0
-docker compose -f ../../../docker/docker-compose.yaml up -d --profile l0
-cd ../../../
+
+docker compose --profile l0 up
+
+cd ../
 
 # wait for GL0 to come online
 sleep 30

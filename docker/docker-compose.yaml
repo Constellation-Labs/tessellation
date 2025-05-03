@@ -13,9 +13,9 @@ services:
       - "${CL_DAG_L0_PUBLIC_PORT:-9000}:9000"  # Public HTTP
       - "${CL_DAG_L0_PEER_PORT:-9001}:9001"  # P2P HTTP
     volumes:
-      - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12
+      - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12:ro
       # Only required for testing purposes
-      - ${CL_GENESIS_FILE:-/dev/null}:/tessellation/genesis.csv
+      - ${CL_GENESIS_FILE:-/dev/null}:/tessellation/genesis.csv:ro
       # If using docker volumes:
       # - gl0-data:/tessellation/data
       # If using host volumes:
@@ -46,14 +46,14 @@ services:
       - "${CL_DAG_L1_PEER_PORT:-9011}:9011"  # P2P HTTP
       - "${CL_DAG_L1_CLI_PORT:-9012}:9012"  # CLI
     volumes:
-      - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12
+      - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12:ro
       # If using docker volumes:  
       # - dag-l1-data:/tessellation/data
       # If using host volumes:
       - ${CL_L1_DATA_MOUNT_PATH:-./l1-data}:/tessellation/data
-    depends_on:
-      global-l0:
-        condition: service_healthy
+    # depends_on:
+    #   global-l0:
+    #     condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9010/node/health"]
       interval: 10s
@@ -90,8 +90,6 @@ services:
         tail -f /dev/null
       "
     depends_on:
-      global-l0:
-        condition: service_healthy
       dag-l1:
         condition: service_healthy
     networks:
