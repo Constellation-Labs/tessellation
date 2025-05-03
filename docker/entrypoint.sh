@@ -8,6 +8,12 @@ fi
 
 if [ -n "$CL_DAG_L1" ]; then
 
+  # Only for tests
+  if [ -z "$CL_EXTERNAL_IP" ]; then
+    export CL_EXTERNAL_IP=192.168.100.2${CONTAINER_OFFSET:-0}
+    echo "Using external IP for DAG L1: $CL_EXTERNAL_IP"
+  fi
+
   # If no L0 peer ID is provided, we assume we're connecting to our own L0 validator
   if [ -z "$CL_L0_PEER_ID" ]; then
     echo "No L0 peer ID provided, generating new one"
@@ -23,13 +29,21 @@ if [ -n "$CL_DAG_L1" ]; then
 
   echo "Starting L1 validator"
   echo "Using L0 peer HTTP host: $CL_L0_PEER_HTTP_HOST"
-  exec java -jar /tessellation/jars/dag-l1.jar run-validator --l0-peer-host $CL_L0_PEER_HTTP_HOST
+  sleep 5
+  # Start the join coordinator in the background
+  echo "Starting join coordinator"
+  /tessellation/entrypoint-dag-l1-join-coordinator.sh &
+  L1_COMMAND="run-validator"
+  if [ -n "$CL_GENESIS_FILE" ]; then
+    L1_COMMAND="run-initial-validator"
+  fi
+  exec java -jar /tessellation/jars/dag-l1.jar $L1_COMMAND --l0-peer-host $CL_L0_PEER_HTTP_HOST
 else
   echo "Starting L0 validator"
   
   # Only for tests
   if [ -z "$CL_EXTERNAL_IP" ]; then
-    export CL_EXTERNAL_IP=$(getent hosts global-l0 | cut -d' ' -f1)
+    export CL_EXTERNAL_IP=192.168.100.1${CONTAINER_OFFSET:-0}
     echo "Using external IP for gl0: $CL_EXTERNAL_IP"
   fi
 

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   global-l0:
     image: constellationnetwork/tessellation:${TESSELLATION_DOCKER_VERSION:-latest}
@@ -17,15 +15,15 @@ services:
       # Only required for testing purposes
       - ${CL_GENESIS_FILE:-/dev/null}:/tessellation/genesis.csv:ro
       # If using docker volumes:
-      # - gl0-data:/tessellation/data
+      - gl0-data:/tessellation/data
       # If using host volumes:
-      - ${CL_L0_DATA_MOUNT_PATH:-./l0-data}:/tessellation/data
+      # - ${CL_L0_DATA_MOUNT_PATH:-./l0-data}:/tessellation/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/node/health"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 15s
+      start_period: 20s
     networks:
       - tessellation-network
     profiles: ["l0"]
@@ -40,6 +38,8 @@ services:
       - CL_DAG_L1=true
       - CL_L0_PEER_HTTP_HOST=${CL_L0_PEER_HTTP_HOST:-global-l0}
       - CL_KEYSTORE=/tessellation/key.p12
+      - CL_DAG_L1_JOIN_ENABLED=${CL_DAG_L1_JOIN_ENABLED:-true}
+      - CL_DAG_L1_JOIN_PORT=${CL_DAG_L1_JOIN_PORT:-9001}
     ports:
       - "${CL_DAG_L1_PUBLIC_PORT:-9010}:9000"  # Public HTTP
       - "${CL_DAG_L1_PEER_PORT:-9011}:9001"  # P2P HTTP
@@ -47,9 +47,9 @@ services:
     volumes:
       - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12:ro
       # If using docker volumes:  
-      # - dag-l1-data:/tessellation/data
+      - dag-l1-data:/tessellation/data
       # If using host volumes:
-      - ${CL_L1_DATA_MOUNT_PATH:-./l1-data}:/tessellation/data
+      # - ${CL_L1_DATA_MOUNT_PATH:-./l1-data}:/tessellation/data
     # depends_on:
     #   global-l0:
     #     condition: service_healthy
@@ -64,28 +64,12 @@ services:
     extra_hosts:
       "host.docker.internal": "host-gateway"
 
-  dag-l1-join-coordinator:
-    image: constellationnetwork/tessellation:${TESSELLATION_DOCKER_VERSION:-latest}
-    container_name: dag-l1${CONTAINER_NAME_SUFFIX:-}-join-coordinator
-    env_file:
-      - .env
-    environment:
-      - CL_DAG_L1_JOIN_IP=${CL_DAG_L1_JOIN_IP:-host.docker.internal}
-      - CL_DAG_L1_JOIN_PORT=${CL_DAG_L1_JOIN_PORT:-9011}
-      - CL_DAG_L1_JOIN_ID=${CL_DAG_L1_JOIN_ID:-}
-      - CL_DAG_L1_CLI_PORT=${CL_DAG_L1_CLI_PORT:-9012}
-      - CL_DAG_L1_JOIN_ENABLED=${CL_DAG_L1_JOIN_ENABLED:-true}
-    entrypoint: ["/tessellation/entrypoint-dag-l1-join-coordinator.sh"]
-    depends_on:
-      dag-l1:
-        condition: service_healthy
-    networks:
-      - tessellation-network
-
 # Use volumes for persistence as alternative to mounted file system storage
-# volumes:
-#   gl0-data:
-#   dag-l1-data:
+volumes:
+  gl0-data:
+    name: gl0-data${CONTAINER_NAME_SUFFIX:-}
+  dag-l1-data:
+    name: dag-l1-data${CONTAINER_NAME_SUFFIX:-}
 
 networks:
   tessellation-network:

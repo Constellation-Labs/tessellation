@@ -7,19 +7,14 @@ set -e
 export EXIT_CODE=0
 export CLEAN_BUILD=true
 
-# Remove extra clean if needed
-docker stop $(docker ps -q -f name=global-l0*) || true
-docker stop $(docker ps -q -f name=dag-l1*) || true
-docker rm $(docker ps -q -f name=global-l0*) || true
-docker rm $(docker ps -q -f name=dag-l1*) || true
-
 # Ensure clean setup
 rm -rf ./nodes
 
 mkdir -p ./nodes/global-l0/0
-mkdir -p ./nodes/dag-l1/0
-mkdir -p ./nodes/dag-l1/1
-mkdir -p ./nodes/dag-l1/2
+
+for i in 1 2; do
+  mkdir -p ./nodes/dag-l1/$i
+done
 
 # Build jars, run clean only if CLEAN_BUILD is true
 if [ "$CLEAN_BUILD" = "true" ]; then
@@ -51,40 +46,20 @@ export CL_KEYSTORE="key.p12"
 export CL_KEYALIAS="alias"
 export CL_PASSWORD="password"
 export CL_APP_ENV="dev"
-export CL_COLLATERAL=0
-export CL_EXTERNAL_IP=127.0.0.1
-EOF
-
-cat << EOF > ./nodes/.env
-CL_APP_ENV="dev"
-CL_COLLATERAL=0
-TESSELLATION_DOCKER_VERSION=test
-CL_TEST_MODE=true
-CL_LOCAL_MODE=true
 EOF
 
 cp ./nodes/.envrc ./nodes/global-l0/0/.envrc
-cp ./nodes/.envrc ./nodes/dag-l1/1/.envrc
-cp ./nodes/.envrc ./nodes/dag-l1/2/.envrc
-cp ./nodes/.env ./nodes/global-l0/0/.env
-cp ./nodes/.env ./nodes/dag-l1/1/.env
-cp ./nodes/.env ./nodes/dag-l1/2/.env
-
 cd ./nodes/global-l0/0/
 
 # Unsafe source kept in subshell
 out=$(
   source .envrc
   java -jar ../../keytool.jar generate
-  mv key-0.p12 key.p12
   java -jar ../../wallet.jar show-id
 )
 export GL0_GENERATED_WALLET_PEER_ID=$out
 echo "Generated GL0 wallet peer id $GL0_GENERATED_WALLET_PEER_ID"
 echo $GL0_GENERATED_WALLET_PEER_ID > peer_id
-echo "CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> .env
-echo "CL_L0_PEER_HTTP_HOST=172.19.0.3" >> .env
-
 
 ret_addr=$(
   source .envrc
@@ -94,9 +69,31 @@ export ADDRESS=$ret_addr
 echo "$ADDRESS" > address.txt
 echo "Generated GL0 wallet address $ADDRESS"
 
+cd ../../../
+
+cat << EOF > ./nodes/.env
+CL_APP_ENV="dev"
+CL_COLLATERAL=0
+TESSELLATION_DOCKER_VERSION=test
+CL_TEST_MODE=true
+CL_LOCAL_MODE=true
+CL_L0_PEER_HTTP_HOST=192.168.100.10
+CL_DAG_L1_JOIN_IP=192.168.100.20
+EOF
+
+echo "CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
+echo "CL_DAG_L1_JOIN_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
+
+cp ./nodes/.envrc ./nodes/dag-l1/1/.envrc
+cp ./nodes/.envrc ./nodes/dag-l1/2/.envrc
+cp ./nodes/.env ./nodes/global-l0/0/.env
+cp ./nodes/.env ./nodes/dag-l1/1/.env
+cp ./nodes/.env ./nodes/dag-l1/2/.env
+
+cd ./nodes/global-l0/0/
+
 # 1000000 * 1e8
 echo "$ADDRESS,100000000000000" > genesis.csv
-
 echo "Generated genesis file:"
 cat genesis.csv
 echo "CL_GENESIS_FILE=./genesis.csv" >> .env
@@ -109,38 +106,19 @@ export DAG_L1_PEER_ID_0=$GL0_GENERATED_WALLET_PEER_ID
 
 # dag-l1 1
 
-cd ./nodes/dag-l1/1
-cat << EOF >> .env
-CL_DAG_L1_PUBLIC_PORT=19010
-CL_DAG_L1_PEER_PORT=19011
-CL_DAG_L1_CLI_PORT=19012
-EOF
-echo "CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> .env
-echo "CL_L0_PEER_HTTP_HOST=host.docker.internal" >> .env
-echo "CL_DAG_L1_JOIN_ID=$DAG_L1_PEER_ID_0" >> .env
-echo "CONTAINER_NAME_SUFFIX=-1" >> .env
-out=$(
-  source .envrc
-  java -jar ../../keytool.jar generate
-)
-cd ../../../
-
-# dag-l1 2
-
-cd ./nodes/dag-l1/2
-cat << EOF >> .env
-CL_DAG_L1_PUBLIC_PORT=29010
-CL_DAG_L1_PEER_PORT=29011
-CL_DAG_L1_CLI_PORT=29012
-EOF
-echo "CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> .env
-echo "CL_DAG_L1_JOIN_ID=$DAG_L1_PEER_ID_0" >> .env
-echo "CONTAINER_NAME_SUFFIX=-2" >> .env
-out=$(
-  source .envrc
-  java -jar ../../keytool.jar generate
-)
-cd ../../../
+for i in 1 2; do
+  cd ./nodes/dag-l1/$i
+  echo "CONTAINER_NAME_SUFFIX=-$i" > .env
+  echo "CONTAINER_OFFSET=$i" >> .env
+  echo "CL_DAG_L1_PUBLIC_PORT=${i}9010" >> .env
+  echo "CL_DAG_L1_PEER_PORT=${i}9011" >> .env
+  echo "CL_DAG_L1_CLI_PORT=${i}9012" >> .env
+  out=$(
+    source .envrc
+    java -jar ../../keytool.jar generate
+  )
+  cd ../../../
+done
 
 
 echo "------------------------------------------------"
@@ -148,34 +126,24 @@ echo "All deployment configurations now generated, proceeding to run cluster"
 echo "------------------------------------------------"
 
 # Start GL0 and dag-l1 0
-cp docker/docker-compose.yaml ./nodes/global-l0/0/docker-compose.yaml
-cd ./nodes/global-l0/0
+
+# only run this if you really messed up
+# docker stop $(docker ps -a -q) && docker rm $(docker ps -a -q) && docker volume rm $(docker volume ls -q) && docker network rm $(docker network ls -q)
 
 
-docker stop $(docker ps -a -q) || true; \
-docker rm $(docker ps -a -q) || true; \
-sudo rm -rf l0-data/ l1-data/; \
-docker compose down; docker compose rm; \
+docker network rm tessellation_common;
+
+docker network create \
+  --driver=bridge \
+  --subnet=192.168.100.0/24 \
+  tessellation_common
+
+
+cd ./nodes/global-l0/0/
+docker compose down --remove-orphans --volumes; \
 cp ../../../docker/docker-compose.yaml . ; \
-docker compose --profile l0 up -d
-
-export DAG_L1_HOST_INTERNAL=$(docker exec -it dag-l1 /bin/bash -c "getent hosts dag-l1 | cut -d' ' -f1")
-export DAG_L0_HOST_INTERNAL=$(docker exec -it global-l0 /bin/bash -c "getent hosts global-l0 | cut -d' ' -f1")
-echo "DAG_L1_HOST_INTERNAL: $DAG_L1_HOST_INTERNAL"
-echo "DAG_L0_HOST_INTERNAL: $DAG_L0_HOST_INTERNAL"
-
- docker exec -it dag-l1 /bin/bash -c 'apt install curl -y; curl global-l0:9000/cluster/info'
- docker exec -it dag-l1 /bin/bash -c 'curl 172.19.0.3:9000/cluster/info'
- docker exec -it dag-l1 /bin/bash -c 'getent hosts global-l0'
- docker exec -it dag-l1 /bin/bash -c 'getent hosts dag-l1'
- docker exec -it dag-l1 /bin/bash -c 'getent hosts dag-l1'
- docker exec -it dag-l1 env
-docker exec -it dag-l1-1 /bin/bash
-
-docker exec -it dag-l1 /bin/bash -c 'curl host.docker.internal:9000/cluster/info'
-docker exec -it dag-l1 /bin/bash -c 'curl 172.19.0.1:9000/cluster/info'
-docker exec -it dag-l1 grep host.docker.internal /etc/hosts
-
+cp ../../../docker/docker-compose.test.yaml . ; \
+docker compose -f docker-compose.test.yaml -f docker-compose.yaml --profile l0 up -d
 
 cd ../../..
 
@@ -186,25 +154,19 @@ sleep 30
 cd ./nodes/dag-l1/1
 
 
-docker stop $(docker ps -a -q -f name=dag-l1-1*) || true; \
-docker rm $(docker ps -a -q -f name=dag-l1-1*) || true; \
-sudo rm -rf l0-data/ l1-data/; \
-docker compose down --remove-orphans; docker compose rm; \
+docker compose down --remove-orphans --volumes; \
 cp ../../../docker/docker-compose.yaml . ; \
-docker compose up 
-
-docker exec -it dag-l1-1 /bin/bash -c "cat /etc/hosts"
-
-docker exec -it dag-l1 /bin/bash -c "cat /etc/hosts"
-docker exec -it dag-l1-1 /bin/bash -c 'getent hosts dag-l1'
-
-docker logs dag-l1-join-coordinator-1
+cp ../../../docker/docker-compose.test.yaml . ; \
+docker compose -f docker-compose.test.yaml -f docker-compose.yaml up -d
 
 cd ../../../
 
 # Start dag-l1 2
 cd ./nodes/dag-l1/2
-docker compose -f ../../../docker/docker-compose.yaml up -d
+docker compose down --remove-orphans --volumes; \
+cp ../../../docker/docker-compose.yaml . ; \
+cp ../../../docker/docker-compose.test.yaml . ; \
+docker compose -f docker-compose.test.yaml -f docker-compose.yaml up -d
 cd ../../../
 
 # wait for dag-l1 to come online
