@@ -27,6 +27,8 @@ services:
     networks:
       - tessellation-network
     profiles: ["l0"]
+    extra_hosts:
+      "host.docker.internal": "host-gateway"
 
   dag-l1:
     image: constellationnetwork/tessellation:${TESSELLATION_DOCKER_VERSION:-latest}
@@ -50,6 +52,7 @@ services:
       - dag-l1-data:/tessellation/data
       # If using host volumes:
       # - ${CL_L1_DATA_MOUNT_PATH:-./l1-data}:/tessellation/data
+    # Only if using L0 profile
     # depends_on:
     #   global-l0:
     #     condition: service_healthy
