@@ -124,7 +124,7 @@ object SpendActionValidator {
         ): SpendActionValidationError).invalidNec[SpendAction].pure[F]
       } else {
         val validations = spendAction.spendTransactions.traverse { spendTransaction =>
-          validateSpendTx(spendTransaction, activeAllowSpends, allBalances, currencyId)
+          validateAllowSpendRef(spendTransaction, activeAllowSpends, allBalances, currencyId)
         }
 
         validations.map(_.sequence.as(spendAction))
@@ -177,72 +177,68 @@ object SpendActionValidator {
       }
     }
 
-    private def validateSpendTx(
-      tx: SpendTransaction,
-      activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
-      allBalances: Map[Option[Address], SortedMap[Address, Balance]],
-      currencyId: Address
-    ): F[SpendActionValidationErrorOr[SpendTransaction]] =
-      activeAllowSpends
-        .get(tx.currencyId.map(_.value))
-        .map(validateAllowSpendRef(tx, _, allBalances, currencyId))
-        .getOrElse(
-          Applicative[F]
-            .pure(NoActiveAllowSpends(s"Currency ${tx.currencyId} not found in active allow spends").invalidNec[SpendTransaction])
-        )
-
     private def validateAllowSpendRef(
       spendTransaction: SpendTransaction,
-      activeAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
+      currentActiveAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
       allBalances: Map[Option[Address], SortedMap[Address, Balance]],
       currencyId: Address
     ): F[SpendActionValidationErrorOr[SpendTransaction]] =
       spendTransaction.allowSpendRef match {
         case Some(allowSpendRef) =>
-          activeAllowSpends.toList.traverse {
-            case (_, hashedAllowSpends) =>
-              hashedAllowSpends.toList.traverse(_.toHashed).map { hashedList =>
-                hashedList.map(hashed => hashed.hash -> hashed.signed)
+          currentActiveAllowSpends
+            .get(spendTransaction.currencyId.map(_.value))
+            .map { activeAllowSpends =>
+              activeAllowSpends.toList.traverse {
+                case (_, hashedAllowSpends) =>
+                  hashedAllowSpends.toList.traverse(_.toHashed).map { hashedList =>
+                    hashedList.map(hashed => hashed.hash -> hashed.signed)
+                  }
               }
-          }
-            .map(_.flatten.toMap)
-            .map { allowSpendHashes =>
-              allowSpendHashes.get(allowSpendRef) match {
-                case None =>
-                  AllowSpendNotFound(
-                    s"Allow spend $allowSpendRef not found in currency active allow spends"
-                  ).invalidNec[SpendTransaction]
+                .map(_.flatten.toMap)
+                .map { allowSpendHashes =>
+                  allowSpendHashes.get(allowSpendRef) match {
+                    case None =>
+                      AllowSpendNotFound(
+                        s"Allow spend $allowSpendRef not found in currency active allow spends"
+                      ).invalidNec[SpendTransaction]
 
-                case Some(signedAllowSpend) =>
-                  if (signedAllowSpend.currencyId =!= spendTransaction.currencyId)
-                    InvalidCurrency(
-                      s"Currency mismatch: expected ${signedAllowSpend.currencyId}, found ${spendTransaction.currencyId}"
-                    ).invalidNec[SpendTransaction]
-                  else if (signedAllowSpend.destination =!= currencyId)
-                    InvalidCurrencyId(
-                      s"Currency mismatch: expected $currencyId, found ${signedAllowSpend.currencyId}"
-                    ).invalidNec[SpendTransaction]
-                  else if (!signedAllowSpend.approvers.contains(currencyId))
-                    InvalidCurrencyId(
-                      s"Currency mismatch: expected $currencyId, found ${signedAllowSpend.currencyId}"
-                    ).invalidNec[SpendTransaction]
-                  else if (signedAllowSpend.destination =!= spendTransaction.destination)
-                    InvalidDestinationAddress(
-                      s"Invalid destination address. Found: ${spendTransaction.destination}. Expected: ${signedAllowSpend.destination}"
-                    ).invalidNec[SpendTransaction]
-                  else if (signedAllowSpend.source =!= spendTransaction.source)
-                    InvalidSourceAddress(
-                      s"Invalid source address. Found: ${spendTransaction.source}. Expected: ${signedAllowSpend.source}"
-                    ).invalidNec[SpendTransaction]
-                  else if (signedAllowSpend.amount.value.value < spendTransaction.amount.value.value)
-                    SpendAmountGreaterThanAllowed(
-                      s"Spend amount: ${spendTransaction.amount} greater than allowed: ${signedAllowSpend.amount}"
-                    ).invalidNec[SpendTransaction]
-                  else
-                    spendTransaction.validNec[SpendActionValidationError]
-              }
+                    case Some(signedAllowSpend) =>
+                      if (signedAllowSpend.currencyId =!= spendTransaction.currencyId)
+                        InvalidCurrency(
+                          s"Currency mismatch: expected ${signedAllowSpend.currencyId}, found ${spendTransaction.currencyId}"
+                        ).invalidNec[SpendTransaction]
+                      else if (signedAllowSpend.destination =!= currencyId)
+                        InvalidCurrencyId(
+                          s"Currency mismatch: expected $currencyId, found ${signedAllowSpend.currencyId}"
+                        ).invalidNec[SpendTransaction]
+                      else if (!signedAllowSpend.approvers.contains(currencyId))
+                        InvalidCurrencyId(
+                          s"Currency mismatch: expected $currencyId, found ${signedAllowSpend.currencyId}"
+                        ).invalidNec[SpendTransaction]
+                      else if (signedAllowSpend.destination =!= spendTransaction.destination)
+                        InvalidDestinationAddress(
+                          s"Invalid destination address. Found: ${spendTransaction.destination}. Expected: ${signedAllowSpend.destination}"
+                        ).invalidNec[SpendTransaction]
+                      else if (signedAllowSpend.source =!= spendTransaction.source)
+                        InvalidSourceAddress(
+                          s"Invalid source address. Found: ${spendTransaction.source}. Expected: ${signedAllowSpend.source}"
+                        ).invalidNec[SpendTransaction]
+                      else if (signedAllowSpend.amount.value.value < spendTransaction.amount.value.value)
+                        SpendAmountGreaterThanAllowed(
+                          s"Spend amount: ${spendTransaction.amount} greater than allowed: ${signedAllowSpend.amount}"
+                        ).invalidNec[SpendTransaction]
+                      else
+                        spendTransaction.validNec[SpendActionValidationError]
+                  }
+                }
             }
-
+            .getOrElse(
+              Applicative[F]
+                .pure(
+                  NoActiveAllowSpends(s"Currency ${spendTransaction.currencyId} not found in active allow spends")
+                    .invalidNec[SpendTransaction]
+                )
+            )
         case None =>
           val spendTransactionCurrencyAddress = spendTransaction.currencyId.map(_.value)
           val spendTransactionCurrencyBalances = allBalances.getOrElse(spendTransactionCurrencyAddress, SortedMap.empty[Address, Balance])
