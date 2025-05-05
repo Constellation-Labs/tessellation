@@ -47,14 +47,13 @@ sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
 # Note this copy command may fail if you recompile without clean due to the *dirty* suffix, fixable with env
 # Duplicate copy overwrites with dirty version if only compiling one module
 # Order is deliberate here for reruns
-cp modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly*.jar ./nodes/global-l0.jar
-cp modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly*${DIRTY_SUFFIX}*.jar ./nodes/global-l0.jar
-cp modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly*.jar ./nodes/dag-l1.jar
-cp modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly*${DIRTY_SUFFIX}*.jar ./nodes/dag-l1.jar
-cp modules/keytool/target/scala-2.13/tessellation-keytool-assembly*.jar ./nodes/keytool.jar
-cp modules/keytool/target/scala-2.13/tessellation-keytool-assembly*${DIRTY_SUFFIX}-*.jar ./nodes/keytool.jar
-cp modules/wallet/target/scala-2.13/tessellation-wallet-assembly*.jar ./nodes/wallet.jar
-cp modules/wallet/target/scala-2.13/tessellation-wallet-assembly*${DIRTY_SUFFIX}-*.jar ./nodes/wallet.jar
+
+for module in "dag-l0" "dag-l1" "keytool" "wallet"
+do
+  cp modules/${module}/target/scala-2.13/tessellation-${module}-assembly*.jar ./nodes/${module}.jar || true
+  cp modules/${module}/target/scala-2.13/tessellation-${module}-assembly*${DIRTY_SUFFIX}*.jar ./nodes/${module}.jar  || true
+done
+
 
 export TESSELLATION_DOCKER_VERSION=test
 docker build -t constellationnetwork/tessellation:$TESSELLATION_DOCKER_VERSION -f docker/Dockerfile .
