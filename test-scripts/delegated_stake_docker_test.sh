@@ -4,10 +4,18 @@
 set -e
 
 # For debugging locally use 0 for ci use 1
-export EXIT_CODE=0
-# Only for CI
-export DO_EXIT=false
-export CLEAN_BUILD=false
+if [ -z "$EXIT_CODE" ]; then
+  export EXIT_CODE=0
+fi
+
+# if not found in environment
+if [ -z "$CLEAN_BUILD" ]; then
+  export CLEAN_BUILD=false
+fi
+
+if [ -z "$DO_EXIT" ]; then
+  export DO_EXIT=false
+fi
 
 exit_func() {
   if [ "$DO_EXIT" = "true" ]; then
@@ -37,9 +45,15 @@ sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
 
 
 # Note this copy command may fail if you recompile without clean due to the *dirty* suffix, fixable with env
+# Duplicate copy overwrites with dirty version if only compiling one module
+# Order is deliberate here for reruns
+cp modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly*.jar ./nodes/global-l0.jar
 cp modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly*${DIRTY_SUFFIX}*.jar ./nodes/global-l0.jar
+cp modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly*.jar ./nodes/dag-l1.jar
 cp modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly*${DIRTY_SUFFIX}*.jar ./nodes/dag-l1.jar
+cp modules/keytool/target/scala-2.13/tessellation-keytool-assembly*.jar ./nodes/keytool.jar
 cp modules/keytool/target/scala-2.13/tessellation-keytool-assembly*${DIRTY_SUFFIX}-*.jar ./nodes/keytool.jar
+cp modules/wallet/target/scala-2.13/tessellation-wallet-assembly*.jar ./nodes/wallet.jar
 cp modules/wallet/target/scala-2.13/tessellation-wallet-assembly*${DIRTY_SUFFIX}-*.jar ./nodes/wallet.jar
 
 export TESSELLATION_DOCKER_VERSION=test
