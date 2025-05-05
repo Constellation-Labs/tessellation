@@ -156,16 +156,16 @@ echo "------------------------------------------------"
 # docker stop $(docker ps -a -q) && docker rm $(docker ps -a -q) && docker volume rm $(docker volume ls -q) && docker network rm $(docker network ls -q)
 # 1. Stop & remove all containers on the tessellation_common network
 docker ps -aq --filter network=tessellation_common \
-  | xargs -r docker rm -f
+  | xargs -r docker rm -f || true
 
 # 2. Remove volumes named gl0-data or dag-l1-data
 docker volume ls -q \
   | grep -E 'gl0-data|dag-l1-data' \
-  | xargs -r docker volume rm
+  | xargs -r docker volume rm || true
 
 
 # 3. Now remove the network
-docker network rm tessellation_common
+docker network rm tessellation_common || true
 
 docker network create \
   --driver=bridge \
