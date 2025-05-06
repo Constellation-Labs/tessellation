@@ -445,4 +445,84 @@ object SpendActionValidatorSuite extends MutableIOSuite {
         )
       )
   }
+
+  test("Should accept spendTransactions without allowSpendRef skipping allowSpendRefValidation") { res =>
+    implicit val (_, hs, sp) = res
+
+    val validator = SpendActionValidator.make
+
+    for {
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
+
+      address = keyPair1.getPublic.toAddress
+      ammAddress = keyPair2.getPublic.toAddress
+
+      activeAllowSpends = SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+
+      metagraphSpendTx = SpendTransaction(none, None, SwapAmount(2L), ammAddress, ammAddress)
+      userSpendTx = SpendTransaction(none, None, SwapAmount(1L), ammAddress, ammAddress)
+      spendAction = SpendAction(NonEmptyList.of(metagraphSpendTx, userSpendTx))
+      spendActions = Map(ammAddress -> List(spendAction))
+      balances = Map(none[Address] -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
+
+      (acceptedSpendActions, rejectedSpendActions) <- validator.validateReturningAcceptedAndRejected(
+        spendActions,
+        activeAllowSpends,
+        balances
+      )
+    } yield
+      expect.all(
+        rejectedSpendActions.isEmpty,
+        acceptedSpendActions.nonEmpty,
+        acceptedSpendActions.contains(ammAddress),
+        acceptedSpendActions(ammAddress) === List(spendAction)
+      )
+  }
+
+  test("Should reject spendTransactions with wrong allowSpendRef") { res =>
+    implicit val (_, hs, sp) = res
+
+    val validator = SpendActionValidator.make
+
+    for {
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
+
+      address = keyPair1.getPublic.toAddress
+      ammAddress = keyPair2.getPublic.toAddress
+      allowSpend = AllowSpend(
+        address,
+        ammAddress,
+        None,
+        SwapAmount(1L),
+        AllowSpendFee(1L),
+        AllowSpendReference.empty,
+        EpochProgress(20L),
+        List(ammAddress)
+      )
+      signedAllowSpend <- Signed.forAsyncHasher(allowSpend, keyPair1)
+      activeAllowSpends = SortedMap(none[Address] -> SortedMap(address -> SortedSet(signedAllowSpend)))
+
+      metagraphSpendTx = SpendTransaction(none, None, SwapAmount(2L), ammAddress, ammAddress)
+      userSpendTx = SpendTransaction(Hash.empty.some, None, SwapAmount(1L), address, ammAddress)
+      spendAction = SpendAction(NonEmptyList.of(metagraphSpendTx, userSpendTx))
+      spendActions = Map(ammAddress -> List(spendAction))
+      balances = Map(none[Address] -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
+
+      (acceptedSpendActions, rejectedSpendActions) <- validator.validateReturningAcceptedAndRejected(
+        spendActions,
+        activeAllowSpends,
+        balances
+      )
+    } yield
+      expect.all(
+        rejectedSpendActions.nonEmpty,
+        acceptedSpendActions.isEmpty,
+        rejectedSpendActions.contains(ammAddress),
+        rejectedSpendActions(ammAddress)._2 === List(
+          AllowSpendNotFound(s"Allow spend ${Hash.empty} not found in currency active allow spends")
+        )
+      )
+  }
 }

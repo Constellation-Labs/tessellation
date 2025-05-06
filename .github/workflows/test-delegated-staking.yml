@@ -1,5 +1,4 @@
-name: Test node parameters
-
+name: Test Delegated Staking
 on:
   workflow_call:
     inputs:
@@ -8,7 +7,7 @@ on:
         type: string
 
 jobs:
-  node-parameters-tests:
+  delegated-staking-tests:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -23,7 +22,7 @@ jobs:
         shell: bash
         run: |
           cd .github/action_scripts
-          npm i @stardust-collective/dag4
+          npm i @stardust-collective/dag4@v2.3.0
           npm i js-sha256
           npm i axios
           npm i brotli
@@ -61,25 +60,16 @@ jobs:
           DAG_L0_PORT_PREFIX: 90
           DAG_L1_PORT_PREFIX: 91
 
-      - name: Start Metagraph - Project Template
-        uses: "./.github/templates/actions/metagraph/start"
-        with:
-          INCLUDE_DATA_L1: false
-          METAGRAPH_NAME: project-template-metagraph
-          DL0_PORT_PREFIX: 90
-          ML0_PORT_PREFIX: 80
-          CL1_PORT_PREFIX: 81
-
-      - name: Check
+      - name: Test Delegated Staking
         run: |
-          cd .github/action_scripts/node_parameters
-          node node_parameters.js 90 91 80 81 82 checkNodeParameters
+          cd .github/action_scripts/delegated_staking
+          node delegated-staking.js 90 91 testDelegatedStaking
 
       - name: Upload log files
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: node-parameters-node-log-files-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}-${{ inputs.tessellation_version }}
+          name: delegated-staking-node-log-files-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}-${{ inputs.tessellation_version }}
           path: .github/code/**/*.log
           if-no-files-found: warn
           retention-days: 3
