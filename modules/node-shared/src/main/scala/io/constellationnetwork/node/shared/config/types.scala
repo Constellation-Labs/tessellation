@@ -26,6 +26,7 @@ object types {
 
   case class FieldsAddedOrdinals(
     tessellation3Migration: Map[AppEnvironment, SnapshotOrdinal],
+    tessellation301Migration: Map[AppEnvironment, SnapshotOrdinal],
     checkSyncGlobalSnapshotField: Map[AppEnvironment, SnapshotOrdinal],
     globalSnapshotsWithCurrencySnapshots: Map[AppEnvironment, SnapshotOrdinal]
   )
