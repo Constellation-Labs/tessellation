@@ -45,6 +45,7 @@ import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral._
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.priceOracle.{PriceRecord, TokenPair}
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction._
@@ -104,6 +105,7 @@ object GlobalSnapshotAcceptanceManager {
 
   def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider](
     tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
+    tessellation301MigrationStartingOrdinal: SnapshotOrdinal,
     blockAcceptanceManager: BlockAcceptanceManager[F],
     allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[F],
     tokenLockBlockAcceptanceManager: TokenLockBlockAcceptanceManager[F],
@@ -512,6 +514,7 @@ object GlobalSnapshotAcceptanceManager {
           case (_, updatedNodeCollateralsRecords) =>
             updatedNodeCollateralsRecords.nonEmpty
         }
+        updatedPriceState = SortedMap.empty[TokenPair, PriceRecord]
 
         gsi = GlobalSnapshotInfo(
           updatedLastStateChannelSnapshotHashes,
@@ -530,7 +533,8 @@ object GlobalSnapshotAcceptanceManager {
           if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedCreateDelegatedStakesCleaned.some,
           if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedWithdrawDelegatedStakesCleaned.some,
           if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedCreateNodeCollateralsCleaned.some,
-          if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedWithdrawNodeCollateralsCleaned.some
+          if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedWithdrawNodeCollateralsCleaned.some,
+          if (ordinal < tessellation301MigrationStartingOrdinal) none else updatedPriceState.some
         )
 
         stateProof <- gsi.stateProof(maybeMerkleTree)

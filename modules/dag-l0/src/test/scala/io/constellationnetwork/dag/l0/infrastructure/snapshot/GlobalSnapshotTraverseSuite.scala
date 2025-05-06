@@ -346,6 +346,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager
         .make[IO](
           SnapshotOrdinal.MinValue,
+          SnapshotOrdinal.MinValue,
           blockAcceptanceManager,
           allowSpendBlockAcceptanceManager,
           tokenLockBlockAcceptanceManager,
@@ -383,6 +384,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           SortedMap.from(balances),
           SortedMap.empty,
           SortedMap.empty,
+          Some(SortedMap.empty),
           Some(SortedMap.empty),
           Some(SortedMap.empty),
           Some(SortedMap.empty),
