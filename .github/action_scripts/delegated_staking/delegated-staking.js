@@ -95,8 +95,8 @@ const checkBadRequest = (response) => {
   }
 }
 
-const datumToFloat = (datum) => { 
-    return parseFloat((datum / 1e8).toFixed(8))
+const dagToDatum = (dag) => {
+  return Math.round(dag * 1e8);
 }
 
 const getNodeParams = async (urls) => {
@@ -438,18 +438,18 @@ const setupDag4Account = (urls) => {
   return dag4.account
 }
 
-const assertBalanceChange = async (account, expectedBalance) => {
-  const balance = await account.getBalance()
+const assertBalanceChange = async (account, expectedBalanceDatum) => {
+  const balance = dagToDatum(await account.getBalance())
 
-  if (Number(balance) !== expectedBalance) {
+  if (balance !== expectedBalanceDatum) {
     throw new Error(
-      `Invalid balance: Expected balance to be ${expectedBalance} but got ${balance}`,
+      `Invalid balance: Expected balance to be ${expectedBalanceDatum} but got ${balance}`,
     )
   }
 }
 
 const createTokenLock = async (account, urls, lockAmount) => {
-  const initialBalance = await account.getBalance()
+  const initialBalance = dagToDatum(await account.getBalance())
 
   const { hash } = await account.postTokenLock({
     source: account.address,
@@ -466,7 +466,7 @@ const createTokenLock = async (account, urls, lockAmount) => {
 
   await withRetry(
     async () =>
-      assertBalanceChange(account, initialBalance - datumToFloat(lockAmount)),
+      assertBalanceChange(account, initialBalance - lockAmount),
     {
       name: 'assertBalanceChangeAfterTokenLock',
       maxAttempts: 10,
@@ -760,7 +760,7 @@ const assertTokenUnlockInSnapshot = async (
 const checkWithdrawDelegatedStake = async (urls, account, stakeHash) => {
   logWorkflow.info('---- Start checkWithdrawDelegatedStake ----')
 
-  const initialBalance = await account.getBalance()
+  const initialBalance = dagToDatum(await account.getBalance())
 
   const originalStake = await fetchStakeWithRewardsBalance(
     urls,
@@ -827,7 +827,7 @@ const checkWithdrawDelegatedStake = async (urls, account, stakeHash) => {
   )
   logWorkflow.info('Stake removed from pendingWithdrawal')
 
-  await assertBalanceChange(account, initialBalance + datumToFloat(originalStake.totalBalance))
+  await assertBalanceChange(account, initialBalance + originalStake.totalBalance)
   logWorkflow.info('Wallet balance updated')
 
   let ordinal
