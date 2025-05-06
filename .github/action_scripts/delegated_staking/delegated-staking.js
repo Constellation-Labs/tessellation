@@ -649,6 +649,8 @@ const fetchStakeWithRewardsBalance = async (
 const checkUpdateDelegatedStake = async (urls, account, stakeHash, nodeId) => {
   logWorkflow.info('---- Start checkUpdateDelegatedStake ----')
 
+  logWorkflow.info('Waiting for stake with non-zero rewards balance')
+
   const originalStake = await fetchStakeWithRewardsBalance(
     urls,
     account.address,
@@ -701,7 +703,7 @@ const checkUpdateDelegatedStake = async (urls, account, stakeHash, nodeId) => {
       handleError: () => {},
     },
   )
-  logWorkflow.info('Stake update verified')
+  logWorkflow.info('Stake update verified with balance change')
 
   logWorkflow.info('---- End checkUpdateDelegatedStake ----')
 
@@ -909,4 +911,5 @@ executeWorkflowByType(workflowType).catch((err) => {
   console.log('err:')
   console.log(err)
   logWorkflow.error('-', err)
+  throw err
 })
