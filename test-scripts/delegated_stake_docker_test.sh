@@ -21,6 +21,14 @@ if [ -z "$L0_ONLY" ]; then
   export L0_ONLY=false
 fi
 
+if [ -z "$REMOVE_EXISTING_CONFIGS" ]; then
+  export REMOVE_EXISTING_CONFIGS=true
+fi
+
+if [ -z "$SKIP_ASSEMBLY" ]; then
+  export SKIP_ASSEMBLY=false
+fi
+
 exit_func() {
   if [ "$DO_EXIT" = "true" ]; then
     exit $EXIT_CODE
@@ -28,8 +36,9 @@ exit_func() {
   return 0
 }
 
-# Ensure clean setup
-rm -rf ./nodes
+if [ "$REMOVE_EXISTING_CONFIGS" = "true" ]; then
+  rm -rf ./nodes
+fi
 
 mkdir -p ./nodes/global-l0/0
 
@@ -57,7 +66,7 @@ else
     sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
   else
     echo "Assembling only L0"
-    sbt dagL0/assembly
+    # sbt dagL0/assembly
   fi
 fi
 
@@ -152,10 +161,15 @@ export DAG_L1_PEER_ID_0=$GL0_GENERATED_WALLET_PEER_ID
 
 for i in 1 2; do
   cd ./nodes/dag-l1/$i
+  echo "CL_DAG_L1_JOIN_ENABLED=true" >> .env
+  echo "CL_DAG_L0_JOIN_ENABLED=true" >> .env
   echo "CONTAINER_NAME_SUFFIX=-$i" >> .env
   echo "CONTAINER_OFFSET=$i" >> .env
+  echo "CL_DAG_L0_PUBLIC_PORT=${i}9000" >> .env
   echo "CL_DAG_L1_PUBLIC_PORT=${i}9010" >> .env
+  echo "CL_DAG_L0_PEER_PORT=${i}9001" >> .env
   echo "CL_DAG_L1_PEER_PORT=${i}9011" >> .env
+  echo "CL_DAG_L0_CLI_PORT=${i}9002" >> .env
   echo "CL_DAG_L1_CLI_PORT=${i}9012" >> .env
   out=$(
     source .envrc
@@ -217,7 +231,7 @@ cd ./nodes/dag-l1/2
 docker compose down --remove-orphans --volumes || true; \
 cp ../../../docker/docker-compose.yaml . ; \
 cp ../../../docker/docker-compose.test.yaml . ; \
-docker compose -f docker-compose.test.yaml -f docker-compose.yaml up -d
+docker compose -f docker-compose.test.yaml -f docker-compose.yaml  --profile l0 up -d
 cd ../../../
 
 # wait for dag-l1 to come online
@@ -317,7 +331,24 @@ jq -e '.activeDelegatedStakes | length == 1' > /dev/null || \
 
 
 # Change node params, first register them for second node.
+# Create node update params for gl0 kp
+cd ./nodes/dag-l1/1/
+# 6000 * 1e8
+out=$(
+  source .envrc
+  java -jar ../../wallet.jar create-node-params
+)
+echo "Create node params output $out"
+cat event
+cp event initial-node-params.json
+curl -i -X POST --header 'Content-Type: application/json' --data @initial-node-params.json "$DAG_L0_URL"/node-params
+# Await accepted
+sleep 30
+cd ../../..
 
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e '.[1].updateNodeParameters | length > 1' > /dev/null || \
+{ echo "ERROR: updateNodeParameters is empty in snapshot combined"; exit_func; }
 
 
 
