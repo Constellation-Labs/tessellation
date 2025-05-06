@@ -688,7 +688,7 @@ const checkUpdateDelegatedStake = async (urls, account, stakeHash, nodeId) => {
             nodeId,
             amount: originalStake.amount,
             tokenLockRef: originalStake.tokenLockRef,
-            // rewardAmount: originalStake.rewardAmount, // balance is transferred
+            rewardAmount: originalStake.rewardAmount, // balance is transferred
           },
         ],
         [],
