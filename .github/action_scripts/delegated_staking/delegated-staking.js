@@ -301,7 +301,7 @@ const checkCreateNodeParameters = async (urls) => {
         path.join(__dirname, 'keys', 'genesis-node.hex')
   )
 
-  checkInitialNodeParamsNode(urls, nodeId1)
+  await checkInitialNodeParamsNode(urls, nodeId1)
   logWorkflow.info('Check initial node params is OK')
 
   const ur1 = await postNodeParamsNodeId(
@@ -401,6 +401,10 @@ const checkCreateNodeParameters = async (urls) => {
     secondNodeFraction1,
   )
   checkOk(ur4)
+  
+  // tends to fail here in CI, wait a little longer
+  await sleep(5000)
+  
   await getNodeParamsNodeIdVerify(
     urls,
     nodeId2,
