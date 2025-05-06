@@ -68,6 +68,30 @@ object NonNegFractionSuite extends SimpleIOSuite with Checkers {
     }
   }
 
+  test("fromBigDecimal creates a fraction with 8 digits of precision") {
+    val testCases = List(
+      BigDecimal("2.0") -> (200000000L, 100000000L),
+      BigDecimal("2.000000001") -> (200000000L, 100000000L), // Truncated
+      BigDecimal("1.12345678") -> (112345678L, 100000000L),
+      BigDecimal("1.123456789") -> (112345678L, 100000000L) // Truncated
+    )
+
+    IO.parSequenceN(4)(testCases.map {
+      case (input, (expectedNum, expectedDenom)) =>
+        NonNegFraction.fromBigDecimal[IO](input).map { fraction =>
+          expect(fraction.numerator.value == expectedNum) &&
+          expect(fraction.denominator.value == expectedDenom)
+        }
+    }).map(_.reduce(_ && _))
+  }
+
+  test("fromBigDecimal rejects negative inputs") {
+    forall(Gen.chooseNum(Double.MinValue, -0.000000001)) { negValue =>
+      val result = NonNegFraction.fromBigDecimal[Either[Throwable, *]](BigDecimal(negValue))
+      expect(result.isLeft)
+    }
+  }
+
   test("fromDouble creates a fraction with 8 digits of precision") {
     val testCases = List(
       2.0 -> (200000000L, 100000000L),

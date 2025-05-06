@@ -299,6 +299,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       delegatedStakesWithdrawals = None, // No withdrawals
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
+      priceState = None,
       lastGlobalSnapshotsWithCurrency = None
     )
 
@@ -381,6 +382,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       delegatedStakesWithdrawals = None,
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
+      priceState = None,
       lastGlobalSnapshotsWithCurrency = None
     )
 
@@ -490,6 +492,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       delegatedStakesWithdrawals = None,
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
+      priceState = None,
       lastGlobalSnapshotsWithCurrency = None
     )
 
@@ -622,6 +625,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       delegatedStakesWithdrawals = None,
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
+      priceState = None,
       lastGlobalSnapshotsWithCurrency = None
     )
 
@@ -783,6 +787,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       delegatedStakesWithdrawals = None,
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
+      priceState = None,
       lastGlobalSnapshotsWithCurrency = None
     )
 
@@ -818,6 +823,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       delegatedStakesWithdrawals = None,
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
+      priceState = None,
       lastGlobalSnapshotsWithCurrency = None
     )
 
@@ -1077,6 +1083,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         delegatedStakesWithdrawals = None,
         activeNodeCollaterals = None,
         nodeCollateralWithdrawals = None,
+        priceState = None,
         lastGlobalSnapshotsWithCurrency = None
       )
 

@@ -47,6 +47,7 @@ import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral._
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.priceOracle.{PriceRecord, TokenPair}
 import io.constellationnetwork.schema.snapshot.GlobalSnapshotWithCurrencyInfo
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock._
@@ -159,6 +160,9 @@ object GlobalSnapshotAcceptanceManager {
     ] = {
       implicit val hasher = HasherSelector[F].getForOrdinal(ordinal)
       val tessellation3MigrationStartingOrdinal = fieldsAddedOrdinals.tessellation3Migration
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
+
+      val tessellation301MigrationStartingOrdinal = fieldsAddedOrdinals.tessellation301Migration
         .getOrElse(environment, SnapshotOrdinal.MinValue)
 
       val globalSnapshotsWithCurrencySnapshotsStartingOrdinals = fieldsAddedOrdinals.globalSnapshotsWithCurrencySnapshots
@@ -521,6 +525,7 @@ object GlobalSnapshotAcceptanceManager {
           case (_, updatedNodeCollateralsRecords) =>
             updatedNodeCollateralsRecords.nonEmpty
         }
+        updatedPriceState = SortedMap.empty[TokenPair, PriceRecord]
 
         updatedLastGlobalSnapshotsWithCurrency = lastSnapshotContext.lastGlobalSnapshotsWithCurrency.map { current =>
           val globalSnapshotWithCurrencyInfo = GlobalSnapshotWithCurrencyInfo(ordinal, epochProgress)
@@ -549,6 +554,7 @@ object GlobalSnapshotAcceptanceManager {
           if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedWithdrawDelegatedStakesCleaned.some,
           if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedCreateNodeCollateralsCleaned.some,
           if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedWithdrawNodeCollateralsCleaned.some,
+          if (ordinal < tessellation301MigrationStartingOrdinal) none else updatedPriceState.some,
           if (ordinal < globalSnapshotsWithCurrencySnapshotsStartingOrdinals) none else updatedLastGlobalSnapshotsWithCurrency.some
         )
 

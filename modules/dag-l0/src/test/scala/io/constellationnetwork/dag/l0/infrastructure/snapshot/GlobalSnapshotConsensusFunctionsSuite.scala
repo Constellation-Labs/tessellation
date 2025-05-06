@@ -296,7 +296,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
       GlobalSnapshotAcceptanceManager
         .make[IO](
-          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty),
+          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty),
           Dev,
           bam,
           asbam,
