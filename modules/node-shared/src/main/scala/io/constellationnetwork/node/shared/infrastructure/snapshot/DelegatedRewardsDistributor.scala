@@ -28,8 +28,6 @@ import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 
-/** Result container for delegation rewards calculation
-  */
 case class DelegatedRewardsResult(
   delegatorRewardsMap: SortedMap[PeerId, Map[Address, Amount]],
   updatedCreateDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
@@ -69,19 +67,14 @@ object DelegatedRewardsDistributor {
     existingRecords: SortedMap[Address, List[DelegatedStakeRecord]],
     acceptedCreates: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]]
   ): Set[(Address, Hash)] =
-    acceptedCreates.flatMap {
-      case (addr, stakeList) =>
-        stakeList.flatMap {
+    acceptedCreates.toSeq.flatMap {
+      case (addr, creates) =>
+        creates.flatMap {
           case (ev, _) =>
-            val matchingRecords = existingRecords
-              .getOrElse(addr, List.empty)
-              .exists(_.event.value.tokenLockRef === ev.value.tokenLockRef)
-
-            if (matchingRecords) {
-              Some((addr, ev.value.tokenLockRef))
-            } else {
-              None
-            }
+            existingRecords
+              .get(addr)
+              .filter(_.exists(_.event.value.tokenLockRef === ev.value.tokenLockRef))
+              .map(_ => addr -> ev.value.tokenLockRef)
         }
     }.toSet
 
@@ -92,13 +85,17 @@ object DelegatedRewardsDistributor {
     existingRecords: SortedMap[Address, List[DelegatedStakeRecord]],
     modifiedStakes: Set[(Address, Hash)]
   ): SortedMap[Address, List[DelegatedStakeRecord]] =
-    existingRecords.flatMap {
+    existingRecords.iterator.flatMap {
       case (address, records) =>
-        val filteredRecords = records.filterNot { record =>
-          modifiedStakes.contains((address, record.event.value.tokenLockRef))
+        val filtered = records.filterNot { record =>
+          modifiedStakes.contains(
+            (address, record.event.value.tokenLockRef)
+          )
         }
-        if (filteredRecords.isEmpty) None else Some(address -> filteredRecords)
-    }
+
+        if (filtered.nonEmpty) Some(address -> filtered)
+        else None
+    }.toSortedMap
 
   def getUpdatedCreateDelegatedStakes[F[_]: Async: Hasher](
     delegatorRewardsMap: Map[PeerId, Map[Address, Amount]],
@@ -152,15 +149,20 @@ object DelegatedRewardsDistributor {
       }.map(_.map {
         case (addr, recs) =>
           addr -> recs.map { record =>
+            val isModified = modifiedStakes.contains((addr, record.event.value.tokenLockRef))
+
             val nodeSpecificReward =
-              if (modifiedStakes.contains((addr, record.event.value.tokenLockRef))) Amount.empty
+              if (isModified) Amount.empty
               else
                 delegatorRewardsMap
                   .get(record.event.value.nodeId)
                   .flatMap(_.get(addr))
                   .getOrElse(Amount.empty)
 
-            val disbursedBalance = record.rewards.plus(nodeSpecificReward).toOption.getOrElse(Balance.empty)
+            // ensure we're not accidentally zeroing out rewards
+            val disbursedBalance =
+              if (isModified) record.rewards
+              else record.rewards.plus(nodeSpecificReward).toOption.getOrElse(Balance.empty)
 
             DelegatedStakeRecord(record.event, record.createdAt, disbursedBalance)
           }

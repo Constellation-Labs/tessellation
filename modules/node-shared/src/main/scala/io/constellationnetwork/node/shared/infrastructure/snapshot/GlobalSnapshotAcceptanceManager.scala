@@ -652,7 +652,7 @@ object GlobalSnapshotAcceptanceManager {
     private def acceptDelegatedStakes(
       lastSnapshotContext: GlobalSnapshotInfo,
       epochProgress: EpochProgress
-    )(implicit h: Hasher[F]): (
+    ): (
       SortedMap[Address, List[DelegatedStakeRecord]],
       SortedMap[Address, List[PendingDelegatedStakeWithdrawal]],
       SortedMap[Address, List[PendingDelegatedStakeWithdrawal]]
