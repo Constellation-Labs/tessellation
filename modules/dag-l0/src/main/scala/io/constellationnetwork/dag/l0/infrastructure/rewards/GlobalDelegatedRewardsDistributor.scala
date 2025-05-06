@@ -17,12 +17,13 @@ import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
-import io.constellationnetwork.schema.delegatedStake.DelegatedStakeRecord
+import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, UpdateDelegatedStake}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.{DelegatedStakeRewardParameters, RewardFraction, UpdateNodeParameters}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
 import io.constellationnetwork.security._
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 
@@ -147,9 +148,7 @@ object GlobalDelegatedRewardsDistributor {
           else {
             reservedAddressWeights.map {
               case (addr, pct) =>
-                // Calculate proportion of reserved amount
                 val proportion = pct / reservedWeight
-                // Calculate reward with high precision
                 val reward = proportion * reservedTotal
                 addr -> reward
             }
@@ -263,20 +262,27 @@ object GlobalDelegatedRewardsDistributor {
     private def calculateDelegatorRewards(
       activeDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
       nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
-      totalDelegationRewardPool: BigDecimal
-    ): F[Map[PeerId, Map[Address, Amount]]] =
-      getTotalActiveStake(activeDelegatedStakes).flatMap { totalStakeAmount =>
+      totalDelegationRewardPool: BigDecimal,
+      acceptedCreates: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]]
+    ): F[Map[PeerId, Map[Address, Amount]]] = {
+      val modifiedStakes = DelegatedRewardsDistributor.identifyModifiedStakes(activeDelegatedStakes, acceptedCreates)
+      val filteredActiveStakes = DelegatedRewardsDistributor.filterOutModifiedStakes(activeDelegatedStakes, modifiedStakes)
+
+      // Create a view of active stakes that excludes modified stakes
+      val adjustedActiveStakes = filteredActiveStakes.flatMap {
+        case (address, records) =>
+          records.map { record =>
+            (record.event.value.nodeId.toId, address, record)
+          }
+      }
+
+      getTotalActiveStake(filteredActiveStakes).flatMap { totalStakeAmount =>
         val totalStakeBD = BigDecimal(totalStakeAmount.value.value, mc)
 
         if (activeDelegatedStakes.isEmpty || totalStakeBD === 0) Map.empty[PeerId, Map[Address, Amount]].pure[F]
         else {
-          activeDelegatedStakes.flatMap {
-            case (address, records) =>
-              records.map { record =>
-                (record.event.value.nodeId.toId, address, record)
-              }
-          }
-            .groupBy(_._1)
+          adjustedActiveStakes
+            .groupBy(_._1) // Group by nodeId (possibly adjusted)
             .toList
             .flatTraverse {
               case (nodeId, nodeStakes) =>
@@ -330,13 +336,15 @@ object GlobalDelegatedRewardsDistributor {
             .map(_.groupBy(_._1).view.mapValues(_.map(_._2).toMap).toMap)
         }
       }
+    }
 
     private def calculateNodeOperatorRewards(
       nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
       facilitators: List[(Address, PeerId)],
       facilitatorRewardPool: BigDecimal,
       delegatorRewardPool: BigDecimal,
-      lastSnapshotContext: GlobalSnapshotInfo
+      lastSnapshotContext: GlobalSnapshotInfo,
+      acceptedCreates: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]] = SortedMap.empty
     ): F[SortedSet[RewardTransaction]] = {
       val facilitatorCount = BigDecimal(facilitators.size, mc)
       val perValidatorStaticReward =
@@ -362,7 +370,9 @@ object GlobalDelegatedRewardsDistributor {
       if (activeDelegatedStakes.isEmpty || (delegatorRewardPool === BigDecimal(0) && facilitatorRewardPool === BigDecimal(0)))
         SortedSet.from(staticRewardsList).pure[F]
       else {
-        val nodeStakes = activeDelegatedStakes.values.flatten
+        val modifiedStakes = DelegatedRewardsDistributor.identifyModifiedStakes(activeDelegatedStakes, acceptedCreates)
+        val filteredActiveDelegatedStakes = DelegatedRewardsDistributor.filterOutModifiedStakes(activeDelegatedStakes, modifiedStakes)
+        val nodeStakes = filteredActiveDelegatedStakes.values.flatten
           .groupBy(_.event.value.nodeId.toId)
           .view
           .mapValues(stakes => stakes.map(s => BigDecimal(getStakedAmount(s), mc)).sum)
@@ -388,7 +398,6 @@ object GlobalDelegatedRewardsDistributor {
                       val operatorCommission = BigDecimal(params.value.delegatedStakeRewardParameters.rewardFraction, mc) /
                         BigDecimal(100_000_000, mc)
 
-                      // Calculate stake proportion
                       val stakeRatio = stakeAmount / totalFacilitatorStake
                       val dynamicRewardBD = delegatorRewardPool * stakeRatio * operatorCommission
                       val dynamicReward = dynamicRewardBD.setScale(0, RoundingMode.HALF_UP).toLong
@@ -465,7 +474,8 @@ object GlobalDelegatedRewardsDistributor {
           calculateDelegatorRewards(
             lastSnapshotContext.activeDelegatedStakes.getOrElse(SortedMap.empty),
             lastSnapshotContext.updateNodeParameters.getOrElse(SortedMap.empty),
-            delegatorRewardPool
+            delegatorRewardPool,
+            delegatedStakeDiffs.acceptedCreates
           ).map(_.toSortedMap)
 
         nodeOperatorRewards <-
@@ -474,7 +484,8 @@ object GlobalDelegatedRewardsDistributor {
             facilitators,
             facilitatorRewardPool,
             delegatorRewardPool,
-            lastSnapshotContext
+            lastSnapshotContext,
+            delegatedStakeDiffs.acceptedCreates
           )
 
         reservedAddressRewards <-

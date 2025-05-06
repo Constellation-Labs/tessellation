@@ -95,8 +95,8 @@ const checkBadRequest = (response) => {
   }
 }
 
-const datumToFloat = (datum) => { 
-    return parseFloat((datum / 1e8).toFixed(8))
+const dagToDatum = (dag) => {
+  return Math.round(dag * 1e8);
 }
 
 const getNodeParams = async (urls) => {
@@ -301,7 +301,7 @@ const checkCreateNodeParameters = async (urls) => {
         path.join(__dirname, 'keys', 'genesis-node.hex')
   )
 
-  checkInitialNodeParamsNode(urls, nodeId1)
+  await checkInitialNodeParamsNode(urls, nodeId1)
   logWorkflow.info('Check initial node params is OK')
 
   const ur1 = await postNodeParamsNodeId(
@@ -324,7 +324,7 @@ const checkCreateNodeParameters = async (urls) => {
   )
   logWorkflow.info('Check updates node params is OK')
 
-  getNodeParamsNodeIdVerify(
+  await getNodeParamsNodeIdVerify(
     urls,
     nodeId1,
     firstNodeParameterName1,
@@ -353,7 +353,7 @@ const checkCreateNodeParameters = async (urls) => {
   )
   logWorkflow.info('Check second updates node params is OK')
 
-  getNodeParamsNodeIdVerify(
+  await getNodeParamsNodeIdVerify(
     urls,
     nodeId1,
     firstNodeParameterName2,
@@ -373,7 +373,7 @@ const checkCreateNodeParameters = async (urls) => {
   )
   checkBadRequest(ur3)
 
-  getNodeParamsNodeIdVerify(
+  await getNodeParamsNodeIdVerify(
     urls,
     nodeId1,
     firstNodeParameterName2,
@@ -401,7 +401,11 @@ const checkCreateNodeParameters = async (urls) => {
     secondNodeFraction1,
   )
   checkOk(ur4)
-  getNodeParamsNodeIdVerify(
+  
+  // tends to fail here in CI, wait a little longer
+  await sleep(5000)
+  
+  await getNodeParamsNodeIdVerify(
     urls,
     nodeId2,
     secondNodeParameterName1,
@@ -438,18 +442,18 @@ const setupDag4Account = (urls) => {
   return dag4.account
 }
 
-const assertBalanceChange = async (account, expectedBalance) => {
-  const balance = await account.getBalance()
+const assertBalanceChange = async (account, expectedBalanceDatum) => {
+  const balance = dagToDatum(await account.getBalance())
 
-  if (Number(balance) !== expectedBalance) {
+  if (balance !== expectedBalanceDatum) {
     throw new Error(
-      `Invalid balance: Expected balance to be ${expectedBalance} but got ${balance}`,
+      `Invalid balance: Expected balance to be ${expectedBalanceDatum} but got ${balance}`,
     )
   }
 }
 
 const createTokenLock = async (account, urls, lockAmount) => {
-  const initialBalance = await account.getBalance()
+  const initialBalance = dagToDatum(await account.getBalance())
 
   const { hash } = await account.postTokenLock({
     source: account.address,
@@ -466,7 +470,7 @@ const createTokenLock = async (account, urls, lockAmount) => {
 
   await withRetry(
     async () =>
-      assertBalanceChange(account, initialBalance - datumToFloat(lockAmount)),
+      assertBalanceChange(account, initialBalance - lockAmount),
     {
       name: 'assertBalanceChangeAfterTokenLock',
       maxAttempts: 10,
@@ -649,6 +653,8 @@ const fetchStakeWithRewardsBalance = async (
 const checkUpdateDelegatedStake = async (urls, account, stakeHash, nodeId) => {
   logWorkflow.info('---- Start checkUpdateDelegatedStake ----')
 
+  logWorkflow.info('Waiting for stake with non-zero rewards balance')
+
   const originalStake = await fetchStakeWithRewardsBalance(
     urls,
     account.address,
@@ -688,7 +694,7 @@ const checkUpdateDelegatedStake = async (urls, account, stakeHash, nodeId) => {
             nodeId,
             amount: originalStake.amount,
             tokenLockRef: originalStake.tokenLockRef,
-            // rewardAmount: originalStake.rewardAmount, // balance is transferred
+            rewardAmount: originalStake.rewardAmount, // balance is transferred
           },
         ],
         [],
@@ -701,7 +707,7 @@ const checkUpdateDelegatedStake = async (urls, account, stakeHash, nodeId) => {
       handleError: () => {},
     },
   )
-  logWorkflow.info('Stake update verified')
+  logWorkflow.info('Stake update verified with balance change')
 
   logWorkflow.info('---- End checkUpdateDelegatedStake ----')
 
@@ -758,7 +764,7 @@ const assertTokenUnlockInSnapshot = async (
 const checkWithdrawDelegatedStake = async (urls, account, stakeHash) => {
   logWorkflow.info('---- Start checkWithdrawDelegatedStake ----')
 
-  const initialBalance = await account.getBalance()
+  const initialBalance = dagToDatum(await account.getBalance())
 
   const originalStake = await fetchStakeWithRewardsBalance(
     urls,
@@ -825,7 +831,7 @@ const checkWithdrawDelegatedStake = async (urls, account, stakeHash) => {
   )
   logWorkflow.info('Stake removed from pendingWithdrawal')
 
-  await assertBalanceChange(account, initialBalance + datumToFloat(originalStake.totalBalance))
+  await assertBalanceChange(account, initialBalance + originalStake.totalBalance)
   logWorkflow.info('Wallet balance updated')
 
   let ordinal
@@ -909,4 +915,5 @@ executeWorkflowByType(workflowType).catch((err) => {
   console.log('err:')
   console.log(err)
   logWorkflow.error('-', err)
+  throw err
 })
