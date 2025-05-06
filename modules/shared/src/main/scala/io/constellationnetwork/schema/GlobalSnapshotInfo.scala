@@ -2,7 +2,12 @@ package io.constellationnetwork.schema
 
 import cats.Parallel
 import cats.effect.Sync
-import cats.syntax.all._
+import cats.syntax.applicative._
+import cats.syntax.apply._
+import cats.syntax.eq._
+import cats.syntax.flatMap._
+import cats.syntax.option._
+import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
@@ -13,12 +18,12 @@ import io.constellationnetwork.merkletree.{MerkleRoot, MerkleTree, Proof}
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
-import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, PendingDelegatedStakeWithdrawal, UpdateDelegatedStake}
-import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, PendingDelegatedStakeWithdrawal}
 import io.constellationnetwork.schema.node.UpdateNodeParameters
-import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralRecord, PendingNodeCollateralWithdrawal, UpdateNodeCollateral}
+import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralRecord, PendingNodeCollateralWithdrawal}
+import io.constellationnetwork.schema.priceOracle.{PriceRecord, TokenId, TokenPair}
 import io.constellationnetwork.schema.snapshot.{SnapshotInfo, StateProof}
-import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendReference}
+import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendReference, CurrencyId}
 import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockReference}
 import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.security._
@@ -29,9 +34,8 @@ import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
-import eu.timepit.refined.auto._
+import io.circe._
 import io.circe.disjunctionCodecs._
-import io.circe.{KeyDecoder, KeyEncoder}
 
 @derive(encoder, decoder, eqv, show)
 case class GlobalSnapshotInfoV1(
@@ -60,6 +64,7 @@ object GlobalSnapshotInfoV1 {
       Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
+      Some(SortedMap.empty),
       Some(SortedMap.empty)
     )
 }
@@ -77,6 +82,7 @@ case class GlobalSnapshotStateProofV1(
       lastTxRefsProof,
       balancesProof,
       lastCurrencySnapshotsProof,
+      None,
       None,
       None,
       None,
@@ -119,7 +125,8 @@ case class GlobalSnapshotStateProof(
   activeDelegatedStakes: Option[Hash],
   delegatedStakesWithdrawals: Option[Hash],
   activeNodeCollaterals: Option[Hash],
-  nodeCollateralWithdrawals: Option[Hash]
+  nodeCollateralWithdrawals: Option[Hash],
+  priceState: Option[Hash]
 ) extends StateProof
 
 object GlobalSnapshotStateProof {
@@ -138,11 +145,12 @@ object GlobalSnapshotStateProof {
       Option[Hash],
       Option[Hash],
       Option[Hash],
+      Option[Hash],
       Option[Hash]
     )
   ) => GlobalSnapshotStateProof = {
-    case (x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14) =>
-      GlobalSnapshotStateProof.apply(x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14)
+    case (x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15) =>
+      GlobalSnapshotStateProof.apply(x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15)
   }
 }
 
@@ -165,6 +173,7 @@ case class GlobalSnapshotInfoV2(
         _.map { case (Signed(inc, proofs), info) => (Signed(inc.toCurrencyIncrementalSnapshot, proofs), info.toCurrencySnapshotInfo) }
       }.to(lastCurrencySnapshots.sortedMapFactory),
       lastCurrencySnapshotsProofs,
+      None,
       None,
       None,
       None,
@@ -220,7 +229,8 @@ case class GlobalSnapshotInfo(
   activeDelegatedStakes: Option[SortedMap[Address, SortedSet[DelegatedStakeRecord]]],
   delegatedStakesWithdrawals: Option[SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]]],
   activeNodeCollaterals: Option[SortedMap[Address, SortedSet[NodeCollateralRecord]]],
-  nodeCollateralWithdrawals: Option[SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]]]
+  nodeCollateralWithdrawals: Option[SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]]],
+  priceState: Option[SortedMap[TokenPair, PriceRecord]]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
   def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
@@ -241,8 +251,9 @@ case class GlobalSnapshotInfo(
       activeDelegatedStakes.traverse(_.hash),
       delegatedStakesWithdrawals.traverse(_.hash),
       activeNodeCollaterals.traverse(_.hash),
-      nodeCollateralWithdrawals.traverse(_.hash)
-    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _))
+      nodeCollateralWithdrawals.traverse(_.hash),
+      priceState.traverse(_.hash)
+    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _, _))
   }
 
 }
@@ -254,6 +265,7 @@ object GlobalSnapshotInfo {
     SortedMap.empty,
     SortedMap.empty,
     SortedMap.empty,
+    Some(SortedMap.empty),
     Some(SortedMap.empty),
     Some(SortedMap.empty),
     Some(SortedMap.empty),

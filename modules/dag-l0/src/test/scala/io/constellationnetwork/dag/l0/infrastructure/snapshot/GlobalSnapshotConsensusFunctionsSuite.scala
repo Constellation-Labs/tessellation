@@ -296,6 +296,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       GlobalSnapshotAcceptanceManager
         .make[IO](
           SnapshotOrdinal.MinValue,
+          SnapshotOrdinal.MinValue,
           bam,
           asbam,
           tlbam,
