@@ -324,7 +324,7 @@ const checkCreateNodeParameters = async (urls) => {
   )
   logWorkflow.info('Check updates node params is OK')
 
-  getNodeParamsNodeIdVerify(
+  await getNodeParamsNodeIdVerify(
     urls,
     nodeId1,
     firstNodeParameterName1,
@@ -353,7 +353,7 @@ const checkCreateNodeParameters = async (urls) => {
   )
   logWorkflow.info('Check second updates node params is OK')
 
-  getNodeParamsNodeIdVerify(
+  await getNodeParamsNodeIdVerify(
     urls,
     nodeId1,
     firstNodeParameterName2,
@@ -373,7 +373,7 @@ const checkCreateNodeParameters = async (urls) => {
   )
   checkBadRequest(ur3)
 
-  getNodeParamsNodeIdVerify(
+  await getNodeParamsNodeIdVerify(
     urls,
     nodeId1,
     firstNodeParameterName2,
@@ -401,7 +401,7 @@ const checkCreateNodeParameters = async (urls) => {
     secondNodeFraction1,
   )
   checkOk(ur4)
-  getNodeParamsNodeIdVerify(
+  await getNodeParamsNodeIdVerify(
     urls,
     nodeId2,
     secondNodeParameterName1,
