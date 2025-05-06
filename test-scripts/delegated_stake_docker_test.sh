@@ -17,6 +17,10 @@ if [ -z "$DO_EXIT" ]; then
   export DO_EXIT=false
 fi
 
+if [ -z "$L0_ONLY" ]; then
+  export L0_ONLY=false
+fi
+
 exit_func() {
   if [ "$DO_EXIT" = "true" ]; then
     exit $EXIT_CODE
@@ -33,25 +37,37 @@ for i in 1 2; do
   mkdir -p ./nodes/dag-l1/$i
 done
 
-# Build jars, run clean only if CLEAN_BUILD is true
-if [ "$CLEAN_BUILD" = "true" ]; then
-  sbt clean
-  DIRTY_SUFFIX=""
+
+if [ "$L0_ONLY" = "false" ]; then
+  sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
 else
-  DIRTY_SUFFIX="-dirty"
+  missing=false
+
+  for module in dag-l0 dag-l1 keytool wallet; do
+    jar_path=$(ls -1t modules/"$module"/target/scala-2.13/tessellation-"$module"-assembly*.jar 2>/dev/null | head -n1)
+    if [ -z "$jar_path" ]; then
+      echo "⚠️  Missing JAR for module: $module"
+      missing=true
+      break
+    fi
+  done
+
+  if [ "$missing" = true ]; then
+    echo "▶️  One or more modules is missing. Running full assembly"
+    sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
+  else
+    echo "Assembling only L0"
+    sbt dagL0/assembly
+  fi
 fi
 
-sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
-
-
-# Note this copy command may fail if you recompile without clean due to the *dirty* suffix, fixable with env
-# Duplicate copy overwrites with dirty version if only compiling one module
-# Order is deliberate here for reruns
+mkdir -p ./docker/jars/
 
 for module in "dag-l0" "dag-l1" "keytool" "wallet"
 do
-  cp modules/${module}/target/scala-2.13/tessellation-${module}-assembly*.jar ./nodes/${module}.jar || true
-  cp modules/${module}/target/scala-2.13/tessellation-${module}-assembly*${DIRTY_SUFFIX}*.jar ./nodes/${module}.jar  || true
+  path=$(ls -1t modules/${module}/target/scala-2.13/tessellation-${module}-assembly*.jar | head -n1)
+  cp $path ./nodes/${module}.jar
+  cp $path ./docker/jars/${module}.jar
 done
 
 
@@ -105,10 +121,12 @@ CL_TEST_MODE=true
 CL_LOCAL_MODE=true
 CL_L0_PEER_HTTP_HOST=192.168.100.10
 CL_DAG_L1_JOIN_IP=192.168.100.20
+CL_DAG_L0_JOIN_IP=192.168.100.10
 EOF
 
 echo "CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
 echo "CL_DAG_L1_JOIN_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
+echo "CL_DAG_L0_JOIN_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
 
 cp ./nodes/.env ./nodes/global-l0/0/.env
 cp ./nodes/.envrc ./nodes/dag-l1/1/.envrc
@@ -123,6 +141,7 @@ echo "Generated genesis file:"
 cat genesis.csv
 echo "CL_GENESIS_FILE=./genesis.csv" >> .env
 echo "CL_DAG_L1_JOIN_ENABLED=false" >> .env
+echo "CL_DAG_L0_JOIN_ENABLED=false" >> .env
 echo "CONTAINER_NAME_SUFFIX=-0" >> .env
 echo "CONTAINER_OFFSET=0" >> .env
 cd ../../../
@@ -186,11 +205,10 @@ sleep 30
 # Start dag-l1 1
 cd ./nodes/dag-l1/1
 
-
 docker compose down --remove-orphans --volumes || true; \
 cp ../../../docker/docker-compose.yaml . ; \
 cp ../../../docker/docker-compose.test.yaml . ; \
-docker compose -f docker-compose.test.yaml -f docker-compose.yaml up -d
+docker compose -f docker-compose.test.yaml -f docker-compose.yaml --profile l0 up -d
 
 cd ../../../
 
@@ -296,6 +314,10 @@ jq -e '.[0].delegateRewards != {}' > /dev/null || \
 curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
 jq -e '.activeDelegatedStakes | length == 1' > /dev/null || \
 { echo "ERROR: activeDelegatedStakes is empty in DS info endpoint"; exit_func; }
+
+
+# Change node params, first register them for second node.
+
 
 
 
