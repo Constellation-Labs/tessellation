@@ -226,20 +226,11 @@ object GlobalSnapshotAcceptanceManager {
           if (ordinal.value < tessellation3MigrationStartingOrdinal.value) {
             calculateRewardsFn(ClassicRewardsInput(acceptedTransactions))
           } else {
-            val acceptedTokenLockRefs = delegatedStakeAcceptanceResult.acceptedCreates.map {
-              case (addr, creates) => (addr, creates.map(_._1.tokenLockRef).toSet)
-            }
-            val filteredUnexpiredCreateDelegatedStakes = unexpiredCreateDelegatedStakes.map {
-              case (addr, recs) =>
-                val tokenLocks = acceptedTokenLockRefs.getOrElse(addr, Set.empty)
-                (addr, recs.filterNot(record => tokenLocks(record.event.tokenLockRef)))
-            }
-
             calculateRewardsFn(
               DelegateRewardsInput(
                 delegatedStakeAcceptanceResult,
                 PartitionedStakeUpdates(
-                  filteredUnexpiredCreateDelegatedStakes,
+                  unexpiredCreateDelegatedStakes,
                   unexpiredWithdrawalsDelegatedStaking,
                   expiredWithdrawalsDelegatedStaking
                 ),
@@ -661,7 +652,7 @@ object GlobalSnapshotAcceptanceManager {
     private def acceptDelegatedStakes(
       lastSnapshotContext: GlobalSnapshotInfo,
       epochProgress: EpochProgress
-    )(implicit h: Hasher[F]): (
+    ): (
       SortedMap[Address, List[DelegatedStakeRecord]],
       SortedMap[Address, List[PendingDelegatedStakeWithdrawal]],
       SortedMap[Address, List[PendingDelegatedStakeWithdrawal]]
