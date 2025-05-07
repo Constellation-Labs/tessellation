@@ -497,4 +497,60 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
         .and(expect(balance.contains(initialBalance)))
         .and(expect(updatedNodeId.contains(nodeId2)))
   }
+
+  test("getUpdatedCreateDelegatedStakes should preserve existing stakes when adding new ones") {
+    val delegatorRewardsMap = Map(
+      nodeId1 -> Map(address1 -> Amount(100L)),
+      nodeId2 -> Map(address2 -> Amount(200L))
+    )
+
+    // Create two different stakes for address1 with different tokenLockRefs
+    val tokenLockRef1 = Hash("1111111111111111111111111111111111111111111111111111111111111111")
+    val tokenLockRef2 = Hash("2222222222222222222222222222222222222222222222222222222222222222")
+    
+    val stake1 = createSignedStake(address1, nodeId1, 1000L, tokenLockRef1)
+    val stake2 = createSignedStake(address1, nodeId2, 2000L, tokenLockRef2)
+
+    val existingStakes = SortedMap(
+      address1 -> List(
+        DelegatedStakeRecord(stake1, SnapshotOrdinal(1L), Balance(50L))
+      )
+    )
+
+    val delegatedStakeDiffs = UpdateDelegatedStakeAcceptanceResult(
+      acceptedCreates = SortedMap(
+        address1 -> List((stake2, SnapshotOrdinal(2L)))
+      ),
+      notAcceptedCreates = List.empty,
+      acceptedWithdrawals = SortedMap.empty,
+      notAcceptedWithdrawals = List.empty
+    )
+
+    val partitionedRecords = PartitionedStakeUpdates(
+      unexpiredCreateDelegatedStakes = existingStakes,
+      unexpiredWithdrawalsDelegatedStaking = SortedMap.empty,
+      expiredWithdrawalsDelegatedStaking = SortedMap.empty
+    )
+
+    for {
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
+      implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
+
+      updatedStakes <- DelegatedRewardsDistributor.getUpdatedCreateDelegatedStakes[IO](
+        delegatorRewardsMap,
+        delegatedStakeDiffs,
+        partitionedRecords
+      )
+    } yield {
+      val address1Stakes = updatedStakes.get(address1).map(_.length)
+      val address1Balances = updatedStakes.get(address1).map(_.map(_.rewards.value.value).toList)
+
+      // Should have both stakes
+      expect(address1Stakes.contains(2)) &&
+      // First stake should maintain its balance of 50L
+      expect(address1Balances.exists(_.contains(150L))) &&
+      // Second stake should have 0L balance as it's new
+      expect(address1Balances.exists(_.contains(0L)))
+    }
+  }
 }

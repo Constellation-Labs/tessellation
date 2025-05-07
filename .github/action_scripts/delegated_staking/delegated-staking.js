@@ -558,7 +558,7 @@ const assertDelegatedStakes = (stakeResponse, activeStakes, pendingStakes) => {
   })
 }
 
-const checkCreateDelegatedStake = async (urls, account, nodeId) => {
+const checkCreateDelegatedStake = async (urls, account, nodeIds) => {
   logWorkflow.info('---- Start checkCreateDelegatedStake ----')
 
   const lockAmount = 500000000000
@@ -572,7 +572,7 @@ const checkCreateDelegatedStake = async (urls, account, nodeId) => {
     account,
     lockHash,
     lockAmount,
-    nodeId,
+    nodeIds[0],
   )
   logWorkflow.info('Stake created')
 
@@ -587,7 +587,7 @@ const checkCreateDelegatedStake = async (urls, account, nodeId) => {
         [
           {
             hash: stakeHash,
-            nodeId,
+            nodeId: nodeIds[0],
             amount: lockAmount,
           },
         ],
@@ -603,9 +603,56 @@ const checkCreateDelegatedStake = async (urls, account, nodeId) => {
   )
   logWorkflow.info('Stake creation verified')
 
+  logWorkflow.info('Creating 2nd stake')
+  const secondStakeHash = await createDelegatedStake(
+    account,
+    lockHash,
+    lockAmount,
+    nodeIds[1],
+  )
+  logWorkflow.info('Stake 2 created')
+  
+  await withRetry(
+    async () => {
+      const updatedStakeResponse = await getAccountDelegatedStakes(
+        urls,
+        account.address,
+      )
+      return assertDelegatedStakes(
+        updatedStakeResponse,
+        [
+          {
+            hash: stakeHash,
+            nodeId: nodeIds[0],
+            amount: lockAmount,
+          },
+          {
+            hash: secondStakeHash,
+            nodeId: nodeIds[1],
+            amount: lockAmount,
+          },
+        ],
+        [],
+      )
+    },
+    {
+      name: 'assertDelegatedStake2Created',
+      maxAttempts: 10,
+      interval: 1000,
+      handleError: (err, attempt) => {
+        if (attempt !== 10) return
+
+        console.log(`assertDelegatedStake2Created failed: ${err.message}`)
+        throw err
+      },
+    },
+  )
+
+  logWorkflow.info('Stake 2 creation verified')
+
   logWorkflow.info('---- End checkCreateDelegatedStake ----')
 
-  return stakeHash
+  return [stakeHash, secondStakeHash]
 }
 
 // Get stake to update and wait until it has some rewards
@@ -876,17 +923,17 @@ const testDelegatedStaking = async (urls) => {
 
   const nodeParams = await getNodeParams(urls)
 
-  const stakeHash = await checkCreateDelegatedStake(
+  const [stakeHash] = await checkCreateDelegatedStake(
     urls,
     account,
-    nodeParams[0].peerId,
+    [nodeParams[0].peerId, nodeParams[1].peerId],
   )
 
   const updatedStakeHash = await checkUpdateDelegatedStake(
     urls,
     account,
     stakeHash,
-    nodeParams[1].peerId,
+    nodeParams[2].peerId,
   )
 
   await checkWithdrawDelegatedStake(urls, account, updatedStakeHash)
@@ -915,5 +962,7 @@ executeWorkflowByType(workflowType).catch((err) => {
   console.log('err:')
   console.log(err)
   logWorkflow.error('-', err)
-  throw err
+  if (RUN_ENV !== 'local') {
+    throw err
+  }
 })
