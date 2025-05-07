@@ -13,9 +13,9 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage.UnableToPersistSnapshot
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.snapshot.Snapshot
-import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.{Hasher, HasherSelector}
 import io.constellationnetwork.storage.PathGenerator._
 import io.constellationnetwork.storage.{PathGenerator, SerializableLocalFileSystemStorage}
 
@@ -36,8 +36,9 @@ abstract class SnapshotLocalFileSystemStorage[
   val ordinalChunkSize = ChunkSize(20000)
   val hashPathGenerator = PathGenerator.forHash(Depth(2), PrefixSize(3))
   val ordinalPathGenerator = PathGenerator.forOrdinal(ordinalChunkSize)
+  val maxParallelFileOperations = 4
 
-  private val logger = Slf4jLogger.getLogger[F]
+  private val logger = Slf4jLogger.getLoggerFromName[F]("SnapshotLocalFileSystemStorage")
 
   def write(snapshot: Signed[S])(implicit hasher: Hasher[F]): F[Unit] = {
     val ordinalName = toOrdinalName(snapshot.value)
@@ -103,47 +104,139 @@ abstract class SnapshotLocalFileSystemStorage[
       link(hashName, toOrdinalName(snapshot))
     }
 
-  def findAbove(ordinal: SnapshotOrdinal): F[Stream[F, File]] = {
+  def findAbove(ordinal: SnapshotOrdinal): Stream[F, File] = {
     val baseDirectory = (ordinal.value.value / ordinalChunkSize.value) * ordinalChunkSize.value
 
-    def isAbove(file: File): Boolean = {
-      val fileOrdinal = file.name.toLong
-      fileOrdinal > ordinal.value.value
-    }
+    def isAbove(file: File): Boolean =
+      file.name.toLongOption.exists(_ > ordinal.value.value)
 
     def listFilesFrom(base: Long): F[Stream[F, File]] =
       dir
         .map(_ / "ordinal" / base.toString)
-        .flatMap { a =>
+        .flatMap { baseDir =>
           Async[F].blocking {
-            if (base === baseDirectory) a.list(f => !f.isDirectory && isAbove(f), maxDepth = 1)
-            else a.list(f => !f.isDirectory, maxDepth = 1)
+            if (base == baseDirectory)
+              baseDir.list(f => !f.isDirectory && isAbove(f), maxDepth = 1)
+            else
+              baseDir.list(f => !f.isDirectory, maxDepth = 1)
+          }.handleErrorWith { ex =>
+            logger.warn(ex)(s"Error listing files in directory ${baseDir.pathAsString}") >>
+            Async[F].pure(Iterator.empty)
           }
         }
-        .map(Stream.fromIterator[F](_, 1))
+        .map(_.toList)
+        .map(Stream.emits(_))
 
-    def go(base: Long): F[Stream[F, File]] =
-      dir
-        .map(_ / "ordinal" / base.toString)
-        .map(_.isEmpty)
-        .ifM(
-          Async[F].pure(Stream.empty),
-          listFilesFrom(base).flatMap { filesInBase =>
-            val nextBase = base + ordinalChunkSize.value
-            go(nextBase).map { filesInNextBase =>
-              filesInBase ++ filesInNextBase
-            }
+    Stream
+      .unfoldEval[F, Long, List[File]](baseDirectory) { currentBase =>
+        val currentDirF = dir.map(_ / "ordinal" / currentBase.toString)
+
+        currentDirF.flatMap { currentDir =>
+          Async[F].blocking(currentDir.exists).flatMap {
+            case false => Async[F].pure(None)
+            case true =>
+              listFilesFrom(currentBase).flatMap { stream =>
+                stream.compile.toList.map { files =>
+                  Some((files, currentBase + ordinalChunkSize.value.toLong))
+                }
+              }
           }
-        )
-
-    go(baseDirectory)
+        }
+      }
+      .flatMap(files => Stream.emits(files))
   }
 
+  def processFileChunk(
+    chunk: Stream[F, File],
+    movePersistedToTmp: (Hash, SnapshotOrdinal) => F[Unit]
+  )(implicit hs: HasherSelector[F], kryoSerializer: KryoSerializer[F]): F[Unit] =
+    chunk
+      .map(file => file.name.toLongOption.flatMap(SnapshotOrdinal(_)))
+      .collect { case Some(fileOrdinal) => fileOrdinal }
+      .parEvalMapUnordered(maxParallelFileOperations) { fileOrdinal =>
+        val operation = for {
+          snapshotOpt <- read(fileOrdinal)
+          _ <- snapshotOpt match {
+            case Some(snapshot) =>
+              HasherSelector[F]
+                .forOrdinal(snapshot.ordinal) { implicit hasher =>
+                  for {
+                    hashed <- snapshot.toHashed
+                    _ <- movePersistedToTmp(hashed.hash, hashed.ordinal).handleErrorWith { err =>
+                      logger.warn(err)(s"Failed to move persisted to tmp for ordinal=${snapshot.ordinal}, hash=${hashed.hash}")
+                      Async[F].raiseError(err)
+                    }
+                  } yield ()
+                }
+                .handleErrorWith { error =>
+                  implicit val kryoHasher = Hasher.forKryo[F]
+                  logger.warn(error)(s"cleanupAbove failed for ordinal=${snapshot.ordinal}, retrying with Kryo hasher") >>
+                    snapshot.toHashed.flatMap { s =>
+                      movePersistedToTmp(s.hash, s.ordinal).handleErrorWith { err =>
+                        logger.error(err)(s"Failed to move persisted to tmp even with Kryo hasher for ordinal=${snapshot.ordinal}") >>
+                        Async[F].raiseError(err)
+                      }
+                    }
+                }
+            case None =>
+              logger.debug(s"No snapshot found for ordinal $fileOrdinal") >> Async[F].unit
+          }
+        } yield ()
+
+        operation.handleErrorWith { err =>
+          logger.error(err)(s"Failed to process file with ordinal $fileOrdinal") >>
+            Async[F].unit
+        }
+      }
+      .compile
+      .drain
+
+  def cleanupAboveOrdinal(
+    ordinal: SnapshotOrdinal,
+    movePersistedToTmp: (Hash, SnapshotOrdinal) => F[Unit]
+  )(implicit hs: HasherSelector[F], kryoSerializer: KryoSerializer[F]): F[Unit] = for {
+    _ <- logger.info(s"Searching for persisted files above ordinal ${ordinal.show}")
+    baseDirectory = (ordinal.value.value / ordinalChunkSize.value) * ordinalChunkSize.value
+
+    _ <- baseDirectory.tailRecM { currentBase =>
+      for {
+        baseDir <- dir.map(_ / "ordinal" / currentBase.toString)
+        result <-
+          if (!baseDir.exists) {
+            ().asRight[Long].pure
+          } else {
+            for {
+              _ <- logger.info(s"Processing directory for base $currentBase")
+
+              files <- Async[F].blocking {
+                if (currentBase == baseDirectory)
+                  baseDir
+                    .list(
+                      f => !f.isDirectory && f.name.toLongOption.exists(_ > ordinal.value.value),
+                      maxDepth = 1
+                    )
+                    .toList
+                else
+                  baseDir.list(f => !f.isDirectory, maxDepth = 1).toList
+              }.handleErrorWith { ex =>
+                logger.warn(ex)(s"Error listing files in directory ${baseDir.pathAsString}") >>
+                Async[F].pure(List.empty)
+              }.map(Stream.emits(_))
+
+              _ <- processFileChunk(files, movePersistedToTmp)
+            } yield (currentBase + ordinalChunkSize.value).asLeft[Unit]
+          }
+      } yield result
+    }
+  } yield ()
+
   private def toOrdinalName(snapshot: S): String = toOrdinalName(snapshot.ordinal)
+
   private def toOrdinalName(ordinal: SnapshotOrdinal): String =
     "ordinal/" + ordinalPathGenerator.get(ordinal.value.value.toString)
 
   private def toHashName(snapshot: S)(implicit hasher: Hasher[F]): F[String] = snapshot.hash.map(toHashName)
+
   private def toHashName(hash: Hash): String =
     "hash/" + hashPathGenerator.get(hash.coerce[String])
 

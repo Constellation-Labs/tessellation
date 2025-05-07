@@ -2,7 +2,6 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
 import cats.Parallel
 import cats.effect.Async
-import cats.effect.syntax.all._
 import cats.syntax.all._
 
 import io.constellationnetwork.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
@@ -34,8 +33,6 @@ object SnapshotDownloadStorage {
       val logger = Slf4jLogger.getLogger[F]
 
       val cutoffLogic: OrdinalCutoff = LogarithmicOrdinalCutoff.make
-
-      val maxParallelFileOperations = 4
 
       def readPersisted(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalIncrementalSnapshot]]] = persistedStorage.read(ordinal)
 
@@ -118,33 +115,37 @@ object SnapshotDownloadStorage {
         fullGlobalSnapshotStorage.write(genesis)
       }
 
-      def cleanupAbove(ordinal: SnapshotOrdinal): F[Unit] =
-        snapshotInfoStorage.deleteAbove(ordinal) >>
-          persistedStorage
+      def cleanupAbove(ordinal: SnapshotOrdinal): F[Unit] = {
+        val deleteSnapshotInfo = for {
+          _ <- logger.info(s"Starting cleanup above ordinal ${ordinal.show}")
+          _ <- snapshotInfoStorage
+            .deleteAbove(ordinal)
+            .handleErrorWith(err =>
+              logger.error(err)(s"Error while deleting snapshot_info files above ${ordinal.show}") >>
+                Async[F].raiseError(err)
+            )
+          _ <- logger.info(s"Successfully deleted snapshot_info files above ordinal ${ordinal.show}")
+        } yield ()
+
+        val cleanupAboveOrdinal = persistedStorage.cleanupAboveOrdinal(ordinal, movePersistedToTmp)
+
+        val verify = for {
+          remainingFiles <- persistedStorage
             .findAbove(ordinal)
-            .map {
-              _.map(_.name.toLongOption.flatMap(SnapshotOrdinal(_))).collect { case Some(a) => a }
+            .compile
+            .count
+
+          _ <-
+            if (remainingFiles > 0) {
+              throw new RuntimeException(s"Cleanup incomplete: $remainingFiles files still remain above ordinal ${ordinal.show}")
+            } else {
+              logger.info(s"Cleanup successful: No files remain above ordinal ${ordinal.show}")
             }
-            .flatMap {
-              _.compile.toList.flatMap {
-                _.parTraverseN(maxParallelFileOperations) { ordinal =>
-                  readPersisted(ordinal).flatMap {
-                    case Some(snapshot) =>
-                      HasherSelector[F]
-                        .forOrdinal(snapshot.ordinal) { implicit hasher =>
-                          snapshot.toHashed.flatMap(s => movePersistedToTmp(s.hash, s.ordinal))
-                        }
-                        .handleErrorWith { error =>
-                          implicit val kryoHasher = Hasher.forKryo[F]
-                          logger.warn(error)(s"cleanupAbove failed for ordinal=${snapshot.ordinal}, retrying with Kryo hasher") >>
-                            snapshot.toHashed.flatMap { s =>
-                              movePersistedToTmp(s.hash, s.ordinal)
-                            }
-                        }
-                    case None => Async[F].unit
-                  }
-                }.void
-              }
-            }
+        } yield ()
+
+        deleteSnapshotInfo >>
+          cleanupAboveOrdinal >>
+          verify
+      }
     }
 }
