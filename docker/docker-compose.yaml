@@ -7,6 +7,8 @@ services:
       - .env
     environment:
       - CL_KEYSTORE=/tessellation/key.p12
+      - CL_DAG_L0_JOIN_ENABLED=${CL_DAG_L0_JOIN_ENABLED:-true}
+      - CL_DAG_L0_JOIN_PORT=${CL_DAG_L0_JOIN_PORT:-9001}
     ports:
       - "${CL_DAG_L0_PUBLIC_PORT:-9000}:9000"  # Public HTTP
       - "${CL_DAG_L0_PEER_PORT:-9001}:9001"  # P2P HTTP

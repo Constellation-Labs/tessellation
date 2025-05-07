@@ -3,6 +3,24 @@
 # Break on any error
 set -e
 
+if ! command -v jq >/dev/null 2>&1; then
+  case "$(uname)" in
+    Linux)
+      sudo apt install -y jq
+      ;;
+    Darwin)
+      brew install jq
+      ;;
+    *)
+      echo "Unsupported OS: $(uname). Please install jq manually."
+      exit 1
+      ;;
+  esac
+else
+  echo "jq is already installed."
+fi
+
+
 # For debugging locally use 0 for ci use 1
 if [ -z "$EXIT_CODE" ]; then
   export EXIT_CODE=0
@@ -18,7 +36,7 @@ if [ -z "$DO_EXIT" ]; then
 fi
 
 if [ -z "$L0_ONLY" ]; then
-  export L0_ONLY=false
+  export L0_ONLY=true
 fi
 
 if [ -z "$REMOVE_EXISTING_CONFIGS" ]; then
@@ -47,7 +65,7 @@ for i in 1 2; do
 done
 
 
-if [ "$L0_ONLY" = "false" ]; then
+if [[ "$L0_ONLY" == "false" && "$SKIP_ASSEMBLY" == "false" ]]; then
   sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
 else
   missing=false
@@ -62,11 +80,15 @@ else
   done
 
   if [ "$missing" = true ]; then
-    echo "▶️  One or more modules is missing. Running full assembly"
+    echo "▶️  One or more modules is missing. Cannot skip assembly. Running full assembly"
     sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
   else
-    echo "Assembling only L0"
-    # sbt dagL0/assembly
+    if [ "$SKIP_ASSEMBLY" == "false" ]; then
+      echo "Assembling only L0"
+      sbt dagL0/assembly
+    else
+      echo "Found existing assemblies, and skip assembly was set to true"
+    fi
   fi
 fi
 
@@ -175,6 +197,18 @@ for i in 1 2; do
     source .envrc
     java -jar ../../keytool.jar generate
   )
+
+  ret_addr=$(
+    source .envrc
+    java -jar ../../wallet.jar show-address
+  )
+  echo "$ret_addr" > address
+  id=$(
+    source .envrc
+    java -jar ../../wallet.jar show-id
+  )
+  echo "$id" > peer_id
+
   cd ../../../
 done
 
@@ -330,8 +364,10 @@ jq -e '.activeDelegatedStakes | length == 1' > /dev/null || \
 { echo "ERROR: activeDelegatedStakes is empty in DS info endpoint"; exit_func; }
 
 
+
+### UPDATE NODE ID test, requires a second id for node
 # Change node params, first register them for second node.
-# Create node update params for gl0 kp
+# Create node update params for container 1 kp
 cd ./nodes/dag-l1/1/
 # 6000 * 1e8
 out=$(
@@ -349,6 +385,51 @@ cd ../../..
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[1].updateNodeParameters | length > 1' > /dev/null || \
 { echo "ERROR: updateNodeParameters is empty in snapshot combined"; exit_func; }
+
+
+# Now create a delegated stake with the second address
+# Create delegated stake for gl0 kp
+
+second=$(cat ./nodes/dag-l1/1/peer_id)
+echo "Second node id $second"
+export SECOND_NODE="$second"
+
+cd ./nodes/global-l0/0/
+
+
+
+wget $DAG_L0_URL/token-locks/last-reference/$ADDRESS \
+-O token-lock-last-ref.json
+
+out=$(
+  source .envrc
+  java -jar ../../wallet.jar create-delegated-stake --amount 6000 --token-lock $TOKEN_LOCK_HASH --nodeId $SECOND_NODE --parent token-lock-last-ref.json
+)
+echo "Create delegated stake hash $out"
+echo "$out" > delegated-stake-hash2
+export DELEGATED_STAKE_HASH=$out
+cat event
+cp event second-delegated-stake.json
+
+export REWARD_AMOUNT=$(curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
+jq -e '.activeDelegatedStakes[0].rewardAmount')
+echo "Current Reward amount before change $REWARD_AMOUNT"
+
+curl -i -X POST --header 'Content-Type: application/json' --data @second-delegated-stake.json "$DAG_L0_URL"/delegated-stakes
+
+
+# Await accepted, may require adjustment
+cd ../../..
+sleep 30
+
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e '.[1].activeDelegatedStakes | length == 1' > /dev/null || \
+{ echo "ERROR: activeDelegatedStakes is empty in snapshot combined"; exit_func; }
+
+
+export BALANCE_ON_PRESUMED_DS2_ACCEPTED=$(curl -s "$DAG_L0_URL/dag/$ADDRESS/balance" | jq -e ".balance")
+echo "Balance on presumed DS2 accepted $BALANCE_ON_PRESUMED_DS2_ACCEPTED"
+
 
 
 
@@ -408,5 +489,11 @@ jq -e '.activeDelegatedStakes | length == 0' > /dev/null || \
 active_token_locks=$(curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[1].activeTokenLocks | length == 0') > /dev/null || \
 { echo "ERROR: activeTokenLocks is not empty in snapshot combined"; exit_func; }
+
+
+
+export FINAL_BALANCE=$(curl -s "$DAG_L0_URL/dag/$ADDRESS/balance" | jq -e ".balance")
+echo "Final balance $FINAL_BALANCE"
+
 
 echo "success"
