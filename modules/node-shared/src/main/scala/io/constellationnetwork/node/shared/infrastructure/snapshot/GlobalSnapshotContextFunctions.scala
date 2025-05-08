@@ -148,19 +148,11 @@ object GlobalSnapshotContextFunctions {
           expiredWithdrawalsDelegatedStaking
         ) = acceptDelegatedStakes(context, signedArtifact.epochProgress)
 
-        filteredUnexpiredCreateDelegatedStakes = unexpiredCreateDelegatedStakes.map {
-          case (addr, recs) =>
-            val tokenLocks = delegatedStakeAcceptanceResult.acceptedCreates.map {
-              case (addr, creates) => (addr, creates.map(_._1.tokenLockRef).toSet)
-            }.getOrElse(addr, Set.empty)
-            (addr, recs.filterNot(record => tokenLocks(record.event.tokenLockRef)))
-        }
-
         updatedCreateDelegatedStakes <- DelegatedRewardsDistributor.getUpdatedCreateDelegatedStakes(
           signedArtifact.delegateRewards.getOrElse(SortedMap.empty),
           delegatedStakeAcceptanceResult,
           PartitionedStakeUpdates(
-            filteredUnexpiredCreateDelegatedStakes,
+            unexpiredCreateDelegatedStakes,
             unexpiredWithdrawalsDelegatedStaking,
             expiredWithdrawalsDelegatedStaking
           )
@@ -170,7 +162,7 @@ object GlobalSnapshotContextFunctions {
           context,
           delegatedStakeAcceptanceResult,
           PartitionedStakeUpdates(
-            filteredUnexpiredCreateDelegatedStakes,
+            unexpiredCreateDelegatedStakes,
             unexpiredWithdrawalsDelegatedStaking,
             expiredWithdrawalsDelegatedStaking
           )

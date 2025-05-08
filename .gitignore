@@ -38,3 +38,4 @@ scripts/
 .direnv/
 node_modules/
 nodes/
+docker/jars/

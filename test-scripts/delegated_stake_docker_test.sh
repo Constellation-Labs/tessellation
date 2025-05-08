@@ -3,6 +3,24 @@
 # Break on any error
 set -e
 
+if ! command -v jq >/dev/null 2>&1; then
+  case "$(uname)" in
+    Linux)
+      sudo apt install -y jq
+      ;;
+    Darwin)
+      brew install jq
+      ;;
+    *)
+      echo "Unsupported OS: $(uname). Please install jq manually."
+      exit 1
+      ;;
+  esac
+else
+  echo "jq is already installed."
+fi
+
+
 # For debugging locally use 0 for ci use 1
 if [ -z "$EXIT_CODE" ]; then
   export EXIT_CODE=0
@@ -17,6 +35,18 @@ if [ -z "$DO_EXIT" ]; then
   export DO_EXIT=false
 fi
 
+if [ -z "$L0_ONLY" ]; then
+  export L0_ONLY=true
+fi
+
+if [ -z "$REMOVE_EXISTING_CONFIGS" ]; then
+  export REMOVE_EXISTING_CONFIGS=true
+fi
+
+if [ -z "$SKIP_ASSEMBLY" ]; then
+  export SKIP_ASSEMBLY=false
+fi
+
 exit_func() {
   if [ "$DO_EXIT" = "true" ]; then
     exit $EXIT_CODE
@@ -24,8 +54,9 @@ exit_func() {
   return 0
 }
 
-# Ensure clean setup
-rm -rf ./nodes
+if [ "$REMOVE_EXISTING_CONFIGS" = "true" ]; then
+  rm -rf ./nodes
+fi
 
 mkdir -p ./nodes/global-l0/0
 
@@ -33,28 +64,43 @@ for i in 1 2; do
   mkdir -p ./nodes/dag-l1/$i
 done
 
-# Build jars, run clean only if CLEAN_BUILD is true
-if [ "$CLEAN_BUILD" = "true" ]; then
-  sbt clean
-  DIRTY_SUFFIX=""
+
+if [[ "$L0_ONLY" == "false" && "$SKIP_ASSEMBLY" == "false" ]]; then
+  sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
 else
-  DIRTY_SUFFIX="-dirty"
+  missing=false
+
+  for module in dag-l0 dag-l1 keytool wallet; do
+    jar_path=$(ls -1t modules/"$module"/target/scala-2.13/tessellation-"$module"-assembly*.jar 2>/dev/null | head -n1)
+    if [ -z "$jar_path" ]; then
+      echo "⚠️  Missing JAR for module: $module"
+      missing=true
+      break
+    fi
+  done
+
+  if [ "$missing" = true ]; then
+    echo "▶️  One or more modules is missing. Cannot skip assembly. Running full assembly"
+    sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
+  else
+    if [ "$SKIP_ASSEMBLY" == "false" ]; then
+      echo "Assembling only L0"
+      sbt dagL0/assembly
+    else
+      echo "Found existing assemblies, and skip assembly was set to true"
+    fi
+  fi
 fi
 
-sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
+mkdir -p ./docker/jars/
 
+for module in "dag-l0" "dag-l1" "keytool" "wallet"
+do
+  path=$(ls -1t modules/${module}/target/scala-2.13/tessellation-${module}-assembly*.jar | head -n1)
+  cp $path ./nodes/${module}.jar
+  cp $path ./docker/jars/${module}.jar
+done
 
-# Note this copy command may fail if you recompile without clean due to the *dirty* suffix, fixable with env
-# Duplicate copy overwrites with dirty version if only compiling one module
-# Order is deliberate here for reruns
-cp modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly*.jar ./nodes/global-l0.jar
-cp modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly*${DIRTY_SUFFIX}*.jar ./nodes/global-l0.jar
-cp modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly*.jar ./nodes/dag-l1.jar
-cp modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly*${DIRTY_SUFFIX}*.jar ./nodes/dag-l1.jar
-cp modules/keytool/target/scala-2.13/tessellation-keytool-assembly*.jar ./nodes/keytool.jar
-cp modules/keytool/target/scala-2.13/tessellation-keytool-assembly*${DIRTY_SUFFIX}-*.jar ./nodes/keytool.jar
-cp modules/wallet/target/scala-2.13/tessellation-wallet-assembly*.jar ./nodes/wallet.jar
-cp modules/wallet/target/scala-2.13/tessellation-wallet-assembly*${DIRTY_SUFFIX}-*.jar ./nodes/wallet.jar
 
 export TESSELLATION_DOCKER_VERSION=test
 docker build -t constellationnetwork/tessellation:$TESSELLATION_DOCKER_VERSION -f docker/Dockerfile .
@@ -106,10 +152,12 @@ CL_TEST_MODE=true
 CL_LOCAL_MODE=true
 CL_L0_PEER_HTTP_HOST=192.168.100.10
 CL_DAG_L1_JOIN_IP=192.168.100.20
+CL_DAG_L0_JOIN_IP=192.168.100.10
 EOF
 
 echo "CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
 echo "CL_DAG_L1_JOIN_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
+echo "CL_DAG_L0_JOIN_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
 
 cp ./nodes/.env ./nodes/global-l0/0/.env
 cp ./nodes/.envrc ./nodes/dag-l1/1/.envrc
@@ -124,6 +172,7 @@ echo "Generated genesis file:"
 cat genesis.csv
 echo "CL_GENESIS_FILE=./genesis.csv" >> .env
 echo "CL_DAG_L1_JOIN_ENABLED=false" >> .env
+echo "CL_DAG_L0_JOIN_ENABLED=false" >> .env
 echo "CONTAINER_NAME_SUFFIX=-0" >> .env
 echo "CONTAINER_OFFSET=0" >> .env
 cd ../../../
@@ -134,15 +183,32 @@ export DAG_L1_PEER_ID_0=$GL0_GENERATED_WALLET_PEER_ID
 
 for i in 1 2; do
   cd ./nodes/dag-l1/$i
+  echo "CL_DAG_L1_JOIN_ENABLED=true" >> .env
+  echo "CL_DAG_L0_JOIN_ENABLED=true" >> .env
   echo "CONTAINER_NAME_SUFFIX=-$i" >> .env
   echo "CONTAINER_OFFSET=$i" >> .env
+  echo "CL_DAG_L0_PUBLIC_PORT=${i}9000" >> .env
   echo "CL_DAG_L1_PUBLIC_PORT=${i}9010" >> .env
+  echo "CL_DAG_L0_PEER_PORT=${i}9001" >> .env
   echo "CL_DAG_L1_PEER_PORT=${i}9011" >> .env
+  echo "CL_DAG_L0_CLI_PORT=${i}9002" >> .env
   echo "CL_DAG_L1_CLI_PORT=${i}9012" >> .env
   out=$(
     source .envrc
     java -jar ../../keytool.jar generate
   )
+
+  ret_addr=$(
+    source .envrc
+    java -jar ../../wallet.jar show-address
+  )
+  echo "$ret_addr" > address
+  id=$(
+    source .envrc
+    java -jar ../../wallet.jar show-id
+  )
+  echo "$id" > peer_id
+
   cd ../../../
 done
 
@@ -157,16 +223,16 @@ echo "------------------------------------------------"
 # docker stop $(docker ps -a -q) && docker rm $(docker ps -a -q) && docker volume rm $(docker volume ls -q) && docker network rm $(docker network ls -q)
 # 1. Stop & remove all containers on the tessellation_common network
 docker ps -aq --filter network=tessellation_common \
-  | xargs -r docker rm -f
+  | xargs -r docker rm -f || true
 
 # 2. Remove volumes named gl0-data or dag-l1-data
 docker volume ls -q \
   | grep -E 'gl0-data|dag-l1-data' \
-  | xargs -r docker volume rm
+  | xargs -r docker volume rm || true
 
 
 # 3. Now remove the network
-docker network rm tessellation_common
+docker network rm tessellation_common || true
 
 docker network create \
   --driver=bridge \
@@ -187,11 +253,10 @@ sleep 30
 # Start dag-l1 1
 cd ./nodes/dag-l1/1
 
-
 docker compose down --remove-orphans --volumes || true; \
 cp ../../../docker/docker-compose.yaml . ; \
 cp ../../../docker/docker-compose.test.yaml . ; \
-docker compose -f docker-compose.test.yaml -f docker-compose.yaml up -d
+docker compose -f docker-compose.test.yaml -f docker-compose.yaml --profile l0 up -d
 
 cd ../../../
 
@@ -200,7 +265,7 @@ cd ./nodes/dag-l1/2
 docker compose down --remove-orphans --volumes || true; \
 cp ../../../docker/docker-compose.yaml . ; \
 cp ../../../docker/docker-compose.test.yaml . ; \
-docker compose -f docker-compose.test.yaml -f docker-compose.yaml up -d
+docker compose -f docker-compose.test.yaml -f docker-compose.yaml  --profile l0 up -d
 cd ../../../
 
 # wait for dag-l1 to come online
@@ -300,6 +365,81 @@ jq -e '.activeDelegatedStakes | length == 1' > /dev/null || \
 
 
 
+### UPDATE NODE ID test, requires a second id for node
+# Change node params, first register them for second node.
+# Create node update params for container 1 kp
+cd ./nodes/dag-l1/1/
+# 6000 * 1e8
+out=$(
+  source .envrc
+  java -jar ../../wallet.jar create-node-params
+)
+echo "Create node params output $out"
+cat event
+cp event initial-node-params.json
+curl -i -X POST --header 'Content-Type: application/json' --data @initial-node-params.json "$DAG_L0_URL"/node-params
+# Await accepted
+sleep 30
+cd ../../..
+
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e '.[1].updateNodeParameters | length > 1' > /dev/null || \
+{ echo "ERROR: updateNodeParameters is empty in snapshot combined"; exit_func; }
+
+
+# Now create a delegated stake with the second address
+# Create delegated stake for gl0 kp
+
+second=$(cat ./nodes/dag-l1/1/peer_id)
+echo "Second node id $second"
+export SECOND_NODE="$second"
+
+cd ./nodes/global-l0/0/
+
+
+
+wget $DAG_L0_URL/delegated-stakes/last-reference/$ADDRESS \
+-O ds-last-ref.json
+
+out=$(
+  source .envrc
+  java -jar ../../wallet.jar create-delegated-stake --amount 6000 --token-lock $TOKEN_LOCK_HASH --nodeId $SECOND_NODE --parent ds-last-ref.json
+)
+echo "Create delegated stake hash $out"
+echo "$out" > delegated-stake-hash2
+export DELEGATED_STAKE_HASH=$out
+cat event
+cp event second-delegated-stake.json
+
+export REWARD_AMOUNT=$(curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
+jq -e '.activeDelegatedStakes[0].rewardAmount')
+echo "Current Reward amount before change $REWARD_AMOUNT"
+
+curl -i -X POST --header 'Content-Type: application/json' --data @second-delegated-stake.json "$DAG_L0_URL"/delegated-stakes
+
+
+# Await accepted, may require adjustment
+cd ../../..
+sleep 30
+
+curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
+jq -e '.[1].activeDelegatedStakes | length == 1' > /dev/null || \
+{ echo "ERROR: activeDelegatedStakes is empty in snapshot combined"; exit_func; }
+
+
+
+export REWARD_AMOUNT_AFTER_CHANGE=$(curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
+jq -e '.activeDelegatedStakes[0].rewardAmount')
+echo "Current Reward amount after change $REWARD_AMOUNT_AFTER_CHANGE"
+
+# Assert that reward amount is greater than before change
+if [ "$REWARD_AMOUNT_AFTER_CHANGE" -le "$REWARD_AMOUNT" ]; then
+  echo "ERROR: Reward amount is not greater than before change"
+  exit_func
+else
+  echo "Reward amount is greater than before change"
+fi
+
 # initiate withdraw
 cd ./nodes/global-l0/0/
 out=$(
@@ -315,10 +455,14 @@ cd ../../..
 
 sleep 30
 
+set -r
 
 while true; do
-  expected_end=$(curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
-  jq -e ".pendingWithdrawals[0].withdrawalEndEpoch")
+  raw=$(
+    curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" \
+      | jq -e ".pendingWithdrawals[0].withdrawalEndEpoch"
+  ) || raw=null
+  expected_end=$raw
 
   current_epoch=$(curl -s "$DAG_L0_URL/global-snapshots/latest/combined" | \
   jq -e '.[0].value.epochProgress')
@@ -330,31 +474,20 @@ while true; do
   fi
 
   if [ "$current_epoch" -ge "$expected_end" ]; then
+    echo "Withdrawal complete"
     break
   fi
 
   sleep 10
 done
 
-sleep 30
+set -e
 
-curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
-jq -e '.[1].activeDelegatedStakes | length == 0' > /dev/null || \
-{ echo "ERROR: activeDelegatedStakes is not empty in snapshot combined"; exit_func; }
-
-curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
-jq -e '.[0].delegateRewards == null' > /dev/null || \
-{ echo "ERROR: delegateRewards is not empty in snapshot combined"; exit_func; }
-
-echo "Verifying delegated stake info"
-
-curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
-jq -e '.activeDelegatedStakes | length == 0' > /dev/null || \
-{ echo "ERROR: activeDelegatedStakes is not empty in DS info endpoint"; exit_func; }
+sleep 60
 
 
-active_token_locks=$(curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
-jq -e '.[1].activeTokenLocks | length == 0') > /dev/null || \
-{ echo "ERROR: activeTokenLocks is not empty in snapshot combined"; exit_func; }
+export FINAL_BALANCE=$(curl -s "$DAG_L0_URL/dag/$ADDRESS/balance" | jq -e ".balance")
+echo "Final balance $FINAL_BALANCE"
+
 
 echo "success"

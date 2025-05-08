@@ -52,9 +52,16 @@ else
     echo "Starting L0 validator genesis"
     exec java -jar /tessellation/jars/dag-l0.jar run-genesis "/tessellation/genesis.csv"
   else
+    echo "Starting join coordinator"
+    /tessellation/entrypoint-dag-l0-join-coordinator.sh &
     # otherwise, default to L0 validator
-    echo "Starting L0 validator"
-    exec java -jar /tessellation/jars/dag-l0.jar run-validator
+    export L0_COMMAND="run-validator"
+    if [ -n "$L0_COMMAND" ]; then
+      export L0_COMMAND="$L0_COMMAND"
+    fi
+
+    echo "Starting L0 validator with command: $L0_COMMAND"
+    exec java -jar /tessellation/jars/dag-l0.jar $L0_COMMAND
   fi
 
 fi
