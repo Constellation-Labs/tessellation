@@ -81,11 +81,12 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
 
       - name: Create release tag
+        id: set_output
         env:
           VERSION: ${{ steps.get_version.outputs.VERSION }}
         run: |
           echo "Release-As: $VERSION" >> $GITHUB_STEP_SUMMARY
-
+          
           git tag -a v$VERSION -m "Release $VERSION"
           git push origin v$VERSION -f
           echo "release_tag=v$VERSION" >> $GITHUB_OUTPUT
