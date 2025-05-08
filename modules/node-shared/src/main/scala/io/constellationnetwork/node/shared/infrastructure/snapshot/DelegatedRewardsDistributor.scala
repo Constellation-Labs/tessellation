@@ -122,11 +122,11 @@ object DelegatedRewardsDistributor {
                 matchingExistingRecord.map(_.rewards).getOrElse(Balance.empty)
               ).pure[F]
           }.map(addr -> _)
-      }.map(_.toMap)
+      }.map(_.toSortedMap)
 
       filteredExistingRecords = filterOutModifiedStakes(existingRecords, modifiedStakes)
 
-      mergedRecords = filteredExistingRecords ++ newRecordsWithRewards
+      mergedRecords = filteredExistingRecords |+| newRecordsWithRewards
 
       activeStakes <- {
         val withdrawnStakes = delegatedStakeDiffs.acceptedWithdrawals.flatMap(_._2.map(_._1.stakeRef)).toSet
