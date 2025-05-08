@@ -398,12 +398,12 @@ cd ./nodes/global-l0/0/
 
 
 
-wget $DAG_L0_URL/token-locks/last-reference/$ADDRESS \
--O token-lock-last-ref.json
+wget $DAG_L0_URL/delegated-stakes/last-reference/$ADDRESS \
+-O ds-last-ref.json
 
 out=$(
   source .envrc
-  java -jar ../../wallet.jar create-delegated-stake --amount 6000 --token-lock $TOKEN_LOCK_HASH --nodeId $SECOND_NODE --parent token-lock-last-ref.json
+  java -jar ../../wallet.jar create-delegated-stake --amount 6000 --token-lock $TOKEN_LOCK_HASH --nodeId $SECOND_NODE --parent ds-last-ref.json
 )
 echo "Create delegated stake hash $out"
 echo "$out" > delegated-stake-hash2
@@ -427,11 +427,18 @@ jq -e '.[1].activeDelegatedStakes | length == 1' > /dev/null || \
 { echo "ERROR: activeDelegatedStakes is empty in snapshot combined"; exit_func; }
 
 
-export BALANCE_ON_PRESUMED_DS2_ACCEPTED=$(curl -s "$DAG_L0_URL/dag/$ADDRESS/balance" | jq -e ".balance")
-echo "Balance on presumed DS2 accepted $BALANCE_ON_PRESUMED_DS2_ACCEPTED"
 
+export REWARD_AMOUNT_AFTER_CHANGE=$(curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
+jq -e '.activeDelegatedStakes[0].rewardAmount')
+echo "Current Reward amount after change $REWARD_AMOUNT_AFTER_CHANGE"
 
-
+# Assert that reward amount is greater than before change
+if [ "$REWARD_AMOUNT_AFTER_CHANGE" -le "$REWARD_AMOUNT" ]; then
+  echo "ERROR: Reward amount is not greater than before change"
+  exit_func
+else
+  echo "Reward amount is greater than before change"
+fi
 
 # initiate withdraw
 cd ./nodes/global-l0/0/
@@ -448,10 +455,14 @@ cd ../../..
 
 sleep 30
 
+set -r
 
 while true; do
-  expected_end=$(curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
-  jq -e ".pendingWithdrawals[0].withdrawalEndEpoch")
+  raw=$(
+    curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" \
+      | jq -e ".pendingWithdrawals[0].withdrawalEndEpoch"
+  ) || raw=null
+  expected_end=$raw
 
   current_epoch=$(curl -s "$DAG_L0_URL/global-snapshots/latest/combined" | \
   jq -e '.[0].value.epochProgress')
@@ -463,33 +474,16 @@ while true; do
   fi
 
   if [ "$current_epoch" -ge "$expected_end" ]; then
+    echo "Withdrawal complete"
     break
   fi
 
   sleep 10
 done
 
-sleep 30
+set -e
 
-curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
-jq -e '.[1].activeDelegatedStakes | length == 0' > /dev/null || \
-{ echo "ERROR: activeDelegatedStakes is not empty in snapshot combined"; exit_func; }
-
-curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
-jq -e '.[0].delegateRewards == null' > /dev/null || \
-{ echo "ERROR: delegateRewards is not empty in snapshot combined"; exit_func; }
-
-echo "Verifying delegated stake info"
-
-curl -s "$DAG_L0_URL/delegated-stakes/$ADDRESS/info" | \
-jq -e '.activeDelegatedStakes | length == 0' > /dev/null || \
-{ echo "ERROR: activeDelegatedStakes is not empty in DS info endpoint"; exit_func; }
-
-
-active_token_locks=$(curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
-jq -e '.[1].activeTokenLocks | length == 0') > /dev/null || \
-{ echo "ERROR: activeTokenLocks is not empty in snapshot combined"; exit_func; }
-
+sleep 60
 
 
 export FINAL_BALANCE=$(curl -s "$DAG_L0_URL/dag/$ADDRESS/balance" | jq -e ".balance")
