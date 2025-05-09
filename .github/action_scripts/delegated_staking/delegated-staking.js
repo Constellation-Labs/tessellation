@@ -1,31 +1,45 @@
 /**
  * Delegated Staking tests - run with CI or local (Euclid)
- * 
+ *
  * Local run instructions:
  * - Start Euclid from genesis (`hydra start-genesis`)
  * - RUN_ENV=local node .github/action_scripts/delegated_staking/delegated-staking 90 91 testDelegatedStaking
  * - Reset Euclid to run again (`hydra stop && hydra start-genesis`)
  */
 
-const { dag4 } = require('@stardust-collective/dag4')
-const axios = require('axios')
-const fs = require('fs')
 const path = require('path')
-const elliptic = require('elliptic')
+const axios = require('axios')
+const { dag4 } = require('@stardust-collective/dag4')
 
-const RUN_ENV = process.env.RUN_ENV || 'ci';
+const RUN_ENV = process.env.RUN_ENV || 'ci'
 
 const {
   parseSharedArgs,
-  CONSTANTS: sharedConstants,
   PRIVATE_KEYS,
   sleep,
   withRetry,
-  generateProof,
-  SerializerType,
   createNetworkConfig,
   logWorkflow,
 } = require('../shared')
+
+const {
+  checkOk,
+  checkBadRequest,
+  dagToDatum,
+  getPrivateKeyAndNodeIdFromFile,
+  postNodeParamsNodeId,
+  createDelegatedStake,
+  withdrawDelegatedStake,
+  getAccountDelegatedStakes,
+  assertDelegatedStakes,
+  fetchStakeWithRewardsBalance,
+  createTokenLock,
+  assertBalanceChange,
+  getNodeParams,
+  fetchSnapshot,
+  assertRewardTxnInSnapshot,
+  assertTokenUnlockInSnapshot,
+} = require('./lib')
 
 const throwUsage = () => {
   throw new Error(
@@ -44,75 +58,14 @@ const createConfig = () => {
   return { ...sharedArgs }
 }
 
-function getPrivateKeyAndNodeIdFromFile(filePath) {
-  const privateKeyHex = fs.readFileSync(filePath, 'utf8').trim()
+const setupDag4Account = (urls) => {
+  dag4.account.connect({
+    networkVersion: '2.0',
+    l0Url: urls.globalL0Url,
+    l1Url: urls.dagL1Url,
+  })
 
-  const privateKeyBuffer = Buffer.from(privateKeyHex, 'hex')
-
-  try {
-    const ec = new elliptic.ec('secp256k1')
-
-    const privateKeyString = privateKeyBuffer.toString('hex')
-    const keyPair = ec.keyFromPrivate(privateKeyBuffer)
-
-    const uncompressedPublicKey = keyPair.getPublic(false, 'hex') // Uncompressed format
-    const nodeId = uncompressedPublicKey.slice(2) // Remove the '0x04' prefix
-
-    return { privateKeyString, nodeId }
-  } catch (error) {
-    console.error('Error processing the private key:', error)
-  }
-}
-
-const createNodeParams = async (
-  account,
-  parametersName,
-  rewardFraction,
-  parent,
-) => {
-    return {
-        source: account.address,
-        delegatedStakeRewardParameters: {
-          rewardFraction: rewardFraction,
-        },
-        nodeMetadataParameters: {
-          name: parametersName,
-          description: parametersName,
-        },
-        parent: parent,
-    }
-}
-
-const checkOk = (response) => {
-  if (response.status !== 200) {
-    throw new Error(`Node returned ${response.status} instead of 200`)
-  }
-}
-
-const checkBadRequest = (response) => {
-  if (response.status !== 400) {
-    throw new Error(`Node returned ${response.status} instead of 400`)
-  }
-}
-
-const dagToDatum = (dag) => {
-  return Math.round(dag * 1e8);
-}
-
-const getNodeParams = async (urls) => {
-  logWorkflow.info(`Request to: ${urls.globalL0Url}/node-params`)
-  const response = await axios.get(
-    `${urls.globalL0Url}/node-params?t=${Date.now()}`,
-    {
-      headers: {
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        Pragma: 'no-cache',
-        Expires: '0',
-      },
-    },
-  )
-  checkOk(response)
-  return response.data
+  return dag4.account
 }
 
 const verifyInitialNodeParams = (response) => {
@@ -125,71 +78,10 @@ const verifyInitialNodeParams = (response) => {
 
 const extractKeysAndAccount = (filePath) => {
   const { privateKeyString, nodeId } = getPrivateKeyAndNodeIdFromFile(filePath)
-  
+
   const account = dag4.createAccount(privateKeyString)
-  
+
   return { privateKeyString, nodeId, account }
-}
-
-const postNodeParamsNodeId = async (
-  urls,
-  nodeId,
-  account,
-  privateKeyString,
-  parameterName,
-  rewardFaction,
-) => {
-  let parent = {
-    ordinal: 0,
-    hash: '0000000000000000000000000000000000000000000000000000000000000000',
-  }
-
-  try {
-    const response = await axios.get(
-      `${urls.globalL0Url}/node-params/${nodeId}?t=${Date.now()}`,
-      {
-        headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          Pragma: 'no-cache',
-          Expires: '0',
-        },
-      },
-    )
-    if (response.status === 200 && response.data) {
-      parent = response.data.lastRef
-    }
-  } catch (error) {
-    // NOOP
-  }
-
-  const unsignedNodeParams = await createNodeParams(
-    account,
-    parameterName,
-    rewardFaction,
-    parent,
-  )
-  const proof = await generateProof(
-    unsignedNodeParams,
-    privateKeyString,
-    account,
-    SerializerType.BROTLI,
-  )
-  const content = { value: unsignedNodeParams, proofs: [{ ...proof }] }
-
-  try {
-    const updateResponse = await axios.post(
-      `${urls.globalL0Url}/node-params`,
-      content,
-    )
-    await sleep(2000)
-    return updateResponse
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      return error.response
-    } else {
-      throw error
-    }
-  }
 }
 
 const checkInitialNodeParamsNode = async (urls, nodeId) => {
@@ -285,8 +177,11 @@ const firstNodeFraction2 = 5000000
 const secondNodeParameterName1 = 'SecondNode1'
 const secondNodeFraction1 = 6000000
 
-const checkCreateNodeParameters = async (urls) => {
-  logWorkflow.info('---- Start checkCreateNodeParameters ----')
+const thirdNodeParameterName1 = 'ThirdNode1'
+const thirdNodeFraction1 = 7500000
+
+const testCreateNodeParameters = async (urls) => {
+  logWorkflow.info('---- Start testCreateNodeParameters ----')
   const initialNodeParams = await getNodeParams(urls)
   verifyInitialNodeParams(initialNodeParams)
   logWorkflow.info('Initial node params is OK')
@@ -296,9 +191,29 @@ const checkCreateNodeParameters = async (urls) => {
     nodeId: nodeId1,
     account: account1,
   } = extractKeysAndAccount(
-    RUN_ENV === 'ci' ?
-        '../../code/hypergraph/dag-l0/genesis-node/id_ecdsa.hex' :
-        path.join(__dirname, 'keys', 'genesis-node.hex')
+    RUN_ENV === 'ci'
+      ? '../../code/hypergraph/dag-l0/genesis-node/id_ecdsa.hex'
+      : path.join(__dirname, 'keys', 'genesis-node.hex'),
+  )
+
+  const {
+    privateKeyString: privateKeyString2,
+    nodeId: nodeId2,
+    account: account2,
+  } = extractKeysAndAccount(
+    RUN_ENV === 'ci'
+      ? '../../code/hypergraph/dag-l0/validator-1/id_ecdsa.hex'
+      : path.join(__dirname, 'keys', 'validator-1-node.hex'),
+  )
+
+  const {
+    privateKeyString: privateKeyString3,
+    nodeId: nodeId3,
+    account: account3,
+  } = extractKeysAndAccount(
+    RUN_ENV === 'ci'
+      ? '../../code/hypergraph/dag-l0/validator-2/id_ecdsa.hex'
+      : path.join(__dirname, 'keys', 'validator-2-node.hex'),
   )
 
   await checkInitialNodeParamsNode(urls, nodeId1)
@@ -313,7 +228,7 @@ const checkCreateNodeParameters = async (urls) => {
     firstNodeFraction1,
   )
   checkOk(ur1)
-  logWorkflow.info('Update node params is OK')
+  logWorkflow.info('create node params 1 is OK')
 
   const nodeParamsAfterUpdate = await getNodeParams(urls)
   verifyNodeParamsResponse(
@@ -382,16 +297,7 @@ const checkCreateNodeParameters = async (urls) => {
   )
   logWorkflow.info('Check updating node with incorrect params is OK')
 
-  const {
-    privateKeyString: privateKeyString2,
-    nodeId: nodeId2,
-    account: account2,
-  } = extractKeysAndAccount(
-    RUN_ENV === 'ci' ?
-        '../../code/hypergraph/dag-l0/validator-1/id_ecdsa.hex' :
-        path.join(__dirname, 'keys', 'validator-1-node.hex')
-  )
-
+  logWorkflow.info('Check updating node 2 with correct params')
   const ur4 = await postNodeParamsNodeId(
     urls,
     nodeId2,
@@ -401,10 +307,10 @@ const checkCreateNodeParameters = async (urls) => {
     secondNodeFraction1,
   )
   checkOk(ur4)
-  
+
   // tends to fail here in CI, wait a little longer
   await sleep(5000)
-  
+
   await getNodeParamsNodeIdVerify(
     urls,
     nodeId2,
@@ -414,152 +320,50 @@ const checkCreateNodeParameters = async (urls) => {
   )
   logWorkflow.info('Update second node params is OK')
 
-  const bothNodesParams = await getNodeParams(urls)
+  logWorkflow.info('Create third node params')
+  const third = await postNodeParamsNodeId(
+    urls,
+    nodeId3,
+    account3,
+    privateKeyString3,
+    thirdNodeParameterName1,
+    thirdNodeFraction1,
+  )
+  checkOk(third)
+
+  // tends to fail here in CI, wait a little longer
+  await sleep(5000)
+
+  const allNodeParams = await getNodeParams(urls)
+  if (allNodeParams.length !== 3) {
+    throw new Error(`Expected 3 node params, got ${allNodeParams.length}`)
+  }
+
   verifyNodeParamsResponse(
-    bothNodesParams,
+    allNodeParams,
     nodeId1,
     firstNodeParameterName2,
     firstNodeFraction2,
   )
   verifyNodeParamsResponse(
-    bothNodesParams,
+    allNodeParams,
     nodeId2,
     secondNodeParameterName1,
     secondNodeFraction1,
   )
-  logWorkflow.info('Both nodes check is OK')
-
-  logWorkflow.info('---- End checkCreateNodeParameters ----')
-}
-
-const setupDag4Account = (urls) => {
-  dag4.account.connect({
-    networkVersion: '2.0',
-    l0Url: urls.globalL0Url,
-    l1Url: urls.dagL1Url,
-  })
-
-  return dag4.account
-}
-
-const assertBalanceChange = async (account, expectedBalanceDatum) => {
-  const balance = dagToDatum(await account.getBalance())
-
-  if (balance !== expectedBalanceDatum) {
-    throw new Error(
-      `Invalid balance: Expected balance to be ${expectedBalanceDatum} but got ${balance}`,
-    )
-  }
-}
-
-const createTokenLock = async (account, urls, lockAmount) => {
-  const initialBalance = dagToDatum(await account.getBalance())
-
-  const { hash } = await account.postTokenLock({
-    source: account.address,
-    amount: lockAmount,
-    tokenL1Url: urls.dagL1Url,
-    unlockEpoch: null,
-    currencyId: null,
-    fee: 0,
-  })
-
-  if (!hash) {
-    throw new Error('Failed to create TokenLock')
-  }
-
-  await withRetry(
-    async () =>
-      assertBalanceChange(account, initialBalance - lockAmount),
-    {
-      name: 'assertBalanceChangeAfterTokenLock',
-      maxAttempts: 10,
-      interval: 1000,
-      handleError: () => {},
-    },
+  verifyNodeParamsResponse(
+    allNodeParams,
+    nodeId3,
+    thirdNodeParameterName1,
+    thirdNodeFraction1,
   )
+  logWorkflow.info('All nodes check is OK')
 
-  return hash
+  logWorkflow.info('---- End testCreateNodeParameters ----')
 }
 
-const createDelegatedStake = async (account, lockHash, lockAmount, nodeId) => {
-  const { hash } = await account.postDelegatedStake({
-    source: account.address,
-    nodeId: nodeId,
-    amount: lockAmount,
-    fee: 0,
-    tokenLockRef: lockHash,
-  })
-
-  return hash
-}
-
-const withdrawDelegatedStake = async (account, stakeHash) => {
-  const { hash } = await account.putWithdrawDelegatedStake({
-    source: account.address,
-    stakeRef: stakeHash,
-  })
-
-  return hash
-}
-
-const getAccountDelegatedStakes = async (urls, address) => {
-  const response = await axios.get(
-    `${urls.globalL0Url}/delegated-stakes/${address}/info?t=${Date.now()}`,
-    {
-      headers: {
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        Pragma: 'no-cache',
-        Expires: '0',
-      },
-    },
-  )
-  checkOk(response)
-  return response.data
-}
-
-// Assert at least the passed keys are present in the array of objects
-const assertAllKeysMatch = (arr, obj) => {
-  const isValid = arr.some((item) =>
-    Object.entries(obj).every(([key, value]) => item[key] === value),
-  )
-
-  if (!isValid) {
-    // logWorkflow.info(JSON.stringify(arr))
-    throw new Error(
-      `Expected all keys to be present in response: ${JSON.stringify(obj)}`,
-    )
-  }
-}
-
-const assertDelegatedStakes = (stakeResponse, activeStakes, pendingStakes) => {
-  const expectedActiveLength = activeStakes.length
-  const actualActiveLength = stakeResponse.activeDelegatedStakes.length
-  if (expectedActiveLength !== actualActiveLength) {
-    throw new Error(
-      `Expected ${expectedActiveLength} active stakes but got ${actualActiveLength}`,
-    )
-  }
-
-  Object.values(activeStakes).map((stakeItem) => {
-    assertAllKeysMatch(stakeResponse.activeDelegatedStakes, stakeItem)
-  })
-
-  const expectedPendingLength = pendingStakes.length
-  const actualPendingLength = stakeResponse.pendingWithdrawals.length
-  if (expectedPendingLength !== actualPendingLength) {
-    throw new Error(
-      `Expected ${expectedPendingLength} active stakes but got ${actualPendingLength}`,
-    )
-  }
-
-  Object.values(pendingStakes).map((stakeItem) => {
-    assertAllKeysMatch(stakeResponse.pendingWithdrawals, stakeItem)
-  })
-}
-
-const checkCreateDelegatedStake = async (urls, account, nodeId) => {
-  logWorkflow.info('---- Start checkCreateDelegatedStake ----')
+const testCreateDelegatedStake = async (urls, account, nodeIds) => {
+  logWorkflow.info('---- Start testCreateDelegatedStake ----')
 
   const lockAmount = 500000000000
   const lockHash = await createTokenLock(account, urls, lockAmount)
@@ -572,7 +376,7 @@ const checkCreateDelegatedStake = async (urls, account, nodeId) => {
     account,
     lockHash,
     lockAmount,
-    nodeId,
+    nodeIds[0],
   )
   logWorkflow.info('Stake created')
 
@@ -587,7 +391,7 @@ const checkCreateDelegatedStake = async (urls, account, nodeId) => {
         [
           {
             hash: stakeHash,
-            nodeId,
+            nodeId: nodeIds[0],
             amount: lockAmount,
           },
         ],
@@ -603,55 +407,63 @@ const checkCreateDelegatedStake = async (urls, account, nodeId) => {
   )
   logWorkflow.info('Stake creation verified')
 
-  logWorkflow.info('---- End checkCreateDelegatedStake ----')
+  logWorkflow.info('Creating 2nd stake')
+  const secondLockAmount = 1200012345678
+  const secondLockHash = await createTokenLock(account, urls, secondLockAmount)
 
-  return stakeHash
-}
+  const secondStakeHash = await createDelegatedStake(
+    account,
+    secondLockHash,
+    secondLockAmount,
+    nodeIds[1],
+  )
+  logWorkflow.info('Stake 2 created')
 
-// Get stake to update and wait until it has some rewards
-const fetchStakeWithRewardsBalance = async (
-  urls,
-  address,
-  stakeHash,
-  nodeId = null,
-) => {
-  return withRetry(
+  await withRetry(
     async () => {
-      const stakeResponse = await getAccountDelegatedStakes(urls, address)
-      const stake = stakeResponse.activeDelegatedStakes.find(
-        (stake) => stake.hash === stakeHash && stake.rewardAmount > 0,
+      const updatedStakeResponse = await getAccountDelegatedStakes(
+        urls,
+        account.address,
       )
-
-      if (!stake) {
-        throw new Error('Stake not found with rewards balance')
-      }
-
-      const stakeAlreadyExists = stakeResponse.activeDelegatedStakes.find(
-        (stake) => {
-          return (
-            (nodeId ? stake.nodeId === nodeId : true) &&
-            address === stake.source
-          )
-        },
+      return assertDelegatedStakes(
+        updatedStakeResponse,
+        [
+          {
+            hash: stakeHash,
+            nodeId: nodeIds[0],
+            amount: lockAmount,
+          },
+          {
+            hash: secondStakeHash,
+            nodeId: nodeIds[1],
+            amount: secondLockAmount,
+          },
+        ],
+        [],
       )
-
-      if (stakeAlreadyExists) {
-        throw new Error('Cant update, stake already exists')
-      }
-
-      return stake
     },
     {
-      name: 'FetchStakeWithRewardsBalance',
-      maxAttempts: 20,
-      interval: 5 * 1000,
-      handleError: () => {},
+      name: 'assertDelegatedStake2Created',
+      maxAttempts: 10,
+      interval: 1000,
+      handleError: (err, attempt) => {
+        if (attempt !== 10) return
+
+        console.log(`assertDelegatedStake2Created failed: ${err.message}`)
+        throw err
+      },
     },
   )
+
+  logWorkflow.info('Stake 2 creation verified')
+
+  logWorkflow.info('---- End testCreateDelegatedStake ----')
+
+  return [stakeHash, secondStakeHash]
 }
 
-const checkUpdateDelegatedStake = async (urls, account, stakeHash, nodeId) => {
-  logWorkflow.info('---- Start checkUpdateDelegatedStake ----')
+const testUpdateDelegatedStake = async (urls, account, stakeHash, nodeId) => {
+  logWorkflow.info('---- Start testUpdateDelegatedStake ----')
 
   logWorkflow.info('Waiting for stake with non-zero rewards balance')
 
@@ -669,6 +481,12 @@ const checkUpdateDelegatedStake = async (urls, account, stakeHash, nodeId) => {
   if (nodeId === originalStake.nodeId) {
     throw new Error('Cannot update to the same node')
   }
+
+  // get other stake so we can verify it hasn't changed
+  const stakeResponse = await getAccountDelegatedStakes(urls, account.address)
+  const otherStake = stakeResponse.activeDelegatedStakes.find(
+    (stake) => stake.hash !== stakeHash,
+  )
 
   const updatedStakeHash = await createDelegatedStake(
     account,
@@ -696,6 +514,13 @@ const checkUpdateDelegatedStake = async (urls, account, stakeHash, nodeId) => {
             tokenLockRef: originalStake.tokenLockRef,
             rewardAmount: originalStake.rewardAmount, // balance is transferred
           },
+          {
+            hash: otherStake.hash,
+            nodeId: otherStake.nodeId,
+            amount: otherStake.amount,
+            tokenLockRef: otherStake.tokenLockRef,
+            rewardAmount: otherStake.rewardAmount,
+          },
         ],
         [],
       )
@@ -704,65 +529,23 @@ const checkUpdateDelegatedStake = async (urls, account, stakeHash, nodeId) => {
       name: 'assertDelegatedStakeUpdated',
       maxAttempts: 10,
       interval: 1000,
-      handleError: () => {},
+      handleError: (err, attempt) => {
+        if (attempt !== 10) return
+
+        console.log(`assertDelegatedStakeUpdated failed: ${err.message}`)
+        throw err
+      },
     },
   )
   logWorkflow.info('Stake update verified with balance change')
 
-  logWorkflow.info('---- End checkUpdateDelegatedStake ----')
+  logWorkflow.info('---- End testUpdateDelegatedStake ----')
 
   return updatedStakeHash
 }
 
-const fetchSnapshot = async (urls, ordinal) => {
-  logWorkflow.info(`Fetching snapshot: ${ordinal} `)
-
-  const response = await axios.get(
-    `${urls.globalL0Url}/global-snapshots/${ordinal}?t=${Date.now()}`,
-    {
-      headers: {
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        Pragma: 'no-cache',
-        Expires: '0',
-      },
-    },
-  )
-  checkOk(response)
-  return response.data
-}
-
-const assertRewardTxnInSnapshot = async (snapshot, account, amount) => {
-  rewardTxn = snapshot.value.rewards.find((txn) => {
-    return txn.amount === amount && txn.destination === account.address
-  })
-
-  if (!rewardTxn) {
-    throw new Error('Reward txn not found for withdrawal')
-  }
-}
-
-const assertTokenUnlockInSnapshot = async (
-  snapshot,
-  account,
-  lockHash,
-  amount,
-) => {
-  tokenUnlock = snapshot.value.artifacts.find((item) => {
-    return (
-      item.hasOwnProperty('TokenUnlock') &&
-      item.TokenUnlock.tokenLockRef === lockHash &&
-      item.TokenUnlock.amount === amount &&
-      item.TokenUnlock.source === account.address
-    )
-  })
-
-  if (!tokenUnlock) {
-    throw new Error('TokenUnlock not found for withdrawal')
-  }
-}
-
-const checkWithdrawDelegatedStake = async (urls, account, stakeHash) => {
-  logWorkflow.info('---- Start checkWithdrawDelegatedStake ----')
+const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
+  logWorkflow.info('---- Start testWithdrawDelegatedStake ----')
 
   const initialBalance = dagToDatum(await account.getBalance())
 
@@ -776,6 +559,12 @@ const checkWithdrawDelegatedStake = async (urls, account, stakeHash) => {
     throw new Error('Stake not found, cannot test updating stake')
   }
 
+  // get other stake so we can verify it hasn't changed
+  const stakeResponse = await getAccountDelegatedStakes(urls, account.address)
+  const otherStake = stakeResponse.activeDelegatedStakes.find(
+    (stake) => stake.hash !== stakeHash,
+  )
+
   await withdrawDelegatedStake(account, stakeHash)
   logWorkflow.info('Stake withdrawal sent')
 
@@ -788,7 +577,15 @@ const checkWithdrawDelegatedStake = async (urls, account, stakeHash) => {
       )
       return assertDelegatedStakes(
         updatedStakeResponse,
-        [],
+        [
+          {
+            hash: otherStake.hash,
+            nodeId: otherStake.nodeId,
+            amount: otherStake.amount,
+            tokenLockRef: otherStake.tokenLockRef,
+            rewardAmount: otherStake.rewardAmount,
+          },
+        ],
         [
           {
             hash: stakeHash,
@@ -805,7 +602,12 @@ const checkWithdrawDelegatedStake = async (urls, account, stakeHash) => {
       name: 'assertDelegatedStakeMovedToPending',
       maxAttempts: 10,
       interval: 1000,
-      handleError: () => {},
+      handleError: (err, attempt) => {
+        if (attempt !== 10) return
+
+        console.log(`assertDelegatedStakeMovedToPending failed: ${err.message}`)
+        throw err
+      },
     },
   )
   logWorkflow.info('Stake withdraw verified pending')
@@ -820,18 +622,37 @@ const checkWithdrawDelegatedStake = async (urls, account, stakeHash) => {
         urls,
         account.address,
       )
-      return assertDelegatedStakes(updatedStakeResponse, [], [])
+      return assertDelegatedStakes(
+        updatedStakeResponse,
+        [
+          {
+            hash: otherStake.hash,
+            nodeId: otherStake.nodeId,
+            amount: otherStake.amount,
+            tokenLockRef: otherStake.tokenLockRef,
+          },
+        ],
+        [],
+      )
     },
     {
       name: 'assertDelegatedStakeRemovedFromState',
       maxAttempts: 36,
       interval: 1000 * 10,
-      handleError: () => {},
+      handleError: (err, attempt) => {
+        if (attempt !== 36) return
+
+        console.log(`assertDelegatedStakeRemovedFromState failed: ${err.message}`)
+        throw err
+      },
     },
   )
   logWorkflow.info('Stake removed from pendingWithdrawal')
 
-  await assertBalanceChange(account, initialBalance + originalStake.totalBalance)
+  await assertBalanceChange(
+    account,
+    initialBalance + originalStake.totalBalance,
+  )
   logWorkflow.info('Wallet balance updated')
 
   let ordinal
@@ -865,31 +686,30 @@ const checkWithdrawDelegatedStake = async (urls, account, stakeHash) => {
 
   logWorkflow.info('Reward and TokenUnlock transactions sent')
 
-  logWorkflow.info('---- End checkWithdrawDelegatedStake ----')
+  logWorkflow.info('---- End testWithdrawDelegatedStake ----')
 }
 
 const testDelegatedStaking = async (urls) => {
-  await checkCreateNodeParameters(urls)
-
   const account = setupDag4Account(urls)
   account.loginPrivateKey(PRIVATE_KEYS.key4)
+  
+  await testCreateNodeParameters(urls)
 
   const nodeParams = await getNodeParams(urls)
 
-  const stakeHash = await checkCreateDelegatedStake(
-    urls,
-    account,
+  const [stakeHash] = await testCreateDelegatedStake(urls, account, [
     nodeParams[0].peerId,
-  )
+    nodeParams[1].peerId,
+  ])
 
-  const updatedStakeHash = await checkUpdateDelegatedStake(
+  const updatedStakeHash = await testUpdateDelegatedStake(
     urls,
     account,
     stakeHash,
-    nodeParams[1].peerId,
+    nodeParams[2].peerId,
   )
 
-  await checkWithdrawDelegatedStake(urls, account, updatedStakeHash)
+  await testWithdrawDelegatedStake(urls, account, updatedStakeHash)
 }
 
 const executeWorkflowByType = async (workflowType) => {
@@ -915,5 +735,7 @@ executeWorkflowByType(workflowType).catch((err) => {
   console.log('err:')
   console.log(err)
   logWorkflow.error('-', err)
-  throw err
+  if (RUN_ENV !== 'local') {
+    throw err
+  }
 })
