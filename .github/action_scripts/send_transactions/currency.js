@@ -1,5 +1,5 @@
 const { dag4 } = require('@stardust-collective/dag4')
-const { parseSharedArgs } = require('../shared')
+const { parseSharedArgs, logWorkflow } = require('../shared')
 
 const createConfig = () => {
   const args = process.argv.slice(2)
@@ -14,22 +14,19 @@ const createConfig = () => {
   return { ...sharedArgs }
 }
 
-const SLEEP_TIME_UNTIL_QUERY = 120 * 1000
+const SLEEP_TIME_UNTIL_QUERY = 30 * 1000
 
 const FIRST_WALLET_SEED_PHRASE =
-  'drift doll absurd cost upon magic plate often actor decade obscure smooth'
+  'right off artist rare copy zebra shuffle excite evidence mercy isolate raise'
 const SECOND_WALLET_SEED_PHRASE =
-  'upper pistol movie hedgehog case exhaust wife injury joke live festival shield'
+  'gauge shell cactus system resemble garlic pioneer theme doll grocery tiger spend'
 
-const FIRST_WALLET_ADDRESS = 'DAG4Zd2W2JxL1f1gsHQCoaKrRonPSSHLgcqD7osU'
-const SECOND_WALLET_ADDRESS = 'DAG6kfTqFxLLPLopHqR43CeQrcvJ5k3eXgYSeELt'
+const FIRST_WALLET_ADDRESS = 'DAG0d6yzQqBZTCnq7kB9hL8p4cCiFejfM5m6FBJB'
+const SECOND_WALLET_ADDRESS = 'DAG87hragrbzrEQEz6VC5B7hvtm4wAemS7Zg8KFj'
 const THIRD_WALLET_ADDRESS = 'DAG0DQPuvVThrHnz66S4V6cocrtpg59oesAWyRMb'
 
 const logMessage = (message) => {
-  const formattedMessage = {
-    message,
-  }
-  console.log(formattedMessage)
+  logWorkflow.info(message)
 }
 
 const sleep = (ms) => {
@@ -55,22 +52,14 @@ const batchTransaction = async (
       txnsData.push(txnBody)
     }
 
-    logMessage('Starting generation')
     const generatedTransactions = await origin.generateBatchTransactions(
       txnsData,
     )
-    logMessage('Generated')
 
-    logMessage('Starting sending')
     const hashes = await origin.sendBatchTransactions(generatedTransactions)
-    logMessage('Sent')
 
     logMessage(
-      `Transaction from: ${
-        origin.address
-      } sent - batch. Generated transaction response body: ${JSON.stringify(
-        generatedTransactions,
-      )}. Post hashes: ${hashes}`,
+      `DAG transaction from: ${origin.address} sent - batch of ${num}.`,
     )
 
     return hashes
@@ -99,24 +88,16 @@ const batchMetagraphTransaction = async (
       txnsData.push(txnBody)
     }
 
-    logMessage('Starting generation')
     const generatedTransactions = await metagraphTokenClient.generateBatchTransactions(
       txnsData,
     )
 
-    logMessage('Generated')
-    logMessage('Starting sending')
     const hashes = await metagraphTokenClient.sendBatchTransactions(
       generatedTransactions,
     )
-    logMessage('Sent')
 
     logMessage(
-      `Transaction from: ${
-        origin.address
-      } sent - batch. Generated transaction response body: ${JSON.stringify(
-        generatedTransactions,
-      )}. Post hashes: ${hashes}`,
+      `L0 token transaction from: ${origin.address} sent - batch of ${num}.`,
     )
 
     return hashes
@@ -126,26 +107,26 @@ const batchMetagraphTransaction = async (
 }
 
 const handleBatchTransactions = async (
+  networkOptions,
   origin,
   destination,
-  networkOptions,
   amount,
   fee,
   txnCount,
 ) => {
-  await origin.connect({
-    networkVersion: '2.0',
-    l0Url: networkOptions.l0GlobalUrl,
-    l1Url: networkOptions.dagL1UrlFirstNode,
-    testnet: true,
-  })
+  if (networkOptions) {
+    await origin.connect({
+      networkVersion: '2.0',
+      l0Url: networkOptions.l0GlobalUrl,
+      l1Url: networkOptions.dagL1UrlFirstNode,
+      testnet: true,
+    })
+  }
 
   try {
     await batchTransaction(origin, destination, amount, fee, txnCount)
 
-    logMessage(
-      `Waiting ${SLEEP_TIME_UNTIL_QUERY}ms until fetch wallet balances`,
-    )
+    logMessage(`Waiting ${SLEEP_TIME_UNTIL_QUERY} ms to fetch wallet balances`)
     await sleep(SLEEP_TIME_UNTIL_QUERY)
 
     const originBalance = await origin.getBalance()
@@ -160,21 +141,21 @@ const handleBatchTransactions = async (
 }
 
 const handleMetagraphBatchTransactions = async (
+  networkOptions,
   origin,
   destination,
-  networkOptions,
   amount,
   fee,
   txnCount,
 ) => {
-  await origin.connect({
-    networkVersion: '2.0',
-    l0Url: networkOptions.l0GlobalUrl,
-    l1Url: networkOptions.dagL1UrlFirstNode,
-    testnet: true,
-  })
-
   try {
+    await origin.connect({
+      networkVersion: '2.0',
+      l0Url: networkOptions.l0GlobalUrl,
+      l1Url: networkOptions.dagL1UrlFirstNode,
+      testnet: true,
+    })
+
     const metagraphTokenClient = origin.createMetagraphTokenClient({
       id: networkOptions.metagraphId,
       l0Url: networkOptions.l0MetagraphUrl,
@@ -191,9 +172,7 @@ const handleMetagraphBatchTransactions = async (
       txnCount,
     )
 
-    logMessage(
-      `Waiting ${SLEEP_TIME_UNTIL_QUERY}ms until fetch wallet balances`,
-    )
+    logMessage(`Waiting ${SLEEP_TIME_UNTIL_QUERY} ms to fetch wallet balances`)
     await sleep(SLEEP_TIME_UNTIL_QUERY)
 
     const originBalance = await metagraphTokenClient.getBalance()
@@ -209,7 +188,16 @@ const handleMetagraphBatchTransactions = async (
   }
 }
 
-const sendDoubleSpendTransaction = async (networkOptions) => {
+const doubleSpendTest = async (networkOptions, isMetagraph) => {
+  logMessage(
+    `========= Starting double spend transaction test (${
+      isMetagraph ? 'L0 token' : 'DAG'
+    }) =========`,
+  )
+
+  const sendAmount = 1000
+  const sendFee = 0
+
   const connectConfig = {
     networkVersion: '2.0',
     l0Url: networkOptions.l0GlobalUrl,
@@ -217,16 +205,24 @@ const sendDoubleSpendTransaction = async (networkOptions) => {
     testnet: true,
   }
 
-  const sendAmount = 1000
-  const sendFee = 1
-
-  const lastRef = await dag4.network.getAddressLastAcceptedTransactionRef(
-    FIRST_WALLET_ADDRESS,
-  )
-
   const accountFirstNode = dag4.createAccount()
   accountFirstNode.loginSeedPhrase(FIRST_WALLET_SEED_PHRASE)
   accountFirstNode.connect(connectConfig)
+
+  let sendingClient
+  if (isMetagraph) {
+    sendingClient = accountFirstNode.createMetagraphTokenClient({
+      id: networkOptions.metagraphId,
+      l0Url: networkOptions.l0MetagraphUrl,
+      l1Url: networkOptions.l1MetagraphUrl,
+    })
+  } else {
+    sendingClient = accountFirstNode
+  }
+
+  const lastRef = await sendingClient.network.getAddressLastAcceptedTransactionRef(
+    FIRST_WALLET_ADDRESS,
+  )
 
   const firstToSecondTx = await accountFirstNode.generateSignedTransaction(
     SECOND_WALLET_ADDRESS,
@@ -243,25 +239,26 @@ const sendDoubleSpendTransaction = async (networkOptions) => {
   )
 
   try {
-    const startBalance1 = await accountFirstNode.getBalanceFor(
+    const startBalance1 = await sendingClient.getBalanceFor(
       FIRST_WALLET_ADDRESS,
     )
-    const startBalance2 = await accountFirstNode.getBalanceFor(
+    const startBalance2 = await sendingClient.getBalanceFor(
       SECOND_WALLET_ADDRESS,
     )
-    const startBalance3 = await accountFirstNode.getBalanceFor(
+    const startBalance3 = await sendingClient.getBalanceFor(
       THIRD_WALLET_ADDRESS,
     )
 
+    logMessage('Sending txns w/same lastRef')
     const [firstToSecondSucceeded, firstToThirdSucceeded] = await Promise.all([
-      dag4.network
+      sendingClient.network
         .postTransaction(firstToSecondTx)
-        .catch((e) => false)
-        .then((v) => true),
-      dag4.network
+        .then((v) => true)
+        .catch((e) => false),
+      sendingClient.network
         .postTransaction(firstToThirdTx)
-        .catch((e) => false)
-        .then((v) => true),
+        .then((v) => true)
+        .catch((e) => false),
     ])
 
     logMessage(
@@ -269,17 +266,19 @@ const sendDoubleSpendTransaction = async (networkOptions) => {
     )
     await sleep(SLEEP_TIME_UNTIL_QUERY)
 
-    const balance1 = await accountFirstNode.getBalanceFor(FIRST_WALLET_ADDRESS)
-    const balance2 = await accountFirstNode.getBalanceFor(SECOND_WALLET_ADDRESS)
-    const balance3 = await accountFirstNode.getBalanceFor(THIRD_WALLET_ADDRESS)
+    const balance1 = await sendingClient.getBalanceFor(FIRST_WALLET_ADDRESS)
+    const balance2 = await sendingClient.getBalanceFor(SECOND_WALLET_ADDRESS)
+    const balance3 = await sendingClient.getBalanceFor(THIRD_WALLET_ADDRESS)
 
     logMessage(`FirstWalletBalance: ${balance1}`)
     logMessage(`SecondWalletBalance: ${balance2}`)
     logMessage(`ThirdWalletBalance: ${balance3}`)
+    logMessage(`firstToSecondSucceeded: ${firstToSecondSucceeded}`)
+    logMessage(`firstToThirdSucceeded: ${firstToThirdSucceeded}`)
 
     if (
       firstToSecondSucceeded &&
-      balance1 === startBalance1 - sendAmount &&
+      balance1 === startBalance1 - sendAmount - sendFee &&
       balance2 === startBalance2 + sendAmount &&
       balance3 === startBalance3
     ) {
@@ -289,7 +288,7 @@ const sendDoubleSpendTransaction = async (networkOptions) => {
 
     if (
       firstToThirdSucceeded &&
-      balance1 === startBalance1 - sendAmount &&
+      balance1 === startBalance1 - sendAmount - sendFee &&
       balance2 === startBalance2 &&
       balance3 === startBalance3 + sendAmount
     ) {
@@ -326,216 +325,98 @@ const assertBalances = async (
   logMessage(`Correct Account 2 Balance: ${expectedAccount2Balance}`)
 }
 
-const sendTransactionsUsingUrls = async (
-  metagraphId,
-  l0GlobalUrl,
-  dagL1UrlFirstNode,
-  dagL1UrlSecondNode,
-  l0MetagraphUrl,
-  l1MetagraphUrl,
+const transferTest = async (
+  fromAccount,
+  toAccount,
+  amount,
+  fee,
+  txnCount,
+  metagraphOpts,
 ) => {
+  let fromAccountStart, toAccountStart, isMetagraph
+  if (metagraphOpts) {
+    isMetagraph = true
+
+    const metagraphTokenClient = fromAccount.createMetagraphTokenClient({
+      id: metagraphOpts.metagraphId,
+      l0Url: metagraphOpts.l0MetagraphUrl,
+      l1Url: metagraphOpts.l1MetagraphUrl,
+    })
+
+    fromAccountStart = await metagraphTokenClient.getBalance()
+    toAccountStart = await metagraphTokenClient.getBalanceFor(toAccount.address)
+  } else {
+    fromAccountStart = await fromAccount.getBalance()
+    toAccountStart = await toAccount.getBalance()
+  }
+
+  logMessage(
+    `========= Transfer test (${isMetagraph ? 'L0 token' : 'DAG'}): ${
+      fromAccount.address
+    } to ${toAccount.address} w/fee (${fee}) and count (${txnCount}) =========`,
+  )
+
+  const batchFunc = metagraphOpts
+    ? handleMetagraphBatchTransactions
+    : handleBatchTransactions
+
+  const { originBalance, destinationBalance } = await batchFunc(
+    metagraphOpts,
+    fromAccount,
+    toAccount,
+    amount,
+    fee,
+    txnCount,
+  )
+
+  const totalAmount = txnCount * amount
+  const totalFee = txnCount * fee
+
+  const expectedFromBalance = fromAccountStart - totalAmount - totalFee
+  const expectedToBalance = toAccountStart + totalAmount
+
+  await assertBalances(
+    originBalance,
+    destinationBalance,
+    expectedFromBalance,
+    expectedToBalance,
+  )
+}
+
+const sendTransactionsUsingUrls = async (networkOptions) => {
+  const dagConfig = {
+    networkVersion: '2.0',
+    l0Url: networkOptions.l0GlobalUrl,
+    l1Url: networkOptions.dagL1UrlFirstNode,
+    testnet: true,
+  }
+
   const account1 = dag4.createAccount()
   account1.loginSeedPhrase(FIRST_WALLET_SEED_PHRASE)
+  account1.connect(dagConfig)
 
   const account2 = dag4.createAccount()
   account2.loginSeedPhrase(SECOND_WALLET_SEED_PHRASE)
+  account2.connect(dagConfig)
 
-  const networkOptions = {
-    metagraphId,
-    l0GlobalUrl,
-    dagL1UrlFirstNode,
-    dagL1UrlSecondNode,
-    l0MetagraphUrl,
-    l1MetagraphUrl,
-  }
+  // DAG
+  await transferTest(account1, account2, 10, 0, 1)
+  await transferTest(account2, account1, 10, 0, 1)
 
-  const balances = {
-    account1: Number(await account1.getBalance()),
-    account2: Number(await account2.getBalance()),
-  }
+  await transferTest(account1, account2, 10, 0.02, 100)
+  await transferTest(account2, account1, 10, 0.02, 100)
 
-  try {
-    logMessage(
-      `Starting batch DAG Transactions from: ${account1.address} to ${account2.address}`,
-    )
-    const txnAmount1 = 10
-    const txnFee1 = 0
-    const txnCount1 = 100
+  // Metagraph
+  await transferTest(account1, account2, 10, 0, 1, networkOptions)
+  await transferTest(account2, account1, 10, 0, 1, networkOptions)
 
-    const { originBalance, destinationBalance } = await handleBatchTransactions(
-      account1,
-      account2,
-      networkOptions,
-      txnAmount1,
-      txnFee1,
-      txnCount1,
-    )
+  await transferTest(account1, account2, 10, 0.02, 100, networkOptions)
+  await transferTest(account2, account1, 10, 0.02, 100, networkOptions)
 
-    const expectedAccount1Balance = balances.account1 - txnCount1 * txnAmount1
-    const expectedAccount2Balance = balances.account2 + txnCount1 * txnAmount1
+  // Double spends
+  await doubleSpendTest(networkOptions, false)
+  await doubleSpendTest(networkOptions, true)
 
-    await assertBalances(
-      originBalance,
-      destinationBalance,
-      expectedAccount1Balance,
-      expectedAccount2Balance,
-    )
-
-    balances.account1 = expectedAccount1Balance
-    balances.account2 = expectedAccount2Balance
-
-    logMessage(
-      `Finished batch DAG Transactions from: ${account1.address} to ${account2.address}`,
-    )
-  } catch (error) {
-    logMessage(
-      `Error sending forth transactions from: ${account1.address} to ${account2.address}:`,
-      error,
-    )
-    throw error
-  }
-
-  try {
-    logMessage(
-      `Starting batch DAG Transactions from: ${account2.address} to ${account1.address}`,
-    )
-    const txnAmount2 = 10
-    const txnFee2 = 0
-    const txnCount2 = 100
-
-    const { originBalance, destinationBalance } = await handleBatchTransactions(
-      account2,
-      account1,
-      networkOptions,
-      txnAmount2,
-      txnFee2,
-      txnCount2,
-    )
-
-    const expectedAccount1Balance = balances.account1 + txnCount2 * txnAmount2
-    const expectedAccount2Balance = balances.account2 - txnCount2 * txnAmount2
-
-    await assertBalances(
-      destinationBalance,
-      originBalance,
-      expectedAccount1Balance,
-      expectedAccount2Balance,
-    )
-
-    balances.account1 = expectedAccount1Balance
-    balances.account2 = expectedAccount2Balance
-
-    logMessage(
-      `Finished batch DAG Transactions from: ${account2.address} to ${account1.address}`,
-    )
-  } catch (error) {
-    logMessage(
-      `Error sending back transactions from: ${account2.address} to ${account1.address}:`,
-      error,
-    )
-    throw error
-  }
-
-  try {
-    logMessage(
-      `Starting batch METAGRAPH Transactions from: ${account1.address} to ${account2.address}`,
-    )
-    const txnAmount3 = 10
-    const txnFee3 = 0
-    const txnCount3 = 100
-
-    const {
-      originBalance,
-      destinationBalance,
-    } = await handleMetagraphBatchTransactions(
-      account1,
-      account2,
-      networkOptions,
-      txnAmount3,
-      txnFee3,
-      txnCount3,
-    )
-
-    const expectedAccount1Balance = balances.account1 - txnCount3 * txnAmount3
-    const expectedAccount2Balance = balances.account2 + txnCount3 * txnAmount3
-
-    await assertBalances(
-      destinationBalance,
-      originBalance,
-      expectedAccount1Balance,
-      expectedAccount2Balance,
-    )
-
-    balances.account1 = expectedAccount1Balance
-    balances.account2 = expectedAccount2Balance
-
-    logMessage(
-      `Finished batch METAGRAPH Transactions from: ${account1.address} to ${account2.address}`,
-    )
-  } catch (error) {
-    logMessage(
-      `Error sending forth transactions from: ${account1.address} to ${account2.address}:`,
-      error,
-    )
-    throw error
-  }
-
-  try {
-    logMessage(
-      `Starting batch METAGRAPH Transactions from: ${account2.address} to ${account1.address}`,
-    )
-    const txnAmount4 = 10
-    const txnFee4 = 0
-    const txnCount4 = 100
-
-    const {
-      originBalance,
-      destinationBalance,
-    } = await handleMetagraphBatchTransactions(
-      account2,
-      account1,
-      networkOptions,
-      txnAmount4,
-      txnFee4,
-      txnCount4,
-    )
-
-    const expectedAccount1Balance = balances.account1 + txnCount4 * txnAmount4
-    const expectedAccount2Balance = balances.account2 - txnCount4 * txnAmount4
-
-    await assertBalances(
-      destinationBalance,
-      originBalance,
-      expectedAccount1Balance,
-      expectedAccount2Balance,
-    )
-
-    balances.account1 = expectedAccount1Balance
-    balances.account2 = expectedAccount2Balance
-
-    logMessage(
-      `Finished batch METAGRAPH Transactions from: ${account2.address} to ${account1.address}`,
-    )
-  } catch (error) {
-    logMessage(
-      `Error sending back transactions from: ${account2.address} to ${account1.address}:`,
-      error,
-    )
-    throw error
-  }
-
-  try {
-    logMessage('Starting to send double spend transaction')
-    await sendDoubleSpendTransaction(networkOptions)
-
-    logMessage('Finished double spend transaction')
-  } catch (error) {
-    logMessage(
-      `Error sending back transactions from: ${account2.address} to ${account1.address}:`,
-      error,
-    )
-    throw error
-  }
   logMessage('Script finished')
   return
 }
@@ -547,21 +428,24 @@ const sendTransactions = async () => {
     metagraphL0PortPrefix,
     currencyL1PortPrefix,
   } = createConfig()
-  const metagraphId = 'custom_id'
-  const l0GlobalUrl = `http://localhost:${dagL0PortPrefix}00`
-  const dagL1UrlFirstNode = `http://localhost:${dagL1PortPrefix}00`
-  const dagL1UrlSecondNode = `http://localhost:${dagL1PortPrefix}10`
-  const l0MetagraphUrl = `http://localhost:${metagraphL0PortPrefix}00`
-  const l1MetagraphUrl = `http://localhost:${currencyL1PortPrefix}00`
 
-  await sendTransactionsUsingUrls(
-    metagraphId,
-    l0GlobalUrl,
-    dagL1UrlFirstNode,
-    dagL1UrlSecondNode,
-    l0MetagraphUrl,
-    l1MetagraphUrl,
-  )
+  const networkOptions = {
+    metagraphId: 'custom_id',
+    l0GlobalUrl: `http://localhost:${dagL0PortPrefix}00`,
+    dagL1UrlFirstNode: `http://localhost:${dagL1PortPrefix}00`,
+    l0MetagraphUrl: `http://localhost:${metagraphL0PortPrefix}00`,
+    l1MetagraphUrl: `http://localhost:${currencyL1PortPrefix}00`,
+  }
+
+  await sendTransactionsUsingUrls(networkOptions)
 }
 
-sendTransactions()
+sendTransactions().catch((err) => {
+  if (process.env.RUN_ENV === 'local') {
+    console.log('Failed: ')
+    console.log(err)
+    return
+  }
+
+  throw err
+})
