@@ -4,6 +4,7 @@
 set -e
 
 if ! command -v jq >/dev/null 2>&1; then
+  echo "jq missing, please install if following command fails"
   case "$(uname)" in
     Linux)
       sudo apt install -y jq
@@ -53,6 +54,25 @@ exit_func() {
   fi
   return 0
 }
+
+
+
+# Cleanup pre-existing docker related containers
+# only run this if you really messed up
+# docker stop $(docker ps -a -q) && docker rm $(docker ps -a -q) && docker volume rm $(docker volume ls -q) && docker network rm $(docker network ls -q)
+# 1. Stop & remove all containers on the tessellation_common network
+docker ps -aq --filter network=tessellation_common \
+  | xargs -r docker rm -f || true
+
+# 2. Remove volumes named gl0-data or dag-l1-data
+docker volume ls -q \
+  | grep -E 'gl0-data|dag-l1-data' \
+  | xargs -r docker volume rm || true
+
+
+# 3. Now remove the network
+docker network rm tessellation_common || true
+
 
 if [ "$REMOVE_EXISTING_CONFIGS" = "true" ]; then
   rm -rf ./nodes
@@ -153,11 +173,14 @@ CL_LOCAL_MODE=true
 CL_L0_PEER_HTTP_HOST=192.168.100.10
 CL_DAG_L1_JOIN_IP=192.168.100.20
 CL_DAG_L0_JOIN_IP=192.168.100.10
+CL_L0_PEER_HTTP_PORT=8999
 EOF
 
 echo "CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
 echo "CL_DAG_L1_JOIN_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
 echo "CL_DAG_L0_JOIN_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
+
+
 
 cp ./nodes/.env ./nodes/global-l0/0/.env
 cp ./nodes/.envrc ./nodes/dag-l1/1/.envrc
@@ -175,6 +198,29 @@ echo "CL_DAG_L1_JOIN_ENABLED=false" >> .env
 echo "CL_DAG_L0_JOIN_ENABLED=false" >> .env
 echo "CONTAINER_NAME_SUFFIX=-0" >> .env
 echo "CONTAINER_OFFSET=0" >> .env
+
+# These are only required on systems that implement docker with a host networking bridge
+# Port conflicts cause it to fail with external networks that re-use ports
+# Internal ports
+echo "L0_CL_PUBLIC_HTTP_PORT=8999" >> .env
+echo "L0_CL_P2P_HTTP_PORT=9001" >> .env
+echo "L0_CL_CLI_HTTP_PORT=9002" >> .env
+
+# External ports
+echo "CL_DAG_L0_PUBLIC_PORT=8999" >> .env
+echo "CL_DAG_L0_P2P_PORT=9001" >> .env
+echo "CL_DAG_L0_CLI_PORT=9002" >> .env
+
+# Internal Ports
+echo "L1_CL_PUBLIC_HTTP_PORT=9010" >> .env
+echo "L1_CL_P2P_HTTP_PORT=9011" >> .env
+echo "L1_CL_CLI_HTTP_PORT=9012" >> .env
+
+# External ports
+echo "CL_DAG_L1_PUBLIC_PORT=9010" >> .env
+echo "CL_DAG_L1_P2P_PORT=9011" >> .env
+echo "CL_DAG_L1_CLI_PORT=9012" >> .env
+
 cd ../../../
 
 export DAG_L1_PEER_ID_0=$GL0_GENERATED_WALLET_PEER_ID
@@ -187,12 +233,25 @@ for i in 1 2; do
   echo "CL_DAG_L0_JOIN_ENABLED=true" >> .env
   echo "CONTAINER_NAME_SUFFIX=-$i" >> .env
   echo "CONTAINER_OFFSET=$i" >> .env
+
+  # External ports
   echo "CL_DAG_L0_PUBLIC_PORT=${i}9000" >> .env
   echo "CL_DAG_L1_PUBLIC_PORT=${i}9010" >> .env
-  echo "CL_DAG_L0_PEER_PORT=${i}9001" >> .env
-  echo "CL_DAG_L1_PEER_PORT=${i}9011" >> .env
+  echo "CL_DAG_L0_P2P_PORT=${i}9001" >> .env
+  echo "CL_DAG_L1_P2P_PORT=${i}9011" >> .env
   echo "CL_DAG_L0_CLI_PORT=${i}9002" >> .env
   echo "CL_DAG_L1_CLI_PORT=${i}9012" >> .env
+
+  # These are only required on systems that implement docker with a host networking bridge
+  # Port conflicts cause it to fail with external networks that re-use ports
+  # internal ports
+  echo "L0_CL_PUBLIC_HTTP_PORT=${i}9000" >> .env
+  echo "L0_CL_P2P_HTTP_PORT=${i}9001" >> .env
+  echo "L0_CL_CLI_HTTP_PORT=${i}9002" >> .env
+  echo "L1_CL_PUBLIC_HTTP_PORT=${i}9010" >> .env
+  echo "L1_CL_P2P_HTTP_PORT=${i}9011" >> .env
+  echo "L1_CL_CLI_HTTP_PORT=${i}9012" >> .env
+
   out=$(
     source .envrc
     java -jar ../../keytool.jar generate
@@ -216,23 +275,6 @@ done
 echo "------------------------------------------------"
 echo "All deployment configurations now generated, proceeding to run cluster"
 echo "------------------------------------------------"
-
-# Start GL0 and dag-l1 0
-
-# only run this if you really messed up
-# docker stop $(docker ps -a -q) && docker rm $(docker ps -a -q) && docker volume rm $(docker volume ls -q) && docker network rm $(docker network ls -q)
-# 1. Stop & remove all containers on the tessellation_common network
-docker ps -aq --filter network=tessellation_common \
-  | xargs -r docker rm -f || true
-
-# 2. Remove volumes named gl0-data or dag-l1-data
-docker volume ls -q \
-  | grep -E 'gl0-data|dag-l1-data' \
-  | xargs -r docker volume rm || true
-
-
-# 3. Now remove the network
-docker network rm tessellation_common || true
 
 docker network create \
   --driver=bridge \
@@ -287,7 +329,7 @@ done
 ### CLUSTER SPECIFIC TESTING BELOW
 echo "Starting cluster test"
 
-export DAG_L0_URL="http://localhost:9000"
+export DAG_L0_URL="http://localhost:8999"
 export DAG_L1_URL="http://localhost:9010"
 
 # Create node update params for gl0 kp

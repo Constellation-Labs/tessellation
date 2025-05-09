@@ -21,8 +21,6 @@ RUN chmod +x /tessellation/entrypoint-dag-l1-join-coordinator.sh
 COPY docker/entrypoint-dag-l0-join-coordinator.sh /tessellation/entrypoint-dag-l0-join-coordinator.sh
 RUN chmod +x /tessellation/entrypoint-dag-l0-join-coordinator.sh
 
-EXPOSE 9000 9001 9010 9011
-
 WORKDIR /tessellation
 
 ENV CL_KEYSTORE=/tessellation/key.p12
