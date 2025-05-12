@@ -30,8 +30,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-    networks:
-      - tessellation-network
     profiles: ["l0"]
 #    extra_hosts:
 #      "host.docker.internal": "host-gateway"
@@ -71,8 +69,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
-    networks:
-      - tessellation-network
+
 #    extra_hosts:
 #      "host.docker.internal": "host-gateway"
 
@@ -82,7 +79,3 @@ volumes:
     name: gl0-data${CONTAINER_NAME_SUFFIX:-}
   dag-l1-data:
     name: dag-l1-data${CONTAINER_NAME_SUFFIX:-}
-
-networks:
-  tessellation-network:
-    driver: bridge

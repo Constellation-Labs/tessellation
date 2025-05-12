@@ -49,7 +49,7 @@ if [ -z "$SKIP_ASSEMBLY" ]; then
 fi
 
 if [ -z "$NET_PREFIX" ]; then
-  export NET_PREFIX="10.200.0"
+  export NET_PREFIX="172.32.0"
 fi
 
 exit_func() {
@@ -101,21 +101,27 @@ if [ -n "$containers" ]; then
         docker rm -f "$container_id" 2>/dev/null || true
     done
 fi
-
-# 5. Unmount volumes before removing them (helps with stubborn volumes)
-echo "Properly unmounting tessellation volumes..."
-for vol in gl0-data dag-l1-data; do
-    vol_path=$(docker volume inspect --format '{{ .Mountpoint }}' $vol 2>/dev/null || echo "")
-    if [ -n "$vol_path" ]; then
-        echo "Unmounting volume path: $vol_path"
-        umount "$vol_path" 2>/dev/null || true
-    fi
-done
+#
+## 5. Unmount volumes before removing them (helps with stubborn volumes)
+#echo "Properly unmounting tessellation volumes..."
+#for vol in gl0-data dag-l1-data; do
+#    for suffix in "-0" "-1" "-2"; do
+#        vol="${vol}${suffix}"
+#        port="${prefix}${base_port}"
+#        vol_path=$(docker volume inspect --format '{{ .Mountpoint }}' $vol 2>/dev/null || echo "")
+#        if [ -n "$vol_path" ]; then
+#            echo "Unmounting volume path: $vol_path"
+#            umount "$vol_path" 2>/dev/null || true
+#        fi
+#done
 
 # 6. Remove volumes with better error handling
 echo "Removing tessellation volumes..."
 for vol in gl0-data dag-l1-data; do
-    docker volume rm $vol 2>/dev/null || true
+    for suffix in "-0" "-1" "-2"; do
+        vol="${vol}${suffix}"
+        docker volume rm $vol 2>/dev/null || true
+    done
 done
 
 # 7. Force cleanup any dangling volumes that match our pattern
@@ -345,7 +351,8 @@ cd ./nodes/global-l0/0/
 docker compose down --remove-orphans --volumes || true; \
 cp ../../../docker/docker-compose.yaml . ; \
 cp ../../../docker/docker-compose.test.yaml . ; \
-docker compose -f docker-compose.test.yaml -f docker-compose.yaml --profile l0 up -d
+cp ../../../docker/docker-compose.profile-l0.yaml . ; \
+docker compose -f docker-compose.test.yaml -f docker-compose.yaml -f docker-compose.profile-l0.yaml --profile l0 up -d
 cd ../../..
 
 # wait for GL0 to come online
@@ -357,7 +364,8 @@ cd ./nodes/dag-l1/1
 docker compose down --remove-orphans --volumes || true; \
 cp ../../../docker/docker-compose.yaml . ; \
 cp ../../../docker/docker-compose.test.yaml . ; \
-docker compose -f docker-compose.test.yaml -f docker-compose.yaml --profile l0 up -d
+cp ../../../docker/docker-compose.profile-l0.yaml . ; \
+docker compose -f docker-compose.test.yaml -f docker-compose.yaml -f docker-compose.profile-l0.yaml --profile l0 up -d
 
 cd ../../../
 
@@ -366,14 +374,17 @@ cd ./nodes/dag-l1/2
 docker compose down --remove-orphans --volumes || true; \
 cp ../../../docker/docker-compose.yaml . ; \
 cp ../../../docker/docker-compose.test.yaml . ; \
-docker compose -f docker-compose.test.yaml -f docker-compose.yaml  --profile l0 up -d
+cp ../../../docker/docker-compose.profile-l0.yaml . ; \
+docker compose -f docker-compose.test.yaml -f docker-compose.yaml -f docker-compose.profile-l0.yaml --profile l0 up -d
 cd ../../../
 
 # wait for dag-l1 to come online
 
+echo "Waiting for docker containers to come online"
+
 sleep 45
 
-
+echo "Sending cluster poll health request for cluster info to check joined."
 for i in 0 1 2; do
     port="${i}9010"
     res=$(curl -s http://localhost:${port}/cluster/info | \
