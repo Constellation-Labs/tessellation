@@ -60,32 +60,76 @@ exit_func() {
 }
 
 
-# 2. Stop & remove any containers with global-l0 or dag-l1 in their names
-docker ps -aq --filter name=global-l0 \
-  | xargs -r docker stop || true
-docker ps -aq --filter name=global-l0 \
-  | xargs -r docker rm -f || true
-
-docker ps -aq --filter name=dag-l1 \
-  | xargs -r docker stop || true
-docker ps -aq --filter name=dag-l1 \
-  | xargs -r docker rm -f || true
-
 # Cleanup pre-existing docker related containers
 # only run this if you really messed up
 # docker stop $(docker ps -a -q) && docker rm $(docker ps -a -q) && docker volume rm $(docker volume ls -q) && docker network rm $(docker network ls -q)
-# 1. Stop & remove all containers on the tessellation_common network
-docker ps -aq --filter network=tessellation_common \
-  | xargs -r docker rm -f || true
-
-# 2. Remove volumes named gl0-data or dag-l1-data
-docker volume ls -q \
-  | grep -E 'gl0-data|dag-l1-data' \
-  | xargs -r docker volume rm || true
 
 
-# 3. Now remove the network
-docker network rm tessellation_common || true
+
+# 2. More thorough container cleanup with proper error handling
+echo "Stopping and removing global-l0 containers..."
+docker ps -a --filter name=global-l0 --format "{{.ID}}" | while read -r container_id; do
+    docker stop "$container_id" 2>/dev/null || true
+    docker rm -f "$container_id" 2>/dev/null || true
+done
+
+echo "Stopping and removing dag-l1 containers..."
+docker ps -a --filter name=dag-l1 --format "{{.ID}}" | while read -r container_id; do
+    docker stop "$container_id" 2>/dev/null || true
+    docker rm -f "$container_id" 2>/dev/null || true
+done
+
+# 3. Find and kill any lingering processes binding to tessellation ports
+echo "Checking for lingering processes on common ports..."
+for base_port in 8999 9000 9001 9002 9010 9011 9012; do
+    for prefix in "" "1" "2"; do
+        port="${prefix}${base_port}"
+        pid=$(lsof -i:$port -t 2>/dev/null || true)
+        if [ -n "$pid" ]; then
+            echo "Killing process $pid on port $port"
+            kill -9 $pid 2>/dev/null || true
+        fi
+    done
+done
+
+# 4. Clean containers on the tessellation network with proper error handling
+echo "Removing containers on tessellation_common network..."
+containers=$(docker ps -a --filter network=tessellation_common --format "{{.ID}}" 2>/dev/null || echo "")
+if [ -n "$containers" ]; then
+    echo "$containers" | while read -r container_id; do
+        docker stop "$container_id" 2>/dev/null || true
+        docker rm -f "$container_id" 2>/dev/null || true
+    done
+fi
+
+# 5. Unmount volumes before removing them (helps with stubborn volumes)
+echo "Properly unmounting tessellation volumes..."
+for vol in gl0-data dag-l1-data; do
+    vol_path=$(docker volume inspect --format '{{ .Mountpoint }}' $vol 2>/dev/null || echo "")
+    if [ -n "$vol_path" ]; then
+        echo "Unmounting volume path: $vol_path"
+        umount "$vol_path" 2>/dev/null || true
+    fi
+done
+
+# 6. Remove volumes with better error handling
+echo "Removing tessellation volumes..."
+for vol in gl0-data dag-l1-data; do
+    docker volume rm $vol 2>/dev/null || true
+done
+
+# 7. Force cleanup any dangling volumes that match our pattern
+echo "Cleaning up any dangling volumes..."
+docker volume ls -qf dangling=true | grep -E 'gl0-data|dag-l1-data' | xargs -r docker volume rm 2>/dev/null || true
+
+# 8. Remove the network with better error handling
+echo "Removing tessellation_common network..."
+docker network rm tessellation_common 2>/dev/null || true
+
+# 9. Docker system prune - removes unused data
+echo "Performing final cleanup of unused Docker resources..."
+docker system prune -f 2>/dev/null || true
+
 
 
 if [ "$REMOVE_EXISTING_CONFIGS" = "true" ]; then
