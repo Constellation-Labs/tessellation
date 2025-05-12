@@ -25,7 +25,7 @@ services:
       # If using host volumes:
       # - ${CL_L0_DATA_MOUNT_PATH:-./l0-data}:/tessellation/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/node/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${L0_CL_PUBLIC_HTTP_PORT:-8999}/node/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -66,7 +66,7 @@ services:
     #   global-l0:
     #     condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/node/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${L1_CL_PUBLIC_HTTP_PORT:-9010}/node/health"]
       interval: 10s
       timeout: 5s
       retries: 5
