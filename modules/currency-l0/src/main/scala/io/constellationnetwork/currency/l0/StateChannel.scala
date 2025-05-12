@@ -12,11 +12,13 @@ import scala.concurrent.duration._
 
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
 import io.constellationnetwork.currency.l0.cli.method.Run
+import io.constellationnetwork.currency.l0.metrics.updateFailedConfirmingStateChannelBinaryMetrics
 import io.constellationnetwork.currency.l0.modules.{Programs, Services, Storages}
 import io.constellationnetwork.currency.schema.globalSnapshotSync.{GlobalSnapshotSync, GlobalSnapshotSyncReference}
 import io.constellationnetwork.kernel.{:: => _, _}
 import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.snapshot.Validator
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.snapshot.currency.{CurrencySnapshotEvent, GlobalSnapshotSyncEvent}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
@@ -31,7 +33,7 @@ object StateChannel {
 
   private val awakePeriod = 10.seconds
 
-  def run[F[_]: Async: HasherSelector: SecurityProvider](
+  def run[F[_]: Async: HasherSelector: SecurityProvider: Metrics](
     lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
     services: Services[F, Run],
     storages: Storages[F],
@@ -121,13 +123,21 @@ object StateChannel {
                             )
                         }
                         .flatMap { context =>
-                          storages.lastGlobalSnapshot.set(snapshot, context) >>
-                            HasherSelector[F].withCurrent { implicit hasher =>
+                          for {
+                            _ <- storages.lastGlobalSnapshot.set(snapshot, context)
+                            _ <- HasherSelector[F].withCurrent { implicit hasher =>
                               sendGlobalSnapshotSyncConsensusEvent(snapshot)
-                            } >>
-                            triggerOnGlobalSnapshotPullHook(snapshot, context) >>
-                            services.stateChannelBinarySender.confirm(snapshot) >>
-                            S.supervise(services.stateChannelBinarySender.processPending).void
+                            }
+                            _ <- triggerOnGlobalSnapshotPullHook(snapshot, context)
+                            _ <- services.stateChannelBinarySender.confirm(snapshot).handleErrorWith { error =>
+                              logger.error(error)("Error when confirming state channel binary") >>
+                                updateFailedConfirmingStateChannelBinaryMetrics() >>
+                                Async[F].unit
+                            }
+                            _ <- S.supervise(services.stateChannelBinarySender.processPending(snapshot)).void.handleErrorWith { error =>
+                              logger.error(error)("Error when process pending state channel binary") >> Async[F].unit
+                            }
+                          } yield ()
                         }
                   },
                   Applicative[F].unit
