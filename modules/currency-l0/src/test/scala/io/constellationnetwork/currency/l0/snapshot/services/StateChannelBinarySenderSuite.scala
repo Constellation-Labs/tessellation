@@ -9,6 +9,8 @@ import cats.syntax.all._
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.currency.schema.currency.SnapshotFee
+import io.constellationnetwork.env.AppEnvironment
+import io.constellationnetwork.env.AppEnvironment.{Dev, Mainnet}
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.generators.nonEmptyStringGen
 import io.constellationnetwork.json.JsonSerializer
@@ -18,6 +20,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotS
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.StateChannelValidationError
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse.PeerResponse
 import io.constellationnetwork.node.shared.http.p2p.clients.StateChannelSnapshotClient
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -72,10 +75,14 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   def mkService(
     identifier: Address,
     currentOrdinal: SnapshotOrdinal,
-    state: State
+    state: State,
+    stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]] = None,
+    selfId: PeerId = PeerId(Hex("0000000000000000")),
+    environment: AppEnvironment = Dev
   )(
     implicit sp: SecurityProvider[IO],
-    hs: Hasher[IO]
+    hs: Hasher[IO],
+    metrics: Metrics[IO]
   ): IO[(StateChannelBinarySender[IO], Ref[IO, State], Ref[IO, List[Hashed[StateChannelSnapshotBinary]]])] =
     for {
       identifierStorage <- new IdentifierStorage[IO] {
@@ -86,6 +93,8 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         def getPeers: IO[NonEmptySet[L0Peer]] = ???
         def getPeer(id: peer.PeerId): IO[Option[peer.L0Peer]] = ???
         def getRandomPeer: IO[peer.L0Peer] = L0Peer(PeerId(Hex("")), Host.fromString("0.0.0.0").get, Port.fromInt(100).get).pure[IO]
+        def getRandomPeerExistentOnList(peers: List[PeerId]): IO[Option[L0Peer]] =
+          L0Peer(PeerId(Hex("")), Host.fromString("0.0.0.0").get, Port.fromInt(100).get).some.pure[IO]
         def addPeers(l0Peers: Set[peer.L0Peer]): IO[Unit] = ???
         def setPeers(l0Peers: NonEmptySet[peer.L0Peer]): IO[Unit] = ???
       }
@@ -113,16 +122,20 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
           }
       }
       stateRef <- Ref.of[IO, State](state)
+
       sender = StateChannelBinarySender.make[IO](
         stateRef,
         identifierStorage,
         globalL0ClusterStorage,
         lastSnapshotStorage,
-        stateChannelSnapshotClient
+        stateChannelSnapshotClient,
+        stateChannelAllowanceLists,
+        selfId,
+        environment
       )
     } yield (sender, stateRef, postedRef)
 
-  type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO])
+  type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO])
 
   override def sharedResource: Resource[IO, Res] =
     for {
@@ -130,7 +143,8 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
       sp <- SecurityProvider.forAsync[IO]
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
       h = Hasher.forJson[IO]
-    } yield (ks, h, sp)
+      metrics <- Metrics.forAsync[IO](Seq.empty)
+    } yield (ks, h, sp, metrics)
 
   def binaryGen: Gen[Signed[StateChannelSnapshotBinary]] =
     for {
@@ -140,7 +154,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     } yield signedBinary
 
   test("should add confirmation proof for confirmed binaries in the queue") { res =>
-    implicit val (_, hs, sp) = res
+    implicit val (_, hs, sp, metrics) = res
 
     forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
       for {
@@ -148,7 +162,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         currentOrdinal = SnapshotOrdinal.MinValue
         (sender, stateRef, _) <- mkService(kp.getPublic.toAddress, currentOrdinal = currentOrdinal, state = State.empty)
         hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(sender.process)
+        _ <- hashed.traverse(binaryHashed => sender.process(binaryHashed, none))
         globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, binaries)
         _ <- sender.confirm(globalSnapshot)
         state <- stateRef.get
@@ -163,14 +177,14 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("should transition to retry mode when a snapshot is not confirmed for 5 or more ordinals") { res =>
-    implicit val (_, hs, sp) = res
+    implicit val (_, hs, sp, metrics) = res
 
     forall(binaryGen) { binary =>
       for {
         kp <- KeyPairGenerator.makeKeyPair
         (sender, stateRef, _) <- mkService(kp.getPublic.toAddress, currentOrdinal = SnapshotOrdinal.MinValue, state = State.empty)
         hashed <- binary.toHashed
-        _ <- sender.process(hashed)
+        _ <- sender.process(hashed, none)
         globalSnapshot <- mkSnapshot(SnapshotOrdinal(6L), kp, List.empty)
         _ <- sender.confirm(globalSnapshot)
         state <- stateRef.get
@@ -179,7 +193,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("normal mode - process should enqueue and send a binary right away") { res =>
-    implicit val (_, hs, sp) = res
+    implicit val (_, hs, sp, metrics) = res
 
     forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
       for {
@@ -190,7 +204,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
           state = State.empty.copy(retryMode = true)
         )
         hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(sender.process)
+        _ <- hashed.traverse(binary => sender.process(binary, none))
         state <- stateRef.get
         posted <- postedRef.get
       } yield
@@ -204,7 +218,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("retry mode - should switch to normal mode if cap >= enqueued count, all sent and no stalled") { res =>
-    implicit val (_, hs, sp) = res
+    implicit val (_, hs, sp, metrics) = res
 
     forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
       for {
@@ -219,7 +233,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         )
 
         hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(sender.process)
+        _ <- hashed.traverse(binary => sender.process(binary, none))
 
         globalSnapshot <- mkSnapshot(SnapshotOrdinal(5L), kp, List.empty)
         _ <- sender.confirm(globalSnapshot)
@@ -256,7 +270,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("retry mode - process should enqueue binary without sending") { res =>
-    implicit val (_, hs, sp) = res
+    implicit val (_, hs, sp, metrics) = res
 
     forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
       for {
@@ -267,7 +281,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
           state = State.empty.copy(retryMode = true)
         )
         hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(sender.process)
+        _ <- hashed.traverse(binary => sender.process(binary, none))
         state <- stateRef.get
         posted <- postedRef.get
       } yield
@@ -281,7 +295,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("retry mode - cap should decrement by 1 if no confirmations") { res =>
-    implicit val (_, hs, sp) = res
+    implicit val (_, hs, sp, metrics) = res
 
     val gen = for {
       binary <- binaryGen
@@ -298,7 +312,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
             state = State.empty.copy(cap = cap, retryMode = true)
           )
           hashedBinary <- binary.toHashed
-          _ <- sender.process(hashedBinary)
+          _ <- sender.process(hashedBinary, none)
           globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, List.empty)
           prevState <- stateRef.get
           _ <- sender.confirm(globalSnapshot)
@@ -308,7 +322,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("retry mode - cap should increment with every confirmation but no more than 4*confirmedCount") { res =>
-    implicit val (_, hs, sp) = res
+    implicit val (_, hs, sp, metrics) = res
 
     val gen = for {
       nBinaries <- Gen.nonEmptyListOf(binaryGen)
@@ -331,7 +345,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
             )
           )
 
-          _ <- binaries.traverse_(bin => bin.toHashed.flatMap(sender.process))
+          _ <- binaries.traverse_(bin => bin.toHashed.flatMap(binary => sender.process(binary, none)))
           globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, confirmedBinaries)
           prevState <- stateRef.get
           _ <- sender.confirm(globalSnapshot)
@@ -341,7 +355,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("retry mode - should switch to exponential mode when cap goes to 0") { res =>
-    implicit val (_, hs, sp) = res
+    implicit val (_, hs, sp, metrics) = res
 
     forall(binaryGen) { binary =>
       for {
@@ -352,7 +366,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
           state = State.empty.copy(cap = 1L, retryMode = true)
         )
         hashedBinary <- binary.toHashed
-        _ <- sender.process(hashedBinary)
+        _ <- sender.process(hashedBinary, none)
         globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, List.empty)
         _ <- sender.confirm(globalSnapshot)
         state <- stateRef.get
@@ -365,7 +379,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("retry mode (exponential) - retries 1 only if waited 2^n ordinals") { res =>
-    implicit val (_, hs, sp) = res
+    implicit val (_, hs, sp, metrics) = res
 
     val gen = for {
       binary <- binaryGen
@@ -382,17 +396,17 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
             state = State.empty.copy(cap = 0L, retryMode = true, backoffExponent = exponent, noConfirmationsSinceRetryCount = 1L)
           )
           hashedBinary <- binary.toHashed
-          _ <- sender.process(hashedBinary)
+          _ <- sender.process(hashedBinary, none)
 
           expectedNoConfirmationsToRetry = Math.pow(2.0, exponent.value.toDouble).toLong
           snapshots <- mkEmptySnapshots(expectedNoConfirmationsToRetry, kp)
 
           lessThanNeeded = snapshots.take(expectedNoConfirmationsToRetry.toInt - 2)
-          _ <- lessThanNeeded.traverse(snapshot => sender.confirm(snapshot) >> sender.processPending)
+          _ <- lessThanNeeded.traverse(snapshot => sender.confirm(snapshot) >> sender.processPending(snapshot))
 
           postedAfterSendingLessThanNeeded <- postedRef.get
 
-          _ <- sender.confirm(snapshots.last) >> sender.processPending
+          _ <- sender.confirm(snapshots.last) >> sender.processPending(snapshots.last)
 
           postedAfterSendingLast <- postedRef.get
 
@@ -401,7 +415,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("retry mode (exponential) - increments exponent if passed 2^n without confirmations and resets counter") { res =>
-    implicit val (_, hs, sp) = res
+    implicit val (_, hs, sp, metrics) = res
 
     val gen = for {
       binary <- binaryGen
@@ -423,16 +437,55 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
             )
           )
           hashedBinary <- binary.toHashed
-          _ <- sender.process(hashedBinary)
+          _ <- sender.process(hashedBinary, none)
           snapshot <- mkSnapshot(ordinal = SnapshotOrdinal.MinValue, kp, List.empty)
           prevState <- stateR.get
-          _ <- sender.confirm(snapshot) >> sender.processPending
+          _ <- sender.confirm(snapshot) >> sender.processPending(snapshot)
           state <- stateR.get
         } yield
           expect
             .eql(state.backoffExponent.value, prevState.backoffExponent.value + 1L)
             .and(expect.eql(state.noConfirmationsSinceRetryCount, NonNegLong(1L)))
             .and(expect.eql(state.cap, NonNegLong(0L)))
+    }
+  }
+
+  test("should reject when not on allowance list") { res =>
+    implicit val (_, hs, sp, metrics) = res
+
+    forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
+      for {
+        kp <- KeyPairGenerator.makeKeyPair
+        currentOrdinal = SnapshotOrdinal.MinValue
+        selfId = PeerId(Hex("0000000000000000"))
+        allowed = PeerId(Hex("000000000000011"))
+        allowanceList = Map(kp.getPublic.toAddress -> NonEmptySet.of(allowed))
+
+        (sender, stateRef, postedRef) <- mkService(
+          kp.getPublic.toAddress,
+          currentOrdinal = currentOrdinal,
+          state = State.empty,
+          allowanceList.some,
+          selfId,
+          Mainnet
+        )
+        hashed <- binaries.traverse(_.toHashed)
+        _ <- hashed.traverse(binaryHashed => sender.process(binaryHashed, none))
+        globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, binaries)
+        _ <- sender.confirm(globalSnapshot)
+        state <- stateRef.get
+        expected = hashed.map { binary =>
+          ConfirmedBinary(
+            PendingBinary(binary, currentOrdinal, NonNegLong(0L)),
+            GlobalSnapshotConfirmationProof.fromGlobalSnapshot(globalSnapshot)
+          )
+        }
+        posted <- postedRef.get
+      } yield
+        expect.all(
+          state.tracked.toList === expected,
+          posted.size === 0
+        )
     }
   }
 }
