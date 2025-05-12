@@ -4,15 +4,15 @@ services:
     networks:
       tessellation_common:
         aliases:
-          - global-l0{CONTAINER_NAME_SUFFIX:-}
-        ipv4_address: 192.168.100.1${CONTAINER_OFFSET:-0}
+          - global-l0{COxNTAINER_NAME_SUFFIX:-}
+        ipv4_address: ${NET_PREFIX}.1${CONTAINER_OFFSET:-0}
   dag-l1:
     # merge in an extra network just for tests
     networks:
       tessellation_common:
         aliases:
           - dag-l1{CONTAINER_NAME_SUFFIX:-}
-        ipv4_address: 192.168.100.2${CONTAINER_OFFSET:-0}
+        ipv4_address: ${NET_PREFIX}.2${CONTAINER_OFFSET:-0}
 # declare the external network (must already exist)
 networks:
   tessellation_common:

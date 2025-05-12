@@ -10,7 +10,7 @@ if [ -n "$CL_DAG_L1" ]; then
 
   # Only for tests
   if [ -z "$CL_EXTERNAL_IP" ]; then
-    export CL_EXTERNAL_IP=192.168.100.2${CONTAINER_OFFSET:-0}
+    export CL_EXTERNAL_IP=${NET_PREFIX}.2${CONTAINER_OFFSET:-0}
     echo "Using external IP for DAG L1: $CL_EXTERNAL_IP"
   fi
 
@@ -43,7 +43,7 @@ else
   
   # Only for tests
   if [ -z "$CL_EXTERNAL_IP" ]; then
-    export CL_EXTERNAL_IP=192.168.100.1${CONTAINER_OFFSET:-0}
+    export CL_EXTERNAL_IP=${NET_PREFIX}.1${CONTAINER_OFFSET:-0}
     echo "Using external IP for gl0: $CL_EXTERNAL_IP"
   fi
 

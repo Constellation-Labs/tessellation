@@ -48,6 +48,10 @@ if [ -z "$SKIP_ASSEMBLY" ]; then
   export SKIP_ASSEMBLY=false
 fi
 
+if [ -z "$NET_PREFIX" ]; then
+  export NET_PREFIX="10.200.0"
+fi
+
 exit_func() {
   if [ "$DO_EXIT" = "true" ]; then
     exit $EXIT_CODE
@@ -56,6 +60,16 @@ exit_func() {
 }
 
 
+# 2. Stop & remove any containers with global-l0 or dag-l1 in their names
+docker ps -aq --filter name=global-l0 \
+  | xargs -r docker stop || true
+docker ps -aq --filter name=global-l0 \
+  | xargs -r docker rm -f || true
+
+docker ps -aq --filter name=dag-l1 \
+  | xargs -r docker stop || true
+docker ps -aq --filter name=dag-l1 \
+  | xargs -r docker rm -f || true
 
 # Cleanup pre-existing docker related containers
 # only run this if you really messed up
@@ -170,10 +184,11 @@ CL_COLLATERAL=0
 TESSELLATION_DOCKER_VERSION=test
 CL_TEST_MODE=true
 CL_LOCAL_MODE=true
-CL_L0_PEER_HTTP_HOST=192.168.100.10
-CL_DAG_L1_JOIN_IP=192.168.100.20
-CL_DAG_L0_JOIN_IP=192.168.100.10
+CL_L0_PEER_HTTP_HOST=${NET_PREFIX}.10
+CL_DAG_L1_JOIN_IP=${NET_PREFIX}.20
+CL_DAG_L0_JOIN_IP=${NET_PREFIX}.10
 CL_L0_PEER_HTTP_PORT=8999
+NET_PREFIX=${NET_PREFIX}
 EOF
 
 echo "CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
@@ -278,7 +293,7 @@ echo "------------------------------------------------"
 
 docker network create \
   --driver=bridge \
-  --subnet=192.168.100.0/24 \
+  --subnet=${NET_PREFIX}.0/24 \
   tessellation_common
 
 
