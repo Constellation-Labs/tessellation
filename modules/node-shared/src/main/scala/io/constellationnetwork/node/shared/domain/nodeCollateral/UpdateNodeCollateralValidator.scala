@@ -39,6 +39,20 @@ trait UpdateNodeCollateralValidator[F[_]] {
 
 object UpdateNodeCollateralValidator {
 
+  def rejectAll[F[_]: Async]: UpdateNodeCollateralValidator[F] = new UpdateNodeCollateralValidator[F] {
+    def validateCreateNodeCollateral(
+      signed: Signed[UpdateNodeCollateral.Create],
+      lastContext: GlobalSnapshotInfo
+    ): F[UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Create]]] =
+      (Rejected: UpdateNodeCollateralValidationError).invalidNec[Signed[UpdateNodeCollateral.Create]].pure[F]
+
+    def validateWithdrawNodeCollateral(
+      signed: Signed[UpdateNodeCollateral.Withdraw],
+      lastContext: GlobalSnapshotInfo
+    ): F[UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Withdraw]]] =
+      (Rejected: UpdateNodeCollateralValidationError).invalidNec[Signed[UpdateNodeCollateral.Withdraw]].pure[F]
+  }
+
   def make[F[_]: Async: SecurityProvider](
     signedValidator: SignedValidator[F],
     seedlist: Option[Set[SeedlistEntry]]
@@ -271,6 +285,8 @@ object UpdateNodeCollateralValidator {
   case class AlreadyWithdrawn(collateralRef: Hash) extends UpdateNodeCollateralValidationError
 
   case class InvalidParent(parent: NodeCollateralReference) extends UpdateNodeCollateralValidationError
+
+  case object Rejected extends UpdateNodeCollateralValidationError
 
   type UpdateNodeCollateralValidationErrorOr[A] = ValidatedNec[UpdateNodeCollateralValidationError, A]
 }
