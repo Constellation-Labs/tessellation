@@ -25,7 +25,7 @@ import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.auto.{autoRefineV, _}
 import eu.timepit.refined.cats._
-import eu.timepit.refined.types.numeric.NonNegLong
+import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import io.estatico.newtype.macros.newtype
 
 object delegatedStake {
@@ -147,20 +147,19 @@ object delegatedStake {
 
   @derive(encoder, decoder, eqv, show)
   case class NextDagPrice(
-    price: Long,
+    price: Amount,
     asOfEpoch: EpochProgress
   )
 
   @derive(encoder, decoder, eqv, show)
   case class RewardsInfo(
-    epochsPerYear: Long,
-    currentDagPrice: Long,
+    epochsPerYear: PosLong,
+    currentDagPrice: Amount,
     nextDagPrice: NextDagPrice,
-    totalDelegatedAmount: Long,
-    averageRewardRatePerDagEpoch: Long,
-    totalDagAmount: Long,
-    totalRewardPerEpoch: Long,
-    totalRewardAPYPerDag: Long,
-    totalInflationAPY: Long
+    totalDelegatedAmount: Amount,
+    latestAverageRewardPerDag: Amount,
+    totalDagAmount: Amount,
+    totalRewardPerEpoch: Amount,
+    totalRewardsPerYearEstimate: Amount
   )
 }
