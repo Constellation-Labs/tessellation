@@ -16,14 +16,10 @@ properties:
     type: integer
     format: int64
     description: Total amount delegated across all active delegated stakes, including accrued rewards
-  averageRewardRatePerDagEpoch:
+  latestAverageRewardPerDag:
     type: integer
     format: int64
     description: Average reward rate per DAG per epoch in datums
-  rewardTotalRatePerDagEpoch:
-    type: integer
-    format: int64
-    description: Total reward rate per DAG per epoch in datums (normalized by node parameters)
   totalDagAmount:
     type: integer
     format: int64
@@ -32,22 +28,16 @@ properties:
     type: integer
     format: int64
     description: Last total incremental rewards addition in datums
-  totalRewardAPYPerDag:
+  totalRewardsPerYearEstimate:
     type: integer
     format: int64
-    description: Total reward APY per DAG in datums (averageRewardRatePerDagEpoch * epochsPerYear)
-  totalInflationAPY:
-    type: integer
-    format: int64
-    description: Total inflation APY in datums (totalRewardAPYPerDag * totalSupply)
+    description: Total reward APY per DAG in datums (latestAverageRewardPerDag * epochsPerYear)
 required:
   - epochsPerYear
   - currentDagPrice
   - nextDagPrice
   - totalDelegatedAmount
-  - averageRewardRatePerDagEpoch
-  - rewardTotalRatePerDagEpoch
+  - latestAverageRewardPerDag
   - totalDagAmount
   - totalRewardPerEpoch
-  - totalRewardAPYPerDag
-  - totalInflationAPY
+  - totalRewardsPerYearEstimate
