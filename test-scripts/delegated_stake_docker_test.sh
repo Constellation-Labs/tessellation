@@ -27,6 +27,11 @@ if [ -z "$EXIT_CODE" ]; then
   export EXIT_CODE=0
 fi
 
+# For debugging locally use 0 for ci use 1
+if [ -z "$BIND_INTERFACE" ]; then
+  export BIND_INTERFACE="127.0.0.1:"
+fi
+
 # if not found in environment
 if [ -z "$CLEAN_BUILD" ]; then
   export CLEAN_BUILD=false
@@ -239,6 +244,7 @@ CL_DAG_L1_JOIN_IP=${NET_PREFIX}.20
 CL_DAG_L0_JOIN_IP=${NET_PREFIX}.10
 CL_L0_PEER_HTTP_PORT=8999
 NET_PREFIX=${NET_PREFIX}
+BIND_INTERFACE=${BIND_INTERFACE}
 EOF
 
 echo "CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env

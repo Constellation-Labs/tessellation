@@ -13,9 +13,9 @@ services:
       - CL_P2P_HTTP_PORT=${L0_CL_P2P_HTTP_PORT:-9001}
       - CL_CLI_HTTP_PORT=${L0_CL_CLI_HTTP_PORT:-9002}
     ports:
-      - "${CL_DAG_L0_PUBLIC_PORT:-8999}:${L0_CL_PUBLIC_HTTP_PORT:-8999}"  # Public HTTP
-      - "${CL_DAG_L0_P2P_PORT:-9001}:${L0_CL_P2P_HTTP_PORT:-9001}"  # P2P HTTP
-      - "${CL_DAG_L0_CLI_PORT:-9002}:${L0_CL_P2P_HTTP_PORT:-9002}"  # P2P HTTP
+      - "${BIND_INTERFACE:-}${CL_DAG_L0_PUBLIC_PORT:-8999}:${L0_CL_PUBLIC_HTTP_PORT:-8999}"  # Public HTTP
+      - "${BIND_INTERFACE:-}${CL_DAG_L0_P2P_PORT:-9001}:${L0_CL_P2P_HTTP_PORT:-9001}"  # P2P HTTP
+      - "${BIND_INTERFACE:-}${CL_DAG_L0_CLI_PORT:-9002}:${L0_CL_P2P_HTTP_PORT:-9002}"  # P2P HTTP
     volumes:
       - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12:ro
       # Only required for testing purposes
@@ -50,9 +50,9 @@ services:
       - CL_P2P_HTTP_PORT=${L1_CL_P2P_HTTP_PORT:-9011}
       - CL_CLI_HTTP_PORT=${L1_CL_CLI_HTTP_PORT:-9012}
     ports:
-      - "${CL_DAG_L1_PUBLIC_PORT:-9010}:${L1_CL_PUBLIC_HTTP_PORT:-9010}"  # Public HTTP
-      - "${CL_DAG_L1_P2P_PORT:-9011}:${L1_CL_P2P_HTTP_PORT:-9011}"  # P2P HTTP
-      - "${CL_DAG_L1_CLI_PORT:-9012}:${L1_CL_CLI_HTTP_PORT:-9012}"  # CLI
+      - "${BIND_INTERFACE:-}${CL_DAG_L1_PUBLIC_PORT:-9010}:${L1_CL_PUBLIC_HTTP_PORT:-9010}"  # Public HTTP
+      - "${BIND_INTERFACE:-}${CL_DAG_L1_P2P_PORT:-9011}:${L1_CL_P2P_HTTP_PORT:-9011}"  # P2P HTTP
+      - "${BIND_INTERFACE:-}${CL_DAG_L1_CLI_PORT:-9012}:${L1_CL_CLI_HTTP_PORT:-9012}"  # CLI
     volumes:
       - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12:ro
       # If using docker volumes:  
