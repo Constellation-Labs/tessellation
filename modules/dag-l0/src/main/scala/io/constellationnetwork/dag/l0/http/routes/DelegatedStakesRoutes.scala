@@ -15,6 +15,7 @@ import io.constellationnetwork.node.shared.config.types.{DelegatedRewardsConfig,
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
+import io.constellationnetwork.node.shared.infrastructure.snapshot.DelegatedRewardsDistributor
 import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
@@ -26,6 +27,9 @@ import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.utils.AmountOps._
+import io.constellationnetwork.utils.DecimalUtils
+import io.constellationnetwork.utils.DecimalUtils.syntax._
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
@@ -43,8 +47,7 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
   snapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   nodeStorage: NodeStorage[F],
   withdrawalTimeLimit: EpochProgress,
-  environment: AppEnvironment,
-  delegatedRewardsConfig: DelegatedRewardsConfig
+  delegatedRewardsDistributor: DelegatedRewardsDistributor[F]
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {
 
@@ -162,23 +165,20 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
     lastSnapshotInfo: GlobalSnapshotInfo
   ): F[RewardsInfo] =
     for {
-      emConfig <- delegatedRewardsConfig.emissionConfig
-        .get(environment)
-        .pure[F]
-        .flatMap(Async[F].fromOption(_, new RuntimeException(s"Could not retrieve emission config for env: $environment")))
+      emissionConfig <- delegatedRewardsDistributor.getEmissionConfig
 
       (_, _, totalDelegateStake, currentTotalSupply) <- processDelegations(lastSnapshotInfo)
       latestDelegateRewardsNoCommission <- getLatestDelegateRewardTotal(lastSnapshot, lastSnapshotInfo)
 
-      currentPrice <- toAmount(getCurrentDagPrice(emConfig))
-      nextPrice <- getNextDagPrice(emConfig)
+      currentPrice <- toAmount(getCurrentDagPrice(emissionConfig))
+      nextPrice <- getNextDagPrice(emissionConfig)
 
       avgRewardAmount <- calculateAverageReward(latestDelegateRewardsNoCommission, totalDelegateStake)
-      totalRewardsPerYear <- calculateAverageRewardOverAYear(avgRewardAmount, emConfig.epochsPerYear)
+      totalRewardsPerYear <- calculateAverageRewardOverAYear(avgRewardAmount, emissionConfig.epochsPerYear)
 
     } yield
       RewardsInfo(
-        epochsPerYear = emConfig.epochsPerYear,
+        epochsPerYear = emissionConfig.epochsPerYear,
         currentDagPrice = currentPrice,
         nextDagPrice = nextPrice,
         totalDelegatedAmount = totalDelegateStake,
@@ -222,15 +222,19 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
 
     val calcFullReward: (Long, (PeerId, Map[Address, Amount])) => Long = {
       case (acc, (peerId, rewards)) =>
-        val nodeCommission = BigDecimal(
-          nodeParams.get(peerId.toId).map(_._1.delegatedStakeRewardParameters.reward).getOrElse(0.0)
-        )
+        val nodeCommissionValue = nodeParams.get(peerId.toId).map(_._1.delegatedStakeRewardParameters.reward).getOrElse(0.0)
+        val nodeCommission = BigDecimal(nodeCommissionValue)
 
-        val delegatePortion = 1 - nodeCommission
+        val delegatePortion = if (nodeCommission >= 1.0) BigDecimal(0.0) else BigDecimal(1.0) - nodeCommission
 
-        acc + (BigDecimal(rewards.values.map(_.value.value).sum) / delegatePortion)
-          .setScale(0, RoundingMode.HALF_UP)
-          .longValue
+        val rewardsSum = rewards.values.map(_.value.value).sum
+        val rewardsBigDecimal = BigDecimal(rewardsSum)
+
+        if (delegatePortion == BigDecimal(0.0)) acc
+        else
+          acc + (rewardsBigDecimal / delegatePortion)
+            .setScale(0, RoundingMode.HALF_UP)
+            .longValue
     }
 
     delegateRewards
@@ -257,31 +261,63 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
 
   private def getCurrentDagPrice(emConfig: EmissionConfigEntry): Long = {
     val dagPrices = emConfig.dagPrices
-    val currentPrice = dagPrices.values.headOption.getOrElse(dagPrices.head._2)
-    (currentPrice.toBigDecimal * 100000000).longValue // Convert to datum format
+    if (dagPrices.isEmpty) 0L
+    else {
+      val currentPrice = dagPrices.values.headOption.getOrElse(dagPrices.head._2)
+      (currentPrice.toBigDecimal * DecimalUtils.DATUM_USD).setScale(0, RoundingMode.HALF_UP).longValue
+    }
   }
 
   private def getNextDagPrice(emConfig: EmissionConfigEntry): F[NextDagPrice] = {
     val dagPrices = emConfig.dagPrices
-    val sortedPrices = dagPrices.toList.sortBy(_._1.value.value)
 
-    val defaultPriceF: F[NextDagPrice] =
-      NextDagPrice(
-        price = Amount(PosLong.unsafeFrom((sortedPrices.head._2.toBigDecimal * 100000000).longValue)),
-        asOfEpoch = sortedPrices.head._1
-      ).pure[F]
+    if (dagPrices.isEmpty) {
+      PosLong
+        .from(1L)
+        .fold(
+          err => Async[F].raiseError(new IllegalArgumentException(s"Failed to create positive epoch: $err")),
+          posLong =>
+            NextDagPrice(
+              price = Amount.empty,
+              asOfEpoch = EpochProgress(posLong)
+            ).pure[F]
+        )
+    } else {
+      val sortedPrices = dagPrices.toList.sortBy(_._1.value.value)
 
-    val maybeNext = sortedPrices.dropWhile {
-      case (epoch, _) =>
-        epoch.value.value <= sortedPrices.head._1.value.value
-    }.headOption
+      val priceValue = (sortedPrices.head._2.toBigDecimal * DecimalUtils.DATUM_USD).setScale(0, RoundingMode.HALF_UP).longValue
 
-    maybeNext match {
-      case Some((epoch, price)) =>
-        toAmount((price.toBigDecimal * 100000000).longValue).map { amt =>
-          NextDagPrice(price = amt, asOfEpoch = epoch)
+      val defaultPriceF: F[NextDagPrice] =
+        if (priceValue <= 0) {
+          NextDagPrice(
+            price = Amount.empty,
+            asOfEpoch = sortedPrices.head._1
+          ).pure[F]
+        } else {
+          PosLong
+            .from(priceValue)
+            .fold(
+              err => Async[F].raiseError(new IllegalArgumentException(s"Failed to create positive price: $err")),
+              posLong =>
+                NextDagPrice(
+                  price = Amount(posLong),
+                  asOfEpoch = sortedPrices.head._1
+                ).pure[F]
+            )
         }
-      case None => defaultPriceF
+
+      val maybeNext = sortedPrices.dropWhile {
+        case (epoch, _) =>
+          epoch.value.value <= sortedPrices.head._1.value.value
+      }.headOption
+
+      maybeNext match {
+        case Some((epoch, price)) =>
+          toAmount((price.toBigDecimal * DecimalUtils.DATUM_USD).setScale(0, RoundingMode.HALF_UP).longValue).map { amt =>
+            NextDagPrice(price = amt, asOfEpoch = epoch)
+          }
+        case None => defaultPriceF
+      }
     }
   }
 

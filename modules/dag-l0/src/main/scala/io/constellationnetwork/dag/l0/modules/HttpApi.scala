@@ -3,6 +3,7 @@ package io.constellationnetwork.dag.l0.modules
 import java.security.PrivateKey
 
 import cats.effect.Async
+import cats.syntax.flatMap._
 import cats.syntax.option._
 import cats.syntax.semigroupk._
 
@@ -163,8 +164,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
         storages.globalSnapshot,
         storages.node,
         delegatedStakingWithdrawalTimeLimit,
-        environment,
-        services.rewards.delegatedRewardsConfig
+        services.rewards.delegatedRewards
       )
     }
   private val nodeCollateralsRoutes = HasherSelector[F].withCurrent { implicit hasher =>
