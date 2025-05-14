@@ -1,0 +1,81 @@
+services:
+  global-l0:
+    image: constellationnetwork/tessellation:${TESSELLATION_DOCKER_VERSION:-latest}
+    container_name: global-l0${CONTAINER_NAME_SUFFIX:-}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - CL_KEYSTORE=/tessellation/key.p12
+      - CL_DAG_L0_JOIN_ENABLED=${CL_DAG_L0_JOIN_ENABLED:-true}
+      - CL_DAG_L0_JOIN_PORT=${CL_DAG_L0_JOIN_PORT:-9001}
+      - CL_PUBLIC_HTTP_PORT=${L0_CL_PUBLIC_HTTP_PORT:-8999}
+      - CL_P2P_HTTP_PORT=${L0_CL_P2P_HTTP_PORT:-9001}
+      - CL_CLI_HTTP_PORT=${L0_CL_CLI_HTTP_PORT:-9002}
+    ports:
+      - "${BIND_INTERFACE:-}${CL_DAG_L0_PUBLIC_PORT:-8999}:${L0_CL_PUBLIC_HTTP_PORT:-8999}"  # Public HTTP
+      - "${BIND_INTERFACE:-}${CL_DAG_L0_P2P_PORT:-9001}:${L0_CL_P2P_HTTP_PORT:-9001}"  # P2P HTTP
+      - "${BIND_INTERFACE:-}${CL_DAG_L0_CLI_PORT:-9002}:${L0_CL_P2P_HTTP_PORT:-9002}"  # P2P HTTP
+    volumes:
+      - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12:ro
+      # Only required for testing purposes
+      - ${CL_GENESIS_FILE:-/dev/null}:/tessellation/genesis.csv:ro
+      # If using docker volumes:
+      - gl0-data:/tessellation/data
+      # If using host volumes:
+      # - ${CL_L0_DATA_MOUNT_PATH:-./l0-data}:/tessellation/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${L0_CL_PUBLIC_HTTP_PORT:-8999}/node/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    profiles: ["l0"]
+#    extra_hosts:
+#      "host.docker.internal": "host-gateway"
+
+  dag-l1:
+    image: constellationnetwork/tessellation:${TESSELLATION_DOCKER_VERSION:-latest}
+    container_name: dag-l1${CONTAINER_NAME_SUFFIX:-}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - CL_DAG_L1=true
+      - CL_L0_PEER_HTTP_HOST=${CL_L0_PEER_HTTP_HOST:-global-l0}
+      - CL_KEYSTORE=/tessellation/key.p12
+      - CL_DAG_L1_JOIN_ENABLED=${CL_DAG_L1_JOIN_ENABLED:-true}
+      - CL_DAG_L1_JOIN_PORT=${CL_DAG_L1_JOIN_PORT:-9011}
+      - CL_PUBLIC_HTTP_PORT=${L1_CL_PUBLIC_HTTP_PORT:-9010}
+      - CL_P2P_HTTP_PORT=${L1_CL_P2P_HTTP_PORT:-9011}
+      - CL_CLI_HTTP_PORT=${L1_CL_CLI_HTTP_PORT:-9012}
+    ports:
+      - "${BIND_INTERFACE:-}${CL_DAG_L1_PUBLIC_PORT:-9010}:${L1_CL_PUBLIC_HTTP_PORT:-9010}"  # Public HTTP
+      - "${BIND_INTERFACE:-}${CL_DAG_L1_P2P_PORT:-9011}:${L1_CL_P2P_HTTP_PORT:-9011}"  # P2P HTTP
+      - "${BIND_INTERFACE:-}${CL_DAG_L1_CLI_PORT:-9012}:${L1_CL_CLI_HTTP_PORT:-9012}"  # CLI
+    volumes:
+      - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12:ro
+      # If using docker volumes:  
+      - dag-l1-data:/tessellation/data
+      # If using host volumes:
+      # - ${CL_L1_DATA_MOUNT_PATH:-./l1-data}:/tessellation/data
+    # Only if using L0 profile
+    # depends_on:
+    #   global-l0:
+    #     condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${L1_CL_PUBLIC_HTTP_PORT:-9010}/node/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+#    extra_hosts:
+#      "host.docker.internal": "host-gateway"
+
+# Use volumes for persistence as alternative to mounted file system storage
+volumes:
+  gl0-data:
+    name: gl0-data${CONTAINER_NAME_SUFFIX:-}
+  dag-l1-data:
+    name: dag-l1-data${CONTAINER_NAME_SUFFIX:-}

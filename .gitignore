@@ -37,3 +37,5 @@ scripts/
 .envrc
 .direnv/
 node_modules/
+nodes/
+docker/jars/

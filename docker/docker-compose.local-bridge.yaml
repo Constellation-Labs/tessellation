@@ -1,0 +1,10 @@
+services:
+  global-l0:
+    networks:
+      tessellation-network:
+  dag-l1:
+    networks:
+      tessellation-network:
+networks:
+  tessellation-network:
+    driver: bridge

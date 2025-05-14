@@ -1,0 +1,5 @@
+services:
+  dag-l1:
+    depends_on:
+      global-l0:
+        condition: service_healthy
