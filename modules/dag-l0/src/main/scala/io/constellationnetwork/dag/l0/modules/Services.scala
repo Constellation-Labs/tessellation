@@ -80,6 +80,11 @@ object Services {
           .pure[F]
       }
 
+      rewardsService = RewardsService(
+        classicRewards,
+        delegatorRewards
+      )
+
       consensus <- HasherSelector[F].withCurrent { implicit hs =>
         GlobalSnapshotConsensus
           .make[F, R](
@@ -123,12 +128,6 @@ object Services {
         )
       getOrdinal = storages.globalSnapshot.headSnapshot.map(_.map(_.ordinal))
       trustUpdaterService = TrustStorageUpdater.make(getOrdinal, sharedServices.gossip, storages.trust)
-
-      rewardsService = RewardsService(
-        classicRewards,
-        delegatorRewards,
-        DefaultDelegatedRewardsConfigProvider.getConfig()
-      )
     } yield
       new Services[F, R](
         localHealthcheck = sharedServices.localHealthcheck,
@@ -157,10 +156,4 @@ sealed abstract class Services[F[_], R <: CliMethod] private (
   val trustStorageUpdater: TrustStorageUpdater[F],
   val restart: RestartService[F, R],
   val rewards: RewardsService[F]
-)
-
-case class RewardsService[F[_]](
-  classicRewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
-  delegatedRewards: DelegatedRewardsDistributor[F],
-  delegatedRewardsConfig: DelegatedRewardsConfig
 )

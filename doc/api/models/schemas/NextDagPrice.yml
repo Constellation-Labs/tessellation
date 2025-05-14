@@ -4,7 +4,8 @@ properties:
   price:
     type: integer
     format: int64
-    description: The next DAG price (in the same format as used internally in configuration)
+    minimum: 0
+    description: The next DAG price in datum/USD format
   asOfEpoch:
     $ref: './EpochProgress.yml'
 required:
