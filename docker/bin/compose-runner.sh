@@ -106,8 +106,6 @@ exit_func() {
   return 0
 }
 
-
-
 ./docker/bin/tessellation-docker-cleanup.sh
 
 if [ "$PURGE_CONFIG" = "true" ]; then
@@ -235,7 +233,7 @@ cp ./.github/config/genesis.csv ./nodes/0/genesis.csv
 
 cd ./nodes/0/
 # 1000000 * 1e8
-echo "\n$ADDRESS,100000000000000" >> genesis.csv
+echo "$ADDRESS,100000000000000" >> genesis.csv
 echo "Generated genesis file:"
 cat genesis.csv
 echo "CL_GENESIS_FILE=./genesis.csv" >> .env
