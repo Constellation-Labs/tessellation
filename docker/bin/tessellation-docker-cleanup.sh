@@ -57,9 +57,9 @@ done
 
 # 7. Force cleanup any dangling volumes that match our pattern
 echo "Cleaning up any dangling volumes..."
-docker volume ls -qf dangling=true | grep -E 'gl0-data|dag-l1-data' | xargs -r docker volume rm 2>/dev/null || true
+docker volume ls -qf dangling=true | grep -E 'gl0-data|dag-l1-data' | xargs -r docker volume rm 2>/dev/null || true &
 
 # 8. Remove the network with better error handling
 echo "Removing tessellation_common network..."
-docker network rm tessellation_common 2>/dev/null || true
+docker network rm tessellation_common || true 
 

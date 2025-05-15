@@ -174,6 +174,8 @@ done
 export TESSELLATION_DOCKER_VERSION=test
 docker build -t constellationnetwork/tessellation:$TESSELLATION_DOCKER_VERSION -f docker/Dockerfile .
 
+
+
 cat << EOF > ./nodes/.envrc
 export CL_KEYSTORE="key.p12"
 export CL_KEYALIAS="alias"
@@ -181,28 +183,52 @@ export CL_PASSWORD="password"
 export CL_APP_ENV="dev"
 EOF
 
-cp ./nodes/.envrc ./nodes/0/.envrc
-cd ./nodes/0/
+generate_keys() {
 
-# Unsafe source kept in subshell
-out=$(
-  source .envrc
-  java -jar ../keytool.jar generate
-  java -jar ../wallet.jar show-id
-)
-export GL0_GENERATED_WALLET_PEER_ID=$out
+  for i in 0 1 2; do
+    mkdir -p ./nodes/$i
+    cp ./nodes/.envrc ./nodes/$i/.envrc
+    cd ./nodes/$i/
+
+    out=$(
+      source .envrc
+      java -jar ../keytool.jar generate
+    )
+
+    ret_addr=$(
+      source .envrc
+      java -jar ../wallet.jar show-address
+    )
+    echo "$ret_addr" > address
+    id=$(
+      source .envrc
+      java -jar ../wallet.jar show-id
+    )
+    echo "$id" > peer_id
+    mkdir -p ../../docker/config/local-test-keys/$i
+    cp key.p12 ../../docker/config/local-test-keys/$i
+    cp address ../../docker/config/local-test-keys/$i
+    cp peer_id ../../docker/config/local-test-keys/$i
+    cd ../../
+  done
+
+}
+
+populate_test_keys() {
+  for i in 0 1 2; do
+    cp ./docker/config/local-test-keys/$i/key.p12 ./nodes/$i/key.p12
+    cp ./docker/config/local-test-keys/$i/address ./nodes/$i/address
+    cp ./docker/config/local-test-keys/$i/peer_id ./nodes/$i/peer_id
+  done
+}
+
+# generate_keys
+populate_test_keys
+
+export GL0_GENERATED_WALLET_PEER_ID=$(cat ./nodes/0/peer_id)
 echo "Generated GL0 wallet peer id $GL0_GENERATED_WALLET_PEER_ID"
-echo $GL0_GENERATED_WALLET_PEER_ID > peer_id
-
-ret_addr=$(
-  source .envrc
-  java -jar ../wallet.jar show-address
-)
-export ADDRESS=$ret_addr
-echo "$ADDRESS" > address.txt
+export ADDRESS=$(cat ./nodes/0/address)
 echo "Generated GL0 wallet address $ADDRESS"
-
-cd ../../
 
 cat << EOF > ./nodes/.env
 CL_APP_ENV="dev"
@@ -231,7 +257,9 @@ cp ./.github/config/genesis.csv ./nodes/0/genesis.csv
 
 cd ./nodes/0/
 # 1000000 * 1e8
-echo "\\n$ADDRESS,100000000000000" >> genesis.csv
+# Ensure the file ends with a newline before appending
+sed -i -e '$a\' genesis.csv
+echo "$ADDRESS,100000000000000" >> genesis.csv
 echo "Generated genesis file:"
 cat genesis.csv
 echo "CL_GENESIS_FILE=./genesis.csv" >> .env
@@ -292,22 +320,6 @@ for i in 1 2; do
   echo "L1_CL_PUBLIC_HTTP_PORT=${i}9010" >> .env
   echo "L1_CL_P2P_HTTP_PORT=${i}9011" >> .env
   echo "L1_CL_CLI_HTTP_PORT=${i}9012" >> .env
-
-  out=$(
-    source .envrc
-    java -jar ../keytool.jar generate
-  )
-
-  ret_addr=$(
-    source .envrc
-    java -jar ../wallet.jar show-address
-  )
-  echo "$ret_addr" > address
-  id=$(
-    source .envrc
-    java -jar ../wallet.jar show-id
-  )
-  echo "$id" > peer_id
 
   cd ../../
 done
