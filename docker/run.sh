@@ -94,7 +94,7 @@ fi
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 # Navigate to the project root directory (one level up from the script location)
-cd "$SCRIPT_DIR/../.."
+cd "$SCRIPT_DIR/../"
 echo "Changed to project root directory: $(pwd)"
 
 # Execute 'just' with all arguments passed to this script

@@ -1,61 +1,104 @@
-#!/bin/bash
 
-# Break on any error
+#!/usr/bin/env bash
 set -e
 
-if ! command -v jq >/dev/null 2>&1; then
-  echo "jq missing, please install if following command fails"
-  case "$(uname)" in
-    Linux)
-      sudo apt install -y jq
-      ;;
-    Darwin)
-      brew install jq
-      ;;
-    *)
-      echo "Unsupported OS: $(uname). Please install jq manually."
-      exit 1
-      ;;
-  esac
-else
-  echo "jq is already installed."
-fi
 
 
-# For debugging locally use 0 for ci use 1
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cur_dir=$(pwd)
+echo "Script started in $cur_dir with script directory $SCRIPT_DIR"
+
+cd "$SCRIPT_DIR/../../"
+cur_dir=$(pwd)
+echo "Running in top level directory $cur_dir"
+
+# Set default values if environment variables are not set
 if [ -z "$EXIT_CODE" ]; then
-  export EXIT_CODE=0
+    export EXIT_CODE=0
 fi
 
-# For debugging locally use 0 for ci use 1
 if [ -z "$BIND_INTERFACE" ]; then
-  export BIND_INTERFACE="127.0.0.1:"
+    # Example
+    # 127.0.0.1:
+    export BIND_INTERFACE=""
 fi
 
-# if not found in environment
-if [ -z "$CLEAN_BUILD" ]; then
-  export CLEAN_BUILD=false
+if [ -z "$CLEAN_ASSEMBLY" ]; then
+    export CLEAN_ASSEMBLY=false
 fi
 
 if [ -z "$DO_EXIT" ]; then
-  export DO_EXIT=false
+    export DO_EXIT=false
 fi
 
-if [ -z "$L0_ONLY" ]; then
-  export L0_ONLY=true
+if [ -z "$INCLUDE_L0" ]; then
+    export INCLUDE_L0=true
 fi
 
-if [ -z "$REMOVE_EXISTING_CONFIGS" ]; then
-  export REMOVE_EXISTING_CONFIGS=true
+if [ -z "$INCLUDE_L1" ]; then
+    export INCLUDE_L1=false
+fi
+
+if [ -z "$INCLUDE_ALL" ]; then
+    export INCLUDE_ALL=false
+fi
+
+if [ -z "$PURGE_CONFIG" ]; then
+    export PURGE_CONFIG=true
 fi
 
 if [ -z "$SKIP_ASSEMBLY" ]; then
-  export SKIP_ASSEMBLY=false
+    export SKIP_ASSEMBLY=false
 fi
 
 if [ -z "$NET_PREFIX" ]; then
-  export NET_PREFIX="172.32.0"
+    export NET_PREFIX="172.32.0"
 fi
+
+if [ -z "$TESSELLATION_DOCKER_VERSION" ]; then
+    export TESSELLATION_DOCKER_VERSION=test
+fi
+
+# Process command-line arguments
+for arg in "$@"; do
+  case "$arg" in
+    --exit-code=*)
+      export EXIT_CODE="${arg#*=}"
+      ;;
+    --bind-interface=*)
+      export BIND_INTERFACE="${arg#*=}"
+      ;;
+    --clean-assembly=*)
+      export CLEAN_ASSEMBLY="${arg#*=}"
+      ;;
+    --do-exit=*)
+      export DO_EXIT="${arg#*=}"
+      ;;
+    --l1=*)
+      export INCLUDE_L1="${arg#*=}"
+      ;;
+    --include-all=*)
+      export INCLUDE_ALL="${arg#*=}"
+      ;;
+    --purge-config=*)
+      export PURGE_CONFIG="${arg#*=}"
+      ;;
+    --skip-assembly=*)
+      export SKIP_ASSEMBLY="${arg#*=}"
+      ;;
+    --net-prefix=*)
+      export NET_PREFIX="${arg#*=}"
+      ;;
+    --tessellation-docker-version=*)
+      export TESSELLATION_DOCKER_VERSION="${arg#*=}"
+      ;;
+    *)
+      echo "Unknown argument: $arg"
+      exit 1
+      ;;
+  esac
+done
 
 exit_func() {
   if [ "$DO_EXIT" = "true" ]; then
@@ -63,11 +106,6 @@ exit_func() {
   fi
   return 0
 }
-
-
-# Cleanup pre-existing docker related containers
-# only run this if you really messed up
-# docker stop $(docker ps -a -q) && docker rm $(docker ps -a -q) && docker volume rm $(docker volume ls -q) && docker network rm $(docker network ls -q)
 
 
 
