@@ -10,42 +10,42 @@ test *ARGS: _check_deps
     @bash ./docker/bin/set-default-env.sh
     # Process command-line arguments
     for arg in "$@"; do
-      case "$arg" in
-        --exit-code=*)
-          export EXIT_CODE="${arg#*=}"
-          ;;
-        --bind-interface=*)
-          export BIND_INTERFACE="${arg#*=}"
-          ;;
-        --clean-assembly=*)
-          export CLEAN_ASSEMBLY="${arg#*=}"
-          ;;
-        --do-exit=*)
-          export DO_EXIT="${arg#*=}"
-          ;;
-        --l1=*)
-          export INCLUDE_L1="${arg#*=}"
-          ;;
-        --include-all=*)
-          export INCLUDE_ALL="${arg#*=}"
-          ;;
-        --purge-config=*)
-          export PURGE_CONFIG="${arg#*=}"
-          ;;
-        --skip-assembly=*)
-          export SKIP_ASSEMBLY="${arg#*=}"
-          ;;
-        --net-prefix=*)
-          export NET_PREFIX="${arg#*=}"
-          ;;
-        --tessellation-docker-version=*)
-          export TESSELLATION_DOCKER_VERSION="${arg#*=}"
-          ;;
-        *)
-          echo "Unknown argument: $arg"
-          exit 1
-          ;;
-      esac
+    case "$arg" in
+      --exit-code=*)
+        export EXIT_CODE="${arg#*=}"
+        ;;
+      --bind-interface=*)
+        export BIND_INTERFACE="${arg#*=}"
+        ;;
+      --clean-assembly=*)
+        export CLEAN_ASSEMBLY="${arg#*=}"
+        ;;
+      --do-exit=*)
+        export DO_EXIT="${arg#*=}"
+        ;;
+      --l1=*)
+        export INCLUDE_L1="${arg#*=}"
+        ;;
+      --include-all=*)
+        export INCLUDE_ALL="${arg#*=}"
+        ;;
+      --purge-config=*)
+        export PURGE_CONFIG="${arg#*=}"
+        ;;
+      --skip-assembly=*)
+        export SKIP_ASSEMBLY="${arg#*=}"
+        ;;
+      --net-prefix=*)
+        export NET_PREFIX="${arg#*=}"
+        ;;
+      --tessellation-docker-version=*)
+        export TESSELLATION_DOCKER_VERSION="${arg#*=}"
+        ;;
+      *)
+        echo "Unknown argument: $arg"
+        exit 1
+        ;;
+    esac
     done
 
     # Map justfile variables to compose-runner.sh variables

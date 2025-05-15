@@ -143,7 +143,6 @@ check_jq() {
     Linux)
       if command -v apt >/dev/null 2>&1; then
         echo "Installing jq using apt..."
-        sudo apt update
         sudo apt install -y jq
       elif command -v yum >/dev/null 2>&1; then
         echo "Installing jq using yum..."
