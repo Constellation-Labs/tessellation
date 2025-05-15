@@ -106,7 +106,7 @@ exit_func() {
   return 0
 }
 
-./docker/bin/tessellation-docker-cleanup.sh
+./docker/bin/tessellation-docker-cleanup.sh & 
 
 if [ "$PURGE_CONFIG" = "true" ]; then
   rm -rf ./nodes
@@ -174,8 +174,6 @@ done
 export TESSELLATION_DOCKER_VERSION=test
 docker build -t constellationnetwork/tessellation:$TESSELLATION_DOCKER_VERSION -f docker/Dockerfile .
 
-source ./docker/bin/tessellation-docker-cleanup.sh
-
 cat << EOF > ./nodes/.envrc
 export CL_KEYSTORE="key.p12"
 export CL_KEYALIAS="alias"
@@ -233,7 +231,7 @@ cp ./.github/config/genesis.csv ./nodes/0/genesis.csv
 
 cd ./nodes/0/
 # 1000000 * 1e8
-echo "$ADDRESS,100000000000000" >> genesis.csv
+echo "\\n$ADDRESS,100000000000000" >> genesis.csv
 echo "Generated genesis file:"
 cat genesis.csv
 echo "CL_GENESIS_FILE=./genesis.csv" >> .env
@@ -334,7 +332,7 @@ for i in 0 1 2; do
   cd ../../
 done
 
-DOCKER_STARTED_TIME=$(date +%s)
+export DOCKER_STARTED_TIME=$(date +%s)
 
 echo "Docker started at $DOCKER_STARTED_TIME"
 
