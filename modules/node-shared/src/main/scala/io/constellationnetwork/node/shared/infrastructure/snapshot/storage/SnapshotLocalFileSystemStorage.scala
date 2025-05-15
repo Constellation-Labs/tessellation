@@ -121,7 +121,7 @@ abstract class SnapshotLocalFileSystemStorage[
               baseDir.list(f => !f.isDirectory, maxDepth = 1)
           }.handleErrorWith { ex =>
             logger.warn(ex)(s"Error listing files in directory ${baseDir.pathAsString}") >>
-            Async[F].pure(Iterator.empty)
+              Async[F].pure(Iterator.empty)
           }
         }
         .map(_.toList)
@@ -174,7 +174,7 @@ abstract class SnapshotLocalFileSystemStorage[
                     snapshot.toHashed.flatMap { s =>
                       movePersistedToTmp(s.hash, s.ordinal).handleErrorWith { err =>
                         logger.error(err)(s"Failed to move persisted to tmp even with Kryo hasher for ordinal=${snapshot.ordinal}") >>
-                        Async[F].raiseError(err)
+                          Async[F].raiseError(err)
                       }
                     }
                 }
@@ -220,7 +220,7 @@ abstract class SnapshotLocalFileSystemStorage[
                   baseDir.list(f => !f.isDirectory, maxDepth = 1).toList
               }.handleErrorWith { ex =>
                 logger.warn(ex)(s"Error listing files in directory ${baseDir.pathAsString}") >>
-                Async[F].pure(List.empty)
+                  Async[F].pure(List.empty)
               }.map(Stream.emits(_))
 
               _ <- processFileChunk(files, movePersistedToTmp)

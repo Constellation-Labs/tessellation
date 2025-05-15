@@ -6,14 +6,14 @@ set -e
 # 2. More thorough container cleanup with proper error handling
 echo "Stopping and removing global-l0 containers..."
 docker ps -a --filter name=global-l0 --format "{{.ID}}" | while read -r container_id; do
-    docker stop "$container_id" 2>/dev/null || true
-    docker rm -f "$container_id" 2>/dev/null || true
+    docker stop "$container_id" 2>/dev/null || true &
+    docker rm -f "$container_id" 2>/dev/null || true &
 done
 
 echo "Stopping and removing dag-l1 containers..."
 docker ps -a --filter name=dag-l1 --format "{{.ID}}" | while read -r container_id; do
-    docker stop "$container_id" 2>/dev/null || true
-    docker rm -f "$container_id" 2>/dev/null || true
+    docker stop "$container_id" 2>/dev/null || true &
+    docker rm -f "$container_id" 2>/dev/null || true &
 done
 
 # 3. Find and kill any lingering processes binding to tessellation ports
@@ -41,8 +41,8 @@ echo "Removing containers on tessellation_common network..."
 containers=$(docker ps -a --filter network=tessellation_common --format "{{.ID}}" 2>/dev/null || echo "")
 if [ -n "$containers" ]; then
     echo "$containers" | while read -r container_id; do
-        docker stop "$container_id" 2>/dev/null || true
-        docker rm -f "$container_id" 2>/dev/null || true
+        docker stop "$container_id" 2>/dev/null || true & 
+        docker rm -f "$container_id" 2>/dev/null || true &
     done
 fi
 
@@ -51,7 +51,7 @@ echo "Removing tessellation volumes..."
 for vol in gl0-data dag-l1-data; do
     for suffix in "-0" "-1" "-2"; do
         vol="${vol}${suffix}"
-        docker volume rm $vol 2>/dev/null || true
+        docker volume rm $vol 2>/dev/null || true &
     done
 done
 

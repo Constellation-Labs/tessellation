@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
+
+export START_TIME=$(date +%s)
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cur_dir=$(pwd)
@@ -15,10 +17,10 @@ if [ -z "$EXIT_CODE" ]; then
     export EXIT_CODE=0
 fi
 
-if [ -z "$BIND_INTERFACE" ]; then
+if [ -z "$CL_DOCKER_BIND_INTERFACE" ]; then
     # Example
     # 127.0.0.1:
-    export BIND_INTERFACE=""
+    export CL_DOCKER_BIND_INTERFACE=""
 fi
 
 if [ -z "$CLEAN_ASSEMBLY" ]; then
@@ -64,7 +66,7 @@ for arg in "$@"; do
       export EXIT_CODE="${arg#*=}"
       ;;
     --bind-interface=*)
-      export BIND_INTERFACE="${arg#*=}"
+      export CL_DOCKER_BIND_INTERFACE="${arg#*=}"
       ;;
     --clean-assembly=*)
       export CLEAN_ASSEMBLY="${arg#*=}"
@@ -105,6 +107,9 @@ exit_func() {
 }
 
 
+
+./docker/bin/tessellation-docker-cleanup.sh
+
 if [ "$PURGE_CONFIG" = "true" ]; then
   rm -rf ./nodes
 fi
@@ -119,7 +124,7 @@ assemble_all() {
 
 
 if [[ "$INCLUDE_L0" == "false" && "$INCLUDE_L1" == "false" && "$SKIP_ASSEMBLY" == "false" ]]; then
-  sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
+  assemble_all
 else
   missing=false
 
@@ -134,22 +139,24 @@ else
 
   if [ "$missing" = true ]; then
     echo "▶️  One or more modules is missing. Cannot skip assembly. Running full assembly"
-    sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
+    assemble_all
   else
-    override_set=false
-    if [ "$INCLUDE_L0" == "true" ]; then
-      echo "Assembling L0"
-      sbt dagL0/assembly
-      override_set=true
-    fi
-    if [ "$INCLUDE_L1" == "true" ]; then
-      echo "Assembling L1"
-      sbt dagL1/assembly
-      override_set=true
-    fi
-    if [ "$SKIP_ASSEMBLY" == "false" && "$override_set" == "false" ]; then
-      echo "Assembling L0 according to default behavior"
-      sbt dagL0/assembly
+    if [ "$SKIP_ASSEMBLY" == "false" ]; then
+      override_set=false
+      if [ "$INCLUDE_L0" == "true" ]; then
+        echo "Assembling L0"
+        sbt dagL0/assembly
+        override_set=true
+      fi
+      if [ "$INCLUDE_L1" == "true" ]; then
+        echo "Assembling L1"
+        sbt dagL1/assembly
+        override_set=true
+      fi
+      if [ "$override_set" == "false" ]; then
+        echo "Assembling L0 according to default behavior"
+        sbt dagL0/assembly
+      fi
     else
       echo "Found existing assemblies, and skip assembly was set to true"
     fi
@@ -169,6 +176,7 @@ done
 export TESSELLATION_DOCKER_VERSION=test
 docker build -t constellationnetwork/tessellation:$TESSELLATION_DOCKER_VERSION -f docker/Dockerfile .
 
+source ./docker/bin/tessellation-docker-cleanup.sh
 
 cat << EOF > ./nodes/.envrc
 export CL_KEYSTORE="key.p12"
@@ -183,8 +191,8 @@ cd ./nodes/0/
 # Unsafe source kept in subshell
 out=$(
   source .envrc
-  java -jar ../../keytool.jar generate
-  java -jar ../../wallet.jar show-id
+  java -jar ../keytool.jar generate
+  java -jar ../wallet.jar show-id
 )
 export GL0_GENERATED_WALLET_PEER_ID=$out
 echo "Generated GL0 wallet peer id $GL0_GENERATED_WALLET_PEER_ID"
@@ -192,7 +200,7 @@ echo $GL0_GENERATED_WALLET_PEER_ID > peer_id
 
 ret_addr=$(
   source .envrc
-  java -jar ../../wallet.jar show-address
+  java -jar ../wallet.jar show-address
 )
 export ADDRESS=$ret_addr
 echo "$ADDRESS" > address.txt
@@ -211,7 +219,7 @@ CL_DAG_L1_JOIN_IP=${NET_PREFIX}.20
 CL_DAG_L0_JOIN_IP=${NET_PREFIX}.10
 CL_L0_PEER_HTTP_PORT=9000
 NET_PREFIX=${NET_PREFIX}
-BIND_INTERFACE=${BIND_INTERFACE}
+CL_DOCKER_BIND_INTERFACE=${CL_DOCKER_BIND_INTERFACE}
 EOF
 
 echo "CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
@@ -223,10 +231,11 @@ cp ./nodes/.envrc ./nodes/1/.envrc
 cp ./nodes/.envrc ./nodes/2/.envrc
 cp ./nodes/.env ./nodes/1/.env
 cp ./nodes/.env ./nodes/2/.env
+cp ./.github/config/genesis.csv ./nodes/0/genesis.csv
 
 cd ./nodes/0/
 # 1000000 * 1e8
-echo "$ADDRESS,100000000000000" > genesis.csv
+echo "\n$ADDRESS,100000000000000" >> genesis.csv
 echo "Generated genesis file:"
 cat genesis.csv
 echo "CL_GENESIS_FILE=./genesis.csv" >> .env
@@ -243,9 +252,9 @@ echo "L0_CL_P2P_HTTP_PORT=9001" >> .env
 echo "L0_CL_CLI_HTTP_PORT=9002" >> .env
 
 # External ports
-echo "CL_DAG_L0_PUBLIC_PORT=9000" >> .env
-echo "CL_DAG_L0_P2P_PORT=9001" >> .env
-echo "CL_DAG_L0_CLI_PORT=9002" >> .env
+echo "CL_DOCKER_EXTERNAL_L0_PUBLIC=9000" >> .env
+echo "CL_DOCKER_EXTERNAL_L0_P2P=9001" >> .env
+echo "CL_DOCKER_EXTERNAL_L0_CLI=9002" >> .env
 
 # Internal Ports
 echo "L1_CL_PUBLIC_HTTP_PORT=9010" >> .env
@@ -271,11 +280,11 @@ for i in 1 2; do
   echo "CONTAINER_OFFSET=$i" >> .env
 
   # External ports
-  echo "CL_DAG_L0_PUBLIC_PORT=${i}9000" >> .env
+  echo "CL_DOCKER_EXTERNAL_L0_PUBLIC=${i}9000" >> .env
   echo "CL_DAG_L1_PUBLIC_PORT=${i}9010" >> .env
-  echo "CL_DAG_L0_P2P_PORT=${i}9001" >> .env
+  echo "CL_DOCKER_EXTERNAL_L0_P2P=${i}9001" >> .env
   echo "CL_DAG_L1_P2P_PORT=${i}9011" >> .env
-  echo "CL_DAG_L0_CLI_PORT=${i}9002" >> .env
+  echo "CL_DOCKER_EXTERNAL_L0_CLI=${i}9002" >> .env
   echo "CL_DAG_L1_CLI_PORT=${i}9012" >> .env
 
   # These are only required on systems that implement docker with a host networking bridge
@@ -290,17 +299,17 @@ for i in 1 2; do
 
   out=$(
     source .envrc
-    java -jar ../../keytool.jar generate
+    java -jar ../keytool.jar generate
   )
 
   ret_addr=$(
     source .envrc
-    java -jar ../../wallet.jar show-address
+    java -jar ../wallet.jar show-address
   )
   echo "$ret_addr" > address
   id=$(
     source .envrc
-    java -jar ../../wallet.jar show-id
+    java -jar ../wallet.jar show-id
   )
   echo "$id" > peer_id
 
@@ -326,3 +335,10 @@ for i in 0 1 2; do
   docker compose -f docker-compose.test.yaml -f docker-compose.yaml --profile l0 up -d
   cd ../../
 done
+
+DOCKER_STARTED_TIME=$(date +%s)
+
+echo "Docker started at $DOCKER_STARTED_TIME"
+
+DELTA_SECONDS=$((DOCKER_STARTED_TIME - START_TIME))
+echo "Docker started in $DELTA_SECONDS seconds"
