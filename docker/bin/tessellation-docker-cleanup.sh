@@ -5,16 +5,41 @@ set -e
 
 # 2. More thorough container cleanup with proper error handling
 echo "Stopping and removing global-l0 containers..."
-docker ps -a --filter name=global-l0 --format "{{.ID}}" | while read -r container_id; do
-    docker stop "$container_id" 2>/dev/null || true &
-    docker rm -f "$container_id" 2>/dev/null || true &
+
+
+cleanup_container() {
+    local name=$1
+    local vol=$2
+    docker stop $name 2>/dev/null || true
+    docker rm -f $name 2>/dev/null || true
+    docker volume rm ${vol} 2>/dev/null || true
+
+cleanup() {
+    for i in 0 1 2; do
+        cleanup_container global-l0-$i gl0-data-$i &
+        cleanup_container dag-l1-$i dag-l1-data-$i &
+    done
+    LAST_PID=$!
+    echo "$LAST_PID"
+}
+
+export CLEANUP_PID=$(cleanup)
+
+# 8. Remove the network with better error handling and retry logic
+echo "Removing tessellation_common network..."
+while true; do
+  output=$(docker network rm tessellation_common 2>&1) || true
+  if [[ $output != *"network tessellation_common has active endpoints"* ]]; then
+    # If the error message is not present, break the loop
+    echo "Network removed successfully or encountered a different error."
+    break
+  fi
+  echo "Network has active endpoints, retrying in 1 second..."
+  sleep 1
 done
 
-echo "Stopping and removing dag-l1 containers..."
-docker ps -a --filter name=dag-l1 --format "{{.ID}}" | while read -r container_id; do
-    docker stop "$container_id" 2>/dev/null || true &
-    docker rm -f "$container_id" 2>/dev/null || true &
-done
+echo "Waiting for cleanup to finish..."
+wait $CLEANUP_PID
 
 # 3. Find and kill any lingering processes binding to tessellation ports
 
@@ -35,40 +60,3 @@ check_port_binds() {
 }
 
 check_port_binds
-
-# 4. Clean containers on the tessellation network with proper error handling
-echo "Removing containers on tessellation_common network..."
-containers=$(docker ps -a --filter network=tessellation_common --format "{{.ID}}" 2>/dev/null || echo "")
-if [ -n "$containers" ]; then
-    echo "$containers" | while read -r container_id; do
-        docker stop "$container_id" 2>/dev/null || true & 
-        docker rm -f "$container_id" 2>/dev/null || true &
-    done
-fi
-
-# 6. Remove volumes with better error handling
-echo "Removing tessellation volumes..."
-for vol in gl0-data dag-l1-data; do
-    for suffix in "-0" "-1" "-2"; do
-        vol="${vol}${suffix}"
-        docker volume rm $vol 2>/dev/null || true &
-    done
-done
-
-# 7. Force cleanup any dangling volumes that match our pattern
-echo "Cleaning up any dangling volumes..."
-docker volume ls -qf dangling=true | grep -E 'gl0-data|dag-l1-data' | xargs -r docker volume rm 2>/dev/null || true &
-
-# 8. Remove the network with better error handling and retry logic
-echo "Removing tessellation_common network..."
-while true; do
-  output=$(docker network rm tessellation_common 2>&1) || true
-  if [[ $output != *"network tessellation_common has active endpoints"* ]]; then
-    # If the error message is not present, break the loop
-    echo "Network removed successfully or encountered a different error."
-    break
-  fi
-  echo "Network has active endpoints, retrying in 1 second..."
-  sleep 1
-done
-

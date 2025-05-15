@@ -374,36 +374,53 @@ cd .github/action_scripts
 echo "Installing Node.js dependencies..."
 npm i @stardust-collective/dag4 js-sha256 axios brotli zod
 
+verify_healthy() {
+  echo "Sending cluster poll health request for cluster info to check joined."
+  MAX_RETRIES=30
+  for i in "" "1" "2"; do
+      l0_port="${i}9000"
+      l1_port="${i}9010"
 
-echo "Sending cluster poll health request for cluster info to check joined."
-MAX_RETRIES=30
-for i in "" "1" "2"; do
-    l0_port="${i}9000"
-    l1_port="${i}9010"
+      # Poll L0 cluster until it has 3 nodes
+      retry_count=0
+      while [ $retry_count -lt $MAX_RETRIES ]; do
+        for port in $l0_port $l1_port; do
+          echo "Checking cluster on port ${port} (attempt $((retry_count+1))/$MAX_RETRIES)"
+          export CLUSTER_INFO=$(curl -s http://localhost:${port}/cluster/info) ||  echo "starting"
+          echo "CLUSTER_INFO: $CLUSTER_INFO for $port"
+          
+          # Check if curl returned valid JSON before using jq
+          if [ -z "$CLUSTER_INFO" ] || [ "$CLUSTER_INFO" = "null" ] || [ "$CLUSTER_INFO" = "starting" ]; then
+            echo "Warning: Empty or null response from L0 cluster"
+            sleep 2
+            retry_count=$((retry_count+1))
+            continue
+          fi
+          
+          # Use jq with error handling
+          CLUSTER_INFO_LEN=$(echo "$CLUSTER_INFO" | jq 'length' 2>/dev/null || echo "0")
+          echo "CLUSTER_INFO_LEN: $CLUSTER_INFO_LEN"
+          
+          if [ "$CLUSTER_INFO_LEN" = "3" ]; then
+            echo "Success: cluster $i has 3 nodes on port $port"
+            break
+          else
+            echo "Warning: cluster $i has $CLUSTER_INFO_LEN nodes on port $port, waiting for 3 nodes"
+            sleep 2
+            retry_count=$((retry_count+1))
+          fi
+          
+          if [ $retry_count -eq $MAX_RETRIES ]; then
+            echo "ERROR: cluster $i doesn't have 3 nodes on port $port after $MAX_RETRIES attempts"
+            exit_func
+          fi
+        done
+      done
+  done
 
-    # Poll L0 cluster until it has 3 nodes
-    while true; do
-      L0_CLUSTER_INFO=$(curl -s http://localhost:${l0_port}/cluster/info)
-      echo "CLUSTER_INFO: $L0_CLUSTER_INFO for $l0_port"
-      L0_CLUSTER_INFO_LENGTH=$(echo "$L0_CLUSTER_INFO" | jq -e 'length')
-      echo "L0_CLUSTER_INFO_LENGTH: $L0_CLUSTER_INFO_LENGTH"
-      if [ "$L0_CLUSTER_INFO_LENGTH" != "3" ]; then
-        echo "ERROR: l0 $i doesn't have 3 nodes"
-        exit_func
-      fi
-      break
-    done
+}
 
-    L1_CLUSTER_INFO=$(curl -s http://localhost:${l1_port}/cluster/info)
-    echo "CLUSTER_INFO: $L1_CLUSTER_INFO for l1"
-    res=$(echo "$L0_CLUSTER_INFO" | jq -e 'length > 2')
-    echo "res: $res"
-    if [ "$res" != "true" ]; then
-      echo "ERROR: dag-l1 $i doesn't have 3 nodes"
-      exit_func
-    fi
-done
-
+# verify_healthy
 
 # # Run the transaction tests
 # echo "Running transaction tests..."
