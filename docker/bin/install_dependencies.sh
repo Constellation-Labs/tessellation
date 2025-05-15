@@ -3,6 +3,26 @@
 # Break on any error
 set -e
 
+
+check_java_home() {
+    echo "Checking if JAVA_HOME env is set"
+    if [ -z "$JAVA_HOME" ]; then
+        JAVA_HOME_LINE='export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(which java)")")")"'
+        echo "JAVA_HOME is not set. Attempting to set automatically"
+        echo "Please ensure the following line is in your ~/.bashrc or ~/.zshrc file:"
+        echo "Script will attempt to now add it for you and source it, but this only adds to .bashrc" 
+        echo $JAVA_HOME_LINE
+        echo "$JAVA_HOME_LINE" >> $HOME/.bashrc
+        echo "Sourcing .bashrc"
+        if [ -z $JAVA_HOME ]; then
+            echo "Failed to set JAVA_HOME automatically. Please set it manually and rerun the script."
+            return 1
+        fi
+        echo "JAVA_HOME is now set to: $JAVA_HOME"
+    fi
+    
+}
+
 # Check and install Java 11
 check_java() {
   echo "Checking for Java 11..."
@@ -18,12 +38,12 @@ check_java() {
   else
     echo "⚠️ Java not found. Will attempt to install Java 11."
   fi
+
   
   case "$(uname)" in
     Linux)
       if command -v apt >/dev/null 2>&1; then
         echo "Installing Java 11 using apt..."
-        sudo apt update
         sudo apt install -y openjdk-11-jdk
       elif command -v yum >/dev/null 2>&1; then
         echo "Installing Java 11 using yum..."
@@ -276,7 +296,6 @@ check_docker() {
     Darwin)
         echo "Please install Docker Desktop manually from https://www.docker.com/products/docker-desktop"
         return 1
-      fi
       ;;
     MINGW*|MSYS*|CYGWIN*)
       echo "On Windows, please install Docker Desktop manually from https://www.docker.com/products/docker-desktop"
@@ -295,6 +314,7 @@ check_docker() {
 # Run all checks
 echo "🔍 Checking and installing required dependencies..."
 check_java
+check_java_home
 check_sbt
 check_jq
 check_wget
