@@ -310,6 +310,54 @@ check_docker() {
   return 0
 }
 
+# Check and install Node.js
+check_node() {
+  echo "Checking for Node.js..."
+  if command -v node >/dev/null 2>&1; then
+    echo "✅ Node.js is already installed."
+    return 0
+  fi
+  
+  echo "⚠️ Node.js not found. Will attempt to install Node.js."
+  
+  case "$(uname)" in
+    Linux)
+      echo "Installing Node.js using nvm..."
+      # NPM
+      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.35.3/install.sh | bash
+
+      # Load nvm without needing to open a new terminal
+      export NVM_DIR="$HOME/.nvm"
+      [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+      [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+
+      # Install node
+      nvm install node
+
+      # Verify installation
+      echo "Node version: $(node -v)"
+      echo "NPM version: $(npm -v)"
+      echo "NPX version: $(npx -v)"
+      ;;
+    Darwin)
+      if command -v brew >/dev/null 2>&1; then
+        echo "Installing Node.js using Homebrew..."
+        brew install node
+      else
+        echo "⚠️ Homebrew not found. Please install Node.js manually."
+        return 1
+      fi
+      ;;
+    *)
+      echo "⚠️ No Node.js installation needed for this OS: $(uname)"
+      return 0
+      ;;
+  esac
+  
+  echo "✅ Node.js installation complete."
+  return 0
+}
+
 # Run all checks
 echo "🔍 Checking and installing required dependencies..."
 check_java
@@ -319,5 +367,6 @@ check_jq
 check_wget
 check_curl
 check_docker
+check_node
 
 echo "✅ All dependency checks completed."

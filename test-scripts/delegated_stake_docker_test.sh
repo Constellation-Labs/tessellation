@@ -4,18 +4,6 @@ echo "Waiting for docker containers to come online"
 
 sleep 45
 
-echo "Sending cluster poll health request for cluster info to check joined."
-for i in 0 1 2; do
-    port="${i}9010"
-    res=$(curl -s http://localhost:${port}/cluster/info | \
-    jq -e 'length > 2')
-    echo "res: $res"
-    if [ "$res" != "true" ]; then
-      echo "ERROR: dag-l1 $i doesn't have 3 nodes"
-      exit_func
-    fi
-done
-
 ### CLUSTER SPECIFIC TESTING BELOW
 echo "Starting cluster test"
 

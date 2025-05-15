@@ -59,6 +59,10 @@ if [ -z "$TESSELLATION_DOCKER_VERSION" ]; then
     export TESSELLATION_DOCKER_VERSION=test
 fi
 
+if [ -z "$CLEANUP_DOCKER_AT_END" ]; then
+    export CLEANUP_DOCKER_AT_END=false
+fi
+
 # Process command-line arguments
 for arg in "$@"; do
   case "$arg" in
@@ -352,7 +356,71 @@ done
 export DOCKER_STARTED_TIME=$(date +%s)
 
 echo "Docker started at $DOCKER_STARTED_TIME"
-
 DELTA_SECONDS=$((DOCKER_STARTED_TIME - START_TIME))
 echo "Docker started in $DELTA_SECONDS seconds"
+
+echo "------------------------------------------------"
+echo "Running end-to-end tests from .github/action_scripts"
+echo "------------------------------------------------"
+
+# Check if Node.js is installed
+if ! command -v node &> /dev/null; then
+    echo "Node.js is required to run the end-to-end tests but it's not installed. Skipping tests."
+    exit_func
+fi
+
+# Install dependencies
+cd .github/action_scripts
+echo "Installing Node.js dependencies..."
+npm i @stardust-collective/dag4 js-sha256 axios brotli zod
+
+
+echo "Sending cluster poll health request for cluster info to check joined."
+MAX_RETRIES=30
+for i in "" "1" "2"; do
+    l0_port="${i}9000"
+    l1_port="${i}9010"
+
+    # Poll L0 cluster until it has 3 nodes
+    while true; do
+      L0_CLUSTER_INFO=$(curl -s http://localhost:${l0_port}/cluster/info)
+      echo "CLUSTER_INFO: $L0_CLUSTER_INFO for $l0_port"
+      L0_CLUSTER_INFO_LENGTH=$(echo "$L0_CLUSTER_INFO" | jq -e 'length')
+      echo "L0_CLUSTER_INFO_LENGTH: $L0_CLUSTER_INFO_LENGTH"
+      if [ "$L0_CLUSTER_INFO_LENGTH" != "3" ]; then
+        echo "ERROR: l0 $i doesn't have 3 nodes"
+        exit_func
+      fi
+      break
+    done
+
+    L1_CLUSTER_INFO=$(curl -s http://localhost:${l1_port}/cluster/info)
+    echo "CLUSTER_INFO: $L1_CLUSTER_INFO for l1"
+    res=$(echo "$L0_CLUSTER_INFO" | jq -e 'length > 2')
+    echo "res: $res"
+    if [ "$res" != "true" ]; then
+      echo "ERROR: dag-l1 $i doesn't have 3 nodes"
+      exit_func
+    fi
+done
+
+
+# # Run the transaction tests
+# echo "Running transaction tests..."
+# cd "$SCRIPT_DIR/../../.github/action_scripts"
+# node send_transactions/currency.js 90 91 80 81 82
+
+# # Run delegated staking tests if they exist
+# if [ -f "$SCRIPT_DIR/../../.github/action_scripts/delegated_staking/test.js" ]; then
+#     echo "Running delegated staking tests..."
+#     node delegated_staking/test.js 90 91 80 81 82
+# fi
+
+# echo "------------------------------------------------"
+# echo "End-to-end tests completed"
+# echo "------------------------------------------------"
+
+# # Return to the original directory
+# cd "$SCRIPT_DIR/../../"
+
 
