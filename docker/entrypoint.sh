@@ -29,7 +29,6 @@ if [ -n "$CL_DAG_L1" ]; then
 
   echo "Starting L1 validator"
   echo "Using L0 peer HTTP host: $CL_L0_PEER_HTTP_HOST"
-  sleep 5
   # Start the join coordinator in the background
   echo "Starting join coordinator"
   /tessellation/entrypoint-dag-l1-join-coordinator.sh &

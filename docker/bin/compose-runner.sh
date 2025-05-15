@@ -1,8 +1,5 @@
-
 #!/usr/bin/env bash
 set -e
-
-
 
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -108,18 +105,20 @@ exit_func() {
 }
 
 
-if [ "$REMOVE_EXISTING_CONFIGS" = "true" ]; then
+if [ "$PURGE_CONFIG" = "true" ]; then
   rm -rf ./nodes
 fi
 
-mkdir -p ./nodes/global-l0/0
-
-for i in 1 2; do
-  mkdir -p ./nodes/dag-l1/$i
+for i in 0 1 2; do
+  mkdir -p ./nodes/$i
 done
 
+assemble_all() {
+  sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
+}
 
-if [[ "$L0_ONLY" == "false" && "$SKIP_ASSEMBLY" == "false" ]]; then
+
+if [[ "$INCLUDE_L0" == "false" && "$INCLUDE_L1" == "false" && "$SKIP_ASSEMBLY" == "false" ]]; then
   sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
 else
   missing=false
@@ -137,8 +136,19 @@ else
     echo "▶️  One or more modules is missing. Cannot skip assembly. Running full assembly"
     sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
   else
-    if [ "$SKIP_ASSEMBLY" == "false" ]; then
-      echo "Assembling only L0"
+    override_set=false
+    if [ "$INCLUDE_L0" == "true" ]; then
+      echo "Assembling L0"
+      sbt dagL0/assembly
+      override_set=true
+    fi
+    if [ "$INCLUDE_L1" == "true" ]; then
+      echo "Assembling L1"
+      sbt dagL1/assembly
+      override_set=true
+    fi
+    if [ "$SKIP_ASSEMBLY" == "false" && "$override_set" == "false" ]; then
+      echo "Assembling L0 according to default behavior"
       sbt dagL0/assembly
     else
       echo "Found existing assemblies, and skip assembly was set to true"
@@ -159,14 +169,6 @@ done
 export TESSELLATION_DOCKER_VERSION=test
 docker build -t constellationnetwork/tessellation:$TESSELLATION_DOCKER_VERSION -f docker/Dockerfile .
 
-# Populate environment per node
-
-### GL0 First
-
-# To run this in IJ for breakpoint use:
-# CL_KEYSTORE=key-0.p12;CL_KEYALIAS=alias;CL_PASSWORD=password;CL_APP_ENV=dev;CL_COLLATERAL=0
-
-# Common environment variables
 
 cat << EOF > ./nodes/.envrc
 export CL_KEYSTORE="key.p12"
@@ -175,8 +177,8 @@ export CL_PASSWORD="password"
 export CL_APP_ENV="dev"
 EOF
 
-cp ./nodes/.envrc ./nodes/global-l0/0/.envrc
-cd ./nodes/global-l0/0/
+cp ./nodes/.envrc ./nodes/0/.envrc
+cd ./nodes/0/
 
 # Unsafe source kept in subshell
 out=$(
@@ -196,7 +198,7 @@ export ADDRESS=$ret_addr
 echo "$ADDRESS" > address.txt
 echo "Generated GL0 wallet address $ADDRESS"
 
-cd ../../../
+cd ../../
 
 cat << EOF > ./nodes/.env
 CL_APP_ENV="dev"
@@ -207,7 +209,7 @@ CL_LOCAL_MODE=true
 CL_L0_PEER_HTTP_HOST=${NET_PREFIX}.10
 CL_DAG_L1_JOIN_IP=${NET_PREFIX}.20
 CL_DAG_L0_JOIN_IP=${NET_PREFIX}.10
-CL_L0_PEER_HTTP_PORT=8999
+CL_L0_PEER_HTTP_PORT=9000
 NET_PREFIX=${NET_PREFIX}
 BIND_INTERFACE=${BIND_INTERFACE}
 EOF
@@ -216,13 +218,13 @@ echo "CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
 echo "CL_DAG_L1_JOIN_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
 echo "CL_DAG_L0_JOIN_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
 
-cp ./nodes/.env ./nodes/global-l0/0/.env
-cp ./nodes/.envrc ./nodes/dag-l1/1/.envrc
-cp ./nodes/.envrc ./nodes/dag-l1/2/.envrc
-cp ./nodes/.env ./nodes/dag-l1/1/.env
-cp ./nodes/.env ./nodes/dag-l1/2/.env
+cp ./nodes/.env ./nodes/0/.env
+cp ./nodes/.envrc ./nodes/1/.envrc
+cp ./nodes/.envrc ./nodes/2/.envrc
+cp ./nodes/.env ./nodes/1/.env
+cp ./nodes/.env ./nodes/2/.env
 
-cd ./nodes/global-l0/0/
+cd ./nodes/0/
 # 1000000 * 1e8
 echo "$ADDRESS,100000000000000" > genesis.csv
 echo "Generated genesis file:"
@@ -236,12 +238,12 @@ echo "CONTAINER_OFFSET=0" >> .env
 # These are only required on systems that implement docker with a host networking bridge
 # Port conflicts cause it to fail with external networks that re-use ports
 # Internal ports
-echo "L0_CL_PUBLIC_HTTP_PORT=8999" >> .env
+echo "L0_CL_PUBLIC_HTTP_PORT=9000" >> .env
 echo "L0_CL_P2P_HTTP_PORT=9001" >> .env
 echo "L0_CL_CLI_HTTP_PORT=9002" >> .env
 
 # External ports
-echo "CL_DAG_L0_PUBLIC_PORT=8999" >> .env
+echo "CL_DAG_L0_PUBLIC_PORT=9000" >> .env
 echo "CL_DAG_L0_P2P_PORT=9001" >> .env
 echo "CL_DAG_L0_CLI_PORT=9002" >> .env
 
@@ -255,14 +257,14 @@ echo "CL_DAG_L1_PUBLIC_PORT=9010" >> .env
 echo "CL_DAG_L1_P2P_PORT=9011" >> .env
 echo "CL_DAG_L1_CLI_PORT=9012" >> .env
 
-cd ../../../
+cd ../../
 
 export DAG_L1_PEER_ID_0=$GL0_GENERATED_WALLET_PEER_ID
 
 # dag-l1 1
 
 for i in 1 2; do
-  cd ./nodes/dag-l1/$i
+  cd ./nodes/$i
   echo "CL_DAG_L1_JOIN_ENABLED=true" >> .env
   echo "CL_DAG_L0_JOIN_ENABLED=true" >> .env
   echo "CONTAINER_NAME_SUFFIX=-$i" >> .env
@@ -302,7 +304,7 @@ for i in 1 2; do
   )
   echo "$id" > peer_id
 
-  cd ../../../
+  cd ../../
 done
 
 
@@ -316,35 +318,11 @@ docker network create \
   tessellation_common
 
 
-cd ./nodes/global-l0/0/
-docker compose down --remove-orphans --volumes || true; \
-cp ../../../docker/docker-compose.yaml . ; \
-cp ../../../docker/docker-compose.test.yaml . ; \
-cp ../../../docker/docker-compose.profile-l0.yaml . ; \
-docker compose -f docker-compose.test.yaml -f docker-compose.yaml -f docker-compose.profile-l0.yaml --profile l0 up -d
-cd ../../..
-
-# wait for GL0 to come online
-sleep 30
-
-# Start dag-l1 1
-cd ./nodes/dag-l1/1
-
-docker compose down --remove-orphans --volumes || true; \
-cp ../../../docker/docker-compose.yaml . ; \
-cp ../../../docker/docker-compose.test.yaml . ; \
-cp ../../../docker/docker-compose.profile-l0.yaml . ; \
-docker compose -f docker-compose.test.yaml -f docker-compose.yaml -f docker-compose.profile-l0.yaml --profile l0 up -d
-
-cd ../../../
-
-# Start dag-l1 2
-cd ./nodes/dag-l1/2
-docker compose down --remove-orphans --volumes || true; \
-cp ../../../docker/docker-compose.yaml . ; \
-cp ../../../docker/docker-compose.test.yaml . ; \
-cp ../../../docker/docker-compose.profile-l0.yaml . ; \
-docker compose -f docker-compose.test.yaml -f docker-compose.yaml -f docker-compose.profile-l0.yaml --profile l0 up -d
-cd ../../../
-
-# wait for dag-l1 to come online
+for i in 0 1 2; do
+  cd ./nodes/$i/
+  docker compose down --remove-orphans --volumes || true > /dev/null 2>&1; \
+  cp ../../docker/docker-compose.yaml . ; \
+  cp ../../docker/docker-compose.test.yaml . ; \
+  docker compose -f docker-compose.test.yaml -f docker-compose.yaml --profile l0 up -d
+  cd ../../
+done

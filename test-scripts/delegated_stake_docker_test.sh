@@ -19,11 +19,11 @@ done
 ### CLUSTER SPECIFIC TESTING BELOW
 echo "Starting cluster test"
 
-export DAG_L0_URL="http://localhost:8999"
+export DAG_L0_URL="http://localhost:9000"
 export DAG_L1_URL="http://localhost:9010"
 
 # Create node update params for gl0 kp
-cd ./nodes/global-l0/0/
+cd ./nodes/0/
 # 6000 * 1e8
 out=$(
   source .envrc
@@ -35,7 +35,7 @@ cp event initial-node-params.json
 curl -i -X POST --header 'Content-Type: application/json' --data @initial-node-params.json "$DAG_L0_URL"/node-params
 # Await accepted
 sleep 30
-cd ../../..
+cd ../../
 
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[1].updateNodeParameters | length > 0' > /dev/null || \
@@ -44,7 +44,7 @@ jq -e '.[1].updateNodeParameters | length > 0' > /dev/null || \
 
 
 # # Create token lock for gl0 kp
-cd ./nodes/global-l0/0/
+cd ./nodes/0/
 
 out=$(
   source .envrc
@@ -58,7 +58,7 @@ echo "Initial token lock hash reference $TOKEN_LOCK_HASH"
 curl -i -X POST --header 'Content-Type: application/json' --data @initial-token-lock.json "$DAG_L1_URL"/token-locks
 # Await accepted, may require adjustment
 sleep 40
-cd ../../..
+cd ../../
 
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[1].activeTokenLocks | length == 1' > /dev/null || \
@@ -67,7 +67,7 @@ jq -e '.[1].activeTokenLocks | length == 1' > /dev/null || \
 
 # Create delegated stake for gl0 kp
 
-cd ./nodes/global-l0/0/
+cd ./nodes/0/
 out=$(
   source .envrc
   java -jar ../../wallet.jar create-delegated-stake --amount 6000 --token-lock $TOKEN_LOCK_HASH
@@ -78,7 +78,7 @@ cat event
 cp event initial-delegated-stake.json
 curl -i -X POST --header 'Content-Type: application/json' --data @initial-delegated-stake.json "$DAG_L0_URL"/delegated-stakes
 # Await accepted, may require adjustment
-cd ../../..
+cd ../../
 sleep 30
 
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
@@ -100,7 +100,7 @@ jq -e '.activeDelegatedStakes | length == 1' > /dev/null || \
 ### UPDATE NODE ID test, requires a second id for node
 # Change node params, first register them for second node.
 # Create node update params for container 1 kp
-cd ./nodes/dag-l1/1/
+cd ./nodes/1/
 # 6000 * 1e8
 out=$(
   source .envrc
@@ -112,7 +112,7 @@ cp event initial-node-params.json
 curl -i -X POST --header 'Content-Type: application/json' --data @initial-node-params.json "$DAG_L0_URL"/node-params
 # Await accepted
 sleep 30
-cd ../../..
+cd ../../
 
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
 jq -e '.[1].updateNodeParameters | length > 1' > /dev/null || \
@@ -122,7 +122,7 @@ jq -e '.[1].updateNodeParameters | length > 1' > /dev/null || \
 # Now create a delegated stake with the second address
 # Create delegated stake for gl0 kp
 
-second=$(cat ./nodes/dag-l1/1/peer_id)
+second=$(cat ./nodes/1/peer_id)
 echo "Second node id $second"
 export SECOND_NODE="$second"
 
@@ -151,7 +151,7 @@ curl -i -X POST --header 'Content-Type: application/json' --data @second-delegat
 
 
 # Await accepted, may require adjustment
-cd ../../..
+cd ../../
 sleep 30
 
 curl -s "$DAG_L0_URL"/global-snapshots/latest/combined | \
@@ -173,7 +173,7 @@ else
 fi
 
 # initiate withdraw
-cd ./nodes/global-l0/0/
+cd ./nodes/0/
 out=$(
   source .envrc
   java -jar ../../wallet.jar withdraw-delegated-stake --stake-ref "$DELEGATED_STAKE_HASH"
@@ -183,7 +183,7 @@ cat event
 cp event withdraw-delegated-stake.json
 curl -i -X PUT --header 'Content-Type: application/json' --data @withdraw-delegated-stake.json "$DAG_L0_URL"/delegated-stakes
 # Await accepted, may require adjustment
-cd ../../..
+cd ../../
 
 sleep 30
 

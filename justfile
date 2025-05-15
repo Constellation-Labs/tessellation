@@ -16,3 +16,14 @@ test *extra_args:
 
 purge-docker:
 	@bash docker/bin/purge-docker
+
+clean-docker:
+	@bash docker/bin/tessellation-docker-cleanup.sh
+
+clean-configs:
+	@rm -rf ./nodes
+
+clean:
+	@bash sbt clean
+	@just clean-configs
+	@just clean-docker
