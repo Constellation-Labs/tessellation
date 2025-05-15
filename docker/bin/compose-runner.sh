@@ -107,6 +107,8 @@ exit_func() {
 }
 
 ./docker/bin/tessellation-docker-cleanup.sh & 
+CLEANUP_PID=$!
+
 
 if [ "$PURGE_CONFIG" = "true" ]; then
   rm -rf ./nodes
@@ -329,6 +331,9 @@ echo "------------------------------------------------"
 echo "All deployment configurations now generated, proceeding to run cluster"
 echo "------------------------------------------------"
 
+# Wait for cleanup PID to finish
+wait $CLEANUP_PID
+
 docker network create \
   --driver=bridge \
   --subnet=${NET_PREFIX}.0/24 \
@@ -350,3 +355,4 @@ echo "Docker started at $DOCKER_STARTED_TIME"
 
 DELTA_SECONDS=$((DOCKER_STARTED_TIME - START_TIME))
 echo "Docker started in $DELTA_SECONDS seconds"
+

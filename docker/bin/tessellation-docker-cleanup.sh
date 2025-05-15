@@ -59,7 +59,16 @@ done
 echo "Cleaning up any dangling volumes..."
 docker volume ls -qf dangling=true | grep -E 'gl0-data|dag-l1-data' | xargs -r docker volume rm 2>/dev/null || true &
 
-# 8. Remove the network with better error handling
+# 8. Remove the network with better error handling and retry logic
 echo "Removing tessellation_common network..."
-docker network rm tessellation_common || true 
+while true; do
+  output=$(docker network rm tessellation_common 2>&1) || true
+  if [[ $output != *"network tessellation_common has active endpoints"* ]]; then
+    # If the error message is not present, break the loop
+    echo "Network removed successfully or encountered a different error."
+    break
+  fi
+  echo "Network has active endpoints, retrying in 1 second..."
+  sleep 1
+done
 
