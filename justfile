@@ -10,6 +10,9 @@ _check_deps:
 	@bash docker/bin/install_dependencies.sh
 
 # Main test command to run the Tessellation node setup
+# Example: `just test --skip-assembly` to restart without assembling.
+# Example: `just test --l1` to re-assemble L0 and L1.
+# Example: `just test` to re-assemble L0 only.
 test *extra_args:
 	@just _check_deps
 	@bash docker/bin/compose-runner.sh {{ extra_args }}

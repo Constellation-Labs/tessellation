@@ -81,7 +81,7 @@ for i in 0 1 2; do
   echo "L1_CL_PUBLIC_HTTP_PORT=${L1_PORT}0" >> .env
   echo "L1_CL_P2P_HTTP_PORT=${L1_PORT}1" >> .env
   echo "L1_CL_CLI_HTTP_PORT=${L1_PORT}2" >> .env
-  echo "CL_DOCKER_L1_JOIN_DELAY=$((i*10 + 60))" >> .env
+  echo "CL_DOCKER_L1_JOIN_DELAY=$((i*10 + 20))" >> .env
 
   cd ../../
 done
