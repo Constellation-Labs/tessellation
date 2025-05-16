@@ -1,10 +1,16 @@
 #!/bin/bash
 
-CL_DOCKER_L1_JOIN_DELAY=0
 JOIN_RETRIES=20
 JOIN_RETRY_DELAY=5
 
+if [ -z "$CL_DOCKER_L1_JOIN_DELAY" ]; then
+  export CL_DOCKER_L1_JOIN_DELAY=0
+fi
+
+echo "Joining cluster with delay of $CL_DOCKER_L1_JOIN_DELAY seconds"
 sleep $CL_DOCKER_L1_JOIN_DELAY
+echo "Joining cluster started after delay of $CL_DOCKER_L1_JOIN_DELAY seconds"
+
 
 for i in $(seq 1 $JOIN_RETRIES); do
   if [ "$CL_DAG_L1_JOIN_ENABLED" = "true" ]; then

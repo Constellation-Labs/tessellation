@@ -17,7 +17,7 @@ verify_healthy() {
             # Check if curl returned valid JSON before using jq
             if [ -z "$CLUSTER_INFO" ] || [ "$CLUSTER_INFO" = "null" ] || [ "$CLUSTER_INFO" = "starting" ]; then
               echo "Waiting for node $i on port $port/cluster/info to come online"
-              sleep 2
+              sleep 4
               retry_count=$((retry_count+1))
               continue
             fi
@@ -31,7 +31,7 @@ verify_healthy() {
               break
             else
               echo "Waiting for node $i on port $port to have 3 nodes, currently has $CLUSTER_INFO_LEN nodes"
-              sleep 2
+              sleep 4
               retry_count=$((retry_count+1))
             fi
             
