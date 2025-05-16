@@ -172,7 +172,7 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
       latestDelegateRewardsNoCommission <- getLatestDelegateRewardTotal(lastSnapshot, lastSnapshotInfo)
 
       currentPrice <- toAmount(getCurrentDagPrice(emissionConfig))
-      nextPrice <- getNextDagPrice(emissionConfig)
+      nextPrice <- getNextDagPrice(emissionConfig, lastSnapshot)
 
       avgRewardAmount <- calculateAverageReward(latestDelegateRewardsNoCommission, totalDelegateStake)
       totalRewardsPerYear <- calculateAverageRewardOverAYear(avgRewardAmount, emissionConfig.epochsPerYear)
@@ -269,7 +269,7 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
     }
   }
 
-  private def getNextDagPrice(emConfig: EmissionConfigEntry): F[NextDagPrice] = {
+  private def getNextDagPrice(emConfig: EmissionConfigEntry, lastSnapshot: GlobalIncrementalSnapshot): F[NextDagPrice] = {
     val dagPrices = emConfig.dagPrices
 
     if (dagPrices.isEmpty) {
@@ -307,10 +307,11 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
             )
         }
 
-      val maybeNext = sortedPrices.dropWhile {
-        case (epoch, _) =>
-          epoch.value.value <= sortedPrices.head._1.value.value
-      }.headOption
+      val currentEpochProgress = lastSnapshot.epochProgress
+
+      val maybeNext = sortedPrices.find {
+        case (epoch, _) => epoch.value.value > currentEpochProgress.value.value
+      }
 
       maybeNext match {
         case Some((epoch, price)) =>

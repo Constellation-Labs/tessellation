@@ -141,10 +141,11 @@ object DecimalUtilsSuite extends SimpleIOSuite with Checkers {
       denominator <- nonZeroDecimalGen
     } yield (numerator, denominator)
 
-    expectGen(gen) { case (numerator, denominator) =>
-      val result = DecimalUtils.safeDivide(numerator, denominator)
-      val expected = numerator / denominator
-      expect.eql(expected, result)
+    expectGen(gen) {
+      case (numerator, denominator) =>
+        val result = DecimalUtils.safeDivide(numerator, denominator)
+        val expected = numerator / denominator
+        expect.eql(expected, result)
     }
   }
 
@@ -154,10 +155,11 @@ object DecimalUtilsSuite extends SimpleIOSuite with Checkers {
       scale <- scaleGen
     } yield (value, scale)
 
-    expectGen(gen) { case (value, scale) =>
-      val result = DecimalUtils.round(value, scale)
-      val expected = value.setScale(scale, RoundingMode.HALF_UP)
-      expect.eql(expected, result)
+    expectGen(gen) {
+      case (value, scale) =>
+        val result = DecimalUtils.round(value, scale)
+        val expected = value.setScale(scale, RoundingMode.HALF_UP)
+        expect.eql(expected, result)
     }
   }
 }
