@@ -23,10 +23,11 @@ import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
+import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
-import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSyncGlobalSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotContextFunctions
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
@@ -55,7 +56,8 @@ object Download {
     identifierStorage: IdentifierStorage[F],
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
     lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
-    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] with LatestBalances[F]
   )(implicit l0NodeContext: L0NodeContext[F]): Download[F] = new Download[F] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -97,10 +99,12 @@ object Download {
               .flatMap { case (ordinal, calculatedState) => da.setCalculatedState(ordinal, calculatedState) }
           }.getOrElse(Applicative[F].unit)
 
-          setCalculatedState >> identifierStorage.get.flatMap { currencyAddress =>
-            consensus.manager
-              .startFacilitatingAfterDownload(observationLimit, snapshot, CurrencySnapshotContext(currencyAddress, context))
-          }
+          snapshotStorage.prepend(snapshot, context) >>
+            setCalculatedState >>
+            identifierStorage.get.flatMap { currencyAddress =>
+              consensus.manager
+                .startFacilitatingAfterDownload(observationLimit, snapshot, CurrencySnapshotContext(currencyAddress, context))
+            }
         }
     }
 
