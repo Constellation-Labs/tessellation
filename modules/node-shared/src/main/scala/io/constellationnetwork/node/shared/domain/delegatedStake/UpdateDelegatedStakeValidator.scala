@@ -222,6 +222,7 @@ object UpdateDelegatedStakeValidator {
             .getOrElse(SortedMap.empty[Address, List[NodeCollateralRecord]])
             .getOrElse(address, List.empty[NodeCollateralRecord])
             .find(_.event.tokenLockRef === signed.tokenLockRef)
+
           maybeExistingCollateral.isEmpty && maybeExistingStake.forall(_.nodeId != signed.nodeId)
         }
 
@@ -234,7 +235,9 @@ object UpdateDelegatedStakeValidator {
           } yield
             tokenLocksWithReferences.find { case (_, r) => r.hash === signed.tokenLockRef } match {
               case Some((tokenLock, _)) =>
-                signed.amount.value.value === tokenLock.amount.value.value && tokenLock.unlockEpoch.isEmpty
+                signed.amount.value.value === tokenLock.amount.value.value &&
+                tokenLock.unlockEpoch.isEmpty &&
+                address === tokenLock.source
               case None => false
             }
         }

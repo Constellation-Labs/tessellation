@@ -94,12 +94,17 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     } yield (ref, SortedMap(keyPair.getPublic.toAddress -> SortedSet(signed)))
   }
 
-  def mkValidGlobalContext(keyPair: KeyPair, tokenLockAmount: Long = 100L, tokenLockUnlockEpoch: Option[EpochProgress] = None)(
+  def mkValidGlobalContext(
+    keyPair: KeyPair,
+    tokenLockKeyPair: KeyPair,
+    tokenLockAmount: Long = 100L,
+    tokenLockUnlockEpoch: Option[EpochProgress] = None
+  )(
     implicit sp: SecurityProvider[IO],
     h: Hasher[IO]
   ) =
     for {
-      (ref, tokenLocks) <- testTokenLocks(keyPair, tokenLockAmount, tokenLockUnlockEpoch)
+      (ref, tokenLocks) <- testTokenLocks(tokenLockKeyPair, tokenLockAmount, tokenLockUnlockEpoch)
       address = keyPair.getPublic.toAddress
       nodeId = keyPair.getPublic.toId
       nodeParams = SortedMap(
@@ -124,7 +129,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
-      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, keyPair)
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       seedlist <- mkSeedlist(validCreate.nodeId)
@@ -138,7 +143,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
-      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, keyPair)
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair).map(signed =>
         signed.copy(proofs =
@@ -168,7 +173,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
-      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, keyPair)
       activeTokenLocks = lastContext.activeTokenLocks.get
       tokenLocks = activeTokenLocks(keyPair.getPublic.toAddress)
       lastContext1 = lastContext.copy(activeTokenLocks = Some(activeTokenLocks.updated(keyPair2.getPublic.toAddress, tokenLocks)))
@@ -195,7 +200,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
-      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, keyPair)
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
@@ -207,7 +212,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
-      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, keyPair)
       invalidCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(invalidCreate, keyPair)
       seedlist <- mkSeedlist()
@@ -220,7 +225,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
-      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, keyPair)
       parent = testCreateDelegatedStake(keyPair, sourceAddress, Hash.empty)
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
@@ -243,7 +248,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
-      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, keyPair)
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       nodeId1 = PeerId.fromPublic(keyPair1.getPublic)
       parent = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
@@ -268,7 +273,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
-      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, keyPair)
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       nodeId1 = PeerId.fromPublic(keyPair1.getPublic)
       parent = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
@@ -298,7 +303,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
-      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, keyPair)
       parent = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       nodeId1 = PeerId.fromPublic(keyPair1.getPublic)
@@ -322,7 +327,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
-      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, keyPair)
       nodeCollateral = UpdateNodeCollateral.Create(
         source = sourceAddress,
         nodeId = PeerId.fromPublic(keyPair.getPublic),
@@ -349,7 +354,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     for {
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
-      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, tokenLockAmount = 10L)
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, keyPair, tokenLockAmount = 10L)
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
@@ -361,7 +366,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     implicit val (json, h, sp, keyPair, sourceAddress) = res
 
     for {
-      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, tokenLockUnlockEpoch = EpochProgress.MaxValue.some)
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, keyPair, tokenLockUnlockEpoch = EpochProgress.MaxValue.some)
       parent = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signedParent <- forAsyncHasher(parent, keyPair)
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
@@ -567,6 +572,20 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       validator = mkValidator(seedlist)
       result <- validator.validateWithdrawDelegatedStake(signed, context)
     } yield expect.same(AlreadyWithdrawn(lastRef.hash).invalidNec, result)
+  }
+
+  test("Should fail when tokenLock address is different than delegated stake address") { res =>
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
+
+    for {
+      keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, keyPair2)
+      validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
+      signed <- forAsyncHasher(validCreate, keyPair)
+      seedlist <- mkSeedlist(validCreate.nodeId)
+      validator = mkValidator(seedlist)
+      result <- validator.validateCreateDelegatedStake(signed, lastContext)
+    } yield expect.same(InvalidTokenLock(tokenLockReference).invalidNec, result)
   }
 
   private def mkSeedlist(peerIds: PeerId*)(implicit sp: SecurityProvider[IO]): IO[Option[Set[SeedlistEntry]]] =

@@ -74,7 +74,7 @@ object SharedValidators {
     val updateDelegatedStakeValidator =
       UpdateDelegatedStakeValidator.make[F](signedValidator, l0Seedlist)
     val updateNodeCollateralValidator =
-      UpdateNodeCollateralValidator.make[F](signedValidator, l0Seedlist)
+      UpdateNodeCollateralValidator.rejectAll[F]
 
     val spendActionValidator = SpendActionValidator.make[F]
 
