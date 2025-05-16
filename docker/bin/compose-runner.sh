@@ -26,7 +26,7 @@ export PROJECT_ROOT=$cur_dir
 echo "Running in top level directory $cur_dir"
 
 
-source ./docker/bin/set-env.sh
+source ./docker/bin/set-env.sh "$@"
 
 ./docker/bin/tessellation-docker-cleanup.sh & 
 CLEANUP_PID=$!
@@ -45,7 +45,7 @@ source ./docker/bin/assembly.sh
 export TESSELLATION_DOCKER_VERSION=test
 docker build -t constellationnetwork/tessellation:$TESSELLATION_DOCKER_VERSION -f docker/Dockerfile .
 
-source ./docker/bin/node-env-setup.sh
+source ./docker/bin/node-key-env-setup.sh
 source ./docker/bin/docker-env-setup.sh
 
 echo "------------------------------------------------"

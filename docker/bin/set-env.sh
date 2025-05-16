@@ -50,38 +50,47 @@ if [ -z "$CLEANUP_DOCKER_AT_END" ]; then
     export CLEANUP_DOCKER_AT_END=false
 fi
 
+if [ -z "$REGENERATE_TEST_KEYS" ]; then
+    export REGENERATE_TEST_KEYS=false
+fi
+
+echo "processing args: $@"
+
 # Process command-line arguments
 for arg in "$@"; do
   case "$arg" in
-    --exit-code=*)
-      export EXIT_CODE="${arg#*=}"
+    --exit-code)
+      export EXIT_CODE=1
       ;;
-    --bind-interface=*)
-      export CL_DOCKER_BIND_INTERFACE="${arg#*=}"
+    --bind-interface)
+      export CL_DOCKER_BIND_INTERFACE=""
       ;;
-    --clean-assembly=*)
-      export CLEAN_ASSEMBLY="${arg#*=}"
+    --clean-assembly)
+      export CLEAN_ASSEMBLY=true
       ;;
-    --do-exit=*)
-      export DO_EXIT="${arg#*=}"
+    --do-exit)
+      export DO_EXIT=true
       ;;
-    --l1=*)
-      export INCLUDE_L1="${arg#*=}"
+    --l1)
+      export INCLUDE_L1=true
       ;;
-    --include-all=*)
-      export INCLUDE_ALL="${arg#*=}"
+    --include-all)
+      export INCLUDE_ALL=true
       ;;
-    --purge-config=*)
-      export PURGE_CONFIG="${arg#*=}"
+    --purge-config)
+      export PURGE_CONFIG=true
       ;;
-    --skip-assembly=*)
-      export SKIP_ASSEMBLY="${arg#*=}"
+    --skip-assembly)
+      export SKIP_ASSEMBLY=true
       ;;
     --net-prefix=*)
       export NET_PREFIX="${arg#*=}"
       ;;
     --tessellation-docker-version=*)
       export TESSELLATION_DOCKER_VERSION="${arg#*=}"
+      ;;
+    --regenerate-test-keys)
+      export REGENERATE_TEST_KEYS=true
       ;;
     *)
       echo "Unknown argument: $arg"

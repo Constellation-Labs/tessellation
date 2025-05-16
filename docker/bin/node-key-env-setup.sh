@@ -49,5 +49,9 @@ populate_test_keys() {
   done
 }
 
-# generate_keys
+
+if [ "$REGENERATE_TEST_KEYS" = true ]; then
+  generate_keys
+fi
+
 populate_test_keys
