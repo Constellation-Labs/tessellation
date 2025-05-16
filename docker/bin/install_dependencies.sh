@@ -10,10 +10,11 @@ check_java_home() {
         JAVA_HOME_LINE='export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(which java)")")")"'
         echo "JAVA_HOME is not set. Attempting to set automatically"
         echo "Please ensure the following line is in your ~/.bashrc or ~/.zshrc file:"
-        echo "Script will attempt to now add it for you and source it, but this only adds to .bashrc" 
+        echo "Script will attempt to now add it for you and run it, but this only adds to .bashrc" 
         echo $JAVA_HOME_LINE
         echo "$JAVA_HOME_LINE" >> $HOME/.bashrc
-        echo "Sourcing .bashrc"
+        echo "Adding JAVA_HOME to current environment"
+        eval $JAVA_HOME_LINE
         if [ -z $JAVA_HOME ]; then
             echo "Failed to set JAVA_HOME automatically. Please set it manually and rerun the script."
             return 1
