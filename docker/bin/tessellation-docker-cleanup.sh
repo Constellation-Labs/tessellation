@@ -13,6 +13,7 @@ cleanup_container() {
     docker stop $name 2>/dev/null || true
     docker rm -f $name 2>/dev/null || true
     docker volume rm ${vol} 2>/dev/null || true
+}
 
 cleanup() {
     for i in 0 1 2; do
@@ -20,11 +21,11 @@ cleanup() {
         cleanup_container dag-l1-$i dag-l1-data-$i &
     done
     LAST_PID=$!
-    echo "$LAST_PID"
+    wait $LAST_PID
 }
 
-export CLEANUP_PID=$(cleanup)
-
+cleanup &
+export CLEANUP_PID=$!
 # 8. Remove the network with better error handling and retry logic
 echo "Removing tessellation_common network..."
 while true; do

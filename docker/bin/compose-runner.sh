@@ -126,6 +126,7 @@ assemble_all() {
   sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
 }
 
+export ASSEMBLY_START_TIME=$(date +%s)
 
 if [[ "$INCLUDE_L0" == "false" && "$INCLUDE_L1" == "false" && "$SKIP_ASSEMBLY" == "false" ]]; then
   assemble_all
@@ -346,7 +347,7 @@ docker network create \
 
 for i in 0 1 2; do
   cd ./nodes/$i/
-  docker compose down --remove-orphans --volumes || true > /dev/null 2>&1; \
+  docker compose down --remove-orphans --volumes > /dev/null 2>&1 || true; \
   cp ../../docker/docker-compose.yaml . ; \
   cp ../../docker/docker-compose.test.yaml . ; \
   docker compose -f docker-compose.test.yaml -f docker-compose.yaml --profile l0 up -d
@@ -380,47 +381,47 @@ verify_healthy() {
   for i in "" "1" "2"; do
       l0_port="${i}9000"
       l1_port="${i}9010"
+      for port in $l0_port $l1_port; do
 
-      # Poll L0 cluster until it has 3 nodes
-      retry_count=0
-      while [ $retry_count -lt $MAX_RETRIES ]; do
-        for port in $l0_port $l1_port; do
-          echo "Checking cluster on port ${port} (attempt $((retry_count+1))/$MAX_RETRIES)"
-          export CLUSTER_INFO=$(curl -s http://localhost:${port}/cluster/info) ||  echo "starting"
-          echo "CLUSTER_INFO: $CLUSTER_INFO for $port"
-          
-          # Check if curl returned valid JSON before using jq
-          if [ -z "$CLUSTER_INFO" ] || [ "$CLUSTER_INFO" = "null" ] || [ "$CLUSTER_INFO" = "starting" ]; then
-            echo "Warning: Empty or null response from L0 cluster"
-            sleep 2
-            retry_count=$((retry_count+1))
-            continue
-          fi
-          
-          # Use jq with error handling
-          CLUSTER_INFO_LEN=$(echo "$CLUSTER_INFO" | jq 'length' 2>/dev/null || echo "0")
-          echo "CLUSTER_INFO_LEN: $CLUSTER_INFO_LEN"
-          
-          if [ "$CLUSTER_INFO_LEN" = "3" ]; then
-            echo "Success: cluster $i has 3 nodes on port $port"
-            break
-          else
-            echo "Warning: cluster $i has $CLUSTER_INFO_LEN nodes on port $port, waiting for 3 nodes"
-            sleep 2
-            retry_count=$((retry_count+1))
-          fi
-          
-          if [ $retry_count -eq $MAX_RETRIES ]; then
-            echo "ERROR: cluster $i doesn't have 3 nodes on port $port after $MAX_RETRIES attempts"
-            exit_func
-          fi
-        done
+        # Poll L0 cluster until it has 3 nodes
+        retry_count=0
+        while [ $retry_count -lt $MAX_RETRIES ]; do
+            # echo "Checking cluster on port ${port} (attempt $((retry_count+1))/$MAX_RETRIES)"
+            export CLUSTER_INFO=$(curl -s http://localhost:${port}/cluster/info) ||  echo "starting"
+            # echo "CLUSTER_INFO: $CLUSTER_INFO for $port"
+            
+            # Check if curl returned valid JSON before using jq
+            if [ -z "$CLUSTER_INFO" ] || [ "$CLUSTER_INFO" = "null" ] || [ "$CLUSTER_INFO" = "starting" ]; then
+              echo "Waiting for node $i on port $port/cluster/info to come online"
+              sleep 2
+              retry_count=$((retry_count+1))
+              continue
+            fi
+            
+            # Use jq with error handling
+            CLUSTER_INFO_LEN=$(echo "$CLUSTER_INFO" | jq 'length' 2>/dev/null || echo "0")
+            # echo "CLUSTER_INFO_LEN: $CLUSTER_INFO_LEN"
+            
+            if [ "$CLUSTER_INFO_LEN" = "3" ]; then
+              echo "Success: cluster $i has 3 nodes on port $port"
+              break
+            else
+              echo "Waiting for node $i on port $port to have 3 nodes, currently has $CLUSTER_INFO_LEN nodes"
+              sleep 2
+              retry_count=$((retry_count+1))
+            fi
+            
+            if [ $retry_count -eq $MAX_RETRIES ]; then
+              echo "ERROR: cluster $i doesn't have 3 nodes on port $port after $MAX_RETRIES attempts"
+              return 1
+            fi
+          done
       done
   done
 
 }
 
-# verify_healthy
+verify_healthy
 
 # # Run the transaction tests
 # echo "Running transaction tests..."
