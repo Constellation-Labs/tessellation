@@ -59,5 +59,9 @@ populate_test_keys() {
   cp ./nodes/0/id_ecdsa.hex $PROJECT_ROOT/.github/code/hypergraph/dag-l0/genesis-node/id_ecdsa.hex
 }
 
-generate_keys
+
+if [ "$REGENERATE_TEST_KEYS" = true ]; then
+  generate_keys
+fi
+
 populate_test_keys
