@@ -30,9 +30,13 @@ export CLEANUP_PID=$!
 echo "Removing tessellation_common network..."
 while true; do
   output=$(docker network rm tessellation_common 2>&1) || true
-  if [[ $output != *"network tessellation_common has active endpoints"* ]]; then
+  if [[ $output == *"not found"* ]]; then
+    echo "Network removed successfully"
+    break
+  elif [[ $output != *"network tessellation_common has active endpoints"* ]]; then
     # If the error message is not present, break the loop
-    echo "Network removed successfully or encountered a different error."
+    echo "Network removed successfully or encountered a different error. Output below"
+    echo $output
     break
   fi
   echo "Network has active endpoints, retrying in 1 second..."
