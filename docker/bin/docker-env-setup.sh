@@ -42,29 +42,6 @@ echo "$ADDRESS,100000000000000" >> genesis.csv
 echo "Generated genesis file:"
 cat genesis.csv
 echo "CL_GENESIS_FILE=./genesis.csv" >> .env
-# echo "CL_DAG_L1_JOIN_ENABLED=false" >> .env
-# echo "CL_DAG_L0_JOIN_ENABLED=false" >> .env
-# echo "CONTAINER_NAME_SUFFIX=-0" >> .env
-# echo "CONTAINER_OFFSET=0" >> .env
-
-# These are only required on systems that implement docker with a host networking bridge
-# Port conflicts cause it to fail with external networks that re-use ports
-# Internal ports
-# echo "L0_CL_PUBLIC_HTTP_PORT=9000" >> .env
-# echo "L0_CL_P2P_HTTP_PORT=9001" >> .env
-# echo "L0_CL_CLI_HTTP_PORT=9002" >> .env
-# # External ports
-# echo "CL_DOCKER_EXTERNAL_L0_PUBLIC=9000" >> .env
-# echo "CL_DOCKER_EXTERNAL_L0_P2P=9001" >> .env
-# echo "CL_DOCKER_EXTERNAL_L0_CLI=9002" >> .env
-# # Internal Ports
-# echo "L1_CL_PUBLIC_HTTP_PORT=9010" >> .env
-# echo "L1_CL_P2P_HTTP_PORT=9011" >> .env
-# echo "L1_CL_CLI_HTTP_PORT=9012" >> .env
-# # External ports
-# echo "CL_DOCKER_EXTERNAL_L1_PUBLIC=9010" >> .env
-# echo "CL_DOCKER_EXTERNAL_L1_P2P=9011" >> .env
-# echo "CL_DOCKER_EXTERNAL_L1_CLI=9012" >> .env
 
 cd ../../
 
