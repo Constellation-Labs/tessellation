@@ -49,7 +49,7 @@ object AmountOpsSuite extends SimpleIOSuite with Checkers {
   test("safeDivideBy should perform normal division when divisor is not zero") {
     // Use a fixed non-empty amount for the divisor to avoid discarding too many values
     val nonEmptyAmount = Amount(NonNegLong.unsafeFrom(100L))
-    
+
     forall(positiveAmountGen) { a1 =>
       for {
         result <- new AmountOpsClass(a1).safeDivideBy(nonEmptyAmount).pure[IO]
@@ -109,7 +109,7 @@ object AmountOpsSuite extends SimpleIOSuite with Checkers {
   test("toAmount should return empty Amount for non-positive BigDecimal") {
     // Use a fixed non-positive value to avoid discarding too many values
     val nonPositiveValue = BigDecimal(-1.0)
-    
+
     for {
       result <- new BigDecimalOps(nonPositiveValue).toAmount[IO]
     } yield expect.eql(Amount.empty, result)
