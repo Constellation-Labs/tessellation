@@ -14,6 +14,7 @@ import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
+import io.constellationnetwork.schema.AmountOps._
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -28,7 +29,6 @@ import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
-import io.constellationnetwork.utils.AmountOps._
 import io.constellationnetwork.utils.DecimalUtils
 
 import eu.timepit.refined.auto.autoUnwrap
@@ -431,12 +431,10 @@ object GlobalDelegatedRewardsDistributor {
     ): F[SortedSet[RewardTransaction]] =
       withdrawingBalances.toList.filter { case (_, amount) => amount.value.value > 0 }.traverse {
         case (address, amount) =>
-          amount.toBigDecimal.roundedHalfUp(0).toTransactionAmount[F].map { roundedAmount =>
-            RewardTransaction(
-              address,
-              TransactionAmount(roundedAmount.value)
-            )
-          }
+          BigDecimal(amount.value.value)
+            .roundedHalfUp(0)
+            .toTransactionAmount[F]
+            .map(RewardTransaction(address, _))
       }.map(SortedSet.from(_))
 
     private def applyDistribution(

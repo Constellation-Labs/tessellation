@@ -35,6 +35,7 @@ import eu.timepit.refined.types.all.NonNegLong
 abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
 object GlobalSnapshotContextFunctions {
+
   def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider](
     snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     updateDelegatedStakeAcceptanceManager: UpdateDelegatedStakeAcceptanceManager[F],
