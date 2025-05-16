@@ -1,6 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
 import cats.Applicative
+import cats.data.Validated.{Invalid, Valid}
 import cats.data.{NonEmptyList, OptionT}
 import cats.effect.Async
 import cats.syntax.all._
@@ -150,42 +151,69 @@ object DataApplicationSnapshotAcceptanceManager {
         )
 
         dataState = DataState(lastOnChainState, lastCalculatedState)
+        initialResult = (
+          dataState,
+          List.empty[Signed[FeeTransaction]],
+          List.empty[Signed[DataApplicationBlock]],
+          List.empty[(Signed[DataApplicationBlock], DataBlockNotAccepted)]
+        )
 
-        (validatedUpdates, validatedBlocks, notAccepted) <- OptionT.liftF {
+        processingResult <- OptionT.liftF {
           NonEmptyList
             .fromList(dataBlocks.distinctBy(_.value.roundId))
-            .map { uniqueBlocks =>
-              uniqueBlocks.toList.traverse { dataBlock =>
+            .map(_.toList)
+            .getOrElse(Nil)
+            .foldLeftM(initialResult) {
+              case ((currentState, accFeeTransactions, accAcceptedBlocks, accNotAcceptedBlocks), dataBlock) =>
                 val dataTransactions = dataBlock.value.dataTransactions
 
                 val dataTransactionsValidations =
                   dataTransactions.traverse(validateDataTransactionsL0(_, service, balances, currentOrdinal, dataState)).map(_.reduce)
 
-                dataTransactionsValidations.flatTap { validated =>
-                  logger.warn(s"Data application is invalid, errors: ${validated.toString}").whenA(validated.isInvalid)
+                dataTransactionsValidations.flatTap { validation =>
+                  if (validation.isValid)
+                    logger.debug(s"Validating block with roundId=${dataBlock.value.roundId}")
+                  else
+                    logger.debug(s"Block ${dataBlock.value.roundId} is invalid: ${validation.fold(_.toList.mkString(", "), _ => "")}")
+                }.flatMap {
+                  case Valid(_) =>
+                    val dataTransactionsAsList = dataTransactions.toList
+                    val dataUpdates = getDataUpdates(dataTransactionsAsList)
+                    val feeTransactions = getFeeTransactions(dataTransactionsAsList)
+
+                    logger.debug(s"Block ${dataBlock.value.roundId} is valid") >>
+                      service.combine(currentState, dataUpdates).map { newState =>
+                        (
+                          newState,
+                          accFeeTransactions ++ feeTransactions,
+                          accAcceptedBlocks :+ dataBlock,
+                          accNotAcceptedBlocks
+                        )
+                      }
+                  case Invalid(err) =>
+                    Async[F].pure(
+                      (
+                        currentState,
+                        accFeeTransactions,
+                        accAcceptedBlocks,
+                        accNotAcceptedBlocks :+ (dataBlock, DataBlockNotAccepted(err.toString))
+                      )
+                    )
+                }.handleErrorWith { err =>
+                  logger.error(err)(s"Exception during block validation for roundId=${dataBlock.value.roundId}") >>
+                    Async[F].pure(
+                      (
+                        currentState,
+                        accFeeTransactions,
+                        accAcceptedBlocks,
+                        accNotAcceptedBlocks :+ (dataBlock, DataBlockNotAccepted(err.getMessage))
+                      )
+                    )
                 }
-                  .map(x => if (x.isInvalid) Some((dataBlock, DataBlockNotAccepted(x.toString))) else None)
-                  .handleErrorWith(err =>
-                    logger
-                      .error(err)("Unhandled exception during validating data application, assumed as invalid")
-                      .as(Some((dataBlock, DataBlockNotAccepted(err.getMessage))))
-                  )
-              }.map(_.flatten).map { invalidDataBlocks =>
-                if (invalidDataBlocks.isEmpty) {
-                  val updates = uniqueBlocks.flatMap(_.value.dataTransactions)
-                  (updates.toList, uniqueBlocks.toList, List.empty)
-                } else {
-                  (List.empty, List.empty, invalidDataBlocks)
-                }
-              }
             }
-            .getOrElse((List.empty, List.empty, List.empty).pure[F])
         }
 
-        newDataState <- OptionT.liftF {
-          val dataUpdates = getDataUpdates(validatedUpdates)
-          service.combine(dataState, dataUpdates)
-        }
+        (newDataState, validatedFeeTransactions, validatedBlocks, notAcceptedBlocks) = processingResult
 
         serializedOnChainState <- OptionT.liftF(
           service.serializeState(newDataState.onChain)
@@ -194,8 +222,6 @@ object DataApplicationSnapshotAcceptanceManager {
         serializedBlocks <- OptionT.liftF(
           validatedBlocks.traverse(service.serializeBlock)
         )
-
-        feeTransactions = getFeeTransactions(validatedUpdates)
 
         calculatedStateProof <- OptionT.liftF(
           service.hashCalculatedState(newDataState.calculated)
@@ -212,9 +238,9 @@ object DataApplicationSnapshotAcceptanceManager {
         DataApplicationAcceptanceResult(
           DataApplicationPart(serializedOnChainState, serializedBlocks, calculatedStateProof),
           newDataState.calculated,
-          feeTransactions,
+          validatedFeeTransactions,
           sharedArtifacts,
-          notAccepted
+          notAcceptedBlocks
         )
 
       newDataState.value.handleErrorWith { err =>
