@@ -50,6 +50,15 @@ if [ -z "$CLEANUP_DOCKER_AT_END" ]; then
     export CLEANUP_DOCKER_AT_END=false
 fi
 
+if [ -z "$DAG_L0_PORT_PREFIX" ]; then
+    export DAG_L0_PORT_PREFIX=90
+fi
+
+if [ -z "$DAG_L1_PORT_PREFIX" ]; then
+    export DAG_L1_PORT_PREFIX=91
+fi
+
+
 # Process command-line arguments
 for arg in "$@"; do
   case "$arg" in
@@ -79,6 +88,15 @@ for arg in "$@"; do
       ;;
     --net-prefix=*)
       export NET_PREFIX="${arg#*=}"
+      ;;
+    --dag-l0-port-prefix=*)
+      export DAG_L0_PORT_PREFIX="${arg#*=}"
+      ;;
+    --dag-l1-port-prefix=*)
+      export DAG_L1_PORT_PREFIX="${arg#*=}"
+      ;;
+    --cleanup-docker-at-end=*)
+      export CLEANUP_DOCKER_AT_END="${arg#*=}"
       ;;
     --tessellation-docker-version=*)
       export TESSELLATION_DOCKER_VERSION="${arg#*=}"

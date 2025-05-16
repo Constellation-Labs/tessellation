@@ -2,9 +2,9 @@
 verify_healthy() {
   echo "Sending cluster poll health request for cluster info to check joined."
   MAX_RETRIES=30
-  for i in "" "1" "2"; do
-      l0_port="${i}9000"
-      l1_port="${i}9010"
+  for i in "0" "1" "2"; do
+      l0_port="${DAG_L0_PORT_PREFIX}${i}0"
+      l1_port="${DAG_L1_PORT_PREFIX}${i}0"
       for port in $l0_port $l1_port; do
 
         # Poll L0 cluster until it has 3 nodes

@@ -1,5 +1,3 @@
-export DAG_L0_PORT_PREFIX=90
-export DAG_L1_PORT_PREFIX=91
 
 export GL0_GENERATED_WALLET_PEER_ID=$(cat ./nodes/0/peer_id)
 echo "Generated GL0 wallet peer id $GL0_GENERATED_WALLET_PEER_ID"
@@ -37,10 +35,11 @@ cp ./.github/config/genesis.csv ./nodes/0/genesis.csv
 cd ./nodes/0/
 # 1000000 * 1e8
 # Ensure the file ends with a newline before appending
-sed -i -e '$a\' genesis.csv
+echo "" >> genesis.csv
 echo "$ADDRESS,100000000000000" >> genesis.csv
 echo "Generated genesis file:"
 cat genesis.csv
+sed -i.bak '${\n/^$/d\n}' genesis.csv && rm -f genesis.csv.bak
 echo "CL_GENESIS_FILE=./genesis.csv" >> .env
 
 cd ../../

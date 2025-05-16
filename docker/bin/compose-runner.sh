@@ -86,9 +86,8 @@ source ../../docker/bin/health-check.sh
 verify_healthy
 show_time "Cluster became healthy"
 
-cd .github/action_scripts/delegated_staking
-node delegated-staking.js 90 91 testDelegatedStaking
-
+cd $PROJECT_ROOT/.github/action_scripts/delegated_staking
+node delegated-staking.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX testDelegatedStaking
 
 echo "------------------------------------------------"
 echo "End-to-end tests completed"

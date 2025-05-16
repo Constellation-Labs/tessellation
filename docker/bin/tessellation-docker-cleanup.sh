@@ -33,7 +33,7 @@ while true; do
   if [[ $output == *"not found"* ]]; then
     echo "Network removed successfully"
     break
-  elif [[ $output != *"network tessellation_common has active endpoints"* ]]; then
+  elif [[ $output != *"has active endpoints"* ]]; then
     # If the error message is not present, break the loop
     echo "Network removed successfully or encountered a different error. Output below"
     echo $output
