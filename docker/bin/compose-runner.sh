@@ -168,6 +168,10 @@ else
   fi
 fi
 
+export ASSEMBLY_END_TIME=$(date +%s)
+export ASSEMBLY_DURATION=$((ASSEMBLY_END_TIME - ASSEMBLY_START_TIME))
+echo "Assembly completed in $ASSEMBLY_DURATION seconds"
+
 mkdir -p ./docker/jars/
 
 for module in "dag-l0" "dag-l1" "keytool" "wallet"
@@ -327,6 +331,7 @@ for i in 1 2; do
   echo "L1_CL_PUBLIC_HTTP_PORT=${i}9010" >> .env
   echo "L1_CL_P2P_HTTP_PORT=${i}9011" >> .env
   echo "L1_CL_CLI_HTTP_PORT=${i}9012" >> .env
+  echo "CL_DOCKER_L1_JOIN_DELAY=$((i*10))" >> .env
 
   cd ../../
 done
@@ -356,9 +361,13 @@ done
 
 export DOCKER_STARTED_TIME=$(date +%s)
 
-echo "Docker started at $DOCKER_STARTED_TIME"
+echo "Test setup started at $DOCKER_STARTED_TIME"
 DELTA_SECONDS=$((DOCKER_STARTED_TIME - START_TIME))
-echo "Docker started in $DELTA_SECONDS seconds"
+DELTA_SECONDS_DOCKER_ONLY=$((DOCKER_STARTED_TIME - ASSEMBLY_END_TIME))
+DELTA_SECONDS_ASSEMBLY_ONLY=$((ASSEMBLY_END_TIME - START_TIME))
+echo "Assembly setup completed in $DELTA_SECONDS_ASSEMBLY_ONLY seconds"
+echo "Docker setup completed in $DELTA_SECONDS_DOCKER_ONLY seconds"
+echo "Test setup completed in $DELTA_SECONDS seconds"
 
 echo "------------------------------------------------"
 echo "Running end-to-end tests from .github/action_scripts"
@@ -375,52 +384,7 @@ cd .github/action_scripts
 echo "Installing Node.js dependencies..."
 npm i @stardust-collective/dag4 js-sha256 axios brotli zod
 
-verify_healthy() {
-  echo "Sending cluster poll health request for cluster info to check joined."
-  MAX_RETRIES=30
-  for i in "" "1" "2"; do
-      l0_port="${i}9000"
-      l1_port="${i}9010"
-      for port in $l0_port $l1_port; do
-
-        # Poll L0 cluster until it has 3 nodes
-        retry_count=0
-        while [ $retry_count -lt $MAX_RETRIES ]; do
-            # echo "Checking cluster on port ${port} (attempt $((retry_count+1))/$MAX_RETRIES)"
-            export CLUSTER_INFO=$(curl -s http://localhost:${port}/cluster/info) ||  echo "starting"
-            # echo "CLUSTER_INFO: $CLUSTER_INFO for $port"
-            
-            # Check if curl returned valid JSON before using jq
-            if [ -z "$CLUSTER_INFO" ] || [ "$CLUSTER_INFO" = "null" ] || [ "$CLUSTER_INFO" = "starting" ]; then
-              echo "Waiting for node $i on port $port/cluster/info to come online"
-              sleep 2
-              retry_count=$((retry_count+1))
-              continue
-            fi
-            
-            # Use jq with error handling
-            CLUSTER_INFO_LEN=$(echo "$CLUSTER_INFO" | jq 'length' 2>/dev/null || echo "0")
-            # echo "CLUSTER_INFO_LEN: $CLUSTER_INFO_LEN"
-            
-            if [ "$CLUSTER_INFO_LEN" = "3" ]; then
-              echo "Success: cluster $i has 3 nodes on port $port"
-              break
-            else
-              echo "Waiting for node $i on port $port to have 3 nodes, currently has $CLUSTER_INFO_LEN nodes"
-              sleep 2
-              retry_count=$((retry_count+1))
-            fi
-            
-            if [ $retry_count -eq $MAX_RETRIES ]; then
-              echo "ERROR: cluster $i doesn't have 3 nodes on port $port after $MAX_RETRIES attempts"
-              return 1
-            fi
-          done
-      done
-  done
-
-}
-
+source ./docker/bin/health-check.sh
 verify_healthy
 
 # # Run the transaction tests
