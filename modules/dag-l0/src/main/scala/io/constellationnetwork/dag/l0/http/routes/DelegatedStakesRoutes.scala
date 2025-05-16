@@ -27,7 +27,6 @@ import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.utils.AmountOps._
 import io.constellationnetwork.utils.DecimalUtils
 import io.constellationnetwork.utils.DecimalUtils.syntax._
 
@@ -40,6 +39,8 @@ import org.http4s.dsl.Http4sDsl
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import shapeless._
 import shapeless.syntax.singleton._
+
+import AmountOps._
 
 final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
   mkCell: DelegatedStakeOutput => Cell[F, StackF, _, Either[CellError, Ω], _],
