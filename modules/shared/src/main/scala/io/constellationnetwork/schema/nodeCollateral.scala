@@ -1,9 +1,9 @@
 package io.constellationnetwork.schema
 
+import cats.Order
 import cats.Order._
 import cats.effect.kernel.Async
-import cats.syntax.functor._
-import cats.syntax.semigroup._
+import cats.syntax.all._
 
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.ext.derevo.ordering
@@ -67,7 +67,7 @@ object nodeCollateral {
   @derive(eqv, show, encoder, decoder)
   sealed trait UpdateNodeCollateral
   case object UpdateNodeCollateral {
-    @derive(eqv, show, encoder, decoder)
+    @derive(eqv, show, encoder, decoder, order)
     case class Create(
       source: Address,
       nodeId: PeerId,
@@ -89,12 +89,24 @@ object nodeCollateral {
   @derive(decoder, encoder, eqv, show)
   case class NodeCollateralRecord(event: Signed[UpdateNodeCollateral.Create], createdAt: SnapshotOrdinal)
 
+  object NodeCollateralRecord {
+    implicit val order: Order[NodeCollateralRecord] = Order[SnapshotOrdinal].contramap(_.createdAt)
+
+    implicit val ordering: Ordering[NodeCollateralRecord] =
+      Ordering.by(r => (r.createdAt, r.event))
+  }
   @derive(decoder, encoder, eqv, show)
   case class PendingNodeCollateralWithdrawal(
     event: Signed[UpdateNodeCollateral.Create],
     acceptedOrdinal: SnapshotOrdinal,
     createdAt: EpochProgress
   )
+  object PendingNodeCollateralWithdrawal {
+    implicit val order: Order[PendingNodeCollateralWithdrawal] = Order[EpochProgress].contramap(_.createdAt)
+
+    implicit val ordering: Ordering[PendingNodeCollateralWithdrawal] =
+      Ordering.by(r => (r.createdAt, r.event))
+  }
 
   @derive(eqv, show, encoder)
   case class NodeCollateralInfo(

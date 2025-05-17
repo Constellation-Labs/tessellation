@@ -56,7 +56,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         nodeId2.toPeerId -> Map(address2 -> Amount(NonNegLong.unsafeFrom(amount.value.value * 15 / 100)))
       ),
       updatedCreateDelegatedStakes = SortedMap(
-        address1 -> List(
+        address1 -> SortedSet(
           DelegatedStakeRecord(
             Signed(
               UpdateDelegatedStake.Create(
@@ -249,8 +249,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     val stakes = SortedMap(
-      address1 -> List(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L))),
-      address2 -> List(DelegatedStakeRecord(stakeCreate2, SnapshotOrdinal(1L), Balance(200L)))
+      address1 -> SortedSet(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L))),
+      address2 -> SortedSet(DelegatedStakeRecord(stakeCreate2, SnapshotOrdinal(1L), Balance(200L)))
     )
 
     val nodeParams = SortedMap(
@@ -453,7 +453,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     val initialStakes = SortedMap(
-      address1 -> List(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L)))
+      address1 -> SortedSet(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L)))
     )
 
     val nodeParams = SortedMap(
@@ -584,7 +584,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     val stakes = SortedMap(
-      address1 -> List(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L)))
+      address1 -> SortedSet(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L)))
     )
 
     val nodeParams = SortedMap(
@@ -744,7 +744,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
 
     // Zero-stake records
     val zeroStakes = SortedMap(
-      address1 -> List(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance.empty))
+      address1 -> SortedSet(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance.empty))
     )
 
     val nodeParams = SortedMap(
@@ -996,16 +996,16 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
 
       // Combine stakes into a map organized by address -> stake list
       val stakes = SortedMap(
-        userXAddress -> List(
+        userXAddress -> SortedSet(
           DelegatedStakeRecord(stakeCreateUserXNodeA, SnapshotOrdinal(1L), Balance(0L)),
           DelegatedStakeRecord(stakeCreateUserXNodeB, SnapshotOrdinal(1L), Balance(0L))
         ),
-        userYAddress -> List(
+        userYAddress -> SortedSet(
           DelegatedStakeRecord(stakeCreateUserYNodeA, SnapshotOrdinal(1L), Balance(0L)),
           DelegatedStakeRecord(stakeCreateUserYNodeB, SnapshotOrdinal(1L), Balance(0L)),
           DelegatedStakeRecord(stakeCreateUserYNodeC, SnapshotOrdinal(1L), Balance(0L))
         ),
-        userZAddress -> List(
+        userZAddress -> SortedSet(
           DelegatedStakeRecord(stakeCreateUserZNodeA, SnapshotOrdinal(1L), Balance(0L)),
           DelegatedStakeRecord(stakeCreateUserZNodeB, SnapshotOrdinal(1L), Balance(0L))
         )

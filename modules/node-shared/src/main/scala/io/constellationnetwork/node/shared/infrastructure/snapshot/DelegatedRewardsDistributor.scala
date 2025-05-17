@@ -23,15 +23,15 @@ import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshot
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
+import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedSetSyntax}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 
 case class DelegatedRewardsResult(
   delegatorRewardsMap: SortedMap[PeerId, Map[Address, Amount]],
-  updatedCreateDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
-  updatedWithdrawDelegatedStakes: SortedMap[Address, List[PendingDelegatedStakeWithdrawal]],
+  updatedCreateDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
+  updatedWithdrawDelegatedStakes: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
   nodeOperatorRewards: SortedSet[RewardTransaction],
   reservedAddressRewards: SortedSet[RewardTransaction],
   withdrawalRewardTxs: SortedSet[RewardTransaction],
@@ -39,9 +39,9 @@ case class DelegatedRewardsResult(
 )
 
 case class PartitionedStakeUpdates(
-  unexpiredCreateDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
-  unexpiredWithdrawalsDelegatedStaking: SortedMap[Address, List[PendingDelegatedStakeWithdrawal]],
-  expiredWithdrawalsDelegatedStaking: SortedMap[Address, List[PendingDelegatedStakeWithdrawal]]
+  unexpiredCreateDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
+  unexpiredWithdrawalsDelegatedStaking: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
+  expiredWithdrawalsDelegatedStaking: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]]
 )
 
 trait DelegatedRewardsDistributor[F[_]] {
@@ -64,7 +64,7 @@ object DelegatedRewardsDistributor {
     * (Address, TokenLockRef) tuples representing the modified stakes.
     */
   def identifyModifiedStakes(
-    existingRecords: SortedMap[Address, List[DelegatedStakeRecord]],
+    existingRecords: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
     acceptedCreates: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]]
   ): Set[(Address, Hash)] =
     acceptedCreates.toSeq.flatMap {
@@ -82,9 +82,9 @@ object DelegatedRewardsDistributor {
     * calculations.
     */
   def filterOutModifiedStakes(
-    existingRecords: SortedMap[Address, List[DelegatedStakeRecord]],
+    existingRecords: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
     modifiedStakes: Set[(Address, Hash)]
-  ): SortedMap[Address, List[DelegatedStakeRecord]] =
+  ): SortedMap[Address, SortedSet[DelegatedStakeRecord]] =
     existingRecords.iterator.flatMap {
       case (address, records) =>
         val filtered = records.filterNot { record =>
@@ -101,7 +101,7 @@ object DelegatedRewardsDistributor {
     delegatorRewardsMap: Map[PeerId, Map[Address, Amount]],
     delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
     partitionedRecords: PartitionedStakeUpdates
-  ): F[SortedMap[Address, List[DelegatedStakeRecord]]] = {
+  ): F[SortedMap[Address, SortedSet[DelegatedStakeRecord]]] = {
     val existingRecords = partitionedRecords.unexpiredCreateDelegatedStakes
     val modifiedStakes = identifyModifiedStakes(existingRecords, delegatedStakeDiffs.acceptedCreates)
 
@@ -121,7 +121,7 @@ object DelegatedRewardsDistributor {
                 ord,
                 matchingExistingRecord.map(_.rewards).getOrElse(Balance.empty)
               ).pure[F]
-          }.map(addr -> _)
+          }.map(records => addr -> records.toSortedSet)
       }.map(_.toSortedMap)
 
       filteredExistingRecords = filterOutModifiedStakes(existingRecords, modifiedStakes)
@@ -133,7 +133,7 @@ object DelegatedRewardsDistributor {
 
         mergedRecords.toList.traverse {
           case (addr, records) =>
-            records.traverse { record =>
+            records.toList.traverse { record =>
               for {
                 ref <- DelegatedStakeReference.of[F](record.event)
                 isWithdrawn = withdrawnStakes.contains(ref.hash)
@@ -162,10 +162,10 @@ object DelegatedRewardsDistributor {
             // ensure we're not accidentally zeroing out rewards
             val disbursedBalance =
               if (isModified) record.rewards
-              else record.rewards.plus(nodeSpecificReward).toOption.getOrElse(Balance.empty)
+              else record.rewards.plus(nodeSpecificReward).toOption.getOrElse(Amount.empty)
 
             DelegatedStakeRecord(record.event, record.createdAt, disbursedBalance)
-          }
+          }.toSortedSet
       }.filterNot(_._2.isEmpty).toSortedMap)
     } yield activeStakes
   }
@@ -174,7 +174,7 @@ object DelegatedRewardsDistributor {
     lastSnapshotContext: GlobalSnapshotInfo,
     delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
     partitionedRecords: PartitionedStakeUpdates
-  ): F[SortedMap[Address, List[PendingDelegatedStakeWithdrawal]]] =
+  ): F[SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]]] =
     delegatedStakeDiffs.acceptedWithdrawals.toList.traverse {
       case (addr, acceptedWithdrawls) =>
         acceptedWithdrawls.traverse {
@@ -186,8 +186,10 @@ object DelegatedRewardsDistributor {
                 }.map(_.map(rec => PendingDelegatedStakeWithdrawal(rec.event, rec.rewards, rec.createdAt, ep)))
               })
               .flatMap(Async[F].fromOption(_, new RuntimeException("Unexpected None when processing user delegations")))
-        }.map(addr -> _)
-    }.map(SortedMap.from(_))
+        }.map { records =>
+          addr -> records.toSortedSet
+        }
+    }.map(records => SortedMap.from(records))
       .map(partitionedRecords.unexpiredWithdrawalsDelegatedStaking |+| _)
       .map(_.filterNot(_._2.isEmpty))
 

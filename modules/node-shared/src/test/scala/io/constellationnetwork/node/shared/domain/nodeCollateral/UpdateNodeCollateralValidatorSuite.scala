@@ -201,7 +201,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeNodeCollaterals =
-        Some(SortedMap(address -> List(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue))))
+        Some(SortedMap(address -> SortedSet(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue))))
       )
       lastRef <- NodeCollateralReference.of(signedParent)
       validCreate = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference, lastRef)
@@ -223,7 +223,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       lastRef <- NodeCollateralReference.of(signedParent)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeNodeCollaterals =
-        Some(SortedMap(address -> List(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue))))
+        Some(SortedMap(address -> SortedSet(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue))))
       )
       validCreate = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference, lastRef)
       signed <- forAsyncHasher(validCreate, keyPair)
@@ -246,9 +246,10 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       signedWithdraw <- forAsyncHasher(validWithdraw, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(
-        activeNodeCollaterals = Some(SortedMap(address -> List(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue)))),
-        nodeCollateralWithdrawals =
-          Some(SortedMap(address -> List(PendingNodeCollateralWithdrawal(signedParent, SnapshotOrdinal.MinValue, EpochProgress.MinValue))))
+        activeNodeCollaterals = Some(SortedMap(address -> SortedSet(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue)))),
+        nodeCollateralWithdrawals = Some(
+          SortedMap(address -> SortedSet(PendingNodeCollateralWithdrawal(signedParent, SnapshotOrdinal.MinValue, EpochProgress.MinValue)))
+        )
       )
       validCreate = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference, lastRef)
       signed <- forAsyncHasher(validCreate, keyPair)
@@ -268,7 +269,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       signedParent <- forAsyncHasher(parent.copy(nodeId = nodeId1), keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeNodeCollaterals =
-        Some(SortedMap(address -> List(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue))))
+        Some(SortedMap(address -> SortedSet(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue))))
       )
       validCreate = testCreateNodeCollateral(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
@@ -293,7 +294,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       context = lastContext.copy(activeDelegatedStakes =
         Some(
           SortedMap(
-            address -> List(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty))
+            address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty))
           )
         )
       )
@@ -343,7 +344,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
     for {
       signedParent <- forAsyncHasher(validParent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
-      context = mkGlobalContext(SortedMap(address -> List(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue))))
+      context = mkGlobalContext(SortedMap(address -> SortedSet(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue))))
       lastRef <- NodeCollateralReference.of(signedParent)
       validWithdraw = testWithdrawNodeCollateral(keyPair, sourceAddress).copy(collateralRef = lastRef.hash)
       signed <- forAsyncHasher(validWithdraw, keyPair)
@@ -361,7 +362,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
     for {
       signedParent <- forAsyncHasher(validParent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
-      context = mkGlobalContext(SortedMap(address -> List(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue))))
+      context = mkGlobalContext(SortedMap(address -> SortedSet(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue))))
       lastRef <- NodeCollateralReference.of(signedParent)
       validWithdraw = testWithdrawNodeCollateral(keyPair, sourceAddress).copy(collateralRef = lastRef.hash)
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -393,7 +394,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
     for {
       signedParent <- forAsyncHasher(validParent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
-      context = mkGlobalContext(SortedMap(address -> List(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue))))
+      context = mkGlobalContext(SortedMap(address -> SortedSet(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue))))
       lastRef <- NodeCollateralReference.of(signedParent)
       validWithdraw = testWithdrawNodeCollateral(keyPair, sourceAddress).copy(collateralRef = lastRef.hash)
       signed1 <- forAsyncHasher(validWithdraw, keyPair)
@@ -445,7 +446,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
     for {
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
-      context = mkGlobalContext(SortedMap(address -> List(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue))))
+      context = mkGlobalContext(SortedMap(address -> SortedSet(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue))))
       lastRef <- NodeCollateralReference.of(signedParent)
       validWithdraw = testWithdrawNodeCollateral(keyPair, sourceAddress).copy(collateralRef = lastRef.hash)
       signed <- forAsyncHasher(validWithdraw, keyPair)
@@ -462,7 +463,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
     for {
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
-      context = mkGlobalContext(SortedMap(address -> List()))
+      context = mkGlobalContext(SortedMap(address -> SortedSet()))
       lastRef <- h.hash(parent)
       invalidWithdraw = testWithdrawNodeCollateral(keyPair, sourceAddress).copy(collateralRef = lastRef)
       signed <- forAsyncHasher(invalidWithdraw, keyPair)
@@ -481,7 +482,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
         keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
         signedParent <- forAsyncHasher(parent, keyPair1)
         address <- signedParent.proofs.head.id.toAddress
-        context = mkGlobalContext(SortedMap(address -> List(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue))))
+        context = mkGlobalContext(SortedMap(address -> SortedSet(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue))))
         lastRef <- NodeCollateralReference.of(signedParent)
         invalidWithdraw = testWithdrawNodeCollateral(keyPair, sourceAddress).copy(collateralRef = lastRef.hash)
         signed <- forAsyncHasher(invalidWithdraw, keyPair)
@@ -502,9 +503,9 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       validWithdraw = testWithdrawNodeCollateral(keyPair, sourceAddress).copy(collateralRef = lastRef.hash)
       signed <- forAsyncHasher(validWithdraw, keyPair)
       context = mkGlobalContext(
-        SortedMap(address -> List(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue))),
+        SortedMap(address -> SortedSet(NodeCollateralRecord(signedParent, SnapshotOrdinal.MinValue))),
         withdrawals =
-          SortedMap(address -> List(PendingNodeCollateralWithdrawal(signedParent, SnapshotOrdinal.MinValue, EpochProgress.MinValue)))
+          SortedMap(address -> SortedSet(PendingNodeCollateralWithdrawal(signedParent, SnapshotOrdinal.MinValue, EpochProgress.MinValue)))
       )
       seedlist <- mkSeedlist(validParent.nodeId)
       validator = mkValidator(seedlist)
@@ -531,8 +532,8 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
   }
 
   def mkGlobalContext(
-    nodeCollaterals: SortedMap[Address, List[NodeCollateralRecord]] = SortedMap.empty,
-    withdrawals: SortedMap[Address, List[PendingNodeCollateralWithdrawal]] = SortedMap.empty,
+    nodeCollaterals: SortedMap[Address, SortedSet[NodeCollateralRecord]] = SortedMap.empty,
+    withdrawals: SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]] = SortedMap.empty,
     tokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = SortedMap.empty
   ) =
     GlobalSnapshotInfo.empty.copy(

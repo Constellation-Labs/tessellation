@@ -64,10 +64,10 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
     val stake3 = createSignedStake(address3, nodeId1, 3000L)
 
     val existingStakes = SortedMap(
-      address1 -> List(
+      address1 -> SortedSet(
         DelegatedStakeRecord(stake1A, SnapshotOrdinal(1L), Balance(50L))
       ),
-      address2 -> List(
+      address2 -> SortedSet(
         DelegatedStakeRecord(stake2, SnapshotOrdinal(1L), Balance(75L))
       )
     )
@@ -127,10 +127,10 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
     val stake2 = createSignedStake(address2, nodeId2, 2000L)
 
     val existingStakes = SortedMap(
-      address1 -> List(
+      address1 -> SortedSet(
         DelegatedStakeRecord(stake1, SnapshotOrdinal(1L), Balance(100L))
       ),
-      address2 -> List(
+      address2 -> SortedSet(
         DelegatedStakeRecord(stake2, SnapshotOrdinal(1L), Balance(200L))
       )
     )
@@ -179,10 +179,10 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
     )
 
     val existingStakes = SortedMap(
-      address1 -> List(
+      address1 -> SortedSet(
         DelegatedStakeRecord(stake1, SnapshotOrdinal(1L), Balance(100L))
       ),
-      address2 -> List(
+      address2 -> SortedSet(
         DelegatedStakeRecord(stake2, SnapshotOrdinal(1L), Balance(200L))
       )
     )
@@ -235,7 +235,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
         partitionedRecords
       )
     } yield {
-      val address1Stakes = updatedStakes.get(address1).map(_.length)
+      val address1Stakes = updatedStakes.get(address1).map(_.toList.length)
       val address2Balance = updatedStakes.get(address2).flatMap(_.headOption.map(_.rewards.value.value))
 
       expect(address1Stakes.isEmpty || address1Stakes.contains(0))
@@ -254,7 +254,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
     val stake1B = createSignedStake(address1, nodeId2, 1000L, customTokenLockRef)
 
     val initialStakes = SortedMap(
-      address1 -> List(
+      address1 -> SortedSet(
         DelegatedStakeRecord(stake1A, SnapshotOrdinal(1L), Balance(50L))
       )
     )
@@ -347,7 +347,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
 
       // Set up existing records and accepted creates
       existingRecords = SortedMap(
-        walletAddress -> List(
+        walletAddress -> SortedSet(
           DelegatedStakeRecord(originalStake, SnapshotOrdinal(10L), Balance(103778187663683L))
         )
       )
@@ -412,7 +412,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
 
             rewardsMap = partitionedRecords.unexpiredCreateDelegatedStakes.flatMap {
               case (addr, records) =>
-                records.map { record =>
+                records.toList.map { record =>
                   val isModified = modifiedStakes.contains((addr, record.event.value.tokenLockRef))
                   val nodeId = record.event.value.nodeId
                   val rewardAmount = if (!isModified) Amount(100L) else Amount(0L)
@@ -457,7 +457,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
     val modifiedStake = createSignedStake(walletAddress, nodeId2, 1000L, originalTokenLockRef)
     val balanceValue = NonNegLong.unsafeFrom(initialBalance)
     val unexpiredCreateDelegatedStakes = SortedMap(
-      walletAddress -> List(
+      walletAddress -> SortedSet(
         DelegatedStakeRecord(originalStake, SnapshotOrdinal(10L), Balance(balanceValue))
       )
     )
