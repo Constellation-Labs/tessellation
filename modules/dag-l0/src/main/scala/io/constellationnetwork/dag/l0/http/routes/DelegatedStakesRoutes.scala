@@ -4,7 +4,7 @@ import cats.data.Validated.{Invalid, Valid}
 import cats.effect.Async
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.dag.l0.domain.delegatedStake.{CreateDelegatedStakeOutput, DelegatedStakeOutput, WithdrawDelegatedStakeOutput}
 import io.constellationnetwork.ext.http4s.AddressVar
@@ -48,17 +48,17 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
   protected val prefixPath: InternalUrlPrefix = "/delegated-stakes"
 
   private def getDelegatedStakesInfo(address: Address, info: GlobalSnapshotInfo): F[DelegatedStakesInfo] = {
-    val lastStakes: List[DelegatedStakeRecord] =
+    val lastStakes: SortedSet[DelegatedStakeRecord] =
       info.activeDelegatedStakes
-        .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
-        .getOrElse(address, List.empty)
-    val lastWithdrawals: List[PendingDelegatedStakeWithdrawal] =
+        .getOrElse(SortedMap.empty[Address, SortedSet[DelegatedStakeRecord]])
+        .getOrElse(address, SortedSet.empty)
+    val lastWithdrawals: SortedSet[PendingDelegatedStakeWithdrawal] =
       info.delegatedStakesWithdrawals
-        .getOrElse(SortedMap.empty[Address, List[PendingDelegatedStakeWithdrawal]])
-        .getOrElse(address, List.empty)
+        .getOrElse(SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]])
+        .getOrElse(address, SortedSet.empty)
 
     for {
-      stakes <- lastStakes.traverse {
+      stakes <- lastStakes.toList.traverse {
         case DelegatedStakeRecord(stake, ord, bal) =>
           DelegatedStakeReference
             .of(stake)
@@ -89,7 +89,7 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
           }
       }
 
-      withdrawals <- lastWithdrawals.traverse {
+      withdrawals <- lastWithdrawals.toList.traverse {
         case PendingDelegatedStakeWithdrawal(stake, bal, acceptedOrdinal, epochProgress) =>
           DelegatedStakeReference
             .of(stake)

@@ -110,7 +110,7 @@ object GlobalDelegatedRewardsDistributor {
       }
 
     private def calculateEmissionDistribution(
-      activeDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
+      activeDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
       totalRewards: Amount,
       pctConfig: ProgramsDistributionConfig,
       epochsPerYear: Long
@@ -243,7 +243,7 @@ object GlobalDelegatedRewardsDistributor {
       stakeRecord.event.value.amount.value.value + stakeRecord.rewards.value
 
     private def getTotalActiveStake(
-      activeDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]]
+      activeDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]]
     ): F[Amount] =
       if (activeDelegatedStakes.isEmpty) Amount.empty.pure[F]
       else {
@@ -263,7 +263,7 @@ object GlobalDelegatedRewardsDistributor {
       }
 
     private def calculateDelegatorRewards(
-      activeDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
+      activeDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
       nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
       totalDelegationRewardPool: BigDecimal,
       acceptedCreates: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]]
@@ -369,7 +369,7 @@ object GlobalDelegatedRewardsDistributor {
       }
 
       val activeDelegatedStakes =
-        lastSnapshotContext.activeDelegatedStakes.getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
+        lastSnapshotContext.activeDelegatedStakes.getOrElse(SortedMap.empty[Address, SortedSet[DelegatedStakeRecord]])
 
       if (activeDelegatedStakes.isEmpty || (delegatorRewardPool === BigDecimal(0) && facilitatorRewardPool === BigDecimal(0)))
         SortedSet.from(staticRewardsList).pure[F]
@@ -512,7 +512,7 @@ object GlobalDelegatedRewardsDistributor {
           calculateWithdrawalRewardTransactions(
             partitionedRecords.expiredWithdrawalsDelegatedStaking.toList.flatMap {
               case (address, withdrawals) =>
-                withdrawals.mapFilter { withdrawal =>
+                withdrawals.toList.mapFilter { withdrawal =>
                   Option.when(withdrawal.rewards.value > Balance.empty.value) {
                     (address, Amount(NonNegLong.unsafeFrom(withdrawal.rewards.value.value)))
                   }

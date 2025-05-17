@@ -2,11 +2,10 @@ package io.constellationnetwork.schema
 
 import cats.Order._
 import cats.effect.kernel.Async
-import cats.kernel.Monoid
-import cats.syntax.functor._
-import cats.syntax.semigroup._
+import cats.kernel._
+import cats.syntax.all._
 
-import scala.collection.immutable.SortedSet
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.math.Ordered.orderingToOrdered
 import scala.util.control.NoStackTrace
 
@@ -76,7 +75,7 @@ object delegatedStake {
   @derive(eqv, show, encoder, decoder)
   sealed trait UpdateDelegatedStake
   object UpdateDelegatedStake {
-    @derive(eqv, show, encoder, decoder)
+    @derive(eqv, show, encoder, decoder, order)
     case class Create(
       source: Address,
       nodeId: PeerId,
@@ -119,12 +118,14 @@ object delegatedStake {
   case class DelegatedStakeRecord(
     event: Signed[UpdateDelegatedStake.Create],
     createdAt: SnapshotOrdinal,
-    rewards: Balance
+    rewards: Amount
   )
 
   object DelegatedStakeRecord {
-    implicit val delegatedStakeAcctOrdering: Ordering[DelegatedStakeRecord] =
-      (x: DelegatedStakeRecord, y: DelegatedStakeRecord) => Ordering[SnapshotOrdinal].compare(x.createdAt, y.createdAt)
+    implicit val order: Order[DelegatedStakeRecord] = Order[SnapshotOrdinal].contramap(_.createdAt)
+
+    implicit val ordering: Ordering[DelegatedStakeRecord] =
+      Ordering.by(r => (r.createdAt, r.rewards, r.event))
   }
 
   @derive(decoder, encoder, eqv, show)
@@ -136,8 +137,10 @@ object delegatedStake {
   )
 
   object PendingDelegatedStakeWithdrawal {
-    implicit val pendingWithdrawalOrdering: Ordering[PendingDelegatedStakeWithdrawal] =
-      (x: PendingDelegatedStakeWithdrawal, y: PendingDelegatedStakeWithdrawal) => Ordering[EpochProgress].compare(x.createdAt, y.createdAt)
+    implicit val order: Order[PendingDelegatedStakeWithdrawal] = Order[EpochProgress].contramap(_.createdAt)
+
+    implicit val ordering: Ordering[PendingDelegatedStakeWithdrawal] =
+      Ordering.by(r => (r.createdAt, r.rewards, r.event))
   }
 
   @derive(eqv, show)

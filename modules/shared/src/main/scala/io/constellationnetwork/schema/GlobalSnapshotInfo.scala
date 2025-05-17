@@ -24,6 +24,7 @@ import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
 
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
@@ -216,10 +217,10 @@ case class GlobalSnapshotInfo(
   lastAllowSpendRefs: Option[SortedMap[Address, AllowSpendReference]],
   lastTokenLockRefs: Option[SortedMap[Address, TokenLockReference]],
   updateNodeParameters: Option[SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)]],
-  activeDelegatedStakes: Option[SortedMap[Address, List[DelegatedStakeRecord]]],
-  delegatedStakesWithdrawals: Option[SortedMap[Address, List[PendingDelegatedStakeWithdrawal]]],
-  activeNodeCollaterals: Option[SortedMap[Address, List[NodeCollateralRecord]]],
-  nodeCollateralWithdrawals: Option[SortedMap[Address, List[PendingNodeCollateralWithdrawal]]]
+  activeDelegatedStakes: Option[SortedMap[Address, SortedSet[DelegatedStakeRecord]]],
+  delegatedStakesWithdrawals: Option[SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]]],
+  activeNodeCollaterals: Option[SortedMap[Address, SortedSet[NodeCollateralRecord]]],
+  nodeCollateralWithdrawals: Option[SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]]]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
   def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
