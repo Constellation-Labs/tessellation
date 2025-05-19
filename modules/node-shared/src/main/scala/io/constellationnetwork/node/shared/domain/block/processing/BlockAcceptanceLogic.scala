@@ -11,7 +11,8 @@ trait BlockAcceptanceLogic[F[_]] {
     block: Signed[Block],
     txChains: TxChains,
     context: BlockAcceptanceContext[F],
-    contextUpdate: BlockAcceptanceContextUpdate
+    contextUpdate: BlockAcceptanceContextUpdate,
+    shouldValidateCollateral: Boolean
   ): EitherT[F, BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]
 
 }

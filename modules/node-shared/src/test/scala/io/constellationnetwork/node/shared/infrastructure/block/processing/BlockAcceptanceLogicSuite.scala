@@ -73,6 +73,15 @@ object BlockAcceptanceLogicSuite extends MutableIOSuite with Checkers {
     }
   }
 
+  test("accept block with signers without collateral when skipped validation") { implicit sc =>
+    forall(dagBlockWithSigningPeer(Seq(peer1))) { block =>
+      BlockAcceptanceLogic
+        .processSignatures[IO](block, mkContext(Balance(249_999L)), shouldValidateCollateral = false)
+        .value
+        .map(expect.same(_, Right(())))
+    }
+  }
+
   test("reject block with signers without collateral") { implicit sc =>
     forall(dagBlockWithSigningPeer(Seq(peer1))) { block =>
       BlockAcceptanceLogic
