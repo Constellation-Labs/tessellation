@@ -13,9 +13,9 @@ services:
       - CL_P2P_HTTP_PORT=${L0_CL_P2P_HTTP_PORT:-9001}
       - CL_CLI_HTTP_PORT=${L0_CL_CLI_HTTP_PORT:-9002}
     ports:
-      - "${BIND_INTERFACE:-}${CL_DAG_L0_PUBLIC_PORT:-8999}:${L0_CL_PUBLIC_HTTP_PORT:-8999}"  # Public HTTP
-      - "${BIND_INTERFACE:-}${CL_DAG_L0_P2P_PORT:-9001}:${L0_CL_P2P_HTTP_PORT:-9001}"  # P2P HTTP
-      - "${BIND_INTERFACE:-}${CL_DAG_L0_CLI_PORT:-9002}:${L0_CL_P2P_HTTP_PORT:-9002}"  # P2P HTTP
+      - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L0_PUBLIC:-8999}:${L0_CL_PUBLIC_HTTP_PORT:-8999}"  # Public HTTP
+      - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L0_P2P:-9001}:${L0_CL_P2P_HTTP_PORT:-9001}"  # P2P HTTP
+      - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L0_CLI:-9002}:${L0_CL_P2P_HTTP_PORT:-9002}"  # P2P HTTP
     volumes:
       - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12:ro
       # Only required for testing purposes
@@ -26,10 +26,10 @@ services:
       # - ${CL_L0_DATA_MOUNT_PATH:-./l0-data}:/tessellation/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:${L0_CL_PUBLIC_HTTP_PORT:-8999}/node/health"]
-      interval: 10s
+      interval: 3s
       timeout: 5s
       retries: 5
-      start_period: 20s
+      start_period: 3s
     profiles: ["l0"]
 #    extra_hosts:
 #      "host.docker.internal": "host-gateway"
@@ -49,10 +49,11 @@ services:
       - CL_PUBLIC_HTTP_PORT=${L1_CL_PUBLIC_HTTP_PORT:-9010}
       - CL_P2P_HTTP_PORT=${L1_CL_P2P_HTTP_PORT:-9011}
       - CL_CLI_HTTP_PORT=${L1_CL_CLI_HTTP_PORT:-9012}
+      - CL_DOCKER_L1_JOIN_DELAY=${CL_DOCKER_L1_JOIN_DELAY:-0}
     ports:
-      - "${BIND_INTERFACE:-}${CL_DAG_L1_PUBLIC_PORT:-9010}:${L1_CL_PUBLIC_HTTP_PORT:-9010}"  # Public HTTP
-      - "${BIND_INTERFACE:-}${CL_DAG_L1_P2P_PORT:-9011}:${L1_CL_P2P_HTTP_PORT:-9011}"  # P2P HTTP
-      - "${BIND_INTERFACE:-}${CL_DAG_L1_CLI_PORT:-9012}:${L1_CL_CLI_HTTP_PORT:-9012}"  # CLI
+      - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L1_PUBLIC:-9010}:${L1_CL_PUBLIC_HTTP_PORT:-9010}"  # Public HTTP
+      - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L1_P2P:-9011}:${L1_CL_P2P_HTTP_PORT:-9011}"  # P2P HTTP
+      - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L1_CLI:-9012}:${L1_CL_CLI_HTTP_PORT:-9012}"  # CLI
     volumes:
       - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12:ro
       # If using docker volumes:  
@@ -65,10 +66,10 @@ services:
     #     condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:${L1_CL_PUBLIC_HTTP_PORT:-9010}/node/health"]
-      interval: 10s
+      interval: 3s
       timeout: 5s
       retries: 5
-      start_period: 15s
+      start_period: 3s
 
 #    extra_hosts:
 #      "host.docker.internal": "host-gateway"

@@ -39,3 +39,4 @@ scripts/
 node_modules/
 nodes/
 docker/jars/
+.github/code/
