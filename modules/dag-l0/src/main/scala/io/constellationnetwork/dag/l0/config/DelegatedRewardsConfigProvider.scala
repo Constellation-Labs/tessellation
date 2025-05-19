@@ -94,7 +94,7 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
       )
 
   private val testnetDistributionProgram: EpochProgress => ProgramsDistributionConfig = {
-    case epoch if epoch < EpochProgress(1027000L) =>
+    case epoch if epoch < EpochProgress(997154L) =>
       ProgramsDistributionConfig(
         weights = Map.empty,
         validatorsWeight = NonNegFraction.unsafeFrom(50L, 100L),
