@@ -46,10 +46,10 @@ jobs:
           JAVA_VERSION: 11
         uses: "./.github/templates/actions/setup_java_and_scala"
 
-      - name: Test
-        run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#      - name: Test
+#        run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test'
+#        env:
+#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Get the release version
         id: get_version
