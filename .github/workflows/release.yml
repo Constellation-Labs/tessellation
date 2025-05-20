@@ -95,6 +95,7 @@ jobs:
         run: sbt 'keytool/assembly;wallet/assembly;dagL0/assembly;dagL1/assembly'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: v${{ steps.get_version.outputs.VERSION }}
 
       - name: Copy dependencies
         env:
