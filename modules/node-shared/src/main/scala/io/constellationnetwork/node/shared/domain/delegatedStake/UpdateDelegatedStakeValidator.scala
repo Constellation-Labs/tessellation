@@ -173,10 +173,10 @@ object UpdateDelegatedStakeValidator {
 
         def validateUniqueness(address: Address): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Withdraw]]] = {
           val withdrawals = lastContext.delegatedStakesWithdrawals
-            .getOrElse(SortedMap.empty[Address, List[PendingDelegatedStakeWithdrawal]])
-            .getOrElse(address, List.empty)
+            .getOrElse(SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]])
+            .getOrElse(address, SortedSet.empty[PendingDelegatedStakeWithdrawal])
           for {
-            stakeRefs <- withdrawals.traverse(w => DelegatedStakeReference.of(w.event))
+            stakeRefs <- withdrawals.toList.traverse(w => DelegatedStakeReference.of(w.event))
           } yield
             if (stakeRefs.exists(ref => ref.hash === signed.stakeRef)) {
               AlreadyWithdrawn(signed.stakeRef).invalidNec
@@ -188,7 +188,7 @@ object UpdateDelegatedStakeValidator {
         def validateCreate(address: Address): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Withdraw]]] =
           getParent(
             address,
-            lastContext.activeDelegatedStakes.getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]]),
+            lastContext.activeDelegatedStakes.getOrElse(SortedMap.empty[Address, SortedSet[DelegatedStakeRecord]]),
             signed
           ).map {
             case Some(delegatedStaking) =>
@@ -251,11 +251,11 @@ object UpdateDelegatedStakeValidator {
 
       private def getParent(
         address: Address,
-        delegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
+        delegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
         signed: Signed[UpdateDelegatedStake.Withdraw]
       ): F[Option[Signed[UpdateDelegatedStake.Create]]] =
         for {
-          maybeParent <- delegatedStakes.getOrElse(address, List.empty).findM { s =>
+          maybeParent <- delegatedStakes.getOrElse(address, SortedSet.empty[DelegatedStakeRecord]).findM { s =>
             DelegatedStakeReference.of(s.event).map(_.hash === signed.stakeRef)
           }
         } yield maybeParent.map(_.event)

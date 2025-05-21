@@ -4,7 +4,7 @@ import cats.data.Validated.{Invalid, Valid}
 import cats.effect.Async
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.dag.l0.domain.nodeCollateral.{CreateNodeCollateralOutput, NodeCollateralOutput, WithdrawNodeCollateralOutput}
 import io.constellationnetwork.ext.http4s.AddressVar
@@ -47,16 +47,16 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
   protected val prefixPath: InternalUrlPrefix = "/node-collateral"
 
   private def getNodeCollateralInfo(address: Address, info: GlobalSnapshotInfo): NodeCollateralsInfo = {
-    val lastCollaterals: List[NodeCollateralRecord] =
+    val lastCollaterals: SortedSet[NodeCollateralRecord] =
       info.activeNodeCollaterals
-        .getOrElse(SortedMap.empty[Address, List[NodeCollateralRecord]])
-        .getOrElse(address, List.empty)
-    val lastWithdrawals: List[PendingNodeCollateralWithdrawal] =
+        .getOrElse(SortedMap.empty[Address, SortedSet[NodeCollateralRecord]])
+        .getOrElse(address, SortedSet.empty[NodeCollateralRecord])
+    val lastWithdrawals: SortedSet[PendingNodeCollateralWithdrawal] =
       info.nodeCollateralWithdrawals
-        .getOrElse(SortedMap.empty[Address, List[PendingNodeCollateralWithdrawal]])
-        .getOrElse(address, List.empty)
+        .getOrElse(SortedMap.empty[Address, SortedSet[PendingNodeCollateralWithdrawal]])
+        .getOrElse(address, SortedSet.empty[PendingNodeCollateralWithdrawal])
 
-    val active = lastCollaterals.map {
+    val active = lastCollaterals.toList.map {
       case NodeCollateralRecord(collateral, acceptedOrdinal) =>
         NodeCollateralInfo(
           nodeId = collateral.nodeId,
@@ -68,7 +68,7 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
           withdrawalEndEpoch = None
         )
     }
-    val pending = lastWithdrawals.map {
+    val pending = lastWithdrawals.toList.map {
       case PendingNodeCollateralWithdrawal(collateral, acceptedOrdinal, createdAt) =>
         NodeCollateralInfo(
           nodeId = collateral.nodeId,
