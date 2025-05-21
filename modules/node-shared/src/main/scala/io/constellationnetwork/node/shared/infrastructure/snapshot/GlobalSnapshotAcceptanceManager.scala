@@ -515,7 +515,9 @@ object GlobalSnapshotAcceptanceManager {
 
         gsi = GlobalSnapshotInfo(
           updatedLastStateChannelSnapshotHashes,
-          transactionsRefs,
+          if (ordinal < tessellation3MigrationStartingOrdinal)
+            lastSnapshotContext.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
+          else transactionsRefs,
           updatedBalancesBySpendTransactions,
           updatedLastCurrencySnapshots,
           updatedLastCurrencySnapshotProofs,

@@ -364,7 +364,9 @@ object CurrencySnapshotAcceptanceManager {
       updatedActiveTokenLocksCleaned = updatedActiveTokenLocks.filter { case (_, tokenLocks) => tokenLocks.nonEmpty }
 
       csi = CurrencySnapshotInfo(
-        transactionsRefs,
+        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal)
+          lastSnapshotContext.snapshotInfo.lastTxRefs ++ acceptanceBlocksResult.contextUpdate.lastTxRefs
+        else transactionsRefs,
         updatedBalancesBySpendTransactions,
         Option.when(messagesAcceptanceResult.contextUpdate.nonEmpty)(messagesAcceptanceResult.contextUpdate),
         None,
