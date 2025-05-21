@@ -131,7 +131,9 @@ object StateChannelSnapshotService {
             )
           )
         _ <- lastGlobalSnapshotStorage.deleteOlderThanSynchronized()
-        _ <- stateChannelBinarySender.process(binaryHashed)
+        lastGlobalSnapshot <- lastGlobalSnapshotStorage.get
+        lastGlobalSnapshotSigners = lastGlobalSnapshot.map(_.signed.proofs.map(_.id.toPeerId))
+        _ <- stateChannelBinarySender.process(binaryHashed, lastGlobalSnapshotSigners)
       } yield ()
 
     }

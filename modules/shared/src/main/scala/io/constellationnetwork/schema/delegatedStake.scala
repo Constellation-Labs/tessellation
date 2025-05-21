@@ -24,7 +24,7 @@ import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.auto.{autoRefineV, _}
 import eu.timepit.refined.cats._
-import eu.timepit.refined.types.numeric.NonNegLong
+import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import io.estatico.newtype.macros.newtype
 
 object delegatedStake {
@@ -147,4 +147,22 @@ object delegatedStake {
   sealed trait DelegatedStakeError extends NoStackTrace
   case class MissingDelegatedStaking(message: String) extends DelegatedStakeError
   case class MissingTokenLock(message: String) extends DelegatedStakeError
+
+  @derive(encoder, decoder, eqv, show)
+  case class NextDagPrice(
+    price: Amount,
+    asOfEpoch: EpochProgress
+  )
+
+  @derive(encoder, decoder, eqv, show)
+  case class RewardsInfo(
+    epochsPerYear: PosLong,
+    currentDagPrice: Amount,
+    nextDagPrice: NextDagPrice,
+    totalDelegatedAmount: Amount,
+    latestAverageRewardPerDag: Amount,
+    totalDagAmount: Amount,
+    totalRewardPerEpoch: Amount,
+    totalRewardsPerYearEstimate: Amount
+  )
 }

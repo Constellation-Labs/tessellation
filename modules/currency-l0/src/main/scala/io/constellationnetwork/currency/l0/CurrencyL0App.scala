@@ -105,7 +105,8 @@ abstract class CurrencyL0App(
           validators.signedValidator,
           sharedServices.globalSnapshotContextFns,
           maybeMajorityPeerIds,
-          hasherSelectorAlwaysCurrent
+          hasherSelectorAlwaysCurrent,
+          maybeAllowanceList
         )
         .asResource
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext

@@ -35,6 +35,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.services.Addr
 import io.constellationnetwork.node.shared.modules.SharedServices
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.SignedValidator
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
@@ -61,7 +62,8 @@ object Services {
     signedValidator: SignedValidator[F],
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]],
-    hasherSelector: HasherSelector[F]
+    hasherSelector: HasherSelector[F],
+    stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]]
   ): F[Services[F, R]] =
     for {
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[F]
@@ -71,7 +73,10 @@ object Services {
         storages.identifier,
         storages.globalL0Cluster,
         storages.lastGlobalSnapshot,
-        p2PClient.stateChannelSnapshot
+        p2PClient.stateChannelSnapshot,
+        stateChannelAllowanceLists,
+        selfId,
+        cfg.environment
       )
 
       l0NodeContext = L0NodeContext

@@ -37,6 +37,15 @@ object L0ClusterStorage {
           .flatMap(Random[F].shuffleList)
           .map(_.head)
 
+      def getRandomPeerExistentOnList(
+        peers: List[PeerId]
+      ): F[Option[L0Peer]] =
+        getPeers
+          .map(_.toNonEmptyList.toList)
+          .map(_.filter(p => peers.contains(p.id)))
+          .flatMap(Random[F].shuffleList)
+          .map(_.headOption)
+
       def addPeers(l0Peers: Set[L0Peer]): F[Unit] =
         peers.modify { current =>
           val updated = l0Peers.map(p => p.id -> p).toMap.foldLeft(current)(_.add(_))
