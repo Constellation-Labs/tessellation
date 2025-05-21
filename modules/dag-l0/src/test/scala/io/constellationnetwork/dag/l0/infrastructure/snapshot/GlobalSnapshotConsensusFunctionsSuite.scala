@@ -266,11 +266,14 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         Amount.empty
       )
         .pure[F]
+
+    def getEmissionConfig: GlobalSnapshotConsensusFunctionsSuite.F[EmissionConfigEntry] =
+      delegatedRewardsConfigProvider.getConfig().emissionConfig.head._2.pure[F]
   }
 
   val delegatedRewardsConfigProvider: DelegatedRewardsConfigProvider = new DelegatedRewardsConfigProvider {
-    def getConfig(): io.constellationnetwork.node.shared.config.types.DelegatedRewardsConfig =
-      io.constellationnetwork.node.shared.config.types.DelegatedRewardsConfig(
+    def getConfig(): DelegatedRewardsConfig =
+      DelegatedRewardsConfig(
         flatInflationRate = io.constellationnetwork.schema.NonNegFraction.unsafeFrom(0, 100),
         emissionConfig = Map.empty,
         percentDistribution = Map.empty

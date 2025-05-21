@@ -8,7 +8,8 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet, TreeSet}
 
 import io.constellationnetwork.currency.dataApplication.DataCalculatedState
-import io.constellationnetwork.node.shared.config.types.{DelegatedRewardsConfig, SharedConfig}
+import io.constellationnetwork.env.AppEnvironment
+import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.schema.ID.Id
@@ -45,6 +46,8 @@ case class PartitionedStakeUpdates(
 )
 
 trait DelegatedRewardsDistributor[F[_]] {
+
+  def getEmissionConfig: F[EmissionConfigEntry]
 
   def calculateVariableInflation(epochProgress: EpochProgress): F[Amount]
 
