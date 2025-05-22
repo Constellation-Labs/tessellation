@@ -15,8 +15,7 @@ import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
-import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStateUpdater._
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
@@ -48,7 +47,6 @@ abstract class GlobalSnapshotConsensusStateAdvancer[F[_]]
 
 object GlobalSnapshotConsensusStateAdvancer {
   def make[F[_]: Async: SecurityProvider: Metrics: HasherSelector](
-    lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
     keyPair: KeyPair,
     consensusStorage: GlobalConsensusStorage[F],
     globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
@@ -57,6 +55,7 @@ object GlobalSnapshotConsensusStateAdvancer {
     restartService: RestartService[F, _],
     nodeStorage: NodeStorage[F],
     leavingDelay: FiniteDuration,
+    lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): GlobalSnapshotConsensusStateAdvancer[F] = new GlobalSnapshotConsensusStateAdvancer[F] {
     val logger = Slf4jLogger.getLogger[F]
@@ -111,30 +110,20 @@ object GlobalSnapshotConsensusStateAdvancer {
                           events = peerEvents.toList.flatMap(_._2).map(_._2).toSet
                           (artifact, context, returnedEvents) <- HasherSelector[F].forOrdinal(state.key) { implicit hasher =>
                             val lastArtifact = state.lastOutcome.finished.signedMajorityArtifact
-                            globalSnapshotStorage
-                              .getLastN(
-                                lastArtifact.ordinal,
-                                lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value
-                              )
-                              .flatMap { lastNGlobalSnapshots =>
-                                lastNGlobalSnapshots.traverse(_.traverse(_.toHashed)).flatMap { lastGlobalSnapshots =>
-                                  lastArtifact.toHashed.flatMap { hashedLastArtifact =>
-                                    consensusFns
-                                      .createProposalArtifact(
-                                        state.key,
-                                        hashedLastArtifact.signed,
-                                        state.lastOutcome.finished.context,
-                                        HasherSelector[F].getForOrdinal(lastArtifact.ordinal),
-                                        majorityTrigger,
-                                        events,
-                                        state.facilitators.value.toSet,
-                                        lastGlobalSnapshots,
-                                        getGlobalSnapshotByOrdinal
-                                      )
-                                  }
-
-                                }
-                              }
+                            lastArtifact.toHashed.flatMap { hashedLastArtifact =>
+                              consensusFns
+                                .createProposalArtifact(
+                                  state.key,
+                                  hashedLastArtifact.signed,
+                                  state.lastOutcome.finished.context,
+                                  HasherSelector[F].getForOrdinal(lastArtifact.ordinal),
+                                  majorityTrigger,
+                                  events,
+                                  state.facilitators.value.toSet,
+                                  lastNGlobalSnapshotStorage.getLastN,
+                                  getGlobalSnapshotByOrdinal
+                                )
+                            }
                           }
                           returnedPeerEvents = peerEvents.map {
                             case (peerId, events) =>
@@ -174,52 +163,43 @@ object GlobalSnapshotConsensusStateAdvancer {
                     .flatTraverse { allProposalHashes =>
                       val lastArtifact = state.lastOutcome.finished.signedMajorityArtifact
 
-                      globalSnapshotStorage
-                        .getLastN(
-                          lastArtifact.ordinal,
-                          lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value
-                        )
-                        .flatMap { lastNGlobalSnapshots =>
-                          lastNGlobalSnapshots.traverse(_.traverse(_.toHashed)).flatMap { lastGlobalSnapshots =>
-                            lastArtifact.toHashed.flatMap { hashedLastArtifact =>
-                              pickValidatedMajorityArtifact(
-                                proposalInfo,
-                                hashedLastArtifact.signed,
-                                state.lastOutcome.finished.context,
-                                majorityTrigger,
-                                resources,
-                                allProposalHashes,
-                                state.facilitators.value.toSet,
-                                consensusFns,
-                                lastGlobalSnapshots,
-                                getGlobalSnapshotByOrdinal
-                              ).flatMap { maybeMajorityArtifactInfo =>
-                                state.facilitators.value.hash.flatMap { facilitatorsHash =>
-                                  maybeMajorityArtifactInfo.traverse { majorityArtifactInfo =>
-                                    val newState =
-                                      state.copy(status =
-                                        identity[GlobalSnapshotStatus](
-                                          CollectingSignatures(
-                                            majorityArtifactInfo,
-                                            majorityTrigger,
-                                            candidates,
-                                            facilitatorsHash
-                                          )
-                                        )
-                                      )
-                                    val effect = Signature.fromHash(keyPair.getPrivate, majorityArtifactInfo.hash).flatMap { signature =>
-                                      gossip.spread(ConsensusPeerDeclaration(state.key, MajoritySignature(signature, facilitatorsHash)))
-                                    } >> Metrics[F].recordDistribution(
-                                      "dag_consensus_proposal_affinity",
-                                      proposalAffinity(allProposalHashes, proposalInfo.hash)
+                      lastArtifact.toHashed.flatMap { hashedLastArtifact =>
+                        pickValidatedMajorityArtifact(
+                          proposalInfo,
+                          hashedLastArtifact.signed,
+                          state.lastOutcome.finished.context,
+                          majorityTrigger,
+                          resources,
+                          allProposalHashes,
+                          state.facilitators.value.toSet,
+                          consensusFns,
+                          lastNGlobalSnapshotStorage.getLastN,
+                          getGlobalSnapshotByOrdinal
+                        ).flatMap { maybeMajorityArtifactInfo =>
+                          state.facilitators.value.hash.flatMap { facilitatorsHash =>
+                            maybeMajorityArtifactInfo.traverse { majorityArtifactInfo =>
+                              val newState =
+                                state.copy(status =
+                                  identity[GlobalSnapshotStatus](
+                                    CollectingSignatures(
+                                      majorityArtifactInfo,
+                                      majorityTrigger,
+                                      candidates,
+                                      facilitatorsHash
                                     )
-                                    (newState, effect).pure[F]
-                                  }
-                                }
-                              }
+                                  )
+                                )
+                              val effect = Signature.fromHash(keyPair.getPrivate, majorityArtifactInfo.hash).flatMap { signature =>
+                                gossip.spread(ConsensusPeerDeclaration(state.key, MajoritySignature(signature, facilitatorsHash)))
+                              } >> Metrics[F].recordDistribution(
+                                "dag_consensus_proposal_affinity",
+                                proposalAffinity(allProposalHashes, proposalInfo.hash)
+                              )
+                              (newState, effect).pure[F]
                             }
                           }
                         }
+                      }
                     }
               }
             case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, ownFacilitatorsHash) =>
@@ -270,7 +250,11 @@ object GlobalSnapshotConsensusStateAdvancer {
                           val effect =
                             HasherSelector[F]
                               .forOrdinal(signedArtifact.ordinal) { implicit hasher =>
-                                globalSnapshotStorage.prepend(signedArtifact, majorityArtifactInfo.context)
+                                for {
+                                  hashedSnapshot <- signedArtifact.toHashed
+                                  _ <- lastNGlobalSnapshotStorage.set(hashedSnapshot, majorityArtifactInfo.context)
+                                  result <- globalSnapshotStorage.prepend(signedArtifact, majorityArtifactInfo.context)
+                                } yield result
                               }
                               .ifM(
                                 metrics.globalSnapshot(signedArtifact),

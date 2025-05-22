@@ -18,6 +18,7 @@ import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.cluster.programs.{Joining, L0PeerDiscovery, PeerDiscovery}
 import io.constellationnetwork.node.shared.domain.snapshot.PeerSelect
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
+import io.constellationnetwork.node.shared.domain.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.genesis.{GenesisFS => GenesisLoader}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencySnapshotContextFunctions, PeerSelect}
 import io.constellationnetwork.node.shared.modules.SharedPrograms
@@ -36,7 +37,8 @@ object Programs {
     services: Services[F, R],
     p2pClient: P2PClient[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
-    dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])]
+    dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])],
+    lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F]
   )(implicit context: L0NodeContext[F]): Programs[F] = {
     val peerSelect: PeerSelect[F] =
       PeerSelect.make(
@@ -46,7 +48,6 @@ object Programs {
       )
     val download = Download
       .make(
-        sharedCfg.lastGlobalSnapshotsSync,
         p2pClient,
         storages.cluster,
         currencySnapshotContextFns,
@@ -55,7 +56,7 @@ object Programs {
         peerSelect,
         storages.identifier,
         dataApplication.map { case (da, _) => da },
-        storages.lastGlobalSnapshot,
+        lastNGlobalSnapshotStorage.getLastN,
         services.globalL0.pullGlobalSnapshot,
         storages.snapshot
       )
@@ -86,6 +87,7 @@ object Programs {
       storages.identifier,
       storages.snapshot,
       storages.lastGlobalSnapshot,
+      lastNGlobalSnapshotStorage,
       services.collateral,
       services.consensus.manager,
       dataApplication

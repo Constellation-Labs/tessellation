@@ -103,7 +103,8 @@ object Main
         cfg.incremental.lastFullGlobalSnapshotOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
         p2pClient,
         sharedServices.globalSnapshotContextFns,
-        hashSelect
+        hashSelect,
+        storages.lastNGlobalSnapshot
       )
 
       rumorHandler = RumorHandlers
@@ -208,7 +209,11 @@ object Main
             programs.rollbackLoader.load(m.rollbackHash).flatMap {
               case (snapshotInfo, snapshot) =>
                 hasherSelector.forOrdinal(snapshot.ordinal) { implicit hasher =>
-                  storages.globalSnapshot.prepend(snapshot, snapshotInfo)
+                  for {
+                    _ <- storages.globalSnapshot.prepend(snapshot, snapshotInfo)
+                    hashedSnapshot <- snapshot.toHashed[IO]
+                    _ <- storages.lastNGlobalSnapshot.setInitial(hashedSnapshot, snapshotInfo)
+                  } yield ()
                 } >>
                   services.consensus.manager.startFacilitatingAfterRollback(
                     snapshot.ordinal,
@@ -285,11 +290,14 @@ object Main
                             GlobalSnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis).flatMap { firstIncrementalSnapshot =>
                               Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).flatMap {
                                 signedFirstIncrementalSnapshot =>
-                                  storages.globalSnapshot.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info) >>
-                                    services.collateral
+                                  for {
+                                    _ <- services.collateral
                                       .hasCollateral(nodeShared.nodeId)
-                                      .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
-                                    services.consensus.manager
+                                      .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA)
+                                    _ <- storages.globalSnapshot.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info)
+                                    hashedSnapshot <- signedFirstIncrementalSnapshot.toHashed[IO]
+                                    _ <- storages.lastNGlobalSnapshot.setInitial(hashedSnapshot, hashedGenesis.info)
+                                    _ <- services.consensus.manager
                                       .startFacilitatingAfterRollback(
                                         signedFirstIncrementalSnapshot.ordinal,
                                         GlobalConsensusOutcome(
@@ -306,7 +314,7 @@ object Main
                                           )
                                         )
                                       )
-
+                                  } yield ()
                               }
                             }
                         }

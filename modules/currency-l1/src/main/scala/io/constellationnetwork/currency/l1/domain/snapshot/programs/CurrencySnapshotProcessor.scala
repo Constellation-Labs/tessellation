@@ -77,18 +77,16 @@ object CurrencySnapshotProcessor {
                   .setInitial(globalSnapshot, globalState)
                   .as[SnapshotProcessingResult](DownloadPerformed(globalSnapshotReference, Set.empty, Set.empty))
 
-                lastNGlobalSnapshotStorage
-                  .getLastN(globalSnapshot.ordinal, lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value)
-                  .flatMap { lastGlobalSnapshots =>
-                    processCurrencySnapshots(
-                      globalSnapshot,
-                      globalState,
-                      globalSnapshotReference,
-                      setGlobalSnapshot,
-                      setNGlobalSnapshots,
-                      lastGlobalSnapshots
-                    )
-                  }
+                processCurrencySnapshots(
+                  globalSnapshot,
+                  globalState,
+                  globalSnapshotReference,
+                  setGlobalSnapshot,
+                  setNGlobalSnapshots,
+                  lastNGlobalSnapshotStorage.getLastN,
+                  getGlobalSnapshotByOrdinal
+                )
+
               case _ => (new Throwable("unexpected state")).raiseError[F, SnapshotProcessingResult]
             }
           case Right(globalSnapshot) =>
@@ -97,43 +95,32 @@ object CurrencySnapshotProcessor {
               case Some((lastGlobalSnapshot, lastGlobalState)) =>
                 Validator.compare(lastGlobalSnapshot, globalSnapshot.signed.value) match {
                   case _: Validator.Next =>
-                    lastNGlobalSnapshotStorage
-                      .getLastN(
-                        lastGlobalSnapshot.ordinal,
-                        lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value
-                      )
-                      .flatMap { lastGlobalSnapshots =>
-                        applyGlobalSnapshotFn(
-                          lastGlobalState,
-                          lastGlobalSnapshot.signed,
-                          globalSnapshot.signed,
-                          lastGlobalSnapshots,
-                          getGlobalSnapshotByOrdinal
-                        ).flatMap { state =>
-                          val setGlobalSnapshot = lastGlobalSnapshotStorage
-                            .set(globalSnapshot, state)
-                            .as[SnapshotProcessingResult](Aligned(globalSnapshotReference, Set.empty))
+                    applyGlobalSnapshotFn(
+                      lastGlobalState,
+                      lastGlobalSnapshot.signed,
+                      globalSnapshot.signed,
+                      lastNGlobalSnapshotStorage.getLastN,
+                      getGlobalSnapshotByOrdinal
+                    ).flatMap { state =>
+                      val setGlobalSnapshot = lastGlobalSnapshotStorage
+                        .set(globalSnapshot, state)
+                        .as[SnapshotProcessingResult](Aligned(globalSnapshotReference, Set.empty))
 
-                          val setNGlobalSnapshots = lastNGlobalSnapshotStorage
-                            .set(globalSnapshot, state)
-                            .as[SnapshotProcessingResult](DownloadPerformed(globalSnapshotReference, Set.empty, Set.empty))
-                          lastNGlobalSnapshotStorage
-                            .getLastN(
-                              globalSnapshot.ordinal,
-                              lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value
-                            )
-                            .flatMap { lastGlobalSnapshots =>
-                              processCurrencySnapshots(
-                                globalSnapshot,
-                                state,
-                                globalSnapshotReference,
-                                setGlobalSnapshot,
-                                setNGlobalSnapshots,
-                                lastGlobalSnapshots
-                              )
-                            }
-                        }
-                      }
+                      val setNGlobalSnapshots = lastNGlobalSnapshotStorage
+                        .set(globalSnapshot, state)
+                        .as[SnapshotProcessingResult](DownloadPerformed(globalSnapshotReference, Set.empty, Set.empty))
+
+                      processCurrencySnapshots(
+                        globalSnapshot,
+                        state,
+                        globalSnapshotReference,
+                        setGlobalSnapshot,
+                        setNGlobalSnapshots,
+                        lastNGlobalSnapshotStorage.getLastN,
+                        getGlobalSnapshotByOrdinal
+                      )
+
+                    }
 
                   case Validator.NotNext =>
                     Applicative[F].pure(SnapshotIgnored(globalSnapshotReference))
@@ -146,16 +133,16 @@ object CurrencySnapshotProcessor {
         lastState: GlobalSnapshotInfo,
         lastSnapshot: Signed[GlobalIncrementalSnapshot],
         snapshot: Signed[GlobalIncrementalSnapshot],
-        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+        getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
         getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] =
-        globalSnapshotContextFns.createContext(lastState, lastSnapshot, snapshot, lastGlobalSnapshots, getGlobalSnapshotByOrdinal)
+        globalSnapshotContextFns.createContext(lastState, lastSnapshot, snapshot, getLastNGlobalSnapshots, getGlobalSnapshotByOrdinal)
 
       def applySnapshotFn(
         lastState: CurrencySnapshotInfo,
         lastSnapshot: Signed[CurrencyIncrementalSnapshot],
         snapshot: Signed[CurrencyIncrementalSnapshot],
-        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+        getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
         getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[CurrencySnapshotInfo] =
         currencySnapshotContextFns
@@ -163,7 +150,7 @@ object CurrencySnapshotProcessor {
             CurrencySnapshotContext(identifier, lastState),
             lastSnapshot,
             snapshot,
-            lastGlobalSnapshots,
+            getLastNGlobalSnapshots,
             getGlobalSnapshotByOrdinal
           )
           .map(_.snapshotInfo)
@@ -182,7 +169,8 @@ object CurrencySnapshotProcessor {
         globalSnapshotReference: SnapshotReference,
         setGlobalSnapshot: F[SnapshotProcessingResult],
         setNGlobalSnapshot: F[SnapshotProcessingResult],
-        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+        getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
+        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[SnapshotProcessingResult] =
         fetchCurrencySnapshots(globalSnapshot).flatMap {
           case Some(Validated.Valid(hashedSnapshots)) =>
@@ -206,7 +194,7 @@ object CurrencySnapshotProcessor {
                       case Some(Right((_, stateToDownload))) =>
                         val toPass = (snapshotToDownload, stateToDownload).asLeft[Hashed[CurrencyIncrementalSnapshot]]
 
-                        checkAlignment(toPass, bs, lcss, txHasher, lastGlobalSnapshots, getGlobalSnapshotByOrdinal).map { alignment =>
+                        checkAlignment(toPass, bs, lcss, txHasher, getLastNGlobalSnapshots, getGlobalSnapshotByOrdinal).map { alignment =>
                           NonEmptyList.one(alignment).some
                         }
                       case _ => (new Throwable("unexpected state")).raiseError[F, Option[Success]]
@@ -217,7 +205,7 @@ object CurrencySnapshotProcessor {
                       case (NonEmptyList(snapshot, nextSnapshots), agg) =>
                         val toPass = snapshot.asRight[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]
 
-                        checkAlignment(toPass, bs, lcss, txHasher, lastGlobalSnapshots, getGlobalSnapshotByOrdinal).flatMap {
+                        checkAlignment(toPass, bs, lcss, txHasher, getLastNGlobalSnapshots, getGlobalSnapshotByOrdinal).flatMap {
                           case _: Ignore =>
                             Applicative[F].pure(none[Success].asRight[Agg])
                           case alignment =>

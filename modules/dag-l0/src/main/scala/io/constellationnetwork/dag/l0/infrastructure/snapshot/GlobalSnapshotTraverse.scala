@@ -10,7 +10,6 @@ import scala.util.control.NoStackTrace
 import io.constellationnetwork.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
 import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
-import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.schema._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -30,6 +29,7 @@ object GlobalSnapshotTraverse {
     loadInfo: SnapshotOrdinal => F[Option[GlobalSnapshotInfo]],
     contextFns: SnapshotContextFunctions[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
     rollbackHash: Hash,
+    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): GlobalSnapshotTraverse[F] =
     new GlobalSnapshotTraverse[F] {
@@ -38,8 +38,10 @@ object GlobalSnapshotTraverse {
       def loadChain(): F[(GlobalSnapshotInfo, Signed[GlobalIncrementalSnapshot])] = {
         def loadIncOrErr(h: Hash) =
           loadInc(h).flatMap(_.liftTo[F](new Exception(s"Incremental snapshot not found during rollback, hash=${h.show}")))
+
         def loadInfoOrErr(o: SnapshotOrdinal) =
           loadInfo(o).flatMap(_.liftTo[F](new Exception(s"Expected SnapshotInfo not found during rollback, ordinal=${o.show}")))
+
         def loadFullOrIncOrErr(h: Hash) =
           loadFull(h)
             .map(_.map(_.asRight[Signed[GlobalIncrementalSnapshot]]))
@@ -113,9 +115,7 @@ object GlobalSnapshotTraverse {
             case ((lastCtx, lastInc), hash) =>
               loadIncOrErr(hash).flatMap { inc =>
                 HasherSelector[F].forOrdinal(inc.ordinal) { implicit hasher =>
-                  lastInc.toHashed.flatMap { lastIncHashed =>
-                    contextFns.createContext(lastCtx, lastInc, inc, List(lastIncHashed).some, getGlobalSnapshotByOrdinal).map(_ -> inc)
-                  }
+                  contextFns.createContext(lastCtx, lastInc, inc, getLastNGlobalSnapshots, getGlobalSnapshotByOrdinal).map(_ -> inc)
                 }
               }
           }

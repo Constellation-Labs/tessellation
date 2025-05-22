@@ -18,6 +18,7 @@ import io.constellationnetwork.node.shared.app.{NodeShared, TessellationIOApp, g
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.statechannel.StateChannelAllowanceLists
 import io.constellationnetwork.node.shared.resources.MkHttpServer
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
@@ -116,6 +117,7 @@ abstract class CurrencyL0App(
           storages.lastGlobalSnapshot,
           storages.identifier
         )
+
       programs = Programs.make[IO, Run](
         sharedConfig,
         keyPair,
@@ -126,7 +128,8 @@ abstract class CurrencyL0App(
         services,
         p2pClient,
         services.snapshotContextFunctions,
-        dataApplicationService.zip(storages.calculatedStateStorage)
+        dataApplicationService.zip(storages.calculatedStateStorage),
+        services.lastNGlobalSnapshot
       )
       rumorHandler = RumorHandlers
         .make[IO](storages.cluster, services.localHealthcheck, sharedStorages.forkInfo)
@@ -338,7 +341,7 @@ abstract class CurrencyL0App(
               case _ => IO.unit
             }
             _ <- StateChannel
-              .run[IO](sharedConfig.lastGlobalSnapshotsSync, services, storages, programs, dataApplicationService, keyPair, mkCell)
+              .run[IO](services, storages, programs, dataApplicationService, keyPair, mkCell, services.lastNGlobalSnapshot)
               .compile
               .drain
           } yield innerProgram

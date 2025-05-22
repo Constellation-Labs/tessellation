@@ -17,14 +17,14 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorag
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
-import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.domain.trust.storage.TrustStorage
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage._
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.trust.PeerObservationAdjustmentUpdateBatch
-import io.constellationnetwork.security.{HashSelect, HasherSelector}
+import io.constellationnetwork.security.{HashSelect, Hashed, HasherSelector}
 
 object Storages {
 
@@ -73,6 +73,9 @@ object Storages {
           hashSelect
         )
 
+      lastNGlobalSnapshotStorage <- HasherSelector[F].withCurrent { implicit hasher =>
+        LastNGlobalSnapshotStorage.make[F](sharedConfig.lastGlobalSnapshotsSync, globalSnapshotStorage.asRight)
+      }
     } yield
       new Storages[F](
         cluster = sharedStorages.cluster,
@@ -85,7 +88,8 @@ object Storages {
         incrementalGlobalSnapshotLocalFileSystemStorage = incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
         snapshotDownload = snapshotDownloadStorage,
         globalSnapshotInfoLocalFileSystemStorage = incrementalGlobalSnapshotInfoLocalFileSystemStorage,
-        globalSnapshotInfoLocalFileSystemKryoStorage = incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage
+        globalSnapshotInfoLocalFileSystemKryoStorage = incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage,
+        lastNGlobalSnapshot = lastNGlobalSnapshotStorage
       ) {}
 }
 
@@ -100,5 +104,6 @@ sealed abstract class Storages[F[_]] private (
   val incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
   val snapshotDownload: SnapshotDownloadStorage[F],
   val globalSnapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
-  val globalSnapshotInfoLocalFileSystemKryoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2]
+  val globalSnapshotInfoLocalFileSystemKryoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2],
+  val lastNGlobalSnapshot: LastNGlobalSnapshotStorage[F]
 )

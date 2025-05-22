@@ -218,7 +218,7 @@ object types {
 
   case class TokenLocksConfig(minEpochProgressesToLock: NonNegLong)
 
-  case class LastGlobalSnapshotsSyncConfig(syncOffset: NonNegLong, minGlobalSnapshotsToParticipateConsensus: PosInt)
+  case class LastGlobalSnapshotsSyncConfig(syncOffset: NonNegLong, maxAllowedGap: PosInt, maxLastGlobalSnapshotsInMemory: PosInt)
 
   case class ValidationErrorStorageConfig(maxSize: PosInt)
 }

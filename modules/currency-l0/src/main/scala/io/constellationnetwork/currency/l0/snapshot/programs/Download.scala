@@ -26,8 +26,7 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
-import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
-import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSyncGlobalSnapshotStorage, SnapshotStorage}
+import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotContextFunctions
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
@@ -46,7 +45,6 @@ import retry._
 
 object Download {
   def make[F[_]: Async: Random](
-    lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
     p2pClient: P2PClient[F],
     clusterStorage: ClusterStorage[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
@@ -55,7 +53,7 @@ object Download {
     peerSelect: PeerSelect[F],
     identifierStorage: IdentifierStorage[F],
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
-    lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
+    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] with LatestBalances[F]
   )(implicit l0NodeContext: L0NodeContext[F]): Download[F] = new Download[F] {
@@ -149,19 +147,15 @@ object Download {
           } >>
             identifierStorage.get
               .flatMap(currencyAddress =>
-                lastGlobalSnapshotStorage
-                  .getLastNSynchronized(lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value)
-                  .flatMap(lastNGlobalSnapshots =>
-                    currencySnapshotContextFns
-                      .createContext(
-                        CurrencySnapshotContext(currencyAddress, lastContext),
-                        lastSnapshot,
-                        snapshot,
-                        lastNGlobalSnapshots,
-                        getGlobalSnapshotByOrdinal
-                      )
-                      .handleErrorWith(_ => InvalidChain.raiseError[F, CurrencySnapshotContext])
+                currencySnapshotContextFns
+                  .createContext(
+                    CurrencySnapshotContext(currencyAddress, lastContext),
+                    lastSnapshot,
+                    snapshot,
+                    getLastNGlobalSnapshots,
+                    getGlobalSnapshotByOrdinal
                   )
+                  .handleErrorWith(_ => InvalidChain.raiseError[F, CurrencySnapshotContext])
               )
               .map(c => (snapshot, c.snapshotInfo))
         }
@@ -204,5 +198,6 @@ object Download {
   }
 
   case object CannotFetchSnapshot extends NoStackTrace
+
   case object InvalidChain extends NoStackTrace
 }

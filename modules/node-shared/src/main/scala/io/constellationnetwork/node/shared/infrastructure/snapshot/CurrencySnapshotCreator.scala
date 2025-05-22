@@ -63,7 +63,7 @@ trait CurrencySnapshotCreator[F[_]] {
     facilitators: Set[PeerId],
     feeTransactionFn: Option[() => SortedSet[Signed[FeeTransaction]]],
     artifactsFn: Option[() => SortedSet[SharedArtifact]],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
@@ -97,7 +97,7 @@ object CurrencySnapshotCreator {
       facilitators: Set[PeerId],
       feeTransactionFn: Option[() => SortedSet[Signed[FeeTransaction]]],
       artifactsFn: Option[() => SortedSet[SharedArtifact]],
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
@@ -203,7 +203,7 @@ object CurrencySnapshotCreator {
                     )
                     .getOrElse(SortedSet.empty[RewardTransaction].pure[F]),
                 facilitators,
-                lastGlobalSnapshots,
+                getLastNGlobalSnapshots,
                 getGlobalSnapshotByOrdinal,
                 lastArtifact.globalSyncView
               )

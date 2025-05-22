@@ -55,7 +55,6 @@ object Storages {
       globalL0ClusterStorage <- L0ClusterStorage.make[F](globalL0Peer)
       lastCurrencySnapshotStorage <- LastSnapshotStorage.make[F, S, SI]
       lastGlobalSnapshotStorage <- LastSnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
-      lastNGlobalSnapshotStorage <- LastNGlobalSnapshotStorage.make[F]
 
       transactionStorage <- TransactionReference.emptyCurrency(currencyIdentifier).flatMap {
         TransactionStorage.make[F](_, contextualTransactionValidator)
@@ -88,7 +87,6 @@ object Storages {
         val allowSpendBlock = allowSpendBlockStorage
         val tokenLock = tokenLockStorage
         val tokenLockBlock = tokenLockBlockStorage
-        val lastNGlobalSnapshot = lastNGlobalSnapshotStorage
         val identifier = identifierStorage
       }
 }

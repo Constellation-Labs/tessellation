@@ -35,6 +35,7 @@ object RollbackLoader {
     snapshotStorage: SnapshotDownloadStorage[F],
     snapshotContextFunctions: GlobalSnapshotContextFunctions[F],
     hashSelect: HashSelect,
+    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): RollbackLoader[F] =
     new RollbackLoader[F](
@@ -45,6 +46,7 @@ object RollbackLoader {
       snapshotContextFunctions,
       snapshotInfoLocalFileSystemStorage,
       hashSelect,
+      getLastNGlobalSnapshots,
       getGlobalSnapshotByOrdinal
     ) {}
 }
@@ -57,6 +59,7 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
   snapshotContextFunctions: GlobalSnapshotContextFunctions[F],
   snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
   hashSelect: HashSelect,
+  getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
   getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
 ) {
 
@@ -76,6 +79,7 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
                   snapshotInfoLocalFileSystemStorage.read(_),
                   snapshotContextFunctions,
                   rollbackHash,
+                  getLastNGlobalSnapshots,
                   getGlobalSnapshotByOrdinal
                 )
               snapshotTraverse.loadChain()
