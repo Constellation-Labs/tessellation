@@ -173,7 +173,8 @@ object CurrencySnapshotValidator {
                 expected.feeTransactions.map(() => _),
                 expected.artifacts.map(() => _),
                 lastGlobalSnapshots,
-                getGlobalSnapshotByOrdinal
+                getGlobalSnapshotByOrdinal,
+                shouldValidateCollateral = false
               )
 
           def check(result: F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]) =

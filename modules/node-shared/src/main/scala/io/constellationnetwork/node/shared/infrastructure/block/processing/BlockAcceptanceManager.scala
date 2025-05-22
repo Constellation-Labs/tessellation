@@ -33,7 +33,8 @@ object BlockAcceptanceManager {
       def acceptBlocksIteratively(
         blocks: List[Signed[Block]],
         context: BlockAcceptanceContext[F],
-        snapshotOrdinal: SnapshotOrdinal
+        snapshotOrdinal: SnapshotOrdinal,
+        shouldValidateCollateral: Boolean = true
       )(implicit hasher: Hasher[F]): F[BlockAcceptanceResult] = {
 
         def go(
@@ -45,7 +46,7 @@ object BlockAcceptanceManager {
               blockAndTxChains match {
                 case (block, txChains) =>
                   logic
-                    .acceptBlock(block, txChains, context, acc.contextUpdate)
+                    .acceptBlock(block, txChains, context, acc.contextUpdate, shouldValidateCollateral)
                     .map {
                       case (contextUpdate, blockUsages) =>
                         acc
@@ -96,14 +97,16 @@ object BlockAcceptanceManager {
       def acceptBlock(
         block: Signed[Block],
         context: BlockAcceptanceContext[F],
-        snapshotOrdinal: SnapshotOrdinal
+        snapshotOrdinal: SnapshotOrdinal,
+        shouldValidateCollateral: Boolean = true
       )(implicit hasher: Hasher[F]): F[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, NonNegLong)]] =
         blockValidator.validate(block, snapshotOrdinal).flatMap {
           _.toEither
             .leftMap(errors => ValidationFailed(errors.toNonEmptyList))
             .toEitherT[F]
             .flatMap {
-              case (block, txChains) => logic.acceptBlock(block, txChains, context, BlockAcceptanceContextUpdate.empty)
+              case (block, txChains) =>
+                logic.acceptBlock(block, txChains, context, BlockAcceptanceContextUpdate.empty, shouldValidateCollateral)
             }
             .leftSemiflatTap(reason => logNotAcceptedBlock((block, reason)))
             .semiflatTap { case (_, usages) => logAcceptedBlock((block, usages)) }

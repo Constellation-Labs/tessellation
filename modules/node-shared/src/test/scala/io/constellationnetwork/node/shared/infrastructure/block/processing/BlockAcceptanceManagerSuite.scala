@@ -54,7 +54,8 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
           block: Signed[Block],
           txChains: Map[Address, TransactionChainValidator.TransactionNel],
           context: BlockAcceptanceContext[IO],
-          contextUpdate: BlockAcceptanceContextUpdate
+          contextUpdate: BlockAcceptanceContextUpdate,
+          shouldValidateCollateral: Boolean = true
         ): EitherT[IO, BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)] =
           EitherT(
             for {
