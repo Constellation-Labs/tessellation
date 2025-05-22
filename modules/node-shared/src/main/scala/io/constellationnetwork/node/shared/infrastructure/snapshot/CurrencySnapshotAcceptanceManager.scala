@@ -492,50 +492,50 @@ object CurrencySnapshotAcceptanceManager {
       lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       currencyId: Address
-    ): F[SortedMap[Address, List[SpendAction]]] =
+    ): F[SortedMap[Address, List[SpendAction]]] = {
+      val empty = SortedMap.empty[Address, List[SpendAction]].pure[F]
       maybeLastGlobalSnapshot match {
-        case None => SortedMap.empty[Address, List[SpendAction]].pure[F]
+        case None => empty
         case Some(lastGlobalSnapshot) =>
           val lastSyncOrdinal = lastGlobalSyncView.map(_.ordinal).getOrElse(lastGlobalSnapshot.ordinal)
-
           if (lastGlobalSnapshot.ordinal.value.value < lastSyncOrdinal.value.value) {
-            SortedMap.empty[Address, List[SpendAction]].pure[F]
+            empty
           } else {
-            val snapshotsMap = lastGlobalSnapshots.map { snapshots =>
-              snapshots.map(s => (s.ordinal, s)).toMap
-            }.getOrElse(Map.empty)
+            val snapshotCache: Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]] =
+              lastGlobalSnapshots.map(_.map(s => s.ordinal -> s).toMap).getOrElse(Map.empty)
 
-            val start = lastSyncOrdinal.value.value
-            val end = lastGlobalSnapshot.ordinal.value.value
-            val snapshotOrdinals = (start until end)
-              .map(l => SnapshotOrdinal(NonNegLong.unsafeFrom(l)))
-              .toList
+            val startOrdinal = lastSyncOrdinal.value.value
+            val endOrdinal = lastGlobalSnapshot.ordinal.value.value
+            val snapshotOrdinals: List[SnapshotOrdinal] =
+              (startOrdinal until endOrdinal).map(i => SnapshotOrdinal(NonNegLong.unsafeFrom(i))).toList
 
-            val limitOfOrdinalsToFetch = 20L
-            if (snapshotOrdinals.length > limitOfOrdinalsToFetch) {
+            val maxAllowedGap = 20
+            if (snapshotOrdinals.size > maxAllowedGap) {
               Slf4jLogger
                 .getLogger[F]
                 .warn(
-                  s"Interval of ordinals of metagraph $currencyId between lastSyncGlobalSnapshot and lastGlobalView greater than $limitOfOrdinalsToFetch, skipping fetching interval"
+                  s"Interval of ordinals of metagraph $currencyId between lastSyncGlobalSnapshot and lastGlobalView is greater than $maxAllowedGap; skipping fetching interval"
                 )
-                .as(
-                  lastGlobalSnapshot.spendActions.getOrElse(SortedMap.empty[Address, List[SpendAction]])
-                )
+                .as(lastGlobalSnapshot.spendActions.getOrElse(SortedMap.empty))
             } else {
-              snapshotOrdinals.foldMapM { ordinal =>
-                snapshotsMap.get(ordinal) match {
-                  case Some(snapshot) =>
-                    snapshot.spendActions.getOrElse(SortedMap.empty[Address, List[SpendAction]]).pure[F]
-                  case None =>
-                    getGlobalSnapshotByOrdinal(ordinal).map(
-                      _.flatMap(_.spendActions)
-                        .getOrElse(SortedMap.empty[Address, List[SpendAction]])
-                    )
+              val (cached, missing) = snapshotOrdinals.partition(snapshotCache.contains)
+
+              val fromCache: List[SortedMap[Address, List[SpendAction]]] =
+                cached.flatMap(ordinal => snapshotCache.get(ordinal).flatMap(_.spendActions).toList)
+
+              val fetchMissing: F[List[SortedMap[Address, List[SpendAction]]]] =
+                missing.parTraverse { ordinal =>
+                  getGlobalSnapshotByOrdinal(ordinal)
+                    .map(_.flatMap(_.spendActions).getOrElse(SortedMap.empty))
                 }
-              }
+
+              for {
+                fromFetched <- fetchMissing
+              } yield (fromCache ++ fromFetched).reduceOption(_ ++ _).getOrElse(SortedMap.empty)
             }
           }
       }
+    }
 
     private def acceptTransactionRefs(
       lastTxRefs: SortedMap[Address, TransactionReference],
