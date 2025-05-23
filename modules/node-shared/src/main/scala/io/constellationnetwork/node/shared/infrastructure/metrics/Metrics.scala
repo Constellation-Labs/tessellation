@@ -69,20 +69,16 @@ object Metrics {
 
   implicit class MetricsMapOps(map: Map[String, Any]) {
     def updateGauges[F[_]](prefix: String)(implicit M: Metrics[F], F: Monad[F]): F[Unit] = {
-      // Start with unit
-      val empty: F[Unit] = F.pure(())
-
-      // Process only numeric values
-      map.foldLeft(empty) {
-        case (acc, (k, v)) =>
+      map.toSeq.traverse_ {
+        case (k, v) =>
           val key: MetricKey = Refined.unsafeApply(s"dag_${prefix}_$k")
           v match {
-            case v: Int    => acc.flatMap(_ => M.updateGauge(key, v))
-            case v: Long   => acc.flatMap(_ => M.updateGauge(key, v))
-            case v: Float  => acc.flatMap(_ => M.updateGauge(key, v))
-            case v: Double => acc.flatMap(_ => M.updateGauge(key, v))
-            case v: Number => acc.flatMap(_ => M.updateGauge(key, v.doubleValue()))
-            case _         => acc // Skip non-numeric values
+            case v: Int    => M.updateGauge(key, v)
+            case v: Long   => M.updateGauge(key, v)
+            case v: Float  => M.updateGauge(key, v)
+            case v: Double => M.updateGauge(key, v)
+            case v: Number => M.updateGauge(key, v.doubleValue())
+            case _         => F.pure(())
           }
       }
     }
