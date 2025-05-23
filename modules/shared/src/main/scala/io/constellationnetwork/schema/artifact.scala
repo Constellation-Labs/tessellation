@@ -4,6 +4,7 @@ import cats.data.NonEmptyList
 
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.priceOracle._
 import io.constellationnetwork.schema.swap.{CurrencyId, SwapAmount}
 import io.constellationnetwork.schema.tokenLock.TokenLockAmount
 import io.constellationnetwork.security.hash.Hash
@@ -40,4 +41,14 @@ object artifact {
   case class AllowSpendExpiration(
     allowSpendRef: Hash
   ) extends SharedArtifact
+
+  @derive(decoder, encoder, order, ordering, show)
+  case class PricingUpdate(
+    price: PriceFraction,
+    markOverride: Boolean,
+    parent: PricingUpdateReference
+  ) extends SharedArtifact {
+    def ordinal: PricingUpdateOrdinal = parent.ordinal.next
+    def tokenPair: TokenPair = price.tokenPair
+  }
 }

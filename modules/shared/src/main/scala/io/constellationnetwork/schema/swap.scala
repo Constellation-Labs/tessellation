@@ -22,7 +22,7 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher}
 
 import derevo.cats.{eqv, order, show}
-import derevo.circe.magnolia.{decoder, encoder}
+import derevo.circe.magnolia._
 import derevo.derive
 import enumeratum._
 import eu.timepit.refined.auto.{autoRefineV, _}
@@ -48,7 +48,7 @@ object swap {
     implicit def toAmount(fee: AllowSpendFee): Amount = Amount(fee.value)
   }
 
-  @derive(decoder, encoder, order, show, ordering)
+  @derive(decoder, encoder, keyDecoder, keyEncoder, order, show, ordering)
   @newtype
   case class CurrencyId(value: Address)
 
