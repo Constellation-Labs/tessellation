@@ -130,7 +130,6 @@ object StateChannelSnapshotService {
               s"Cannot save CurrencySnapshot ordinal=${signedArtifact.ordinal} for metagraph identifier=${context.address} into the storage."
             )
           )
-        _ <- lastGlobalSnapshotStorage.deleteOlderThanSynchronized()
         lastGlobalSnapshot <- lastGlobalSnapshotStorage.get
         lastGlobalSnapshotSigners = lastGlobalSnapshot.map(_.signed.proofs.map(_.id.toPeerId))
         _ <- stateChannelBinarySender.process(binaryHashed, lastGlobalSnapshotSigners)

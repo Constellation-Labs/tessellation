@@ -1,5 +1,6 @@
 package io.constellationnetwork.currency.l0.modules
 
+import cats.Parallel
 import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.all._
@@ -31,7 +32,7 @@ object Storages {
 
   def dataApplicationCalculatedStatePath = Path("data/calculated_state")
 
-  def make[F[+_]: Async: KryoSerializer: JsonSerializer: Supervisor: Random](
+  def make[F[+_]: Async: Parallel: KryoSerializer: JsonSerializer: Supervisor: Random](
     sharedCfg: SharedConfig,
     sharedStorages: SharedStorages[F],
     snapshotConfig: SnapshotConfig,

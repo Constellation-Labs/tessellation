@@ -41,6 +41,7 @@ import io.constellationnetwork.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
+import fs2.concurrent.SignallingRef
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -87,7 +88,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     lastDeprecatedTips: SortedSet[DeprecatedTip],
     calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
     facilitators: Set[PeerId],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     lastGlobalSyncView: Option[GlobalSyncView]
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult]
@@ -110,6 +111,35 @@ object CurrencySnapshotAcceptanceManager {
     messageValidator: CurrencyMessageValidator[F],
     feeTransactionValidator: FeeTransactionValidator[F],
     globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F]
+  ): F[CurrencySnapshotAcceptanceManager[F]] =
+    SignallingRef
+      .of[F, Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]](SortedMap.empty)
+      .map(
+        make[F](
+          tessellation3MigrationStartingOrdinal,
+          lastGlobalSnapshotsSyncConfig,
+          blockAcceptanceManager,
+          tokenLockBlockAcceptanceManager,
+          allowSpendBlockAcceptanceManager,
+          collateral,
+          messageValidator,
+          feeTransactionValidator,
+          globalSnapshotSyncValidator,
+          _
+        )
+      )
+
+  def make[F[_]: Async: Parallel](
+    tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
+    lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
+    blockAcceptanceManager: BlockAcceptanceManager[F],
+    tokenLockBlockAcceptanceManager: TokenLockBlockAcceptanceManager[F],
+    allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[F],
+    collateral: Amount,
+    messageValidator: CurrencyMessageValidator[F],
+    feeTransactionValidator: FeeTransactionValidator[F],
+    globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F],
+    lastGlobalSnapshotsCached: SignallingRef[F, Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]]
   ): CurrencySnapshotAcceptanceManager[F] = new CurrencySnapshotAcceptanceManager[F] {
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLogger[F]
 
@@ -128,7 +158,7 @@ object CurrencySnapshotAcceptanceManager {
       lastDeprecatedTips: SortedSet[DeprecatedTip],
       calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
       facilitators: Set[PeerId],
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       lastGlobalSyncView: Option[GlobalSyncView]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
@@ -209,16 +239,35 @@ object CurrencySnapshotAcceptanceManager {
         .maxByOption { case (ordinal, occurrences) => (occurrences.size, -ordinal.value.value) }
         .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value - lastGlobalSnapshotsSyncConfig.syncOffset) }
 
-      maybeLastGlobalSnapshot <- lastGlobalSnapshots.flatMap(_.find { snapshot =>
-        maybeSnapshotOrdinalSync.exists(_ === snapshot.ordinal)
-      }) match {
-        case some @ Some(_) => some.pure
-        case None =>
-          maybeSnapshotOrdinalSync match {
-            case Some(ordinal) =>
-              getGlobalSnapshotByOrdinal(ordinal)
-            case None => none.pure
+      lastGlobalSnapshots <- getLastNGlobalSnapshots
+      maybeLastGlobalSnapshot <- maybeSnapshotOrdinalSync match {
+        case Some(ordinal) =>
+          lastGlobalSnapshots.find(_.ordinal === ordinal) match {
+            case some @ Some(_) =>
+              some.pure[F]
+            case None =>
+              lastGlobalSnapshotsCached.get.flatMap { cache =>
+                cache.get(ordinal) match {
+                  case Some(snapshot) => snapshot.some.pure[F]
+                  case None           => getGlobalSnapshotByOrdinal(ordinal)
+                }
+              }
           }
+        case None =>
+          none.pure[F]
+      }
+
+      _ <- maybeLastGlobalSnapshot match {
+        case Some(snapshot) =>
+          lastGlobalSnapshotsCached.update { current =>
+            val updated = current.updated(snapshot.ordinal, snapshot)
+            updated.toSeq
+              .sortBy(_._1.value.value)
+              .takeRight(lastGlobalSnapshotsSyncConfig.maxLastGlobalSnapshotsInMemory)
+              .toMap
+          }
+        case _ =>
+          Applicative[F].unit
       }
 
       lastGlobalSnapshotEpochProgress <-
@@ -489,53 +538,52 @@ object CurrencySnapshotAcceptanceManager {
     private def getLastSpendActions(
       lastGlobalSyncView: Option[GlobalSyncView],
       maybeLastGlobalSnapshot: Option[Hashed[GlobalIncrementalSnapshot]],
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      lastGlobalSnapshots: List[Hashed[GlobalIncrementalSnapshot]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       currencyId: Address
-    ): F[SortedMap[Address, List[SpendAction]]] =
+    ): F[SortedMap[Address, List[SpendAction]]] = {
+      val empty = SortedMap.empty[Address, List[SpendAction]].pure[F]
       maybeLastGlobalSnapshot match {
-        case None => SortedMap.empty[Address, List[SpendAction]].pure[F]
+        case None => empty
         case Some(lastGlobalSnapshot) =>
           val lastSyncOrdinal = lastGlobalSyncView.map(_.ordinal).getOrElse(lastGlobalSnapshot.ordinal)
-
           if (lastGlobalSnapshot.ordinal.value.value < lastSyncOrdinal.value.value) {
-            SortedMap.empty[Address, List[SpendAction]].pure[F]
+            empty
           } else {
-            val snapshotsMap = lastGlobalSnapshots.map { snapshots =>
-              snapshots.map(s => (s.ordinal, s)).toMap
-            }.getOrElse(Map.empty)
+            val snapshotCache: Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]] =
+              lastGlobalSnapshots.map(s => s.ordinal -> s).toMap
 
-            val start = lastSyncOrdinal.value.value
-            val end = lastGlobalSnapshot.ordinal.value.value
-            val snapshotOrdinals = (start until end)
-              .map(l => SnapshotOrdinal(NonNegLong.unsafeFrom(l)))
-              .toList
+            val startOrdinal = lastSyncOrdinal.value.value
+            val endOrdinal = lastGlobalSnapshot.ordinal.value.value
+            val snapshotOrdinals: List[SnapshotOrdinal] =
+              (startOrdinal until endOrdinal).map(i => SnapshotOrdinal(NonNegLong.unsafeFrom(i))).toList
 
-            val limitOfOrdinalsToFetch = 20L
-            if (snapshotOrdinals.length > limitOfOrdinalsToFetch) {
+            if (snapshotOrdinals.size > lastGlobalSnapshotsSyncConfig.maxAllowedGap.value) {
               Slf4jLogger
                 .getLogger[F]
                 .warn(
-                  s"Interval of ordinals of metagraph $currencyId between lastSyncGlobalSnapshot and lastGlobalView greater than $limitOfOrdinalsToFetch, skipping fetching interval"
+                  s"Interval of ordinals of metagraph $currencyId between lastSyncGlobalSnapshot and lastGlobalView is greater than $lastGlobalSnapshotsSyncConfig.maxAllowedGap; skipping fetching interval"
                 )
-                .as(
-                  lastGlobalSnapshot.spendActions.getOrElse(SortedMap.empty[Address, List[SpendAction]])
-                )
+                .as(lastGlobalSnapshot.spendActions.getOrElse(SortedMap.empty))
             } else {
-              snapshotOrdinals.foldMapM { ordinal =>
-                snapshotsMap.get(ordinal) match {
-                  case Some(snapshot) =>
-                    snapshot.spendActions.getOrElse(SortedMap.empty[Address, List[SpendAction]]).pure[F]
-                  case None =>
-                    getGlobalSnapshotByOrdinal(ordinal).map(
-                      _.flatMap(_.spendActions)
-                        .getOrElse(SortedMap.empty[Address, List[SpendAction]])
-                    )
+              val (cached, missing) = snapshotOrdinals.partition(snapshotCache.contains)
+
+              val fromCache: List[SortedMap[Address, List[SpendAction]]] =
+                cached.flatMap(ordinal => snapshotCache.get(ordinal).flatMap(_.spendActions).toList)
+
+              val fetchMissing: F[List[SortedMap[Address, List[SpendAction]]]] =
+                missing.parTraverse { ordinal =>
+                  getGlobalSnapshotByOrdinal(ordinal)
+                    .map(_.flatMap(_.spendActions).getOrElse(SortedMap.empty))
                 }
-              }
+
+              for {
+                fromFetched <- fetchMissing
+              } yield (fromCache ++ fromFetched).reduceOption(_ ++ _).getOrElse(SortedMap.empty)
             }
           }
       }
+    }
 
     private def acceptTransactionRefs(
       lastTxRefs: SortedMap[Address, TransactionReference],

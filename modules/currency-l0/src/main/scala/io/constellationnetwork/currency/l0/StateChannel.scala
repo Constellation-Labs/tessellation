@@ -16,8 +16,8 @@ import io.constellationnetwork.currency.l0.metrics.updateFailedConfirmingStateCh
 import io.constellationnetwork.currency.l0.modules.{Programs, Services, Storages}
 import io.constellationnetwork.currency.schema.globalSnapshotSync.{GlobalSnapshotSync, GlobalSnapshotSyncReference}
 import io.constellationnetwork.kernel.{:: => _, _}
-import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.snapshot.Validator
+import io.constellationnetwork.node.shared.domain.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.snapshot.currency.{CurrencySnapshotEvent, GlobalSnapshotSyncEvent}
 import io.constellationnetwork.schema.peer.PeerId
@@ -34,13 +34,13 @@ object StateChannel {
   private val awakePeriod = 10.seconds
 
   def run[F[_]: Async: HasherSelector: SecurityProvider: Metrics](
-    lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
     services: Services[F, Run],
     storages: Storages[F],
     programs: Programs[F],
     dataApplicationService: Option[BaseDataApplicationL0Service[F]],
     selfKeyPair: KeyPair,
-    enqueueConsensusEventFn: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _]
+    enqueueConsensusEventFn: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
+    lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F]
   )(implicit S: Supervisor[F]): Stream[F, Unit] = {
     val logger = Slf4jLogger.getLogger[F]
 
@@ -93,7 +93,9 @@ object StateChannel {
         .evalMap(_ => services.globalL0.pullGlobalSnapshots)
         .evalMap {
           case Left((snapshot, state)) =>
-            storages.lastGlobalSnapshot.setInitial(snapshot, state) >> triggerOnGlobalSnapshotPullHook(snapshot, state)
+            storages.lastGlobalSnapshot.setInitial(snapshot, state) >>
+              lastNGlobalSnapshotStorage.setInitial(snapshot, state) >>
+              triggerOnGlobalSnapshotPullHook(snapshot, state)
 
           case Right(snapshots) =>
             snapshots.tailRecM {
@@ -109,22 +111,19 @@ object StateChannel {
                     case Some((lastSnapshot, lastState)) =>
                       HasherSelector[F]
                         .forOrdinal(snapshot.ordinal) { implicit hasher =>
-                          storages.lastGlobalSnapshot
-                            .getLastNSynchronized(lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value)
-                            .flatMap(lastNSync =>
-                              services.globalSnapshotContextFunctions
-                                .createContext(
-                                  lastState,
-                                  lastSnapshot.signed,
-                                  snapshot.signed,
-                                  lastNSync,
-                                  services.globalL0.pullGlobalSnapshot
-                                )
+                          services.globalSnapshotContextFunctions
+                            .createContext(
+                              lastState,
+                              lastSnapshot.signed,
+                              snapshot.signed,
+                              lastNGlobalSnapshotStorage.getLastN,
+                              services.globalL0.pullGlobalSnapshot
                             )
                         }
                         .flatMap { context =>
                           for {
                             _ <- storages.lastGlobalSnapshot.set(snapshot, context)
+                            _ <- lastNGlobalSnapshotStorage.set(snapshot, context)
                             _ <- HasherSelector[F].withCurrent { implicit hasher =>
                               sendGlobalSnapshotSyncConsensusEvent(snapshot)
                             }

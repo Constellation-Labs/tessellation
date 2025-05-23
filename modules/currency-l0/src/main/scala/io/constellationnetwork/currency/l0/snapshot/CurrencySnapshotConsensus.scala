@@ -20,7 +20,7 @@ import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
-import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSyncGlobalSnapshotStorage}
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
@@ -57,6 +57,7 @@ object CurrencySnapshotConsensus {
     hasherSelector: HasherSelector[F],
     restartService: RestartService[F, _],
     leavingDelay: FiniteDuration,
+    lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): F[CurrencySnapshotConsensus[F]] = {
     def noopDecoder: Decoder[DataTransaction] = Decoder.failedWithMessage[DataTransaction]("not implemented")
@@ -88,7 +89,6 @@ object CurrencySnapshotConsensus {
       )
       consensusStateAdvancer = CurrencySnapshotConsensusStateAdvancer
         .make[F](
-          sharedCfg.lastGlobalSnapshotsSync,
           keyPair,
           consensusStorage,
           consensusFunctions,
@@ -98,7 +98,7 @@ object CurrencySnapshotConsensus {
           restartService,
           nodeStorage,
           leavingDelay,
-          lastGlobalSnapshotStorage,
+          lastNGlobalSnapshotStorage,
           getGlobalSnapshotByOrdinal
         )
       consensusStateCreator = CurrencySnapshotConsensusStateCreator

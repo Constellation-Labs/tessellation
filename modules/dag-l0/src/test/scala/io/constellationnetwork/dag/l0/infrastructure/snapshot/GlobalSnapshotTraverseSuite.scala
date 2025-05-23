@@ -294,23 +294,23 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           )
         )
 
-    val currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
-      SnapshotOrdinal.MinValue,
-      LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
-      BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, txHasher),
-      TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
-      AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
-      Amount(0L),
-      validators.currencyMessageValidator,
-      validators.feeTransactionValidator,
-      validators.globalSnapshotSyncValidator
-    )
     val currencyEventsCutter = CurrencyEventsCutter.make[IO](None)
 
     implicit val hs = HasherSelector.forSyncAlwaysCurrent(H)
 
     for {
       validationErrorStorage <- CurrencySnapshotEventValidationErrorStorage.make(TestValidationErrorStorageMaxSize)
+      currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager.make(
+        SnapshotOrdinal.MinValue,
+        LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10), PosInt(10)),
+        BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, txHasher),
+        TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
+        AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
+        Amount(0L),
+        validators.currencyMessageValidator,
+        validators.feeTransactionValidator,
+        validators.globalSnapshotSyncValidator
+      )
       currencySnapshotCreator =
         CurrencySnapshotCreator
           .make[IO](
@@ -365,7 +365,15 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       )
     } yield
       GlobalSnapshotTraverse
-        .make[IO](loadGlobalIncrementalSnapshot, loadGlobalSnapshot, loadInfo, snapshotContextFunctions, rollbackHash, _ => None.pure[IO])
+        .make[IO](
+          loadGlobalIncrementalSnapshot,
+          loadGlobalSnapshot,
+          loadInfo,
+          snapshotContextFunctions,
+          rollbackHash,
+          List.empty.pure[IO],
+          _ => None.pure[IO]
+        )
   }
 
   test("can compute state for given incremental global snapshot") { res =>

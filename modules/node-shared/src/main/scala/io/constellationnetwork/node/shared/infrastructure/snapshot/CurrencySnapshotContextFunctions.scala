@@ -33,14 +33,14 @@ object CurrencySnapshotContextFunctions {
         context: CurrencySnapshotContext,
         lastArtifact: Signed[CurrencyIncrementalSnapshot],
         signedArtifact: Signed[CurrencyIncrementalSnapshot],
-        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+        getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
         getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[CurrencySnapshotContext] = for {
         validatedS <- validator.validateSignedSnapshot(
           lastArtifact,
           context,
           signedArtifact,
-          lastGlobalSnapshots,
+          getLastNGlobalSnapshots,
           getGlobalSnapshotByOrdinal
         )
         validatedContext <- validatedS match {

@@ -76,7 +76,7 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
     lastDeprecatedTips: SortedSet[DeprecatedTip],
     calculateRewardsFn: RewardsInput => F[DelegatedRewardsResult],
     validationType: StateChannelValidationType,
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): F[
     (
@@ -133,7 +133,7 @@ object GlobalSnapshotAcceptanceManager {
       lastDeprecatedTips: SortedSet[DeprecatedTip],
       calculateRewardsFn: RewardsInput => F[DelegatedRewardsResult],
       validationType: StateChannelValidationType,
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     ): F[
       (
@@ -198,7 +198,7 @@ object GlobalSnapshotAcceptanceManager {
               lastSnapshotContext.copy(balances = updatedGlobalBalances),
               scEvents,
               validationType,
-              lastGlobalSnapshots,
+              getLastNGlobalSnapshots,
               getGlobalSnapshotByOrdinal
             )
 

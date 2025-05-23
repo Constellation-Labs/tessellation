@@ -110,6 +110,7 @@ object Services {
             delegatorRewards,
             txHasher,
             sharedServices.restart,
+            storages.lastNGlobalSnapshot,
             storages.globalSnapshot.getHashed
           )
       }

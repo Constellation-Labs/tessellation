@@ -252,7 +252,7 @@ object ConsensusStateUpdater {
     proposals: List[Hash],
     facilitators: Set[PeerId],
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact, Context],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[Option[ArtifactInfo[Artifact, Context]]] = {
     def go(proposals: List[(Int, Hash)]): F[Option[ArtifactInfo[Artifact, Context]]] =
@@ -271,7 +271,7 @@ object ConsensusStateUpdater {
                     trigger,
                     artifact,
                     facilitators,
-                    lastGlobalSnapshots,
+                    getLastNGlobalSnapshots,
                     getGlobalSnapshotByOrdinal
                   )
                   .map { validationResultOrError =>

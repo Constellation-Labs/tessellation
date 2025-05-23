@@ -15,7 +15,6 @@ trait SnapshotStorage[F[_], S <: Snapshot, State] {
 
   def get(ordinal: SnapshotOrdinal): F[Option[Signed[S]]]
   def getHashed(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Option[Hashed[S]]]
-  def getLastN(ordinal: SnapshotOrdinal, n: Int): F[Option[List[Signed[S]]]]
 
   def get(hash: Hash): F[Option[Signed[S]]]
   def getHash(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Option[Hash]]
