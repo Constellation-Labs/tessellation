@@ -22,25 +22,17 @@ ThisBuild / version := sys.env.get("RELEASE_TAG").map(_.stripPrefix("v")).getOrE
 
 enablePlugins(TessellationCiRelease)
 
-resolvers += Resolver.sonatypeRepo("snapshots")
-
 val scalafixCommonSettings = inConfig(IntegrationTest)(scalafixConfigSettings(IntegrationTest))
 
 bloopExportJarClassifiers in Global := Some(Set("sources"))
-
-val ghTokenSource = TokenSource.GitConfig("github.token") || TokenSource.Environment("GITHUB_TOKEN")
-
-This / githubTokenSource := ghTokenSource
 
 lazy val commonSettings = Seq(
   scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
   scalafmtOnCompile := true,
   scalafixOnCompile := true,
   resolvers ++= List(
-    Resolver.sonatypeRepo("snapshots"),
-    Resolver.githubPackages("abankowski", "http-request-signer")
-  ),
-  githubTokenSource := ghTokenSource
+    Resolver.sonatypeRepo("snapshots")
+  )
 )
 
 lazy val commonTestSettings = Seq(
