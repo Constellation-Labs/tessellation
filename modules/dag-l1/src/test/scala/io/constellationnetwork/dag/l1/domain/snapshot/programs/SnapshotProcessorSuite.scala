@@ -33,6 +33,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlock
 import io.constellationnetwork.node.shared.domain.tokenlock.{ContextualTokenLockValidator, TokenLockStorage}
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.consensus.CurrencySnapshotEventValidationErrorStorage
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.modules.SharedValidators
@@ -89,200 +90,204 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
     SecurityProvider.forAsync[IO].flatMap { implicit sp =>
       KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar).flatMap { implicit kp =>
         Random.scalaUtilRandom[IO].asResource.flatMap { implicit random =>
-          for {
-            implicit0(jhs: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-            implicit0(h: Hasher[IO]) = Hasher.forJson[IO]
-            balancesR <- Ref.of[IO, Map[Address, Balance]](Map.empty).asResource
-            blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]().asResource
-            lastSnapR <- SignallingRef.of[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](None).asResource
-            lastNSnapR <- SignallingRef
-              .of[IO, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](SortedMap.empty)
-              .asResource
-            incLastNSnapR <- SignallingRef
-              .of[IO, SortedMap[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]](SortedMap.empty)
-              .asResource
-            transactionsR <- MapRef
-              .ofConcurrentHashMap[IO, Address, SortedMap[TransactionOrdinal, StoredTransaction]]()
-              .asResource
-            validators = SharedValidators
-              .make[IO](
-                AddressesConfig(Set()),
-                None,
-                None,
-                Some(Map.empty),
-                SortedMap.empty,
-                Long.MaxValue,
-                Hasher.forKryo[IO],
-                DelegatedStakingConfig(
-                  RewardFraction(5_000_000),
-                  RewardFraction(10_000_000),
-                  PosInt(140),
-                  PosInt(10),
-                  PosLong((5000 * 1e8).toLong),
-                  Map(Dev -> EpochProgress(NonNegLong(7338977L)))
-                )
-              )
-            contextualTransactionValidator = ContextualTransactionValidator
-              .make(TransactionLimitConfig(Balance.empty, 0.hours, TransactionFee.zero, 1.second), None)
-            transactionStorage = new TransactionStorage[IO](
-              transactionsR,
-              TransactionReference.empty,
-              contextualTransactionValidator
-            )
-            allowSpendBlockStorage <- AllowSpendBlockStorage.make[IO].asResource
-            allowSpendStorage <- AllowSpendStorage
-              .make[IO](
-                AllowSpendReference.empty,
-                ContextualAllowSpendValidator.make(None, None, AllowSpendsConfig(MinMax(min = NonNegLong(1L), max = NonNegLong(100L))))
-              )
-              .asResource
-
-            tokenLockStorage <- TokenLockStorage
-              .make[IO](
-                TokenLockReference.empty,
-                ContextualTokenLockValidator.make(None, TokenLocksConfig(NonNegLong(1L)), none)
-              )
-              .asResource
-
-            currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager
-              .make(
-                SnapshotOrdinal.MinValue,
-                LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(20), PosInt(10)),
-                BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
-                TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
-                AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
-                Amount(0L),
-                validators.currencyMessageValidator,
-                validators.feeTransactionValidator,
-                validators.globalSnapshotSyncValidator
-              )
-              .asResource
-            implicit0(hs: HasherSelector[IO]) = HasherSelector.forSyncAlwaysCurrent(h)
-            currencyEventsCutter = CurrencyEventsCutter.make[IO](None)
-            validationErrorStorage <- CurrencySnapshotEventValidationErrorStorage.make(TestValidationErrorStorageMaxSize).asResource
-            currencySnapshotCreator = CurrencySnapshotCreator
-              .make[IO](
-                SnapshotOrdinal.MinValue,
-                currencySnapshotAcceptanceManager,
-                None,
-                SnapshotSizeConfig(Long.MaxValue, Long.MaxValue),
-                currencyEventsCutter,
-                validationErrorStorage
-              )
-            currencySnapshotValidator = CurrencySnapshotValidator
-              .make[IO](SnapshotOrdinal.MinValue, currencySnapshotCreator, validators.signedValidator, None, None)
-
-            currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
-            globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L)).asResource
-            jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[IO].asResource
-            feeCalculator = FeeCalculator.make(SortedMap.empty)
-            updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
-            updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager
-              .make(validators.updateDelegatedStakeValidator)
-            updateNodeCollateralAcceptanceManager = UpdateNodeCollateralAcceptanceManager
-              .make(validators.updateNodeCollateralValidator)
-            globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
-              SnapshotOrdinal.MinValue,
-              BlockAcceptanceManager.make[IO](validators.blockValidator, Hasher.forKryo[IO]),
-              AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
-              TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
-              GlobalSnapshotStateChannelEventsProcessor
+          Metrics.forAsync[IO](Seq(("application", name))).flatMap { implicit _metrics =>
+            for {
+              implicit0(jhs: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+              implicit0(h: Hasher[IO]) = Hasher.forJson[IO]
+              balancesR <- Ref.of[IO, Map[Address, Balance]](Map.empty).asResource
+              blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]().asResource
+              lastSnapR <- SignallingRef.of[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](None).asResource
+              lastNSnapR <- SignallingRef
+                .of[IO, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](SortedMap.empty)
+                .asResource
+              incLastNSnapR <- SignallingRef
+                .of[IO, SortedMap[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]](SortedMap.empty)
+                .asResource
+              transactionsR <- MapRef
+                .ofConcurrentHashMap[IO, Address, SortedMap[TransactionOrdinal, StoredTransaction]]()
+                .asResource
+              validators = SharedValidators
                 .make[IO](
-                  validators.stateChannelValidator,
-                  globalSnapshotStateChannelManager,
-                  currencySnapshotContextFns,
-                  jsonBrotliBinarySerializer,
-                  feeCalculator
-                ),
-              updateNodeParametersAcceptanceManager,
-              updateDelegatedStakeAcceptanceManager,
-              updateNodeCollateralAcceptanceManager,
-              validators.spendActionValidator,
-              Amount(0L),
-              EpochProgress(NonNegLong(136080L))
-            )
-            globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(
-              globalSnapshotAcceptanceManager,
-              updateDelegatedStakeAcceptanceManager,
-              EpochProgress(NonNegLong.unsafeFrom(1L)),
-              SnapshotOrdinal.MinValue
-            )
-            snapshotProcessor = {
-              val addressStorage = new AddressStorage[IO] {
-                def getState: IO[Map[Address, Balance]] =
-                  balancesR.get
-
-                def getBalance(address: Address): IO[balance.Balance] =
-                  balancesR.get.map(b => b(address))
-
-                def updateBalances(addressBalances: Map[Address, balance.Balance]): IO[Unit] =
-                  balancesR.set(addressBalances)
-
-                def clean: IO[Unit] = balancesR.set(Map.empty)
-              }
-
-              val blockStorage = new BlockStorage[IO](blocksR)
-              val lastSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
-              val lastGlobalSnapshotsSyncConfig = LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt.unsafeFrom(10), PosInt.unsafeFrom(5))
-              val globalL0Service = new GlobalL0Service[IO] {
-                override def pullLatestSnapshot: IO[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = ???
-
-                override def pullLatestSnapshotFromRandomPeer: IO[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = ???
-
-                override def pullGlobalSnapshots
-                  : IO[Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]] = ???
-
-                override def pullGlobalSnapshot(ordinal: SnapshotOrdinal): IO[Option[Hashed[GlobalIncrementalSnapshot]]] = none.pure[IO]
-
-                override def pullGlobalSnapshot(hash: Hash): IO[Option[Hashed[GlobalIncrementalSnapshot]]] = ???
-              }
-              val lastNSnapshotStorage =
-                LastNGlobalSnapshotStorage.make[IO](lastGlobalSnapshotsSyncConfig, globalL0Service.asLeft, lastNSnapR, incLastNSnapR)
-              DAGSnapshotProcessor
-                .make[IO](
-                  lastGlobalSnapshotsSyncConfig,
-                  addressStorage,
-                  blockStorage,
-                  lastSnapshotStorage,
-                  lastNSnapshotStorage,
-                  transactionStorage,
-                  allowSpendStorage,
-                  tokenLockStorage,
-                  globalSnapshotContextFns,
+                  AddressesConfig(Set()),
+                  None,
+                  None,
+                  Some(Map.empty),
+                  SortedMap.empty,
+                  Long.MaxValue,
                   Hasher.forKryo[IO],
-                  globalL0Service.pullGlobalSnapshot
+                  DelegatedStakingConfig(
+                    RewardFraction(5_000_000),
+                    RewardFraction(10_000_000),
+                    PosInt(140),
+                    PosInt(10),
+                    PosLong((5000 * 1e8).toLong),
+                    Map(Dev -> EpochProgress(NonNegLong(7338977L)))
+                  )
                 )
-            }
-            keys <- (
-              KeyPairGenerator.makeKeyPair[IO],
-              KeyPairGenerator.makeKeyPair[IO],
-              KeyPairGenerator.makeKeyPair[IO]
-            ).tupled.asResource
-            srcKey = keys._1
-            dstKey <- KeyPairGenerator.makeKeyPair[IO].asResource
-            srcAddress = srcKey.getPublic.toAddress
-            dstAddress = dstKey.getPublic.toAddress
-            peerId = PeerId.fromId(srcKey.getPublic.toId)
-          } yield
-            (
-              snapshotProcessor,
-              sp,
-              h,
-              kp,
-              keys,
-              srcKey,
-              dstKey,
-              srcAddress,
-              dstAddress,
-              peerId,
-              balancesR,
-              blocksR,
-              lastSnapR,
-              transactionStorage,
-              globalSnapshotContextFns,
-              lastNSnapR,
-              incLastNSnapR
-            )
+              contextualTransactionValidator = ContextualTransactionValidator
+                .make(TransactionLimitConfig(Balance.empty, 0.hours, TransactionFee.zero, 1.second), None)
+              transactionStorage = new TransactionStorage[IO](
+                transactionsR,
+                TransactionReference.empty,
+                contextualTransactionValidator
+              )
+              allowSpendBlockStorage <- AllowSpendBlockStorage.make[IO].asResource
+              allowSpendStorage <- AllowSpendStorage
+                .make[IO](
+                  AllowSpendReference.empty,
+                  ContextualAllowSpendValidator.make(None, None, AllowSpendsConfig(MinMax(min = NonNegLong(1L), max = NonNegLong(100L))))
+                )
+                .asResource
+
+              tokenLockStorage <- TokenLockStorage
+                .make[IO](
+                  TokenLockReference.empty,
+                  ContextualTokenLockValidator.make(None, TokenLocksConfig(NonNegLong(1L)), none)
+                )
+                .asResource
+
+              currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager
+                .make(
+                  SnapshotOrdinal.MinValue,
+                  LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(20), PosInt(10)),
+                  BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
+                  TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
+                  AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
+                  Amount(0L),
+                  validators.currencyMessageValidator,
+                  validators.feeTransactionValidator,
+                  validators.globalSnapshotSyncValidator
+                )
+                .asResource
+              implicit0(hs: HasherSelector[IO]) = HasherSelector.forSyncAlwaysCurrent(h)
+              currencyEventsCutter = CurrencyEventsCutter.make[IO](None)
+              validationErrorStorage <- CurrencySnapshotEventValidationErrorStorage.make(TestValidationErrorStorageMaxSize).asResource
+              currencySnapshotCreator = CurrencySnapshotCreator
+                .make[IO](
+                  SnapshotOrdinal.MinValue,
+                  currencySnapshotAcceptanceManager,
+                  None,
+                  SnapshotSizeConfig(Long.MaxValue, Long.MaxValue),
+                  currencyEventsCutter,
+                  validationErrorStorage
+                )
+              currencySnapshotValidator = CurrencySnapshotValidator
+                .make[IO](SnapshotOrdinal.MinValue, currencySnapshotCreator, validators.signedValidator, None, None)
+
+              currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
+              globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L)).asResource
+              jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[IO].asResource
+              feeCalculator = FeeCalculator.make(SortedMap.empty)
+              updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
+              updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager
+                .make(validators.updateDelegatedStakeValidator)
+              updateNodeCollateralAcceptanceManager = UpdateNodeCollateralAcceptanceManager
+                .make(validators.updateNodeCollateralValidator)
+
+              globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
+                SnapshotOrdinal.MinValue,
+                BlockAcceptanceManager.make[IO](validators.blockValidator, Hasher.forKryo[IO]),
+                AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
+                TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
+                GlobalSnapshotStateChannelEventsProcessor
+                  .make[IO](
+                    validators.stateChannelValidator,
+                    globalSnapshotStateChannelManager,
+                    currencySnapshotContextFns,
+                    jsonBrotliBinarySerializer,
+                    feeCalculator
+                  ),
+                updateNodeParametersAcceptanceManager,
+                updateDelegatedStakeAcceptanceManager,
+                updateNodeCollateralAcceptanceManager,
+                validators.spendActionValidator,
+                Amount(0L),
+                EpochProgress(NonNegLong(136080L))
+              )
+              globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(
+                globalSnapshotAcceptanceManager,
+                updateDelegatedStakeAcceptanceManager,
+                EpochProgress(NonNegLong.unsafeFrom(1L)),
+                SnapshotOrdinal.MinValue
+              )
+              snapshotProcessor = {
+                val addressStorage = new AddressStorage[IO] {
+                  def getState: IO[Map[Address, Balance]] =
+                    balancesR.get
+
+                  def getBalance(address: Address): IO[balance.Balance] =
+                    balancesR.get.map(b => b(address))
+
+                  def updateBalances(addressBalances: Map[Address, balance.Balance]): IO[Unit] =
+                    balancesR.set(addressBalances)
+
+                  def clean: IO[Unit] = balancesR.set(Map.empty)
+                }
+
+                val blockStorage = new BlockStorage[IO](blocksR)
+                val lastSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
+                val lastGlobalSnapshotsSyncConfig =
+                  LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt.unsafeFrom(10), PosInt.unsafeFrom(5))
+                val globalL0Service = new GlobalL0Service[IO] {
+                  override def pullLatestSnapshot: IO[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = ???
+
+                  override def pullLatestSnapshotFromRandomPeer: IO[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = ???
+
+                  override def pullGlobalSnapshots
+                    : IO[Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]] = ???
+
+                  override def pullGlobalSnapshot(ordinal: SnapshotOrdinal): IO[Option[Hashed[GlobalIncrementalSnapshot]]] = none.pure[IO]
+
+                  override def pullGlobalSnapshot(hash: Hash): IO[Option[Hashed[GlobalIncrementalSnapshot]]] = ???
+                }
+                val lastNSnapshotStorage =
+                  LastNGlobalSnapshotStorage.make[IO](lastGlobalSnapshotsSyncConfig, globalL0Service.asLeft, lastNSnapR, incLastNSnapR)
+                DAGSnapshotProcessor
+                  .make[IO](
+                    lastGlobalSnapshotsSyncConfig,
+                    addressStorage,
+                    blockStorage,
+                    lastSnapshotStorage,
+                    lastNSnapshotStorage,
+                    transactionStorage,
+                    allowSpendStorage,
+                    tokenLockStorage,
+                    globalSnapshotContextFns,
+                    Hasher.forKryo[IO],
+                    globalL0Service.pullGlobalSnapshot
+                  )
+              }
+              keys <- (
+                KeyPairGenerator.makeKeyPair[IO],
+                KeyPairGenerator.makeKeyPair[IO],
+                KeyPairGenerator.makeKeyPair[IO]
+              ).tupled.asResource
+              srcKey = keys._1
+              dstKey <- KeyPairGenerator.makeKeyPair[IO].asResource
+              srcAddress = srcKey.getPublic.toAddress
+              dstAddress = dstKey.getPublic.toAddress
+              peerId = PeerId.fromId(srcKey.getPublic.toId)
+            } yield
+              (
+                snapshotProcessor,
+                sp,
+                h,
+                kp,
+                keys,
+                srcKey,
+                dstKey,
+                srcAddress,
+                dstAddress,
+                peerId,
+                balancesR,
+                blocksR,
+                lastSnapR,
+                transactionStorage,
+                globalSnapshotContextFns,
+                lastNSnapR,
+                incLastNSnapR
+              )
+          }
         }
       }
     }
