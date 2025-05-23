@@ -10,6 +10,10 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
 
+import io.constellationnetwork.httpsigner.http4s._
+import io.constellationnetwork.httpsigner.signature.generic.{GenericGenerator, GenericVerifier}
+import io.constellationnetwork.httpsigner.signature.{Generator, Verifier}
+import io.constellationnetwork.httpsigner.{HttpCryptoConfig, SignatureValid}
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.SessionStorage
 import io.constellationnetwork.node.shared.domain.collateral.Collateral
@@ -24,10 +28,6 @@ import org.http4s.Status.Unauthorized
 import org.http4s._
 import org.http4s.client.Client
 import org.typelevel.ci._
-import pl.abankowski.httpsigner.http4s._
-import pl.abankowski.httpsigner.signature.generic.{GenericGenerator, GenericVerifier}
-import pl.abankowski.httpsigner.signature.{Generator, Verifier}
-import pl.abankowski.httpsigner.{HttpCryptoConfig, SignatureValid}
 
 object PeerAuthMiddleware {
 
