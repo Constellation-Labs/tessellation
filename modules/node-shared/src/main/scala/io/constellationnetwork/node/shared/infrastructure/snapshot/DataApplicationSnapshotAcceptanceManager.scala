@@ -159,11 +159,19 @@ object DataApplicationSnapshotAcceptanceManager {
         )
 
         processingResult <- OptionT.liftF {
-          NonEmptyList
+          val blocksToProcess = NonEmptyList
             .fromList(dataBlocks.distinctBy(_.value.roundId))
             .map(_.toList)
             .getOrElse(Nil)
-            .foldLeftM(initialResult) {
+
+          if (blocksToProcess.isEmpty) {
+            val (oldState, oldFeeTxns, oldAcceptedBlocks, oldRejectedBlocks) = initialResult
+            // No blocks to process - call combine with empty updates
+            service.combine(oldState, List.empty).map { newState =>
+              (newState, oldFeeTxns, oldAcceptedBlocks, oldRejectedBlocks)
+            }
+          } else {
+            blocksToProcess.foldLeftM(initialResult) {
               case ((currentState, accFeeTransactions, accAcceptedBlocks, accNotAcceptedBlocks), dataBlock) =>
                 val dataTransactions = dataBlock.value.dataTransactions
 
@@ -211,6 +219,7 @@ object DataApplicationSnapshotAcceptanceManager {
                     )
                 }
             }
+          }
         }
 
         (newDataState, validatedFeeTransactions, validatedBlocks, notAcceptedBlocks) = processingResult

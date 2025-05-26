@@ -33,7 +33,7 @@ import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
-import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig}
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
@@ -80,6 +80,7 @@ object GlobalSnapshotConsensus {
     delegatorRewards: DelegatedRewardsDistributor[F],
     txHasher: Hasher[F],
     restartService: RestartService[F, R],
+    lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): F[GlobalSnapshotConsensus[F]] =
     for {
@@ -139,7 +140,6 @@ object GlobalSnapshotConsensus {
 
       consensusStateAdvancer = GlobalSnapshotConsensusStateAdvancer
         .make[F](
-          sharedCfg.lastGlobalSnapshotsSync,
           keyPair,
           consensusStorage,
           globalSnapshotStorage,
@@ -148,6 +148,7 @@ object GlobalSnapshotConsensus {
           restartService,
           nodeStorage,
           appConfig.shared.leavingDelay,
+          lastNGlobalSnapshotStorage,
           getGlobalSnapshotByOrdinal
         )
       consensusStateCreator = GlobalSnapshotConsensusStateCreator.make[F](consensusFunctions, consensusStorage, gossip, selfId, seedlist)

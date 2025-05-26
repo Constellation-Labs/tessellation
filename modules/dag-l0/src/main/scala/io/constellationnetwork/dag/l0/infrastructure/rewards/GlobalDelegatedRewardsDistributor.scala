@@ -2,6 +2,7 @@ package io.constellationnetwork.dag.l0.infrastructure.rewards
 
 import java.math.MathContext
 
+import cats.Applicative
 import cats.effect.{Async, Sync}
 import cats.syntax.all._
 
@@ -13,9 +14,11 @@ import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
+import io.constellationnetwork.schema.AmountOps._
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.balance.Balance._
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, UpdateDelegatedStake}
 import io.constellationnetwork.schema.epoch.EpochProgress
@@ -26,6 +29,7 @@ import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
+import io.constellationnetwork.utils.DecimalUtils
 
 import eu.timepit.refined.auto.autoUnwrap
 import eu.timepit.refined.types.all.{NonNegLong, PosLong}
@@ -39,15 +43,30 @@ object GlobalDelegatedRewardsDistributor {
   ): DelegatedRewardsDistributor[F] = new DelegatedRewardsDistributor[F] {
 
     // Define a high precision MathContext for consistent calculations
-    val mc: MathContext = new java.math.MathContext(24, java.math.RoundingMode.HALF_UP)
+    private val mc: MathContext = new java.math.MathContext(24, java.math.RoundingMode.HALF_UP)
+
+    /** Return emission configuration applied by this rewards distributor
+      */
+    def getEmissionConfig: F[EmissionConfigEntry] =
+      delegatedRewardsConfig.emissionConfig
+        .get(environment)
+        .pure[F]
+        .flatMap(Async[F].fromOption(_, new RuntimeException(s"Could not retrieve emission config for env: $environment")))
+
+    def getDistributionProgram(epochProgress: EpochProgress): F[ProgramsDistributionConfig] =
+      delegatedRewardsConfig.percentDistribution
+        .get(environment)
+        .pure[F]
+        .flatMap(
+          Async[F]
+            .fromOption(_, new RuntimeException(s"Could not retrieve program distribution config for env: $environment"))
+        )
+        .map(f => f(epochProgress))
 
     /** Calculate the variable amount of rewards to mint for this epoch based on the config and epoch progress.
       */
     def calculateVariableInflation(epochProgress: EpochProgress): F[Amount] = for {
-      emConfig <- delegatedRewardsConfig.emissionConfig
-        .get(environment)
-        .pure[F]
-        .flatMap(Async[F].fromOption(_, new RuntimeException(s"Could not retrieve emission config for env: $environment")))
+      emConfig <- getEmissionConfig
       result <- calculateEmissionRewards(epochProgress, emConfig)
     } yield result
 
@@ -77,19 +96,8 @@ object GlobalDelegatedRewardsDistributor {
         case TimeTrigger =>
           for {
             emitFromFunction <- calculateVariableInflation(epochProgress)
-            pctConfig <- delegatedRewardsConfig.percentDistribution
-              .get(environment)
-              .pure[F]
-              .flatMap(
-                Async[F]
-                  .fromOption(_, new RuntimeException(s"Could not retrieve program distribution config for env: $environment"))
-              )
-              .map(f => f(epochProgress))
-            epochSPerYear <- delegatedRewardsConfig.emissionConfig
-              .get(environment)
-              .map(_.epochsPerYear.value)
-              .pure[F]
-              .flatMap(Async[F].fromOption(_, new RuntimeException(s"Could not retrieve emission config for env: $environment")))
+            pctConfig <- getDistributionProgram(epochProgress)
+            epochSPerYear <- getEmissionConfig.map(_.epochsPerYear.value)
             (reservedRewards, facilitatorRewardPool, delegatorRewardPool) <- calculateEmissionDistribution(
               lastSnapshotContext.activeDelegatedStakes.getOrElse(SortedMap.empty),
               emitFromFunction,
@@ -110,7 +118,7 @@ object GlobalDelegatedRewardsDistributor {
       }
 
     private def calculateEmissionDistribution(
-      activeDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
+      activeDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
       totalRewards: Amount,
       pctConfig: ProgramsDistributionConfig,
       epochsPerYear: Long
@@ -177,12 +185,12 @@ object GlobalDelegatedRewardsDistributor {
       val totalSupply = BigDecimal(emConfig.totalSupply.value, mc)
 
       if (emConfig.dagPrices.values.isEmpty) {
-        Slf4jLogger.getLogger[F].error("Empty DAG price configuration").as(Amount(NonNegLong.unsafeFrom(0L)))
+        Slf4jLogger.getLogger[F].error("Empty DAG price configuration").as(Amount.empty)
       } else {
         val dagPrices = emConfig.dagPrices
         val initialPrice = dagPrices.head._2.toBigDecimal
         val currentPrice = getCurrentDagPrice(epochProgress, dagPrices).toBigDecimal
-        val yearDiff = BigDecimal(epochProgress.value.value - transitionEpoch.toLong, mc) / epochsPerYear
+        val yearDiff = DecimalUtils.safeDivide(BigDecimal(epochProgress.value.value - transitionEpoch.toLong, mc), epochsPerYear)
 
         for {
           // Current year
@@ -214,18 +222,8 @@ object GlobalDelegatedRewardsDistributor {
           annualEmissionValue = totalSupply * annualInflationRate
 
           // Per epoch emission
-          perEpochEmissionValue = annualEmissionValue / epochsPerYear
-
-          // Convert to Amount with consistent rounding
-          emissionLong = perEpochEmissionValue.setScale(0, RoundingMode.HALF_UP).toLong
-
-          amount <- NonNegLong
-            .from(emissionLong)
-            .pure[F]
-            .map(_.leftMap(new IllegalArgumentException(_)))
-            .flatMap(Async[F].fromEither(_))
-            .map(Amount(_))
-
+          perEpochEmissionValue = DecimalUtils.safeDivide(annualEmissionValue, epochsPerYear)
+          amount <- perEpochEmissionValue.roundedHalfUp(0).toAmount[F]
         } yield amount
       }
     }
@@ -237,13 +235,13 @@ object GlobalDelegatedRewardsDistributor {
       dagPrices.filter { case (epoch, _) => epoch.value <= epochProgress.value }
         .maxByOption(_._1.value.value)
         .map(_._2)
-        .getOrElse(dagPrices.head._2) // Default to initial price if no match found
+        .getOrElse(dagPrices.head._2)
 
     private def getStakedAmount(stakeRecord: DelegatedStakeRecord): Long =
       stakeRecord.event.value.amount.value.value + stakeRecord.rewards.value
 
     private def getTotalActiveStake(
-      activeDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]]
+      activeDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]]
     ): F[Amount] =
       if (activeDelegatedStakes.isEmpty) Amount.empty.pure[F]
       else {
@@ -263,7 +261,7 @@ object GlobalDelegatedRewardsDistributor {
       }
 
     private def calculateDelegatorRewards(
-      activeDelegatedStakes: SortedMap[Address, List[DelegatedStakeRecord]],
+      activeDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
       nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
       totalDelegationRewardPool: BigDecimal,
       acceptedCreates: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]]
@@ -325,15 +323,9 @@ object GlobalDelegatedRewardsDistributor {
                           nodePortionOfTotalStake *
                           delegatorPortionOfNodeStake
 
-                        val rewardLong = rewardBD.setScale(0, RoundingMode.HALF_UP).toLong
-
-                        NonNegLong
-                          .from(rewardLong)
-                          .pure[F]
-                          .map(_.leftMap(new IllegalArgumentException(_)))
-                          .flatMap(Async[F].fromEither(_))
-                          .map(Amount(_))
-                          .map(rewardAmount => nodeId.toPeerId -> (address -> rewardAmount))
+                        rewardBD.roundedHalfUp(0).toAmount[F].map { rewardAmount =>
+                          nodeId.toPeerId -> (address -> rewardAmount)
+                        }
                     }
                   } yield addressRewards
               }
@@ -350,77 +342,74 @@ object GlobalDelegatedRewardsDistributor {
       lastSnapshotContext: GlobalSnapshotInfo,
       acceptedCreates: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]] = SortedMap.empty
     ): F[SortedSet[RewardTransaction]] = {
-      val facilitatorCount = BigDecimal(facilitators.size, mc)
-      val perValidatorStaticReward =
-        if (facilitators.isEmpty) BigDecimal(0, mc)
-        else facilitatorRewardPool / facilitatorCount
 
-      val staticRewardsList = facilitators.flatMap {
-        case (addr, _) =>
-          val staticReward = perValidatorStaticReward.setScale(0, RoundingMode.HALF_UP).toLong
-          if (staticReward > 0)
-            Some(
-              RewardTransaction(
-                addr,
-                TransactionAmount(PosLong.unsafeFrom(staticReward))
-              )
-            )
-          else None
+      val staticRewardsF = {
+        val facilitatorCount = BigDecimal(facilitators.size, mc)
+        val perValidatorStaticReward =
+          if (facilitators.isEmpty) BigDecimal(0, mc)
+          else facilitatorRewardPool / facilitatorCount
+
+        facilitators
+          .traverse[F, Option[RewardTransaction]] {
+            case (addr, _) =>
+              val staticRewardBD = perValidatorStaticReward.roundedHalfUp(0)
+              if (staticRewardBD <= 0) Option.empty[RewardTransaction].pure[F]
+              else
+                staticRewardBD
+                  .toTransactionAmount[F]
+                  .map(RewardTransaction(addr, _).some)
+          }
+          .map(_.flatten)
       }
 
       val activeDelegatedStakes =
-        lastSnapshotContext.activeDelegatedStakes.getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
+        lastSnapshotContext.activeDelegatedStakes.getOrElse(SortedMap.empty[Address, SortedSet[DelegatedStakeRecord]])
 
-      if (activeDelegatedStakes.isEmpty || (delegatorRewardPool === BigDecimal(0) && facilitatorRewardPool === BigDecimal(0)))
-        SortedSet.from(staticRewardsList).pure[F]
-      else {
-        val modifiedStakes = DelegatedRewardsDistributor.identifyModifiedStakes(activeDelegatedStakes, acceptedCreates)
-        val filteredActiveDelegatedStakes = DelegatedRewardsDistributor.filterOutModifiedStakes(activeDelegatedStakes, modifiedStakes)
-        val nodeStakes = filteredActiveDelegatedStakes.values.flatten
-          .groupBy(_.event.value.nodeId.toId)
-          .view
-          .mapValues(stakes => stakes.map(s => BigDecimal(getStakedAmount(s), mc)).sum)
-          .toMap
+      if (activeDelegatedStakes.isEmpty || (delegatorRewardPool === BigDecimal(0) && facilitatorRewardPool === BigDecimal(0))) {
+        staticRewardsF.map(staticRewards => SortedSet.from(staticRewards))
+      } else {
+        for {
+          staticRewards <- staticRewardsF
+          modifiedStakes = DelegatedRewardsDistributor.identifyModifiedStakes(activeDelegatedStakes, acceptedCreates)
+          filteredActiveDelegatedStakes = DelegatedRewardsDistributor.filterOutModifiedStakes(activeDelegatedStakes, modifiedStakes)
+          nodeStakes = filteredActiveDelegatedStakes.values.flatten
+            .groupBy(_.event.value.nodeId.toId)
+            .view
+            .mapValues(stakes => stakes.map(s => BigDecimal(getStakedAmount(s), mc)).sum)
+            .toMap
 
-        val facilitatorStakes = facilitators.map {
-          case (_, id) =>
-            (id, nodeStakes.getOrElse(id.toId, BigDecimal(0, mc)))
-        }
-
-        val totalFacilitatorStake = facilitatorStakes.map(_._2).sum
-
-        val dynamicRewardsList =
-          if (totalFacilitatorStake <= 0) List.empty
-          else {
-            facilitatorStakes.flatMap {
-              case (nodeId, stakeAmount) =>
-                if (stakeAmount <= 0) None
-                else {
-                  nodeParametersMap.get(nodeId.toId).flatMap {
-                    case (params, _) =>
-                      // RewardFraction is stored as a value from 0 to 100,000,000 representing 0% to 100%
-                      val operatorCommission = BigDecimal(params.value.delegatedStakeRewardParameters.rewardFraction, mc) /
-                        BigDecimal(100_000_000, mc)
-
-                      val stakeRatio = stakeAmount / totalFacilitatorStake
-                      val dynamicRewardBD = delegatorRewardPool * stakeRatio * operatorCommission
-                      val dynamicReward = dynamicRewardBD.setScale(0, RoundingMode.HALF_UP).toLong
-
-                      if (dynamicReward > 0)
-                        Some(
-                          RewardTransaction(
-                            params.value.source,
-                            TransactionAmount(PosLong.unsafeFrom(dynamicReward))
-                          )
-                        )
-                      else None
-                  }
-                }
-            }
+          facilitatorStakes = facilitators.map {
+            case (_, id) =>
+              (id, nodeStakes.getOrElse(id.toId, BigDecimal(0, mc)))
           }
 
-        // Combine static and dynamic rewards
-        SortedSet.from(staticRewardsList ++ dynamicRewardsList).pure[F]
+          totalFacilitatorStake = facilitatorStakes.map(_._2).sum
+
+          dynamicRewards <- facilitatorStakes.flatMap {
+            case (nodeId, stakeAmount) =>
+              if (stakeAmount <= 0) None
+              else {
+                nodeParametersMap.get(nodeId.toId).flatMap {
+                  case (params, _) =>
+                    // RewardFraction is stored as a value from 0 to 100,000,000 representing 0% to 100%
+                    val operatorCommission = BigDecimal(params.value.delegatedStakeRewardParameters.rewardFraction, mc) /
+                      BigDecimal(100_000_000, mc)
+
+                    val stakeRatio = stakeAmount / totalFacilitatorStake
+                    val dynamicRewardBD = delegatorRewardPool * stakeRatio * operatorCommission
+                    val roundedDynamicReward = dynamicRewardBD.roundedHalfUp(0)
+                    if (roundedDynamicReward <= 0) None
+                    else
+                      roundedDynamicReward
+                        .toTransactionAmount[F]
+                        .map(RewardTransaction(params.value.source, _))
+                        .some
+                }
+              }
+          }.sequence
+
+          allRewards = SortedSet.from(staticRewards ++ dynamicRewards)
+        } yield allRewards
       }
     }
 
@@ -429,17 +418,12 @@ object GlobalDelegatedRewardsDistributor {
     ): F[SortedSet[RewardTransaction]] =
       reservedRewards.traverse {
         case (addr, amt) =>
-          PosLong
-            .from(amt.setScale(0, RoundingMode.HALF_UP).toLong)
-            .leftMap(new IllegalArgumentException(_))
-            .pure[F]
-            .flatMap(Async[F].fromEither)
-            .map { posLongAmt =>
-              RewardTransaction(
-                addr,
-                TransactionAmount(posLongAmt)
-              )
-            }
+          amt.roundedHalfUp(0).toTransactionAmount[F].map { amount =>
+            RewardTransaction(
+              addr,
+              TransactionAmount(amount.value)
+            )
+          }
       }.map(SortedSet.from(_))
 
     private def calculateWithdrawalRewardTransactions(
@@ -447,20 +431,11 @@ object GlobalDelegatedRewardsDistributor {
     ): F[SortedSet[RewardTransaction]] =
       withdrawingBalances.toList.filter { case (_, amount) => amount.value.value > 0 }.traverse {
         case (address, amount) =>
-          PosLong
-            .from(amount.value.value)
-            .pure[F]
-            .map(_.leftMap(new IllegalArgumentException(_)))
-            .flatMap(Async[F].fromEither(_))
-            .map(TransactionAmount(_))
-            .map(txAmt =>
-              RewardTransaction(
-                address,
-                txAmt
-              )
-            )
-      }
-        .map(SortedSet.from(_))
+          BigDecimal(amount.value.value)
+            .roundedHalfUp(0)
+            .toTransactionAmount[F]
+            .map(RewardTransaction(address, _))
+      }.map(SortedSet.from(_))
 
     private def applyDistribution(
       lastSnapshotContext: GlobalSnapshotInfo,
@@ -512,7 +487,7 @@ object GlobalDelegatedRewardsDistributor {
           calculateWithdrawalRewardTransactions(
             partitionedRecords.expiredWithdrawalsDelegatedStaking.toList.flatMap {
               case (address, withdrawals) =>
-                withdrawals.mapFilter { withdrawal =>
+                withdrawals.toList.mapFilter { withdrawal =>
                   Option.when(withdrawal.rewards.value > Balance.empty.value) {
                     (address, Amount(NonNegLong.unsafeFrom(withdrawal.rewards.value.value)))
                   }

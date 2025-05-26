@@ -39,6 +39,7 @@ abstract class SnapshotProcessor[
   S <: Snapshot,
   SI <: SnapshotInfo[P]
 ] {
+
   import SnapshotProcessor._
 
   def process(
@@ -49,7 +50,7 @@ abstract class SnapshotProcessor[
     lastGlobalState: GlobalSnapshotInfo,
     lastGlobalSnapshot: Signed[GlobalIncrementalSnapshot],
     globalSnapshot: Signed[GlobalIncrementalSnapshot],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo]
 
@@ -57,13 +58,16 @@ abstract class SnapshotProcessor[
     lastState: SI,
     lastSnapshot: Signed[S],
     snapshot: Signed[S],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[SI]
 
   def onDownload(snapshot: Hashed[S], state: SI): F[Unit] = Applicative[F].unit
+
   def onRedownload(snapshot: Hashed[S], state: SI): F[Unit] = Applicative[F].unit
+
   def setLastNSnapshots(snapshot: Hashed[S], state: SI): F[Unit] = Applicative[F].unit
+
   def setInitialLastNSnapshots(snapshot: Hashed[S], state: SI): F[Unit] = Applicative[F].unit
 
   def processAlignment(
@@ -247,7 +251,7 @@ abstract class SnapshotProcessor[
     blockStorage: BlockStorage[F],
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI],
     txHasher: Hasher[F],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[Alignment] = {
     val snapshot = snapshotWithState.fold({ case (snapshot, _) => snapshot }, identity)
@@ -334,7 +338,7 @@ abstract class SnapshotProcessor[
                       lastState,
                       lastSnapshot.signed,
                       snapshot.signed,
-                      lastGlobalSnapshots,
+                      getLastNGlobalSnapshots,
                       getGlobalSnapshotByOrdinal
                     ).flatMap { state =>
                       blockStorage.getBlocksForMajorityReconciliation(lastSnapshot.height, snapshot.height, isDependent).flatMap {
@@ -396,7 +400,7 @@ abstract class SnapshotProcessor[
                       lastState,
                       lastSnapshot.signed,
                       snapshot.signed,
-                      lastGlobalSnapshots,
+                      getLastNGlobalSnapshots,
                       getGlobalSnapshotByOrdinal
                     ).flatMap { state =>
                       blockStorage.getBlocksForMajorityReconciliation(lastSnapshot.height, snapshot.height, isDependent).flatMap {
@@ -541,6 +545,7 @@ abstract class SnapshotProcessor[
     }
 
   }
+
   sealed trait Alignment
 
   case class AlignedAtNewOrdinal(
@@ -632,6 +637,7 @@ object SnapshotProcessor {
   ) extends SnapshotProcessingResult
 
   sealed trait SnapshotProcessingError extends NoStackTrace
+
   case class TipsGotMisaligned(deprecatedToAdd: Set[ProofsHash], activeToDeprecate: Set[ProofsHash]) extends SnapshotProcessingError {
     override def getMessage: String =
       s"Tips got misaligned! Check the implementation! deprecatedToAdd -> $deprecatedToAdd not equal activeToDeprecate -> $activeToDeprecate"

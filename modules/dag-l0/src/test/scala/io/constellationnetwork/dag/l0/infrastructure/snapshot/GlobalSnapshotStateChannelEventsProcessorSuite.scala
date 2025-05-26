@@ -95,9 +95,9 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
             Map(Dev -> EpochProgress(NonNegLong(7338977L)))
           )
         )
-      currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
+      currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager.make(
         SnapshotOrdinal.MinValue,
-        LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
+        LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(20), PosInt(10)),
         BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
         TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
         AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
@@ -159,7 +159,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         snapshotInfo,
         output :: Nil,
         StateChannelValidationType.Full,
-        List(snapshot).some,
+        List.empty.pure[IO],
         _ => None.pure[IO]
       )
     } yield expect.eql(expected, result)
@@ -193,7 +193,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         snapshotInfo,
         output1 :: output2 :: Nil,
         StateChannelValidationType.Full,
-        List(snapshot).some,
+        List.empty.pure[IO],
         _ => None.pure[IO]
       )
     } yield expect.eql(expected, result)
@@ -228,7 +228,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         snapshotInfo,
         output1 :: output2 :: Nil,
         StateChannelValidationType.Full,
-        List(snapshot).some,
+        List.empty.pure[IO],
         _ => None.pure[IO]
       )
     } yield expect.eql(expected, result)

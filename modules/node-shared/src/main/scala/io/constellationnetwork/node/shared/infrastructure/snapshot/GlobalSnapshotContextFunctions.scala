@@ -35,6 +35,7 @@ import eu.timepit.refined.types.all.NonNegLong
 abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
 object GlobalSnapshotContextFunctions {
+
   def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider](
     snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     updateDelegatedStakeAcceptanceManager: UpdateDelegatedStakeAcceptanceManager[F],
@@ -48,16 +49,16 @@ object GlobalSnapshotContextFunctions {
         lastSnapshotContext: GlobalSnapshotInfo,
         epochProgress: EpochProgress
       )(implicit h: Hasher[F]): (
-        SortedMap[Address, List[DelegatedStakeRecord]],
-        SortedMap[Address, List[PendingDelegatedStakeWithdrawal]],
-        SortedMap[Address, List[PendingDelegatedStakeWithdrawal]]
+        SortedMap[Address, SortedSet[DelegatedStakeRecord]],
+        SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
+        SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]]
       ) = {
         val existingDelegatedStakes = lastSnapshotContext.activeDelegatedStakes.getOrElse(
-          SortedMap.empty[Address, List[DelegatedStakeRecord]]
+          SortedMap.empty[Address, SortedSet[DelegatedStakeRecord]]
         )
 
         val existingWithdrawals = lastSnapshotContext.delegatedStakesWithdrawals.getOrElse(
-          SortedMap.empty[Address, List[PendingDelegatedStakeWithdrawal]]
+          SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]]
         )
 
         def isWithdrawalExpired(withdrawalEpoch: EpochProgress): Boolean =
@@ -90,7 +91,7 @@ object GlobalSnapshotContextFunctions {
         context: GlobalSnapshotInfo,
         lastArtifact: Signed[GlobalIncrementalSnapshot],
         signedArtifact: Signed[GlobalIncrementalSnapshot],
-        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+        getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
         getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = for {
         lastActiveTips <- HasherSelector[F].forOrdinal(lastArtifact.ordinal)(implicit hasher => lastArtifact.activeTips)
@@ -227,7 +228,7 @@ object GlobalSnapshotContextFunctions {
                   }
                 },
             StateChannelValidationType.Historical,
-            lastGlobalSnapshots,
+            getLastNGlobalSnapshots,
             getGlobalSnapshotByOrdinal
           )
 
@@ -238,6 +239,7 @@ object GlobalSnapshotContextFunctions {
         diffRewards = acceptedRewardTxs -- signedArtifact.rewards
         _ <- CannotApplyRewardsError(diffRewards).raiseError[F, Unit].whenA(diffRewards.nonEmpty)
         hashedArtifact <- HasherSelector[F].forOrdinal(signedArtifact.ordinal)(implicit hasher => signedArtifact.toHashed)
+
         calculatedStateProof <- HasherSelector[F].forOrdinal(signedArtifact.ordinal) { implicit hasher =>
           hasher.getLogic(signedArtifact.ordinal) match {
             case JsonHash => snapshotInfo.stateProof(signedArtifact.ordinal)

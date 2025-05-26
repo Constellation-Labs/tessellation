@@ -5,6 +5,4 @@ import io.constellationnetwork.security.Hashed
 
 trait LastSyncGlobalSnapshotStorage[F[_]] extends LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
   def getLastSynchronizedCombined: F[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
-  def getLastNSynchronized(n: Int): F[Option[List[Hashed[GlobalIncrementalSnapshot]]]]
-  def deleteOlderThanSynchronized(): F[Unit]
 }

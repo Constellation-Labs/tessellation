@@ -9,7 +9,6 @@
 
 import com.github.sbt.git.GitPlugin
 import com.jsuereth.sbtpgp.SbtPgp
-import com.rallyhealth.sbt.versioning.GitVersioningPlugin
 import sbt.Def
 import sbt.Keys.*
 import sbt.*
@@ -25,7 +24,7 @@ import xerial.sbt.Sonatype.autoImport.*
 object TessellationCiRelease extends AutoPlugin {
 
   override def trigger = allRequirements
-  override def requires = JvmPlugin && SbtPgp && GitVersioningPlugin && GitPlugin && Sonatype
+  override def requires = JvmPlugin && SbtPgp && GitPlugin && Sonatype
 
   def isSecure: Boolean = System.getenv("PGP_SECRET") != null
   def isTag: Boolean = Option(System.getenv("RELEASE_TAG")).exists(_.nonEmpty) ||

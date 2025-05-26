@@ -21,7 +21,7 @@ import io.constellationnetwork.dag.l0.infrastructure.trust.TrustStorageUpdater
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
-import io.constellationnetwork.node.shared.config.types.SharedConfig
+import io.constellationnetwork.node.shared.config.types.{DelegatedRewardsConfig, SharedConfig}
 import io.constellationnetwork.node.shared.domain.cluster.services.{Cluster, Session}
 import io.constellationnetwork.node.shared.domain.collateral.Collateral
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
@@ -32,6 +32,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.services.AddressServi
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
+import io.constellationnetwork.node.shared.infrastructure.snapshot.DelegatedRewardsDistributor
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedValidators}
 import io.constellationnetwork.schema.address.Address
@@ -79,6 +80,11 @@ object Services {
           .pure[F]
       }
 
+      rewardsService = RewardsService(
+        classicRewards,
+        delegatorRewards
+      )
+
       consensus <- HasherSelector[F].withCurrent { implicit hs =>
         GlobalSnapshotConsensus
           .make[F, R](
@@ -104,6 +110,7 @@ object Services {
             delegatorRewards,
             txHasher,
             sharedServices.restart,
+            storages.lastNGlobalSnapshot,
             storages.globalSnapshot.getHashed
           )
       }
@@ -133,7 +140,8 @@ object Services {
         collateral = collateralService,
         stateChannel = stateChannelService,
         trustStorageUpdater = trustUpdaterService,
-        restart = sharedServices.restart
+        restart = sharedServices.restart,
+        rewards = rewardsService
       ) {}
 }
 
@@ -147,5 +155,6 @@ sealed abstract class Services[F[_], R <: CliMethod] private (
   val collateral: Collateral[F],
   val stateChannel: StateChannelService[F],
   val trustStorageUpdater: TrustStorageUpdater[F],
-  val restart: RestartService[F, R]
+  val restart: RestartService[F, R],
+  val rewards: RewardsService[F]
 )

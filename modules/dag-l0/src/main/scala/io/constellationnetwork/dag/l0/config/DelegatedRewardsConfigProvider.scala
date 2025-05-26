@@ -1,5 +1,7 @@
 package io.constellationnetwork.dag.l0.config
 
+import cats.syntax.partialOrder._
+
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.dag.l0.config.types.MainnetRewardsConfig
@@ -63,8 +65,8 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
         )
       ),
       AppEnvironment.Mainnet -> EmissionConfigEntry(
-        epochsPerYear = PosLong(732000L),
-        asOfEpoch = EpochProgress(5000000L),
+        epochsPerYear = PosLong(485502L),
+        asOfEpoch = EpochProgress(2311565L),
         iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target inflation
         iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial inflation
         lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda parameter
@@ -91,13 +93,25 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
         delegatorsWeight = NonNegFraction.unsafeFrom(50L, 100L)
       )
 
-  private val testnetDistributionProgram: EpochProgress => ProgramsDistributionConfig =
-    _ =>
+  private val testnetDistributionProgram: EpochProgress => ProgramsDistributionConfig = {
+    case epoch if epoch < EpochProgress(997154L) =>
       ProgramsDistributionConfig(
         weights = Map.empty,
         validatorsWeight = NonNegFraction.unsafeFrom(50L, 100L),
         delegatorsWeight = NonNegFraction.unsafeFrom(50L, 100L)
       )
+    case _ =>
+      ProgramsDistributionConfig(
+        weights = Map(
+          stardustNewPrimary -> NonNegFraction.unsafeFrom(5L, 100L),
+          testnet -> NonNegFraction.unsafeFrom(24L, 1000L),
+          integrationNet -> NonNegFraction.unsafeFrom(88L, 1000L),
+          protocolWalletMetanomics -> NonNegFraction.unsafeFrom(30L, 100L)
+        ),
+        validatorsWeight = NonNegFraction.unsafeFrom(88L, 1000L),
+        delegatorsWeight = NonNegFraction.unsafeFrom(45L, 100L)
+      )
+  }
 
   private val intnetDistributionProgram: EpochProgress => ProgramsDistributionConfig =
     _ =>

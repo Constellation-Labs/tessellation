@@ -18,7 +18,7 @@ import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
-import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
+import io.constellationnetwork.node.shared.domain.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import io.constellationnetwork.schema._
@@ -44,7 +44,7 @@ object Download {
     nodeStorage: NodeStorage[F],
     consensus: GlobalSnapshotConsensus[F],
     peerSelect: PeerSelect[F],
-    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+    lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F]
   ): Download[F] = new Download[F] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -56,14 +56,24 @@ object Download {
     type DownloadResult = (Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)
     type ObservationLimit = SnapshotOrdinal
 
+    private def fetchSnapshotByOrdinal(implicit hasherSelector: HasherSelector[F]) = (ordinal: SnapshotOrdinal) =>
+      hasherSelector.withCurrent { implicit hasher =>
+        fetchSnapshot(none, ordinal).flatMap(_.toHashed.map(_.some))
+      }
+
     def download(implicit hasherSelector: HasherSelector[F]): F[Unit] =
       nodeStorage
         .tryModifyState(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.WaitingForObserving)(start)
         .flatMap(observe)
         .flatMap { result =>
           val ((snapshot, context), observationLimit) = result
-
-          consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context)
+          hasherSelector.withCurrent { implicit hasher =>
+            for {
+              hashedSnapshot <- snapshot.toHashed
+              _ <- lastNGlobalSnapshotStorage.setInitialFetchingGL0(hashedSnapshot, context, fetchSnapshot)
+              _ <- consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context)
+            } yield ()
+          }
         }
         .onError(logger.error(_)("Unexpected failure during download!"))
 
@@ -134,10 +144,8 @@ object Download {
             } >>
             HasherSelector[F]
               .forOrdinal(snapshot.ordinal) { implicit hasher =>
-                lastSnapshot.toHashed.flatMap { hashedLastSnapshot =>
-                  globalSnapshotContextFns
-                    .createContext(lastContext, lastSnapshot, snapshot, List(hashedLastSnapshot).some, getGlobalSnapshotByOrdinal)
-                }
+                globalSnapshotContextFns
+                  .createContext(lastContext, lastSnapshot, snapshot, lastNGlobalSnapshotStorage.getLastN, fetchSnapshotByOrdinal)
               }
               .handleErrorWith(_ => InvalidChain.raiseError[F, GlobalSnapshotContext])
               .flatTap { _ =>
@@ -192,6 +200,7 @@ object Download {
 
     def isSnapshotPersistedOrReachedGenesis(hash: Hash, ordinal: SnapshotOrdinal): F[Boolean] = {
       def isSnapshotPersisted = snapshotStorage.isPersisted(hash)
+
       def didReachGenesis = ordinal === lastFullGlobalSnapshotOrdinal
 
       if (!didReachGenesis) {
@@ -244,10 +253,8 @@ object Download {
               case Some(snapshot) =>
                 HasherSelector[F]
                   .forOrdinal(snapshot.ordinal) { implicit hasher =>
-                    lastSnapshot.toHashed.flatMap { hashedLastSnapshot =>
-                      globalSnapshotContextFns
-                        .createContext(context, lastSnapshot, snapshot, List(hashedLastSnapshot).some, getGlobalSnapshotByOrdinal)
-                    }
+                    globalSnapshotContextFns
+                      .createContext(context, lastSnapshot, snapshot, lastNGlobalSnapshotStorage.getLastN, fetchSnapshotByOrdinal)
                   }
                   .flatTap(newContext =>
                     hasherSelector
@@ -393,10 +400,16 @@ object Download {
   }
 
   case object HashAndOrdinalMismatch extends NoStackTrace
+
   case object CannotFetchSnapshot extends NoStackTrace
+
   case object CannotFetchGenesisSnapshot extends NoStackTrace
+
   case object FirstIncrementalNotFound extends NoStackTrace
+
   case object InvalidChain extends NoStackTrace
+
   case class InvalidStateProof(ordinal: SnapshotOrdinal) extends NoStackTrace
+
   case object UnexpectedState extends NoStackTrace
 }

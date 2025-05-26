@@ -1,8 +1,7 @@
 package io.constellationnetwork.dag.l1
 
 import cats.effect.{IO, Resource}
-import cats.syntax.applicativeError._
-import cats.syntax.semigroupk._
+import cats.syntax.all._
 
 import io.constellationnetwork.BuildInfo
 import io.constellationnetwork.dag.l1.cli.method._
@@ -18,13 +17,14 @@ import io.constellationnetwork.ext.kryo._
 import io.constellationnetwork.node.shared.app.{NodeShared, TessellationIOApp, getMajorityPeerIds}
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.resources.MkHttpServer
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.node.NodeState.SessionStarted
 import io.constellationnetwork.schema.semver.TessellationVersion
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.shared.{SharedKryoRegistrationIdRange, sharedKryoRegistrar}
 
@@ -101,12 +101,22 @@ object Main
         maybeMajorityPeerIds,
         Hasher.forKryo[IO]
       )
+
+      lastNGlobalSnapshotStorage <- hasherSelector.withCurrent { implicit hasher =>
+        LastNGlobalSnapshotStorage
+          .make[IO](
+            sharedConfig.lastGlobalSnapshotsSync,
+            services.globalL0.asLeft
+          )
+          .asResource
+      }
+
       snapshotProcessor = DAGSnapshotProcessor.make(
         sharedConfig.lastGlobalSnapshotsSync,
         storages.address,
         storages.block,
         storages.lastSnapshot,
-        storages.lastNGlobalSnapshot,
+        lastNGlobalSnapshotStorage,
         storages.transaction,
         storages.allowSpend,
         storages.tokenLock,

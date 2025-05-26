@@ -182,10 +182,10 @@ object UpdateNodeCollateralValidator {
 
         def validateUniqueness(address: Address): F[UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Withdraw]]] = {
           val withdrawals = lastContext.nodeCollateralWithdrawals
-            .getOrElse(SortedMap.empty[Address, List[PendingNodeCollateralWithdrawal]])
-            .getOrElse(address, List.empty)
+            .getOrElse(SortedMap.empty[Address, SortedSet[PendingNodeCollateralWithdrawal]])
+            .getOrElse(address, SortedSet.empty[PendingNodeCollateralWithdrawal])
           for {
-            refs <- withdrawals.traverse(w => NodeCollateralReference.of(w.event))
+            refs <- withdrawals.toList.traverse(w => NodeCollateralReference.of(w.event))
           } yield
             if (refs.exists(_.hash === signed.collateralRef)) {
               AlreadyWithdrawn(signed.collateralRef).invalidNec
@@ -254,11 +254,11 @@ object UpdateNodeCollateralValidator {
 
       private def getParent(
         address: Address,
-        nodeCollaterals: SortedMap[Address, List[NodeCollateralRecord]],
+        nodeCollaterals: SortedMap[Address, SortedSet[NodeCollateralRecord]],
         signed: Signed[UpdateNodeCollateral.Withdraw]
       ): F[Option[Signed[UpdateNodeCollateral.Create]]] =
         for {
-          maybeParent <- nodeCollaterals.getOrElse(address, List.empty).findM { s =>
+          maybeParent <- nodeCollaterals.getOrElse(address, SortedSet.empty[NodeCollateralRecord]).findM { s =>
             NodeCollateralReference.of(s.event).map(_.hash === signed.collateralRef)
           }
         } yield maybeParent.map(_.event)

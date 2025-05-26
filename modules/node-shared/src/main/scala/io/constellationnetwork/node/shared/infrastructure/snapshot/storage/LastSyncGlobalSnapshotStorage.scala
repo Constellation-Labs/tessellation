@@ -93,49 +93,5 @@ object LastSyncGlobalSnapshotStorage {
               }
           }
         }
-
-      override def getLastNSynchronized(
-        n: Int
-      ): F[Option[List[Hashed[GlobalIncrementalSnapshot]]]] =
-        currencySnapshotStorage.head.flatMap {
-          case Some((_, info)) =>
-            info.globalSnapshotSyncView.flatTraverse { syncView =>
-              val lastOrdinalOpt = syncView.values
-                .map(_.globalSnapshotOrdinal)
-                .groupBy(identity)
-                .toList
-                .sortBy { case (ordinal, occurrences) => (-occurrences.size, ordinal.value.value) }
-                .map { case (ordinal, _) => ordinal }
-                .maxOption
-
-              lastOrdinalOpt match {
-                case Some(lastOrdinal) =>
-                  val selectedOrdinals = (0 until n).flatMap { i =>
-                    NonNegLong.from(lastOrdinal.value.value - i.toLong).toOption.flatMap(SnapshotOrdinal(_))
-                  }.toSet.toList
-
-                  selectedOrdinals.traverse(get).map { results =>
-                    val snapshots = results.flatten
-                    if (snapshots.isEmpty) None else Some(snapshots)
-                  }
-
-                case None =>
-                  Async[F].pure(None)
-              }
-            }
-          case None =>
-            Async[F].pure(None)
-        }
-
-      def deleteOlderThanSynchronized(): F[Unit] = getLastSynchronizedCombined
-        .flatMap(_.traverse {
-          case (snapshot, _) =>
-            val deleteOffset = lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus
-            NonNegLong.from(snapshot.ordinal.value - deleteOffset) match {
-              case Left(_)      => deleteBelow(SnapshotOrdinal.MinValue)
-              case Right(value) => deleteBelow(SnapshotOrdinal(value))
-            }
-        })
-        .void
     }
 }

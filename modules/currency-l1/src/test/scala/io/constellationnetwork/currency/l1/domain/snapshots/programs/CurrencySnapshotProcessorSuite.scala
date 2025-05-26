@@ -57,17 +57,19 @@ object CurrencySnapshotProcessorSuite extends SimpleIOSuite with TransactionGene
               Map(Dev -> EpochProgress(NonNegLong(7338977L)))
             )
           )
-          currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
-            SnapshotOrdinal.MinValue,
-            LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
-            BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
-            TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
-            AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
-            Amount(0L),
-            validators.currencyMessageValidator,
-            validators.feeTransactionValidator,
-            validators.globalSnapshotSyncValidator
-          )
+          currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager
+            .make(
+              SnapshotOrdinal.MinValue,
+              LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(20), PosInt(50)),
+              BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
+              TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
+              AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
+              Amount(0L),
+              validators.currencyMessageValidator,
+              validators.feeTransactionValidator,
+              validators.globalSnapshotSyncValidator
+            )
+            .asResource
         } yield currencySnapshotAcceptanceManager
       }
     }

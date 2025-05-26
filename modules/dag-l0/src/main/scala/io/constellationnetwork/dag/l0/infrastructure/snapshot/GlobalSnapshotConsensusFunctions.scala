@@ -75,7 +75,7 @@ object GlobalSnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       artifact: GlobalSnapshotArtifact,
       facilitators: Set[PeerId],
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (GlobalSnapshotArtifact, GlobalSnapshotContext)]] = {
       val dagEvents = artifact.blocks.unsorted.map(_.block).map(DAGEvent(_))
@@ -114,7 +114,7 @@ object GlobalSnapshotConsensusFunctions {
         trigger,
         events,
         facilitators,
-        lastGlobalSnapshots,
+        getLastNGlobalSnapshots,
         getGlobalSnapshotByOrdinal
       )
 
@@ -126,7 +126,7 @@ object GlobalSnapshotConsensusFunctions {
         trigger,
         events,
         facilitators,
-        lastGlobalSnapshots,
+        getLastNGlobalSnapshots,
         getGlobalSnapshotByOrdinal
       )
 
@@ -153,7 +153,7 @@ object GlobalSnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       events: Set[GlobalSnapshotEvent],
       facilitators: Set[PeerId],
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])] = {
       val scEventsBeforeCut = events.collect { case sc: StateChannelEvent => sc }
@@ -275,7 +275,7 @@ object GlobalSnapshotConsensusFunctions {
               lastDeprecatedTips,
               rewardsWithFacilitators(lastFacilitators),
               StateChannelValidationType.Full,
-              lastGlobalSnapshots,
+              getLastNGlobalSnapshots,
               getGlobalSnapshotByOrdinal
             )
         (deprecated, remainedActive, accepted) = getUpdatedTips(

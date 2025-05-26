@@ -2,11 +2,10 @@ package io.constellationnetwork.schema
 
 import cats.Order._
 import cats.effect.kernel.Async
-import cats.kernel.Monoid
-import cats.syntax.functor._
-import cats.syntax.semigroup._
+import cats.kernel._
+import cats.syntax.all._
 
-import scala.collection.immutable.SortedSet
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.math.Ordered.orderingToOrdered
 import scala.util.control.NoStackTrace
 
@@ -25,7 +24,7 @@ import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.auto.{autoRefineV, _}
 import eu.timepit.refined.cats._
-import eu.timepit.refined.types.numeric.NonNegLong
+import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import io.estatico.newtype.macros.newtype
 
 object delegatedStake {
@@ -76,7 +75,7 @@ object delegatedStake {
   @derive(eqv, show, encoder, decoder)
   sealed trait UpdateDelegatedStake
   object UpdateDelegatedStake {
-    @derive(eqv, show, encoder, decoder)
+    @derive(eqv, show, encoder, decoder, order)
     case class Create(
       source: Address,
       nodeId: PeerId,
@@ -119,12 +118,14 @@ object delegatedStake {
   case class DelegatedStakeRecord(
     event: Signed[UpdateDelegatedStake.Create],
     createdAt: SnapshotOrdinal,
-    rewards: Balance
+    rewards: Amount
   )
 
   object DelegatedStakeRecord {
-    implicit val delegatedStakeAcctOrdering: Ordering[DelegatedStakeRecord] =
-      (x: DelegatedStakeRecord, y: DelegatedStakeRecord) => Ordering[SnapshotOrdinal].compare(x.createdAt, y.createdAt)
+    implicit val order: Order[DelegatedStakeRecord] = Order[SnapshotOrdinal].contramap(_.createdAt)
+
+    implicit val ordering: Ordering[DelegatedStakeRecord] =
+      Ordering.by(r => (r.createdAt, r.rewards, r.event))
   }
 
   @derive(decoder, encoder, eqv, show)
@@ -136,12 +137,32 @@ object delegatedStake {
   )
 
   object PendingDelegatedStakeWithdrawal {
-    implicit val pendingWithdrawalOrdering: Ordering[PendingDelegatedStakeWithdrawal] =
-      (x: PendingDelegatedStakeWithdrawal, y: PendingDelegatedStakeWithdrawal) => Ordering[EpochProgress].compare(x.createdAt, y.createdAt)
+    implicit val order: Order[PendingDelegatedStakeWithdrawal] = Order[EpochProgress].contramap(_.createdAt)
+
+    implicit val ordering: Ordering[PendingDelegatedStakeWithdrawal] =
+      Ordering.by(r => (r.createdAt, r.rewards, r.event))
   }
 
   @derive(eqv, show)
   sealed trait DelegatedStakeError extends NoStackTrace
   case class MissingDelegatedStaking(message: String) extends DelegatedStakeError
   case class MissingTokenLock(message: String) extends DelegatedStakeError
+
+  @derive(encoder, decoder, eqv, show)
+  case class NextDagPrice(
+    price: Amount,
+    asOfEpoch: EpochProgress
+  )
+
+  @derive(encoder, decoder, eqv, show)
+  case class RewardsInfo(
+    epochsPerYear: PosLong,
+    currentDagPrice: Amount,
+    nextDagPrice: NextDagPrice,
+    totalDelegatedAmount: Amount,
+    latestAverageRewardPerDag: Amount,
+    totalDagAmount: Amount,
+    totalRewardPerEpoch: Amount,
+    totalRewardsPerYearEstimate: Amount
+  )
 }

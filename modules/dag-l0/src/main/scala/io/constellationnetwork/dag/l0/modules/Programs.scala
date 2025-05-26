@@ -5,6 +5,7 @@ import java.security.KeyPair
 import cats.Parallel
 import cats.effect.Async
 import cats.effect.std.Random
+import cats.syntax.all._
 
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.cluster.programs.TrustPush
@@ -18,6 +19,7 @@ import io.constellationnetwork.node.shared.domain.cluster.programs.{Joining, Pee
 import io.constellationnetwork.node.shared.domain.snapshot.PeerSelect
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
+import io.constellationnetwork.node.shared.domain.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{GlobalSnapshotContextFunctions, PeerSelect}
 import io.constellationnetwork.node.shared.modules.SharedPrograms
 import io.constellationnetwork.schema.SnapshotOrdinal
@@ -34,7 +36,8 @@ object Programs {
     lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
     p2pClient: P2PClient[F],
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
-    hashSelect: HashSelect
+    hashSelect: HashSelect,
+    lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F]
   ): Programs[F] =
     HasherSelector[F].withCurrent { implicit hasher =>
       val trustPush = TrustPush.make(storages.trust, services.gossip)
@@ -53,7 +56,7 @@ object Programs {
           storages.node,
           services.consensus,
           peerSelect,
-          storages.globalSnapshot.getHashed
+          lastNGlobalSnapshotStorage
         )
       val rollbackLoader = RollbackLoader.make(
         keyPair,
@@ -63,6 +66,7 @@ object Programs {
         storages.snapshotDownload,
         globalSnapshotContextFns,
         hashSelect,
+        lastNGlobalSnapshotStorage.getLastN,
         storages.globalSnapshot.getHashed
       )
 

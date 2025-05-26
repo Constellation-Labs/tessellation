@@ -4,8 +4,8 @@ import java.security.KeyPair
 
 import cats.Parallel
 import cats.data.NonEmptySet
-import cats.effect.Async
 import cats.effect.std.{Random, Supervisor}
+import cats.effect.{Async, IO, Resource}
 import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
@@ -26,19 +26,21 @@ import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.snapshot.services.{AddressService, GlobalL0Service}
+import io.constellationnetwork.node.shared.domain.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.modules.SharedServices
 import io.constellationnetwork.node.shared.snapshot.currency._
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
+import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.SignedValidator
-import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
 import org.http4s.client.Client
 
@@ -124,6 +126,11 @@ object Services {
       globalL0Service = GlobalL0Service
         .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastGlobalSnapshot, None, maybeMajorityPeerIds)
 
+      lastNGlobalSnapshotStorage <- LastNGlobalSnapshotStorage.make[F](
+        sharedCfg.lastGlobalSnapshotsSync,
+        globalL0Service.asLeft
+      )
+
       consensus <- CurrencySnapshotConsensus
         .make[F](
           sharedCfg,
@@ -146,6 +153,7 @@ object Services {
           hasherSelector,
           sharedServices.restart,
           cfg.shared.leavingDelay,
+          lastNGlobalSnapshotStorage,
           globalL0Service.pullGlobalSnapshot
         )
     } yield
@@ -163,7 +171,8 @@ object Services {
         dataApplication = maybeDataApplication,
         globalSnapshotContextFunctions = globalSnapshotContextFns,
         stateChannelBinarySender = stateChannelBinarySender,
-        restart = sharedServices.restart
+        restart = sharedServices.restart,
+        lastNGlobalSnapshot = lastNGlobalSnapshotStorage
       ) {}
 }
 
@@ -181,5 +190,6 @@ sealed abstract class Services[F[_], R <: CliMethod] private (
   val dataApplication: Option[BaseDataApplicationL0Service[F]],
   val globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F],
   val stateChannelBinarySender: StateChannelBinarySender[F],
-  val restart: RestartService[F, R]
+  val restart: RestartService[F, R],
+  val lastNGlobalSnapshot: LastNGlobalSnapshotStorage[F]
 )

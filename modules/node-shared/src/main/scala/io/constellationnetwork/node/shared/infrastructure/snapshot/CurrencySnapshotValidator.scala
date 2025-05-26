@@ -35,7 +35,7 @@ trait CurrencySnapshotValidator[F[_]] {
     lastArtifact: Signed[CurrencySnapshotArtifact],
     lastContext: CurrencySnapshotContext,
     artifact: Signed[CurrencySnapshotArtifact],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]]
 
@@ -44,7 +44,7 @@ trait CurrencySnapshotValidator[F[_]] {
     lastContext: CurrencySnapshotContext,
     artifact: CurrencySnapshotArtifact,
     facilitators: Set[PeerId],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]]
 }
@@ -63,13 +63,13 @@ object CurrencySnapshotValidator {
       lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,
       artifact: Signed[CurrencySnapshotArtifact],
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]] =
       validateSigned(artifact).flatMap { signedV =>
         val facilitators = artifact.proofs.map(_.id).map(PeerId.fromId).toSortedSet
 
-        validateSnapshot(lastArtifact, lastContext, artifact, facilitators, lastGlobalSnapshots, getGlobalSnapshotByOrdinal).map {
+        validateSnapshot(lastArtifact, lastContext, artifact, facilitators, getLastNGlobalSnapshots, getGlobalSnapshotByOrdinal).map {
           snapshotV =>
             signedV.product(snapshotV.map { case (_, info) => info })
         }
@@ -80,7 +80,7 @@ object CurrencySnapshotValidator {
       lastContext: CurrencySnapshotContext,
       artifact: CurrencySnapshotArtifact,
       facilitators: Set[PeerId],
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]] = for {
       contentV <- validateRecreateContent(
@@ -88,7 +88,7 @@ object CurrencySnapshotValidator {
         lastContext,
         artifact,
         facilitators,
-        lastGlobalSnapshots,
+        getLastNGlobalSnapshots,
         getGlobalSnapshotByOrdinal
       )
       blocksV <- contentV.map(validateNotAcceptedEvents).pure[F]
@@ -121,7 +121,7 @@ object CurrencySnapshotValidator {
       lastContext: CurrencySnapshotContext,
       expected: CurrencySnapshotArtifact,
       facilitators: Set[PeerId],
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] = {
       def dataApplicationBlocks = maybeDataApplication.flatTraverse { service =>
@@ -172,7 +172,7 @@ object CurrencySnapshotValidator {
                 facilitators,
                 expected.feeTransactions.map(() => _),
                 expected.artifacts.map(() => _),
-                lastGlobalSnapshots,
+                getLastNGlobalSnapshots,
                 getGlobalSnapshotByOrdinal,
                 shouldValidateCollateral = false
               )
