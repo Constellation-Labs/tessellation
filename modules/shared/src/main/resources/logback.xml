@@ -10,6 +10,7 @@
     </root>
 
     <logger name="io.constellationnetwork" level="DEBUG" />
+    <logger name="io.constellationnetwork.httpsigner" level="INFO" />
     <logger name="org.http4s.server.middleware.RequestLogger" level="OFF" />
     <logger name="org.http4s.server.middleware.ResponseLogger" level="OFF" />
     <logger name="org.http4s.client.middleware.RequestLogger" level="OFF" />
