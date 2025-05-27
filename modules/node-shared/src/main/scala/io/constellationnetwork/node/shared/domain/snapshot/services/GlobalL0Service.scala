@@ -35,6 +35,7 @@ trait GlobalL0Service[F[_]] {
   def pullLatestSnapshot: F[LatestSnapshotTuple]
   def pullLatestSnapshotFromRandomPeer: F[LatestSnapshotTuple]
   def pullGlobalSnapshots: F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]]
+  def pullGlobalSnapshots(ordinal: SnapshotOrdinal): F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]]
   def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalIncrementalSnapshot]]]
   def pullGlobalSnapshot(hash: Hash): F[Option[Hashed[GlobalIncrementalSnapshot]]]
 }
@@ -87,31 +88,36 @@ object GlobalL0Service {
         }
 
       def pullGlobalSnapshots: F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]] =
-        maybeMajorityPeerIds.fold(pullGlobalSnapshotsFromRandomPeer)(pullGlobalSnapshotsFromMajority)
+        maybeMajorityPeerIds.fold(pullGlobalSnapshotsFromRandomPeer())(pullGlobalSnapshotsFromMajority())
 
-      private def pullGlobalSnapshotsFromMajority(
+      private def pullGlobalSnapshotsFromMajority(startingOrdinal: Option[SnapshotOrdinal] = None)(
         majorityPeerIds: NonEmptyList[PeerId]
       ): F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]] =
-        lastGlobalSnapshotStorage.getOrdinal.flatMap {
-          _.fold {
-            pullLatestSnapshotWithMajorityHash(majorityPeerIds).map(_.asLeft[List[Hashed[GlobalIncrementalSnapshot]]])
-          } { lastStoredOrdinal =>
-            for {
-              msd <- getMajoritySnapshotData(majorityPeerIds, lastStoredOrdinal.next)
-              l0Peers <- globalL0ClusterStorage.getPeers
-              pulled <- (lastStoredOrdinal < msd.ordinal)
-                .pure[F]
-                .ifM(
-                  pullVerifiedSnapshots(lastStoredOrdinal.next, msd, l0Peers),
-                  noSnapshots.pure[F]
-                )
-            } yield pulled.asRight[LatestSnapshotTuple]
+        OptionT
+          .fromOption(startingOrdinal)
+          .orElseF(lastGlobalSnapshotStorage.getOrdinal)
+          .value
+          .flatMap {
+            _.fold {
+              pullLatestSnapshotWithMajorityHash(majorityPeerIds).map(_.asLeft[List[Hashed[GlobalIncrementalSnapshot]]])
+            } { lastStoredOrdinal =>
+              for {
+                msd <- getMajoritySnapshotData(majorityPeerIds, lastStoredOrdinal.next)
+                l0Peers <- globalL0ClusterStorage.getPeers
+                pulled <- (lastStoredOrdinal < msd.ordinal)
+                  .pure[F]
+                  .ifM(
+                    pullVerifiedSnapshots(lastStoredOrdinal.next, msd, l0Peers),
+                    noSnapshots.pure[F]
+                  )
+              } yield pulled.asRight[LatestSnapshotTuple]
+            }
           }
-        }.handleErrorWith { e =>
-          logger
-            .warn(e)(s"Failure pulling global snapshots from majority")
-            .as(noSnapshots.asRight[LatestSnapshotTuple])
-        }
+          .handleErrorWith { e =>
+            logger
+              .warn(e)(s"Failure pulling global snapshots from majority")
+              .as(noSnapshots.asRight[LatestSnapshotTuple])
+          }
 
       private def pullLatestSnapshotWithMajorityHash(
         majorityPeerIds: NonEmptyList[PeerId]
@@ -143,6 +149,9 @@ object GlobalL0Service {
           }
         } yield result
       }
+
+      def pullGlobalSnapshots(ordinal: SnapshotOrdinal): F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]] =
+        maybeMajorityPeerIds.fold(pullGlobalSnapshotsFromRandomPeer(ordinal.some))(pullGlobalSnapshotsFromMajority(ordinal.some))
 
       private def verifyLatestSnapshot(
         snapshotTuple: LatestSnapshotTuple,
@@ -206,24 +215,31 @@ object GlobalL0Service {
             .map(_.some)
         }
 
-      private def pullGlobalSnapshotsFromRandomPeer: F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]] =
-        lastGlobalSnapshotStorage.getOrdinal.flatMap {
-          _.fold {
-            pullLatestSnapshotFromRandomPeer.map(_.asLeft[List[Hashed[GlobalIncrementalSnapshot]]])
-          } { lastStoredOrdinal =>
-            for {
-              l0Peer <- globalL0ClusterStorage.getRandomPeer
-              latestOrdinal <- l0GlobalSnapshotClient.getLatestOrdinal.run(l0Peer)
-              nextOrdinal = lastStoredOrdinal.next
-              lastOrdinal = calculateLastOrdinal(nextOrdinal, latestOrdinal)
-              pulled <- pullSnapshots(l0Peer, nextOrdinal, lastOrdinal)
-            } yield pulled.toList.asRight[LatestSnapshotTuple]
+      private def pullGlobalSnapshotsFromRandomPeer(
+        startingOrdinal: Option[SnapshotOrdinal] = None
+      ): F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]] =
+        OptionT
+          .fromOption(startingOrdinal)
+          .orElseF(lastGlobalSnapshotStorage.getOrdinal)
+          .value
+          .flatMap {
+            _.fold {
+              pullLatestSnapshotFromRandomPeer.map(_.asLeft[List[Hashed[GlobalIncrementalSnapshot]]])
+            } { lastStoredOrdinal =>
+              for {
+                l0Peer <- globalL0ClusterStorage.getRandomPeer
+                latestOrdinal <- l0GlobalSnapshotClient.getLatestOrdinal.run(l0Peer)
+                nextOrdinal = lastStoredOrdinal.next
+                lastOrdinal = calculateLastOrdinal(nextOrdinal, latestOrdinal)
+                pulled <- pullSnapshots(l0Peer, nextOrdinal, lastOrdinal)
+              } yield pulled.toList.asRight[LatestSnapshotTuple]
+            }
           }
-        }.handleErrorWith { e =>
-          logger
-            .warn(e)("Failure pulling global snapshots from random peer")
-            .as(noSnapshots.asRight[LatestSnapshotTuple])
-        }
+          .handleErrorWith { e =>
+            logger
+              .warn(e)("Failure pulling global snapshots from random peer")
+              .as(noSnapshots.asRight[LatestSnapshotTuple])
+          }
 
       private def calculateLastOrdinal(nextOrdinal: SnapshotOrdinal, latestOrdinal: SnapshotOrdinal): SnapshotOrdinal =
         SnapshotOrdinal.unsafeApply(
