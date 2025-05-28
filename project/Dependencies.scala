@@ -20,7 +20,7 @@ object Dependencies {
     val javaxCrypto = "1.0.1"
     val jawnVersion = "1.4.0"
     val jawnFs2Version = "2.4.0"
-    val flyway = "9.10.2"
+    val flyway = "9.22.3"
     val fs2 = "3.4.0"
     val fs2Data = "1.6.0"
     val guava = "31.1-jre"
