@@ -30,7 +30,7 @@ object Dependencies {
     val log4cats = "2.5.0"
     val micrometer = "1.10.2"
     val monocle = "3.1.0"
-    val mapref = "0.2.0-M2"
+    val mapref = "0.2.1"
     val newtype = "0.4.4"
     val pureconfig = "0.17.5"
     val refined = "0.10.1"
