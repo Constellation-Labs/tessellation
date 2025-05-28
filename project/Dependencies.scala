@@ -3,7 +3,7 @@ import sbt._
 object Dependencies {
 
   object V {
-    val bouncyCastle = "1.70"
+    val bouncyCastle = "1.80"
     val betterFiles = "3.9.1"
     val brotli4j = "1.12.0"
     val cats = "2.9.0"
