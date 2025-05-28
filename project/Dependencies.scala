@@ -34,7 +34,7 @@ object Dependencies {
     val newtype = "0.4.4"
     val pureconfig = "0.17.5"
     val refined = "0.10.1"
-    val redis4cats = "1.3.0"
+    val redis4cats = "1.7.2"
     val skunk = "0.3.2"
     val sqlite = "3.40.0.0"
     val chill = "0.9.5"
