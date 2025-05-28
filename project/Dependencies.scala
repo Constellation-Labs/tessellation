@@ -36,7 +36,7 @@ object Dependencies {
     val refined = "0.10.1"
     val redis4cats = "1.3.0"
     val skunk = "0.3.2"
-    val sqlite = "3.40.0.0"
+    val sqlite = "3.40.1.0"
     val chill = "0.9.5"
     val shapeless = "2.3.10"
     val spongyCastle = "1.58.0.0"
