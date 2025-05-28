@@ -48,7 +48,7 @@ object Dependencies {
     val logstashLogbackEncoder = "7.2"
     val organizeImports = "0.5.0"
     val semanticDB = "4.13.1.1"
-    val weaver = "0.8.1"
+    val weaver = "0.8.4"
   }
 
   object Libraries {
