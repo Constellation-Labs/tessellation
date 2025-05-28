@@ -90,7 +90,8 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     facilitators: Set[PeerId],
     getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    lastGlobalSyncView: Option[GlobalSyncView]
+    lastGlobalSyncView: Option[GlobalSyncView],
+    shouldValidateCollateral: Boolean
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult]
 
   def acceptRewardTxs(
@@ -160,7 +161,8 @@ object CurrencySnapshotAcceptanceManager {
       facilitators: Set[PeerId],
       getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-      lastGlobalSyncView: Option[GlobalSyncView]
+      lastGlobalSyncView: Option[GlobalSyncView],
+      shouldValidateCollateral: Boolean
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
       initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
       tokenLockInitialTxRef <- TokenLockReference.emptyCurrency(lastSnapshotContext.address)
@@ -173,7 +175,8 @@ object CurrencySnapshotAcceptanceManager {
         snapshotOrdinal,
         lastActiveTips,
         lastDeprecatedTips,
-        initialTxRef
+        initialTxRef,
+        shouldValidateCollateral
       )
 
       acceptedTransactions = acceptanceBlocksResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
@@ -609,7 +612,8 @@ object CurrencySnapshotAcceptanceManager {
       snapshotOrdinal: SnapshotOrdinal,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
-      initialTxRef: TransactionReference
+      initialTxRef: TransactionReference,
+      shouldValidateCollateral: Boolean
     )(implicit hasher: Hasher[F]) = {
       val tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
       val context = BlockAcceptanceContext.fromStaticData(
@@ -620,7 +624,7 @@ object CurrencySnapshotAcceptanceManager {
         initialTxRef
       )
 
-      blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, snapshotOrdinal)
+      blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, snapshotOrdinal, shouldValidateCollateral)
     }
 
     private def acceptTokenLockBlocks(
