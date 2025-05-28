@@ -16,7 +16,7 @@ object Dependencies {
     val derevo = "0.13.0"
     val doobie = "1.0.0-RC1"
     val droste = "0.9.0"
-    val enumeratum = "1.7.2"
+    val enumeratum = "1.7.6"
     val javaxCrypto = "1.0.1"
     val jawnVersion = "1.4.0"
     val jawnFs2Version = "2.4.0"
