@@ -5,12 +5,12 @@ object Dependencies {
   object V {
     val tessellation: String = sys.env.getOrElse("TESSELLATION_VERSION", "99.99.99")
     val decline = "2.4.1"
-    val organizeImports = "0.5.0"
+    val organizeImports = "0.6.0"
     val requests = "0.8.0"
   }
 
   def tessellation(artifact: String): ModuleID = "io.constellationnetwork" %% s"tessellation-$artifact" % V.tessellation
-  def decline(artifact: String = ""): ModuleID = "com.monovore" %% {if (artifact.isEmpty) "decline" else s"decline-$artifact"} % V.decline
+  def decline(artifact: String = ""): ModuleID = "com.monovore" %% { if (artifact.isEmpty) "decline" else s"decline-$artifact" } % V.decline
 
   object Libraries {
     val tessellationSdk = tessellation("sdk")
@@ -21,9 +21,8 @@ object Dependencies {
     val organizeImports = "com.github.liancheng" %% "organize-imports" % V.organizeImports
   }
 
-
   // Scalafix rules
-  val organizeImports = "com.github.liancheng" %% "organize-imports" % "0.5.0"
+  val organizeImports = "com.github.liancheng" %% "organize-imports" % "0.6.0"
 
   object CompilerPlugin {
 
