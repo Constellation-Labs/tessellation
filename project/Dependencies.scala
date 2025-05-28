@@ -5,7 +5,7 @@ object Dependencies {
   object V {
     val bouncyCastle = "1.70"
     val betterFiles = "3.9.1"
-    val brotli4j = "1.12.0"
+    val brotli4j = "1.18.0"
     val cats = "2.9.0"
     val catsEffect = "3.4.2"
     val catsRetry = "3.1.0"
