@@ -24,7 +24,7 @@ object Dependencies {
     val fs2 = "3.4.0"
     val fs2Data = "1.6.0"
     val guava = "31.1-jre"
-    val http4s = "0.23.16"
+    val http4s = "0.23.30"
     val http4sJwtAuth = "1.0.0"
     val httpSigner = "0.1.0"
     val log4cats = "2.5.0"
