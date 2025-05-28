@@ -11,7 +11,7 @@ object Dependencies {
     val catsRetry = "3.1.0"
     val circe = "0.14.3"
     val ciris = "3.0.0"
-    val comcast = "3.2.0"
+    val comcast = "3.7.0"
     val decline = "2.4.1"
     val derevo = "0.13.0"
     val doobie = "1.0.0-RC1"
