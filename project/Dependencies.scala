@@ -14,7 +14,7 @@ object Dependencies {
     val comcast = "3.2.0"
     val decline = "2.4.1"
     val derevo = "0.13.0"
-    val doobie = "1.0.0-RC1"
+    val doobie = "1.0.0-RC9"
     val droste = "0.9.0"
     val enumeratum = "1.7.2"
     val javaxCrypto = "1.0.1"
