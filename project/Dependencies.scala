@@ -22,7 +22,7 @@ object Dependencies {
     val jawnFs2Version = "2.4.0"
     val flyway = "9.10.2"
     val fs2 = "3.4.0"
-    val fs2Data = "1.6.0"
+    val fs2Data = "1.6.1"
     val guava = "31.1-jre"
     val http4s = "0.23.16"
     val http4sJwtAuth = "1.0.0"
