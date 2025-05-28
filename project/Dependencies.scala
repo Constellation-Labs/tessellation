@@ -28,7 +28,7 @@ object Dependencies {
     val http4sJwtAuth = "1.0.0"
     val httpSigner = "0.1.0"
     val log4cats = "2.5.0"
-    val micrometer = "1.10.2"
+    val micrometer = "1.10.13"
     val monocle = "3.1.0"
     val mapref = "0.2.0-M2"
     val newtype = "0.4.4"
