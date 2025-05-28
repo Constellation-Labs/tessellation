@@ -9,7 +9,7 @@ object Dependencies {
     val cats = "2.9.0"
     val catsEffect = "3.4.2"
     val catsRetry = "3.1.0"
-    val circe = "0.14.3"
+    val circe = "0.14.4"
     val ciris = "3.0.0"
     val comcast = "3.2.0"
     val decline = "2.4.1"
