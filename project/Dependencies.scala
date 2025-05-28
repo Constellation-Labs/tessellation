@@ -32,7 +32,7 @@ object Dependencies {
     val monocle = "3.1.0"
     val mapref = "0.2.0-M2"
     val newtype = "0.4.4"
-    val pureconfig = "0.17.5"
+    val pureconfig = "0.17.9"
     val refined = "0.10.1"
     val redis4cats = "1.3.0"
     val skunk = "0.3.2"
