@@ -29,7 +29,7 @@ object Dependencies {
     val httpSigner = "0.1.0"
     val log4cats = "2.5.0"
     val micrometer = "1.10.2"
-    val monocle = "3.1.0"
+    val monocle = "3.3.0"
     val mapref = "0.2.0-M2"
     val newtype = "0.4.4"
     val pureconfig = "0.17.5"
