@@ -18,7 +18,7 @@ object Dependencies {
     val droste = "0.9.0"
     val enumeratum = "1.7.2"
     val javaxCrypto = "1.0.1"
-    val jawnVersion = "1.4.0"
+    val jawnVersion = "1.6.0"
     val jawnFs2Version = "2.4.0"
     val flyway = "9.10.2"
     val fs2 = "3.4.0"
