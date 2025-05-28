@@ -61,7 +61,7 @@ jobs:
               echo EOF
             elif [[ "${{ github.ref_name }}" == "release/integrationnet" ]]; then
               echo 'VERSION<<EOF'
-              npx commit-and-tag-version --dry-run --release-as 3.2.0-rc.0 | grep -oP 'tagging release v\K(.*)'
+              npx commit-and-tag-version --dry-run --prerelease rc | grep -oP 'tagging release v\K(.*)'
               echo EOF
             fi
           } >> "$GITHUB_OUTPUT"
