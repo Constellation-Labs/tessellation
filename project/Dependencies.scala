@@ -38,7 +38,7 @@ object Dependencies {
     val skunk = "0.3.2"
     val sqlite = "3.40.0.0"
     val chill = "0.9.5"
-    val shapeless = "2.3.10"
+    val shapeless = "2.3.13"
     val spongyCastle = "1.58.0.0"
     val squants = "1.8.3"
     val twitterChill = "0.10.0"
