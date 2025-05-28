@@ -64,14 +64,12 @@ object L0TokenDef extends StateChannelDef[L0TokenStep, Ω, L0TokenStep] {
   def trigger[F[_]: Async]: Stream[F, L0TokenStep] =
     Stream.awakeEvery(10.seconds).as(CreateStateChannelSnapshot())
 
-  /**
-    * The following code will merge two streams alltogether.
-    * It pass-through the input stream and emit CreateStateChannelSnapshot() every 10 seconds
+  /** The following code will merge two streams alltogether. It pass-through the input stream and emit CreateStateChannelSnapshot() every 10
+    * seconds
     *
     * override def inputPipe[F[_]: Async]: Pipe[F, L0TokenStep, L0TokenStep] = _.merge(trigger$[F])
     */
-  /**
-    * This will watch input stream and start emitting CreateStateChannelSnapshot() only if there is no new input for n seconds.
+  /** This will watch input stream and start emitting CreateStateChannelSnapshot() only if there is no new input for n seconds.
     */
   override def inputPipe[F[_]: Async]: Pipe[F, L0TokenStep, L0TokenStep] = _.switchMap { input =>
     val n = 10.seconds

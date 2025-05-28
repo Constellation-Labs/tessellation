@@ -18,8 +18,10 @@ lazy val root = (project in file("."))
   .settings(
     name := "simple-snapshot-publisher",
     libraryDependencies ++= cats ++ catsEffect ++ droste ++ refined ++ tessellation ++ decline,
-    assemblyPackageScala / assembleArtifact := false, /** Exclude Scala Standard Library from an assembly jar file */
+    assemblyPackageScala / assembleArtifact := false,
+    /** Exclude Scala Standard Library from an assembly jar file */
     Compile / run := Defaults
       .runTask(Compile / fullClasspath, Compile / run / mainClass, Compile / run / runner)
-      .evaluated /** Include dependencies in the `Provided` scope when running a `generateInput` task */
+      .evaluated
+    /** Include dependencies in the `Provided` scope when running a `generateInput` task */
   )

@@ -2,10 +2,8 @@ import sbt._
 
 object Dependencies {
 
-  /**
-    * All the library dependencies listed below are already provided by the L0 Runtime and they shouldn't be compiled
-    * into the assembled jar file, hence they're in a `Provided` scope. To compile a library into a jar file use a
-    * `Compile` scope instead.
+  /** All the library dependencies listed below are already provided by the L0 Runtime and they shouldn't be compiled into the assembled jar
+    * file, hence they're in a `Provided` scope. To compile a library into a jar file use a `Compile` scope instead.
     */
   lazy val cats = Seq("cats-core")
     .map("org.typelevel" %% _ % "2.6.1" % Provided)

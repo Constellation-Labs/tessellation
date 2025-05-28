@@ -103,7 +103,9 @@ object TessellationCiRelease extends AutoPlugin {
           println(s"Sonatype Central does not accept snapshots, only official releases. Aborting release.")
           currentState
         } else if (!isTag) {
-          println(s"No tag published. Cannot publish an official release without a tag and Sonatype Central does not accept snapshot releases. Aborting release.")
+          println(
+            s"No tag published. Cannot publish an official release without a tag and Sonatype Central does not accept snapshot releases. Aborting release."
+          )
           currentState
         } else {
           println("Tag push detected, publishing a stable release")
@@ -140,16 +142,13 @@ object TessellationCiRelease extends AutoPlugin {
       val logger = new ProcessLogger {
         override def out(s: => String): Unit = ()
 
-        override def err(s: => String): Unit = {
+        override def err(s: => String): Unit =
           error = Some(s)
-        }
 
         override def buffer[T](f: => T): T = f
       }
 
-      Try(p1.!!(logger)).map((result) =>
-        (p2 #< new ByteArrayInputStream(result.getBytes))
-      ) match {
+      Try(p1.!!(logger)).map(result => p2 #< new ByteArrayInputStream(result.getBytes)) match {
         case Failure(ex) =>
           error match {
             case Some(errorMessageFromPipe) =>

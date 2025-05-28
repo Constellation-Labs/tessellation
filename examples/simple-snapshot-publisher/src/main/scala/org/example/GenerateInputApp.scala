@@ -69,11 +69,10 @@ object GenerateInputApp
             .flatMap {
               _.traverse {
                 case (i, s) =>
-                  Resource.fromAutoCloseable(IO(new FileOutputStream(args.targetDir.resolve(s"$i.bin").toFile))).use {
-                    os =>
-                      s.toBinary.liftTo[IO].flatMap { bytes =>
-                        IO.blocking(os.write(bytes))
-                      }
+                  Resource.fromAutoCloseable(IO(new FileOutputStream(args.targetDir.resolve(s"$i.bin").toFile))).use { os =>
+                    s.toBinary.liftTo[IO].flatMap { bytes =>
+                      IO.blocking(os.write(bytes))
+                    }
                   }
               }.void
             }

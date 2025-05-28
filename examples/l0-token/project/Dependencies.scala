@@ -1,7 +1,7 @@
 import sbt._
 
 object Dependencies {
-  
+
   object V {
     val scalaTest = "3.2.8"
     val cats = "2.6.1"

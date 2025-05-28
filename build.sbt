@@ -581,7 +581,7 @@ lazy val sdk = (project in file("modules/sdk"))
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
-      CompilerPlugin.semanticDB,
+      CompilerPlugin.semanticDB
     ) ++ Seq(
       (keytool / Compile / libraryDependencies).value,
       (kernel / Compile / libraryDependencies).value,
@@ -592,14 +592,14 @@ lazy val sdk = (project in file("modules/sdk"))
       (dagL1 / Compile / libraryDependencies).value
     ).flatten,
     Compile / packageBin / mappings ++= Seq(
-        (keytool / Compile / packageBin / mappings).value,
-        (kernel / Compile / packageBin / mappings).value,
-        (shared / Compile / packageBin / mappings).value,
-        (nodeShared / Compile / packageBin / mappings).value,
-        (currencyL0 / Compile / packageBin / mappings).value,
-        (currencyL1 / Compile / packageBin / mappings).value,
-        (dagL1 / Compile / packageBin / mappings).value
-      ).flatten.filterNot { case (_, path) => path.endsWith("rally-version.properties")},
+      (keytool / Compile / packageBin / mappings).value,
+      (kernel / Compile / packageBin / mappings).value,
+      (shared / Compile / packageBin / mappings).value,
+      (nodeShared / Compile / packageBin / mappings).value,
+      (currencyL0 / Compile / packageBin / mappings).value,
+      (currencyL1 / Compile / packageBin / mappings).value,
+      (dagL1 / Compile / packageBin / mappings).value
+    ).flatten.filterNot { case (_, path) => path.endsWith("rally-version.properties") },
     Compile / packageSrc / mappings ++= Seq(
       (keytool / Compile / packageSrc / mappings).value,
       (kernel / Compile / packageSrc / mappings).value,
@@ -617,7 +617,7 @@ lazy val sdk = (project in file("modules/sdk"))
       (currencyL0 / Compile / doc / sources).value,
       (currencyL1 / Compile / doc / sources).value,
       (dagL1 / Compile / doc / sources).value
-    ).flatten,
+    ).flatten
   )
 
 addCommandAlias("runLinter", ";scalafixAll --rules OrganizeImports")

@@ -10,7 +10,7 @@ object Dependencies {
   }
 
   def tessellation(artifact: String): ModuleID = "io.constellationnetwork" %% s"tessellation-$artifact" % V.tessellation
-  def decline(artifact: String = ""): ModuleID = "com.monovore" %% {if (artifact.isEmpty) "decline" else s"decline-$artifact"} % V.decline
+  def decline(artifact: String = ""): ModuleID = "com.monovore" %% { if (artifact.isEmpty) "decline" else s"decline-$artifact" } % V.decline
 
   object Libraries {
     val tessellationSdk = tessellation("sdk")
@@ -20,7 +20,6 @@ object Dependencies {
     val requests = "com.lihaoyi" %% "requests" % V.requests
     val organizeImports = "com.github.liancheng" %% "organize-imports" % V.organizeImports
   }
-
 
   // Scalafix rules
   val organizeImports = "com.github.liancheng" %% "organize-imports" % "0.5.0"
