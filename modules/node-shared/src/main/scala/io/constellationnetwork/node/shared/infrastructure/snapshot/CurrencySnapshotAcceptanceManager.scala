@@ -221,6 +221,7 @@ object CurrencySnapshotAcceptanceManager {
         feeTransactionsForAcceptance
       )
 
+      _ <- Slf4jLogger.getLogger[F].debug(s"--- Shared artifacts accepted: ${sharedArtifactsForAcceptance.show}")
       acceptedSharedArtifacts = acceptSharedArtifacts(sharedArtifactsForAcceptance)
 
       messagesAcceptanceResult <- acceptMessages(
