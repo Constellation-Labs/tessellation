@@ -66,7 +66,7 @@ for i in 0 1 2; do
   docker compose down --remove-orphans --volumes > /dev/null 2>&1 || true; \
   cp ../../docker/docker-compose.yaml . ; \
   cp ../../docker/docker-compose.test.yaml . ; \
-  docker compose -f docker-compose.test.yaml -f docker-compose.yaml --profile l0 up -d
+  docker compose -f docker-compose.test.yaml -f docker-compose.yaml --profile l0 --profile l1 up -d
   cd ../../
 done
 

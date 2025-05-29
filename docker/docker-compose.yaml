@@ -9,23 +9,23 @@ services:
       - CL_KEYSTORE=/tessellation/key.p12
       - CL_DAG_L0_JOIN_ENABLED=${CL_DAG_L0_JOIN_ENABLED:-true}
       - CL_DAG_L0_JOIN_PORT=${CL_DAG_L0_JOIN_PORT:-9001}
-      - CL_PUBLIC_HTTP_PORT=${L0_CL_PUBLIC_HTTP_PORT:-8999}
+      - CL_PUBLIC_HTTP_PORT=${L0_CL_PUBLIC_HTTP_PORT:-9000}
       - CL_P2P_HTTP_PORT=${L0_CL_P2P_HTTP_PORT:-9001}
       - CL_CLI_HTTP_PORT=${L0_CL_CLI_HTTP_PORT:-9002}
     ports:
-      - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L0_PUBLIC:-8999}:${L0_CL_PUBLIC_HTTP_PORT:-8999}"  # Public HTTP
+      - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L0_PUBLIC:-9000}:${L0_CL_PUBLIC_HTTP_PORT:-9000}"  # Public HTTP
       - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L0_P2P:-9001}:${L0_CL_P2P_HTTP_PORT:-9001}"  # P2P HTTP
       - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L0_CLI:-9002}:${L0_CL_P2P_HTTP_PORT:-9002}"  # P2P HTTP
     volumes:
       - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12:ro
       # Only required for testing purposes
-      - ${CL_GENESIS_FILE:-/dev/null}:/tessellation/genesis.csv:ro
+      # - ${CL_GENESIS_FILE:-/dev/null}:/tessellation/genesis.csv:ro
       # If using docker volumes:
-      - gl0-data:/tessellation/data
+      # - gl0-data:/tessellation/data
       # If using host volumes:
-      # - ${CL_L0_DATA_MOUNT_PATH:-./l0-data}:/tessellation/data
+      - ${CL_L0_DATA_MOUNT_PATH:-./l0-data}:/tessellation/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${L0_CL_PUBLIC_HTTP_PORT:-8999}/node/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${L0_CL_PUBLIC_HTTP_PORT:-9000}/node/health"]
       interval: 3s
       timeout: 5s
       retries: 5
@@ -70,13 +70,14 @@ services:
       timeout: 5s
       retries: 5
       start_period: 3s
+    profiles: ["l1"]
 
 #    extra_hosts:
 #      "host.docker.internal": "host-gateway"
 
 # Use volumes for persistence as alternative to mounted file system storage
-volumes:
-  gl0-data:
-    name: gl0-data${CONTAINER_NAME_SUFFIX:-}
-  dag-l1-data:
-    name: dag-l1-data${CONTAINER_NAME_SUFFIX:-}
+# volumes:
+#   gl0-data:
+#     name: gl0-data${CONTAINER_NAME_SUFFIX:-}
+#   dag-l1-data:
+#     name: dag-l1-data${CONTAINER_NAME_SUFFIX:-}
