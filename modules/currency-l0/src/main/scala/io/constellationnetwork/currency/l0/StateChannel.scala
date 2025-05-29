@@ -133,8 +133,9 @@ object StateChannel {
                                 updateFailedConfirmingStateChannelBinaryMetrics() >>
                                 Async[F].unit
                             }
-                            _ <- S.supervise(services.stateChannelBinarySender.processPending(snapshot)).void.handleErrorWith { error =>
-                              logger.error(error)("Error when process pending state channel binary") >> Async[F].unit
+                            _ <- S.supervise(services.stateChannelBinarySender.processPending(snapshot, context)).void.handleErrorWith {
+                              error =>
+                                logger.error(error)("Error when process pending state channel binary") >> Async[F].unit
                             }
                           } yield ()
                         }

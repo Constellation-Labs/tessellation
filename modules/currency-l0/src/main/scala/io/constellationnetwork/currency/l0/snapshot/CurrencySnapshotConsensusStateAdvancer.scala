@@ -298,7 +298,12 @@ object CurrencySnapshotConsensusStateAdvancer {
                       facilitatorsHash <- OptionT.liftF(state.facilitators.value.hash)
                       finalSignedBinary = Signed(binary, validSignaturesNes)
                       hashedBinary <- OptionT.liftF(finalSignedBinary.toHashed)
-                      effect = stateChannelSnapshotService.consume(signedMajorityArtifact, hashedBinary, context) >>
+                      effect = stateChannelSnapshotService.consume(
+                        signedMajorityArtifact,
+                        hashedBinary,
+                        state.lastOutcome.facilitators.value,
+                        context
+                      ) >>
                         gossipForkInfo(gossip, signedMajorityArtifact) >>
                         maybeDataApplication.traverse_ { da =>
                           signedMajorityArtifact.toHashed >>= da.onSnapshotConsensusResult

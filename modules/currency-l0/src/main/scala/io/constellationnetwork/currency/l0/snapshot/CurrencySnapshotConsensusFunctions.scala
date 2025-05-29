@@ -89,7 +89,8 @@ object CurrencySnapshotConsensusFunctions {
           None,
           None,
           getLastNGlobalSnapshots,
-          getGlobalSnapshotByOrdinal
+          getGlobalSnapshotByOrdinal,
+          shouldValidateCollateral = true
         )
         .map(created => (created.artifact, created.context, created.awaitingEvents))
     }

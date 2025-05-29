@@ -59,7 +59,7 @@ object CurrencyEventsCutter {
             case Some(dataApplication) =>
               if (acceptedBlocksLength + acceptedDataBlocksLength + acceptedTokenLockBlocksLength <= 1) {
                 logger.warn(
-                  s"acceptedBlocksLength: $acceptedBlocksLength, acceptedDataBlocksLength :$acceptedDataBlocksLength, acceptedTokenLockBlocksLength: $acceptedTokenLockBlocksLength. Returning None"
+                  s"acceptedBlocksLength: $acceptedBlocksLength, acceptedDataBlocksLength: $acceptedDataBlocksLength, acceptedTokenLockBlocksLength: $acceptedTokenLockBlocksLength. Returning None"
                 ) >>
                   none.pure[F]
               } else if (acceptedBlocksLength < acceptedDataBlocksLength && acceptedTokenLockBlocksLength < acceptedDataBlocksLength) {
