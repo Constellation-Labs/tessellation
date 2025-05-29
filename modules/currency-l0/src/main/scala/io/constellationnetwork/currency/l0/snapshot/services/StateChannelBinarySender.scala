@@ -1,5 +1,7 @@
 package io.constellationnetwork.currency.l0.snapshot.services
 
+import java.security.MessageDigest
+
 import cats.Applicative
 import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.{Async, Ref}
@@ -16,10 +18,9 @@ import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValid
 import io.constellationnetwork.node.shared.http.p2p.clients.StateChannelSnapshotClient
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
-import io.constellationnetwork.node.shared.infrastructure.statechannel.StateChannelAllowanceLists
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.epoch.EpochProgress
-import io.constellationnetwork.schema.peer.{L0Peer, PeerId}
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.{Hashed, Hasher}
@@ -74,13 +75,20 @@ object State {
 }
 
 trait StateChannelBinarySender[F[_]] {
-  def processPending(globalSnapshot: Hashed[GlobalIncrementalSnapshot]): F[Unit]
+  def processPending(
+    globalSnapshot: Hashed[GlobalIncrementalSnapshot],
+    globalSnapshotInfo: GlobalSnapshotInfo
+  ): F[Unit]
 
   def clearPending: F[Unit]
 
   def confirm(globalSnapshot: Hashed[GlobalIncrementalSnapshot]): F[Unit]
 
-  def process(binaryHashed: Hashed[StateChannelSnapshotBinary], lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]]): F[Unit]
+  def process(
+    binaryHashed: Hashed[StateChannelSnapshotBinary],
+    lastCurrencySnapshotSigners: List[PeerId],
+    lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]]
+  ): F[Unit]
 }
 
 object StateChannelBinarySender {
@@ -124,10 +132,11 @@ object StateChannelBinarySender {
       private val confirmedCountMultiplier: PosLong = 4L
       private val allowedEmptyAllowanceList = List(Dev, Testnet, Integrationnet)
 
-      private val logger = Slf4jLogger.getLogger
+      private val logger = Slf4jLogger.getLoggerFromName("StateChannelBinarySender")
 
       def process(
         binary: Hashed[StateChannelSnapshotBinary],
+        lastCurrencySnapshotSigners: List[PeerId],
         lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]]
       ): F[Unit] =
         lastGlobalSnapshotStorage.getOrdinal.map(_.getOrElse(SnapshotOrdinal.MinValue)).flatMap { currentOrdinal =>
@@ -137,9 +146,19 @@ object StateChannelBinarySender {
               val action =
                 if (retryMode) logger.warn(s"[RetryMode] Snapshot binary of hash ${binary.hash} enqueued.")
                 else
-                  post(binary, lastGlobalSnapshotSigners).flatTap(_ =>
-                    logger.info(s"Snapshot binary of hash ${binary.hash} enqueued and sent to GL0")
-                  )
+                  post(binary, lastCurrencySnapshotSigners, lastGlobalSnapshotSigners)
+                    .flatTap(peerId =>
+                      for {
+                        _ <- logger.info(s"Peer selected to send currency snapshot to GL0: $peerId")
+                        _ <-
+                          if (peerId.exists(_ === selfId)) {
+                            logger.info(s"Snapshot binary of hash ${binary.hash} enqueued and sent to GL0")
+                          } else {
+                            ().pure
+                          }
+                      } yield ()
+                    )
+                    .void
               val newState = state.copy(tracked = updatedPending)
               (newState, action)
           }.flatMap(identity)
@@ -159,13 +178,26 @@ object StateChannelBinarySender {
         _ <- updateStateChannelRetryParametersMetrics(updatedState)
       } yield ()
 
-      def processPending(globalSnapshot: Hashed[GlobalIncrementalSnapshot]): F[Unit] = stateR.get.flatMap { state =>
+      def processPending(
+        globalSnapshot: Hashed[GlobalIncrementalSnapshot],
+        globalSnapshotInfo: GlobalSnapshotInfo
+      ): F[Unit] = stateR.get.flatMap { state =>
         if (state.retryMode) {
-          val lastGlobalSnapshotSigners = globalSnapshot.signed.proofs.map(_.id.toPeerId)
-          val toRetry = state.tracked.collect { case pendingBinary: PendingBinary => pendingBinary }.take(state.cap.toInt)
-          logger.warn(s"[RetryMode] Retrying ${toRetry.size} pending binaries").whenA(toRetry.nonEmpty) >> toRetry.traverse_(tracked =>
-            post(tracked.binary, lastGlobalSnapshotSigners.some)
-          )
+          for {
+            identifier <- identifierStorage.get
+            lastAcceptedCurrencySnapshotsSigners = globalSnapshotInfo.lastCurrencySnapshots
+              .get(identifier)
+              .map {
+                case Left(value)  => value.proofs.map(_.id.toPeerId)
+                case Right(value) => value._1.proofs.map(_.id.toPeerId)
+              }
+              .map(_.toList)
+              .getOrElse(List.empty)
+            lastGlobalSnapshotSigners = globalSnapshot.signed.proofs.map(_.id.toPeerId)
+            toRetry = state.tracked.collect { case pendingBinary: PendingBinary => pendingBinary }.take(state.cap.toInt)
+            _ <- logger.warn(s"[RetryMode] Retrying ${toRetry.size} pending binaries").whenA(toRetry.nonEmpty)
+            _ <- toRetry.traverse_(tracked => post(tracked.binary, lastAcceptedCurrencySnapshotsSigners, lastGlobalSnapshotSigners.some))
+          } yield ()
         } else Applicative[F].unit
       }
 
@@ -281,8 +313,81 @@ object StateChannelBinarySender {
 
       private def post(
         binary: Hashed[StateChannelSnapshotBinary],
+        lastCurrencySnapshotSigners: List[PeerId],
         lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]]
-      ): F[Unit] = {
+      ): F[Option[PeerId]] =
+        stateChannelAllowanceLists match {
+          case Some(allowanceLists) =>
+            for {
+              metagraphId <- identifierStorage.get
+              result <- allowanceLists.get(metagraphId) match {
+                case Some(allowedPeers) =>
+                  if (allowedPeers.contains(selfId)) {
+                    pickPeerAndSendCurrencySnapshot(
+                      binary,
+                      lastCurrencySnapshotSigners,
+                      lastGlobalSnapshotSigners,
+                      allowedPeers.toList
+                    )
+                  } else {
+                    none[PeerId].pure
+                  }
+                case None =>
+                  if (allowedEmptyAllowanceList.contains(environment)) {
+                    pickPeerAndSendCurrencySnapshot(
+                      binary,
+                      lastCurrencySnapshotSigners,
+                      lastGlobalSnapshotSigners,
+                      List.empty
+                    )
+                  } else {
+                    logger
+                      .info(s"Empty allowance list and [$environment] is not allowed. Skipping currency snapshot.")
+                      .as(
+                        none[PeerId]
+                      )
+                  }
+              }
+            } yield result
+          case None =>
+            if (allowedEmptyAllowanceList.contains(environment)) {
+              pickPeerAndSendCurrencySnapshot(
+                binary,
+                lastCurrencySnapshotSigners,
+                lastGlobalSnapshotSigners,
+                List.empty
+              )
+            } else {
+              none[PeerId].pure
+            }
+        }
+
+      private def pickPeerAndSendCurrencySnapshot(
+        binary: Hashed[StateChannelSnapshotBinary],
+        lastCurrencySnapshotSigners: List[PeerId],
+        lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]],
+        allowedPeers: List[PeerId]
+      ) = {
+        val peerToSendSnapshot = pickDeterministicPeer(
+          lastCurrencySnapshotSigners,
+          allowedPeers,
+          selfId,
+          binary.lastSnapshotHash
+        )
+        for {
+          _ <-
+            if (peerToSendSnapshot === selfId) {
+              performPost(binary, lastGlobalSnapshotSigners)
+            } else {
+              ().pure
+            }
+        } yield peerToSendSnapshot.some
+      }
+
+      private def performPost(
+        binary: Hashed[StateChannelSnapshotBinary],
+        lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]]
+      ) = {
         val sendRetries = 5
 
         val retryPolicy: RetryPolicy[F] = RetryPolicies.limitRetries(sendRetries)
@@ -297,77 +402,69 @@ object StateChannelBinarySender {
         def onError(binaryHashed: Hashed[StateChannelSnapshotBinary]) = (_: Throwable, details: RetryDetails) =>
           logger.info(s"Retrying sending ${binaryHashed.hash.show} to Global L0 after error. Retries so far ${details.retriesSoFar}")
 
-        def performPost() =
-          retryingOnFailuresAndAllErrors[Either[NonEmptyList[StateChannelValidationError], Unit]](
-            retryPolicy,
-            wasSuccessful,
-            onFailure(binary),
-            onError(binary)
-          )(
-            lastGlobalSnapshotSigners
-              .fold(globalL0ClusterStorage.getRandomPeer) { lastSigners =>
-                for {
-                  _ <- logger.info(s"Selecting a random peer that participated in the global snapshot consensus")
-                  maybeL0Peer <- globalL0ClusterStorage.getRandomPeerExistentOnList(lastSigners.toList)
-                  l0Peer <- maybeL0Peer match {
-                    case Some(value) => value.pure
-                    case None        => globalL0ClusterStorage.getRandomPeer
-                  }
-                } yield l0Peer
-              }
-              .flatMap { l0Peer =>
-                identifierStorage.get.flatMap { identifier =>
-                  stateChannelSnapshotClient
-                    .send(identifier, binary.signed)(l0Peer)
-                    .onError(e => logger.warn(e)(s"Sending ${binary.hash.show} snapshot to Global L0 peer ${l0Peer.show} failed!"))
-                    .flatTap {
-                      case Right(_) =>
-                        logger.info(s"Sent ${binary.hash.show} to Global L0 peer ${l0Peer.show}") >>
-                          stateR.update { state =>
-                            val updatedPending = state.tracked.map {
-                              case PendingBinary(alreadyTrackedBinary, enqueuedAtOrdinal, sendsSoFar) if alreadyTrackedBinary === binary =>
-                                PendingBinary(alreadyTrackedBinary, enqueuedAtOrdinal, NonNegLong.unsafeFrom(sendsSoFar + 1))
-                              case tracked => tracked
-                            }
-                            state.copy(tracked = updatedPending)
-                          }
-
-                      case Left(errors) =>
-                        logger.error(s"Snapshot ${binary.hash.show} rejected by Global L0 peer ${l0Peer.show}. Reasons: ${errors.show}")
-                    }
+        retryingOnFailuresAndAllErrors[Either[NonEmptyList[StateChannelValidationError], Unit]](
+          retryPolicy,
+          wasSuccessful,
+          onFailure(binary),
+          onError(binary)
+        )(
+          lastGlobalSnapshotSigners
+            .fold(globalL0ClusterStorage.getRandomPeer) { lastSigners =>
+              for {
+                maybeL0Peer <- globalL0ClusterStorage.getRandomPeerExistentOnList(lastSigners.toList)
+                l0Peer <- maybeL0Peer match {
+                  case Some(value) => value.pure
+                  case None        => globalL0ClusterStorage.getRandomPeer
                 }
-              }
-          ).void
-
-        stateChannelAllowanceLists match {
-          case Some(allowanceLists) =>
-            for {
-              metagraphId <- identifierStorage.get
-              result <- allowanceLists.get(metagraphId) match {
-                case Some(allowedPeers) =>
-                  if (allowedPeers.contains(selfId)) {
-                    logger.debug(s"Node $selfId from metagraph $metagraphId allowed to send snapshots") >>
-                      performPost()
-                  } else {
-                    logger.debug(s"Node $selfId from metagraph $metagraphId NOT allowed to send snapshots, skipping!")
-                  }
-                case None =>
-                  if (allowedEmptyAllowanceList.contains(environment)) {
-                    logger.debug(s"Empty allowance list, but [$environment] is allowed. Proceeding to send currency snapshot.") >>
-                      performPost()
-                  } else {
-                    logger.debug(s"Empty allowance list and [$environment] is not allowed. Skipping currency snapshot.")
-                  }
-              }
-            } yield result
-          case None =>
-            if (allowedEmptyAllowanceList.contains(environment)) {
-              logger.debug(s"Empty allowance list, trying to send currency snapshot") >>
-                performPost()
-            } else {
-              logger.debug(s"Empty allowance list, but allowance list is required for environment: $environment. Skipping!")
+              } yield l0Peer
             }
-        }
+            .flatMap { l0Peer =>
+              identifierStorage.get.flatMap { identifier =>
+                stateChannelSnapshotClient
+                  .send(identifier, binary.signed)(l0Peer)
+                  .onError(e => logger.warn(e)(s"Sending ${binary.hash.show} snapshot to Global L0 peer ${l0Peer.show} failed!"))
+                  .flatTap {
+                    case Right(_) =>
+                      logger.info(s"Sent ${binary.hash.show} to Global L0 peer ${l0Peer.show}") >>
+                        stateR.update { state =>
+                          val updatedPending = state.tracked.map {
+                            case PendingBinary(alreadyTrackedBinary, enqueuedAtOrdinal, sendsSoFar) if alreadyTrackedBinary === binary =>
+                              PendingBinary(alreadyTrackedBinary, enqueuedAtOrdinal, NonNegLong.unsafeFrom(sendsSoFar + 1))
+                            case tracked => tracked
+                          }
+                          state.copy(tracked = updatedPending)
+                        }
+
+                    case Left(errors) =>
+                      logger.error(s"Snapshot ${binary.hash.show} rejected by Global L0 peer ${l0Peer.show}. Reasons: ${errors.show}")
+                  }
+              }
+            }
+        ).void
       }
+    }
+
+  def pickDeterministicPeer(
+    lastSigners: List[PeerId],
+    allowedPeers: List[PeerId],
+    selfId: PeerId,
+    lastSnapshotHash: Hash
+  ): PeerId =
+    if (lastSigners.isEmpty) selfId
+    else if (lastSigners.size === 1) lastSigners.head
+    else if (allowedPeers.isEmpty) {
+      val sortedSigners = lastSigners.sortBy(_.toString)
+      val seed = lastSnapshotHash.value + sortedSigners.map(_.toString).mkString("|")
+      val digest = MessageDigest.getInstance("SHA-256").digest(seed.getBytes("UTF-8"))
+      val hashValue = BigInt(digest.take(4)).abs
+      val offset = (hashValue % sortedSigners.size).toInt
+      sortedSigners(offset)
+    } else {
+      val sortedAllowed = allowedPeers.sortBy(_.toString)
+      val seed = lastSnapshotHash.value + sortedAllowed.map(_.toString).mkString("|")
+      val digest = MessageDigest.getInstance("SHA-256").digest(seed.getBytes("UTF-8"))
+      val hashValue = BigInt(digest.take(4)).abs
+      val offset = (hashValue % sortedAllowed.size).toInt
+      sortedAllowed(offset)
     }
 }
