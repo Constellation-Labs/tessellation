@@ -94,7 +94,12 @@ git fetch origin
 git checkout -B $cur_branch origin/$cur_branch
 git pull --force
 
-just build --version $RELEASE_TAG
+just build --version=$RELEASE_TAG
+rm /root/docker/docker-compose.yaml;
+cp /root/projects/tessellation/docker/docker-compose.yaml /root/docker/docker-compose.yaml
+cd /root/docker;
+docker compose down;
+docker compose --profile l0 up -d
 EOF
 
 scp bootstrap.sh $REMOTE_DESTINATION_NODE:~/bootstrap.sh
