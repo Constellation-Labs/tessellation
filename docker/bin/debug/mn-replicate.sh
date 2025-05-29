@@ -80,19 +80,24 @@ rm info-$ordinal
 # capture your local branch name
 cur_branch=$(git branch --show-current)
 
-ssh "$REMOTE_DESTINATION_NODE" bash -lc "
-  set -euo pipefail
-  mkdir -p ~/projects
-  cd ~/projects
+cat > bootstrap.sh <<EOF
+apt install -y just
+mkdir -p ~/projects
+cd ~/projects
 
-  if [ ! -d tessellation ]; then
-    git clone https://github.com/Constellation-Labs/tessellation.git
-  fi
+if [ ! -d tessellation ]; then
+git clone https://github.com/Constellation-Labs/tessellation.git
+fi
 
-  cd tessellation
-  git fetch origin
-  git checkout -B $cur_branch origin/$cur_branch
+cd tessellation
+git fetch origin
+git checkout -B $cur_branch origin/$cur_branch
 
-  # now no fancy quoting needed—$RELEASE_TAG was expanded locally
-  just build --version $RELEASE_TAG
-"
+just build --version $RELEASE_TAG
+EOF
+
+scp bootstrap.sh $REMOTE_DESTINATION_NODE:~/bootstrap.sh
+ssh $REMOTE_DESTINATION_NODE "bash -c \"chmod +x ~/bootstrap.sh\""
+ssh $REMOTE_DESTINATION_NODE "bash -c \"~/bootstrap.sh\""
+
+rm bootstrap.sh
