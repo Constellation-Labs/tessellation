@@ -133,7 +133,9 @@ object method {
     collateralAmount: Option[Amount],
     trustRatingsPath: Option[Path],
     prioritySeedlistPath: Option[SeedListPath],
-    peerToJoinPool: NonEmptySet[PeerToJoin]
+    peerToJoinPool: NonEmptySet[PeerToJoin],
+    overrideJarHash: Option[String],
+    overrideVersionHash: Option[String]
   ) extends Run
 
   case class RunValidator(
@@ -146,7 +148,9 @@ object method {
     seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     trustRatingsPath: Option[Path],
-    prioritySeedlistPath: Option[SeedListPath]
+    prioritySeedlistPath: Option[SeedListPath],
+    overrideJarHash: Option[String],
+    overrideVersionHash: Option[String]
   ) extends Run
 
   object RunValidator extends WithOpts[RunValidator] {
@@ -162,7 +166,9 @@ object method {
         SeedListPath.opts,
         CollateralAmountOpts.opts,
         trustRatingsPathOpts,
-        SeedListPath.priorityOpts
+        SeedListPath.priorityOpts,
+        Opts.env[String]("CL_JAR_HASH", help = "Override the jar hash").orNone,
+        Opts.env[String]("CL_VERSION_HASH", help = "Override the version hash").orNone
       ).mapN(RunValidator.apply)
     }
   }

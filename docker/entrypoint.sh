@@ -20,10 +20,10 @@ if [ -n "$CL_DAG_L1" ]; then
     export CL_L0_PEER_ID=$(java -jar /tessellation/jars/wallet.jar show-id)
   fi
 
-  # If CL_L0_PEER_HTTP_HOST is set to global-l0, replace it with the actual IP address
-  if [ "$CL_L0_PEER_HTTP_HOST" = "global-l0" ]; then
-    echo "Resolving global-l0 to IP address"
-    export CL_L0_PEER_HTTP_HOST=$(getent hosts global-l0 | cut -d' ' -f1)
+  # If CL_L0_PEER_HTTP_HOST is set to gl0, replace it with the actual IP address
+  if [ "$CL_L0_PEER_HTTP_HOST" = "gl0" ]; then
+    echo "Resolving gl0 to IP address"
+    export CL_L0_PEER_HTTP_HOST=$(getent hosts gl0 | cut -d' ' -f1)
     echo "Using L0 peer HTTP host: $CL_L0_PEER_HTTP_HOST"
   fi
 
@@ -31,12 +31,12 @@ if [ -n "$CL_DAG_L1" ]; then
   echo "Using L0 peer HTTP host: $CL_L0_PEER_HTTP_HOST"
   # Start the join coordinator in the background
   echo "Starting join coordinator"
-  /tessellation/entrypoint-dag-l1-join-coordinator.sh &
+  /tessellation/entrypoint-gl1-join-coordinator.sh &
   L1_COMMAND="run-validator"
   if [ -n "$CL_GENESIS_FILE" ]; then
     L1_COMMAND="run-initial-validator"
   fi
-  exec java -jar /tessellation/jars/dag-l1.jar $L1_COMMAND --l0-peer-host $CL_L0_PEER_HTTP_HOST
+  exec java $CL_DOCKER_JAVA_OPTS -jar /tessellation/jars/gl1.jar $L1_COMMAND --l0-peer-host $CL_L0_PEER_HTTP_HOST
 else
   echo "Starting L0 validator"
   
@@ -49,7 +49,7 @@ else
   if [ -n "$CL_GENESIS_FILE" ]; then
     # if you’ve provided a genesis file, run genesis
     echo "Starting L0 validator genesis"
-    exec java -jar /tessellation/jars/dag-l0.jar run-genesis "/tessellation/genesis.csv"
+    exec java $CL_DOCKER_JAVA_OPTS -jar /tessellation/jars/dag-l0.jar run-genesis "/tessellation/genesis.csv"
   else
     echo "Starting join coordinator"
     /tessellation/entrypoint-dag-l0-join-coordinator.sh &
@@ -59,8 +59,13 @@ else
       export L0_COMMAND="$L0_COMMAND"
     fi
 
+    if [ -n "$CL_DOCKER_SEEDLIST" ]; then
+      echo "Using seedlist: $CL_DOCKER_SEEDLIST"
+      export L0_COMMAND="$L0_COMMAND --seedlist /tessellation/seedlist"
+    fi
+
     echo "Starting L0 validator with command: $L0_COMMAND"
-    exec java -jar /tessellation/jars/dag-l0.jar $L0_COMMAND
+    exec java $CL_DOCKER_JAVA_OPTS -jar /tessellation/jars/dag-l0.jar $L0_COMMAND
   fi
 
 fi

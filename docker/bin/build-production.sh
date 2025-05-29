@@ -9,7 +9,7 @@ mkdir -p ./docker/jars/
 # Duplicate copy overwrites with dirty version if only compiling one module
 # Order is deliberate here for reruns
 
-for module in "dag-l0" "dag-l1" "keytool" "wallet"
+for module in "dag-l0" "gl1" "keytool" "wallet"
 do 
     # Note this intended to work with *dirty suffixes as well, if you need to enforce exactness use 
     # a different script.

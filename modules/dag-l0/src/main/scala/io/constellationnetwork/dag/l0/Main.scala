@@ -164,7 +164,9 @@ object Main
                 m.collateralAmount,
                 m.trustRatingsPath,
                 m.prioritySeedlistPath,
-                _
+                _,
+                m.overrideJarHash,
+                m.overrideVersionHash
               )
             )
         case m: RunValidatorWithJoinAttempt =>
@@ -182,7 +184,9 @@ object Main
                 m.seedlistPath,
                 m.collateralAmount,
                 m.trustRatingsPath,
-                m.prioritySeedlistPath
+                m.prioritySeedlistPath,
+                m.overrideJarHash,
+                m.overrideVersionHash
               )
             ) >>
             services.restart.setNodeForkedRestartMethod(
@@ -197,7 +201,9 @@ object Main
                 m.collateralAmount,
                 m.trustRatingsPath,
                 m.prioritySeedlistPath,
-                _
+                _,
+                m.overrideJarHash,
+                m.overrideVersionHash
               )
             )
         case m: RunRollback =>
@@ -245,7 +251,9 @@ object Main
                 m.seedlistPath,
                 m.collateralAmount,
                 m.trustRatingsPath,
-                m.prioritySeedlistPath
+                m.prioritySeedlistPath,
+                None,
+                None
               )
             ) >>
             services.restart.setNodeForkedRestartMethod(
@@ -260,7 +268,9 @@ object Main
                 m.collateralAmount,
                 m.trustRatingsPath,
                 m.prioritySeedlistPath,
-                _
+                _,
+                None,
+                None
               )
             )
         case m: RunGenesis =>
@@ -337,7 +347,9 @@ object Main
                 m.seedlistPath,
                 m.collateralAmount,
                 m.trustRatingsPath,
-                m.prioritySeedlistPath
+                m.prioritySeedlistPath,
+                None,
+                None
               )
             ) >>
             services.restart.setNodeForkedRestartMethod(
@@ -352,7 +364,9 @@ object Main
                 m.collateralAmount,
                 m.trustRatingsPath,
                 m.prioritySeedlistPath,
-                _
+                _,
+                None,
+                None
               )
             )
       }).asResource

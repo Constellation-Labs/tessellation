@@ -52,6 +52,13 @@ echo "------------------------------------------------"
 echo "All deployment configurations now generated, proceeding to run cluster"
 echo "------------------------------------------------"
 
+
+if [ "$BUILD_ONLY" = "true" ]; then
+  echo "Build only mode, skipping end-to-end tests"
+  exit 0
+fi
+
+
 # Wait for cleanup PID to finish
 wait $CLEANUP_PID
 
@@ -66,7 +73,13 @@ for i in 0 1 2; do
   docker compose down --remove-orphans --volumes > /dev/null 2>&1 || true; \
   cp ../../docker/docker-compose.yaml . ; \
   cp ../../docker/docker-compose.test.yaml . ; \
-  docker compose -f docker-compose.test.yaml -f docker-compose.yaml --profile l0 up -d
+  cp ../../docker/docker-compose.volumes.yaml . ; \
+  docker compose -f docker-compose.test.yaml \
+  -f docker-compose.yaml \
+  -f docker-compose.volumes.yaml \
+  --profile l0 \
+  --profile l1 \
+  up -d
   cd ../../
 done
 
