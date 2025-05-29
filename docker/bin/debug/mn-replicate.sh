@@ -92,6 +92,7 @@ fi
 cd tessellation
 git fetch origin
 git checkout -B $cur_branch origin/$cur_branch
+git pull --force
 
 just build --version $RELEASE_TAG
 EOF
