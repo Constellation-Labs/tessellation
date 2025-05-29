@@ -267,15 +267,15 @@ object CurrencySnapshotCreator {
             Option.when(currencySnapshotAcceptanceResult.info.lastMessages.nonEmpty)(
               currencySnapshotAcceptanceResult.messages.accepted.toSortedSet
             ),
-            if (currencySnapshotAcceptanceResult.syncGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none
+            if (currencySnapshotAcceptanceResult.lastGlobalSnapshotToCheckFields < tessellation3MigrationStartingOrdinal) none
             else currencySnapshotAcceptanceResult.globalSnapshotSync.accepted.toSortedSet.some,
             currencySnapshotAcceptanceResult.feeTransactions,
             currencySnapshotAcceptanceResult.sharedArtifacts.some,
-            if (currencySnapshotAcceptanceResult.syncGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none
+            if (currencySnapshotAcceptanceResult.lastGlobalSnapshotToCheckFields < tessellation3MigrationStartingOrdinal) none
             else currencySnapshotAcceptanceResult.allowSpendBlock.accepted.toSortedSet.some,
-            if (currencySnapshotAcceptanceResult.syncGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none
+            if (currencySnapshotAcceptanceResult.lastGlobalSnapshotToCheckFields < tessellation3MigrationStartingOrdinal) none
             else currencySnapshotAcceptanceResult.tokenLockBlock.accepted.toSortedSet.some,
-            if (currencySnapshotAcceptanceResult.syncGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none
+            if (currencySnapshotAcceptanceResult.lastGlobalSnapshotToCheckFields < tessellation3MigrationStartingOrdinal) none
             else currencySnapshotAcceptanceResult.globalSyncView.some
           )
 
