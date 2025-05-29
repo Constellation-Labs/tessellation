@@ -80,25 +80,19 @@ rm info-$ordinal
 # capture your local branch name
 cur_branch=$(git branch --show-current)
 
-# one SSH, explicit fetch & checkout
-ssh "$REMOTE_DESTINATION_NODE" bash -lc '
+ssh "$REMOTE_DESTINATION_NODE" bash -lc "
   set -euo pipefail
-
-  # ensure project dir & clone if missing
   mkdir -p ~/projects
   cd ~/projects
+
   if [ ! -d tessellation ]; then
     git clone https://github.com/Constellation-Labs/tessellation.git
   fi
 
   cd tessellation
-
-  # get latest remote branches
   git fetch origin
+  git checkout -B $cur_branch origin/$cur_branch
 
-  # force-create or reset local branch to match origin/cur_branch
-  git checkout -B "'"$cur_branch"'" origin/"'"$cur_branch"'"
-
-  # now you're on cur_branch and fully up-to-date
-  just build --version "'"$RELEASE_TAG"'"
-'
+  # now no fancy quoting needed—$RELEASE_TAG was expanded locally
+  just build --version $RELEASE_TAG
+"
