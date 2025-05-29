@@ -1,0 +1,5 @@
+volumes:
+  gl0-data:
+    name: gl0-data${CONTAINER_NAME_SUFFIX:-}
+  dag-l1-data:
+    name: dag-l1-data${CONTAINER_NAME_SUFFIX:-}

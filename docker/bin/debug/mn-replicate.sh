@@ -9,7 +9,7 @@ if [ -z $REMOTE_SOURCE_NODE ]; then
 fi
 
 if [ -z $REMOTE_DESTINATION_NODE ]; then
-    export REMOTE_DESTINATION_NODE=h
+    export REMOTE_DESTINATION_NODE=dest
 fi
 
 if [ -z $SOURCE_HTTP ]; then
@@ -26,6 +26,12 @@ echo "Found latest ordinal: $ordinal"
 
 latest_ordinal=$ordinal
 ordinal=$((latest_ordinal - 1))
+
+
+# commit your current changes
+git add .
+git commit -m "Replicated snapshot $ordinal"
+git push
 
 
 
@@ -66,7 +72,33 @@ scp incremental-$ordinal $REMOTE_DESTINATION_NODE:$l0_data/$storage_path_full
 scp incremental-$ordinal $REMOTE_DESTINATION_NODE:$l0_data/incremental_snapshot/ordinal/${block}/$ordinal
 scp info-$ordinal $REMOTE_DESTINATION_NODE:$l0_data/snapshot_info/$ordinal
 
-
 # cleanup
 rm incremental-$ordinal
 rm info-$ordinal
+
+# run the compose-runner
+# capture your local branch name
+cur_branch=$(git branch --show-current)
+
+# one SSH, explicit fetch & checkout
+ssh "$REMOTE_DESTINATION_NODE" bash -lc '
+  set -euo pipefail
+
+  # ensure project dir & clone if missing
+  mkdir -p ~/projects
+  cd ~/projects
+  if [ ! -d tessellation ]; then
+    git clone https://github.com/Constellation-Labs/tessellation.git
+  fi
+
+  cd tessellation
+
+  # get latest remote branches
+  git fetch origin
+
+  # force-create or reset local branch to match origin/cur_branch
+  git checkout -B "'"$cur_branch"'" origin/"'"$cur_branch"'"
+
+  # now you're on cur_branch and fully up-to-date
+  just build --version "'"$RELEASE_TAG"'"
+'

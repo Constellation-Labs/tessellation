@@ -17,6 +17,10 @@ test *extra_args:
 	@just _check_deps
 	@bash docker/bin/compose-runner.sh {{ extra_args }}
 
+build *extra_args:
+	@just _check_deps
+	@bash docker/bin/compose-runner.sh --build {{ extra_args }}
+
 purge-docker:
 	@bash docker/bin/purge-docker
 
@@ -30,3 +34,7 @@ clean:
 	@bash sbt clean
 	@just clean-configs
 	@just clean-docker
+
+debug-main:
+	@just _check_deps
+	@bash docker/bin/debug/mn-replicate.sh

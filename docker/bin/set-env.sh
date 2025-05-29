@@ -62,6 +62,10 @@ if [ -z "$REGENERATE_TEST_KEYS" ]; then
     export REGENERATE_TEST_KEYS=false
 fi
 
+if [ -z "$BUILD_ONLY" ]; then
+    export BUILD_ONLY=false
+fi
+
 echo "processing args: $@"
 
 # Process command-line arguments
@@ -109,6 +113,12 @@ for arg in "$@"; do
     --regenerate-test-keys)
       export REGENERATE_TEST_KEYS=true
       ;;
+    --build)
+      export BUILD_ONLY=true
+      ;;
+    --version=*)
+      export RELEASE_TAG="${arg#*=}"
+      ;;
     *)
       echo "Unknown argument: $arg"
       exit 1
@@ -122,3 +132,6 @@ exit_func() {
   fi
   return 0
 }
+
+echo "BUILD_ONLY: $BUILD_ONLY"
+echo "RELEASE_TAG: $RELEASE_TAG"
