@@ -144,13 +144,13 @@ object NonNegFraction {
       }
     }
 
-  def fromDouble[F[_]: MonadThrow](value: Double): F[NonNegFraction] =
+  def fromBigDecimal[F[_]: MonadThrow](value: BigDecimal): F[NonNegFraction] =
     if (value < 0) {
       new IllegalArgumentException("Value must be non-negative").raiseError[F, NonNegFraction]
     } else {
       val scale = 8 // tessellation specific precision
       val denominator = BigInt(10).pow(scale).toLong
-      val numerator = (BigDecimal(value) * BigDecimal(denominator)).toLong
+      val numerator = (value * BigDecimal(denominator)).toLong
       // ^^ This will round down by truncating any digits beyond 8 places ^^
 
       for {
@@ -158,6 +158,8 @@ object NonNegFraction {
         refinedDenom <- refineV[Positive](denominator).leftMap(new IllegalArgumentException(_)).liftTo[F]
       } yield NonNegFraction(refinedNum, refinedDenom)
     }
+
+  def fromDouble[F[_]: MonadThrow](value: Double): F[NonNegFraction] = fromBigDecimal(BigDecimal(value))
 
   def fromPercentage[F[_]: MonadThrow](percentage: Double): F[NonNegFraction] =
     if (percentage < 0) {
