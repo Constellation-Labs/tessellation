@@ -16,10 +16,9 @@ unless all other jars are not found, in which case it will recompile all.
 `just debug-main`
 
 This is intended for deploying a custom version from your current git branch to a live mainnet network node 
-for capturing debug information, heap dumps, profile data, or custom metrics or log statements.
+for capturing debug information, heap dumps, profile data, or custom metrics or log statements. 
 
-Warning: this script will perform a `git add .; git commit` in your local directory for tracking changes. 
-Ensure you are on a clean branch when running this, it deliberately done to track every deployed change.
+Requires rsync to be installed.
 
 This assumes you have already set in your ~/.ssh/config the following:
 

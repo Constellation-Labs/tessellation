@@ -39,7 +39,7 @@ echo "" >> genesis.csv
 echo "$ADDRESS,100000000000000" >> genesis.csv
 echo "Generated genesis file:"
 cat genesis.csv
-sed -i.bak '${\n/^$/d\n}' genesis.csv && rm -f genesis.csv.bak
+# sed -i.bak '${\n/^$/d\n}' genesis.csv && rm -f genesis.csv.bak
 echo "CL_GENESIS_FILE=./genesis.csv" >> .env
 
 cd ../../
