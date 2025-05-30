@@ -36,7 +36,7 @@ if [ -n "$CL_DAG_L1" ]; then
   if [ -n "$CL_GENESIS_FILE" ]; then
     L1_COMMAND="run-initial-validator"
   fi
-  exec java -jar /tessellation/jars/dag-l1.jar $L1_COMMAND --l0-peer-host $CL_L0_PEER_HTTP_HOST
+  exec java $CL_DOCKER_JAVA_OPTS -jar /tessellation/jars/dag-l1.jar $L1_COMMAND --l0-peer-host $CL_L0_PEER_HTTP_HOST
 else
   echo "Starting L0 validator"
   
@@ -49,7 +49,7 @@ else
   if [ -n "$CL_GENESIS_FILE" ]; then
     # if you’ve provided a genesis file, run genesis
     echo "Starting L0 validator genesis"
-    exec java -jar /tessellation/jars/dag-l0.jar run-genesis "/tessellation/genesis.csv"
+    exec java $CL_DOCKER_JAVA_OPTS -jar /tessellation/jars/dag-l0.jar run-genesis "/tessellation/genesis.csv"
   else
     echo "Starting join coordinator"
     /tessellation/entrypoint-dag-l0-join-coordinator.sh &
@@ -60,7 +60,7 @@ else
     fi
 
     echo "Starting L0 validator with command: $L0_COMMAND"
-    exec java -jar /tessellation/jars/dag-l0.jar $L0_COMMAND
+    exec java $CL_DOCKER_JAVA_OPTS -jar /tessellation/jars/dag-l0.jar $L0_COMMAND
   fi
 
 fi
