@@ -16,6 +16,7 @@ import scala.util.control.NoStackTrace
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.http.p2p.clients.NodeClient
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.cluster.SessionToken
 import io.constellationnetwork.schema.peer._
 

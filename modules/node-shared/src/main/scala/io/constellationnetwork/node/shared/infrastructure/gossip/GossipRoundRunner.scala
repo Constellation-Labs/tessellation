@@ -16,6 +16,7 @@ import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.errorShow
 import io.constellationnetwork.schema.peer.Peer
 
+import eu.timepit.refined.auto._
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -58,7 +59,8 @@ object GossipRoundRunner {
               }
               .flatMap(_ => metrics.incrementGossipRoundSucceeded)
               .handleErrorWith { err =>
-                logger.error(s"Error running gossip round {peer=${peer.show}, reason=${err.show}") >>
+                Metrics[F].incrementCounter("dag_gossip_round_error") >>
+                  logger.error(s"Error running gossip round {peer=${peer.show}, reason=${err.show}") >>
                   localHealthcheck.start(peer)
               },
             selectedPeersR.update(_.excl(peer))
@@ -71,6 +73,10 @@ object GossipRoundRunner {
             selectedPeers <- selectedPeersR.get
             availablePeers = allPeers.diff(selectedPeers)
             drawnPeers <- Random[F].shuffleList(availablePeers.toList).map(_.take(cfg.fanout.value))
+            _ <- Metrics[F].recordDistribution("dag_gossip_round_all_peers", allPeers.size)
+            _ <- Metrics[F].recordDistribution("dag_gossip_round_selected_peers", selectedPeers.size)
+            _ <- Metrics[F].recordDistribution("dag_gossip_round_available_peers", availablePeers.size)
+            _ <- Metrics[F].recordDistribution("dag_gossip_round_drawn_peers", drawnPeers.size)
             _ <- drawnPeers.traverse { peer =>
               selectedPeersR.modify { selectedPeers =>
                 if (selectedPeers.contains(peer))

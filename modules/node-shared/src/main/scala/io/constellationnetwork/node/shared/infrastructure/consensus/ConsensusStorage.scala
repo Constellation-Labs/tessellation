@@ -33,6 +33,12 @@ import monocle.Lens
 import monocle.syntax.all._
 
 trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kind] {
+
+  val storageCreatedMillis: Long = System.currentTimeMillis()
+
+  def timeDelta(): Long =
+    System.currentTimeMillis() - storageCreatedMillis
+
   def getState(key: Key): F[Option[ConsensusState[Key, Status, Outcome, Kind]]]
 
   def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[F, Key, Status, Outcome, Kind, B]): F[Option[B]]

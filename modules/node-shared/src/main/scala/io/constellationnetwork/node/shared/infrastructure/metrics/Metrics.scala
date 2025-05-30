@@ -1,5 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.metrics
 
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import java.util.{List => JList}
 
@@ -63,14 +64,29 @@ trait Metrics[F[_]] {
   def recordDistribution(key: MetricKey, value: Double, tags: TagSeq): F[Unit]
 
   private[shared] def getAllAsText: F[String]
+
+  def timedMetric[A](operation: F[A], metricKey: MetricKey, tags: TagSeq = Seq.empty): F[A]
+
+  def genericRecordDistributionWithTimeBuckets[A: Numeric](
+    key: MetricKey,
+    value: A,
+    timeSeconds: Float,
+    tags: TagSeq = Seq()
+  ): F[Unit]
 }
 
 object Metrics {
+
+  import org.openjdk.jol.info.GraphLayout
+
+  def sizeInKB(obj: Any): Double =
+    GraphLayout.parseInstance(obj).totalSize() / 1024.0
 
   type MetricKey = String Refined MatchesRegex["dag_[a-z0-9]+(?:_[a-z0-9]+)*"]
   type LabelName = String Refined MatchesRegex["[a-z0-9]+(?:_[a-z0-9]+)*"]
   type TagSeq = Seq[(LabelName, String)]
   type AtomicDouble = AtomicReference[Double]
+  def unsafeLabelName(s: String): LabelName = Refined.unsafeApply(s)
 
   private def toMicrometerTags(tags: TagSeq): JList[Tag] =
     tags.map { case (k, v) => Tag.of(k, v) }.asJava
@@ -199,6 +215,16 @@ object Metrics {
             registry.timer(key, toMicrometerTags(tags)).record(duration.toJava)
           }
 
+        def timedMetric[A](operation: F[A], metricKey: MetricKey, tags: TagSeq): F[A] =
+          Async[F].realTime.flatMap { start =>
+            operation.flatTap { _ =>
+              Async[F].realTime.flatMap { end =>
+                val duration = FiniteDuration(end.toNanos - start.toNanos, TimeUnit.NANOSECONDS)
+                recordTime(metricKey, duration, tags)
+              }
+            }
+          }
+
         def recordDistribution(key: MetricKey, value: Int): F[Unit] =
           genericRecordDistribution(key, value, Seq.empty)
 
@@ -228,6 +254,22 @@ object Metrics {
             registry.summary(key, toMicrometerTags(tags)).record(Numeric[A].toDouble(value))
           }
 
+        def genericRecordDistributionWithTimeBuckets[A: Numeric](
+          key: MetricKey,
+          value: A,
+          timeSeconds: Float,
+          tags: TagSeq = Seq()
+        ): F[Unit] = {
+          val timeBucket = if (timeSeconds > 120f) {
+            "120s+"
+          } else {
+            val bucketStart = (timeSeconds / 5f).toInt * 5
+            val bucketEnd = bucketStart + 5
+            s"${bucketStart}-${bucketEnd}s"
+          }
+          val tagsWithBucket = tags :+ (unsafeLabelName("time_bucket") -> timeBucket)
+          genericRecordDistribution(key, value, tagsWithBucket)
+        }
         def getAllAsText: F[String] = Async[F].delay {
           registry.scrape(TextFormat.CONTENT_TYPE_OPENMETRICS_100)
         }

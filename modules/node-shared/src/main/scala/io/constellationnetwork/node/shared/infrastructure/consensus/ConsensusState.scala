@@ -47,7 +47,13 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   withdrawnFacilitators: WithdrawnFacilitators = WithdrawnFacilitators.empty,
   lockStatus: LockStatus = LockStatus.Open,
   spreadAckKinds: Set[Kind]
-)
+) {
+  val stateUpdatedAt: Long = System.currentTimeMillis()
+  def timeDelta(): Long =
+    System.currentTimeMillis() - stateUpdatedAt
+  def timeDeltaSeconds(): Float =
+    timeDelta().toFloat / 1000
+}
 
 object ConsensusState {
   implicit def showInstance[K: Show, S: Show, O, Kind: Show]: Show[ConsensusState[K, S, O, Kind]] = { cs =>

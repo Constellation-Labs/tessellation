@@ -70,29 +70,35 @@ object ConsensusManager {
 
     def collectRegistration(peer: Peer): F[Unit] =
       for {
-        registrationResponse <- consensusClient.getRegistration.run(peer)
+        registrationResponse <- Metrics[F].timedMetric(consensusClient.getRegistration.run(peer), "dag_consensus_collect_registration")
         maybeResult <- registrationResponse.maybeKey.traverse(consensusStorage.registerPeer(peer.id, _))
         _ <- (registrationResponse.maybeKey, maybeResult).traverseN {
           case (key, result) =>
             if (result)
-              logger.info(s"Peer ${peer.id.show} registered at ${key.show}")
-            else
-              logger.warn(s"Peer ${peer.id.show} cannot be registered at ${key.show}")
+              logger.info(s"Peer ${peer.id.show} registered at ${key.show}") >>
+                Metrics[F].incrementCounter("dag_consensus_peer_registered")
+            else {
+              logger.warn(s"Peer ${peer.id.show} cannot be registered at ${key.show}") >>
+                Metrics[F].incrementCounter("dag_consensus_peer_cannot_register")
+            }
         }
       } yield ()
 
     val manager = new ConsensusManager[F, Key, Artifact, Context, Status, Outcome, Kind] {
 
-      def registerForConsensus(observationKey: Key): F[Unit] =
+      def registerForConsensus(observationKey: Key): F[Unit] = {
+        Metrics[F].incrementCounter("dag_consensus_register_self")
         consensusStorage
           .trySetObservationKey(observationKey)
           .ifM(
             nodeStorage.tryModifyState(NodeState.WaitingForObserving, NodeState.Observing) >>
               logger.info(s"Registered for consensus {registrationKey=${observationKey.next.show}"),
-            new Throwable(
-              s"Registration for consensus failed {registrationKey=${observationKey.next.show}. Already registered at different key."
-            ).raiseError[F, Unit]
+            Metrics[F].incrementCounter("dag_consensus_register_self_failed") >>
+              new Throwable(
+                s"Registration for consensus failed {registrationKey=${observationKey.next.show}. Already registered at different key."
+              ).raiseError[F, Unit]
           )
+      }
 
       def startFacilitatingAfterDownload(key: Key, lastArtifact: Signed[Artifact], lastContext: Context): F[Unit] =
         S.supervise {
@@ -183,7 +189,9 @@ object ConsensusManager {
         for {
           maybeLastOutcome <- consensusStorage.clearAndGetLastConsensusOutcome
           _ <- maybeLastOutcome.traverse { lastOutcome =>
-            consensusStateRemover.withdrawFromConsensus(_key.get(lastOutcome).next)
+            // Record consensus cancelation
+            Metrics[F].incrementCounter("dag_consensus_withdrawal") >>
+              consensusStateRemover.withdrawFromConsensus(_key.get(lastOutcome).next)
           }
           _ <- consensusStorage.clearObservationKey
         } yield ()
@@ -223,9 +231,10 @@ object ConsensusManager {
           case Some((oldState, newState)) =>
             consensusStateAdvancer.getConsensusOutcome(newState) match {
               case Some((previousKey, newOutcome)) =>
-                Clock[F].monotonic.flatMap { finishedAt =>
-                  Metrics[F].recordTime("dag_consensus_duration", finishedAt - newState.createdAt)
-                } >>
+                Metrics[F].recordDistribution("dag_consensus_manager_any_state_change", oldState.timeDeltaSeconds()) >>
+                  Clock[F].monotonic.flatMap { finishedAt =>
+                    Metrics[F].recordTime("dag_consensus_duration", finishedAt - newState.createdAt)
+                  } >>
                   consensusStorage
                     .tryUpdateLastConsensusOutcomeWithCleanup(previousKey, newOutcome)
                     .ifM(
@@ -269,16 +278,25 @@ object ConsensusManager {
       private def stallDetection(key: Key, state: ConsensusState[Key, Status, Outcome, Kind]): F[Unit] =
         S.supervise {
           Temporal[F].sleep(config.declarationTimeout) >>
+            Metrics[F].incrementCounter("dag_consensus_stall_detection_awoke") >>
             consensusStateUpdater.tryLockConsensus(key, state).flatMap { maybeResult =>
-              maybeResult.traverse {
-                case (_, lockedState) =>
-                  Temporal[F].sleep(config.lockDuration) >>
-                    consensusOps.maybeCollectingKind(lockedState.status).traverse { ackKind =>
-                      consensusStorage.getResources(key).flatMap { resources =>
-                        consensusStateUpdater.trySpreadAck(key, ackKind, resources)
+              if (maybeResult.isEmpty) {
+                Metrics[F].incrementCounter("dag_consensus_stall_detection_lock_empty")
+              } else {
+                Metrics[F].incrementCounter("dag_consensus_stall_detection_lock_found")
+              } >>
+                maybeResult.traverse {
+                  case (_, lockedState) =>
+                    Temporal[F].sleep(config.lockDuration) >>
+                      Metrics[F].updateGauge("dag_consensus_stall_detection_lock_state_updated_delta", lockedState.timeDeltaSeconds()) >>
+                      consensusOps.maybeCollectingKind(lockedState.status).traverse { ackKind =>
+                        Metrics[F].incrementCounter("dag_consensus_stall_detection_ack_kind") >>
+                          consensusStorage.getResources(key).flatMap { resources =>
+                            Metrics[F].incrementCounter("dag_consensus_stall_detection_try_spread_ack") >>
+                              consensusStateUpdater.trySpreadAck(key, ackKind, resources)
+                          }
                       }
-                    }
-              }
+                }.void
             }
         }.void
 
@@ -288,7 +306,8 @@ object ConsensusManager {
       nodeStorage.nodeStates
         .filter(_ === NodeState.Leaving)
         .evalTap { _ =>
-          manager.withdrawFromConsensus
+          Metrics[F].incrementCounter("dag_consensus_manager_withdraw_from") >>
+            manager.withdrawFromConsensus
         }
         .compile
         .drain

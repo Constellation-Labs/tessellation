@@ -336,7 +336,8 @@ lazy val nodeShared = (project in file("modules/node-shared"))
       Libraries.pureconfigHttp4s,
       Libraries.pureconfigIp4s,
       Libraries.refinedPureconfig,
-      Libraries.shapeless
+      Libraries.shapeless,
+      Libraries.jol,
     )
   )
 
@@ -515,7 +516,8 @@ lazy val dagL0 = (project in file("modules/dag-l0"))
       Libraries.refinedCats,
       Libraries.skunkCore,
       Libraries.skunkCirce,
-      Libraries.squants
+      Libraries.squants,
+      Libraries.jol
     )
   )
 

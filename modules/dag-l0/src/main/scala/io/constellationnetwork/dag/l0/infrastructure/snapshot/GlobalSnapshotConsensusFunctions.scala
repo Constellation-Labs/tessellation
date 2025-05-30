@@ -21,6 +21,7 @@ import io.constellationnetwork.node.shared.domain.event.EventCutter
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{RewardsInput, _}
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
@@ -53,7 +54,7 @@ abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
 
 object GlobalSnapshotConsensusFunctions {
 
-  def make[F[_]: Async: SecurityProvider: JsonSerializer: KryoSerializer](
+  def make[F[_]: Async: SecurityProvider: JsonSerializer: KryoSerializer: Metrics](
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
     classicRewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
@@ -156,6 +157,7 @@ object GlobalSnapshotConsensusFunctions {
       getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])] = {
+      val start = System.currentTimeMillis()
       val scEventsBeforeCut = events.collect { case sc: StateChannelEvent => sc }
       val dagEventsBeforeCut = events.collect { case d: DAGEvent => d }
       val allowSpendEventsForAcceptance = events.collect { case as: AllowSpendEvent => as }
@@ -321,6 +323,16 @@ object GlobalSnapshotConsensusFunctions {
           acceptedNnodeCollateralWithdrawals.some
         )
         returnedEvents = returnedSCEvents.map(StateChannelEvent(_)) ++ returnedDAGEvents
+        delta = System.currentTimeMillis() - start
+        _ <- Metrics[F].recordDistribution(
+          "dag_gl0_consensus_fns_create_proposal_artifact_duration",
+          delta.toFloat / 1000
+        )
+        _ <- Metrics[F].recordDistribution("dag_gl0_consensus_fns_create_proposal_artifact_sc_snapshots", scSnapshots.size)
+        _ <- Metrics[F].recordDistribution("dag_gl0_consensus_fns_create_proposal_artifact_info_size", Metrics.sizeInKB(snapshotInfo))
+        _ <- Metrics[F]
+          .recordDistribution("dag_gl0_consensus_fns_create_proposal_artifact_incremental_size", Metrics.sizeInKB(globalSnapshot))
+        _ <- Metrics[F].recordDistribution("dag_gl0_consensus_fns_create_proposal_artifact_event_size", Metrics.sizeInKB(returnedEvents))
       } yield (globalSnapshot, snapshotInfo, returnedEvents)
     }
 
