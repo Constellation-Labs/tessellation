@@ -113,7 +113,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     override def acceptBlocksIteratively(
       blocks: List[Signed[Block]],
       context: BlockAcceptanceContext[IO],
-      ordinal: SnapshotOrdinal
+      ordinal: SnapshotOrdinal,
+      shouldValidateCollateral: Boolean = true
     )(implicit hasher: Hasher[F]): IO[BlockAcceptanceResult] =
       BlockAcceptanceResult(
         BlockAcceptanceContextUpdate.empty,
@@ -124,7 +125,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     override def acceptBlock(
       block: Signed[Block],
       context: BlockAcceptanceContext[IO],
-      ordinal: SnapshotOrdinal
+      ordinal: SnapshotOrdinal,
+      shouldValidateCollateral: Boolean = true
     )(implicit hasher: Hasher[F]): IO[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]] = ???
 
   }

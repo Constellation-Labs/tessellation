@@ -236,7 +236,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   override def pullGlobalSnapshots
                     : IO[Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]] = ???
 
-                  override def pullGlobalSnapshot(ordinal: SnapshotOrdinal): IO[Option[Hashed[GlobalIncrementalSnapshot]]] = none.pure[IO]
+                  def pullGlobalSnapshots(ordinal: SnapshotOrdinal)
+                  : IO[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]] = ???
+
+                override def pullGlobalSnapshot(ordinal: SnapshotOrdinal): IO[Option[Hashed[GlobalIncrementalSnapshot]]] = none.pure[IO]
 
                   override def pullGlobalSnapshot(hash: Hash): IO[Option[Hashed[GlobalIncrementalSnapshot]]] = ???
                 }

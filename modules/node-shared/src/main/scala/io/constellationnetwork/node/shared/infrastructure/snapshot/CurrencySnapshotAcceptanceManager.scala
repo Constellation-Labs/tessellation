@@ -69,7 +69,8 @@ case class CurrencySnapshotAcceptanceResult(
   info: CurrencySnapshotInfo,
   stateProof: CurrencySnapshotStateProof,
   globalSyncView: GlobalSyncView,
-  syncGlobalSnapshotOrdinal: SnapshotOrdinal
+  syncGlobalSnapshotOrdinal: SnapshotOrdinal,
+  lastGlobalSnapshotToCheckFields: SnapshotOrdinal
 )
 
 trait CurrencySnapshotAcceptanceManager[F[_]] {
@@ -90,7 +91,8 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     facilitators: Set[PeerId],
     getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    lastGlobalSyncView: Option[GlobalSyncView]
+    lastGlobalSyncView: Option[GlobalSyncView],
+    shouldValidateCollateral: Boolean
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult]
 
   def acceptRewardTxs(
@@ -141,7 +143,7 @@ object CurrencySnapshotAcceptanceManager {
     globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F],
     lastGlobalSnapshotsCached: SignallingRef[F, Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]]
   ): CurrencySnapshotAcceptanceManager[F] = new CurrencySnapshotAcceptanceManager[F] {
-    val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLogger[F]
+    val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F]("CurrencySnapshotAcceptanceManager")
 
     def accept(
       blocksForAcceptance: List[Signed[Block]],
@@ -160,7 +162,8 @@ object CurrencySnapshotAcceptanceManager {
       facilitators: Set[PeerId],
       getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-      lastGlobalSyncView: Option[GlobalSyncView]
+      lastGlobalSyncView: Option[GlobalSyncView],
+      shouldValidateCollateral: Boolean
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
       initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
       tokenLockInitialTxRef <- TokenLockReference.emptyCurrency(lastSnapshotContext.address)
@@ -173,7 +176,8 @@ object CurrencySnapshotAcceptanceManager {
         snapshotOrdinal,
         lastActiveTips,
         lastDeprecatedTips,
-        initialTxRef
+        initialTxRef,
+        shouldValidateCollateral
       )
 
       acceptedTransactions = acceptanceBlocksResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
@@ -218,6 +222,7 @@ object CurrencySnapshotAcceptanceManager {
         feeTransactionsForAcceptance
       )
 
+      _ <- Slf4jLogger.getLogger[F].debug(s"--- Shared artifacts accepted: ${sharedArtifactsForAcceptance.show}")
       acceptedSharedArtifacts = acceptSharedArtifacts(sharedArtifactsForAcceptance)
 
       messagesAcceptanceResult <- acceptMessages(
@@ -240,6 +245,8 @@ object CurrencySnapshotAcceptanceManager {
         .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value - lastGlobalSnapshotsSyncConfig.syncOffset) }
 
       lastGlobalSnapshots <- getLastNGlobalSnapshots
+      _ <- logger.info(s"Metagraph $metagraphId snapshot $snapshotOrdinal - maybeSnapshotOrdinalSync: $maybeSnapshotOrdinalSync")
+
       maybeLastGlobalSnapshot <- maybeSnapshotOrdinalSync match {
         case Some(ordinal) =>
           lastGlobalSnapshots.find(_.ordinal === ordinal) match {
@@ -295,7 +302,8 @@ object CurrencySnapshotAcceptanceManager {
         maybeLastGlobalSnapshot,
         lastGlobalSnapshots,
         getGlobalSnapshotByOrdinal,
-        metagraphId
+        metagraphId,
+        snapshotOrdinal
       )
 
       metagraphIdSpendTransactions = lastGlobalSnapshotsSpendActions.flatMap {
@@ -308,7 +316,7 @@ object CurrencySnapshotAcceptanceManager {
       _ <- metagraphIdSpendTransactions.nonEmpty
         .pure[F]
         .ifM(
-          Slf4jLogger.getLogger[F].debug(s"--- [CURRENCY] Currency $metagraphId spend transactions: $metagraphIdSpendTransactions"),
+          logger.info(s"--- [CURRENCY] Currency $metagraphId spend transactions: $metagraphIdSpendTransactions"),
           Applicative[F].unit
         )
 
@@ -412,19 +420,26 @@ object CurrencySnapshotAcceptanceManager {
       updatedAllowSpendsCleaned = updatedAllowSpends.filter { case (_, allowSpends) => allowSpends.nonEmpty }
       updatedActiveTokenLocksCleaned = updatedActiveTokenLocks.filter { case (_, tokenLocks) => tokenLocks.nonEmpty }
 
+      snapshotOrdinalToCheckFields =
+        if (lastGlobalSnapshotOrdinal === SnapshotOrdinal.MinValue) {
+          lastGlobalSnapshots.lastOption.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue)
+        } else {
+          lastGlobalSnapshotOrdinal
+        }
+
       csi = CurrencySnapshotInfo(
-        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal)
+        if (snapshotOrdinalToCheckFields < tessellation3MigrationStartingOrdinal)
           lastSnapshotContext.snapshotInfo.lastTxRefs ++ acceptanceBlocksResult.contextUpdate.lastTxRefs
         else transactionsRefs,
         updatedBalancesBySpendTransactions,
         Option.when(messagesAcceptanceResult.contextUpdate.nonEmpty)(messagesAcceptanceResult.contextUpdate),
         None,
-        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none else updatedAllowSpendRefs.some,
-        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none else updatedAllowSpendsCleaned.some,
-        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none
+        if (snapshotOrdinalToCheckFields < tessellation3MigrationStartingOrdinal) none else updatedAllowSpendRefs.some,
+        if (snapshotOrdinalToCheckFields < tessellation3MigrationStartingOrdinal) none else updatedAllowSpendsCleaned.some,
+        if (snapshotOrdinalToCheckFields < tessellation3MigrationStartingOrdinal) none
         else globalSnapshotSyncAcceptanceResult.contextUpdate.some,
-        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none else tokenLockRefs.some,
-        if (lastGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none else updatedActiveTokenLocksCleaned.some
+        if (snapshotOrdinalToCheckFields < tessellation3MigrationStartingOrdinal) none else tokenLockRefs.some,
+        if (snapshotOrdinalToCheckFields < tessellation3MigrationStartingOrdinal) none else updatedActiveTokenLocksCleaned.some
       )
 
       stateProof <- csi.stateProof(snapshotOrdinal)
@@ -442,6 +457,8 @@ object CurrencySnapshotAcceptanceManager {
         case Some(value) => GlobalSyncView(value.ordinal, value.hash, value.epochProgress)
         case _           => GlobalSyncView.empty
       }
+
+      _ <- logger.info(s"Metagraph $metagraphId snapshot $snapshotOrdinal - globalSyncView: $globalSyncView")
     } yield
       CurrencySnapshotAcceptanceResult(
         acceptanceBlocksResult,
@@ -455,7 +472,8 @@ object CurrencySnapshotAcceptanceManager {
         csi,
         stateProof,
         globalSyncView,
-        lastGlobalSnapshotOrdinal
+        lastGlobalSnapshotOrdinal,
+        snapshotOrdinalToCheckFields
       )
 
     private def acceptMessages(
@@ -540,7 +558,8 @@ object CurrencySnapshotAcceptanceManager {
       maybeLastGlobalSnapshot: Option[Hashed[GlobalIncrementalSnapshot]],
       lastGlobalSnapshots: List[Hashed[GlobalIncrementalSnapshot]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-      currencyId: Address
+      currencyId: Address,
+      snapshotOrdinal: SnapshotOrdinal
     ): F[SortedMap[Address, List[SpendAction]]] = {
       val empty = SortedMap.empty[Address, List[SpendAction]].pure[F]
       maybeLastGlobalSnapshot match {
@@ -559,10 +578,9 @@ object CurrencySnapshotAcceptanceManager {
               (startOrdinal until endOrdinal).map(i => SnapshotOrdinal(NonNegLong.unsafeFrom(i))).toList
 
             if (snapshotOrdinals.size > lastGlobalSnapshotsSyncConfig.maxAllowedGap.value) {
-              Slf4jLogger
-                .getLogger[F]
+              logger
                 .warn(
-                  s"Interval of ordinals of metagraph $currencyId between lastSyncGlobalSnapshot and lastGlobalView is greater than $lastGlobalSnapshotsSyncConfig.maxAllowedGap; skipping fetching interval"
+                  s"Interval of ordinals of metagraph $currencyId ordinal: $snapshotOrdinal between lastSyncGlobalSnapshot: $startOrdinal and lastGlobalView: $endOrdinal is greater than ${lastGlobalSnapshotsSyncConfig.maxAllowedGap}; skipping fetching interval"
                 )
                 .as(lastGlobalSnapshot.spendActions.getOrElse(SortedMap.empty))
             } else {
@@ -609,7 +627,8 @@ object CurrencySnapshotAcceptanceManager {
       snapshotOrdinal: SnapshotOrdinal,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
-      initialTxRef: TransactionReference
+      initialTxRef: TransactionReference,
+      shouldValidateCollateral: Boolean
     )(implicit hasher: Hasher[F]) = {
       val tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
       val context = BlockAcceptanceContext.fromStaticData(
@@ -620,7 +639,7 @@ object CurrencySnapshotAcceptanceManager {
         initialTxRef
       )
 
-      blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, snapshotOrdinal)
+      blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, snapshotOrdinal, shouldValidateCollateral)
     }
 
     private def acceptTokenLockBlocks(

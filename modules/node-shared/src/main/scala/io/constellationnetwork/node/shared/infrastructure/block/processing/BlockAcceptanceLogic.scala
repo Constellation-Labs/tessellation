@@ -2,16 +2,7 @@ package io.constellationnetwork.node.shared.infrastructure.block.processing
 
 import cats.data.{EitherT, NonEmptyList}
 import cats.effect.Async
-import cats.syntax.bifunctor._
-import cats.syntax.either._
-import cats.syntax.flatMap._
-import cats.syntax.foldable._
-import cats.syntax.functor._
-import cats.syntax.option._
-import cats.syntax.order._
-import cats.syntax.semigroup._
-import cats.syntax.traverse._
-import cats.syntax.traverseFilter._
+import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.schema.Block
@@ -33,10 +24,11 @@ object BlockAcceptanceLogic {
         signedBlock: Signed[Block],
         txChains: TxChains,
         context: BlockAcceptanceContext[F],
-        contextUpdate: BlockAcceptanceContextUpdate
+        contextUpdate: BlockAcceptanceContextUpdate,
+        shouldValidateCollateral: Boolean
       ): EitherT[F, BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)] =
         for {
-          _ <- processSignatures(signedBlock, context)
+          _ <- processSignatures(signedBlock, context, shouldValidateCollateral)
           (contextUpdate1, blockUsages) <- processParents(signedBlock, context, contextUpdate)
           contextUpdate2 <- processLastTxRefs(txChains, context, contextUpdate1)
           contextUpdate3 <- processBalances(signedBlock, context, contextUpdate2)
@@ -187,25 +179,30 @@ object BlockAcceptanceLogic {
 
   def processSignatures[F[_]: Async: SecurityProvider](
     signedBlock: Signed[Block],
-    context: BlockAcceptanceContext[F]
+    context: BlockAcceptanceContext[F],
+    shouldValidateCollateral: Boolean = true
   ): EitherT[F, BlockNotAcceptedReason, Unit] =
     EitherT(
-      signedBlock.proofs
-        .map(_.id.toPeerId)
-        .toList
-        .traverse(_.toAddress)
-        .flatMap(
-          _.filterA(address =>
-            context.getBalance(address).map { balances =>
-              !balances.getOrElse(Balance.empty).satisfiesCollateral(context.getCollateral)
-            }
+      if (!shouldValidateCollateral) {
+        ().asRight[BlockNotAcceptedReason].pure
+      } else {
+        signedBlock.proofs
+          .map(_.id.toPeerId)
+          .toList
+          .traverse(_.toAddress)
+          .flatMap(
+            _.filterA(address =>
+              context.getBalance(address).map { balances =>
+                !balances.getOrElse(Balance.empty).satisfiesCollateral(context.getCollateral)
+              }
+            )
           )
-        )
-        .map(list =>
-          NonEmptyList
-            .fromList(list)
-            .map(nel => SigningPeerBelowCollateral(nel).asLeft[Unit])
-            .getOrElse(().asRight[BlockNotAcceptedReason])
-        )
+          .map(list =>
+            NonEmptyList
+              .fromList(list)
+              .map(nel => SigningPeerBelowCollateral(nel).asLeft[Unit])
+              .getOrElse(().asRight[BlockNotAcceptedReason])
+          )
+      }
     )
 }
