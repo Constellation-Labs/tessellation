@@ -116,6 +116,7 @@ CL_DAG_L0_JOIN_IP=52.53.46.33
 CL_DAG_L0_JOIN_ID=e0c1ee6ec43510f0e16d2969a7a7c074a5c8cdb477c074fe9c32a9aad8cbc8ff1dff60bb81923e0db437d2686a9b65b86c403e6a21fa32b6acc4e61be4d70925
 CL_DAG_L0_JOIN_PORT=9001
 CL_L0_DATA_MOUNT_PATH=/root/docker/l0/data
+CL_DOCKER_CLI_BIND_INTERFACE="127.0.0.1:"
 CL_DOCKER_JAVA_OPTS="-Xms1024M -Xmx12G -Xss256K -Dcats.effect.tracing.mode=full -Dcats.effect.tracing.buffer.size=1024 -Dcats.effect.tracing.exceptions.enhanced=true"
 EOF
 
