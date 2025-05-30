@@ -22,6 +22,7 @@ if [ -z $RELEASE_TAG ]; then
 fi
 
 
+
 ssh $REMOTE_DESTINATION_NODE "bash -c \"docker exec -it gl0 bash -c 'curl -X POST http://localhost:9002/cluster/leave'\"" || true;
 ssh $REMOTE_DESTINATION_NODE "bash -c \"mkdir -p /root/projects\""
 ssh $REMOTE_DESTINATION_NODE "bash -c \"mkdir -p /root/docker\""
