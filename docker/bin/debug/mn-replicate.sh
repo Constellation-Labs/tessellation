@@ -100,11 +100,11 @@ cp /root/projects/tessellation/docker/docker-compose.yaml /root/docker/docker-co
 cd /root/docker;
 cp /root/.env .env
 cat /root/.env.remote >> .env
-echo "CL_EXTERNAL_IP=$(curl ifconfig.me)" >> .env
-docker compose down;
+echo "CL_EXTERNAL_IP=$(curl -4 ifconfig.me)" >> .env
+docker compose down || true;
+docker compose --profile l0 up -d
 EOF
 
-# docker compose --profile l0 up -d
 
 
 cat > .env.remote <<EOF
@@ -122,7 +122,7 @@ EOF
 scp .env.remote $REMOTE_DESTINATION_NODE:/root/.env.remote
 rm .env.remote
 scp bootstrap.sh $REMOTE_DESTINATION_NODE:~/bootstrap.sh
-ssh $REMOTE_DESTINATION_NODE "bash -c \"chmod +x ~/bootstrap.sh\""
-ssh $REMOTE_DESTINATION_NODE "bash -c \"~/bootstrap.sh\""
+ssh $REMOTE_DESTINATION_NODE "bash -c \"chmod +x ~/bootstrap.sh; ~/bootstrap.sh\""
+ssh $REMOTE_DESTINATION_NODE "bash -c \"docker logs -f global-l0-0\""
 
 rm bootstrap.sh

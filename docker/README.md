@@ -15,6 +15,12 @@ unless all other jars are not found, in which case it will recompile all.
 
 `just debug-main`
 
+This is intended for deploying a custom version from your current git branch to a live mainnet network node 
+for capturing debug information, heap dumps, profile data, or custom metrics or log statements.
+
+Warning: this script will perform a `git add .; git commit` in your local directory for tracking changes. 
+Ensure you are on a clean branch when running this, it deliberately done to track every deployed change.
+
 This assumes you have already set in your ~/.ssh/config the following:
 
 ```
@@ -35,4 +41,6 @@ ENV CL_KEYALIAS="alias"
 ENV CL_PASSWORD="password"
 ```
 
-The remainder of environment variables will be generated automatically
+The remainder of environment variables will be generated automatically, it is run on root on the remote VM, 
+so should be used with a disposable VM or one you otherwise do not carry state on. It will auto-install 
+all dependencies, only run the GL0, and tail the logs.
