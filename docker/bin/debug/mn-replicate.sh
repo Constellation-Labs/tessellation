@@ -38,16 +38,17 @@ rsync -avzP \
   . $REMOTE_DESTINATION_NODE:/root/projects/tessellation
 
 echo "Rsync command  $PROJECT_ROOT $REMOTE_DESTINATION_NODE:/root/projects/tessellation" 
+# rm -rf /root/docker/l0/data || true;
 
 cat > bootstrap.sh <<EOF
 apt install -y just
 rm -rf /root/docker/l0/logs || true;
-rm -rf /root/docker/l0/data || true;
 mkdir -p /root/docker/l0/logs
 mkdir -p /root/docker/l0/data
 cd ~/projects
 cd tessellation
 source /root/.bashrc || true;
+sbt clean;
 just build --version=$RELEASE_TAG
 just purge-docker
 cp /root/projects/tessellation/docker/docker-compose.yaml /root/docker/docker-compose.yaml
