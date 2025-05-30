@@ -1,6 +1,6 @@
 # Docker Scripts / Development Workflow
 
-In this directory, there is a dockerfile covering GL0/Dag-L1 in same image, entrypoints for running, 
+In this directory, there is a dockerfile covering GL0/gl1 in same image, entrypoints for running, 
 and a docker compose meant to represent a single 'node' of compute running multiple services with a 
 single identity.
 

@@ -1,7 +1,7 @@
 services:
-  global-l0:
+  gl0:
     image: constellationnetwork/tessellation:${TESSELLATION_DOCKER_VERSION:-latest}
-    container_name: global-l0${CONTAINER_NAME_SUFFIX:-}
+    container_name: gl0${CONTAINER_NAME_SUFFIX:-}
     restart: unless-stopped
     env_file:
       - .env
@@ -18,6 +18,8 @@ services:
       - "${CL_DOCKER_CLI_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L0_CLI:-9002}:${L0_CL_P2P_HTTP_PORT:-9002}"  # P2P HTTP
     volumes:
       - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12:ro
+      - ${CL_DOCKER_SEEDLIST:-/dev/null}:/tessellation/seedlist:ro
+      - ${CL_DOCKER_LOGS:-./l0-logs}:/tessellation/logs
       # Only required for testing purposes
       # - ${CL_GENESIS_FILE:-/dev/null}:/tessellation/genesis.csv:ro
       # If using docker volumes: gl0-data:/tessellation/data
@@ -30,15 +32,15 @@ services:
       retries: 5
       start_period: 3s
     profiles: ["l0"]
-  dag-l1:
+  gl1:
     image: constellationnetwork/tessellation:${TESSELLATION_DOCKER_VERSION:-latest}
-    container_name: dag-l1${CONTAINER_NAME_SUFFIX:-}
+    container_name: gl1${CONTAINER_NAME_SUFFIX:-}
     restart: unless-stopped
     env_file:
       - .env
     environment:
       - CL_DAG_L1=true
-      - CL_L0_PEER_HTTP_HOST=${CL_L0_PEER_HTTP_HOST:-global-l0}
+      - CL_L0_PEER_HTTP_HOST=${CL_L0_PEER_HTTP_HOST:-gl0}
       - CL_KEYSTORE=/tessellation/key.p12
       - CL_DAG_L1_JOIN_ENABLED=${CL_DAG_L1_JOIN_ENABLED:-true}
       - CL_DAG_L1_JOIN_PORT=${CL_DAG_L1_JOIN_PORT:-9011}
@@ -53,8 +55,8 @@ services:
     volumes:
       - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12:ro
       # If using host volumes, default to a path like ./l1-data:
-      # If using a named volume, prefer instead dag-l1-data:/tessellation/data
-      - ${CL_L1_DATA_MOUNT_PATH:-dag-l1-data}:/tessellation/data
+      # If using a named volume, prefer instead gl1-data:/tessellation/data
+      - ${CL_L1_DATA_MOUNT_PATH:-gl1-data}:/tessellation/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:${L1_CL_PUBLIC_HTTP_PORT:-9010}/node/health"]
       interval: 3s

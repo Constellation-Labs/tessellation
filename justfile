@@ -22,7 +22,7 @@ build *extra_args:
 	@bash docker/bin/compose-runner.sh --build {{ extra_args }}
 
 purge-docker:
-	@bash docker/bin/purge-docker
+	@bash docker/bin/purge-docker.sh
 
 clean-docker:
 	@bash docker/bin/tessellation-docker-cleanup.sh

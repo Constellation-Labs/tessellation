@@ -101,7 +101,7 @@ for arg in "$@"; do
     --dag-l0-port-prefix=*)
       export DAG_L0_PORT_PREFIX="${arg#*=}"
       ;;
-    --dag-l1-port-prefix=*)
+    --gl1-port-prefix=*)
       export DAG_L1_PORT_PREFIX="${arg#*=}"
       ;;
     --cleanup-docker-at-end=*)
