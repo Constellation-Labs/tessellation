@@ -98,10 +98,28 @@ just build --version=$RELEASE_TAG
 rm /root/docker/docker-compose.yaml;
 cp /root/projects/tessellation/docker/docker-compose.yaml /root/docker/docker-compose.yaml
 cd /root/docker;
+cp /root/.env .env
+cat /root/.env.remote >> .env
+echo "CL_EXTERNAL_IP=$(curl ifconfig.me)" >> .env
 docker compose down;
-docker compose --profile l0 up -d
 EOF
 
+# docker compose --profile l0 up -d
+
+
+cat > .env.remote <<EOF
+CL_APP_ENV=mainnet
+CL_KEYSTORE_MOUNT_PATH="/root/key.p12"
+CL_DOCKER_BIND_INTERFACE="0.0.0.0:"
+CL_DAG_L0_JOIN_ENABLED=true
+CL_DAG_L0_JOIN_IP=52.53.46.33
+CL_DAG_L0_JOIN_ID=e0c1ee6ec43510f0e16d2969a7a7c074a5c8cdb477c074fe9c32a9aad8cbc8ff1dff60bb81923e0db437d2686a9b65b86c403e6a21fa32b6acc4e61be4d70925
+CL_DAG_L0_JOIN_PORT=9001
+CL_L0_DATA_MOUNT_PATH=/root/docker/l0/data
+EOF
+
+scp .env.remote $REMOTE_DESTINATION_NODE:/root/.env.remote
+rm .env.remote
 scp bootstrap.sh $REMOTE_DESTINATION_NODE:~/bootstrap.sh
 ssh $REMOTE_DESTINATION_NODE "bash -c \"chmod +x ~/bootstrap.sh\""
 ssh $REMOTE_DESTINATION_NODE "bash -c \"~/bootstrap.sh\""

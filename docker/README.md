@@ -25,3 +25,14 @@ Host dest
   HostName <your-node-ip-here>
   User root
 ```
+
+Additionally, it assumes you have a keypair at /root/key.p12, and .env file at 
+/root/.env containing the information necessary to load your keypair. Please fill out below 
+as necessary, here is an example you need to replace with your own data.
+
+```
+ENV CL_KEYALIAS="alias"
+ENV CL_PASSWORD="password"
+```
+
+The remainder of environment variables will be generated automatically
