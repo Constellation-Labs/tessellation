@@ -146,7 +146,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
             currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager
               .make(
-                SnapshotOrdinal.MinValue,
+                FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty),
+                Dev,
                 LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(20), PosInt(10)),
                 BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
                 TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
@@ -182,7 +183,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             updateNodeCollateralAcceptanceManager = UpdateNodeCollateralAcceptanceManager
               .make(validators.updateNodeCollateralValidator)
             globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
-              SnapshotOrdinal.MinValue,
+              FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty),
+              Dev,
               BlockAcceptanceManager.make[IO](validators.blockValidator, Hasher.forKryo[IO]),
               AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
               TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
@@ -231,6 +233,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
                 override def pullGlobalSnapshots
                   : IO[Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]] = ???
+
+                def pullGlobalSnapshots(ordinal: SnapshotOrdinal)
+                  : IO[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]] = ???
 
                 override def pullGlobalSnapshot(ordinal: SnapshotOrdinal): IO[Option[Hashed[GlobalIncrementalSnapshot]]] = none.pure[IO]
 
@@ -341,6 +346,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         Some(emptySortedMapHash),
         Some(emptySortedMapHash),
         Some(emptySortedMapHash),
+        Some(emptySortedMapHash),
         Some(emptySortedMapHash)
       ),
       Some(SortedSet.empty),
@@ -409,6 +415,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
+            Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),
@@ -581,6 +588,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
+            Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),
@@ -771,6 +779,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
+            Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),
@@ -1019,6 +1028,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
+            Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),
@@ -1304,6 +1314,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
+            Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),

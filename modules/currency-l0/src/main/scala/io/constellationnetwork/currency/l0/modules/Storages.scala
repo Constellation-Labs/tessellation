@@ -7,6 +7,8 @@ import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
 import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
+import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnapshotCleanupStorage
+import io.constellationnetwork.currency.l0.infrastructure.snapshot.CurrencySnapshotCleanupStorage
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
@@ -60,6 +62,11 @@ object Storages {
         CalculatedStateLocalFileSystemStorage.make[F](dataApplicationCalculatedStatePath)
       }
       lastGlobalSnapshotSyncStorage <- hasherSelector.withCurrent(implicit hs => LastSentGlobalSnapshotSyncStorage.make())
+      currencySnapshotCleanupStorage = CurrencySnapshotCleanupStorage
+        .make[F](
+          snapshotLocalFileSystemStorage,
+          snapshotInfoLocalFileSystemStorage
+        )
     } yield
       new Storages[F](
         globalL0Cluster = globalL0ClusterStorage,
@@ -73,7 +80,8 @@ object Storages {
         identifier = identifierStorage,
         calculatedStateStorage = maybeCalculatedStateStorage,
         lastGlobalSnapshotSync = lastGlobalSnapshotSyncStorage,
-        currencySnapshotEventValidationError = sharedStorages.currencySnapshotEventValidationError
+        currencySnapshotEventValidationError = sharedStorages.currencySnapshotEventValidationError,
+        currencySnapshotCleanup = currencySnapshotCleanupStorage
       ) {}
 }
 
@@ -89,5 +97,6 @@ sealed abstract class Storages[F[_]] private (
   val identifier: IdentifierStorage[F],
   val calculatedStateStorage: Option[CalculatedStateLocalFileSystemStorage[F]],
   val lastGlobalSnapshotSync: LastSentGlobalSnapshotSyncStorage[F],
-  val currencySnapshotEventValidationError: ValidationErrorStorage[F, CurrencySnapshotEvent, BlockRejectionReason]
+  val currencySnapshotEventValidationError: ValidationErrorStorage[F, CurrencySnapshotEvent, BlockRejectionReason],
+  val currencySnapshotCleanup: CurrencySnapshotCleanupStorage[F]
 )

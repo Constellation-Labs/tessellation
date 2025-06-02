@@ -22,11 +22,12 @@ import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
 import io.constellationnetwork.dag.l0.infrastructure.rewards.GlobalDelegatedRewardsDistributor
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.{GlobalSnapshotEvent, StateChannelEvent}
 import io.constellationnetwork.env.AppEnvironment
+import io.constellationnetwork.env.AppEnvironment.Dev
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.node.shared.config.types.{ClassicRewardsConfig, DelegatedRewardsConfig, EmissionConfigEntry}
+import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
   UpdateDelegatedStakeAcceptanceManager,
@@ -110,7 +111,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     override def acceptBlocksIteratively(
       blocks: List[Signed[Block]],
       context: BlockAcceptanceContext[IO],
-      ordinal: SnapshotOrdinal
+      ordinal: SnapshotOrdinal,
+      shouldValidateCollateral: Boolean = true
     )(implicit hasher: Hasher[F]): IO[BlockAcceptanceResult] =
       BlockAcceptanceResult(
         BlockAcceptanceContextUpdate.empty,
@@ -121,7 +123,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     override def acceptBlock(
       block: Signed[Block],
       context: BlockAcceptanceContext[IO],
-      ordinal: SnapshotOrdinal
+      ordinal: SnapshotOrdinal,
+      shouldValidateCollateral: Boolean = true
     )(implicit hasher: Hasher[F]): IO[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]] = ???
 
   }
@@ -293,7 +296,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
       GlobalSnapshotAcceptanceManager
         .make[IO](
-          SnapshotOrdinal.MinValue,
+          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty),
+          Dev,
           bam,
           asbam,
           tlbam,

@@ -26,7 +26,7 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.generators.{chooseNumRefined, signedOf}
-import io.constellationnetwork.schema.peer.{L0Peer, P2PContext, PeerId}
+import io.constellationnetwork.schema.peer._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
@@ -87,25 +87,37 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     for {
       identifierStorage <- new IdentifierStorage[IO] {
         def setInitial(address: Address): IO[Unit] = ???
+
         def get: IO[address.Address] = identifier.pure[IO]
       }.pure[IO]
       globalL0ClusterStorage = new L0ClusterStorage[IO] {
         def getPeers: IO[NonEmptySet[L0Peer]] = ???
+
         def getPeer(id: peer.PeerId): IO[Option[peer.L0Peer]] = ???
+
         def getRandomPeer: IO[peer.L0Peer] = L0Peer(PeerId(Hex("")), Host.fromString("0.0.0.0").get, Port.fromInt(100).get).pure[IO]
+
         def getRandomPeerExistentOnList(peers: List[PeerId]): IO[Option[L0Peer]] =
           L0Peer(PeerId(Hex("")), Host.fromString("0.0.0.0").get, Port.fromInt(100).get).some.pure[IO]
+
         def addPeers(l0Peers: Set[peer.L0Peer]): IO[Unit] = ???
+
         def setPeers(l0Peers: NonEmptySet[peer.L0Peer]): IO[Unit] = ???
       }
       lastSnapshotStorage = new LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
         def set(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): StateChannelBinarySenderSuite.F[Unit] = ???
+
         def setInitial(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): StateChannelBinarySenderSuite.F[Unit] = ???
+
         def get: StateChannelBinarySenderSuite.F[Option[Hashed[GlobalIncrementalSnapshot]]] = ???
+
         def getCombined: StateChannelBinarySenderSuite.F[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
+
         def getCombinedStream
           : fs2.Stream[StateChannelBinarySenderSuite.F, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
+
         def getOrdinal: StateChannelBinarySenderSuite.F[Option[SnapshotOrdinal]] = currentOrdinal.some.pure[F]
+
         def getHeight: StateChannelBinarySenderSuite.F[Option[height.Height]] = ???
       }
 
@@ -135,6 +147,26 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
       )
     } yield (sender, stateRef, postedRef)
 
+  def mkGlobalSnapshotInfo(lastStateChannelSnapshotHashes: SortedMap[Address, Hash] = SortedMap.empty) =
+    GlobalSnapshotInfo(
+      lastStateChannelSnapshotHashes,
+      SortedMap.empty,
+      SortedMap.empty,
+      SortedMap.empty,
+      SortedMap.empty,
+      None,
+      None,
+      None,
+      None,
+      None,
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty)
+    )
+
   type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO])
 
   override def sharedResource: Resource[IO, Res] =
@@ -162,7 +194,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         currentOrdinal = SnapshotOrdinal.MinValue
         (sender, stateRef, _) <- mkService(kp.getPublic.toAddress, currentOrdinal = currentOrdinal, state = State.empty)
         hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(binaryHashed => sender.process(binaryHashed, none))
+        _ <- hashed.traverse(binaryHashed => sender.process(binaryHashed, List.empty, none))
         globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, binaries)
         _ <- sender.confirm(globalSnapshot)
         state <- stateRef.get
@@ -184,7 +216,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         kp <- KeyPairGenerator.makeKeyPair
         (sender, stateRef, _) <- mkService(kp.getPublic.toAddress, currentOrdinal = SnapshotOrdinal.MinValue, state = State.empty)
         hashed <- binary.toHashed
-        _ <- sender.process(hashed, none)
+        _ <- sender.process(hashed, List.empty, none)
         globalSnapshot <- mkSnapshot(SnapshotOrdinal(6L), kp, List.empty)
         _ <- sender.confirm(globalSnapshot)
         state <- stateRef.get
@@ -204,7 +236,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
           state = State.empty.copy(retryMode = true)
         )
         hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(binary => sender.process(binary, none))
+        _ <- hashed.traverse(binary => sender.process(binary, List.empty, none))
         state <- stateRef.get
         posted <- postedRef.get
       } yield
@@ -233,7 +265,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         )
 
         hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(binary => sender.process(binary, none))
+        _ <- hashed.traverse(binary => sender.process(binary, List.empty, none))
 
         globalSnapshot <- mkSnapshot(SnapshotOrdinal(5L), kp, List.empty)
         _ <- sender.confirm(globalSnapshot)
@@ -281,7 +313,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
           state = State.empty.copy(retryMode = true)
         )
         hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(binary => sender.process(binary, none))
+        _ <- hashed.traverse(binary => sender.process(binary, List.empty, none))
         state <- stateRef.get
         posted <- postedRef.get
       } yield
@@ -312,7 +344,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
             state = State.empty.copy(cap = cap, retryMode = true)
           )
           hashedBinary <- binary.toHashed
-          _ <- sender.process(hashedBinary, none)
+          _ <- sender.process(hashedBinary, List.empty, none)
           globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, List.empty)
           prevState <- stateRef.get
           _ <- sender.confirm(globalSnapshot)
@@ -345,7 +377,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
             )
           )
 
-          _ <- binaries.traverse_(bin => bin.toHashed.flatMap(binary => sender.process(binary, none)))
+          _ <- binaries.traverse_(bin => bin.toHashed.flatMap(binary => sender.process(binary, List.empty, none)))
           globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, confirmedBinaries)
           prevState <- stateRef.get
           _ <- sender.confirm(globalSnapshot)
@@ -366,7 +398,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
           state = State.empty.copy(cap = 1L, retryMode = true)
         )
         hashedBinary <- binary.toHashed
-        _ <- sender.process(hashedBinary, none)
+        _ <- sender.process(hashedBinary, List.empty, none)
         globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, List.empty)
         _ <- sender.confirm(globalSnapshot)
         state <- stateRef.get
@@ -396,17 +428,17 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
             state = State.empty.copy(cap = 0L, retryMode = true, backoffExponent = exponent, noConfirmationsSinceRetryCount = 1L)
           )
           hashedBinary <- binary.toHashed
-          _ <- sender.process(hashedBinary, none)
+          _ <- sender.process(hashedBinary, List.empty, none)
 
           expectedNoConfirmationsToRetry = Math.pow(2.0, exponent.value.toDouble).toLong
           snapshots <- mkEmptySnapshots(expectedNoConfirmationsToRetry, kp)
-
+          info = mkGlobalSnapshotInfo()
           lessThanNeeded = snapshots.take(expectedNoConfirmationsToRetry.toInt - 2)
-          _ <- lessThanNeeded.traverse(snapshot => sender.confirm(snapshot) >> sender.processPending(snapshot))
+          _ <- lessThanNeeded.traverse(snapshot => sender.confirm(snapshot) >> sender.processPending(snapshot, info))
 
           postedAfterSendingLessThanNeeded <- postedRef.get
 
-          _ <- sender.confirm(snapshots.last) >> sender.processPending(snapshots.last)
+          _ <- sender.confirm(snapshots.last) >> sender.processPending(snapshots.last, info)
 
           postedAfterSendingLast <- postedRef.get
 
@@ -437,10 +469,11 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
             )
           )
           hashedBinary <- binary.toHashed
-          _ <- sender.process(hashedBinary, none)
+          _ <- sender.process(hashedBinary, List.empty, none)
           snapshot <- mkSnapshot(ordinal = SnapshotOrdinal.MinValue, kp, List.empty)
           prevState <- stateR.get
-          _ <- sender.confirm(snapshot) >> sender.processPending(snapshot)
+          info = mkGlobalSnapshotInfo()
+          _ <- sender.confirm(snapshot) >> sender.processPending(snapshot, info)
           state <- stateR.get
         } yield
           expect
@@ -470,7 +503,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
           Mainnet
         )
         hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(binaryHashed => sender.process(binaryHashed, none))
+        _ <- hashed.traverse(binaryHashed => sender.process(binaryHashed, List.empty, none))
         globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, binaries)
         _ <- sender.confirm(globalSnapshot)
         state <- stateRef.get
@@ -487,5 +520,218 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
           posted.size === 0
         )
     }
+  }
+
+  test("should pick deterministic peer to send snapshots - with allowed peers") { res =>
+    implicit val (_, hs, sp, metrics) = res
+    val selfId = PeerId(Hex("123"))
+
+    val lastSigners: List[PeerId] = List(PeerId(Hex("123")), PeerId(Hex("456")), PeerId(Hex("789")))
+    val lastSigners1: List[PeerId] = List(PeerId(Hex("123")), PeerId(Hex("789")), PeerId(Hex("456")))
+    val lastSigners2: List[PeerId] = List(PeerId(Hex("456")), PeerId(Hex("123")), PeerId(Hex("789")))
+    val lastSigners3: List[PeerId] = List(PeerId(Hex("456")), PeerId(Hex("789")), PeerId(Hex("123")))
+    val lastSigners4: List[PeerId] = List(PeerId(Hex("789")), PeerId(Hex("123")), PeerId(Hex("456")))
+    val lastSigners5: List[PeerId] = List(PeerId(Hex("789")), PeerId(Hex("456")), PeerId(Hex("123")))
+
+    val allowedPeers: List[PeerId] = List(PeerId(Hex("123")), PeerId(Hex("456")), PeerId(Hex("789")))
+    for {
+      selectedPeer <- IO.pure(
+        StateChannelBinarySender.pickDeterministicPeer(
+          lastSigners,
+          allowedPeers,
+          selfId,
+          Hash.empty
+        )
+      )
+      selectedPeer1 <- IO.pure(
+        StateChannelBinarySender.pickDeterministicPeer(
+          lastSigners1,
+          allowedPeers,
+          selfId,
+          Hash.empty
+        )
+      )
+      selectedPeer2 <- IO.pure(
+        StateChannelBinarySender.pickDeterministicPeer(
+          lastSigners2,
+          allowedPeers,
+          selfId,
+          Hash.empty
+        )
+      )
+      selectedPeer3 <- IO.pure(
+        StateChannelBinarySender.pickDeterministicPeer(
+          lastSigners3,
+          allowedPeers,
+          selfId,
+          Hash.empty
+        )
+      )
+      selectedPeer4 <- IO.pure(
+        StateChannelBinarySender.pickDeterministicPeer(
+          lastSigners4,
+          allowedPeers,
+          selfId,
+          Hash.empty
+        )
+      )
+      selectedPeer5 <- IO.pure(
+        StateChannelBinarySender.pickDeterministicPeer(
+          lastSigners5,
+          allowedPeers,
+          selfId,
+          Hash.empty
+        )
+      )
+    } yield
+      expect.all(
+        selectedPeer.value.value === selectedPeer1.value.value,
+        selectedPeer1.value.value === selectedPeer2.value.value,
+        selectedPeer2.value.value === selectedPeer3.value.value,
+        selectedPeer3.value.value === selectedPeer4.value.value,
+        selectedPeer4.value.value === selectedPeer5.value.value,
+        selectedPeer5.value.value === "456"
+      )
+  }
+  test("should pick deterministic peer to send snapshots - without allowed peers") { res =>
+    implicit val (_, hs, sp, metrics) = res
+    val selfId = PeerId(Hex("123"))
+
+    val lastSigners: List[PeerId] = List(PeerId(Hex("123")), PeerId(Hex("456")), PeerId(Hex("789")))
+    val lastSigners1: List[PeerId] = List(PeerId(Hex("123")), PeerId(Hex("789")), PeerId(Hex("456")))
+    val lastSigners2: List[PeerId] = List(PeerId(Hex("456")), PeerId(Hex("123")), PeerId(Hex("789")))
+    val lastSigners3: List[PeerId] = List(PeerId(Hex("456")), PeerId(Hex("789")), PeerId(Hex("123")))
+    val lastSigners4: List[PeerId] = List(PeerId(Hex("789")), PeerId(Hex("123")), PeerId(Hex("456")))
+    val lastSigners5: List[PeerId] = List(PeerId(Hex("789")), PeerId(Hex("456")), PeerId(Hex("123")))
+
+    for {
+      selectedPeer <- IO.pure(
+        StateChannelBinarySender.pickDeterministicPeer(
+          lastSigners,
+          List.empty,
+          selfId,
+          Hash.empty
+        )
+      )
+      selectedPeer1 <- IO.pure(
+        StateChannelBinarySender.pickDeterministicPeer(
+          lastSigners1,
+          List.empty,
+          selfId,
+          Hash.empty
+        )
+      )
+      selectedPeer2 <- IO.pure(
+        StateChannelBinarySender.pickDeterministicPeer(
+          lastSigners2,
+          List.empty,
+          selfId,
+          Hash.empty
+        )
+      )
+      selectedPeer3 <- IO.pure(
+        StateChannelBinarySender.pickDeterministicPeer(
+          lastSigners3,
+          List.empty,
+          selfId,
+          Hash.empty
+        )
+      )
+      selectedPeer4 <- IO.pure(
+        StateChannelBinarySender.pickDeterministicPeer(
+          lastSigners4,
+          List.empty,
+          selfId,
+          Hash.empty
+        )
+      )
+      selectedPeer5 <- IO.pure(
+        StateChannelBinarySender.pickDeterministicPeer(
+          lastSigners5,
+          List.empty,
+          selfId,
+          Hash.empty
+        )
+      )
+    } yield
+      expect.all(
+        selectedPeer.value.value === selectedPeer1.value.value,
+        selectedPeer1.value.value === selectedPeer2.value.value,
+        selectedPeer2.value.value === selectedPeer3.value.value,
+        selectedPeer3.value.value === selectedPeer4.value.value,
+        selectedPeer4.value.value === selectedPeer5.value.value,
+        selectedPeer5.value.value === "456"
+      )
+  }
+
+  test("should pick deterministic peer to send snapshots - without allowed peers - different hash") { res =>
+    implicit val (_, hs, sp, metrics) = res
+    val selfId = PeerId(Hex("123"))
+
+    val lastSigners: List[PeerId] = List(PeerId(Hex("123")), PeerId(Hex("456")), PeerId(Hex("789")))
+    val lastSigners1: List[PeerId] = List(PeerId(Hex("123")), PeerId(Hex("789")), PeerId(Hex("456")))
+    val lastSigners2: List[PeerId] = List(PeerId(Hex("456")), PeerId(Hex("123")), PeerId(Hex("789")))
+    val lastSigners3: List[PeerId] = List(PeerId(Hex("456")), PeerId(Hex("789")), PeerId(Hex("123")))
+    val lastSigners4: List[PeerId] = List(PeerId(Hex("789")), PeerId(Hex("123")), PeerId(Hex("456")))
+    val lastSigners5: List[PeerId] = List(PeerId(Hex("789")), PeerId(Hex("456")), PeerId(Hex("123")))
+
+    for {
+      selectedPeer <- IO.pure(
+        StateChannelBinarySender.pickDeterministicPeer(
+          lastSigners,
+          List.empty,
+          selfId,
+          Hash("123")
+        )
+      )
+      selectedPeer1 <- IO.pure(
+        StateChannelBinarySender.pickDeterministicPeer(
+          lastSigners1,
+          List.empty,
+          selfId,
+          Hash("123")
+        )
+      )
+      selectedPeer2 <- IO.pure(
+        StateChannelBinarySender.pickDeterministicPeer(
+          lastSigners2,
+          List.empty,
+          selfId,
+          Hash("123")
+        )
+      )
+      selectedPeer3 <- IO.pure(
+        StateChannelBinarySender.pickDeterministicPeer(
+          lastSigners3,
+          List.empty,
+          selfId,
+          Hash("123")
+        )
+      )
+      selectedPeer4 <- IO.pure(
+        StateChannelBinarySender.pickDeterministicPeer(
+          lastSigners4,
+          List.empty,
+          selfId,
+          Hash("123")
+        )
+      )
+      selectedPeer5 <- IO.pure(
+        StateChannelBinarySender.pickDeterministicPeer(
+          lastSigners5,
+          List.empty,
+          selfId,
+          Hash("123")
+        )
+      )
+    } yield
+      expect.all(
+        selectedPeer.value.value === selectedPeer1.value.value,
+        selectedPeer1.value.value === selectedPeer2.value.value,
+        selectedPeer2.value.value === selectedPeer3.value.value,
+        selectedPeer3.value.value === selectedPeer4.value.value,
+        selectedPeer4.value.value === selectedPeer5.value.value,
+        selectedPeer5.value.value === "123"
+      )
   }
 }

@@ -9,13 +9,15 @@ trait BlockAcceptanceManager[F[_]] {
   def acceptBlocksIteratively(
     blocks: List[Signed[Block]],
     context: BlockAcceptanceContext[F],
-    snapshotOrdinal: SnapshotOrdinal
+    snapshotOrdinal: SnapshotOrdinal,
+    shouldValidateCollateral: Boolean = true
   )(implicit hasher: Hasher[F]): F[BlockAcceptanceResult]
 
   def acceptBlock(
     block: Signed[Block],
     context: BlockAcceptanceContext[F],
-    snapshotOrdinal: SnapshotOrdinal
+    snapshotOrdinal: SnapshotOrdinal,
+    shouldValidateCollateral: Boolean = true
   )(implicit hasher: Hasher[F]): F[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]]
 
 }

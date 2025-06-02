@@ -64,7 +64,8 @@ trait CurrencySnapshotCreator[F[_]] {
     feeTransactionFn: Option[() => SortedSet[Signed[FeeTransaction]]],
     artifactsFn: Option[() => SortedSet[SharedArtifact]],
     getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
-    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    shouldValidateCollateral: Boolean
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
 
@@ -98,7 +99,8 @@ object CurrencySnapshotCreator {
       feeTransactionFn: Option[() => SortedSet[Signed[FeeTransaction]]],
       artifactsFn: Option[() => SortedSet[SharedArtifact]],
       getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
-      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+      shouldValidateCollateral: Boolean
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
 
@@ -205,7 +207,8 @@ object CurrencySnapshotCreator {
                 facilitators,
                 getLastNGlobalSnapshots,
                 getGlobalSnapshotByOrdinal,
-                lastArtifact.globalSyncView
+                lastArtifact.globalSyncView,
+                shouldValidateCollateral
               )
 
           rejectedBlockEvents = currencySnapshotAcceptanceResult.block.notAccepted.collect {
@@ -267,15 +270,15 @@ object CurrencySnapshotCreator {
             Option.when(currencySnapshotAcceptanceResult.info.lastMessages.nonEmpty)(
               currencySnapshotAcceptanceResult.messages.accepted.toSortedSet
             ),
-            if (currencySnapshotAcceptanceResult.syncGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none
+            if (currencySnapshotAcceptanceResult.lastGlobalSnapshotToCheckFields < tessellation3MigrationStartingOrdinal) none
             else currencySnapshotAcceptanceResult.globalSnapshotSync.accepted.toSortedSet.some,
             currencySnapshotAcceptanceResult.feeTransactions,
             currencySnapshotAcceptanceResult.sharedArtifacts.some,
-            if (currencySnapshotAcceptanceResult.syncGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none
+            if (currencySnapshotAcceptanceResult.lastGlobalSnapshotToCheckFields < tessellation3MigrationStartingOrdinal) none
             else currencySnapshotAcceptanceResult.allowSpendBlock.accepted.toSortedSet.some,
-            if (currencySnapshotAcceptanceResult.syncGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none
+            if (currencySnapshotAcceptanceResult.lastGlobalSnapshotToCheckFields < tessellation3MigrationStartingOrdinal) none
             else currencySnapshotAcceptanceResult.tokenLockBlock.accepted.toSortedSet.some,
-            if (currencySnapshotAcceptanceResult.syncGlobalSnapshotOrdinal < tessellation3MigrationStartingOrdinal) none
+            if (currencySnapshotAcceptanceResult.lastGlobalSnapshotToCheckFields < tessellation3MigrationStartingOrdinal) none
             else currencySnapshotAcceptanceResult.globalSyncView.some
           )
 

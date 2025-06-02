@@ -59,14 +59,16 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
       override def acceptBlocksIteratively(
         blocks: List[Signed[Block]],
         context: BlockAcceptanceContext[IO],
-        ordinal: SnapshotOrdinal
+        ordinal: SnapshotOrdinal,
+        shouldValidateCollateral: Boolean = true
       )(implicit hasher: Hasher[F]): IO[BlockAcceptanceResult] =
         ???
 
       override def acceptBlock(
         block: Signed[Block],
         context: BlockAcceptanceContext[IO],
-        ordinal: SnapshotOrdinal
+        ordinal: SnapshotOrdinal,
+        shouldValidateCollateral: Boolean = true
       )(implicit hasher: Hasher[F]): IO[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]] =
         IO.pure(notAcceptanceReason).map {
           case None         => (BlockAcceptanceContextUpdate.empty, initUsageCount).asRight[BlockNotAcceptedReason]
