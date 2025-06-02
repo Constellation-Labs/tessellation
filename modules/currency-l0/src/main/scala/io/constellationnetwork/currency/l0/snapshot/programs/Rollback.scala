@@ -9,6 +9,7 @@ import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataApplicationTraverse, L0NodeContext}
+import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnapshotCleanupStorage
 import io.constellationnetwork.currency.l0.snapshot.CurrencyConsensusManager
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotContext, CurrencySnapshotInfo}
@@ -47,7 +48,8 @@ object Rollback {
     lastNGlobalSnapshots: LastNGlobalSnapshotStorage[F],
     collateral: Collateral[F],
     consensusManager: CurrencyConsensusManager[F],
-    dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])]
+    dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])],
+    currencySnapshotCleanupStorage: CurrencySnapshotCleanupStorage[F]
   )(implicit context: L0NodeContext[F]): Rollback[F] = new Rollback[F] {
     private val logger = Slf4jLogger.getLogger[F]
 
@@ -103,6 +105,9 @@ object Rollback {
       _ <- logger.info(
         s"Setting the last global snapshot as: ${globalSnapshotUpdated.ordinal.show}"
       )
+
+      _ <- logger.info(s"[Rollback] Cleanup for snapshots greater than ${lastIncremental.ordinal}")
+      _ <- currencySnapshotCleanupStorage.cleanupAbove(lastIncremental.ordinal)
 
       _ <- consensusManager.startFacilitatingAfterRollback(
         lastIncremental.ordinal,
