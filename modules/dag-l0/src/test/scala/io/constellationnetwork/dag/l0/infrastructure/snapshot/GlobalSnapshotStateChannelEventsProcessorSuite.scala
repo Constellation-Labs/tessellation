@@ -293,6 +293,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
+      Some(SortedMap.empty),
       Some(SortedMap.empty)
     )
 
