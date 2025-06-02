@@ -298,7 +298,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeDelegatedStakes = Some(stakes),
       delegatedStakesWithdrawals = None, // No withdrawals
       activeNodeCollaterals = None,
-      nodeCollateralWithdrawals = None
+      nodeCollateralWithdrawals = None,
+      lastGlobalSnapshotsWithCurrency = None
     )
 
     // Mock acceptance results - removed withdrawals
@@ -379,7 +380,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeDelegatedStakes = None,
       delegatedStakesWithdrawals = None,
       activeNodeCollaterals = None,
-      nodeCollateralWithdrawals = None
+      nodeCollateralWithdrawals = None,
+      lastGlobalSnapshotsWithCurrency = None
     )
 
     // Empty acceptance results
@@ -487,7 +489,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeDelegatedStakes = Some(initialStakes),
       delegatedStakesWithdrawals = None,
       activeNodeCollaterals = None,
-      nodeCollateralWithdrawals = None
+      nodeCollateralWithdrawals = None,
+      lastGlobalSnapshotsWithCurrency = None
     )
 
     // Empty acceptance results
@@ -618,7 +621,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeDelegatedStakes = Some(stakes),
       delegatedStakesWithdrawals = None,
       activeNodeCollaterals = None,
-      nodeCollateralWithdrawals = None
+      nodeCollateralWithdrawals = None,
+      lastGlobalSnapshotsWithCurrency = None
     )
 
     // Empty acceptance results
@@ -778,7 +782,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeDelegatedStakes = Some(zeroStakes),
       delegatedStakesWithdrawals = None,
       activeNodeCollaterals = None,
-      nodeCollateralWithdrawals = None
+      nodeCollateralWithdrawals = None,
+      lastGlobalSnapshotsWithCurrency = None
     )
 
     // Empty acceptance results
@@ -812,7 +817,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeDelegatedStakes = None,
       delegatedStakesWithdrawals = None,
       activeNodeCollaterals = None,
-      nodeCollateralWithdrawals = None
+      nodeCollateralWithdrawals = None,
+      lastGlobalSnapshotsWithCurrency = None
     )
 
     for {
@@ -1070,7 +1076,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         activeDelegatedStakes = Some(stakes),
         delegatedStakesWithdrawals = None,
         activeNodeCollaterals = None,
-        nodeCollateralWithdrawals = None
+        nodeCollateralWithdrawals = None,
+        lastGlobalSnapshotsWithCurrency = None
       )
 
       // Empty acceptance results

@@ -9,6 +9,7 @@ import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataApplicationTraverse, L0NodeContext}
+import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnapshotCleanupStorage
 import io.constellationnetwork.currency.l0.snapshot.CurrencyConsensusManager
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotContext, CurrencySnapshotInfo}
@@ -30,7 +31,9 @@ import retry.RetryPolicies.{constantDelay, limitRetries}
 import retry.syntax.all._
 
 sealed trait RollbackError extends NoStackTrace
+
 case object LastSnapshotHashNotFound extends RollbackError
+
 case object LastSnapshotInfoNotFound extends RollbackError
 
 trait Rollback[F[_]] {
@@ -47,9 +50,10 @@ object Rollback {
     lastNGlobalSnapshots: LastNGlobalSnapshotStorage[F],
     collateral: Collateral[F],
     consensusManager: CurrencyConsensusManager[F],
-    dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])]
+    dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])],
+    currencySnapshotCleanupStorage: CurrencySnapshotCleanupStorage[F]
   )(implicit context: L0NodeContext[F]): Rollback[F] = new Rollback[F] {
-    private val logger = Slf4jLogger.getLogger[F]
+    private val logger = Slf4jLogger.getLoggerFromName[F]("CurrencyRollback")
 
     val fetchGlobalSnapshotsRetryPolicy = limitRetries[F](10).join(constantDelay(3.seconds))
 
@@ -57,6 +61,29 @@ object Rollback {
       (globalSnapshot, globalSnapshotInfo) <- globalL0Service.pullLatestSnapshot
 
       identifier <- identifierStorage.get
+      lastGlobalSnapshotWithCurrencySnapshot = globalSnapshotInfo.lastGlobalSnapshotsWithCurrency.flatMap(_.get(identifier))
+
+      globalSnapshotStartingPoint: Hashed[GlobalIncrementalSnapshot] <- lastGlobalSnapshotWithCurrencySnapshot match {
+        case Some(value) =>
+          logger.info(
+            s"Using global snapshot at ordinal ${value.ordinal} as the starting point, which includes the last currency snapshot for metagraph ${identifier.show}"
+          ) >>
+            globalL0Service
+              .pullGlobalSnapshot(value.ordinal)
+              .flatMap {
+                case Some(snapshot) => snapshot.pure[F]
+                case None =>
+                  logger.warn(s"Global snapshot ordinal ${value.ordinal} not found, using current global snapshot") >>
+                    globalSnapshot.pure[F]
+              }
+              .handleErrorWith { e =>
+                logger.error(e)(
+                  s"Could not fetch global snapshot ordinal: ${value.ordinal}, starting from latest global snapshot"
+                ) >> globalSnapshot.pure[F]
+              }
+        case None => globalSnapshot.pure[F]
+      }
+
       lastBinaryHash <- globalSnapshotInfo.lastStateChannelSnapshotHashes
         .get(identifier)
         .toOptionT
@@ -88,7 +115,7 @@ object Rollback {
                   logger.error(err)(s"Error when trying to fetch incremental global snapshot {attempt=${retryDetails.retriesSoFar}}")
               )
 
-          DataApplicationTraverse.make[F](globalSnapshot, fetchSnapshot, da, cs, identifier).flatMap { dat =>
+          DataApplicationTraverse.make[F](globalSnapshotStartingPoint, fetchSnapshot, da, cs, identifier).flatMap { dat =>
             dat.loadChain().flatMap {
               case Some(_) => Applicative[F].unit
               case _       => new Exception(s"Metagraph traversing failed").raiseError[F, Unit]
@@ -103,6 +130,9 @@ object Rollback {
       _ <- logger.info(
         s"Setting the last global snapshot as: ${globalSnapshotUpdated.ordinal.show}"
       )
+
+      _ <- logger.info(s"[Rollback] Cleanup for snapshots greater than ${lastIncremental.ordinal}")
+      _ <- currencySnapshotCleanupStorage.cleanupAbove(lastIncremental.ordinal)
 
       _ <- consensusManager.startFacilitatingAfterRollback(
         lastIncremental.ordinal,

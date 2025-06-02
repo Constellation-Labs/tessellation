@@ -80,6 +80,9 @@ abstract class SnapshotLocalFileSystemStorage[
   def delete(ordinal: SnapshotOrdinal): F[Unit] =
     delete(toOrdinalName(ordinal))
 
+  def delete(hash: Hash): F[Unit] =
+    delete(toHashName(hash))
+
   def getPath(hash: Hash): F[File] =
     getPath(toHashName(hash))
 

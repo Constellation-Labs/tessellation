@@ -17,11 +17,11 @@ import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataCalculatedState, L0NodeContext}
+import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnapshotCleanupStorage
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
 import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotConsensus
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
-import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
@@ -55,7 +55,8 @@ object Download {
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
     getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] with LatestBalances[F]
+    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] with LatestBalances[F],
+    currencySnapshotCleanupStorage: CurrencySnapshotCleanupStorage[F]
   )(implicit l0NodeContext: L0NodeContext[F]): Download[F] = new Download[F] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -71,6 +72,12 @@ object Download {
 
       nodeStorage
         .tryModifyState(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.WaitingForObserving)(start)
+        .flatTap { downloadResult =>
+          val (incrementalSnapshot, _) = downloadResult
+          logger
+            .info(s"[Download] Cleanup for snapshots greater than ${incrementalSnapshot.ordinal}") >>
+            currencySnapshotCleanupStorage.cleanupAbove(incrementalSnapshot.ordinal)
+        }
         .flatMap(observe)
         .flatMap { result =>
           val ((snapshot, context), observationLimit) = result

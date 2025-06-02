@@ -9,9 +9,11 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshotV1, CurrencySnapshotInfoV1}
+import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.merkletree.syntax._
+import io.constellationnetwork.node.shared.config.types.FieldsAddedOrdinals
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
   UpdateDelegatedStakeAcceptanceManager,
@@ -45,6 +47,7 @@ import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral._
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.snapshot.GlobalSnapshotWithCurrencyInfo
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction._
@@ -103,7 +106,8 @@ object GlobalSnapshotAcceptanceManager {
   case object InvalidMerkleTree extends NoStackTrace
 
   def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider](
-    tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
+    fieldsAddedOrdinals: FieldsAddedOrdinals,
+    environment: AppEnvironment,
     blockAcceptanceManager: BlockAcceptanceManager[F],
     allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[F],
     tokenLockBlockAcceptanceManager: TokenLockBlockAcceptanceManager[F],
@@ -154,6 +158,11 @@ object GlobalSnapshotAcceptanceManager {
       )
     ] = {
       implicit val hasher = HasherSelector[F].getForOrdinal(ordinal)
+      val tessellation3MigrationStartingOrdinal = fieldsAddedOrdinals.tessellation3Migration
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
+
+      val globalSnapshotsWithCurrencySnapshotsStartingOrdinals = fieldsAddedOrdinals.globalSnapshotsWithCurrencySnapshots
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
 
       for {
         acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips, ordinal)
@@ -513,6 +522,15 @@ object GlobalSnapshotAcceptanceManager {
             updatedNodeCollateralsRecords.nonEmpty
         }
 
+        updatedLastGlobalSnapshotsWithCurrency = lastSnapshotContext.lastGlobalSnapshotsWithCurrency.map { current =>
+          val globalSnapshotWithCurrencyInfo = GlobalSnapshotWithCurrencyInfo(ordinal, epochProgress)
+          val updatedKeys = incomingCurrencySnapshots.keys.map { metagraphAddress =>
+            metagraphAddress -> globalSnapshotWithCurrencyInfo
+          }.toSortedMap
+
+          current ++ updatedKeys
+        }.getOrElse(SortedMap.empty[Address, GlobalSnapshotWithCurrencyInfo])
+
         gsi = GlobalSnapshotInfo(
           updatedLastStateChannelSnapshotHashes,
           if (ordinal < tessellation3MigrationStartingOrdinal)
@@ -530,7 +548,8 @@ object GlobalSnapshotAcceptanceManager {
           if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedCreateDelegatedStakesCleaned.some,
           if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedWithdrawDelegatedStakesCleaned.some,
           if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedCreateNodeCollateralsCleaned.some,
-          if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedWithdrawNodeCollateralsCleaned.some
+          if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedWithdrawNodeCollateralsCleaned.some,
+          if (ordinal < globalSnapshotsWithCurrencySnapshotsStartingOrdinals) none else updatedLastGlobalSnapshotsWithCurrency.some
         )
 
         stateProof <- gsi.stateProof(maybeMerkleTree)
