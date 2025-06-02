@@ -58,7 +58,8 @@ object Programs {
         dataApplication.map { case (da, _) => da },
         lastNGlobalSnapshotStorage.getLastN,
         services.globalL0.pullGlobalSnapshot,
-        storages.snapshot
+        storages.snapshot,
+        storages.currencySnapshotCleanup
       )
 
     val globalL0PeerDiscovery = L0PeerDiscovery.make(
@@ -90,7 +91,8 @@ object Programs {
       lastNGlobalSnapshotStorage,
       services.collateral,
       services.consensus.manager,
-      dataApplication
+      dataApplication,
+      storages.currencySnapshotCleanup
     )
 
     new Programs[F](sharedPrograms.peerDiscovery, globalL0PeerDiscovery, sharedPrograms.joining, download, genesis, rollback) {}
