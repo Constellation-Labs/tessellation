@@ -128,7 +128,8 @@ object SharedServices {
         validators.updateNodeCollateralValidator
       )
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
-        cfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
+        cfg.fieldsAddedOrdinals,
+        cfg.environment,
         BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
         AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlockValidator),
         TokenLockBlockAcceptanceManager.make[F](validators.tokenLockBlockValidator),

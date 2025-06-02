@@ -163,6 +163,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
       Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
+      Some(SortedMap.empty),
       Some(SortedMap.empty)
     )
 
