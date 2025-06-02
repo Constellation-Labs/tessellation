@@ -66,6 +66,38 @@ if [ -z "$BUILD_ONLY" ]; then
     export BUILD_ONLY=false
 fi
 
+if [ -z "$SKIP_METAGRAPH_ASSEMBLY" ]; then
+    export SKIP_METAGRAPH_ASSEMBLY=false
+fi
+
+if [ -z "$METAGRAPH" ]; then
+    export METAGRAPH=false
+fi
+
+if [ -z "$METAGRAPH_ML0" ]; then
+    export METAGRAPH_ML0=true
+fi
+
+if [ -z "$METAGRAPH_ML1" ]; then
+    export METAGRAPH_ML1=false
+fi
+
+if [ -z "$METAGRAPH_DL1" ]; then
+    export METAGRAPH_DL1=false
+fi
+
+if [ -z $METAGRAPH_ML0_RELATIVE_PATH ]; then
+    export METAGRAPH_ML0_RELATIVE_PATH="l0"
+fi
+
+if [ -z $METAGRAPH_ML1_RELATIVE_PATH ]; then
+    export METAGRAPH_ML1_RELATIVE_PATH="l1"
+fi
+
+if [ -z $METAGRAPH_DL1_RELATIVE_PATH ]; then
+    export METAGRAPH_DL1_RELATIVE_PATH="data_l1"
+fi
+
 echo "processing args: $@"
 
 # Process command-line arguments
@@ -116,8 +148,35 @@ for arg in "$@"; do
     --build)
       export BUILD_ONLY=true
       ;;
+    --publish)
+      export PUBLISH=true
+      ;;
     --version=*)
       export RELEASE_TAG="${arg#*=}"
+      ;;
+    --metagraph=*)
+      export METAGRAPH="${arg#*=}"
+      ;;    -
+    --ml0-path=*)
+      export METAGRAPH_ML0_RELATIVE_PATH="${arg#*=}"
+      ;;
+    --ml1-path=*)
+      export METAGRAPH_ML1_RELATIVE_PATH="${arg#*=}"
+      ;;
+    --dl1-path=*)
+      export METAGRAPH_DL1_RELATIVE_PATH="${arg#*=}"
+      ;;
+    --ml0=*)
+      export METAGRAPH_ML0=true
+      ;;
+    --ml1=*)
+      export METAGRAPH_ML1=true
+      ;;
+    --dl1=*)
+      export METAGRAPH_DL1=true
+      ;;
+    --skip-metagraph-assembly)
+      export SKIP_METAGRAPH_ASSEMBLY=true
       ;;
     *)
       echo "Unknown argument: $arg"

@@ -1,64 +1,82 @@
 services:
   gl0:
-    image: constellationnetwork/tessellation:${TESSELLATION_DOCKER_VERSION:-latest}
+    image: constellationnetwork/tessellation${CL_DOCKER_CORE_REPO:-}:${TESSELLATION_DOCKER_VERSION:-latest}
     container_name: gl0${CONTAINER_NAME_SUFFIX:-}
     restart: unless-stopped
     env_file:
       - .env
     environment:
+      - CL_DOCKER_ID=gl1
       - CL_KEYSTORE=/tessellation/key.p12
-      - CL_DAG_L0_JOIN_ENABLED=${CL_DAG_L0_JOIN_ENABLED:-true}
-      - CL_DAG_L0_JOIN_PORT=${CL_DAG_L0_JOIN_PORT:-9001}
-      - CL_PUBLIC_HTTP_PORT=${L0_CL_PUBLIC_HTTP_PORT:-9000}
-      - CL_P2P_HTTP_PORT=${L0_CL_P2P_HTTP_PORT:-9001}
-      - CL_CLI_HTTP_PORT=${L0_CL_CLI_HTTP_PORT:-9002}
+      - CL_PUBLIC_HTTP_PORT=${CL_DOCKER_INTERNAL_L0_PUBLIC:-9000}
+      - CL_P2P_HTTP_PORT=${CL_DOCKER_INTERNAL_L0_P2P:-9001}
+      - CL_CLI_HTTP_PORT=${CL_DOCKER_INTERNAL_L0_CLI:-9002}
+      - CL_DOCKER_JOIN=${CL_DOCKER_GL0_JOIN:-true}
+      - CL_DOCKER_JOIN_PORT=${CL_DOCKER_INTERNAL_GL0_CLI:-9001}
+      - CL_DOCKER_JOIN_CLI_PORT=${CL_DOCKER_GL0_JOIN_PORT:-9001}
+      - CL_DOCKER_JOIN_ID=$CL_DOCKER_GL0_JOIN_ID
+      - CL_DOCKER_JOIN_IP=$CL_DOCKER_GL0_JOIN_IP
+      - CL_DOCKER_JOIN_INITIAL_DELAY=${CL_DOCKER_GL0_JOIN_INITIAL_DELAY:-0}
+      - CL_DOCKER_JOIN_RETRIES=${CL_DOCKER_GL0_JOIN_RETRIES:-10}
+      - CL_DOCKER_JOIN_DELAY=${CL_DOCKER_GL0_JOIN_DELAY:-10}
+      - CL_DOCKER_GENESIS=${CL_DOCKER_GL0_GENESIS:-false}
     ports:
-      - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L0_PUBLIC:-9000}:${L0_CL_PUBLIC_HTTP_PORT:-9000}"  # Public HTTP
-      - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L0_P2P:-9001}:${L0_CL_P2P_HTTP_PORT:-9001}"  # P2P HTTP
-      - "${CL_DOCKER_CLI_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L0_CLI:-9002}:${L0_CL_P2P_HTTP_PORT:-9002}"  # P2P HTTP
+      - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_GL0_PUBLIC:-9000}:${CL_DOCKER_INTERNAL_GL0_PUBLIC:-9000}"  # Public HTTP
+      - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_GL0_P2P:-9001}:${CL_DOCKER_INTERNAL_GL0_P2P:-9001}"  # P2P HTTP
+      - "${CL_DOCKER_CLI_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_GL0_CLI:-9002}:${CL_DOCKER_INTERNAL_GL0_CLI:-9002}"  # P2P HTTP
     volumes:
       - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12:ro
       - ${CL_DOCKER_SEEDLIST:-/dev/null}:/tessellation/seedlist:ro
-      - ${CL_DOCKER_LOGS:-./l0-logs}:/tessellation/logs
+      - ${CL_DOCKER_GL0_LOGS:-./gl0-logs}:/tessellation/logs
       # Only required for testing purposes
-      # - ${CL_GENESIS_FILE:-/dev/null}:/tessellation/genesis.csv:ro
+      - ${CL_GENESIS_FILE:-/dev/null}:/tessellation/genesis.csv:ro
       # If using docker volumes: gl0-data:/tessellation/data
       # If using host volumes: default to a path like ./l0-data
-      - ${CL_L0_DATA_MOUNT_PATH:-gl0-data}:/tessellation/data
+      - ${CL_DOCKER_GL0_DATA:-./gl0-data}:/tessellation/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${L0_CL_PUBLIC_HTTP_PORT:-9000}/node/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${CL_DOCKER_INTERNAL_L0_PUBLIC:-9000}/node/health"]
       interval: 3s
       timeout: 5s
       retries: 5
       start_period: 3s
     profiles: ["l0"]
   gl1:
-    image: constellationnetwork/tessellation:${TESSELLATION_DOCKER_VERSION:-latest}
+    image: constellationnetwork/tessellation${CL_DOCKER_CORE_REPO:-}:${TESSELLATION_DOCKER_VERSION:-latest}
     container_name: gl1${CONTAINER_NAME_SUFFIX:-}
     restart: unless-stopped
     env_file:
       - .env
     environment:
-      - CL_DAG_L1=true
-      - CL_L0_PEER_HTTP_HOST=${CL_L0_PEER_HTTP_HOST:-gl0}
+      - CL_DOCKER_ID=gl1
+      - CL_L0_PEER_HTTP_HOST=${CL_DOCKER_GL0_PEER_HTTP_HOST:-gl0}
+      - CL_L0_PEER_HTTP_PORT=${CL_DOCKER_GL0_PEER_HTTP_PORT:-9000}
+      - CL_L0_PEER_ID=${CL_DOCKER_GL0_PEER_ID:-}
       - CL_KEYSTORE=/tessellation/key.p12
-      - CL_DAG_L1_JOIN_ENABLED=${CL_DAG_L1_JOIN_ENABLED:-true}
-      - CL_DAG_L1_JOIN_PORT=${CL_DAG_L1_JOIN_PORT:-9011}
-      - CL_PUBLIC_HTTP_PORT=${L1_CL_PUBLIC_HTTP_PORT:-9010}
-      - CL_P2P_HTTP_PORT=${L1_CL_P2P_HTTP_PORT:-9011}
-      - CL_CLI_HTTP_PORT=${L1_CL_CLI_HTTP_PORT:-9012}
-      - CL_DOCKER_L1_JOIN_DELAY=${CL_DOCKER_L1_JOIN_DELAY:-0}
+      - CL_PUBLIC_HTTP_PORT=${CL_DOCKER_INTERNAL_GL1_PUBLIC:-9010}
+      - CL_P2P_HTTP_PORT=${CL_DOCKER_INTERNAL_GL1_P2P:-9011}
+      - CL_CLI_HTTP_PORT=${CL_DOCKER_INTERNAL_GL1_CLI:-9012}
+      - CL_DOCKER_JOIN=${CL_DOCKER_GL1_JOIN:-true}
+      - CL_DOCKER_JOIN_PORT=${CL_DOCKER_GL1_JOIN_PORT:-9001}
+      - CL_DOCKER_JOIN_CLI_PORT=${CL_DOCKER_INTERNAL_GL1_CLI:-9012}
+      - CL_DOCKER_JOIN_ID=$CL_DOCKER_GL1_JOIN_ID
+      - CL_DOCKER_JOIN_IP=$CL_DOCKER_GL1_JOIN_IP
+      - CL_DOCKER_JOIN_INITIAL_DELAY=${CL_DOCKER_GL1_JOIN_INITIAL_DELAY:-0}
+      - CL_DOCKER_JOIN_RETRIES=${CL_DOCKER_GL1_JOIN_RETRIES:-10}
+      - CL_DOCKER_JOIN_DELAY=${CL_DOCKER_GL1_JOIN_DELAY:-10}
+      - CL_DOCKER_GENESIS=${CL_DOCKER_GL1_GENESIS:-false}
     ports:
-      - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L1_PUBLIC:-9010}:${L1_CL_PUBLIC_HTTP_PORT:-9010}"  # Public HTTP
-      - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L1_P2P:-9011}:${L1_CL_P2P_HTTP_PORT:-9011}"  # P2P HTTP
-      - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L1_CLI:-9012}:${L1_CL_CLI_HTTP_PORT:-9012}"  # CLI
+      - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L1_PUBLIC:-9010}:${CL_DOCKER_INTERNAL_GL1_PUBLIC:-9010}"  # Public HTTP
+      - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L1_P2P:-9011}:${CL_DOCKER_INTERNAL_GL1_P2P:-9011}"  # P2P HTTP
+      - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_L1_CLI:-9012}:${CL_DOCKER_INTERNAL_GL1_CLI:-9012}"  # CLI
     volumes:
       - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12:ro
+      - ${CL_DOCKER_SEEDLIST:-/dev/null}:/tessellation/seedlist:ro
       # If using host volumes, default to a path like ./l1-data:
       # If using a named volume, prefer instead gl1-data:/tessellation/data
-      - ${CL_L1_DATA_MOUNT_PATH:-gl1-data}:/tessellation/data
+      - ${CL_DOCKER_GL1_LOGS:-./gl1-logs}:/tessellation/logs
+      - ${CL_DOCKER_GL1_DATA:-./gl1-data}:/tessellation/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${L1_CL_PUBLIC_HTTP_PORT:-9010}/node/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${CL_DOCKER_INTERNAL_GL1_PUBLIC:-9010}/node/health"]
       interval: 3s
       timeout: 5s
       retries: 5
