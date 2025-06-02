@@ -87,7 +87,8 @@ object SharedServices {
       localHealthcheck <- LocalHealthcheck.make[F](nodeClient, storages.cluster)
       gossip <- HasherSelector[F].withCurrent(implicit hasher => Gossip.make[F](queues.rumor, nodeId, generation, keyPair))
       currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager.make(
-        cfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
+        cfg.fieldsAddedOrdinals,
+        cfg.environment,
         cfg.lastGlobalSnapshotsSync,
         BlockAcceptanceManager.make[F](validators.currencyBlockValidator, txHasher),
         TokenLockBlockAcceptanceManager.make[F](validators.tokenLockBlockValidator),
