@@ -126,6 +126,10 @@ if [ -z $NUM_DL1_NODES ]; then
     export NUM_DL1_NODES=3
 fi
 
+if [ -z $USE_TESSELLATION_VERSION ]; then
+    export USE_TESSELLATION_VERSION=true
+fi
+
 
 
 echo "processing args: $@"

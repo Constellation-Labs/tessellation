@@ -64,9 +64,15 @@ touch ./docker/jars/ml0.jar
 touch ./docker/jars/ml1.jar
 touch ./docker/jars/dl1.jar
 
+if [ -n "$USE_TESSELLATION_VERSION" ]; then
+  TESSELLATION_VERSION=$(sbt -Dsbt.log.noformat=true 'print version' | tail -n 1 | tr -d '\r')
+  echo "Exporting TESSELLATION_VERSION=$TESSELLATION_VERSION"
+  export TESSELLATION_VERSION
+fi
 
 if [ -n "$PUBLISH" ]; then
-  sbt publishLocal
+  echo "Publishing local"
+  sbt sdk/publishLocal
 fi
 
 
