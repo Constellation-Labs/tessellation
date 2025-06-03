@@ -17,7 +17,7 @@ import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, Pend
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralRecord, PendingNodeCollateralWithdrawal, UpdateNodeCollateral}
-import io.constellationnetwork.schema.snapshot.{GlobalSnapshotWithCurrencyInfo, SnapshotInfo, StateProof}
+import io.constellationnetwork.schema.snapshot.{SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendReference}
 import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockReference}
 import io.constellationnetwork.schema.transaction.TransactionReference
@@ -60,7 +60,6 @@ object GlobalSnapshotInfoV1 {
       Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
-      Some(SortedMap.empty),
       Some(SortedMap.empty)
     )
 }
@@ -78,7 +77,6 @@ case class GlobalSnapshotStateProofV1(
       lastTxRefsProof,
       balancesProof,
       lastCurrencySnapshotsProof,
-      None,
       None,
       None,
       None,
@@ -121,8 +119,7 @@ case class GlobalSnapshotStateProof(
   activeDelegatedStakes: Option[Hash],
   delegatedStakesWithdrawals: Option[Hash],
   activeNodeCollaterals: Option[Hash],
-  nodeCollateralWithdrawals: Option[Hash],
-  lastGlobalSnapshotsWithCurrency: Option[Hash]
+  nodeCollateralWithdrawals: Option[Hash]
 ) extends StateProof
 
 object GlobalSnapshotStateProof {
@@ -141,12 +138,11 @@ object GlobalSnapshotStateProof {
       Option[Hash],
       Option[Hash],
       Option[Hash],
-      Option[Hash],
       Option[Hash]
     )
   ) => GlobalSnapshotStateProof = {
-    case (x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15) =>
-      GlobalSnapshotStateProof.apply(x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15)
+    case (x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14) =>
+      GlobalSnapshotStateProof.apply(x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14)
   }
 }
 
@@ -169,7 +165,6 @@ case class GlobalSnapshotInfoV2(
         _.map { case (Signed(inc, proofs), info) => (Signed(inc.toCurrencyIncrementalSnapshot, proofs), info.toCurrencySnapshotInfo) }
       }.to(lastCurrencySnapshots.sortedMapFactory),
       lastCurrencySnapshotsProofs,
-      None,
       None,
       None,
       None,
@@ -225,8 +220,7 @@ case class GlobalSnapshotInfo(
   activeDelegatedStakes: Option[SortedMap[Address, SortedSet[DelegatedStakeRecord]]],
   delegatedStakesWithdrawals: Option[SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]]],
   activeNodeCollaterals: Option[SortedMap[Address, SortedSet[NodeCollateralRecord]]],
-  nodeCollateralWithdrawals: Option[SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]]],
-  lastGlobalSnapshotsWithCurrency: Option[SortedMap[Address, GlobalSnapshotWithCurrencyInfo]]
+  nodeCollateralWithdrawals: Option[SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]]]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
   def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
@@ -247,9 +241,8 @@ case class GlobalSnapshotInfo(
       activeDelegatedStakes.traverse(_.hash),
       delegatedStakesWithdrawals.traverse(_.hash),
       activeNodeCollaterals.traverse(_.hash),
-      nodeCollateralWithdrawals.traverse(_.hash),
-      lastGlobalSnapshotsWithCurrency.traverse(_.hash)
-    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _, _))
+      nodeCollateralWithdrawals.traverse(_.hash)
+    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _))
   }
 
 }
@@ -261,7 +254,6 @@ object GlobalSnapshotInfo {
     SortedMap.empty,
     SortedMap.empty,
     SortedMap.empty,
-    Some(SortedMap.empty),
     Some(SortedMap.empty),
     Some(SortedMap.empty),
     Some(SortedMap.empty),

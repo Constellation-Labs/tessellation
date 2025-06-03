@@ -18,7 +18,7 @@ import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.syntax.sortedCollection._
 
-import derevo.cats.{order, show}
+import derevo.cats.show
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 
@@ -64,11 +64,5 @@ object snapshot {
 
   @derive(encoder, decoder, show)
   case class SnapshotMetadata(ordinal: SnapshotOrdinal, hash: Hash, lastSnapshotHash: Hash)
-
-  @derive(decoder, encoder, order, show)
-  case class GlobalSnapshotWithCurrencyInfo(
-    ordinal: SnapshotOrdinal,
-    epochProgress: EpochProgress
-  )
 
 }

@@ -31,9 +31,7 @@ import retry.RetryPolicies.{constantDelay, limitRetries}
 import retry.syntax.all._
 
 sealed trait RollbackError extends NoStackTrace
-
 case object LastSnapshotHashNotFound extends RollbackError
-
 case object LastSnapshotInfoNotFound extends RollbackError
 
 trait Rollback[F[_]] {
@@ -53,7 +51,7 @@ object Rollback {
     dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])],
     currencySnapshotCleanupStorage: CurrencySnapshotCleanupStorage[F]
   )(implicit context: L0NodeContext[F]): Rollback[F] = new Rollback[F] {
-    private val logger = Slf4jLogger.getLoggerFromName[F]("CurrencyRollback")
+    private val logger = Slf4jLogger.getLogger[F]
 
     val fetchGlobalSnapshotsRetryPolicy = limitRetries[F](10).join(constantDelay(3.seconds))
 
@@ -61,29 +59,6 @@ object Rollback {
       (globalSnapshot, globalSnapshotInfo) <- globalL0Service.pullLatestSnapshot
 
       identifier <- identifierStorage.get
-      lastGlobalSnapshotWithCurrencySnapshot = globalSnapshotInfo.lastGlobalSnapshotsWithCurrency.flatMap(_.get(identifier))
-
-      globalSnapshotStartingPoint: Hashed[GlobalIncrementalSnapshot] <- lastGlobalSnapshotWithCurrencySnapshot match {
-        case Some(value) =>
-          logger.info(
-            s"Using global snapshot at ordinal ${value.ordinal} as the starting point, which includes the last currency snapshot for metagraph ${identifier.show}"
-          ) >>
-            globalL0Service
-              .pullGlobalSnapshot(value.ordinal)
-              .flatMap {
-                case Some(snapshot) => snapshot.pure[F]
-                case None =>
-                  logger.warn(s"Global snapshot ordinal ${value.ordinal} not found, using current global snapshot") >>
-                    globalSnapshot.pure[F]
-              }
-              .handleErrorWith { e =>
-                logger.error(e)(
-                  s"Could not fetch global snapshot ordinal: ${value.ordinal}, starting from latest global snapshot"
-                ) >> globalSnapshot.pure[F]
-              }
-        case None => globalSnapshot.pure[F]
-      }
-
       lastBinaryHash <- globalSnapshotInfo.lastStateChannelSnapshotHashes
         .get(identifier)
         .toOptionT
@@ -115,7 +90,7 @@ object Rollback {
                   logger.error(err)(s"Error when trying to fetch incremental global snapshot {attempt=${retryDetails.retriesSoFar}}")
               )
 
-          DataApplicationTraverse.make[F](globalSnapshotStartingPoint, fetchSnapshot, da, cs, identifier).flatMap { dat =>
+          DataApplicationTraverse.make[F](globalSnapshot, fetchSnapshot, da, cs, identifier).flatMap { dat =>
             dat.loadChain().flatMap {
               case Some(_) => Applicative[F].unit
               case _       => new Exception(s"Metagraph traversing failed").raiseError[F, Unit]

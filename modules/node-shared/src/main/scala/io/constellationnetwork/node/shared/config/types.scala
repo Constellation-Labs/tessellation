@@ -26,8 +26,7 @@ object types {
 
   case class FieldsAddedOrdinals(
     tessellation3Migration: Map[AppEnvironment, SnapshotOrdinal],
-    checkSyncGlobalSnapshotField: Map[AppEnvironment, SnapshotOrdinal],
-    globalSnapshotsWithCurrencySnapshots: Map[AppEnvironment, SnapshotOrdinal]
+    checkSyncGlobalSnapshotField: Map[AppEnvironment, SnapshotOrdinal]
   )
 
   case class SharedConfigReader(
