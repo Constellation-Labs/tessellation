@@ -89,8 +89,8 @@ move_metagraph_jar() {
   local module=$1
   local destination=$2
   path=$(ls -1t modules/${module}/target/scala-2.13/*-assembly*.jar | head -n1)
-  cp $path ./nodes/${destination}.jar
-  cp $path ./docker/jars/${destination}.jar
+  cp $path $PROJECT_ROOT/nodes/${destination}.jar
+  cp $path $PROJECT_ROOT/docker/jars/${destination}.jar
 }
 
 
@@ -149,3 +149,5 @@ if [ -n "$METAGRAPH" ]; then
   move_metagraph_jar $METAGRAPH_DL1_RELATIVE_PATH "dl1"
 
 fi
+
+cd $PROJECT_ROOT

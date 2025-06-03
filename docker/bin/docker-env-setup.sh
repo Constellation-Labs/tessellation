@@ -5,16 +5,9 @@ export ADDRESS=$(cat ./nodes/0/address)
 echo "Generated GL0 wallet address $ADDRESS"
 
 
-CL_GLOBAL_L0_PEER_ID", help = "Global L0 peer Id"))
-
-  val globalL0PeerHostOpts: Opts[Host] = Opts
-    .option[Host]("global-l0-peer-host", help = "Global L0 peer HTTP host")
-    .orElse(Opts.env[Host]("CL_GLOBAL_L0_PEER_HTTP_HOST", help = "Global L0 peer HTTP host"))
-
-  val globalL0PeerPortOpts: Opts[Port] = Opts
-    .option[Port]("global-l0-peer-port", help = "Global L0 peer HTTP port")
-    .orElse(Opts.env[Port]("CL_GLOBAL_L0_PEER_HTTP_PORT", help = "Global L0 peer HTTP port"))
-    .withDefault(port"9000")
+#CL_GLOBAL_L0_PEER_ID", help = "Global L0 peer Id"))
+#CL_GLOBAL_L0_PEER_HTTP_HOST", help = "Global L0 peer HTTP host"))
+# CL_GLOBAL_L0_PEER_HTTP_PORT", help = "Global L0 peer HTTP port
 
 cat << EOF > ./nodes/.env
 CL_APP_ENV="dev"
@@ -24,17 +17,21 @@ CL_TEST_MODE=true
 CL_LOCAL_MODE=true
 CL_DOCKER_GL1_GL0_PEER_HTTP_HOST=${NET_PREFIX}.10
 CL_DOCKER_GL0_DATA=${NET_PREFIX}.20
-CL_DAG_L0_JOIN_IP=${NET_PREFIX}.10
-CL_L0_PEER_HTTP_PORT=${DAG_L0_PORT_PREFIX}00
 NET_PREFIX=${NET_PREFIX}
 CL_DOCKER_BIND_INTERFACE=${CL_DOCKER_BIND_INTERFACE}
-CL_DOCKER_GL1_JOIN_PORT=${DAG_L1_PORT_PREFIX}01
-CL_DOCKER_GL0_JOIN_PORT=${DAG_L0_PORT_PREFIX}01
-EOF
+CL_GLOBAL_L0_PEER_ID=${GL0_GENERATED_WALLET_PEER_ID}
+CL_GLOBAL_L0_PEER_HTTP_HOST=${NET_PREFIX}.10
+CL_GLOBAL_L0_PEER_HTTP_PORT=${DAG_L0_PORT_PREFIX}00
+CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID
+CL_L0_PEER_HTTP_PORT=${DAG_L0_PORT_PREFIX}00
 
-echo "CL_L0_PEER_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
-echo "CL_DOCKER_GL1_JOIN_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
-echo "CL_DAG_L0_JOIN_ID=$GL0_GENERATED_WALLET_PEER_ID" >> ./nodes/.env
+CL_DOCKER_GL0_JOIN_ID=$GL0_GENERATED_WALLET_PEER_ID
+CL_DOCKER_GL1_JOIN_ID=$GL0_GENERATED_WALLET_PEER_ID
+CL_DOCKER_GL0_JOIN_IP=${NET_PREFIX}.10
+CL_DAG_L0_JOIN_IP=${NET_PREFIX}.10
+CL_DOCKER_GL0_JOIN_PORT=${DAG_L0_PORT_PREFIX}01
+CL_DOCKER_GL1_JOIN_PORT=${DAG_L1_PORT_PREFIX}01
+EOF
 
 for i in 0 1 2; do
   cp ./nodes/.env ./nodes/$i/.env
@@ -65,9 +62,20 @@ for i in 0 1 2; do
   if [ "$i" != "0" ]; then
     echo "CL_DOCKER_GL1_JOIN=true" >> .env
     echo "CL_DOCKER_GL0_JOIN=true" >> .env
+    echo "CL_DOCKER_ML0_JOIN=true" >> .env
+    echo "CL_DOCKER_ML1_JOIN=true" >> .env
+    echo "CL_DOCKER_DL1_JOIN=true" >> .env
   else
     echo "CL_DOCKER_GL1_JOIN=false" >> .env
     echo "CL_DOCKER_GL0_JOIN=false" >> .env
+    echo "CL_DOCKER_ML0_JOIN=false" >> .env
+    echo "CL_DOCKER_ML1_JOIN=false" >> .env
+    echo "CL_DOCKER_DL1_JOIN=false" >> .env
+    echo "CL_DOCKER_GL0_GENESIS=true" >> .env
+    echo "CL_DOCKER_GL1_GENESIS=true" >> .env
+    echo "CL_DOCKER_ML0_GENESIS=true" >> .env
+    echo "CL_DOCKER_ML1_GENESIS=true" >> .env
+    echo "CL_DOCKER_DL1_GENESIS=true" >> .env
   fi
 
   echo "CONTAINER_NAME_SUFFIX=-$i" >> .env
@@ -75,25 +83,57 @@ for i in 0 1 2; do
 
   L0_PORT="$DAG_L0_PORT_PREFIX$i"
   L1_PORT="$DAG_L1_PORT_PREFIX$i"
+  ML0_PORT="$ML0_PORT_PREFIX$i"
+  ML1_PORT="$ML1_PORT_PREFIX$i"
+  DL1_PORT="$DL1_PORT_PREFIX$i"
 
   # External ports
-  echo "CL_DOCKER_EXTERNAL_L0_PUBLIC=${L0_PORT}0" >> .env
-  echo "CL_DOCKER_EXTERNAL_L1_PUBLIC=${L1_PORT}0" >> .env
-  echo "CL_DOCKER_EXTERNAL_L0_P2P=${L0_PORT}1" >> .env
-  echo "CL_DOCKER_EXTERNAL_L1_P2P=${L1_PORT}1" >> .env
-  echo "CL_DOCKER_EXTERNAL_L0_CLI=${L0_PORT}2" >> .env
-  echo "CL_DOCKER_EXTERNAL_L1_CLI=${L1_PORT}2" >> .env
+  echo "CL_DOCKER_EXTERNAL_GL0_PUBLIC=${L0_PORT}0" >> .env
+  echo "CL_DOCKER_EXTERNAL_GL0_P2P=${L0_PORT}1" >> .env
+  echo "CL_DOCKER_EXTERNAL_GL0_CLI=${L0_PORT}2" >> .env
+
+  echo "CL_DOCKER_EXTERNAL_GL1_PUBLIC=${L1_PORT}0" >> .env
+  echo "CL_DOCKER_EXTERNAL_GL1_P2P=${L1_PORT}1" >> .env
+  echo "CL_DOCKER_EXTERNAL_GL1_CLI=${L1_PORT}2" >> .env
+
+  echo "CL_DOCKER_EXTERNAL_ML0_PUBLIC=${ML0_PORT}0" >> .env
+  echo "CL_DOCKER_EXTERNAL_ML0_P2P=${ML0_PORT}1" >> .env
+  echo "CL_DOCKER_EXTERNAL_ML0_CLI=${ML0_PORT}2" >> .env
+
+  echo "CL_DOCKER_EXTERNAL_ML1_PUBLIC=${ML1_PORT}0" >> .env
+  echo "CL_DOCKER_EXTERNAL_ML1_P2P=${ML1_PORT}1" >> .env
+  echo "CL_DOCKER_EXTERNAL_ML1_CLI=${ML1_PORT}2" >> .env
+
+  echo "CL_DOCKER_EXTERNAL_DL1_PUBLIC=${DL1_PORT}0" >> .env
+  echo "CL_DOCKER_EXTERNAL_DL1_P2P=${DL1_PORT}1" >> .env
+  echo "CL_DOCKER_EXTERNAL_DL1_CLI=${DL1_PORT}2" >> .env
 
   # These are only required on systems that implement docker with a host networking bridge
   # Port conflicts cause it to fail with external networks that re-use ports
   # internal ports
-  echo "CL_DOCKER_INTERNAL_L0_PUBLIC=${L0_PORT}0" >> .env
-  echo "CL_DOCKER_INTERNAL_L0_P2P=${L0_PORT}1" >> .env
-  echo "CL_DOCKER_INTERNAL_L0_CLI=${L0_PORT}2" >> .env
+  echo "CL_DOCKER_INTERNAL_GL0_PUBLIC=${L0_PORT}0" >> .env
+  echo "CL_DOCKER_INTERNAL_GL0_P2P=${L0_PORT}1" >> .env
+  echo "CL_DOCKER_INTERNAL_GL0_CLI=${L0_PORT}2" >> .env
+
   echo "CL_DOCKER_INTERNAL_GL1_PUBLIC=${L1_PORT}0" >> .env
   echo "CL_DOCKER_INTERNAL_GL1_P2P=${L1_PORT}1" >> .env
   echo "CL_DOCKER_INTERNAL_GL1_CLI=${L1_PORT}2" >> .env
-  echo "CL_DOCKER_L1_JOIN_DELAY=$((i*10 + 20))" >> .env
+
+  echo "CL_DOCKER_INTERNAL_ML0_PUBLIC=${ML0_PORT}0" >> .env
+  echo "CL_DOCKER_INTERNAL_ML0_P2P=${ML0_PORT}1" >> .env
+  echo "CL_DOCKER_INTERNAL_ML0_CLI=${ML0_PORT}2" >> .env
+
+  echo "CL_DOCKER_INTERNAL_ML1_PUBLIC=${ML1_PORT}0" >> .env
+  echo "CL_DOCKER_INTERNAL_ML1_P2P=${ML1_PORT}1" >> .env
+  echo "CL_DOCKER_INTERNAL_ML1_CLI=${ML1_PORT}2" >> .env
+  
+  echo "CL_DOCKER_INTERNAL_DL1_PUBLIC=${DL1_PORT}0" >> .env
+  echo "CL_DOCKER_INTERNAL_DL1_P2P=${DL1_PORT}1" >> .env
+  echo "CL_DOCKER_INTERNAL_DL1_CLI=${DL1_PORT}2" >> .env
+
+  echo "CL_DOCKER_GL1_JOIN_DELAY=$((i*10 + 20))" >> .env
+  echo "CL_DOCKER_DL1_JOIN_DELAY=$((i*10 + 20))" >> .env
+  echo "CL_DOCKER_ML1_JOIN_DELAY=$((i*10 + 20))" >> .env
 
   cd ../../
 done

@@ -70,15 +70,50 @@ docker network create \
 
 for i in 0 1 2; do
   cd ./nodes/$i/
+
+  export PROFILE_GL0_ARG=""
+  if [ "$i" -lt "$NUM_GL0_NODES" ]; then
+    export PROFILE_GL0_ARG="--profile l0"
+  fi
+
+  export PROFILE_GL1_ARG=""
+  if [ "$i" -lt "$NUM_GL1_NODES" ]; then
+    export PROFILE_GL1_ARG="--profile l1"
+  fi
+
+  export PROFILE_ML0_ARG=""
+  if [ "$i" -lt "$NUM_ML0_NODES" ]; then
+    export PROFILE_ML0_ARG="--profile ml0"
+  fi
+
+  export PROFILE_ML1_ARG=""
+  if [ "$i" -lt "$NUM_ML1_NODES" ]; then
+    export PROFILE_ML1_ARG="--profile ml1"
+  fi
+
+  export PROFILE_DL1_ARG=""
+  if [ "$i" -lt "$NUM_DL1_NODES" ]; then
+    export PROFILE_DL1_ARG="--profile dl1"
+  fi
+
+  metagraph_args=""
+
+  if [ -n "$METAGRAPH" ]; then
+    cp ../../docker/docker-compose.metagraphs.yaml . ; \
+    metagraph_args="-f docker-compose.metagraphs.yaml $PROFILE_ML0_ARG $PROFILE_ML1_ARG $PROFILE_DL1_ARG"
+  fi
+  
   docker compose down --remove-orphans --volumes > /dev/null 2>&1 || true; \
   cp ../../docker/docker-compose.yaml . ; \
   cp ../../docker/docker-compose.test.yaml . ; \
   cp ../../docker/docker-compose.volumes.yaml . ; \
+  cp ../../docker/docker-compose.metagraphs.yaml . ; \
   docker compose -f docker-compose.test.yaml \
   -f docker-compose.yaml \
   -f docker-compose.volumes.yaml \
-  --profile l0 \
-  --profile l1 \
+  $metagraph_args \
+  $PROFILE_GL0_ARG \
+  $PROFILE_GL1_ARG \
   up -d
   cd ../../
 done

@@ -58,6 +58,18 @@ if [ -z "$DAG_L1_PORT_PREFIX" ]; then
     export DAG_L1_PORT_PREFIX=91
 fi
 
+if [ -z "$ML0_PORT_PREFIX" ]; then
+    export ML0_PORT_PREFIX=92
+fi
+
+if [ -z "$ML1_PORT_PREFIX" ]; then
+    export ML1_PORT_PREFIX=93
+fi
+
+if [ -z "$DL1_PORT_PREFIX" ]; then
+    export DL1_PORT_PREFIX=94
+fi
+
 if [ -z "$REGENERATE_TEST_KEYS" ]; then
     export REGENERATE_TEST_KEYS=false
 fi
@@ -71,7 +83,7 @@ if [ -z "$SKIP_METAGRAPH_ASSEMBLY" ]; then
 fi
 
 if [ -z "$METAGRAPH" ]; then
-    export METAGRAPH=false
+    export METAGRAPH=$PROJECT_ROOT/.github/templates/metagraphs/project_template
 fi
 
 if [ -z "$METAGRAPH_ML0" ]; then
@@ -97,6 +109,24 @@ fi
 if [ -z $METAGRAPH_DL1_RELATIVE_PATH ]; then
     export METAGRAPH_DL1_RELATIVE_PATH="data_l1"
 fi
+
+if [ -z $NUM_GL0_NODES ]; then
+    export NUM_GL0_NODES=3
+fi
+
+if [ -z $NUM_ML0_NODES ]; then
+    export NUM_ML0_NODES=3
+fi
+
+if [ -z $NUM_ML1_NODES ]; then
+    export NUM_ML1_NODES=3
+fi
+
+if [ -z $NUM_DL1_NODES ]; then
+    export NUM_DL1_NODES=3
+fi
+
+
 
 echo "processing args: $@"
 
@@ -156,7 +186,7 @@ for arg in "$@"; do
       ;;
     --metagraph=*)
       export METAGRAPH="${arg#*=}"
-      ;;    -
+      ;;
     --ml0-path=*)
       export METAGRAPH_ML0_RELATIVE_PATH="${arg#*=}"
       ;;
@@ -194,3 +224,9 @@ exit_func() {
 
 echo "BUILD_ONLY: $BUILD_ONLY"
 echo "RELEASE_TAG: $RELEASE_TAG"
+
+
+if [ "$METAGRAPH" = ".github/templates/metagraphs/project_template" ]; then
+    export SKIP_METAGRAPH_ASSEMBLY=true
+fi
+
