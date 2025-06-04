@@ -189,8 +189,9 @@ object DataApplicationSnapshotAcceptanceManager {
                     val dataUpdates = getDataUpdates(dataTransactionsAsList)
                     val feeTransactions = getFeeTransactions(dataTransactionsAsList)
 
-                    logger.debug(s"Block ${dataBlock.value.roundId} is valid") >>
-                      service.combine(currentState, dataUpdates).map { newState =>
+                    for {
+                      _ <- logger.debug(s"Block ${dataBlock.value.roundId} is valid")
+                      result <- service.combine(currentState, dataUpdates).map { newState =>
                         (
                           newState,
                           accFeeTransactions ++ feeTransactions,
@@ -198,6 +199,9 @@ object DataApplicationSnapshotAcceptanceManager {
                           accNotAcceptedBlocks
                         )
                       }
+                      _ <- logger.debug(s"SharedArtifacts produced: ${result._1.sharedArtifacts}")
+                    } yield result
+
                   case Invalid(err) =>
                     Async[F].pure(
                       (
@@ -223,6 +227,10 @@ object DataApplicationSnapshotAcceptanceManager {
         }
 
         (newDataState, validatedFeeTransactions, validatedBlocks, notAcceptedBlocks) = processingResult
+
+        _ <- OptionT.liftF {
+          logger.info(s"New data state produced shared artifacts: ${newDataState.sharedArtifacts}")
+        }
 
         serializedOnChainState <- OptionT.liftF(
           service.serializeState(newDataState.onChain)

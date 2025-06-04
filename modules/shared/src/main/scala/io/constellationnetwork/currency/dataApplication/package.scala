@@ -14,7 +14,7 @@ import io.constellationnetwork.currency.dataApplication.DataTransaction.{DataTra
 import io.constellationnetwork.currency.dataApplication.Errors.Noop
 import io.constellationnetwork.currency.dataApplication.FeeTransaction.serialize
 import io.constellationnetwork.currency.dataApplication.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
-import io.constellationnetwork.currency.http.Codecs.{feeTransactionRequestDecoder, feeTransactionResponseEncoder}
+import io.constellationnetwork.currency.http.Codecs.{dataTransactionsDecoder, feeTransactionResponseEncoder}
 import io.constellationnetwork.currency.schema.EstimatedFee
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.ext.derevo.ordering
@@ -35,12 +35,15 @@ import derevo.cats.{order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.auto._
+import fs2.Stream
 import io.circe._
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.syntax._
 import org.http4s._
 import org.http4s.circe.jsonEncoderOf
 import org.http4s.server.Router
+import org.typelevel.log4cats.Logger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 sealed trait DataTransaction
 object DataTransaction {
@@ -387,20 +390,43 @@ trait DataApplicationL1Service[F[_], D <: DataUpdate, DON <: DataOnChainState, D
     extends DataApplicationService[F, D, DON, DOF]
     with DataApplicationL1ContextualOps[F, D, DON, DOF] {
 
-  def postDataTransactionsRequestDecoder(req: Request[F])(implicit f: Async[F]): F[DataRequest] = {
+  def postDataTransactionsRequestDecoder(req: Request[F])(implicit F: Async[F]): F[DataRequest] = {
+    val logger = Slf4jLogger.getLoggerFromName[F]("DataApplicationL1Service")
+
+    for {
+      bytes <- req.body.compile.to(Array)
+      result <- decodeRequestBody(bytes, logger)
+    } yield result
+  }
+
+  private def decodeRequestBody(bytes: Array[Byte], logger: Logger[F])(implicit F: Async[F]): F[DataRequest] = {
     implicit val dataUpdateDecoder: Decoder[D] = dataDecoder
     implicit val feeTransactionDecoder: Decoder[FeeTransaction] = deriveDecoder[FeeTransaction]
-    implicit val requestDecoder: EntityDecoder[F, DataTransactions] = feeTransactionRequestDecoder
+    implicit val dtDecoders: EntityDecoder[F, DataTransactions] = dataTransactionsDecoder
 
-    req
-      .as[DataTransactions]
-      .map[DataRequest](DataTransactionsRequest)
-      .handleErrorWith { _ =>
+    val bodyStream = Stream.emits(bytes).covary[F]
+    Request(body = bodyStream).attemptAs[DataTransactions].value.flatMap {
+      case Right(dataTransactions) =>
+        (DataTransactionsRequest(dataTransactions): DataRequest).pure[F]
+
+      case Left(firstFailure) =>
         implicit val signedEntityDecoder: EntityDecoder[F, Signed[D]] = signedDataEntityDecoder
-        req.as[Signed[D]].map[DataRequest] { signedData =>
-          SingleDataUpdateRequest(signedData.widen)
-        }
-      }
+        Request(body = Stream.emits(bytes).covary[F])
+          .attemptAs[Signed[D]]
+          .value
+          .flatMap {
+            case Right(signedData) =>
+              (SingleDataUpdateRequest(signedData.widen): DataRequest).pure[F]
+
+            case Left(secondFailure) =>
+              logger.error(s"Decoding failed for both types: $firstFailure, $secondFailure") >>
+                F.raiseError[DataRequest](
+                  InvalidMessageBodyFailure(
+                    s"Could not decode as DataTransactions or Signed data: ${firstFailure.message}"
+                  )
+                )
+          }
+    }
   }
 
   def postDataTransactionsResponseEncoder(

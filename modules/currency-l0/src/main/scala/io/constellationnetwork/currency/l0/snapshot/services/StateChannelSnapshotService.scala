@@ -21,6 +21,7 @@ import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.signature.Signed
@@ -36,6 +37,7 @@ trait StateChannelSnapshotService[F[_]] {
   def consume(
     signedArtifact: Signed[CurrencySnapshotArtifact],
     binaryHashed: Hashed[StateChannelSnapshotBinary],
+    lastOutcomeFacilitators: List[PeerId],
     context: CurrencySnapshotContext
   )(implicit hasher: Hasher[F]): F[Unit]
   def createGenesisBinary(snapshot: Signed[CurrencySnapshot])(implicit hasher: Hasher[F]): F[Signed[StateChannelSnapshotBinary]]
@@ -115,6 +117,7 @@ object StateChannelSnapshotService {
       def consume(
         signedArtifact: Signed[CurrencySnapshotArtifact],
         binaryHashed: Hashed[StateChannelSnapshotBinary],
+        lastOutcomeFacilitators: List[PeerId],
         context: CurrencySnapshotContext
       )(implicit hasher: Hasher[F]): F[Unit] = for {
         _ <- dataApplicationSnapshotAcceptanceManager.traverse { manager =>
@@ -132,7 +135,7 @@ object StateChannelSnapshotService {
           )
         lastGlobalSnapshot <- lastGlobalSnapshotStorage.get
         lastGlobalSnapshotSigners = lastGlobalSnapshot.map(_.signed.proofs.map(_.id.toPeerId))
-        _ <- stateChannelBinarySender.process(binaryHashed, lastGlobalSnapshotSigners)
+        _ <- stateChannelBinarySender.process(binaryHashed, lastOutcomeFacilitators, lastGlobalSnapshotSigners)
       } yield ()
 
     }

@@ -25,7 +25,8 @@ import fs2.io.file.Path
 object types {
 
   case class FieldsAddedOrdinals(
-    tessellation3Migration: Map[AppEnvironment, SnapshotOrdinal]
+    tessellation3Migration: Map[AppEnvironment, SnapshotOrdinal],
+    checkSyncGlobalSnapshotField: Map[AppEnvironment, SnapshotOrdinal]
   )
 
   case class SharedConfigReader(
