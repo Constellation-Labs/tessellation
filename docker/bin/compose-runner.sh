@@ -161,6 +161,4 @@ echo "------------------------------------------------"
 echo "End-to-end tests completed"
 echo "------------------------------------------------"
 
-# Return to the origina
-l directory
-cd "$SCRIPT_DIR/../../"
+cd $PROJECT_ROOT
