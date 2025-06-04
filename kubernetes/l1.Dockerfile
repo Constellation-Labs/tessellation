@@ -13,7 +13,7 @@ export CL_KEYALIAS=alias
 export CL_PASSWORD=password
 export CL_APP_ENV=dev
 export CL_L0_PEER_ID=\$L0_INITIAL_VALIDATOR_ID
-export CL_DOCKER_GL1_GL0_PEER_HTTP_HOST=\$L0_INITIAL_VALIDATOR_SERVICE_HOST
+export CL_L0_PEER_HTTP_HOST=\$L0_INITIAL_VALIDATOR_SERVICE_HOST
 export CL_L0_PEER_HTTP_PORT=\$L0_INITIAL_VALIDATOR_SERVICE_PORT_PUBLIC \
 export JAVA_OPTS="\$JAVA_OPTS -Dlogback.configurationFile=logback-kubernetes.xml -Dcats.effect.tracing.mode=full -Dcats.effect.tracing.buffer.size=64"
 
