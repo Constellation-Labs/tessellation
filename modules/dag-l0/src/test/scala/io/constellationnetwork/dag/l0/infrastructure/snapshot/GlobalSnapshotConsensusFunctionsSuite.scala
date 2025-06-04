@@ -47,6 +47,7 @@ import io.constellationnetwork.node.shared.domain.swap.block._
 import io.constellationnetwork.node.shared.domain.tokenlock.block._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger}
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
 import io.constellationnetwork.schema._
@@ -74,7 +75,7 @@ import weaver.scalacheck.Checkers
 
 object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checkers {
 
-  type Res = (Supervisor[IO], KryoSerializer[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO])
+  type Res = (Supervisor[IO], KryoSerializer[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO])
 
   def mkMockGossip[B](spreadRef: Ref[IO, List[B]]): Gossip[IO] =
     new Gossip[IO] {
@@ -104,7 +105,9 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     sp <- SecurityProvider.forAsync[IO]
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
     h = Hasher.forJson[IO]
-  } yield (supervisor, ks, j, h, sp)
+    m <- Metrics.forAsync[IO](Seq(("application", name)))
+
+  } yield (supervisor, ks, j, h, sp, m)
 
   val bam: BlockAcceptanceManager[IO] = new BlockAcceptanceManager[IO] {
 
@@ -287,7 +290,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     implicit ks: KryoSerializer[IO],
     j: JsonSerializer[IO],
     sp: SecurityProvider[IO],
-    h: Hasher[IO]
+    h: Hasher[IO],
+    m: Metrics[IO]
   ): GlobalSnapshotConsensusFunctions[IO] = {
     implicit val hs = HasherSelector.forSyncAlwaysCurrent(h)
 
@@ -336,7 +340,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     implicit sp: SecurityProvider[F],
     kryo: KryoSerializer[F],
     j: JsonSerializer[F],
-    h: Hasher[IO]
+    h: Hasher[IO],
+    m: Metrics[IO]
   ): IO[(GlobalSnapshotConsensusFunctions[IO], Set[PeerId], Signed[GlobalSnapshotArtifact], Signed[GlobalSnapshot], StateChannelEvent)] =
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[F]
@@ -354,7 +359,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     } yield (gscf, facilitators, signedLastArtifact, signedGenesis, scEvent)
 
   test("validateArtifact - returns artifact for correct data") { res =>
-    implicit val (_, ks, j, h, sp) = res
+    implicit val (_, ks, j, h, sp, m) = res
 
     for {
       (gscf, facilitators, signedLastArtifact, signedGenesis, scEvent) <- getTestData
@@ -387,7 +392,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   }
 
   test("validateArtifact - returns invalid artifact error for incorrect data") { res =>
-    implicit val (_, ks, j, h, sp) = res
+    implicit val (_, ks, j, h, sp, m) = res
 
     for {
       (gscf, facilitators, signedLastArtifact, signedGenesis, scEvent) <- getTestData
@@ -416,7 +421,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   }
 
   test("gossip signed artifacts") { res =>
-    implicit val (_, _, j, h, sp) = res
+    implicit val (_, _, j, h, sp, m) = res
 
     for {
       gossiped <- Ref.of(List.empty[ForkInfo])
@@ -437,7 +442,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   }
 
   test("shouldUseDelegatedRewards - verifies reward selection logic based on ordinal and epoch thresholds") { res =>
-    implicit val (_, ks, j, h, sp) = res
+    implicit val (_, ks, j, h, sp, m) = res
 
     // Test the reward selection logic based on both conditions
     // This reproduces the logic in GlobalSnapshotConsensusFunctions

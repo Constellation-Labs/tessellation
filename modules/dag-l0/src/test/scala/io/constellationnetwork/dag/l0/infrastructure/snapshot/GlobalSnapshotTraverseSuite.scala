@@ -234,7 +234,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     globalSnapshot: Hashed[GlobalSnapshot],
     incrementalSnapshots: List[Hashed[GlobalIncrementalSnapshot]],
     rollbackHash: Hash
-  )(implicit J: JsonSerializer[IO], H: Hasher[IO], S: SecurityProvider[IO], K: KryoSerializer[IO]) = {
+  )(implicit J: JsonSerializer[IO], H: Hasher[IO], S: SecurityProvider[IO], K: KryoSerializer[IO], m: Metrics[IO]) = {
     def loadGlobalSnapshot(hash: Hash): IO[Option[Signed[GlobalSnapshot]]] =
       hash match {
         case h if h === globalSnapshot.hash => Some(globalSnapshot.signed).pure[IO]
@@ -379,7 +379,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   }
 
   test("can compute state for given incremental global snapshot") { res =>
-    implicit val (ks, h, j, sp, _, _) = res
+    implicit val (ks, h, j, sp, m, _) = res
 
     for {
       snapshots <- mkSnapshots(List.empty, balances)
@@ -411,8 +411,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   }
 
   test("computed state contains last refs and preserve total amount of balances when no fees or rewards ") {
-    case (ks, h, j, sp, _, random) =>
-      implicit val (a, b, c, d) = (ks, j, sp, random)
+    case (ks, h, j, sp, m2, random) =>
+      implicit val (a, b, c, d, m) = (ks, j, sp, random, m2)
 
       forall(dagBlockChainGen(currentHasher = h)) { output: IO[DAGS] =>
         for {
@@ -441,8 +441,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   }
 
   test("computed state contains last refs and include fees in total amount of balances") {
-    case (ks, h, j, sp, _, random) =>
-      implicit val (a, b, c, d) = (ks, j, sp, random)
+    case (ks, h, j, sp, m2, random) =>
+      implicit val (a, b, c, d, m) = (ks, j, sp, random, m2)
 
       forall(dagBlockChainGen(1L, currentHasher = h)) { output: IO[DAGS] =>
         for {
