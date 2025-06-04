@@ -114,7 +114,6 @@ export GENESIS_SNAPSHOT_ARG="";
 export RUN_MAIN="true";
 
 if [ "$ID" == "ml0" ] && [ "$CL_DOCKER_GENESIS" == "true" ] && [ -n "$CL_GENESIS_FILE" ]; then
-  export RUN_COMMAND="$RUN_COMMAND /tessellation/data/genesis.snapshot"
 
   if [ -n "$CL_ML0_GENERATE_GENESIS" ]; then
 

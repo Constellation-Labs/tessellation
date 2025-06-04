@@ -123,6 +123,7 @@ for i in 0 1 2; do
       export METAGRAPH_ID=$(head -n 1 genesis.address)
     fi
     echo "METAGRAPH_ID=$METAGRAPH_ID" >> .env
+    echo "CL_L0_TOKEN_IDENTIFIER=$METAGRAPH_ID" >> .env
 
   fi
 

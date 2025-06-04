@@ -107,26 +107,6 @@ if [ -z $METAGRAPH_DL1_RELATIVE_PATH ]; then
     export METAGRAPH_DL1_RELATIVE_PATH="data_l1"
 fi
 
-if [ -z $NUM_GL0_NODES ]; then
-    export NUM_GL0_NODES=3
-fi
-
-if [ -z $NUM_GL1_NODES ]; then
-    export NUM_GL1_NODES=3
-fi
-
-if [ -z $NUM_ML0_NODES ]; then
-    export NUM_ML0_NODES=3
-fi
-
-if [ -z $NUM_ML1_NODES ]; then
-    export NUM_ML1_NODES=3
-fi
-
-if [ -z $NUM_DL1_NODES ]; then
-    export NUM_DL1_NODES=3
-fi
-
 if [ -z $USE_TESSELLATION_VERSION ]; then
     export USE_TESSELLATION_VERSION=true
 fi
@@ -222,6 +202,21 @@ for arg in "$@"; do
       ;;
     --dl1=*)
       export METAGRAPH_DL1=true
+      ;;  
+    --num-gl0=*)
+      export NUM_GL0_NODES="${arg#*=}"
+      ;;
+    --num-gl1=*)
+      export NUM_GL1_NODES="${arg#*=}"
+      ;;
+    --num-ml0=*)
+      export NUM_ML0_NODES="${arg#*=}"
+      ;;
+    --num-ml1=*)
+      export NUM_ML1_NODES="${arg#*=}"
+      ;;
+    --num-dl1=*)
+      export NUM_DL1_NODES="${arg#*=}"
       ;;
     --skip-metagraph-assembly)
       export SKIP_METAGRAPH_ASSEMBLY=true
@@ -250,6 +245,25 @@ echo "BUILD_ONLY: $BUILD_ONLY"
 echo "RELEASE_TAG: $RELEASE_TAG"
 
 
+# If a specific metagraph is provided, set sensible defaults
+if [ -n "$METAGRAPH" ]; then
+  if [ -z "$NUM_GL0_NODES" ]; then
+    export NUM_GL0_NODES=1
+  fi
+  if [ -z "$NUM_GL1_NODES" ]; then
+    export NUM_GL1_NODES=3
+  fi
+  if [ -z "$NUM_ML0_NODES" ]; then
+    export NUM_ML0_NODES=1
+  fi
+  if [ -z "$NUM_ML1_NODES" ]; then
+    export NUM_ML1_NODES=3
+  fi
+  if [ -z "$NUM_DL1_NODES" ]; then
+    export NUM_DL1_NODES=3
+  fi
+fi
+
 # Set more complex defaults below
 
 if [ "$USE_TEST_METAGRAPH" = "true" ] && [ -z "$METAGRAPH" ]; then
@@ -265,4 +279,25 @@ fi
 
 if [ -z "$SKIP_METAGRAPH_ASSEMBLY" ]; then
     export SKIP_METAGRAPH_ASSEMBLY=false
+fi
+
+
+if [ -z $NUM_GL0_NODES ]; then
+    export NUM_GL0_NODES=3
+fi
+
+if [ -z $NUM_GL1_NODES ]; then
+    export NUM_GL1_NODES=3
+fi
+
+if [ -z $NUM_ML0_NODES ]; then
+    export NUM_ML0_NODES=3
+fi
+
+if [ -z $NUM_ML1_NODES ]; then
+    export NUM_ML1_NODES=3
+fi
+
+if [ -z $NUM_DL1_NODES ]; then
+    export NUM_DL1_NODES=3
 fi
