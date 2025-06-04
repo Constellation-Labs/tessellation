@@ -20,7 +20,16 @@ main `compose-runner.sh` script. Below are listed the most common commands you m
 `just test`
 
 This assembles L0 by default using the auto-incremental recompilation cache, and if no jars 
-are found, it will build all of them with sbt assembly, 
+are found, it will build all of them with sbt assembly, and invoke all tests that only require the gl0 / dag-l0. By default, this test will NOT stop docker containers after running, nor will it cleanup 
+the environment afterwards. 
+
+`just test --cleanup-docker-at-end` 
+
+Will run same options as before, but enforce a cleanup / terminate containers at end of test. 
+
+`just test --use-test-metagraph`
+
+The same as the prior command, except this will use the locally defined template metagraph and invoke all tests, including the tests that require the 'default' test metagraph.
 
 `just test --skip-assembly`
 

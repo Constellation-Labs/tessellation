@@ -162,3 +162,12 @@ echo "End-to-end tests completed"
 echo "------------------------------------------------"
 
 cd $PROJECT_ROOT
+
+
+# TODO: Use a trap function
+if [ "$CLEANUP_DOCKER_AT_END" == "true" ]; then
+  ./docker/bin/tessellation-docker-cleanup.sh
+fi
+
+
+
