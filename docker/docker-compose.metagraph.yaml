@@ -85,7 +85,7 @@ services:
     profiles: ["ml1"]
   dl1:
     image: constellationnetwork/tessellation${CL_DOCKER_REPO:-}:${CL_DOCKER_METAGRAPH_IMAGE:-latest}
-    container_name: dl1{CONTAINER_NAME_SUFFIX:-}
+    container_name: dl1${CONTAINER_NAME_SUFFIX:-}
     restart: unless-stopped
     env_file:
       - .env

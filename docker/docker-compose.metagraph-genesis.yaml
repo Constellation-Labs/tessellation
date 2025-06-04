@@ -1,0 +1,3 @@
+services:
+  ml0:
+    restart: no

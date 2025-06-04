@@ -7,8 +7,8 @@ import io.constellationnetwork.currency.dataApplication.dataApplication.DataAppl
 import io.constellationnetwork.security.signature.Signed
 
 import com.my.project_template.shared_data.types.Types.{UsageUpdate, UsageUpdateCalculatedState, UsageUpdateState}
-import io.circe.{Encoder, Printer}
 import io.circe.syntax.EncoderOps
+import io.circe.{Encoder, Printer}
 
 object Serializers {
   private def serialize[A: Encoder](

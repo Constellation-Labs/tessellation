@@ -98,6 +98,8 @@ export RUN_COMMAND="run-validator"
 if [ "$CL_DOCKER_GENESIS" == "true" ]; then
   if [ "$L0" == "false" ]; then
     RUN_COMMAND="run-initial-validator"
+  elif [ "$ID" == "ml0" ]; then
+    RUN_COMMAND="run-genesis /tessellation/data/genesis.snapshot"
   else
     RUN_COMMAND="run-genesis /tessellation/genesis.csv"
   fi
@@ -115,27 +117,27 @@ if [ "$ID" == "ml0" ] && [ "$CL_DOCKER_GENESIS" == "true" ] && [ -n "$CL_GENESIS
   export RUN_COMMAND="$RUN_COMMAND /tessellation/data/genesis.snapshot"
 
   if [ -n "$CL_ML0_GENERATE_GENESIS" ]; then
-    cur_dir=$(pwd)
-    cd /tessellation/data;
+
     ml0_log_file="/tessellation/logs/ml0-create-genesis.log"
     touch $ml0_log_file
-    java -jar /tessellation/jars/ml0.jar create-genesis $CL_GENESIS_FILE > $ml0_log_file 2>&1 &
-    CREATE_GENESIS_PID=$!
+    java -jar /tessellation/jars/ml0.jar create-genesis /tessellation/genesis.csv 2>&1 | tee -a $ml0_log_file  # &
+    # CREATE_GENESIS_PID=$!
 
-    # Wait for genesis.snapshot to be created
-    MAX_WAIT_TIME=60 
-    elapsed_time=0
-    while [ ! -f "genesis.snapshot" ]; do
-      sleep 1
-      elapsed_time=$((elapsed_time + 1))
-      if [ "$elapsed_time" -ge "$MAX_WAIT_TIME" ]; then
-        echo "Error: genesis.snapshot was not created within $MAX_WAIT_TIME seconds."
-        exit 1
-      fi
-    done
+    # # Wait for genesis.snapshot to be created
+    # MAX_WAIT_TIME=60 
+    # elapsed_time=0
+    # while [ ! -f "/tessellation/genesis.snapshot" ]; do
+    #   sleep 1
+    #   elapsed_time=$((elapsed_time + 1))
+    #   if [ "$elapsed_time" -ge "$MAX_WAIT_TIME" ]; then
+    #     echo "Error: genesis.snapshot was not created within $MAX_WAIT_TIME seconds."
+    #     exit 1
+    #   fi
+    # done
     echo "genesis.snapshot created"
-    kill -9 $CREATE_GENESIS_PID
-    cd $cur_dir
+    cp /tessellation/genesis.snapshot /tessellation/data/genesis.snapshot
+    cp /tessellation/genesis.address /tessellation/data/genesis.address
+    # kill -9 $CREATE_GENESIS_PID
     export RUN_MAIN="false"
   fi
 fi

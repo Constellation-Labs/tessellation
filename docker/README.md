@@ -75,7 +75,7 @@ This will purge all docker containers, sbt cache, target folder, and node enviro
 
 `just clean-docker`
 
-This cleans all script / docker related local artifacts
+This cleans all script / docker related local artifacts, but not sbt
 
 `just build --version v3.2.0`
 

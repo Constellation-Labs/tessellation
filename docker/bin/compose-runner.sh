@@ -78,6 +78,7 @@ for i in 0 1 2; do
   cp ../../docker/docker-compose.volumes.yaml . ; \
   cp ../../docker/docker-compose.metagraph.yaml . ;
   cp ../../docker/docker-compose.metagraph-test.yaml . ;
+  cp ../../docker/docker-compose.metagraph-genesis.yaml . ;
 
   export PROFILE_GL0_ARG=""
   if [ "$i" -lt "$NUM_GL0_NODES" ]; then
@@ -109,17 +110,20 @@ for i in 0 1 2; do
   if [ -n "$METAGRAPH" ]; then
     metagraph_args="-f docker-compose.metagraph.yaml -f docker-compose.metagraph-test.yaml $PROFILE_ML0_ARG $PROFILE_ML1_ARG $PROFILE_DL1_ARG"
     echo "Setting metagraph args to $metagraph_args"
-    if [ ! -f "./genesis.snapshot" ]; then
+    if [ ! -f "./genesis.snapshot" ] && [ "$i" -eq 0 ]; then
       echo "Generating metagraph genesis snapshot"
       cp .env .env.bak
       echo "CL_ML0_GENERATE_GENESIS=true" >> .env
-      docker compose -f docker-compose.metagraph.yaml -f docker-compose.metagraph-test.yaml --profile ml0 up
+      docker compose -f docker-compose.metagraph.yaml -f docker-compose.metagraph-test.yaml -f docker-compose.metagraph-genesis.yaml --profile ml0 up
+      docker stop ml0-0
+      docker rm ml0-0
       cp ml0-data/genesis.snapshot .
       cp ml0-data/genesis.address .
       mv .env.bak .env
       export METAGRAPH_ID=$(head -n 1 genesis.address)
-      echo "METAGRAPH_ID=$METAGRAPH_ID" >> .env
     fi
+    echo "METAGRAPH_ID=$METAGRAPH_ID" >> .env
+
   fi
 
   docker_additional_args="$metagraph_args $PROFILE_GL0_ARG $PROFILE_GL1_ARG"
