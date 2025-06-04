@@ -254,7 +254,7 @@ object CurrencySnapshotAcceptanceManager {
         .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value - lastGlobalSnapshotsSyncConfig.syncOffset) }
 
       lastGlobalSnapshots <- getLastNGlobalSnapshots
-      _ <- logger.info(s"Metagraph $metagraphId snapshot $snapshotOrdinal - maybeSnapshotOrdinalSync: $maybeSnapshotOrdinalSync")
+      _ <- logger.debug(s"Metagraph $metagraphId snapshot $snapshotOrdinal - maybeSnapshotOrdinalSync: $maybeSnapshotOrdinalSync")
 
       maybeLastGlobalSnapshot <- maybeSnapshotOrdinalSync match {
         case Some(ordinal) =>
@@ -430,10 +430,12 @@ object CurrencySnapshotAcceptanceManager {
       updatedActiveTokenLocksCleaned = updatedActiveTokenLocks.filter { case (_, tokenLocks) => tokenLocks.nonEmpty }
 
       snapshotOrdinalToCheckFields =
-        if (checkSyncGlobalSnapshotField <= lastGlobalSnapshotOrdinal) {
+        if (lastGlobalSnapshotOrdinal <= checkSyncGlobalSnapshotField) {
           lastGlobalSnapshotOrdinal
         } else {
-          val fallbackOrdinal = lastGlobalSnapshots.lastOption.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue)
+          val fallbackOrdinal = lastGlobalSnapshots
+            .lastOption.map(_.ordinal)
+            .getOrElse(lastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue))
           if (lastGlobalSnapshotOrdinal === SnapshotOrdinal.MinValue) fallbackOrdinal
           else lastGlobalSnapshotOrdinal
         }
@@ -469,7 +471,7 @@ object CurrencySnapshotAcceptanceManager {
         case _           => GlobalSyncView.empty
       }
 
-      _ <- logger.info(s"Metagraph $metagraphId snapshot $snapshotOrdinal - globalSyncView: $globalSyncView")
+      _ <- logger.debug(s"Metagraph $metagraphId snapshot $snapshotOrdinal - globalSyncView: $globalSyncView")
     } yield
       CurrencySnapshotAcceptanceResult(
         acceptanceBlocksResult,
