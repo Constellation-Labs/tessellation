@@ -82,9 +82,9 @@ if [ -z "$SKIP_METAGRAPH_ASSEMBLY" ]; then
     export SKIP_METAGRAPH_ASSEMBLY=false
 fi
 
-if [ -z "$METAGRAPH" ]; then
-    export METAGRAPH=$PROJECT_ROOT/.github/templates/metagraphs/project_template
-fi
+# if [ -z "$METAGRAPH" ]; then
+#     export METAGRAPH=$PROJECT_ROOT/.github/templates/metagraphs/project_template
+# fi
 
 if [ -z "$METAGRAPH_ML0" ]; then
     export METAGRAPH_ML0=true
@@ -114,6 +114,10 @@ if [ -z $NUM_GL0_NODES ]; then
     export NUM_GL0_NODES=3
 fi
 
+if [ -z $NUM_GL1_NODES ]; then
+    export NUM_GL1_NODES=3
+fi
+
 if [ -z $NUM_ML0_NODES ]; then
     export NUM_ML0_NODES=3
 fi
@@ -130,6 +134,19 @@ if [ -z $USE_TESSELLATION_VERSION ]; then
     export USE_TESSELLATION_VERSION=true
 fi
 
+if [ -z $USE_TEST_METAGRAPH ]; then
+    export USE_TEST_METAGRAPH=false
+fi
+
+# Explicitly set TESSELLATION_VERSION based on the project's version
+if [ -z "$TESSELLATION_VERSION" ]; then
+    if [ -n "$RELEASE_TAG" ]; then
+        export TESSELLATION_VERSION="${RELEASE_TAG#v}"
+    else
+        export TESSELLATION_VERSION="99.99.99-SNAPSHOT"
+    fi
+    echo "Setting TESSELLATION_VERSION=$TESSELLATION_VERSION"
+fi
 
 
 echo "processing args: $@"
@@ -212,6 +229,9 @@ for arg in "$@"; do
     --skip-metagraph-assembly)
       export SKIP_METAGRAPH_ASSEMBLY=true
       ;;
+    --use-test-metagraph)
+      export USE_TEST_METAGRAPH=true
+      ;;
     *)
       echo "Unknown argument: $arg"
       exit 1
@@ -230,7 +250,13 @@ echo "BUILD_ONLY: $BUILD_ONLY"
 echo "RELEASE_TAG: $RELEASE_TAG"
 
 
-if [ "$METAGRAPH" = ".github/templates/metagraphs/project_template" ]; then
+# Set more complex defaults below
+
+if [ "$USE_TEST_METAGRAPH" = "true" ] && [ -z "$METAGRAPH" ]; then
+    export METAGRAPH=".github/templates/metagraphs/project_template"
+fi
+
+if [ "$METAGRAPH" = ".github/templates/metagraphs/project_template" ] && [ -z "$SKIP_METAGRAPH_ASSEMBLY" ]; then
     export SKIP_METAGRAPH_ASSEMBLY=true
 fi
 

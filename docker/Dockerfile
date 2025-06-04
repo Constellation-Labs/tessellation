@@ -9,6 +9,7 @@ RUN mkdir -p /tessellation/jars
 
 COPY docker/jars/keytool.jar /tessellation/jars/keytool.jar
 COPY docker/jars/wallet.jar /tessellation/jars/wallet.jar
+
 COPY docker/jars/gl1.jar /tessellation/jars/gl1.jar
 COPY docker/jars/gl0.jar /tessellation/jars/gl0.jar
 

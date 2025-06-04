@@ -97,4 +97,56 @@ if [ -n "$CL_DOCKER_SEEDLIST" ]; then
   export RUN_COMMAND="$RUN_COMMAND --seedlist /tessellation/seedlist"
 fi
 
-exec java "$CL_DOCKER_JAVA_OPTS" -jar "/tessellation/jars/$ID.jar" $RUN_COMMAND
+export GENESIS_SNAPSHOT_ARG="";
+export RUN_MAIN="true";
+
+if [ "$ID" == "ml0" ] && [ "$CL_DOCKER_GENESIS" == "true" ] && [ -n "$CL_GENESIS_FILE" ]; then
+  export RUN_COMMAND="$RUN_COMMAND /tessellation/data/genesis.snapshot"
+
+  if [ -n "$CL_ML0_GENERATE_GENESIS" ]; then
+    cur_dir=$(pwd)
+    cd /tessellation/data;
+    ml0_log_file="/tessellation/logs/ml0-create-genesis.log"
+    touch $ml0_log_file
+    java -jar /tessellation/jars/ml0.jar create-genesis $CL_GENESIS_FILE > $ml0_log_file 2>&1 &
+    CREATE_GENESIS_PID=$!
+
+    # Wait for genesis.snapshot to be created
+    MAX_WAIT_TIME=60 
+    elapsed_time=0
+    while [ ! -f "genesis.snapshot" ]; do
+      sleep 1
+      elapsed_time=$((elapsed_time + 1))
+      if [ "$elapsed_time" -ge "$MAX_WAIT_TIME" ]; then
+        echo "Error: genesis.snapshot was not created within $MAX_WAIT_TIME seconds."
+        exit 1
+      fi
+    done
+    echo "genesis.snapshot created"
+    kill -9 $CREATE_GENESIS_PID
+    cd $cur_dir
+    export RUN_MAIN="false"
+  fi
+fi
+
+export JAR_PATH="/tessellation/jars/$ID.jar"
+
+echo "JAR_PATH: $JAR_PATH"
+
+if [ ! -f "$JAR_PATH" ]; then
+  echo "Error: $JAR_PATH does not exist"
+  exit 1
+fi
+
+if [ "$RUN_MAIN" == "true" ]; then
+  echo "Running $RUN_COMMAND"
+  RUN_LOG_FILE="/tessellation/logs/$ID-run.log"
+  java "$CL_DOCKER_JAVA_OPTS" -jar "$JAR_PATH" $RUN_COMMAND 2>&1 | tee -a $RUN_LOG_FILE
+
+  # Capture Java’s exit code (PIPESTATUS[0] is Java; [1] would be tee)
+  exit_code=${PIPESTATUS[0]}
+  exit $exit_code
+  # exec java "$CL_DOCKER_JAVA_OPTS" -jar "/tessellation/jars/$ID.jar" $RUN_COMMAND > $RUN_LOG_FILE 2>&1
+else 
+  echo "Skipping run-main"
+fi

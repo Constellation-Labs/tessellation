@@ -48,6 +48,7 @@ docker build -t constellationnetwork/tessellation:$TESSELLATION_DOCKER_VERSION -
 source ./docker/bin/node-key-env-setup.sh
 source ./docker/bin/docker-env-setup.sh
 
+
 echo "------------------------------------------------"
 echo "All deployment configurations now generated, proceeding to run cluster"
 echo "------------------------------------------------"
@@ -70,6 +71,13 @@ docker network create \
 
 for i in 0 1 2; do
   cd ./nodes/$i/
+
+
+  docker compose down --remove-orphans --volumes > /dev/null 2>&1 || true;
+  cp ../../docker/docker-compose.yaml . ; \
+  cp ../../docker/docker-compose.test.yaml . ; \
+  cp ../../docker/docker-compose.volumes.yaml . ; \
+  cp ../../docker/docker-compose.metagraph.yaml . ;
 
   export PROFILE_GL0_ARG=""
   if [ "$i" -lt "$NUM_GL0_NODES" ]; then
@@ -99,21 +107,27 @@ for i in 0 1 2; do
   metagraph_args=""
 
   if [ -n "$METAGRAPH" ]; then
-    cp ../../docker/docker-compose.metagraphs.yaml . ; \
-    metagraph_args="-f docker-compose.metagraphs.yaml $PROFILE_ML0_ARG $PROFILE_ML1_ARG $PROFILE_DL1_ARG"
+    metagraph_args="-f docker-compose.metagraph.yaml $PROFILE_ML0_ARG $PROFILE_ML1_ARG $PROFILE_DL1_ARG"
+
+    if [ ! -f "./genesis.snapshot" ]; then
+      cp .env .env.bak
+      echo "CL_ML0_GENERATE_GENESIS=true" >> .env
+      docker compose -f docker-compose.metagraph.yaml up
+      cp ml0-data/genesis.snapshot .
+      cp ml0-data/genesis.address .
+      mv .env.bak .env
+      export METAGRAPH_ID=$(head -n 1 genesis.address)
+      echo "METAGRAPH_ID=$METAGRAPH_ID" >> .env
+    fi
   fi
+
+  docker_additional_args="$metagraph_args $PROFILE_GL0_ARG $PROFILE_GL1_ARG"
+  echo "docker_additional_args: $docker_additional_args"
   
-  docker compose down --remove-orphans --volumes > /dev/null 2>&1 || true; \
-  cp ../../docker/docker-compose.yaml . ; \
-  cp ../../docker/docker-compose.test.yaml . ; \
-  cp ../../docker/docker-compose.volumes.yaml . ; \
-  cp ../../docker/docker-compose.metagraphs.yaml . ; \
   docker compose -f docker-compose.test.yaml \
   -f docker-compose.yaml \
   -f docker-compose.volumes.yaml \
-  $metagraph_args \
-  $PROFILE_GL0_ARG \
-  $PROFILE_GL1_ARG \
+  $docker_additional_args \
   up -d
   cd ../../
 done
@@ -130,7 +144,7 @@ cd $PROJECT_ROOT/.github/action_scripts
 echo "Installing Node.js dependencies..."
 npm i @stardust-collective/dag4 js-sha256 axios brotli zod
 
-source ../../docker/bin/health-check.sh
+source ../../docker/bin/cluster-health-check.sh
 verify_healthy
 show_time "Cluster became healthy"
 
