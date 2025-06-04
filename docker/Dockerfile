@@ -18,8 +18,11 @@ COPY docker/jars/dl1.jar /tessellation/jars/dl1.jar
 COPY docker/jars/ml1.jar /tessellation/jars/ml1.jar
 
 COPY docker/entrypoint.sh /tessellation/entrypoint.sh
+COPY docker/internal-health-check.sh /tessellation/internal-health-check.sh
+COPY docker/health-check-inner.sh /tessellation/health-check-inner.sh
 RUN chmod +x /tessellation/entrypoint.sh
-
+RUN chmod +x /tessellation/internal-health-check.sh
+RUN chmod +x /tessellation/health-check-inner.sh
 WORKDIR /tessellation
 
 ENV CL_KEYSTORE=/tessellation/key.p12

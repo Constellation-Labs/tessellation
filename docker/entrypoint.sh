@@ -21,14 +21,25 @@ EOF
         echo "Payload:"
         cat "$payload_file"
         # send it via curl
-        curl -X POST -H 'Content-Type: application/json' \
+        response=$(curl -X POST -H 'Content-Type: application/json' \
              --data @"$payload_file" \
-             http://localhost:"$CL_DOCKER_INTERNAL_L0_CLI"/cluster/join || true
+             http://localhost:"$CL_DOCKER_JOIN_CLI_PORT"/cluster/join || echo "failure")
+        echo "Join response: $response"
+        if [ "$response" == "failure" ]; then
+          echo "Join failed, retrying..."
+        elif [ "$response" == *"does not allow for joining the cluster"* ]; then
+          echo "Join completed"
+          break
+        else
+          echo "Join not obvious failure, retrying..."
+        fi
       sleep "$JOIN_RETRY_DELAY"
     done
   fi
   echo "Join complete"
 }
+
+join_process &
 
 if [ -z "$CL_PASSWORD" ]; then
   echo "No password provided, using default password"
@@ -61,7 +72,7 @@ if [ -z "$CL_EXTERNAL_IP" ]; then
   export CL_EXTERNAL_IP=${NET_PREFIX}.${CL_DOCKER_TEST_NETWORK_SUFFIX:-1}${CONTAINER_OFFSET:-0}
 fi
 
-echo "Using external IP for DAG L1: $CL_EXTERNAL_IP"
+echo "Using external IP $CL_EXTERNAL_IP for service $ID"
 
 if [ -z "$CL_L0_PEER_ID" ]; then
   echo "No L0 peer ID provided, assume we're connecting to our own L0 validator, generating id from jar"
@@ -73,8 +84,8 @@ if [ -z "$CL_GLOBAL_L0_PEER_ID" ]; then
   export $CL_GLOBAL_L0_PEER_ID=$(java -jar /tessellation/jars/wallet.jar show-id)
 fi
 
-echo "Using L0 peer HTTP host: $CL_L0_PEER_HOST"
-echo "Using L0 peer HTTP port: $CL_L0_PEER_PORT"
+echo "Using L0 peer HTTP host: $CL_L0_PEER_HTTP_HOST"
+echo "Using L0 peer HTTP port: $CL_L0_PEER_HTTP_PORT"
 echo "Using L0 peer id: $CL_L0_PEER_ID"
 
 export L0="false"
@@ -141,12 +152,13 @@ fi
 if [ "$RUN_MAIN" == "true" ]; then
   echo "Running $RUN_COMMAND"
   RUN_LOG_FILE="/tessellation/logs/$ID-run.log"
-  java "$CL_DOCKER_JAVA_OPTS" -jar "$JAR_PATH" $RUN_COMMAND 2>&1 | tee -a $RUN_LOG_FILE
-
+  echo "Running command   java $CL_DOCKER_JAVA_OPTS -jar "$JAR_PATH" $RUN_COMMAND 2>&1 | tee -a $RUN_LOG_FILE "
+  java $CL_DOCKER_JAVA_OPTS -jar "$JAR_PATH" $RUN_COMMAND 2>&1 | tee -a $RUN_LOG_FILE
   # Capture Java’s exit code (PIPESTATUS[0] is Java; [1] would be tee)
   exit_code=${PIPESTATUS[0]}
   exit $exit_code
-  # exec java "$CL_DOCKER_JAVA_OPTS" -jar "/tessellation/jars/$ID.jar" $RUN_COMMAND > $RUN_LOG_FILE 2>&1
+  # > $RUN_LOG_FILE 2>&1
+  # exec java $CL_DOCKER_JAVA_OPTS -jar "$JAR_PATH" $RUN_COMMAND
 else 
   echo "Skipping run-main"
 fi

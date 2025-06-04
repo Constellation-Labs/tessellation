@@ -144,6 +144,12 @@ cd $PROJECT_ROOT/.github/action_scripts
 echo "Installing Node.js dependencies..."
 npm i @stardust-collective/dag4 js-sha256 axios brotli zod
 
+sleep 10
+
+docker logs gl0-0
+
+echo "GL0-0 logs above, now continuing with cluster health check."
+
 source ../../docker/bin/cluster-health-check.sh
 verify_healthy
 show_time "Cluster became healthy"
@@ -155,5 +161,6 @@ echo "------------------------------------------------"
 echo "End-to-end tests completed"
 echo "------------------------------------------------"
 
-# Return to the original directory
+# Return to the origina
+l directory
 cd "$SCRIPT_DIR/../../"

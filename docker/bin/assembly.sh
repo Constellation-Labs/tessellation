@@ -48,21 +48,20 @@ fi
 
 show_time "SBT Assembly"
 
+rm -rf ./docker/jars/ > /dev/null 2>&1 || true;
 mkdir -p ./docker/jars/
 
 for module in "dag-l0" "dag-l1" "keytool" "wallet"
 do
   path=$(ls -1t modules/${module}/target/scala-2.13/tessellation-${module}-assembly*.jar | head -n1)
-  cp $path ./nodes/${module}.jar
   cp $path ./docker/jars/${module}.jar
+  cp $path ./nodes/${module}.jar
 done
 
 mv ./docker/jars/dag-l0.jar ./docker/jars/gl0.jar
+mv ./nodes/dag-l0.jar ./nodes/gl0.jar
 mv ./docker/jars/dag-l1.jar ./docker/jars/gl1.jar
-
-touch ./docker/jars/ml0.jar
-touch ./docker/jars/ml1.jar
-touch ./docker/jars/dl1.jar
+mv ./nodes/dag-l1.jar ./nodes/gl1.jar
 
 
 if [ -n "$PUBLISH" ]; then
@@ -71,14 +70,11 @@ if [ -n "$PUBLISH" ]; then
 fi
 
 
-
-
 assemble_all_metagraph() {
   sbt currencyL0/assembly currencyL1/assembly dataL1/assembly
 }
 
 
-show_time "Starting metagraph assembly"
 
 if [ -z "$METAGRAPH" ]; then
   touch ./docker/jars/ml0.jar
