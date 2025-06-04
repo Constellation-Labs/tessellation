@@ -78,9 +78,6 @@ if [ -z "$BUILD_ONLY" ]; then
     export BUILD_ONLY=false
 fi
 
-if [ -z "$SKIP_METAGRAPH_ASSEMBLY" ]; then
-    export SKIP_METAGRAPH_ASSEMBLY=false
-fi
 
 # if [ -z "$METAGRAPH" ]; then
 #     export METAGRAPH=$PROJECT_ROOT/.github/templates/metagraphs/project_template
@@ -232,6 +229,9 @@ for arg in "$@"; do
     --use-test-metagraph)
       export USE_TEST_METAGRAPH=true
       ;;
+    --up)
+      export DOCKER_UP=true
+      ;;
     *)
       echo "Unknown argument: $arg"
       exit 1
@@ -260,3 +260,9 @@ if [ "$METAGRAPH" = ".github/templates/metagraphs/project_template" ] && [ -z "$
     export SKIP_METAGRAPH_ASSEMBLY=true
 fi
 
+
+# Defaults which must be declared after, such that the complex ones won't override them
+
+if [ -z "$SKIP_METAGRAPH_ASSEMBLY" ]; then
+    export SKIP_METAGRAPH_ASSEMBLY=false
+fi

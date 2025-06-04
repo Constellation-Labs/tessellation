@@ -31,8 +31,8 @@ services:
       - ${CL_GENESIS_FILE:-/dev/null}:/tessellation/genesis.csv:ro
       # If using docker volumes: gl0-data:/tessellation/data
       # If using host volumes: default to a path like ./l0-data
-      - ${CL_DOCKER_ML0_DATA:-ml0-data}:/tessellation/data
-      - ${CL_DOCKER_ML0_LOGS:-ml0-logs}:/tessellation/logs
+      - ${CL_DOCKER_ML0_DATA:-./ml0-data}:/tessellation/data
+      - ${CL_DOCKER_ML0_LOGS:-./ml0-logs}:/tessellation/logs
     healthcheck:
       test: ["CMD", "/tessellation/internal-health-check.sh"]
       interval: 3s
@@ -72,7 +72,8 @@ services:
       - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12:ro
       # If using host volumes, default to a path like ./l1-data:
       # If using a named volume, prefer instead gl1-data:/tessellation/data
-      - ${CL_ML1_DATA_MOUNT_PATH:-ml1-data}:/tessellation/data
+      - ${CL_DOCKER_ML1_DATA:-./ml1-data}:/tessellation/data
+      - ${CL_DOCKER_ML1_LOGS:-./ml1-logs}:/tessellation/logs
       - ${CL_DOCKER_SEEDLIST:-/dev/null}:/tessellation/seedlist:ro
       - ${CL_DOCKER_PRIORITY_SEEDLIST:-/dev/null}:/tessellation/priority-seedlist:ro
     healthcheck:

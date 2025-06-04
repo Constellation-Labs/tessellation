@@ -24,8 +24,7 @@ fi
 
 
 ssh $REMOTE_DESTINATION_NODE "bash -c \"docker exec -it gl0 bash -c 'curl -X POST http://localhost:9002/cluster/leave'\"" || true;
-ssh $REMOTE_DESTINATION_NODE "bash -c \"mkdir -p /root/projects\""
-ssh $REMOTE_DESTINATION_NODE "bash -c \"mkdir -p /root/docker\""
+ssh $REMOTE_DESTINATION_NODE "bash -c \"rm -rf /root/docker/mainnet-seedlist; rm /root/bootstrap.sh; rm /root/.env.remote; mkdir -p /root/projects; mkdir -p /root/docker; \""
 
 wget https://github.com/Constellation-Labs/tessellation/releases/download/$RELEASE_TAG/mainnet-seedlist -O mainnet-seedlist
 scp mainnet-seedlist $REMOTE_DESTINATION_NODE:/root/docker/mainnet-seedlist
@@ -43,6 +42,7 @@ echo "Rsync command  $PROJECT_ROOT $REMOTE_DESTINATION_NODE:/root/projects/tesse
 cat > bootstrap.sh <<EOF
 apt install -y just
 rm -rf /root/docker/l0/logs || true;
+rm -rf /root/docker/l0/data || true;
 mkdir -p /root/docker/l0/logs
 mkdir -p /root/docker/l0/data
 cd ~/projects
@@ -71,8 +71,8 @@ CL_APP_ENV=mainnet
 CL_KEYSTORE_MOUNT_PATH="/root/key.p12"
 CL_DOCKER_BIND_INTERFACE="0.0.0.0:"
 CL_DOCKER_GL0_JOIN=true
-CL_DAG_L0_JOIN_IP=52.53.46.33
-CL_DAG_L0_JOIN_ID=e0c1ee6ec43510f0e16d2969a7a7c074a5c8cdb477c074fe9c32a9aad8cbc8ff1dff60bb81923e0db437d2686a9b65b86c403e6a21fa32b6acc4e61be4d70925
+CL_DOCKER_GL0_JOIN_IP=52.53.46.33
+CL_DOCKER_GL0_JOIN_ID=e0c1ee6ec43510f0e16d2969a7a7c074a5c8cdb477c074fe9c32a9aad8cbc8ff1dff60bb81923e0db437d2686a9b65b86c403e6a21fa32b6acc4e61be4d70925
 CL_DOCKER_GL0_JOIN_PORT=9001
 CL_DOCKER_GL0_DATA=/root/docker/l0/data
 CL_DOCKER_CLI_BIND_INTERFACE="127.0.0.1:"
@@ -82,12 +82,12 @@ CL_JAR_HASH=$JAR_HASH
 CL_DOCKER_JAVA_OPTS="-Xms1024M -Xmx12G -Xss256K"
 CL_DOCKER_SEEDLIST=/root/docker/mainnet-seedlist
 CL_DOCKER_GL0_LOGS=/root/docker/l0/logs
-CL_DOCKER_INTERNAL_L0_CLI=9002
+CL_DOCKER_INTERNAL_GL0_CLI=9002
 CL_DOCKER_GL0_JOIN_RETRIES=1
 CL_DOCKER_GL0_JOIN_RETRY_DELAY=100
 EOF
 
-#  -Dcats.effect.tracing.mode=full -Dcats.effect.tracing.buffer.size=1024 -Dcats.effect.tracing.exceptions.enhanced=true"
+#  -Dcats.effect.tracing.mode=full -Dcats.effect.tracing.buffer.size=512 -Dcats.effect.tracing.exceptions.enhanced=true"
 
 scp .env.remote $REMOTE_DESTINATION_NODE:/root/.env.remote
 rm .env.remote

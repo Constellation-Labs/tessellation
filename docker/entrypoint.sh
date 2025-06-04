@@ -81,7 +81,7 @@ fi
 
 if [ -z "$CL_GLOBAL_L0_PEER_ID" ]; then
   echo "No CL_GLOBAL_L0_PEER_ID peer ID provided, assume we're connecting to our own L0 validator, generating id from jar"
-  export $CL_GLOBAL_L0_PEER_ID=$(java -jar /tessellation/jars/wallet.jar show-id)
+  export CL_GLOBAL_L0_PEER_ID=$(java -jar /tessellation/jars/wallet.jar show-id)
 fi
 
 echo "Using L0 peer HTTP host: $CL_L0_PEER_HTTP_HOST"

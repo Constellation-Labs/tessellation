@@ -55,7 +55,7 @@ echo "------------------------------------------------"
 
 
 if [ "$BUILD_ONLY" = "true" ]; then
-  echo "Build only mode, skipping end-to-end tests"
+  echo "Build only mode, skipping container startup and end-to-end tests"
   exit 0
 fi
 
@@ -72,12 +72,12 @@ docker network create \
 for i in 0 1 2; do
   cd ./nodes/$i/
 
-
   docker compose down --remove-orphans --volumes > /dev/null 2>&1 || true;
   cp ../../docker/docker-compose.yaml . ; \
   cp ../../docker/docker-compose.test.yaml . ; \
   cp ../../docker/docker-compose.volumes.yaml . ; \
   cp ../../docker/docker-compose.metagraph.yaml . ;
+  cp ../../docker/docker-compose.metagraph-test.yaml . ;
 
   export PROFILE_GL0_ARG=""
   if [ "$i" -lt "$NUM_GL0_NODES" ]; then
@@ -107,12 +107,13 @@ for i in 0 1 2; do
   metagraph_args=""
 
   if [ -n "$METAGRAPH" ]; then
-    metagraph_args="-f docker-compose.metagraph.yaml $PROFILE_ML0_ARG $PROFILE_ML1_ARG $PROFILE_DL1_ARG"
-
+    metagraph_args="-f docker-compose.metagraph.yaml -f docker-compose.metagraph-test.yaml $PROFILE_ML0_ARG $PROFILE_ML1_ARG $PROFILE_DL1_ARG"
+    echo "Setting metagraph args to $metagraph_args"
     if [ ! -f "./genesis.snapshot" ]; then
+      echo "Generating metagraph genesis snapshot"
       cp .env .env.bak
       echo "CL_ML0_GENERATE_GENESIS=true" >> .env
-      docker compose -f docker-compose.metagraph.yaml up
+      docker compose -f docker-compose.metagraph.yaml -f docker-compose.metagraph-test.yaml --profile ml0 up
       cp ml0-data/genesis.snapshot .
       cp ml0-data/genesis.address .
       mv .env.bak .env
@@ -134,6 +135,14 @@ done
 
 
 show_time "Started docker compose"
+
+
+
+if [ "$DOCKER_UP" = "true" ]; then
+  echo "Docker up mode, skipping end-to-end tests"
+  exit 0
+fi
+
 
 echo "------------------------------------------------"
 echo "Running end-to-end tests from .github/action_scripts"

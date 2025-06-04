@@ -9,14 +9,21 @@ default:
 _check_deps:
 	@bash docker/bin/install_dependencies.sh
 
-# Main test command to run the Tessellation node setup
-# Example: `just test --skip-assembly` to restart without assembling.
-# Example: `just test --l1` to re-assemble L0 and L1.
-# Example: `just test` to re-assemble L0 only.
+# Main test command recompile GL0 & setup docker environment `just test --skip-assembly` to restart without assembling.
 test *extra_args:
 	@just _check_deps
 	@bash docker/bin/compose-runner.sh {{ extra_args }}
 
+# Bring up the default test environment, starting docker images but without running any tests or checks
+up *extra_args:
+	@just _check_deps
+	@bash docker/bin/compose-runner.sh --up {{ extra_args }}
+
+# Destroy test environment, alias for clean-docker
+down *extra_args:
+	@just clean-docker
+
+# Build the docker images and test environment, without running any containers
 build *extra_args:
 	@just _check_deps
 	@bash docker/bin/compose-runner.sh --build {{ extra_args }}
@@ -32,6 +39,7 @@ clean-configs:
 
 clean:
 	@bash sbt clean
+	@bash cd .github/templates/metagraphs/project_template && sbt clean
 	@just clean-configs
 	@just clean-docker
 

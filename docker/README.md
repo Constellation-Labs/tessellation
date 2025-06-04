@@ -21,7 +21,21 @@ main `compose-runner.sh` script. Below are listed the most common commands you m
 
 This assembles L0 by default using the auto-incremental recompilation cache, and if no jars 
 are found, it will build all of them with sbt assembly, and invoke all tests that only require the gl0 / dag-l0. By default, this test will NOT stop docker containers after running, nor will it cleanup 
-the environment afterwards. 
+the environment afterwards. By default, this will kill all docker containers / volumes with names defined in here, so it 
+requires exclusive access to container names (unless alternatively configured.)
+
+`just up` 
+
+This runs all the commands required to setup and start all relevant containers (in common with `just test`), but 
+skips the cluster start checks and end to end tests.
+
+`just down`
+
+Cleanup all docker containers / artifacts created by `just up`
+
+`just build`
+
+Same as `up`, except skips the container start.
 
 `just test --cleanup-docker-at-end` 
 
@@ -30,6 +44,16 @@ Will run same options as before, but enforce a cleanup / terminate containers at
 `just test --use-test-metagraph`
 
 The same as the prior command, except this will use the locally defined template metagraph and invoke all tests, including the tests that require the 'default' test metagraph.
+
+`just test --metagraph=./your-path-to-a-different-metagraph`
+
+Rather than using a test metagraph, this uses a real metagraph repository located at a local directory. 
+By default, this will assemble the ML0, please use `--ml1` to also include metagraph layer 1, and `--dl1` to assemble data layer 1. By default, if any jars are missing, this will assemble them all. Additionally, 
+if making changes to tessellation and a metagraph at the same time, please use `--publish` to enforce 
+locally publishing the required artifacts, or if you want to compile yourself with whatever options just use
+
+`just test --skip-assembly --metagraph=../ded --skip-metagraph-assembly`
+
 
 `just test --skip-assembly`
 
@@ -55,8 +79,7 @@ This cleans all script / docker related local artifacts
 
 `just build --version v3.2.0`
 
-This will build a docker image off of your current directory, defaulting to only recompiling the L0 assembly 
-unless all other jars are not found, in which case it will recompile all.
+This will build a docker image off of your current directory, setting the version to a custom value.
 
 `just debug-main`
 
