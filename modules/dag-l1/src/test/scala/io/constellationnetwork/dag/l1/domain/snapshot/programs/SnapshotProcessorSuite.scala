@@ -148,7 +148,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
               currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager
                 .make(
-                  SnapshotOrdinal.MinValue,
+                  FieldsAddedOrdinals(Map.empty, Map.empty),
+                Dev,
                   LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(20), PosInt(10)),
                   BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
                   TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),

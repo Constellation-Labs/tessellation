@@ -2,6 +2,7 @@ package io.constellationnetwork.currency.http
 
 import cats.data.NonEmptyList
 import cats.effect.Async
+import cats.implicits.toFunctorOps
 
 import io.constellationnetwork.currency.dataApplication.DataTransaction.DataTransactions
 import io.constellationnetwork.currency.dataApplication._
@@ -11,6 +12,8 @@ import io.constellationnetwork.security.signature.Signed
 import derevo.circe.magnolia.decoder
 import derevo.derive
 import io.circe.Decoder
+import io.circe.generic.semiauto.deriveDecoder
+import io.circe.parser.decode
 import io.circe.shapes._
 import org.http4s._
 import org.http4s.circe._
@@ -20,23 +23,37 @@ import shapeless.syntax.singleton._
 
 object Codecs {
 
-  def feeTransactionRequestDecoder[F[_]: Async, D <: DataUpdate](
+  def dataTransactionsDecoder[F[_]: Async, D <: DataUpdate](
     implicit dataUpdateDecoder: Decoder[D],
     feeTransactionDecoder: Decoder[FeeTransaction]
-  ): EntityDecoder[F, DataTransactions] = {
-    @derive(decoder)
+  ) = {
+
     case class DataTransactionRequest(
       data: Signed[D],
       fee: Option[Signed[FeeTransaction]]
     )
+    implicit val dataTransactionRequestDecoder: Decoder[DataTransactionRequest] =
+      deriveDecoder[DataTransactionRequest]
 
-    jsonOf[F, DataTransactionRequest].flatMapR { req =>
-      val signedTransactions: List[Signed[DataTransaction]] = List(req.data) ++ req.fee.toList
-      NonEmptyList.fromList(signedTransactions) match {
-        case Some(nonEmptyTransactions) =>
-          DecodeResult.successT(nonEmptyTransactions)
-        case None =>
-          DecodeResult.failureT(InvalidMessageBodyFailure("Empty list of transactions"))
+    EntityDecoder.text[F].flatMapR { body =>
+      decode[DataTransactionRequest](body) match {
+        case Right(req) =>
+          val transactions = req.data :: req.fee.toList.map(_.widen[DataTransaction])
+          NonEmptyList.fromList(transactions) match {
+            case Some(nel) => DecodeResult.successT[F, DataTransactions](nel)
+            case None =>
+              DecodeResult.failureT[F, DataTransactions](
+                InvalidMessageBodyFailure("No transactions found in request")
+              )
+          }
+
+        case Left(circeError) =>
+          DecodeResult.failureT[F, DataTransactions](
+            MalformedMessageBodyFailure(
+              s"JSON decode failed: ${circeError.getMessage}",
+              Some(circeError)
+            )
+          )
       }
     }
   }
