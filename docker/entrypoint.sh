@@ -4,14 +4,14 @@ set -e
 join_process() {
   JOIN_RETRIES=${CL_DOCKER_JOIN_RETRIES:-10}
   JOIN_RETRY_DELAY=${CL_DOCKER_JOIN_DELAY:-10}
-  DELAY=${CL_DOCKER_JOIN_DELAY_INITIAL:-30}
+  JOIN_INITIAL_DELAY=${CL_DOCKER_JOIN_INITIAL_DELAY:-30}
   # write payload to a temporary file
   payload_file="join-payload.json"
   cat > "$payload_file" <<EOF
 {"id":"$CL_DOCKER_JOIN_ID","ip":"$CL_DOCKER_JOIN_IP","p2pPort":$CL_DOCKER_JOIN_PORT}
 EOF
   if [ "$CL_DOCKER_JOIN" = "true" ]; then
-    sleep $DELAY;
+    sleep $JOIN_INITIAL_DELAY;
     for i in $(seq 1 $JOIN_RETRIES); do
         echo "Joining cluster (attempt $i)"
         echo "Join id: $CL_DOCKER_JOIN_ID"

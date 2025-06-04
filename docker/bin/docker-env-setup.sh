@@ -155,9 +155,9 @@ for i in 0 1 2; do
   echo "CL_DOCKER_INTERNAL_DL1_P2P=${DL1_PORT}1" >> .env
   echo "CL_DOCKER_INTERNAL_DL1_CLI=${DL1_PORT}2" >> .env
 
-  echo "CL_DOCKER_GL1_JOIN_DELAY=$((i*10 + 20))" >> .env
-  echo "CL_DOCKER_DL1_JOIN_DELAY=$((i*10 + 20))" >> .env
-  echo "CL_DOCKER_ML1_JOIN_DELAY=$((i*10 + 20))" >> .env
+  echo "CL_DOCKER_GL1_JOIN_INITIAL_DELAY=$((i*12 + 30))" >> .env
+  echo "CL_DOCKER_DL1_JOIN_INITIAL_DELAY=$((i*12 + 30))" >> .env
+  echo "CL_DOCKER_ML1_JOIN_INITIAL_DELAY=$((i*12 + 30))" >> .env
 
   cd ../../
 done
