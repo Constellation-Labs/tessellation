@@ -10,7 +10,7 @@ import io.constellationnetwork.env.AppEnvironment.Dev
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.node.shared.config.types.{AddressesConfig, DelegatedStakingConfig, LastGlobalSnapshotsSyncConfig}
+import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
@@ -59,7 +59,8 @@ object CurrencySnapshotProcessorSuite extends SimpleIOSuite with TransactionGene
           )
           currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager
             .make(
-              SnapshotOrdinal.MinValue,
+              FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty),
+              Dev,
               LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(20), PosInt(50)),
               BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
               TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),

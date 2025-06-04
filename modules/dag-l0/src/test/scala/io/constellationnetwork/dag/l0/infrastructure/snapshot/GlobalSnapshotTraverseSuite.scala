@@ -301,7 +301,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     for {
       validationErrorStorage <- CurrencySnapshotEventValidationErrorStorage.make(TestValidationErrorStorageMaxSize)
       currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager.make(
-        SnapshotOrdinal.MinValue,
+        FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty),
+        Dev,
         LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10), PosInt(10)),
         BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, txHasher),
         TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
@@ -345,7 +346,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       )
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager
         .make[IO](
-          SnapshotOrdinal.MinValue,
+          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty),
+          Dev,
           blockAcceptanceManager,
           allowSpendBlockAcceptanceManager,
           tokenLockBlockAcceptanceManager,
@@ -391,6 +393,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           SortedMap.from(balances),
           SortedMap.empty,
           SortedMap.empty,
+          Some(SortedMap.empty),
+          Some(SortedMap.empty),
           Some(SortedMap.empty),
           Some(SortedMap.empty),
           Some(SortedMap.empty),

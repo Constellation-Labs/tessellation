@@ -11,7 +11,8 @@ import scala.collection.mutable
 import io.constellationnetwork.currency.dataApplication.FeeTransaction
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.currency.schema.globalSnapshotSync.{GlobalSnapshotSync, GlobalSyncView}
-import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
+import io.constellationnetwork.env.AppEnvironment
+import io.constellationnetwork.node.shared.config.types.{FieldsAddedOrdinals, LastGlobalSnapshotsSyncConfig}
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.swap.block.{
   AllowSpendBlockAcceptanceContext,
@@ -104,7 +105,8 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
 
 object CurrencySnapshotAcceptanceManager {
   def make[F[_]: Async: Parallel](
-    tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
+    fieldsAddedOrdinals: FieldsAddedOrdinals,
+    environment: AppEnvironment,
     lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
     blockAcceptanceManager: BlockAcceptanceManager[F],
     tokenLockBlockAcceptanceManager: TokenLockBlockAcceptanceManager[F],
@@ -118,7 +120,8 @@ object CurrencySnapshotAcceptanceManager {
       .of[F, Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]](SortedMap.empty)
       .map(
         make[F](
-          tessellation3MigrationStartingOrdinal,
+          fieldsAddedOrdinals,
+          environment,
           lastGlobalSnapshotsSyncConfig,
           blockAcceptanceManager,
           tokenLockBlockAcceptanceManager,
@@ -132,7 +135,8 @@ object CurrencySnapshotAcceptanceManager {
       )
 
   def make[F[_]: Async: Parallel](
-    tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
+    fieldsAddedOrdinals: FieldsAddedOrdinals,
+    environment: AppEnvironment,
     lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
     blockAcceptanceManager: BlockAcceptanceManager[F],
     tokenLockBlockAcceptanceManager: TokenLockBlockAcceptanceManager[F],
@@ -169,6 +173,11 @@ object CurrencySnapshotAcceptanceManager {
       tokenLockInitialTxRef <- TokenLockReference.emptyCurrency(lastSnapshotContext.address)
       initialAllowSpendRef <- AllowSpendReference.emptyCurrency(lastSnapshotContext.address)
       metagraphId = lastSnapshotContext.address
+
+      checkSyncGlobalSnapshotField = fieldsAddedOrdinals.checkSyncGlobalSnapshotField
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
+      tessellation3MigrationStartingOrdinal = fieldsAddedOrdinals.tessellation3Migration
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
 
       acceptanceBlocksResult <- acceptBlocks(
         blocksForAcceptance,
@@ -245,7 +254,7 @@ object CurrencySnapshotAcceptanceManager {
         .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value - lastGlobalSnapshotsSyncConfig.syncOffset) }
 
       lastGlobalSnapshots <- getLastNGlobalSnapshots
-      _ <- logger.info(s"Metagraph $metagraphId snapshot $snapshotOrdinal - maybeSnapshotOrdinalSync: $maybeSnapshotOrdinalSync")
+      _ <- logger.debug(s"Metagraph $metagraphId snapshot $snapshotOrdinal - maybeSnapshotOrdinalSync: $maybeSnapshotOrdinalSync")
 
       maybeLastGlobalSnapshot <- maybeSnapshotOrdinalSync match {
         case Some(ordinal) =>
@@ -421,10 +430,14 @@ object CurrencySnapshotAcceptanceManager {
       updatedActiveTokenLocksCleaned = updatedActiveTokenLocks.filter { case (_, tokenLocks) => tokenLocks.nonEmpty }
 
       snapshotOrdinalToCheckFields =
-        if (lastGlobalSnapshotOrdinal === SnapshotOrdinal.MinValue) {
-          lastGlobalSnapshots.lastOption.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue)
-        } else {
+        if (lastGlobalSnapshotOrdinal <= checkSyncGlobalSnapshotField) {
           lastGlobalSnapshotOrdinal
+        } else {
+          val fallbackOrdinal = lastGlobalSnapshots
+            .lastOption.map(_.ordinal)
+            .getOrElse(lastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue))
+          if (lastGlobalSnapshotOrdinal === SnapshotOrdinal.MinValue) fallbackOrdinal
+          else lastGlobalSnapshotOrdinal
         }
 
       csi = CurrencySnapshotInfo(
@@ -458,7 +471,7 @@ object CurrencySnapshotAcceptanceManager {
         case _           => GlobalSyncView.empty
       }
 
-      _ <- logger.info(s"Metagraph $metagraphId snapshot $snapshotOrdinal - globalSyncView: $globalSyncView")
+      _ <- logger.debug(s"Metagraph $metagraphId snapshot $snapshotOrdinal - globalSyncView: $globalSyncView")
     } yield
       CurrencySnapshotAcceptanceResult(
         acceptanceBlocksResult,

@@ -329,6 +329,8 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
       Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
       Some(SortedMap.empty)
     )
 
