@@ -1,0 +1,1 @@
+echo "CL_EXTERNAL_IP=$(curl -4 ifconfig.me)" >> .env

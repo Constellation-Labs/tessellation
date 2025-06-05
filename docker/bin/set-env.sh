@@ -58,9 +58,73 @@ if [ -z "$DAG_L1_PORT_PREFIX" ]; then
     export DAG_L1_PORT_PREFIX=91
 fi
 
+if [ -z "$ML0_PORT_PREFIX" ]; then
+    export ML0_PORT_PREFIX=92
+fi
+
+if [ -z "$ML1_PORT_PREFIX" ]; then
+    export ML1_PORT_PREFIX=93
+fi
+
+if [ -z "$DL1_PORT_PREFIX" ]; then
+    export DL1_PORT_PREFIX=94
+fi
+
 if [ -z "$REGENERATE_TEST_KEYS" ]; then
     export REGENERATE_TEST_KEYS=false
 fi
+
+if [ -z "$BUILD_ONLY" ]; then
+    export BUILD_ONLY=false
+fi
+
+
+# if [ -z "$METAGRAPH" ]; then
+#     export METAGRAPH=$PROJECT_ROOT/.github/templates/metagraphs/project_template
+# fi
+
+if [ -z "$METAGRAPH_ML0" ]; then
+    export METAGRAPH_ML0=true
+fi
+
+if [ -z "$METAGRAPH_ML1" ]; then
+    export METAGRAPH_ML1=false
+fi
+
+if [ -z "$METAGRAPH_DL1" ]; then
+    export METAGRAPH_DL1=false
+fi
+
+if [ -z $METAGRAPH_ML0_RELATIVE_PATH ]; then
+    export METAGRAPH_ML0_RELATIVE_PATH="l0"
+fi
+
+if [ -z $METAGRAPH_ML1_RELATIVE_PATH ]; then
+    export METAGRAPH_ML1_RELATIVE_PATH="l1"
+fi
+
+if [ -z $METAGRAPH_DL1_RELATIVE_PATH ]; then
+    export METAGRAPH_DL1_RELATIVE_PATH="data_l1"
+fi
+
+if [ -z $USE_TESSELLATION_VERSION ]; then
+    export USE_TESSELLATION_VERSION=true
+fi
+
+if [ -z $USE_TEST_METAGRAPH ]; then
+    export USE_TEST_METAGRAPH=false
+fi
+
+# Explicitly set TESSELLATION_VERSION based on the project's version
+if [ -z "$TESSELLATION_VERSION" ]; then
+    if [ -n "$RELEASE_TAG" ]; then
+        export TESSELLATION_VERSION="${RELEASE_TAG#v}"
+    else
+        export TESSELLATION_VERSION="99.99.99-SNAPSHOT"
+    fi
+    echo "Setting TESSELLATION_VERSION=$TESSELLATION_VERSION"
+fi
+
 
 echo "processing args: $@"
 
@@ -97,7 +161,7 @@ for arg in "$@"; do
     --dag-l0-port-prefix=*)
       export DAG_L0_PORT_PREFIX="${arg#*=}"
       ;;
-    --dag-l1-port-prefix=*)
+    --gl1-port-prefix=*)
       export DAG_L1_PORT_PREFIX="${arg#*=}"
       ;;
     --cleanup-docker-at-end=*)
@@ -108,6 +172,60 @@ for arg in "$@"; do
       ;;
     --regenerate-test-keys)
       export REGENERATE_TEST_KEYS=true
+      ;;
+    --build)
+      export BUILD_ONLY=true
+      ;;
+    --publish)
+      export PUBLISH=true
+      ;;
+    --version=*)
+      export RELEASE_TAG="${arg#*=}"
+      ;;
+    --metagraph=*)
+      export METAGRAPH="${arg#*=}"
+      ;;
+    --ml0-path=*)
+      export METAGRAPH_ML0_RELATIVE_PATH="${arg#*=}"
+      ;;
+    --ml1-path=*)
+      export METAGRAPH_ML1_RELATIVE_PATH="${arg#*=}"
+      ;;
+    --dl1-path=*)
+      export METAGRAPH_DL1_RELATIVE_PATH="${arg#*=}"
+      ;;
+    --ml0=*)
+      export METAGRAPH_ML0=true
+      ;;
+    --ml1=*)
+      export METAGRAPH_ML1=true
+      ;;
+    --dl1=*)
+      export METAGRAPH_DL1=true
+      ;;  
+    --num-gl0=*)
+      export NUM_GL0_NODES="${arg#*=}"
+      ;;
+    --num-gl1=*)
+      export NUM_GL1_NODES="${arg#*=}"
+      ;;
+    --num-ml0=*)
+      export NUM_ML0_NODES="${arg#*=}"
+      ;;
+    --num-ml1=*)
+      export NUM_ML1_NODES="${arg#*=}"
+      ;;
+    --num-dl1=*)
+      export NUM_DL1_NODES="${arg#*=}"
+      ;;
+    --skip-metagraph-assembly)
+      export SKIP_METAGRAPH_ASSEMBLY=true
+      ;;
+    --use-test-metagraph)
+      export USE_TEST_METAGRAPH=true
+      ;;
+    --up)
+      export DOCKER_UP=true
       ;;
     *)
       echo "Unknown argument: $arg"
@@ -122,3 +240,64 @@ exit_func() {
   fi
   return 0
 }
+
+echo "BUILD_ONLY: $BUILD_ONLY"
+echo "RELEASE_TAG: $RELEASE_TAG"
+
+
+# If a specific metagraph is provided, set sensible defaults
+if [ -n "$METAGRAPH" ]; then
+  if [ -z "$NUM_GL0_NODES" ]; then
+    export NUM_GL0_NODES=1
+  fi
+  if [ -z "$NUM_GL1_NODES" ]; then
+    export NUM_GL1_NODES=3
+  fi
+  if [ -z "$NUM_ML0_NODES" ]; then
+    export NUM_ML0_NODES=1
+  fi
+  if [ -z "$NUM_ML1_NODES" ]; then
+    export NUM_ML1_NODES=3
+  fi
+  if [ -z "$NUM_DL1_NODES" ]; then
+    export NUM_DL1_NODES=3
+  fi
+fi
+
+# Set more complex defaults below
+
+if [ "$USE_TEST_METAGRAPH" = "true" ] && [ -z "$METAGRAPH" ]; then
+    export METAGRAPH=".github/templates/metagraphs/project_template"
+fi
+
+if [ "$METAGRAPH" = ".github/templates/metagraphs/project_template" ] && [ -z "$SKIP_METAGRAPH_ASSEMBLY" ]; then
+    export SKIP_METAGRAPH_ASSEMBLY=true
+fi
+
+
+# Defaults which must be declared after, such that the complex ones won't override them
+
+if [ -z "$SKIP_METAGRAPH_ASSEMBLY" ]; then
+    export SKIP_METAGRAPH_ASSEMBLY=false
+fi
+
+
+if [ -z $NUM_GL0_NODES ]; then
+    export NUM_GL0_NODES=3
+fi
+
+if [ -z $NUM_GL1_NODES ]; then
+    export NUM_GL1_NODES=3
+fi
+
+if [ -z $NUM_ML0_NODES ]; then
+    export NUM_ML0_NODES=3
+fi
+
+if [ -z $NUM_ML1_NODES ]; then
+    export NUM_ML1_NODES=3
+fi
+
+if [ -z $NUM_DL1_NODES ]; then
+    export NUM_DL1_NODES=3
+fi

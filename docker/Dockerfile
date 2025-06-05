@@ -9,18 +9,20 @@ RUN mkdir -p /tessellation/jars
 
 COPY docker/jars/keytool.jar /tessellation/jars/keytool.jar
 COPY docker/jars/wallet.jar /tessellation/jars/wallet.jar
-COPY docker/jars/dag-l1.jar /tessellation/jars/dag-l1.jar
-COPY docker/jars/dag-l0.jar /tessellation/jars/dag-l0.jar
+
+COPY docker/jars/gl1.jar /tessellation/jars/gl1.jar
+COPY docker/jars/gl0.jar /tessellation/jars/gl0.jar
+
+COPY docker/jars/ml0.jar /tessellation/jars/ml0.jar
+COPY docker/jars/dl1.jar /tessellation/jars/dl1.jar
+COPY docker/jars/ml1.jar /tessellation/jars/ml1.jar
 
 COPY docker/entrypoint.sh /tessellation/entrypoint.sh
+COPY docker/internal-health-check.sh /tessellation/internal-health-check.sh
+COPY docker/health-check-inner.sh /tessellation/health-check-inner.sh
 RUN chmod +x /tessellation/entrypoint.sh
-
-COPY docker/entrypoint-dag-l1-join-coordinator.sh /tessellation/entrypoint-dag-l1-join-coordinator.sh
-RUN chmod +x /tessellation/entrypoint-dag-l1-join-coordinator.sh
-
-COPY docker/entrypoint-dag-l0-join-coordinator.sh /tessellation/entrypoint-dag-l0-join-coordinator.sh
-RUN chmod +x /tessellation/entrypoint-dag-l0-join-coordinator.sh
-
+RUN chmod +x /tessellation/internal-health-check.sh
+RUN chmod +x /tessellation/health-check-inner.sh
 WORKDIR /tessellation
 
 ENV CL_KEYSTORE=/tessellation/key.p12
@@ -28,7 +30,6 @@ ENV CL_COLLATERAL=25000000000000
 ENV CL_KEYALIAS="alias"
 ENV CL_DEFAULT="password"
 ENV CL_APP_ENV="mainnet"
-ENV CL_L0_PEER_HTTP_PORT=9000
 
 
 ENTRYPOINT ["/tessellation/entrypoint.sh"]
