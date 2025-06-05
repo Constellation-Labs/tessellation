@@ -78,30 +78,6 @@ object priceOracle {
   @derive(decoder, encoder, show)
   case class PriceFraction(tokenPair: TokenPair, value: NonNegFraction)
 
-  @derive(decoder, encoder, show, order, ordering)
-  @newtype
-  case class PricingUpdateOrdinal(value: NonNegLong) {
-    def next: PricingUpdateOrdinal = PricingUpdateOrdinal(value |+| 1L)
-  }
-  object PricingUpdateOrdinal {
-    val first = PricingUpdateOrdinal(1L)
-  }
-
-  @derive(eqv, show, encoder, decoder)
-  case class PricingUpdateReference(ordinal: PricingUpdateOrdinal, hash: Hash)
-  object PricingUpdateReference {
-    val empty = PricingUpdateReference(PricingUpdateOrdinal(0L), Hash.empty)
-
-    def of(hashedTransaction: Hashed[PricingUpdate]): PricingUpdateReference =
-      PricingUpdateReference(hashedTransaction.ordinal, hashedTransaction.hash)
-
-    def of[F[_]: Async: Hasher](signedTransaction: Signed[PricingUpdate]): F[PricingUpdateReference] = of(signedTransaction.value)
-
-    def of[F[_]: Async: Hasher](transaction: PricingUpdate): F[PricingUpdateReference] =
-      transaction.hash.map(PricingUpdateReference(transaction.ordinal, _))
-  }
-
   @derive(eqv, show, encoder, decoder)
   case class PriceRecord(pricingUpdate: PricingUpdate, updatedAt: EpochProgress)
-
 }
