@@ -146,6 +146,7 @@ object SharedServices {
         updateDelegatedStakeAcceptanceManager,
         updateNodeCollateralAcceptanceManager,
         validators.spendActionValidator,
+        validators.pricingUpdateValidator,
         collateral.amount,
         cfg.delegatedStaking.withdrawalTimeLimit.getOrElse(cfg.environment, EpochProgress.MinValue)
       )

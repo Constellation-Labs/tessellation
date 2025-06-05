@@ -48,7 +48,8 @@ object types {
     lastGlobalSnapshotsSync: LastGlobalSnapshotsSyncConfig,
     validationErrorStorage: ValidationErrorStorageConfig,
     delegatedStaking: DelegatedStakingConfig,
-    fieldsAddedOrdinals: FieldsAddedOrdinals
+    fieldsAddedOrdinals: FieldsAddedOrdinals,
+    priceOracle: PriceOracleConfig
   )
 
   case class SharedConfig(
@@ -70,7 +71,8 @@ object types {
     lastGlobalSnapshotsSync: LastGlobalSnapshotsSyncConfig,
     validationErrorStorage: ValidationErrorStorageConfig,
     delegatedStaking: DelegatedStakingConfig,
-    fieldsAddedOrdinals: FieldsAddedOrdinals
+    fieldsAddedOrdinals: FieldsAddedOrdinals,
+    priceOracle: PriceOracleConfig
   )
 
   case class SharedTrustConfig(
@@ -224,4 +226,6 @@ object types {
   case class LastGlobalSnapshotsSyncConfig(syncOffset: NonNegLong, maxAllowedGap: PosInt, maxLastGlobalSnapshotsInMemory: PosInt)
 
   case class ValidationErrorStorageConfig(maxSize: PosInt)
+
+  case class PriceOracleConfig(allowedCurrencyIds: Option[List[Address]], minEpochsBetweenUpdates: NonNegLong)
 }
