@@ -293,7 +293,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
             PosInt(10),
             PosLong((5000 * 1e8).toLong),
             Map(Dev -> EpochProgress(NonNegLong(7338977L)))
-          )
+          ),
+          PriceOracleConfig(None, NonNegLong(0))
         )
 
     val currencyEventsCutter = CurrencyEventsCutter.make[IO](None)
@@ -373,6 +374,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           updateDelegatedStakeAcceptanceManager,
           updateNodeCollateralAcceptanceManager,
           validators.spendActionValidator,
+          validators.pricingUpdateValidator,
           Amount.empty,
           EpochProgress(NonNegLong(136080L))
         )

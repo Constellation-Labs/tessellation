@@ -60,7 +60,8 @@ object method {
       c.validationErrorStorage,
       c.delegatedStaking,
       c.fieldsAddedOrdinals,
-      c.metagraphsSync
+      c.metagraphsSync,
+      c.priceOracle
     )
   }
 

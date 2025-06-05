@@ -123,7 +123,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                     PosInt(10),
                     PosLong((5000 * 1e8).toLong),
                     Map(Dev -> EpochProgress(NonNegLong(7338977L)))
-                  )
+                  ),
+                  PriceOracleConfig(None, NonNegLong(0))
                 )
               contextualTransactionValidator = ContextualTransactionValidator
                 .make(TransactionLimitConfig(Balance.empty, 0.hours, TransactionFee.zero, 1.second), None)
@@ -213,6 +214,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 updateDelegatedStakeAcceptanceManager,
                 updateNodeCollateralAcceptanceManager,
                 validators.spendActionValidator,
+                validators.pricingUpdateValidator,
                 Amount(0L),
                 EpochProgress(NonNegLong(136080L))
               )
