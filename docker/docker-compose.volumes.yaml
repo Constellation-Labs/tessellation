@@ -1,0 +1,5 @@
+volumes:
+  gl0-data:
+    name: gl0-data${CONTAINER_NAME_SUFFIX:-}
+  gl1-data:
+    name: gl1-data${CONTAINER_NAME_SUFFIX:-}
