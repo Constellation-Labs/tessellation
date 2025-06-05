@@ -55,7 +55,8 @@ object CurrencySnapshotProcessorSuite extends SimpleIOSuite with TransactionGene
               PosInt(10),
               PosLong((5000 * 1e8).toLong),
               Map(Dev -> EpochProgress(NonNegLong(7338977L)))
-            )
+            ),
+            PriceOracleConfig(None, NonNegLong(0))
           )
           currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager
             .make(

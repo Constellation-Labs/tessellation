@@ -122,7 +122,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                     PosInt(10),
                     PosLong((5000 * 1e8).toLong),
                     Map(Dev -> EpochProgress(NonNegLong(7338977L)))
-                  )
+                  ),
+                  PriceOracleConfig(None, NonNegLong(0))
                 )
               contextualTransactionValidator = ContextualTransactionValidator
                 .make(TransactionLimitConfig(Balance.empty, 0.hours, TransactionFee.zero, 1.second), None)
@@ -149,7 +150,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager
                 .make(
                   FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty),
-                Dev,
+                  Dev,
                   LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(20), PosInt(10)),
                   BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
                   TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
@@ -187,7 +188,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
               globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
                 FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty),
-              Dev,
+                Dev,
                 BlockAcceptanceManager.make[IO](validators.blockValidator, Hasher.forKryo[IO]),
                 AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
                 TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
@@ -203,6 +204,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 updateDelegatedStakeAcceptanceManager,
                 updateNodeCollateralAcceptanceManager,
                 validators.spendActionValidator,
+                validators.pricingUpdateValidator,
                 Amount(0L),
                 EpochProgress(NonNegLong(136080L))
               )
@@ -239,9 +241,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                     : IO[Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]] = ???
 
                   def pullGlobalSnapshots(ordinal: SnapshotOrdinal)
-                  : IO[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]] = ???
+                    : IO[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]] = ???
 
-                override def pullGlobalSnapshot(ordinal: SnapshotOrdinal): IO[Option[Hashed[GlobalIncrementalSnapshot]]] = none.pure[IO]
+                  override def pullGlobalSnapshot(ordinal: SnapshotOrdinal): IO[Option[Hashed[GlobalIncrementalSnapshot]]] = none.pure[IO]
 
                   override def pullGlobalSnapshot(hash: Hash): IO[Option[Hashed[GlobalIncrementalSnapshot]]] = ???
                 }
