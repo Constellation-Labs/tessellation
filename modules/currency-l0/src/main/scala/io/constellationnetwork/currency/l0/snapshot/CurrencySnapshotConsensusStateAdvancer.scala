@@ -17,7 +17,6 @@ import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.domain.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStateUpdater._
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
@@ -61,7 +60,6 @@ object CurrencySnapshotConsensusStateAdvancer {
     restartService: RestartService[F, _],
     nodeStorage: NodeStorage[F],
     leavingDelay: FiniteDuration,
-    lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): CurrencySnapshotConsensusStateAdvancer[F] =
     new CurrencySnapshotConsensusStateAdvancer[F] {
@@ -118,7 +116,6 @@ object CurrencySnapshotConsensusStateAdvancer {
                                   majorityTrigger,
                                   events,
                                   state.facilitators.value.toSet,
-                                  lastNGlobalSnapshotStorage.getLastN,
                                   getGlobalSnapshotByOrdinal
                                 )
                               returnedPeerEvents = peerEvents.map {
@@ -165,7 +162,6 @@ object CurrencySnapshotConsensusStateAdvancer {
                           allProposalHashes,
                           state.facilitators.value.toSet,
                           consensusFns,
-                          lastNGlobalSnapshotStorage.getLastN,
                           getGlobalSnapshotByOrdinal
                         ).flatMap { maybeMajorityArtifactInfo =>
                           state.facilitators.value.hash.flatMap { facilitatorsHash =>

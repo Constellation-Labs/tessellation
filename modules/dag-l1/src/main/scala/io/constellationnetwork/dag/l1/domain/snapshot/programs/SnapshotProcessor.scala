@@ -50,7 +50,6 @@ abstract class SnapshotProcessor[
     lastGlobalState: GlobalSnapshotInfo,
     lastGlobalSnapshot: Signed[GlobalIncrementalSnapshot],
     globalSnapshot: Signed[GlobalIncrementalSnapshot],
-    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo]
 
@@ -58,7 +57,6 @@ abstract class SnapshotProcessor[
     lastState: SI,
     lastSnapshot: Signed[S],
     snapshot: Signed[S],
-    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[SI]
 
@@ -176,7 +174,10 @@ abstract class SnapshotProcessor[
           transactionStorage.initByRefs(state.lastTxRefs, snapshot.ordinal)
 
         val setInitialSnapshot: F[Unit] =
-          lastSnapshotStorage.setInitial(snapshot, state)
+          Slf4jLogger
+            .getLogger[F]
+            .info(s"Setting initial snapshot: ${snapshot.ordinal.show}") >>
+            lastSnapshotStorage.setInitial(snapshot, state)
 
         adjustToMajority >>
           setBalances >>
@@ -251,7 +252,6 @@ abstract class SnapshotProcessor[
     blockStorage: BlockStorage[F],
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI],
     txHasher: Hasher[F],
-    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[Alignment] = {
     val snapshot = snapshotWithState.fold({ case (snapshot, _) => snapshot }, identity)
@@ -338,7 +338,6 @@ abstract class SnapshotProcessor[
                       lastState,
                       lastSnapshot.signed,
                       snapshot.signed,
-                      getLastNGlobalSnapshots,
                       getGlobalSnapshotByOrdinal
                     ).flatMap { state =>
                       blockStorage.getBlocksForMajorityReconciliation(lastSnapshot.height, snapshot.height, isDependent).flatMap {
@@ -400,7 +399,6 @@ abstract class SnapshotProcessor[
                       lastState,
                       lastSnapshot.signed,
                       snapshot.signed,
-                      getLastNGlobalSnapshots,
                       getGlobalSnapshotByOrdinal
                     ).flatMap { state =>
                       blockStorage.getBlocksForMajorityReconciliation(lastSnapshot.height, snapshot.height, isDependent).flatMap {

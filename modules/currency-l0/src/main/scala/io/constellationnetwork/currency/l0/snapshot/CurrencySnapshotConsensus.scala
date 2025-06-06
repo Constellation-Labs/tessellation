@@ -28,7 +28,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencySnap
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.{Hashed, HasherSelector, SecurityProvider}
 
 import io.circe.Decoder
@@ -37,7 +37,6 @@ import org.http4s.client.Client
 object CurrencySnapshotConsensus {
 
   def make[F[_]: Async: Random: SecurityProvider: Metrics: Supervisor](
-    sharedCfg: SharedConfig,
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
@@ -57,7 +56,6 @@ object CurrencySnapshotConsensus {
     hasherSelector: HasherSelector[F],
     restartService: RestartService[F, _],
     leavingDelay: FiniteDuration,
-    lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): F[CurrencySnapshotConsensus[F]] = {
     def noopDecoder: Decoder[DataTransaction] = Decoder.failedWithMessage[DataTransaction]("not implemented")
@@ -98,7 +96,6 @@ object CurrencySnapshotConsensus {
           restartService,
           nodeStorage,
           leavingDelay,
-          lastNGlobalSnapshotStorage,
           getGlobalSnapshotByOrdinal
         )
       consensusStateCreator = CurrencySnapshotConsensusStateCreator

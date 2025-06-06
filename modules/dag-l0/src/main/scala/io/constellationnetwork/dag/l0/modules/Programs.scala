@@ -19,10 +19,10 @@ import io.constellationnetwork.node.shared.domain.cluster.programs.{Joining, Pee
 import io.constellationnetwork.node.shared.domain.snapshot.PeerSelect
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
-import io.constellationnetwork.node.shared.domain.snapshot.storage.LastNGlobalSnapshotStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{GlobalSnapshotContextFunctions, PeerSelect}
-import io.constellationnetwork.node.shared.modules.SharedPrograms
-import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.node.shared.modules.{SharedPrograms, SharedStorages}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.{HashSelect, HasherSelector, SecurityProvider}
 
 object Programs {
@@ -37,7 +37,8 @@ object Programs {
     p2pClient: P2PClient[F],
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
     hashSelect: HashSelect,
-    lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F]
+    lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
   ): Programs[F] =
     HasherSelector[F].withCurrent { implicit hasher =>
       val trustPush = TrustPush.make(storages.trust, services.gossip)
@@ -46,7 +47,7 @@ object Programs {
         p2pClient.globalSnapshot,
         storages.trust.getBiasedTrustScores
       )
-      val download: Download[F] = Download
+      val download: Download[F, GlobalIncrementalSnapshot] = Download
         .make[F](
           storages.snapshotDownload,
           p2pClient,
@@ -56,7 +57,8 @@ object Programs {
           storages.node,
           services.consensus,
           peerSelect,
-          lastNGlobalSnapshotStorage
+          lastNGlobalSnapshotStorage,
+          lastGlobalSnapshotStorage
         )
       val rollbackLoader = RollbackLoader.make(
         keyPair,
@@ -66,7 +68,6 @@ object Programs {
         storages.snapshotDownload,
         globalSnapshotContextFns,
         hashSelect,
-        lastNGlobalSnapshotStorage.getLastN,
         storages.globalSnapshot.getHashed
       )
 
@@ -78,6 +79,6 @@ sealed abstract class Programs[F[_]] private (
   val peerDiscovery: PeerDiscovery[F],
   val joining: Joining[F],
   val trustPush: TrustPush[F],
-  val download: Download[F],
+  val download: Download[F, GlobalIncrementalSnapshot],
   val rollbackLoader: RollbackLoader[F]
 )

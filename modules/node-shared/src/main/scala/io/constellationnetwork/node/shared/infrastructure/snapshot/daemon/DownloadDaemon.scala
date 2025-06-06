@@ -11,15 +11,16 @@ import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.PeerDiscoveryDelay
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.schema.node.NodeState
+import io.constellationnetwork.schema.snapshot.Snapshot
 import io.constellationnetwork.security.HasherSelector
 
 trait DownloadDaemon[F[_]] extends Daemon[F] {}
 
 object DownloadDaemon {
 
-  def make[F[_]: Async](
+  def make[F[_]: Async, S <: Snapshot](
     nodeStorage: NodeStorage[F],
-    download: Download[F],
+    download: Download[F, S],
     peerDiscoveryDelay: PeerDiscoveryDelay[F],
     hasherSelector: HasherSelector[F]
   )(

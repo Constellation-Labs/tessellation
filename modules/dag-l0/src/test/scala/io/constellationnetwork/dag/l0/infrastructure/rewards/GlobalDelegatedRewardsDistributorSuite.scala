@@ -300,7 +300,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
       priceState = None,
-      lastGlobalSnapshotsWithCurrency = None
+      metagraphSyncData = None
     )
 
     // Mock acceptance results - removed withdrawals
@@ -383,7 +383,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
       priceState = None,
-      lastGlobalSnapshotsWithCurrency = None
+      metagraphSyncData = None
     )
 
     // Empty acceptance results
@@ -493,7 +493,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
       priceState = None,
-      lastGlobalSnapshotsWithCurrency = None
+      metagraphSyncData = None
     )
 
     // Empty acceptance results
@@ -626,7 +626,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
       priceState = None,
-      lastGlobalSnapshotsWithCurrency = None
+      metagraphSyncData = None
     )
 
     // Empty acceptance results
@@ -788,7 +788,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
       priceState = None,
-      lastGlobalSnapshotsWithCurrency = None
+      metagraphSyncData = None
     )
 
     // Empty acceptance results
@@ -824,7 +824,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
       priceState = None,
-      lastGlobalSnapshotsWithCurrency = None
+      metagraphSyncData = None
     )
 
     for {
@@ -1084,7 +1084,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         activeNodeCollaterals = None,
         nodeCollateralWithdrawals = None,
         priceState = None,
-        lastGlobalSnapshotsWithCurrency = None
+        metagraphSyncData = None
       )
 
       // Empty acceptance results

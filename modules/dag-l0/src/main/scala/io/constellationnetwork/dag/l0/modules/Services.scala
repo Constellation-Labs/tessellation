@@ -34,7 +34,7 @@ import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.DelegatedRewardsDistributor
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
-import io.constellationnetwork.node.shared.modules.{SharedServices, SharedValidators}
+import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages, SharedValidators}
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
@@ -50,6 +50,7 @@ object Services {
   ]: Async: Parallel: Random: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Metrics: Supervisor, R <: CliMethod](
     sharedCfg: SharedConfig,
     sharedServices: SharedServices[F, R],
+    sharedStorages: SharedStorages[F],
     queues: Queues[F],
     storages: Storages[F],
     validators: SharedValidators[F],
@@ -110,7 +111,8 @@ object Services {
             delegatorRewards,
             txHasher,
             sharedServices.restart,
-            storages.lastNGlobalSnapshot,
+            sharedStorages.lastNGlobalSnapshot,
+            sharedStorages.lastGlobalSnapshot,
             storages.globalSnapshot.getHashed
           )
       }

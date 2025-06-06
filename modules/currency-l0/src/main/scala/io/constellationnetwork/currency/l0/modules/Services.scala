@@ -34,7 +34,7 @@ import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastNGlobalSnapshotStorage
-import io.constellationnetwork.node.shared.modules.SharedServices
+import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages}
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.PeerId
@@ -52,6 +52,7 @@ object Services {
     sharedCfg: SharedConfig,
     p2PClient: P2PClient[F],
     sharedServices: SharedServices[F, R],
+    sharedStorages: SharedStorages[F],
     storages: Storages[F],
     client: Client[F],
     session: Session[F],
@@ -74,7 +75,7 @@ object Services {
       stateChannelBinarySender <- StateChannelBinarySender.make(
         storages.identifier,
         storages.globalL0Cluster,
-        storages.lastGlobalSnapshot,
+        storages.lastSyncGlobalSnapshot,
         p2PClient.stateChannelSnapshot,
         stateChannelAllowanceLists,
         selfId,
@@ -82,7 +83,7 @@ object Services {
       )
 
       l0NodeContext = L0NodeContext
-        .make[F](storages.snapshot, hasherSelector, storages.lastGlobalSnapshot, storages.identifier)
+        .make[F](storages.snapshot, hasherSelector, storages.lastSyncGlobalSnapshot, storages.identifier)
 
       dataApplicationAcceptanceManager = (maybeDataApplication, storages.calculatedStateStorage).mapN {
         case (service, storage) =>
@@ -95,7 +96,7 @@ object Services {
         .make[F](
           keyPair,
           storages.snapshot,
-          storages.lastGlobalSnapshot,
+          storages.lastSyncGlobalSnapshot,
           jsonBrotliBinarySerializer,
           dataApplicationAcceptanceManager,
           stateChannelBinarySender,
@@ -124,16 +125,10 @@ object Services {
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](cfg.shared.addresses, storages.snapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)
       globalL0Service = GlobalL0Service
-        .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastGlobalSnapshot, None, maybeMajorityPeerIds)
-
-      lastNGlobalSnapshotStorage <- LastNGlobalSnapshotStorage.make[F](
-        sharedCfg.lastGlobalSnapshotsSync,
-        globalL0Service.asLeft
-      )
+        .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastSyncGlobalSnapshot, None, maybeMajorityPeerIds)
 
       consensus <- CurrencySnapshotConsensus
         .make[F](
-          sharedCfg,
           sharedServices.gossip,
           selfId,
           keyPair,
@@ -141,7 +136,7 @@ object Services {
           cfg.collateral.amount,
           storages.cluster,
           storages.node,
-          storages.lastGlobalSnapshot,
+          storages.lastSyncGlobalSnapshot,
           maybeRewards,
           cfg.snapshot,
           client,
@@ -153,7 +148,6 @@ object Services {
           hasherSelector,
           sharedServices.restart,
           cfg.shared.leavingDelay,
-          lastNGlobalSnapshotStorage,
           globalL0Service.pullGlobalSnapshot
         )
     } yield
@@ -171,8 +165,7 @@ object Services {
         dataApplication = maybeDataApplication,
         globalSnapshotContextFunctions = globalSnapshotContextFns,
         stateChannelBinarySender = stateChannelBinarySender,
-        restart = sharedServices.restart,
-        lastNGlobalSnapshot = lastNGlobalSnapshotStorage
+        restart = sharedServices.restart
       ) {}
 }
 
@@ -190,6 +183,5 @@ sealed abstract class Services[F[_], R <: CliMethod] private (
   val dataApplication: Option[BaseDataApplicationL0Service[F]],
   val globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F],
   val stateChannelBinarySender: StateChannelBinarySender[F],
-  val restart: RestartService[F, R],
-  val lastNGlobalSnapshot: LastNGlobalSnapshotStorage[F]
+  val restart: RestartService[F, R]
 )

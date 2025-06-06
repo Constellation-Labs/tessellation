@@ -43,7 +43,7 @@ object GenesisFSSuite extends MutableIOSuite with Checkers {
         Files[F].tempDirectory.use { tempDir =>
           for {
             kp <- KeyPairGenerator.makeKeyPair
-            genesis = CurrencySnapshot.mkGenesis(balances, None)
+            genesis = CurrencySnapshot.mkGenesis(balances, None, None)
             signedGenesis <- Signed.forAsyncHasher(genesis, kp)
             _ <- genesisFS.write(signedGenesis, identifier, tempDir)
             loaded <- genesisFS.loadSignedGenesis(tempDir / "genesis.snapshot")
@@ -62,7 +62,7 @@ object GenesisFSSuite extends MutableIOSuite with Checkers {
         Files[F].tempDirectory.use { tempDir =>
           for {
             kp <- KeyPairGenerator.makeKeyPair
-            genesis = CurrencySnapshot.mkGenesis(balances, None)
+            genesis = CurrencySnapshot.mkGenesis(balances, None, None)
             signedGenesis <- Signed.forAsyncHasher(genesis, kp)
             _ <- genesisFS.write(signedGenesis, identifier, tempDir)
             loaded <- Files[F]

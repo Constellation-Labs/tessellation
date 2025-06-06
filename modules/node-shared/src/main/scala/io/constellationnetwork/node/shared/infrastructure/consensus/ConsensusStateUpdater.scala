@@ -22,7 +22,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.update.Unloc
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher}
@@ -252,7 +252,6 @@ object ConsensusStateUpdater {
     proposals: List[Hash],
     facilitators: Set[PeerId],
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact, Context],
-    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[Option[ArtifactInfo[Artifact, Context]]] = {
     def go(proposals: List[(Int, Hash)]): F[Option[ArtifactInfo[Artifact, Context]]] =
@@ -271,7 +270,6 @@ object ConsensusStateUpdater {
                     trigger,
                     artifact,
                     facilitators,
-                    getLastNGlobalSnapshots,
                     getGlobalSnapshotByOrdinal
                   )
                   .map { validationResultOrError =>
