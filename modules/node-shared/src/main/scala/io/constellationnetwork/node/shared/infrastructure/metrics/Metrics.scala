@@ -68,7 +68,7 @@ trait Metrics[F[_]] {
 object Metrics {
 
   implicit class MetricsMapOps(map: Map[String, Any]) {
-    def updateGauges[F[_]](prefix: String)(implicit M: Metrics[F], F: Monad[F]): F[Unit] = {
+    def updateGauges[F[_]](prefix: String)(implicit M: Metrics[F], F: Monad[F]): F[Unit] =
       map.toSeq.traverse_ {
         case (k, v) =>
           val key: MetricKey = Refined.unsafeApply(s"dag_${prefix}_$k")
@@ -81,7 +81,6 @@ object Metrics {
             case _         => F.pure(())
           }
       }
-    }
   }
   type MetricKey = String Refined MatchesRegex["dag_[a-z0-9]+(?:_[a-z0-9]+)*"]
   type LabelName = String Refined MatchesRegex["[a-z0-9]+(?:_[a-z0-9]+)*"]

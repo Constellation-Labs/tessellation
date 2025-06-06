@@ -91,7 +91,6 @@ object GlobalSnapshotContextFunctions {
         context: GlobalSnapshotInfo,
         lastArtifact: Signed[GlobalIncrementalSnapshot],
         signedArtifact: Signed[GlobalIncrementalSnapshot],
-        getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
         getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = for {
         lastActiveTips <- HasherSelector[F].forOrdinal(lastArtifact.ordinal)(implicit hasher => lastArtifact.activeTips)
@@ -228,7 +227,6 @@ object GlobalSnapshotContextFunctions {
                   }
                 },
             StateChannelValidationType.Historical,
-            getLastNGlobalSnapshots,
             getGlobalSnapshotByOrdinal
           )
 

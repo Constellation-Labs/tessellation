@@ -18,7 +18,7 @@ import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
-import io.constellationnetwork.node.shared.domain.snapshot.storage.LastNGlobalSnapshotStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import io.constellationnetwork.schema._
@@ -44,8 +44,9 @@ object Download {
     nodeStorage: NodeStorage[F],
     consensus: GlobalSnapshotConsensus[F],
     peerSelect: PeerSelect[F],
-    lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F]
-  ): Download[F] = new Download[F] {
+    lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
+  ): Download[F, GlobalIncrementalSnapshot] = new Download[F, GlobalIncrementalSnapshot] {
 
     val logger = Slf4jLogger.getLogger[F]
 
@@ -70,7 +71,16 @@ object Download {
           hasherSelector.withCurrent { implicit hasher =>
             for {
               hashedSnapshot <- snapshot.toHashed
-              _ <- lastNGlobalSnapshotStorage.setInitialFetchingGL0(hashedSnapshot, context, fetchSnapshot)
+              _ <- lastNGlobalSnapshotStorage.setInitialFetchingGL0(
+                hashedSnapshot,
+                context,
+                none,
+                Some((hash, ordinal) => fetchSnapshot(hash, ordinal)(hasher))
+              )
+              _ <- lastGlobalSnapshotStorage.setInitial(
+                hashedSnapshot,
+                context
+              )
               _ <- consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context)
             } yield ()
           }
@@ -131,8 +141,7 @@ object Download {
 
       retryingOnSomeErrors(retryPolicy, isWorthRetrying, retry.noop[F, Throwable]) {
         val (lastSnapshot, lastContext) = result
-
-        fetchSnapshot(none, lastSnapshot.ordinal.next).flatMap { snapshot =>
+        hasherSelector.withCurrent(implicit hs => fetchSnapshot(none, lastSnapshot.ordinal.next)).flatMap { snapshot =>
           hasherSelector
             .forOrdinal(lastSnapshot.ordinal) { implicit hasher =>
               lastSnapshot.toHashed[F]
@@ -145,7 +154,7 @@ object Download {
             HasherSelector[F]
               .forOrdinal(snapshot.ordinal) { implicit hasher =>
                 globalSnapshotContextFns
-                  .createContext(lastContext, lastSnapshot, snapshot, lastNGlobalSnapshotStorage.getLastN, fetchSnapshotByOrdinal)
+                  .createContext(lastContext, lastSnapshot, snapshot, fetchSnapshotByOrdinal)
               }
               .handleErrorWith(_ => InvalidChain.raiseError[F, GlobalSnapshotContext])
               .flatTap { _ =>
@@ -177,7 +186,7 @@ object Download {
             }
             .flatMap {
               _.map(_.pure[F])
-                .getOrElse(fetchSnapshot(stepHash.some, stepOrdinal).flatMap { snapshot =>
+                .getOrElse(hasherSelector.withCurrent(implicit hs => fetchSnapshot(stepHash.some, stepOrdinal)).flatMap { snapshot =>
                   hasherSelector.forOrdinal(snapshot.ordinal) { implicit hasher =>
                     snapshotStorage.writeTmp(snapshot).flatMap(_ => snapshot.toHashed[F])
                   }
@@ -254,7 +263,7 @@ object Download {
                 HasherSelector[F]
                   .forOrdinal(snapshot.ordinal) { implicit hasher =>
                     globalSnapshotContextFns
-                      .createContext(context, lastSnapshot, snapshot, lastNGlobalSnapshotStorage.getLastN, fetchSnapshotByOrdinal)
+                      .createContext(context, lastSnapshot, snapshot, fetchSnapshotByOrdinal)
                   }
                   .flatTap(newContext =>
                     hasherSelector
@@ -326,9 +335,7 @@ object Download {
             .map { case (full, incremental) => (incremental, GlobalSnapshotInfoV1.toGlobalSnapshotInfo(full.info)) }
         }
 
-    def fetchSnapshot(hash: Option[Hash], ordinal: SnapshotOrdinal)(
-      implicit hasherSelector: HasherSelector[F]
-    ): F[Signed[GlobalIncrementalSnapshot]] =
+    def fetchSnapshot(hash: Option[Hash], ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Signed[GlobalIncrementalSnapshot]] =
       clusterStorage.getResponsivePeers
         .map(NodeState.ready)
         .map(_.toList)
@@ -347,7 +354,7 @@ object Download {
               p2pClient.globalSnapshot
                 .get(ordinal)
                 .run(peer)
-                .flatMap(snapshot => hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[F]))
+                .flatMap(snapshot => snapshot.toHashed[F])
                 .map(_.some)
                 .handleErrorWith(e =>
                   logger

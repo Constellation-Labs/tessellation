@@ -228,10 +228,6 @@ object DataApplicationSnapshotAcceptanceManager {
 
         (newDataState, validatedFeeTransactions, validatedBlocks, notAcceptedBlocks) = processingResult
 
-        _ <- OptionT.liftF {
-          logger.info(s"New data state produced shared artifacts: ${newDataState.sharedArtifacts}")
-        }
-
         serializedOnChainState <- OptionT.liftF(
           service.serializeState(newDataState.onChain)
         )

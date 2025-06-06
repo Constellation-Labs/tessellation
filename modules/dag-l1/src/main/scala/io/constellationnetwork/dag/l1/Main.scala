@@ -102,27 +102,18 @@ object Main
         Hasher.forKryo[IO]
       )
 
-      lastNGlobalSnapshotStorage <- hasherSelector.withCurrent { implicit hasher =>
-        LastNGlobalSnapshotStorage
-          .make[IO](
-            sharedConfig.lastGlobalSnapshotsSync,
-            services.globalL0.asLeft
-          )
-          .asResource
-      }
-
       snapshotProcessor = DAGSnapshotProcessor.make(
-        sharedConfig.lastGlobalSnapshotsSync,
         storages.address,
         storages.block,
-        storages.lastSnapshot,
-        lastNGlobalSnapshotStorage,
+        sharedStorages.lastGlobalSnapshot,
+        sharedStorages.lastNGlobalSnapshot,
         storages.transaction,
         storages.allowSpend,
         storages.tokenLock,
         sharedServices.globalSnapshotContextFns,
         Hasher.forKryo[IO],
-        services.globalL0.pullGlobalSnapshot
+        services.globalL0.pullGlobalSnapshot,
+        services.globalL0
       )
       programs = Programs.make(sharedPrograms, p2pClient, storages, snapshotProcessor)
 

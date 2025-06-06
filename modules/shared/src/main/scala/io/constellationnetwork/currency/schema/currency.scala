@@ -162,6 +162,7 @@ object currency {
     info: CurrencySnapshotInfoV1,
     epochProgress: EpochProgress,
     dataApplication: Option[DataApplicationPart] = None,
+    globalSyncView: Option[GlobalSyncView] = None,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends FullSnapshot[CurrencySnapshotStateProofV1, CurrencySnapshotInfoV1]
 
@@ -268,7 +269,11 @@ object currency {
   }
 
   object CurrencySnapshot {
-    def mkGenesis(balances: Map[Address, Balance], dataApplicationPart: Option[DataApplicationPart]): CurrencySnapshot =
+    def mkGenesis(
+      balances: Map[Address, Balance],
+      dataApplicationPart: Option[DataApplicationPart],
+      latestGlobalSnapshot: Option[Hashed[GlobalIncrementalSnapshot]]
+    ): CurrencySnapshot =
       CurrencySnapshot(
         SnapshotOrdinal.MinValue,
         Height.MinValue,
@@ -279,7 +284,11 @@ object currency {
         SnapshotTips(SortedSet.empty, mkActiveTips(8)),
         CurrencySnapshotInfoV1(SortedMap.empty, SortedMap.from(balances)),
         EpochProgress.MinValue,
-        dataApplicationPart
+        dataApplicationPart,
+        latestGlobalSnapshot match {
+          case Some(value) => GlobalSyncView(value.ordinal, value.hash, value.epochProgress).some
+          case None        => none
+        }
       )
 
     def mkFirstIncrementalSnapshot[F[_]: Parallel: Sync: Hasher](
@@ -303,7 +312,7 @@ object currency {
           None,
           None,
           None,
-          None,
+          genesis.globalSyncView,
           genesis.version
         )
       }
