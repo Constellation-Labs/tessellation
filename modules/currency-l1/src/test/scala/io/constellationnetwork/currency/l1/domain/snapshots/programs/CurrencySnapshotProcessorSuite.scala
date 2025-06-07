@@ -15,19 +15,21 @@ import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcce
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.RewardFraction
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.transaction.TransactionGenerator
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
+import fs2.concurrent.SignallingRef
 import weaver.SimpleIOSuite
 
 object CurrencySnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
@@ -57,6 +59,20 @@ object CurrencySnapshotProcessorSuite extends SimpleIOSuite with TransactionGene
               Map(Dev -> EpochProgress(NonNegLong(7338977L)))
             )
           )
+          lastNSnapR <- SignallingRef
+            .of[IO, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](SortedMap.empty)
+            .asResource
+          incLastNSnapR <- SignallingRef
+            .of[IO, SortedMap[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]](SortedMap.empty)
+            .asResource
+          lastSnapR <- SignallingRef.of[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](None).asResource
+
+          lastGlobalSnapshotsSyncConfig =
+            LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt.unsafeFrom(10), PosInt.unsafeFrom(5))
+          lastNSnapshotStorage =
+            LastNGlobalSnapshotStorage.make[IO](lastGlobalSnapshotsSyncConfig, lastNSnapR, incLastNSnapR)
+          lastGlobalSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
+
           currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager
             .make(
               FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty),
@@ -68,7 +84,9 @@ object CurrencySnapshotProcessorSuite extends SimpleIOSuite with TransactionGene
               Amount(0L),
               validators.currencyMessageValidator,
               validators.feeTransactionValidator,
-              validators.globalSnapshotSyncValidator
+              validators.globalSnapshotSyncValidator,
+              lastNSnapshotStorage,
+              lastGlobalSnapshotStorage
             )
             .asResource
         } yield currencySnapshotAcceptanceManager

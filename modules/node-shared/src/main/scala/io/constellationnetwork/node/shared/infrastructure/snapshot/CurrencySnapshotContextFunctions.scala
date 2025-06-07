@@ -15,7 +15,7 @@ import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnap
 import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher}
 
@@ -33,14 +33,12 @@ object CurrencySnapshotContextFunctions {
         context: CurrencySnapshotContext,
         lastArtifact: Signed[CurrencyIncrementalSnapshot],
         signedArtifact: Signed[CurrencyIncrementalSnapshot],
-        getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
         getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[CurrencySnapshotContext] = for {
         validatedS <- validator.validateSignedSnapshot(
           lastArtifact,
           context,
           signedArtifact,
-          getLastNGlobalSnapshots,
           getGlobalSnapshotByOrdinal
         )
         validatedContext <- validatedS match {

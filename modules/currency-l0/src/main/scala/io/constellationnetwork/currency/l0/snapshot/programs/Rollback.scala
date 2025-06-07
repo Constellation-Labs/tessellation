@@ -21,6 +21,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalS
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
+import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security._
@@ -46,8 +47,7 @@ object Rollback {
     globalL0Service: GlobalL0Service[F],
     identifierStorage: IdentifierStorage[F],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-    lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    lastNGlobalSnapshots: LastNGlobalSnapshotStorage[F],
+    sharedStorages: SharedStorages[F],
     collateral: Collateral[F],
     consensusManager: CurrencyConsensusManager[F],
     dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])],
@@ -61,24 +61,24 @@ object Rollback {
       (globalSnapshot, globalSnapshotInfo) <- globalL0Service.pullLatestSnapshot
 
       identifier <- identifierStorage.get
-      lastGlobalSnapshotWithCurrencySnapshot = globalSnapshotInfo.lastGlobalSnapshotsWithCurrency.flatMap(_.get(identifier))
+      metagraphSyncData = globalSnapshotInfo.metagraphSyncData.flatMap(_.get(identifier))
 
-      globalSnapshotStartingPoint: Hashed[GlobalIncrementalSnapshot] <- lastGlobalSnapshotWithCurrencySnapshot match {
+      globalSnapshotStartingPoint: Hashed[GlobalIncrementalSnapshot] <- metagraphSyncData match {
         case Some(value) =>
           logger.info(
-            s"Using global snapshot at ordinal ${value.ordinal} as the starting point, which includes the last currency snapshot for metagraph ${identifier.show}"
+            s"Using global snapshot at ordinal ${value.globalOrdinalLastAcceptedOn} as the starting point, which includes the last currency snapshot for metagraph ${identifier.show}"
           ) >>
             globalL0Service
-              .pullGlobalSnapshot(value.ordinal)
+              .pullGlobalSnapshot(value.globalOrdinalLastAcceptedOn)
               .flatMap {
                 case Some(snapshot) => snapshot.pure[F]
                 case None =>
-                  logger.warn(s"Global snapshot ordinal ${value.ordinal} not found, using current global snapshot") >>
+                  logger.warn(s"Global snapshot ordinal ${value.globalOrdinalLastAcceptedOn} not found, using current global snapshot") >>
                     globalSnapshot.pure[F]
               }
               .handleErrorWith { e =>
                 logger.error(e)(
-                  s"Could not fetch global snapshot ordinal: ${value.ordinal}, starting from latest global snapshot"
+                  s"Could not fetch global snapshot ordinal: ${value.globalOrdinalLastAcceptedOn}, starting from latest global snapshot"
                 ) >> globalSnapshot.pure[F]
               }
         case None => globalSnapshot.pure[F]
@@ -125,8 +125,13 @@ object Rollback {
       }.getOrElse(Applicative[F].unit)
 
       (globalSnapshotUpdated, globalSnapshotInfoUpdated) <- globalL0Service.pullLatestSnapshot
-      _ <- lastGlobalSnapshot.setInitial(globalSnapshotUpdated, globalSnapshotInfoUpdated)
-      _ <- lastNGlobalSnapshots.setInitial(globalSnapshotUpdated, globalSnapshotInfoUpdated)
+      _ <- sharedStorages.lastGlobalSnapshot.setInitial(globalSnapshotUpdated, globalSnapshotInfoUpdated)
+      _ <- sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
+        globalSnapshotUpdated,
+        globalSnapshotInfoUpdated,
+        globalL0Service.asLeft.some,
+        none
+      )
       _ <- logger.info(
         s"Setting the last global snapshot as: ${globalSnapshotUpdated.ordinal.show}"
       )

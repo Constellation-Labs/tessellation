@@ -53,11 +53,10 @@ object CurrencySnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       artifact: CurrencySnapshotArtifact,
       facilitators: Set[PeerId],
-      getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[Either[ConsensusFunctions.InvalidArtifact, (CurrencySnapshotArtifact, CurrencySnapshotContext)]] =
       currencySnapshotValidator
-        .validateSnapshot(lastSignedArtifact, lastContext, artifact, facilitators, getLastNGlobalSnapshots, getGlobalSnapshotByOrdinal)
+        .validateSnapshot(lastSignedArtifact, lastContext, artifact, facilitators, getGlobalSnapshotByOrdinal)
         .map(_.leftMap(_ => ArtifactMismatch).toEither)
 
     def createProposalArtifact(
@@ -68,7 +67,6 @@ object CurrencySnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       events: Set[CurrencySnapshotEvent],
       facilitators: Set[PeerId],
-      getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[(CurrencySnapshotArtifact, CurrencySnapshotContext, Set[CurrencySnapshotEvent])] = {
       val blocksForAcceptance: Set[CurrencySnapshotEvent] = events.filter {
@@ -88,7 +86,6 @@ object CurrencySnapshotConsensusFunctions {
           facilitators,
           None,
           None,
-          getLastNGlobalSnapshots,
           getGlobalSnapshotByOrdinal,
           shouldValidateCollateral = true
         )

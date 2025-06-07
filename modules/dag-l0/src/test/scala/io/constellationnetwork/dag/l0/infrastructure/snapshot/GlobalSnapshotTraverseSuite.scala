@@ -40,6 +40,7 @@ import io.constellationnetwork.node.shared.infrastructure.block.processing.{Bloc
 import io.constellationnetwork.node.shared.infrastructure.consensus.CurrencySnapshotEventValidationErrorStorage
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -62,6 +63,7 @@ import io.constellationnetwork.tools.{DAGBlockGenerator, TransactionGenerator}
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.all.PosLong
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
+import fs2.concurrent.SignallingRef
 import org.scalacheck.Gen
 import weaver._
 import weaver.scalacheck.Checkers
@@ -300,6 +302,18 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
     for {
       validationErrorStorage <- CurrencySnapshotEventValidationErrorStorage.make(TestValidationErrorStorageMaxSize)
+      lastNSnapR <- SignallingRef
+        .of[IO, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](SortedMap.empty)
+      incLastNSnapR <- SignallingRef
+        .of[IO, SortedMap[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]](SortedMap.empty)
+      lastSnapR <- SignallingRef.of[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](None)
+
+      lastGlobalSnapshotsSyncConfig =
+        LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt.unsafeFrom(10), PosInt.unsafeFrom(5))
+      lastNSnapshotStorage =
+        LastNGlobalSnapshotStorage.make[IO](lastGlobalSnapshotsSyncConfig, lastNSnapR, incLastNSnapR)
+      lastGlobalSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
+
       currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager.make(
         FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty),
         Dev,
@@ -310,7 +324,9 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         Amount(0L),
         validators.currencyMessageValidator,
         validators.feeTransactionValidator,
-        validators.globalSnapshotSyncValidator
+        validators.globalSnapshotSyncValidator,
+        lastNSnapshotStorage,
+        lastGlobalSnapshotStorage
       )
       currencySnapshotCreator =
         CurrencySnapshotCreator
@@ -347,6 +363,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager
         .make[IO](
           FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty),
+          MetagraphsSyncConfig(PosInt(100)),
           Dev,
           blockAcceptanceManager,
           allowSpendBlockAcceptanceManager,
@@ -373,7 +390,6 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           loadInfo,
           snapshotContextFunctions,
           rollbackHash,
-          List.empty.pure[IO],
           _ => None.pure[IO]
         )
   }

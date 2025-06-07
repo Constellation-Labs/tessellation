@@ -63,7 +63,6 @@ trait CurrencySnapshotCreator[F[_]] {
     facilitators: Set[PeerId],
     feeTransactionFn: Option[() => SortedSet[Signed[FeeTransaction]]],
     artifactsFn: Option[() => SortedSet[SharedArtifact]],
-    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     shouldValidateCollateral: Boolean
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
@@ -98,7 +97,6 @@ object CurrencySnapshotCreator {
       facilitators: Set[PeerId],
       feeTransactionFn: Option[() => SortedSet[Signed[FeeTransaction]]],
       artifactsFn: Option[() => SortedSet[SharedArtifact]],
-      getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       shouldValidateCollateral: Boolean
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
@@ -205,7 +203,6 @@ object CurrencySnapshotCreator {
                     )
                     .getOrElse(SortedSet.empty[RewardTransaction].pure[F]),
                 facilitators,
-                getLastNGlobalSnapshots,
                 getGlobalSnapshotByOrdinal,
                 lastArtifact.globalSyncView,
                 shouldValidateCollateral

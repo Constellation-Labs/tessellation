@@ -66,7 +66,6 @@ abstract class SnapshotConsensusFunctions[
     trigger: ConsensusTrigger,
     artifact: Artifact,
     facilitators: Set[PeerId],
-    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (Artifact, Context)]]
 
