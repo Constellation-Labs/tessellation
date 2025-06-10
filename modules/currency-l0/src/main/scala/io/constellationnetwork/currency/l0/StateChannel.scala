@@ -19,6 +19,7 @@ import io.constellationnetwork.kernel.{:: => _, _}
 import io.constellationnetwork.node.shared.domain.snapshot.Validator
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.node.shared.snapshot.currency.{CurrencySnapshotEvent, GlobalSnapshotSyncEvent}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
@@ -36,11 +37,11 @@ object StateChannel {
   def run[F[_]: Async: HasherSelector: SecurityProvider: Metrics](
     services: Services[F, Run],
     storages: Storages[F],
+    sharedStorages: SharedStorages[F],
     programs: Programs[F],
     dataApplicationService: Option[BaseDataApplicationL0Service[F]],
     selfKeyPair: KeyPair,
-    enqueueConsensusEventFn: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
-    lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F]
+    enqueueConsensusEventFn: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _]
   )(implicit S: Supervisor[F]): Stream[F, Unit] = {
     val logger = Slf4jLogger.getLogger[F]
 
@@ -93,8 +94,17 @@ object StateChannel {
         .evalMap(_ => services.globalL0.pullGlobalSnapshots)
         .evalMap {
           case Left((snapshot, state)) =>
-            storages.lastGlobalSnapshot.setInitial(snapshot, state) >>
-              lastNGlobalSnapshotStorage.setInitial(snapshot, state) >>
+            storages.lastSyncGlobalSnapshot.setInitial(snapshot, state) >>
+              sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
+                snapshot,
+                state,
+                services.globalL0.asLeft.some,
+                none
+              ) >>
+              sharedStorages.lastGlobalSnapshot.setInitial(
+                snapshot,
+                state
+              ) >>
               triggerOnGlobalSnapshotPullHook(snapshot, state)
 
           case Right(snapshots) =>
@@ -102,11 +112,11 @@ object StateChannel {
               case Nil => Applicative[F].pure(().asRight[List[Hashed[GlobalIncrementalSnapshot]]])
 
               case snapshot :: nextSnapshots =>
-                storages.lastGlobalSnapshot.get.map {
+                storages.lastSyncGlobalSnapshot.get.map {
                   case Some(lastSnapshot) => Validator.isNextSnapshot(lastSnapshot, snapshot.signed.value)
                   case None               => true
                 }.ifM(
-                  storages.lastGlobalSnapshot.getCombined.flatMap {
+                  storages.lastSyncGlobalSnapshot.getCombined.flatMap {
                     case None => Applicative[F].unit
                     case Some((lastSnapshot, lastState)) =>
                       HasherSelector[F]
@@ -116,14 +126,14 @@ object StateChannel {
                               lastState,
                               lastSnapshot.signed,
                               snapshot.signed,
-                              lastNGlobalSnapshotStorage.getLastN,
                               services.globalL0.pullGlobalSnapshot
                             )
                         }
                         .flatMap { context =>
                           for {
-                            _ <- storages.lastGlobalSnapshot.set(snapshot, context)
-                            _ <- lastNGlobalSnapshotStorage.set(snapshot, context)
+                            _ <- storages.lastSyncGlobalSnapshot.set(snapshot, context)
+                            _ <- sharedStorages.lastNGlobalSnapshot.set(snapshot, context)
+                            _ <- sharedStorages.lastGlobalSnapshot.set(snapshot, context)
                             _ <- HasherSelector[F].withCurrent { implicit hasher =>
                               sendGlobalSnapshotSyncConsensusEvent(snapshot)
                             }
@@ -166,7 +176,7 @@ object StateChannel {
     storages: Storages[F],
     programs: Programs[F]
   ): F[Unit] =
-    storages.lastGlobalSnapshot.get.flatMap {
+    storages.lastSyncGlobalSnapshot.get.flatMap {
       case None =>
         storages.globalL0Cluster.getRandomPeer.flatMap(p => programs.globalL0PeerDiscovery.discoverFrom(p))
       case Some(latestSnapshot) =>

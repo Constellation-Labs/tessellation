@@ -66,9 +66,13 @@ object snapshot {
   case class SnapshotMetadata(ordinal: SnapshotOrdinal, hash: Hash, lastSnapshotHash: Hash)
 
   @derive(decoder, encoder, order, show)
-  case class GlobalSnapshotWithCurrencyInfo(
-    ordinal: SnapshotOrdinal,
-    epochProgress: EpochProgress
+  case class MetagraphSyncDataInfo(
+    globalOrdinalLastAcceptedOn: SnapshotOrdinal,
+    globalEpochProgressLastAcceptedOn: EpochProgress,
+    unappliedGlobalChangeOrdinals: SortedSet[SnapshotOrdinal]
   )
+  object MetagraphSyncDataInfo {
+    def empty: MetagraphSyncDataInfo = MetagraphSyncDataInfo(SnapshotOrdinal.MinValue, EpochProgress.MinValue, SortedSet.empty)
+  }
 
 }

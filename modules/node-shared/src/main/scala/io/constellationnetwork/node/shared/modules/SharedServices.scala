@@ -20,7 +20,7 @@ import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAcceptanceManager
 import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralAcceptanceManager
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
-import io.constellationnetwork.node.shared.domain.snapshot.storage.LastNGlobalSnapshotStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
@@ -32,12 +32,12 @@ import io.constellationnetwork.node.shared.infrastructure.healthcheck.LocalHealt
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastNGlobalSnapshotStorage
-import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.generation.Generation
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
@@ -96,7 +96,9 @@ object SharedServices {
         collateral.amount,
         validators.currencyMessageValidator,
         validators.feeTransactionValidator,
-        validators.globalSnapshotSyncValidator
+        validators.globalSnapshotSyncValidator,
+        storages.lastNGlobalSnapshot,
+        storages.lastGlobalSnapshot
       )
 
       currencyEventsCutter = CurrencyEventsCutter.make[F](None)
@@ -130,6 +132,7 @@ object SharedServices {
       )
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         cfg.fieldsAddedOrdinals,
+        cfg.metagraphsSync,
         cfg.environment,
         BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
         AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlockValidator),

@@ -18,6 +18,7 @@ import io.constellationnetwork.node.shared.config.types.HttpConfig
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
@@ -44,6 +45,7 @@ object HttpApi {
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
     ],
+    sharedStorages: SharedStorages[F],
     queues: Queues[F],
     privateKey: PrivateKey,
     services: Services[
@@ -70,6 +72,7 @@ object HttpApi {
     new HttpApi[F, R](
       maybeDataApplication,
       storages,
+      sharedStorages,
       queues,
       privateKey,
       services,
@@ -89,6 +92,7 @@ sealed abstract class HttpApi[
 ] private (
   maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
   storages: Storages[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+  sharedStorages: SharedStorages[F],
   queues: Queues[F],
   privateKey: PrivateKey,
   services: Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, R],
@@ -114,7 +118,7 @@ sealed abstract class HttpApi[
         storages.l0Cluster,
         da,
         queues.dataTransactions,
-        storages.lastGlobalSnapshot,
+        sharedStorages.lastGlobalSnapshot,
         storages.lastSnapshot
       )
     }
