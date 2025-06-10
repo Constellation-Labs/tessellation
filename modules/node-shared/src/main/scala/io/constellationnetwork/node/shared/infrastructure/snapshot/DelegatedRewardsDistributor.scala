@@ -47,7 +47,7 @@ case class PartitionedStakeUpdates(
 
 trait DelegatedRewardsDistributor[F[_]] {
 
-  def getEmissionConfig: F[EmissionConfigEntry]
+  def getEmissionConfig(epochProgress: EpochProgress): F[EmissionConfigEntry]
 
   def calculateVariableInflation(epochProgress: EpochProgress): F[Amount]
 
