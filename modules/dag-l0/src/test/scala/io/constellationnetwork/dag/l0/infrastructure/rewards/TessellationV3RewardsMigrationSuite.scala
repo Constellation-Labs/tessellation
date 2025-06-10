@@ -6,7 +6,6 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.dag.l0.config.DelegatedRewardsConfigProvider
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger

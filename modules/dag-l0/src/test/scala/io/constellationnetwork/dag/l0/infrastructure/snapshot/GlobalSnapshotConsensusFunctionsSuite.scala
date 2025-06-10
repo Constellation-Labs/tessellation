@@ -12,7 +12,6 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.reflect.runtime.universe.TypeTag
 
 import io.constellationnetwork.currency.schema.currency.SnapshotFee
-import io.constellationnetwork.dag.l0.config.DelegatedRewardsConfigProvider
 import io.constellationnetwork.dag.l0.dagL0KryoRegistrar
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
   GlobalSnapshotEventCutter,
@@ -27,6 +26,7 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.config.DelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
@@ -38,7 +38,7 @@ import io.constellationnetwork.node.shared.domain.fork.ForkInfo
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.{UpdateNodeParametersAcceptanceManager, UpdateNodeParametersValidator}
 import io.constellationnetwork.node.shared.domain.nodeCollateral.{UpdateNodeCollateralAcceptanceManager, UpdateNodeCollateralValidator}
-import io.constellationnetwork.node.shared.domain.priceOracle.PricingUpdateValidator
+import io.constellationnetwork.node.shared.domain.priceOracle.{PriceStateUpdater, PricingUpdateValidator}
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
@@ -297,6 +297,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     val spendActionValidator = SpendActionValidator.make[IO]
 
     val pricingUpdateValidator = PricingUpdateValidator.make[IO](None, NonNegLong(0))
+    val priceStateUpdater = PriceStateUpdater.make(Dev, delegatedRewardsConfigProvider)
 
     val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
       GlobalSnapshotAcceptanceManager
@@ -313,6 +314,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
           updateNodeCollateralAcceptanceManager,
           spendActionValidator,
           pricingUpdateValidator,
+          priceStateUpdater,
           collateral,
           EpochProgress(NonNegLong(136080L))
         )

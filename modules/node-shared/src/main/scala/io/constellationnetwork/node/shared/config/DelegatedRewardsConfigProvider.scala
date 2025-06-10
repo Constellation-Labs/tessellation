@@ -1,20 +1,18 @@
-package io.constellationnetwork.dag.l0.config
+package io.constellationnetwork.node.shared.config
 
 import cats.syntax.partialOrder._
 
 import scala.collection.immutable.SortedMap
 
-import io.constellationnetwork.dag.l0.config.types.MainnetRewardsConfig
-import io.constellationnetwork.dag.l0.config.types.MainnetRewardsConfig._
 import io.constellationnetwork.env.AppEnvironment
-import io.constellationnetwork.node.shared.config.types._
+import io.constellationnetwork.node.shared.config.MainnetRewardsConfig._
+import io.constellationnetwork.node.shared.config.types.{DelegatedRewardsConfig, _}
 import io.constellationnetwork.schema.NonNegFraction
-import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
+import eu.timepit.refined.types.numeric.PosLong
 
 /** Provides delegated rewards configuration.
   */
@@ -133,4 +131,5 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
         validatorsWeight = NonNegFraction.unsafeFrom(88L, 1000L),
         delegatorsWeight = NonNegFraction.unsafeFrom(45L, 100L)
       )
+
 }

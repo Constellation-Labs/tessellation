@@ -18,10 +18,12 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceManager
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAcceptanceManager
 import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralAcceptanceManager
+import io.constellationnetwork.node.shared.domain.priceOracle.PriceStateUpdater
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.domain.swap.block.{
   AllowSpendBlockAcceptanceLogic,
@@ -361,6 +363,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       updateNodeCollateralAcceptanceManager = UpdateNodeCollateralAcceptanceManager.make(
         validators.updateNodeCollateralValidator
       )
+      priceStateUpdater = PriceStateUpdater.make(Dev, DefaultDelegatedRewardsConfigProvider)
+
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager
         .make[IO](
           FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty),
@@ -375,6 +379,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           updateNodeCollateralAcceptanceManager,
           validators.spendActionValidator,
           validators.pricingUpdateValidator,
+          priceStateUpdater,
           Amount.empty,
           EpochProgress(NonNegLong(136080L))
         )
