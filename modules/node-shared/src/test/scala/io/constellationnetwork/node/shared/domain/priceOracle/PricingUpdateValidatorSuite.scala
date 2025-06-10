@@ -17,7 +17,7 @@ import io.constellationnetwork.schema.{GlobalSnapshotInfo, NonNegFraction}
 import io.constellationnetwork.security.key.ops._
 import io.constellationnetwork.security.{KeyPairGenerator, SecurityProvider}
 
-import eu.timepit.refined.types.numeric.NonNegLong
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import weaver.MutableIOSuite
 
 object PricingUpdateValidatorSuite extends MutableIOSuite {
@@ -65,7 +65,7 @@ object PricingUpdateValidatorSuite extends MutableIOSuite {
       update2 <- pricingUpdate(2)
       update3 <- pricingUpdate(3)
       snapshotInfo = GlobalSnapshotInfo.empty.copy(priceState =
-        SortedMap(DAG_USD -> PriceRecord(update3, EpochProgress(NonNegLong(3)))).some
+        SortedMap(DAG_USD -> PriceRecord(update3, update3, update3, PosInt(1), EpochProgress.MinValue, EpochProgress(NonNegLong(3)))).some
       )
       (accepted, rejected) <- validator.validateReturningAcceptedAndRejected(
         Map(address1 -> List(update1), address2 -> List(update2)),
