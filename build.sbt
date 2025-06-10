@@ -18,9 +18,8 @@ ThisBuild / developers := List(
 
 ThisBuild / evictionErrorLevel := Level.Warn
 ThisBuild / scalafixDependencies += Libraries.organizeImports
-ThisBuild / version := sys.env.get("RELEASE_TAG").map(_.stripPrefix("v")).getOrElse("99.99.99-SNAPSHOT")
 
-enablePlugins(TessellationCiRelease)
+enablePlugins(GitVersioningPlugin, TessellationCiRelease)
 
 val scalafixCommonSettings = inConfig(IntegrationTest)(scalafixConfigSettings(IntegrationTest))
 
@@ -31,7 +30,8 @@ lazy val commonSettings = Seq(
   scalafmtOnCompile := true,
   scalafixOnCompile := true,
   resolvers ++= List(
-    Resolver.sonatypeRepo("snapshots")
+    Resolver.sonatypeRepo("snapshots"),
+    Resolver.bintrayRepo("rallyhealth", "sbt-plugins")
   )
 )
 
@@ -49,6 +49,7 @@ ThisBuild / assemblyMergeStrategy := {
   case "logback.xml"                                       => MergeStrategy.first
   case x if x.contains("io.netty.versions.properties")     => MergeStrategy.discard
   case x if x.contains("scala.semanticdb")                 => MergeStrategy.discard
+  case x if x.contains("rally-version.properties")         => MergeStrategy.concat
   case PathList(xs @ _*) if xs.last == "module-info.class" => MergeStrategy.first
   case x =>
     val oldStrategy = (assembly / assemblyMergeStrategy).value
@@ -56,6 +57,7 @@ ThisBuild / assemblyMergeStrategy := {
 }
 
 sdk / assemblyMergeStrategy := {
+  case x if x.contains("rally-version.properties")         => MergeStrategy.concat
   case x =>
     val oldStrategy = (assembly / assemblyMergeStrategy).value
     oldStrategy(x)
@@ -592,14 +594,14 @@ lazy val sdk = (project in file("modules/sdk"))
       (dagL1 / Compile / libraryDependencies).value
     ).flatten,
     Compile / packageBin / mappings ++= Seq(
-        (keytool / Compile / packageBin / mappings).value,
-        (kernel / Compile / packageBin / mappings).value,
-        (shared / Compile / packageBin / mappings).value,
-        (nodeShared / Compile / packageBin / mappings).value,
-        (currencyL0 / Compile / packageBin / mappings).value,
-        (currencyL1 / Compile / packageBin / mappings).value,
-        (dagL1 / Compile / packageBin / mappings).value
-      ).flatten.filterNot { case (_, path) => path.endsWith("rally-version.properties")},
+      (keytool / Compile / packageBin / mappings).value,
+      (kernel / Compile / packageBin / mappings).value,
+      (shared / Compile / packageBin / mappings).value,
+      (nodeShared / Compile / packageBin / mappings).value,
+      (currencyL0 / Compile / packageBin / mappings).value,
+      (currencyL1 / Compile / packageBin / mappings).value,
+      (dagL1 / Compile / packageBin / mappings).value
+    ).flatten.filterNot { case (_, path) => path.endsWith("rally-version.properties")},
     Compile / packageSrc / mappings ++= Seq(
       (keytool / Compile / packageSrc / mappings).value,
       (kernel / Compile / packageSrc / mappings).value,
