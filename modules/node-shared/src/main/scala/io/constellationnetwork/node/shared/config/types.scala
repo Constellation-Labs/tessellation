@@ -1,6 +1,7 @@
 package io.constellationnetwork.node.shared.config
 
 import cats.data.NonEmptySet
+import cats.implicits.catsSyntaxPartialOrder
 
 import scala.collection.immutable.SortedMap
 import scala.concurrent.duration.FiniteDuration
@@ -13,6 +14,7 @@ import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.{NodeState, RewardFraction}
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.priceOracle.TokenPair
 import io.constellationnetwork.schema.transaction.TransactionAmount
 import io.constellationnetwork.schema.{NonNegFraction, SnapshotOrdinal}
 
@@ -179,7 +181,9 @@ object types {
     iImpact: NonNegFraction,
     totalSupply: Amount,
     dagPrices: Map[EpochProgress, NonNegFraction]
-  )
+  ) {
+    def epochsPerMonth: NonNegLong = NonNegLong.unsafeFrom(epochsPerYear.value / 12)
+  }
 
   case class ProgramsDistributionConfig(
     weights: Map[Address, NonNegFraction],
@@ -199,7 +203,7 @@ object types {
 
   case class DelegatedRewardsConfig(
     flatInflationRate: NonNegFraction,
-    emissionConfig: Map[AppEnvironment, EmissionConfigEntry],
+    emissionConfig: Map[AppEnvironment, EpochProgress => Option[EmissionConfigEntry]],
     percentDistribution: Map[AppEnvironment, EpochProgress => ProgramsDistributionConfig]
   ) extends RewardsConfig
 
@@ -233,5 +237,8 @@ object types {
 
   case class ValidationErrorStorageConfig(maxSize: PosInt)
 
-  case class PriceOracleConfig(allowedMetagraphIds: Option[List[Address]], minEpochsBetweenUpdates: NonNegLong)
+  case class PriceOracleConfig(
+    allowedMetagraphIds: Option[List[Address]],
+    minEpochsBetweenUpdates: NonNegLong
+  )
 }
