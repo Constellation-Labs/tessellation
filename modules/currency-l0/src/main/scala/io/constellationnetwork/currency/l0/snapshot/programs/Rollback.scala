@@ -17,12 +17,13 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
-import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
-import io.constellationnetwork.schema.GlobalIncrementalSnapshot
+import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 
@@ -46,6 +47,7 @@ object Rollback {
     globalL0Service: GlobalL0Service[F],
     identifierStorage: IdentifierStorage[F],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+    sharedStorages: SharedStorages[F],
     collateral: Collateral[F],
     consensusManager: CurrencyConsensusManager[F],
     dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])],
@@ -121,6 +123,18 @@ object Rollback {
           }
 
       }.getOrElse(Applicative[F].unit)
+
+      (globalSnapshotUpdated, globalSnapshotInfoUpdated) <- globalL0Service.pullLatestSnapshot
+      _ <- sharedStorages.lastGlobalSnapshot.setInitial(globalSnapshotUpdated, globalSnapshotInfoUpdated)
+      _ <- sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
+        globalSnapshotUpdated,
+        globalSnapshotInfoUpdated,
+        globalL0Service.asLeft.some,
+        none
+      )
+      _ <- logger.info(
+        s"Setting the last global snapshot as: ${globalSnapshotUpdated.ordinal.show}"
+      )
 
       _ <- logger.info(s"[Rollback] Cleanup for snapshots greater than ${lastIncremental.ordinal}")
       _ <- currencySnapshotCleanupStorage.cleanupAbove(lastIncremental.ordinal)
