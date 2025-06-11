@@ -10,6 +10,7 @@ import scala.util.control.NoStackTrace
 import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataApplicationTraverse, L0NodeContext}
 import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnapshotCleanupStorage
+import io.constellationnetwork.currency.l0.modules.Storages
 import io.constellationnetwork.currency.l0.snapshot.CurrencyConsensusManager
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotContext, CurrencySnapshotInfo}
@@ -17,13 +18,13 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
-import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
+import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
 import io.constellationnetwork.node.shared.modules.SharedStorages
+import io.constellationnetwork.schema.GlobalIncrementalSnapshot
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 
@@ -48,6 +49,7 @@ object Rollback {
     identifierStorage: IdentifierStorage[F],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     sharedStorages: SharedStorages[F],
+    storages: Storages[F],
     collateral: Collateral[F],
     consensusManager: CurrencyConsensusManager[F],
     dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])],
@@ -132,6 +134,8 @@ object Rollback {
         globalL0Service.asLeft.some,
         none
       )
+      _ <- storages.lastSyncGlobalSnapshot.setInitial(globalSnapshotUpdated, globalSnapshotInfoUpdated)
+
       _ <- logger.info(
         s"Setting the last global snapshot as: ${globalSnapshotUpdated.ordinal.show}"
       )
