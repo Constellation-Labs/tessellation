@@ -5,7 +5,7 @@ services:
     container_name: node-exporter
     restart: unless-stopped
     ports:
-      - "9102:9100"
+      - "${NODE_EXPORTER_BIND_INTERFACE:-127.0.0.1}:9100:9100"
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro

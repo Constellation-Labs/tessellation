@@ -517,7 +517,8 @@ lazy val dagL0 = (project in file("modules/dag-l0"))
       Libraries.skunkCore,
       Libraries.skunkCirce,
       Libraries.squants,
-      Libraries.jol
+      Libraries.jol,
+      Libraries.http4sPrometheusMetrics
     )
   )
 
