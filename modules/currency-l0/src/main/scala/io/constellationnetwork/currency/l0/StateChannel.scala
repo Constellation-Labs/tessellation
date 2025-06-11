@@ -94,17 +94,16 @@ object StateChannel {
         .evalMap {
           case Left((snapshot, state)) =>
             for {
-              _ <- storages.lastSyncGlobalSnapshot.setInitial(snapshot, state)
               lastNAlreadyInitialized <- sharedStorages.lastNGlobalSnapshot.alreadyInitialized
-
               _ <-
                 if (!lastNAlreadyInitialized) {
-                  sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
-                    snapshot,
-                    state,
-                    services.globalL0.asLeft.some,
-                    none
-                  ) >>
+                  storages.lastSyncGlobalSnapshot.setInitial(snapshot, state) >>
+                    sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
+                      snapshot,
+                      state,
+                      services.globalL0.asLeft.some,
+                      none
+                    ) >>
                     sharedStorages.lastGlobalSnapshot.setInitial(
                       snapshot,
                       state
