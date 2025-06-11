@@ -17,4 +17,5 @@ trait LastNGlobalSnapshotStorage[F[_]] extends LastSnapshotStorage[F, GlobalIncr
     globalSnapshotFetcher: Option[GlobalFetcher],
     fetchGL0Function: Option[FetchFunction]
   ): F[Unit]
+  def alreadyInitialized: F[Boolean]
 }

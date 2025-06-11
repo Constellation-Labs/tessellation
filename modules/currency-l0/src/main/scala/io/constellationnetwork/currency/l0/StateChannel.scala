@@ -17,7 +17,6 @@ import io.constellationnetwork.currency.l0.modules.{Programs, Services, Storages
 import io.constellationnetwork.currency.schema.globalSnapshotSync.{GlobalSnapshotSync, GlobalSnapshotSyncReference}
 import io.constellationnetwork.kernel.{:: => _, _}
 import io.constellationnetwork.node.shared.domain.snapshot.Validator
-import io.constellationnetwork.node.shared.domain.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.node.shared.snapshot.currency.{CurrencySnapshotEvent, GlobalSnapshotSyncEvent}
@@ -94,18 +93,27 @@ object StateChannel {
         .evalMap(_ => services.globalL0.pullGlobalSnapshots)
         .evalMap {
           case Left((snapshot, state)) =>
-            storages.lastSyncGlobalSnapshot.setInitial(snapshot, state) >>
-              sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
-                snapshot,
-                state,
-                services.globalL0.asLeft.some,
-                none
-              ) >>
-              sharedStorages.lastGlobalSnapshot.setInitial(
-                snapshot,
-                state
-              ) >>
-              triggerOnGlobalSnapshotPullHook(snapshot, state)
+            for {
+              _ <- storages.lastSyncGlobalSnapshot.setInitial(snapshot, state)
+              lastNAlreadyInitialized <- sharedStorages.lastNGlobalSnapshot.alreadyInitialized
+
+              _ <-
+                if (!lastNAlreadyInitialized) {
+                  sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
+                    snapshot,
+                    state,
+                    services.globalL0.asLeft.some,
+                    none
+                  ) >>
+                    sharedStorages.lastGlobalSnapshot.setInitial(
+                      snapshot,
+                      state
+                    )
+                } else {
+                  ().pure
+                }
+              _ <- triggerOnGlobalSnapshotPullHook(snapshot, state)
+            } yield ()
 
           case Right(snapshots) =>
             snapshots.tailRecM {

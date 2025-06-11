@@ -196,5 +196,8 @@ object LastNGlobalSnapshotStorage {
 
       def getLastN: F[List[Hashed[GlobalIncrementalSnapshot]]] =
         incrementalSnapshotsR.get.map(_.values.toList)
+
+      def alreadyInitialized: F[Boolean] =
+        incrementalSnapshotsR.get.map(_.nonEmpty)
     }
 }
