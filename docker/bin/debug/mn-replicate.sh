@@ -18,9 +18,8 @@ if [ -z $SOURCE_HTTP ]; then
 fi
 
 if [ -z $RELEASE_TAG ]; then
-    export RELEASE_TAG="v3.2.0"
+    export RELEASE_TAG="v3.3.0"
 fi
-
 
 
 ssh $REMOTE_DESTINATION_NODE "bash -c \"docker exec -it gl0 bash -c 'curl -X POST http://localhost:9002/cluster/leave'\"" || true;
@@ -35,6 +34,12 @@ rsync -avzP \
   --filter=':- .gitignore' \
   --exclude='.git/' \
   . $REMOTE_DESTINATION_NODE:/root/projects/tessellation
+
+
+if [ -n "$SYNC_ONLY" ]; then
+    echo "Syncing only"
+    exit 0
+fi
 
 echo "Rsync command  $PROJECT_ROOT $REMOTE_DESTINATION_NODE:/root/projects/tessellation" 
 # rm -rf /root/docker/l0/data || true;
@@ -85,6 +90,7 @@ CL_DOCKER_GL0_LOGS=/root/docker/l0/logs
 CL_DOCKER_INTERNAL_GL0_CLI=9002
 CL_DOCKER_GL0_JOIN_RETRIES=1
 CL_DOCKER_GL0_JOIN_RETRY_DELAY=100
+CL_EXIT_ON_FORK=true
 EOF
 
 #  -Dcats.effect.tracing.mode=full -Dcats.effect.tracing.buffer.size=512 -Dcats.effect.tracing.exceptions.enhanced=true"

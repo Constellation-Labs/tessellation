@@ -135,6 +135,7 @@ object Dependencies {
     val http4sServer = http4s("ember-server")
     val http4sClient = http4s("ember-client")
     val http4sCirce = http4s("circe")
+    val http4sPrometheusMetrics = http4s("prometheus-metrics")
 
     val httpSignerCore = "io.constellationnetwork" %% "http-request-signer-core" % V.httpSigner
     val httpSignerHttp4s = "io.constellationnetwork" %% "http4s-request-signer" % V.httpSigner
