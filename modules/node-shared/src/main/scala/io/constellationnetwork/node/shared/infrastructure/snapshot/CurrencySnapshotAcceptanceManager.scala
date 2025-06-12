@@ -433,8 +433,8 @@ object CurrencySnapshotAcceptanceManager {
         if (lastGlobalSnapshotOrdinal <= checkSyncGlobalSnapshotField) {
           lastGlobalSnapshotOrdinal
         } else {
-          val fallbackOrdinal = lastGlobalSnapshots
-            .lastOption.map(_.ordinal)
+          val fallbackOrdinal = lastGlobalSnapshots.lastOption
+            .map(_.ordinal)
             .getOrElse(lastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue))
           if (lastGlobalSnapshotOrdinal === SnapshotOrdinal.MinValue) fallbackOrdinal
           else lastGlobalSnapshotOrdinal

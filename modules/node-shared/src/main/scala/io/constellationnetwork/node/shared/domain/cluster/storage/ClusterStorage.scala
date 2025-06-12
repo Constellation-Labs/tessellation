@@ -5,11 +5,13 @@ import cats.data.Ior
 import io.constellationnetwork.schema.cluster.{ClusterId, ClusterSessionToken}
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{Peer, PeerId, PeerResponsiveness}
+import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 
 import com.comcast.ip4s.{Host, Port}
 import fs2.Stream
 
 trait ClusterStorage[F[_]] {
+  val prioritySeedlist: Option[Set[SeedlistEntry]]
   def getPeers: F[Set[Peer]]
   def getResponsivePeers: F[Set[Peer]]
   def getPeer(id: PeerId): F[Option[Peer]]

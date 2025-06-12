@@ -21,25 +21,33 @@ import fs2.Stream
 import fs2.concurrent.Topic
 import io.chrisdavenport.mapref.MapRef
 import monocle.syntax.all._
+import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 
 object ClusterStorage {
 
   private val maxQueuedPeerChanges = 1000
 
-  def make[F[_]: Async](clusterId: ClusterId, initialPeers: Map[PeerId, Peer] = Map.empty): F[ClusterStorage[F]] =
+  def make[F[_]: Async](
+    clusterId: ClusterId,
+    initialPeers: Map[PeerId, Peer] = Map.empty,
+    prioritySeedlist: Option[Set[SeedlistEntry]] = None
+  ): F[ClusterStorage[F]] =
     for {
       topic <- Topic[F, Ior[Peer, Peer]]
       peers <- MapRef.ofSingleImmutableMap[F, PeerId, Peer](initialPeers)
       session <- Ref.of[F, Option[ClusterSessionToken]](None)
-    } yield make(clusterId, topic, peers, session)
+    } yield make(clusterId, topic, peers, session, prioritySeedlist)
 
   def make[F[_]: Async](
     clusterId: ClusterId,
     topic: Topic[F, Ior[Peer, Peer]],
     peers: MapRef[F, PeerId, Option[Peer]],
-    session: Ref[F, Option[ClusterSessionToken]]
+    session: Ref[F, Option[ClusterSessionToken]],
+    priority: Option[Set[SeedlistEntry]]
   ): ClusterStorage[F] =
     new ClusterStorage[F] {
+
+      val prioritySeedlist: Option[Set[SeedlistEntry]] = priority
 
       def createToken: F[ClusterSessionToken] =
         generateToken.flatMap { generatedToken =>

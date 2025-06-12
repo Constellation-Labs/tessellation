@@ -338,6 +338,7 @@ lazy val nodeShared = (project in file("modules/node-shared"))
       Libraries.refinedPureconfig,
       Libraries.shapeless,
       Libraries.jol,
+      Libraries.http4sPrometheusMetrics
     )
   )
 

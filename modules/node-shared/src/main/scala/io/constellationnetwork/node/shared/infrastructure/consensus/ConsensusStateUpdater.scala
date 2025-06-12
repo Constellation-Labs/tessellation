@@ -228,7 +228,7 @@ object ConsensusStateUpdater {
 
         if (isForked) {
 
-          if (System.getenv.get("CL_EXIT_ON_FORK") == Some("true")) {
+          if (scala.sys.env.get("CL_EXIT_ON_FORK").exists(_ == "true")) {
             System.exit(1)
           }
           val majorityForkPeers = observations.collect {

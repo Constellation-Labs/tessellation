@@ -30,6 +30,7 @@ services:
     volumes:
       - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12:ro
       - ${CL_DOCKER_SEEDLIST:-/dev/null}:/tessellation/seedlist:ro
+      - ${CL_DOCKER_PRIORITY_SEEDLIST:-/dev/null}:/tessellation/priority-seedlist:ro
       - ${CL_DOCKER_GL0_LOGS:-./gl0-logs}:/tessellation/logs
       # Only required for testing purposes
       - ${CL_GENESIS_FILE:-/dev/null}:/tessellation/genesis.csv:ro

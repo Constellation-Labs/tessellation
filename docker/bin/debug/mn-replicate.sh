@@ -45,9 +45,11 @@ echo "Rsync command  $PROJECT_ROOT $REMOTE_DESTINATION_NODE:/root/projects/tesse
 # rm -rf /root/docker/l0/data || true;
 
 cat > bootstrap.sh <<EOF
+head -n 3 /root/docker/mainnet-seedlist > /root/docker/priority-seedlist
 apt install -y just
 rm -rf /root/docker/l0/logs || true;
 rm -rf /root/docker/l0/data || true;
+cp /root/docker/l0/logs/app.log /root/backup-app-$(date +%s).log
 mkdir -p /root/docker/l0/logs
 mkdir -p /root/docker/l0/data
 cd ~/projects
@@ -55,7 +57,7 @@ cd tessellation
 source /root/.bashrc || true;
 sbt clean;
 just build --version=$RELEASE_TAG
-just purge-docker
+just clean-docker
 cp /root/projects/tessellation/docker/docker-compose.yaml /root/docker/docker-compose.yaml
 cd /root/docker;
 cp /root/.env .env
@@ -86,11 +88,14 @@ CL_VERSION_HASH=$VERSION_HASH
 CL_JAR_HASH=$JAR_HASH
 CL_DOCKER_JAVA_OPTS="-Xms1024M -Xmx12G -Xss256K"
 CL_DOCKER_SEEDLIST=/root/docker/mainnet-seedlist
+CL_DOCKER_PRIORITY_SEEDLIST=/root/docker/priority-seedlist
 CL_DOCKER_GL0_LOGS=/root/docker/l0/logs
 CL_DOCKER_INTERNAL_GL0_CLI=9002
 CL_DOCKER_GL0_JOIN_RETRIES=1
-CL_DOCKER_GL0_JOIN_RETRY_DELAY=100
+CL_DOCKER_GL0_JOIN_INITIAL_DELAY=100
 CL_EXIT_ON_FORK=true
+CL_TRACE_METRICS=true
+CL_GLOBAL_L0_PEER_ID=e0c1ee6ec43510f0e16d2969a7a7c074a5c8cdb477c074fe9c32a9aad8cbc8ff1dff60bb81923e0db437d2686a9b65b86c403e6a21fa32b6acc4e61be4d70925
 EOF
 
 #  -Dcats.effect.tracing.mode=full -Dcats.effect.tracing.buffer.size=512 -Dcats.effect.tracing.exceptions.enhanced=true"

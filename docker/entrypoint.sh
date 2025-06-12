@@ -110,6 +110,11 @@ if [ -n "$CL_DOCKER_SEEDLIST" ]; then
   export RUN_COMMAND="$RUN_COMMAND --seedlist /tessellation/seedlist"
 fi
 
+if [ -n "$CL_DOCKER_PRIORITY_SEEDLIST" ]; then
+  echo "Using priority seedlist: $CL_DOCKER_PRIORITY_SEEDLIST"
+  export RUN_COMMAND="$RUN_COMMAND --prioritySeedlist /tessellation/priority-seedlist"
+fi
+
 export GENESIS_SNAPSHOT_ARG="";
 export RUN_MAIN="true";
 

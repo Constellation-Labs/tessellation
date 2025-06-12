@@ -17,15 +17,17 @@ import io.constellationnetwork.node.shared.infrastructure.node.NodeStorage
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.security.Hasher
+import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 
 object SharedStorages {
 
   def make[F[_]: Async: Hasher](
     clusterId: ClusterId,
-    cfg: SharedConfig
+    cfg: SharedConfig,
+    prioritySeedlist: Option[Set[SeedlistEntry]]
   ): F[SharedStorages[F]] =
     for {
-      clusterStorage <- ClusterStorage.make[F](clusterId)
+      clusterStorage <- ClusterStorage.make[F](clusterId, prioritySeedlist)
       nodeStorage <- NodeStorage.make[F]
       sessionStorage <- SessionStorage.make[F]
       rumorStorage <- RumorStorage.make[F](cfg.gossip.storage)

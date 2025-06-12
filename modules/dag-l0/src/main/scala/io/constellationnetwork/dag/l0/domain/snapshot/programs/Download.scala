@@ -331,6 +331,21 @@ object Download {
     ): F[Signed[GlobalIncrementalSnapshot]] =
       clusterStorage.getResponsivePeers
         .map(NodeState.ready)
+        .map(peers => {
+          if (sys.env.get("CL_EXIT_ON_FORK").contains("true")) {
+            clusterStorage.prioritySeedlist match {
+              case Some(seeds) =>
+                val ids = seeds.map(x => x.peerId)
+                val hasPriorityPeer = peers.exists(p => ids.contains(p.id))
+                if (!hasPriorityPeer) {
+                  println("Exit on fork due to missing priority peer")
+                  System.exit(1)
+                }
+              case _ =>
+            }
+          }
+          peers
+        })
         .map(_.toList)
         .flatMap(Random[F].shuffleList)
         .flatTap { _ =>
