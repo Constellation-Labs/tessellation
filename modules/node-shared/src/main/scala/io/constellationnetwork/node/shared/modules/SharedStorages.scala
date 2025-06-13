@@ -3,11 +3,13 @@ package io.constellationnetwork.node.shared.modules
 import cats.effect.kernel.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+
 import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.block.processing.BlockRejectionReason
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import io.constellationnetwork.node.shared.domain.fork.ForkInfoStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
+import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.infrastructure.cluster.storage.{ClusterStorage, SessionStorage}
 import io.constellationnetwork.node.shared.infrastructure.consensus.{CurrencySnapshotEventValidationErrorStorage, ValidationErrorStorage}
 import io.constellationnetwork.node.shared.infrastructure.fork.ForkInfoStorage
@@ -15,9 +17,8 @@ import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage
 import io.constellationnetwork.node.shared.infrastructure.node.NodeStorage
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.schema.cluster.ClusterId
-import io.constellationnetwork.security.Hasher
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
+import io.constellationnetwork.security.Hasher
 
 object SharedStorages {
 

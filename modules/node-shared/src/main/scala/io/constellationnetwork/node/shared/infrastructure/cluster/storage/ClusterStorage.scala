@@ -11,6 +11,7 @@ import cats.syntax.order._
 import cats.syntax.traverse._
 
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
+import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.schema.cluster.{ClusterId, ClusterSessionAlreadyExists, ClusterSessionToken}
 import io.constellationnetwork.schema.generation.Generation
 import io.constellationnetwork.schema.node.NodeState
@@ -21,7 +22,6 @@ import fs2.Stream
 import fs2.concurrent.Topic
 import io.chrisdavenport.mapref.MapRef
 import monocle.syntax.all._
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 
 object ClusterStorage {
 
@@ -30,7 +30,7 @@ object ClusterStorage {
   def make[F[_]: Async](
     clusterId: ClusterId,
     initialPeers: Map[PeerId, Peer] = Map.empty,
-    priority: Option[Set[SeedlistEntry]] = None,
+    priority: Option[Set[SeedlistEntry]] = None
   ): F[ClusterStorage[F]] =
     for {
       topic <- Topic[F, Ior[Peer, Peer]]

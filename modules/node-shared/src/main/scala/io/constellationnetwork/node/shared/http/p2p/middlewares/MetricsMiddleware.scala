@@ -1,15 +1,19 @@
 package io.constellationnetwork.node.shared.http.p2p.middlewares
 
+import java.util.concurrent.TimeUnit
+
 import cats.data.Kleisli
 import cats.effect.kernel.Async
 import cats.syntax.all._
-import eu.timepit.refined.auto._
-import eu.timepit.refined.api.Refined
+
+import scala.concurrent.duration.FiniteDuration
+
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+
+import eu.timepit.refined.api.Refined
+import eu.timepit.refined.auto._
 import org.http4s.HttpRoutes
 import org.http4s.headers.`X-Forwarded-For`
-import scala.concurrent.duration.FiniteDuration
-import java.util.concurrent.TimeUnit
 
 object MetricsMiddleware {
 
@@ -50,33 +54,30 @@ object MetricsMiddleware {
           // 4. Request size histograms (both route-specific and generic)
 
           _ <- req.contentLength.traverse_ { size =>
-              Metrics[F].recordSizeHistogram(requestSizeMetricKey, size, tags)
+            Metrics[F].recordSizeHistogram(requestSizeMetricKey, size, tags)
           }
           // 5. Response size histograms (both route-specific and generic)
           _ <- response.contentLength.traverse_ { size =>
             Metrics[F].recordSizeHistogram(responseSizeMetricKey, size, tags)
           }
 
-
         } yield ()
         Async[F].start(metricsRecording) >> response.pure[F]
       }
     }
   }
-  
-  /**
-   * Normalize route path for use in metric names
-   * Examples:
-   * - "/api/v1/users/123" -> "api_v1_users_id"  
-   * - "/health" -> "health"
-   * - "/metrics" -> "metrics"
-   * - "/" -> "root"
-   */
-  private def normalizeRoutePath(path: String): String = {
+
+  /** Normalize route path for use in metric names Examples:
+    *   - "/api/v1/users/123" -> "api_v1_users_id"
+    *   - "/health" -> "health"
+    *   - "/metrics" -> "metrics"
+    *   - "/" -> "root"
+    */
+  def normalizeRoutePath(path: String): String = {
     val cleaned = path
       .stripPrefix("/")
       .stripSuffix("/")
-      
+
     if (cleaned.isEmpty) {
       "root"
     } else {
@@ -91,7 +92,7 @@ object MetricsMiddleware {
           } else if (segment.matches("[0-9a-fA-F]{64}")) {
             "hash"
           } else if (segment.matches("(?i).*dag[1-9A-HJ-NP-Za-km-z]{37}.*")) {
-              // DAG address pattern (base58, case insensitive)
+            // DAG address pattern (base58, case insensitive)
             "address"
           } else {
             // Replace non-alphanumeric chars with underscores and lowercase

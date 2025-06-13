@@ -2,10 +2,10 @@ package io.constellationnetwork.node.shared.domain.cluster.storage
 
 import cats.data.Ior
 
+import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.schema.cluster.{ClusterId, ClusterSessionToken}
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{Peer, PeerId, PeerResponsiveness}
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 
 import com.comcast.ip4s.{Host, Port}
 import fs2.Stream

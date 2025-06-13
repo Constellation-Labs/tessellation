@@ -1,10 +1,12 @@
 package io.constellationnetwork.dag.l0.modules
 
 import java.security.PrivateKey
+
 import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.option._
 import cats.syntax.semigroupk._
+
 import io.constellationnetwork.dag.l0.domain.cell.{L0Cell, L0CellInput}
 import io.constellationnetwork.dag.l0.domain.delegatedStake.DelegatedStakeOutput
 import io.constellationnetwork.dag.l0.domain.nodeCollateral.NodeCollateralOutput
@@ -26,6 +28,7 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
+
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
@@ -224,7 +227,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
       }
     }
 
-  private val p2pRoutes: HttpRoutes[F] = {
+  private val p2pRoutes: HttpRoutes[F] =
     MetricsMiddleware[F]()(implicitly[Async[F]], implicitly[Metrics[F]]) {
       PeerAuthMiddleware.responseSignerMiddleware(privateKey, storages.session, selfId)(
         registrationRoutes.p2pPublicRoutes <+>
@@ -243,8 +246,6 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
           )
       )
     }
-  }
-
 
   private val cliRoutes: HttpRoutes[F] =
     clusterRoutes.cliRoutes <+>
