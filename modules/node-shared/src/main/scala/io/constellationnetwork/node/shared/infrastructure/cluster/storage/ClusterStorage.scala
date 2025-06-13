@@ -30,13 +30,13 @@ object ClusterStorage {
   def make[F[_]: Async](
     clusterId: ClusterId,
     initialPeers: Map[PeerId, Peer] = Map.empty,
-    prioritySeedlist: Option[Set[SeedlistEntry]] = None
+    priority: Option[Set[SeedlistEntry]] = None,
   ): F[ClusterStorage[F]] =
     for {
       topic <- Topic[F, Ior[Peer, Peer]]
       peers <- MapRef.ofSingleImmutableMap[F, PeerId, Peer](initialPeers)
       session <- Ref.of[F, Option[ClusterSessionToken]](None)
-    } yield make(clusterId, topic, peers, session, prioritySeedlist)
+    } yield make(clusterId, topic, peers, session, priority)
 
   def make[F[_]: Async](
     clusterId: ClusterId,

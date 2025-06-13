@@ -331,7 +331,7 @@ object Download {
     ): F[Signed[GlobalIncrementalSnapshot]] =
       clusterStorage.getResponsivePeers
         .map(NodeState.ready)
-        .map(peers => {
+        .map { peers =>
           if (sys.env.get("CL_EXIT_ON_FORK").contains("true")) {
             clusterStorage.prioritySeedlist match {
               case Some(seeds) =>
@@ -345,7 +345,7 @@ object Download {
             }
           }
           peers
-        })
+        }
         .map(_.toList)
         .flatMap(Random[F].shuffleList)
         .flatTap { _ =>

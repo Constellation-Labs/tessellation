@@ -3,7 +3,6 @@ package io.constellationnetwork.node.shared.modules
 import cats.effect.kernel.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
-
 import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.block.processing.BlockRejectionReason
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, SessionStorage}
@@ -18,6 +17,7 @@ import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEve
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
+import io.constellationnetwork.schema.peer.{Peer, PeerId}
 
 object SharedStorages {
 
@@ -27,7 +27,7 @@ object SharedStorages {
     prioritySeedlist: Option[Set[SeedlistEntry]]
   ): F[SharedStorages[F]] =
     for {
-      clusterStorage <- ClusterStorage.make[F](clusterId, prioritySeedlist)
+      clusterStorage <- ClusterStorage.make[F](clusterId, Map.empty[PeerId, Peer], prioritySeedlist)
       nodeStorage <- NodeStorage.make[F]
       sessionStorage <- SessionStorage.make[F]
       rumorStorage <- RumorStorage.make[F](cfg.gossip.storage)

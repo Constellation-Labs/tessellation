@@ -135,10 +135,6 @@ object Dependencies {
     val http4sServer = http4s("ember-server")
     val http4sClient = http4s("ember-client")
     val http4sCirce = http4s("circe")
-    // This is the latest available release for http4s, but does not match current http4s version
-    // http4s needs to be upgraded.
-    val http4sPrometheusMetrics = "org.http4s" %% "http4s-prometheus-metrics" % "0.23.12"
-
     val httpSignerCore = "io.constellationnetwork" %% "http-request-signer-core" % V.httpSigner
     val httpSignerHttp4s = "io.constellationnetwork" %% "http4s-request-signer" % V.httpSigner
 

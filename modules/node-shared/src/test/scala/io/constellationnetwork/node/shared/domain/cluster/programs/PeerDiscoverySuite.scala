@@ -2,7 +2,6 @@ package io.constellationnetwork.node.shared.domain.cluster.programs
 
 import cats.data.{Ior, Kleisli}
 import cats.effect.IO
-
 import io.constellationnetwork.node.shared.domain.cluster.programs.PeerDiscovery
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
@@ -11,8 +10,8 @@ import io.constellationnetwork.schema.generators._
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.schema.{cluster, node, peer}
 import io.constellationnetwork.security.hex.Hex
-
 import com.comcast.ip4s.{Host, Port}
+import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import org.scalacheck.Arbitrary
 import weaver.SimpleIOSuite
 import weaver.scalacheck.Checkers
@@ -72,6 +71,8 @@ object PeerDiscoverySuite extends SimpleIOSuite with Checkers {
       override def createToken: IO[cluster.ClusterSessionToken] = ???
 
       override def setPeerResponsiveness(id: PeerId, responsiveness: peer.PeerResponsiveness): IO[Unit] = ???
+
+      override val prioritySeedlist: Option[Set[SeedlistEntry]] = None
     }
 
     PeerDiscovery.make(clusterClient, clusterStorage, nodeId)
