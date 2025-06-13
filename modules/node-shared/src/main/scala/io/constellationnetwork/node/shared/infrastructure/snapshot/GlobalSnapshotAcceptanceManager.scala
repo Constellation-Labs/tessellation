@@ -24,7 +24,7 @@ import io.constellationnetwork.node.shared.domain.nodeCollateral.{
   UpdateNodeCollateralAcceptanceManager,
   UpdateNodeCollateralAcceptanceResult
 }
-import io.constellationnetwork.node.shared.domain.priceOracle.PricingUpdateValidator
+import io.constellationnetwork.node.shared.domain.priceOracle.{PriceStateUpdater, PricingUpdateValidator}
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
@@ -120,6 +120,7 @@ object GlobalSnapshotAcceptanceManager {
     updateNodeCollateralAcceptanceManager: UpdateNodeCollateralAcceptanceManager[F],
     spendActionValidator: SpendActionValidator[F],
     pricingUpdateValidator: PricingUpdateValidator[F],
+    priceStateUpdater: PriceStateUpdater[F],
     collateral: Amount,
     withdrawalTimeLimit: EpochProgress
   ) = new GlobalSnapshotAcceptanceManager[F] {
@@ -543,19 +544,11 @@ object GlobalSnapshotAcceptanceManager {
             updatedNodeCollateralsRecords.nonEmpty
         }
 
-        updatedPriceState = {
-          val lastPriceState: SortedMap[TokenPair, PriceRecord] = lastSnapshotContext.priceState.getOrElse(SortedMap.empty)
-          if (acceptedPricingUpdates.isEmpty) {
-            lastPriceState
-          } else {
-            val acceptedPriceState: SortedMap[TokenPair, PriceRecord] = acceptedPricingUpdates
-              .groupBy(_.tokenPair)
-              .view
-              .mapValues(updates => PriceRecord(updates.head, epochProgress))
-              .toSortedMap
-            lastPriceState ++ acceptedPriceState
-          }
-        }
+        updatedPriceState <- priceStateUpdater.updatePriceState(
+          lastSnapshotContext.priceState.getOrElse(SortedMap.empty),
+          acceptedPricingUpdates,
+          epochProgress
+        )
 
         updatedAcceptedMetagraphSyncData = acceptMetagraphSyncData(
           lastSnapshotContext,

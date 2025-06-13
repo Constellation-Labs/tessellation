@@ -15,7 +15,6 @@ import cats.syntax.show._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.DataCalculatedState
-import io.constellationnetwork.dag.l0.config.types.MainnetRewardsConfig
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.node.shared.config.types.ClassicRewardsConfig
 import io.constellationnetwork.node.shared.domain.rewards.Rewards

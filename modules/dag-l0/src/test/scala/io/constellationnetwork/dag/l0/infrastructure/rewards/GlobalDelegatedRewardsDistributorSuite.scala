@@ -9,7 +9,6 @@ import cats.syntax.traverse._
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.math.BigDecimal.{RoundingMode, double2bigDecimal}
 
-import io.constellationnetwork.dag.l0.config.DelegatedRewardsConfigProvider
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types._

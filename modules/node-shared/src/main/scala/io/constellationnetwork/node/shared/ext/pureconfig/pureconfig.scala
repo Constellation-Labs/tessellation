@@ -11,6 +11,8 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.priceOracle.TokenPair
+import io.constellationnetwork.schema.priceOracle.TokenPair.DAG_USD
 import io.constellationnetwork.schema.transaction.TransactionFee
 import io.constellationnetwork.schema.{NonNegFraction, SnapshotOrdinal}
 import io.constellationnetwork.security.hex.Hex
@@ -44,4 +46,7 @@ package object pureconfig {
     genericMapReader(catchReadError(AppEnvironment.withName))
 
   implicit val addressReader: ConfigReader[Address] = ConfigReader[String].map(AddressVar.unapply).map(_.get)
+  implicit val tokenPairToBigdecimalReader: ConfigReader[Map[TokenPair, BigDecimal]] = genericMapReader(catchReadError {
+    case "DAG::USD" => DAG_USD
+  })
 }
