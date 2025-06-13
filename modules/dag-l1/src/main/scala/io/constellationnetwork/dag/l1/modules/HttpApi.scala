@@ -17,6 +17,7 @@ import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
+import io.constellationnetwork.schema.tokenLock.TokenLockLimitsConfig
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
@@ -43,7 +44,7 @@ object HttpApi {
     httpCfg: HttpConfig,
     txHasher: Hasher[F],
     validators: Validators[F],
-    delegatedStakingCfg: DelegatedStakingConfig
+    tokenLockLimitsConfig: TokenLockLimitsConfig
   ): HttpApi[F, P, S, SI, R] =
     new HttpApi[F, P, S, SI, R](
       storages,
@@ -56,7 +57,7 @@ object HttpApi {
       httpCfg,
       txHasher,
       validators,
-      delegatedStakingCfg
+      tokenLockLimitsConfig
     ) {}
 }
 
@@ -77,7 +78,7 @@ sealed abstract class HttpApi[
   httpCfg: HttpConfig,
   txHasher: Hasher[F],
   validators: Validators[F],
-  delegatedStakingCfg: DelegatedStakingConfig
+  tokenLockLimitsConfig: TokenLockLimitsConfig
 ) {
   private val clusterRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>
@@ -103,7 +104,7 @@ sealed abstract class HttpApi[
         storages.tokenLock,
         storages.lastSnapshot,
         validators.tokenLock,
-        delegatedStakingCfg.some
+        tokenLockLimitsConfig.some
       )
     }
 

@@ -166,9 +166,9 @@ object TokenLockRoutesSuite extends HttpSuite {
     ): IO[TokenLockValidationErrorOr[Signed[TokenLock]]] =
       IO.pure(signedTokenLock.validNec[TokenLockValidationError])
 
-    override def validateWithDelegatedStakeInfo(
+    override def validateWithTokenLockLimits(
       signedTokenLock: Signed[TokenLock],
-      delegatedStakingCfg: DelegatedStakingConfig,
+      tokenLockLimitsConfig: TokenLockLimitsConfig,
       maybeCurrentTokenLocks: Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]
     )(implicit hasher: Hasher[IO]): IO[TokenLockValidationErrorOr[Signed[TokenLock]]] =
       IO.pure(signedTokenLock.validNec[TokenLockValidationError])

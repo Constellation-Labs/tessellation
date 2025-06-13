@@ -28,7 +28,7 @@ import derevo.derive
 import enumeratum._
 import eu.timepit.refined.auto.{autoRefineV, _}
 import eu.timepit.refined.cats._
-import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
 import io.circe.{Decoder, Encoder}
 import io.estatico.newtype.macros.newtype
 
@@ -129,4 +129,10 @@ object tokenLock {
       NonEmptySetCodec.decoder[Signed[TokenLock]]
     implicit object OrderingInstance extends OrderBasedOrdering[TokenLockBlock]
   }
+
+  @derive(decoder, encoder, order, show)
+  case class TokenLockLimitsConfig(
+    maxTokenLocksPerAddress: PosInt,
+    minTokenLockAmount: PosLong
+  )
 }

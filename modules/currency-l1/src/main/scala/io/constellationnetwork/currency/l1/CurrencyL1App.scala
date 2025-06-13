@@ -35,6 +35,7 @@ import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.node.NodeState.SessionStarted
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
 import io.constellationnetwork.schema.swap.CurrencyId
+import io.constellationnetwork.schema.tokenLock.TokenLockLimitsConfig
 import io.constellationnetwork.security.Hasher
 
 import com.monovore.decline.Opts
@@ -48,6 +49,7 @@ trait OverridableL1 extends TessellationIOApp[Run] {
   def dataApplication: Option[Resource[IO, BaseDataApplicationL1Service[IO]]] = None
   def transactionValidator: Option[CustomContextualTransactionValidator] = None
   def transactionFeeEstimator: Option[TransactionFeeEstimator[IO]] = None
+  def setTokenLockLimits: Option[TokenLockLimitsConfig] = None
 }
 
 abstract class CurrencyL1App(
@@ -189,7 +191,8 @@ abstract class CurrencyL1App(
           cfg.http,
           metagraphVersion.some,
           txHasher,
-          validators
+          validators,
+          setTokenLockLimits
         )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
