@@ -25,6 +25,7 @@ import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.node.NodeState.SessionStarted
 import io.constellationnetwork.schema.semver.TessellationVersion
+import io.constellationnetwork.schema.tokenLock.TokenLockLimitsConfig
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.shared.{SharedKryoRegistrationIdRange, sharedKryoRegistrar}
 
@@ -140,7 +141,10 @@ object Main
           cfg.http,
           Hasher.forKryo[IO],
           validators,
-          sharedConfig.delegatedStaking
+          TokenLockLimitsConfig(
+            sharedConfig.delegatedStaking.maxTokenLocksPerAddress,
+            sharedConfig.delegatedStaking.minTokenLockAmount
+          )
         )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)

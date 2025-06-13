@@ -22,6 +22,7 @@ import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
+import io.constellationnetwork.schema.tokenLock.TokenLockLimitsConfig
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
@@ -67,7 +68,8 @@ object HttpApi {
     httpCfg: HttpConfig,
     maybeMetagraphVersion: Option[MetagraphVersion],
     txHasher: Hasher[F],
-    validators: Validators[F]
+    validators: Validators[F],
+    maybeTokenLockLimitsConfig: Option[TokenLockLimitsConfig]
   ): HttpApi[F, R] =
     new HttpApi[F, R](
       maybeDataApplication,
@@ -82,7 +84,8 @@ object HttpApi {
       httpCfg,
       maybeMetagraphVersion,
       txHasher,
-      validators
+      validators,
+      maybeTokenLockLimitsConfig
     ) {}
 }
 
@@ -102,7 +105,8 @@ sealed abstract class HttpApi[
   httpCfg: HttpConfig,
   maybeMetagraphVersion: Option[MetagraphVersion],
   txHasher: Hasher[F],
-  validators: Validators[F]
+  validators: Validators[F],
+  maybeTokenLockLimitsConfig: Option[TokenLockLimitsConfig]
 ) {
 
   private val clusterRoutes =
@@ -142,7 +146,7 @@ sealed abstract class HttpApi[
         storages.tokenLock,
         storages.lastSnapshot,
         validators.tokenLock,
-        none
+        maybeTokenLockLimitsConfig
       )
     }
 
