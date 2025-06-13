@@ -85,23 +85,16 @@ object Metrics {
 
   import org.openjdk.jol.info.GraphLayout
 
-  val sizeBytesBuckets: Array[Double] = Array.tabulate(10){i =>
-    Array(
-      (i+1)*1e3, // Kilobytes cutoff 1kb.
-    ) ++ Array.range(4, 9).map{j =>
-      (i+1).toDouble*Math.pow(10, j.toDouble)
-    }
-  }.flatten.distinct.sorted
+  val sizeBytesBuckets: Array[Double] = Array(
+    1e3, 5e3, 10e3,
+    100e3, 500e3, // 100KB to 500KB
+    1e6, 5e6, 10e6, // 1MB to 10MB
+    25e6, 50e6, 100e6 // 25MB to 100MB
+  )
 
-  val timeSecondsBuckets: Array[Double] = Array.tabulate(10) { i =>
-    Array(
-      (i + 1) * 0.1, // Cutoff below 100 ms
-    ) ++ Array.range(0, 4).map { j =>
-      (i+1).toDouble * Math.pow(10, j.toDouble)
-    }.filter(_ <= 2000)
-  }.flatten.distinct.sorted
-
-//   Array(0.1, 0.250, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0, 1000.0)
+  val timeSecondsBuckets: Array[Double] = Array(
+    0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 300.0
+  )
 
   def sizeInKB(obj: Any): Double =
     GraphLayout.parseInstance(obj).totalSize() / 1024.0
