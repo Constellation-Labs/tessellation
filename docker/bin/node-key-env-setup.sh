@@ -5,7 +5,19 @@ export CL_KEYSTORE="key.p12"
 export CL_KEYALIAS="alias"
 export CL_PASSWORD="password"
 export CL_APP_ENV="dev"
+# These ones below are dummy values used to trick the jar into starting
+export CL_COLLATERAL=0
+export CL_GLOBAL_L0_PEER_ID=1b4b9f98190ede0d26ec1a2ce736638ffa556b08135403256d47d3c405e08e3bb272fb9172c7bd9f96008dd380ceb6201e965498bc9115bbdf905ad9781dbf18
+export CL_GLOBAL_L0_PEER_HTTP_HOST=172.32.0.10
+export CL_GLOBAL_L0_PEER_HTTP_PORT=9000
+export CL_L0_HTTP_PORT=9000
+export CL_L0_PEER_ID=1b4b9f98190ede0d26ec1a2ce736638ffa556b08135403256d47d3c405e08e3bb272fb9172c7bd9f96008dd380ceb6201e965498bc9115bbdf905ad9781dbf18
+export CL_L0_PEER_HTTP_HOST=172.32.0.10
+export CL_PUBLIC_HTTP_PORT=9000
+export CL_P2P_HTTP_PORT=9000
+export CL_CLI_HTTP_PORT=9000
 EOF
+
 
 for i in 0 1 2; do
   cp ./nodes/.envrc ./nodes/$i/.envrc

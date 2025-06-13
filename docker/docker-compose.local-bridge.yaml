@@ -1,8 +1,8 @@
 services:
-  global-l0:
+  gl0:
     networks:
       tessellation-network:
-  dag-l1:
+  gl1:
     networks:
       tessellation-network:
 networks:

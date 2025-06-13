@@ -4,7 +4,7 @@ set -e
 
 
 # 2. More thorough container cleanup with proper error handling
-echo "Stopping and removing global-l0 containers..."
+echo "Stopping and removing gl0 containers..."
 
 
 cleanup_container() {
@@ -17,8 +17,11 @@ cleanup_container() {
 
 cleanup() {
     for i in 0 1 2; do
-        cleanup_container global-l0-$i gl0-data-$i &
-        cleanup_container dag-l1-$i dag-l1-data-$i &
+        cleanup_container gl0-$i gl0-data-$i &
+        cleanup_container gl1-$i gl1-data-$i &
+        cleanup_container dl1-$i dl1-data-$i &
+        cleanup_container ml0-$i ml0-data-$i &
+        cleanup_container ml1-$i ml1-data-$i &
     done
     LAST_PID=$!
     wait $LAST_PID
@@ -48,6 +51,7 @@ wait $CLEANUP_PID
 
 # 3. Find and kill any lingering processes binding to tessellation ports
 
+# TODO: Update this to use new port offsets
 check_port_binds() {
     if [ "$CHECK_PORT_BINDS" == "true" ]; then
         echo "Checking for lingering processes on common ports... -- this requires sudo"
