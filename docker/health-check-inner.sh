@@ -14,8 +14,8 @@ if [ "$ID" == "ml0" ]; then
   export PUBLIC_PORT=$CL_DOCKER_INTERNAL_ML0_PUBLIC
 fi
 
-if [ "$ID" == "ml1" ]; then
-  export PUBLIC_PORT=$CL_DOCKER_INTERNAL_ML1_PUBLIC
+if [ "$ID" == "cl1" ]; then
+  export PUBLIC_PORT=$CL_DOCKER_INTERNAL_CL1_PUBLIC
 fi
 
 if [ "$ID" == "dl1" ]; then

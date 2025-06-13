@@ -47,7 +47,7 @@ verify_healthy() {
       l0_port="${DAG_L0_PORT_PREFIX}${i}0"
       l1_port="${DAG_L1_PORT_PREFIX}${i}0"
       ml0_port="${ML0_PORT_PREFIX}${i}0"
-      ml1_port="${ML1_PORT_PREFIX}${i}0"
+      cl1_port="${CL1_PORT_PREFIX}${i}0"
       dl1_port="${DL1_PORT_PREFIX}${i}0"
 
       if [ "$i" -lt "$NUM_GL0_NODES" ]; then
@@ -62,8 +62,8 @@ verify_healthy() {
         check_health $ml0_port $i "ml0"
       fi
 
-      if [ "$i" -lt "$NUM_ML1_NODES" ]; then
-        check_health $ml1_port $i "ml1"
+      if [ "$i" -lt "$NUM_CL1_NODES" ]; then
+        check_health $cl1_port $i "cl1"
       fi
       
       if [ "$i" -lt "$NUM_DL1_NODES" ]; then

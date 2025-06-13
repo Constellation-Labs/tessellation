@@ -4,21 +4,21 @@ services:
     networks:
       tessellation_common:
         aliases:
-          - ml0{CONTAINER_NAME_SUFFIX:-}
+          - ml0${CONTAINER_NAME_SUFFIX:-}
         ipv4_address: ${NET_PREFIX}.3${CONTAINER_OFFSET:-0}
-  ml1:
+  cl1:
     # merge in an extra network just for tests
     networks:
       tessellation_common:
         aliases:
-          - ml1{CONTAINER_NAME_SUFFIX:-}
+          - cl1${CONTAINER_NAME_SUFFIX:-}
         ipv4_address: ${NET_PREFIX}.4${CONTAINER_OFFSET:-0}
   dl1:
     # merge in an extra network just for tests
     networks:
       tessellation_common:
         aliases:
-          - ml1{CONTAINER_NAME_SUFFIX:-}
+          - dl1${CONTAINER_NAME_SUFFIX:-}
         ipv4_address: ${NET_PREFIX}.5${CONTAINER_OFFSET:-0}
           
 # declare the external network (must already exist)

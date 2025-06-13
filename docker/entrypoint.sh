@@ -60,7 +60,7 @@ if [ "$ID" == "ml0" ]; then
   export CL_DOCKER_TEST_NETWORK_SUFFIX=3;
 fi
 
-if [ "$ID" == "ml1" ]; then
+if [ "$ID" == "cl1" ]; then
   export CL_DOCKER_TEST_NETWORK_SUFFIX=4;
 fi
 

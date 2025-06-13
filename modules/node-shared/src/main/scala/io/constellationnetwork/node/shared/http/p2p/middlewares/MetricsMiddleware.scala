@@ -12,9 +12,6 @@ import scala.concurrent.duration.FiniteDuration
 import java.util.concurrent.TimeUnit
 
 object MetricsMiddleware {
-  
-  // Helper to create MetricKey safely
-  private def unsafeMetricKey(s: String): Metrics.MetricKey = Refined.unsafeApply(s)
 
   def apply[F[_]: Async: Metrics](): HttpRoutes[F] => HttpRoutes[F] = { routes =>
     Kleisli { req =>
@@ -25,31 +22,26 @@ object MetricsMiddleware {
         val duration = FiniteDuration(endTime - startTime, TimeUnit.NANOSECONDS)
         // Extract route path and normalize it for metric naming
         val routePath = normalizeRoutePath(req.pathInfo.renderString)
-        val method = req.method.name.toLowerCase
         val actualIp = req.remote.map(_.host.toString).getOrElse("unknown")
         val forwardedIp = req.headers
           .get[`X-Forwarded-For`]
           .map(_.values.head.toString.split(",").head.trim)
           .getOrElse("none")
 
-        val commonTags = Seq(
+        // Cannot compile time infer type for Seq
+        val tags: Seq[(Metrics.LabelName, String)] = Seq(
           Metrics.unsafeLabelName("script_name") -> scriptName,
           Metrics.unsafeLabelName("method") -> req.method.name,
           Metrics.unsafeLabelName("status") -> response.status.code.toString,
           Metrics.unsafeLabelName("route") -> routePath,
-          Metrics.unsafeLabelName("status_class") -> s"${response.status.code / 100}xx"
-        )
-
-        val ipTags = Seq(
+          Metrics.unsafeLabelName("status_class") -> s"${response.status.code / 100}xx",
           Metrics.unsafeLabelName("actual_ip") -> actualIp,
           Metrics.unsafeLabelName("forwarded_ip") -> forwardedIp
         )
-        val tags = commonTags ++ ipTags
-
         // Generic HTTP metrics with route as label
-        val durationMetricKey: Metrics.MetricKey = unsafeMetricKey("dag_http_request_time")
-        val requestSizeMetricKey: Metrics.MetricKey = unsafeMetricKey("dag_http_request_size")
-        val responseSizeMetricKey: Metrics.MetricKey = unsafeMetricKey("dag_http_response_size")
+        val durationMetricKey: Metrics.MetricKey = "dag_http_request_time"
+        val requestSizeMetricKey: Metrics.MetricKey = "dag_http_request_size"
+        val responseSizeMetricKey: Metrics.MetricKey = "dag_http_response_size"
 
         // Record metrics asynchronously without blocking the response
         val metricsRecording = for {
@@ -98,6 +90,9 @@ object MetricsMiddleware {
             "uuid"
           } else if (segment.matches("[0-9a-fA-F]{64}")) {
             "hash"
+          } else if (segment.matches("(?i).*dag[1-9A-HJ-NP-Za-km-z]{37}.*")) {
+              // DAG address pattern (base58, case insensitive)
+            "address"
           } else {
             // Replace non-alphanumeric chars with underscores and lowercase
             segment.replaceAll("[^a-zA-Z0-9]", "_").toLowerCase

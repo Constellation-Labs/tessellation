@@ -95,9 +95,9 @@ for i in 0 1 2; do
     export PROFILE_ML0_ARG="--profile ml0"
   fi
 
-  export PROFILE_ML1_ARG=""
-  if [ "$i" -lt "$NUM_ML1_NODES" ]; then
-    export PROFILE_ML1_ARG="--profile ml1"
+  export PROFILE_CL1_ARG=""
+  if [ "$i" -lt "$NUM_CL1_NODES" ]; then
+    export PROFILE_CL1_ARG="--profile cl1"
   fi
 
   export PROFILE_DL1_ARG=""
@@ -108,7 +108,7 @@ for i in 0 1 2; do
   metagraph_args=""
 
   if [ -n "$METAGRAPH" ]; then
-    metagraph_args="-f docker-compose.metagraph.yaml -f docker-compose.metagraph-test.yaml $PROFILE_ML0_ARG $PROFILE_ML1_ARG $PROFILE_DL1_ARG"
+    metagraph_args="-f docker-compose.metagraph.yaml -f docker-compose.metagraph-test.yaml $PROFILE_ML0_ARG $PROFILE_CL1_ARG $PROFILE_DL1_ARG"
     echo "Setting metagraph args to $metagraph_args"
     if [ ! -f "./genesis.snapshot" ] && [ "$i" -eq 0 ]; then
       echo "Generating metagraph genesis snapshot"

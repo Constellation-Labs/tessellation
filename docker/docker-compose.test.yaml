@@ -4,14 +4,14 @@ services:
     networks:
       tessellation_common:
         aliases:
-          - gl0{COxNTAINER_NAME_SUFFIX:-}
+          - gl0${CONTAINER_NAME_SUFFIX:-}
         ipv4_address: ${NET_PREFIX}.1${CONTAINER_OFFSET:-0}
   gl1:
     # merge in an extra network just for tests
     networks:
       tessellation_common:
         aliases:
-          - gl1{CONTAINER_NAME_SUFFIX:-}
+          - gl1${CONTAINER_NAME_SUFFIX:-}
         ipv4_address: ${NET_PREFIX}.2${CONTAINER_OFFSET:-0}
 # declare the external network (must already exist)
 networks:

@@ -78,7 +78,7 @@ assemble_all_metagraph() {
 
 if [ -z "$METAGRAPH" ]; then
   touch ./docker/jars/ml0.jar
-  touch ./docker/jars/ml1.jar
+  touch ./docker/jars/cl1.jar
   touch ./docker/jars/dl1.jar
 fi
 
@@ -97,7 +97,7 @@ if [ -n "$METAGRAPH" ]; then
 
   missing=false
 
-  for module in $METAGRAPH_ML0_RELATIVE_PATH $METAGRAPH_ML1_RELATIVE_PATH $METAGRAPH_DL1_RELATIVE_PATH; do
+  for module in $METAGRAPH_ML0_RELATIVE_PATH $METAGRAPH_CL1_RELATIVE_PATH $METAGRAPH_DL1_RELATIVE_PATH; do
     jar_path=$(ls -1t modules/"$module"/target/scala-2.13/*-assembly*.jar 2>/dev/null | head -n1)
     if [ -z "$jar_path" ]; then
       echo "⚠️  Missing JAR for module: $module"
@@ -118,14 +118,14 @@ if [ -n "$METAGRAPH" ]; then
         sbt currencyL0/assembly
         override_set=true
       fi
-      if [ "$METAGRAPH_ML1" == "true" ]; then
-        echo "Assembling L1"
+      if [ "$METAGRAPH_CL1" == "true" ]; then
+        echo "Assembling CL1"
         echo "Assembling currencyL1 with explicit version: $TESSELLATION_VERSION"
         sbt currencyL1/assembly
         override_set=true
       fi
       if [ "$METAGRAPH_DL1" == "true" ]; then
-        echo "Assembling L1"
+        echo "Assembling DL1"
         echo "Assembling dataL1 with explicit version: $TESSELLATION_VERSION"
         sbt dataL1/assembly
         override_set=true
@@ -146,7 +146,7 @@ if [ -n "$METAGRAPH" ]; then
   mkdir -p ./docker/jars/
 
   move_metagraph_jar $METAGRAPH_ML0_RELATIVE_PATH "ml0"
-  move_metagraph_jar $METAGRAPH_ML1_RELATIVE_PATH "ml1"
+  move_metagraph_jar $METAGRAPH_CL1_RELATIVE_PATH "cl1"
   move_metagraph_jar $METAGRAPH_DL1_RELATIVE_PATH "dl1"
 
 fi
