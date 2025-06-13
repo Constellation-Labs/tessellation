@@ -71,5 +71,9 @@ object NoOpMetrics {
         timeSeconds: Float,
         tags: TagSeq
       ): IO[Unit] = IO.unit
+
+      override def recordTimeHistogram(key: MetricKey, duration: FiniteDuration, tags: TagSeq, buckets: Array[Double]): IO[Unit] = IO.unit
+
+      override def recordSizeHistogram(key: MetricKey, sizeBytes: Long, tags: TagSeq, buckets: Array[Double]): IO[Unit] = IO.unit
     }
 }

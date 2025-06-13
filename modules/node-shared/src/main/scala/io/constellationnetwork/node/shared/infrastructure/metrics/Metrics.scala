@@ -3,7 +3,6 @@ package io.constellationnetwork.node.shared.infrastructure.metrics
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import java.util.{List => JList}
-
 import cats.Applicative
 import cats.effect.{Async, Resource}
 import cats.syntax.all._
@@ -11,23 +10,16 @@ import cats.syntax.all._
 import scala.concurrent.duration.FiniteDuration
 import scala.jdk.CollectionConverters._
 import scala.jdk.DurationConverters._
-
-import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.{MetricKey, TagSeq}
-
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.{MetricKey, TagSeq, sizeBytesBuckets, timeSecondsBuckets}
 import better.files.File
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
 import eu.timepit.refined.string.MatchesRegex
 import io.chrisdavenport.mapref.MapRef
-import io.micrometer.core.instrument.Tag
+import io.micrometer.core.instrument.{DistributionSummary, Tag}
 import io.micrometer.core.instrument.binder.jvm._
 import io.micrometer.core.instrument.binder.logging.LogbackMetrics
-import io.micrometer.core.instrument.binder.system.{
-  DiskSpaceMetrics => SystemDiskSpaceMetrics,
-  FileDescriptorMetrics,
-  ProcessorMetrics,
-  UptimeMetrics
-}
+import io.micrometer.core.instrument.binder.system.{FileDescriptorMetrics, ProcessorMetrics, UptimeMetrics, DiskSpaceMetrics => SystemDiskSpaceMetrics}
 import io.micrometer.prometheus.{PrometheusConfig, PrometheusMeterRegistry}
 import io.prometheus.client.exporter.common.TextFormat
 
@@ -73,11 +65,43 @@ trait Metrics[F[_]] {
     timeSeconds: Float,
     tags: TagSeq = Seq()
   ): F[Unit]
+
+  def recordTimeHistogram(
+                           key: MetricKey,
+                           duration: FiniteDuration,
+                           tags: TagSeq = Seq.empty,
+                           buckets: Array[Double] = timeSecondsBuckets
+                         ): F[Unit]
+
+  def recordSizeHistogram(
+                           key: MetricKey,
+                           sizeBytes: Long,
+                           tags: TagSeq = Seq.empty,
+                           buckets: Array[Double] = sizeBytesBuckets
+                         ): F[Unit]
 }
 
 object Metrics {
 
   import org.openjdk.jol.info.GraphLayout
+
+  val sizeBytesBuckets: Array[Double] = Array.tabulate(10){i =>
+    Array(
+      (i+1)*1e3, // Kilobytes cutoff 1kb.
+    ) ++ Array.range(4, 9).map{j =>
+      (i+1).toDouble*Math.pow(10, j.toDouble)
+    }
+  }.flatten.distinct.sorted
+
+  val timeSecondsBuckets: Array[Double] = Array.tabulate(10) { i =>
+    Array(
+      (i + 1) * 0.1, // Cutoff below 100 ms
+    ) ++ Array.range(0, 4).map { j =>
+      (i+1).toDouble * Math.pow(10, j.toDouble)
+    }.filter(_ <= 2000)
+  }.flatten.distinct.sorted
+
+//   Array(0.1, 0.250, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0, 1000.0)
 
   def sizeInKB(obj: Any): Double =
     GraphLayout.parseInstance(obj).totalSize() / 1024.0
@@ -123,6 +147,37 @@ object Metrics {
     case (gaugesR, registry) =>
       new Metrics[F] {
 
+        def recordTimeHistogram(
+                                 key: MetricKey,
+                                 duration: FiniteDuration,
+                                 tags: TagSeq = Seq.empty,
+                                 buckets: Array[Double] = timeSecondsBuckets
+                               ): F[Unit] = {
+          val durationSeconds = duration.toUnit(TimeUnit.SECONDS)
+          Async[F].delay {
+            DistributionSummary.builder(s"${key}_duration_seconds")
+              .baseUnit("seconds")
+              .serviceLevelObjectives(buckets: _*)
+              .tags(toMicrometerTags(tags))
+              .register(registry)
+              .record(durationSeconds)
+          }
+        }
+        def recordSizeHistogram(
+                                 key: MetricKey,
+                                 sizeBytes: Long,
+                                 tags: TagSeq = Seq.empty,
+                                 buckets: Array[Double] = sizeBytesBuckets
+                               ): F[Unit] = {
+          Async[F].delay {
+            DistributionSummary.builder(s"${key}_bytes")
+              .baseUnit("bytes")
+              .serviceLevelObjectives(buckets: _*)
+              .tags(toMicrometerTags(tags))
+              .register(registry)
+              .record(sizeBytes.toDouble)
+          }
+        }
         def updateGauge(key: MetricKey, value: Int): F[Unit] =
           genericUpdateGauge(key, value, Seq.empty)
 

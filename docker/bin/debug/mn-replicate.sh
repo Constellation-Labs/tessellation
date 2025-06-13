@@ -47,9 +47,9 @@ echo "Rsync command  $PROJECT_ROOT $REMOTE_DESTINATION_NODE:/root/projects/tesse
 cat > bootstrap.sh <<EOF
 head -n 3 /root/docker/mainnet-seedlist > /root/docker/priority-seedlist
 apt install -y just
+cp /root/docker/l0/logs/app.log /root/backup-app-$(date +%s).log
 rm -rf /root/docker/l0/logs || true;
 rm -rf /root/docker/l0/data || true;
-cp /root/docker/l0/logs/app.log /root/backup-app-$(date +%s).log
 mkdir -p /root/docker/l0/logs
 mkdir -p /root/docker/l0/data
 cd ~/projects
