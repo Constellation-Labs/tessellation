@@ -1,32 +1,25 @@
 package io.constellationnetwork.node.shared.infrastructure.metrics
 
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import java.util.{List => JList}
-
+import cats.Applicative
 import cats.effect.{Async, Resource}
 import cats.syntax.all._
-import cats.{Applicative, Monad}
 
 import scala.concurrent.duration.FiniteDuration
 import scala.jdk.CollectionConverters._
 import scala.jdk.DurationConverters._
-
-import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.{MetricKey, TagSeq}
-
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.{MetricKey, TagSeq, sizeBytesBuckets, timeSecondsBuckets}
 import better.files.File
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
 import eu.timepit.refined.string.MatchesRegex
 import io.chrisdavenport.mapref.MapRef
-import io.micrometer.core.instrument.Tag
+import io.micrometer.core.instrument.{DistributionSummary, Tag}
 import io.micrometer.core.instrument.binder.jvm._
 import io.micrometer.core.instrument.binder.logging.LogbackMetrics
-import io.micrometer.core.instrument.binder.system.{
-  DiskSpaceMetrics => SystemDiskSpaceMetrics,
-  FileDescriptorMetrics,
-  ProcessorMetrics,
-  UptimeMetrics
-}
+import io.micrometer.core.instrument.binder.system.{FileDescriptorMetrics, ProcessorMetrics, UptimeMetrics, DiskSpaceMetrics => SystemDiskSpaceMetrics}
 import io.micrometer.prometheus.{PrometheusConfig, PrometheusMeterRegistry}
 import io.prometheus.client.exporter.common.TextFormat
 
@@ -63,29 +56,54 @@ trait Metrics[F[_]] {
   def recordDistribution(key: MetricKey, value: Double, tags: TagSeq): F[Unit]
 
   private[shared] def getAllAsText: F[String]
+
+  def timedMetric[A](operation: F[A], metricKey: MetricKey, tags: TagSeq = Seq.empty): F[A]
+
+  def genericRecordDistributionWithTimeBuckets[A: Numeric](
+    key: MetricKey,
+    value: A,
+    timeSeconds: Float,
+    tags: TagSeq = Seq()
+  ): F[Unit]
+
+  def recordTimeHistogram(
+                           key: MetricKey,
+                           duration: FiniteDuration,
+                           tags: TagSeq = Seq.empty,
+                           buckets: Array[Double] = timeSecondsBuckets
+                         ): F[Unit]
+
+  def recordSizeHistogram(
+                           key: MetricKey,
+                           sizeBytes: Long,
+                           tags: TagSeq = Seq.empty,
+                           buckets: Array[Double] = sizeBytesBuckets
+                         ): F[Unit]
 }
 
 object Metrics {
 
-  implicit class MetricsMapOps(map: Map[String, Any]) {
-    def updateGauges[F[_]](prefix: String)(implicit M: Metrics[F], F: Monad[F]): F[Unit] =
-      map.toSeq.traverse_ {
-        case (k, v) =>
-          val key: MetricKey = Refined.unsafeApply(s"dag_${prefix}_$k")
-          v match {
-            case v: Int    => M.updateGauge(key, v)
-            case v: Long   => M.updateGauge(key, v)
-            case v: Float  => M.updateGauge(key, v)
-            case v: Double => M.updateGauge(key, v)
-            case v: Number => M.updateGauge(key, v.doubleValue())
-            case _         => F.pure(())
-          }
-      }
-  }
+  import org.openjdk.jol.info.GraphLayout
+
+  val sizeBytesBuckets: Array[Double] = Array(
+    1e3, 5e3, 10e3,
+    100e3, 500e3, // 100KB to 500KB
+    1e6, 5e6, 10e6, // 1MB to 10MB
+    25e6, 50e6, 100e6 // 25MB to 100MB
+  )
+
+  val timeSecondsBuckets: Array[Double] = Array(
+    0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 300.0
+  )
+
+  def sizeInKB(obj: Any): Double =
+    GraphLayout.parseInstance(obj).totalSize() / 1024.0
+
   type MetricKey = String Refined MatchesRegex["dag_[a-z0-9]+(?:_[a-z0-9]+)*"]
   type LabelName = String Refined MatchesRegex["[a-z0-9]+(?:_[a-z0-9]+)*"]
   type TagSeq = Seq[(LabelName, String)]
   type AtomicDouble = AtomicReference[Double]
+  def unsafeLabelName(s: String): LabelName = Refined.unsafeApply(s)
 
   private def toMicrometerTags(tags: TagSeq): JList[Tag] =
     tags.map { case (k, v) => Tag.of(k, v) }.asJava
@@ -122,6 +140,37 @@ object Metrics {
     case (gaugesR, registry) =>
       new Metrics[F] {
 
+        def recordTimeHistogram(
+                                 key: MetricKey,
+                                 duration: FiniteDuration,
+                                 tags: TagSeq = Seq.empty,
+                                 buckets: Array[Double] = timeSecondsBuckets
+                               ): F[Unit] = {
+          val durationSeconds = duration.toUnit(TimeUnit.SECONDS)
+          Async[F].delay {
+            DistributionSummary.builder(s"${key}_duration_seconds")
+              .baseUnit("seconds")
+              .serviceLevelObjectives(buckets: _*)
+              .tags(toMicrometerTags(tags))
+              .register(registry)
+              .record(durationSeconds)
+          }
+        }
+        def recordSizeHistogram(
+                                 key: MetricKey,
+                                 sizeBytes: Long,
+                                 tags: TagSeq = Seq.empty,
+                                 buckets: Array[Double] = sizeBytesBuckets
+                               ): F[Unit] = {
+          Async[F].delay {
+            DistributionSummary.builder(s"${key}_bytes")
+              .baseUnit("bytes")
+              .serviceLevelObjectives(buckets: _*)
+              .tags(toMicrometerTags(tags))
+              .register(registry)
+              .record(sizeBytes.toDouble)
+          }
+        }
         def updateGauge(key: MetricKey, value: Int): F[Unit] =
           genericUpdateGauge(key, value, Seq.empty)
 
@@ -209,9 +258,21 @@ object Metrics {
             registry.counter(key, toMicrometerTags(tags)).increment(Numeric[A].toDouble(value))
           }
 
+//        @deprecated("This does not properly record buckets due to a micrometer / prometheus mismatch")
         def recordTime(key: MetricKey, duration: FiniteDuration, tags: TagSeq): F[Unit] =
           Async[F].delay {
             registry.timer(key, toMicrometerTags(tags)).record(duration.toJava)
+          }
+
+//        @deprecated("This does not properly record buckets due to a micrometer / prometheus mismatch")
+        def timedMetric[A](operation: F[A], metricKey: MetricKey, tags: TagSeq): F[A] =
+          Async[F].realTime.flatMap { start =>
+            operation.flatTap { _ =>
+              Async[F].realTime.flatMap { end =>
+                val duration = FiniteDuration(end.toNanos - start.toNanos, TimeUnit.NANOSECONDS)
+                recordTime(metricKey, duration, tags)
+              }
+            }
           }
 
         def recordDistribution(key: MetricKey, value: Int): F[Unit] =
@@ -238,11 +299,32 @@ object Metrics {
         def recordDistribution(key: MetricKey, value: Double, tags: TagSeq): F[Unit] =
           genericRecordDistribution(key, value, tags)
 
+
+//        @deprecated("This does not properly record buckets due to a micrometer / prometheus mismatch")
         private def genericRecordDistribution[A: Numeric](key: MetricKey, value: A, tags: TagSeq): F[Unit] =
           Async[F].delay {
             registry.summary(key, toMicrometerTags(tags)).record(Numeric[A].toDouble(value))
           }
 
+        // Alternative to above timer to add labels directly -- uses same format as above but
+        // Adds labels as a workaround to missing information
+//        @deprecated("This does not properly record buckets due to a micrometer / prometheus mismatch")
+        def genericRecordDistributionWithTimeBuckets[A: Numeric](
+          key: MetricKey,
+          value: A,
+          timeSeconds: Float,
+          tags: TagSeq = Seq()
+        ): F[Unit] = {
+          val timeBucket = if (timeSeconds > 120f) {
+            "120s+"
+          } else {
+            val bucketStart = (timeSeconds / 5f).toInt * 5
+            val bucketEnd = bucketStart + 5
+            s"${bucketStart}-${bucketEnd}s"
+          }
+          val tagsWithBucket = tags :+ (unsafeLabelName("time_bucket") -> timeBucket)
+          genericRecordDistribution(key, value, tagsWithBucket)
+        }
         def getAllAsText: F[String] = Async[F].delay {
           registry.scrape(TextFormat.CONTENT_TYPE_OPENMETRICS_100)
         }
