@@ -38,6 +38,7 @@ import io.constellationnetwork.node.shared.domain.fork.ForkInfo
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.{UpdateNodeParametersAcceptanceManager, UpdateNodeParametersValidator}
 import io.constellationnetwork.node.shared.domain.nodeCollateral.{UpdateNodeCollateralAcceptanceManager, UpdateNodeCollateralValidator}
+import io.constellationnetwork.node.shared.domain.priceOracle.PricingUpdateValidator
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
@@ -295,6 +296,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     val spendActionValidator = SpendActionValidator.make[IO]
 
+    val pricingUpdateValidator = PricingUpdateValidator.make[IO](None, NonNegLong(0))
+
     val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
       GlobalSnapshotAcceptanceManager
         .make[IO](
@@ -309,6 +312,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
           updateDelegatedStakeAcceptanceManager,
           updateNodeCollateralAcceptanceManager,
           spendActionValidator,
+          pricingUpdateValidator,
           collateral,
           EpochProgress(NonNegLong(136080L))
         )

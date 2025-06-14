@@ -108,6 +108,7 @@ object GlobalSnapshotConsensus {
         sharedServices.updateDelegatedStakeAcceptanceManager,
         sharedServices.updateNodeCollateralAcceptanceManager,
         validators.spendActionValidator,
+        validators.pricingUpdateValidator,
         collateral,
         sharedCfg.delegatedStaking.withdrawalTimeLimit.getOrElse(sharedCfg.environment, EpochProgress.MinValue)
       )

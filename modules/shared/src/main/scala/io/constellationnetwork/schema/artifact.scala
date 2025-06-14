@@ -44,13 +44,7 @@ object artifact {
   ) extends SharedArtifact
 
   @derive(decoder, encoder, order, ordering, show)
-  case class PricingUpdate(
-    price: PriceFraction,
-    markOverride: Boolean,
-    parent: PricingUpdateReference,
-    acceptedAt: EpochProgress
-  ) extends SharedArtifact {
-    def ordinal: PricingUpdateOrdinal = parent.ordinal.next
+  case class PricingUpdate(price: PriceFraction) extends SharedArtifact {
     def tokenPair: TokenPair = price.tokenPair
   }
 }
