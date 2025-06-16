@@ -148,6 +148,8 @@ object LastNGlobalSnapshotStorage {
           combinedSnapshots.lastOption match {
             case Some((_, (latest, _))) if isNextSnapshot(latest, snapshot.signed.value) =>
               (combinedSnapshots.updated(snapshot.ordinal, (snapshot, state)), Applicative[F].unit)
+            case Some((_, (latest, _))) if latest.hash === snapshot.hash =>
+              (combinedSnapshots, Applicative[F].unit)
             case _ => (combinedSnapshots, MonadThrow[F].raiseError[Unit](new Throwable("Failure during putting new global snapshot!")))
           }
         }.flatten
@@ -162,6 +164,8 @@ object LastNGlobalSnapshotStorage {
                 else
                   updated
               (trimmed, Applicative[F].unit)
+            case Some((_, latest)) if latest.hash === snapshot.hash =>
+              (incrementalSnapshots, Applicative[F].unit)
             case _ =>
               (incrementalSnapshots, MonadThrow[F].raiseError[Unit](new Throwable("Failure during putting new global snapshot!")))
           }
