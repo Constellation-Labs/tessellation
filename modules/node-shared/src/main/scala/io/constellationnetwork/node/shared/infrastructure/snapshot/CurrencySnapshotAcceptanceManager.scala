@@ -634,7 +634,7 @@ object CurrencySnapshotAcceptanceManager {
         snapshotCache.get(ordinal).flatMap(_.spendActions).toList
       }
       val fetchMissing = missing.toList.parTraverse { ordinal =>
-        getGlobalSnapshotByOrdinal(ordinal)
+        getGlobalSnapshotWithRetry(ordinal, getGlobalSnapshotByOrdinal)
           .map(_.flatMap(_.spendActions).getOrElse(SortedMap.empty[Address, List[SpendAction]]))
       }
 

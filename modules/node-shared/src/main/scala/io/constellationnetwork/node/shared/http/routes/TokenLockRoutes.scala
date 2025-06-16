@@ -18,7 +18,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock._
 import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema.http.{ErrorCause, ErrorResponse}
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockStatus, TokenLockView}
+import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
@@ -44,7 +44,7 @@ final case class TokenLockRoutes[
   tokenLockStorage: TokenLockStorage[F],
   lastSnapshotStorage: LastSnapshotStorage[F, S, SI] with LatestBalances[F],
   validator: TokenLockValidator[F],
-  maybeDelegatedStakingCfg: Option[DelegatedStakingConfig]
+  tokenLockLimitsConfig: Option[TokenLockLimitsConfig]
 )(implicit S: Supervisor[F])
     extends Http4sDsl[F]
     with PublicRoutes[F]
@@ -61,7 +61,7 @@ final case class TokenLockRoutes[
       for {
         transaction <- req.as[Signed[TokenLock]]
         hashedTransaction <- transaction.toHashed[F]
-        result <- maybeDelegatedStakingCfg match {
+        result <- tokenLockLimitsConfig match {
           case Some(value) =>
             lastSnapshotStorage.getCombined.map {
               case Some((_, state)) =>
@@ -73,7 +73,11 @@ final case class TokenLockRoutes[
               case None =>
                 throw new IllegalStateException("Expected a last snapshot, but none was found.")
             }.flatMap { activeTokenLocks =>
-              validator.validateWithDelegatedStakeInfo(transaction, value, activeTokenLocks)
+              validator.validateWithTokenLockLimits(
+                transaction,
+                value,
+                activeTokenLocks
+              )
             }
           case None => transaction.validNec.pure
         }
