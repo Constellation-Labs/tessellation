@@ -1,20 +1,19 @@
-package io.constellationnetwork.dag.l0.config
+package io.constellationnetwork.node.shared.config
 
 import cats.syntax.partialOrder._
 
 import scala.collection.immutable.SortedMap
 
-import io.constellationnetwork.dag.l0.config.types.MainnetRewardsConfig
-import io.constellationnetwork.dag.l0.config.types.MainnetRewardsConfig._
 import io.constellationnetwork.env.AppEnvironment
-import io.constellationnetwork.node.shared.config.types._
+import io.constellationnetwork.node.shared.config.MainnetRewardsConfig._
+import io.constellationnetwork.node.shared.config.types.{DelegatedRewardsConfig, _}
 import io.constellationnetwork.schema.NonNegFraction
-import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
+import eu.timepit.refined.types.numeric.PosLong
 
 /** Provides delegated rewards configuration.
   */
@@ -28,7 +27,22 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
   def getConfig(): DelegatedRewardsConfig = DelegatedRewardsConfig(
     flatInflationRate = NonNegFraction.unsafeFrom(3, 100), // 3% flat inflation rate
     emissionConfig = Map(
-      AppEnvironment.Dev -> EmissionConfigEntry(
+      AppEnvironment.Dev -> devnetEmissionFunction,
+      AppEnvironment.Testnet -> testnetEmissionFunction,
+      AppEnvironment.Integrationnet -> intnetEmissionFunction,
+      AppEnvironment.Mainnet -> mainnetEmissionFunction
+    ),
+    percentDistribution = Map(
+      AppEnvironment.Dev -> devnetDistributionProgram,
+      AppEnvironment.Testnet -> testnetDistributionProgram,
+      AppEnvironment.Integrationnet -> intnetDistributionProgram,
+      AppEnvironment.Mainnet -> mainnetDistributionProgram
+    )
+  )
+
+  private val devnetEmission: SortedMap[EpochProgress, EmissionConfigEntry] =
+    List(
+      EmissionConfigEntry(
         epochsPerYear = PosLong(100L),
         asOfEpoch = EpochProgress(0L),
         iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target inflation
@@ -39,8 +53,12 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
         dagPrices = SortedMap(
           EpochProgress(0L) -> NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
         )
-      ),
-      AppEnvironment.Testnet -> EmissionConfigEntry(
+      )
+    ).map(c => c.asOfEpoch -> c).toSortedMap
+
+  private val testnetEmission: SortedMap[EpochProgress, EmissionConfigEntry] =
+    List(
+      EmissionConfigEntry(
         epochsPerYear = PosLong(732000L),
         asOfEpoch = EpochProgress(997094L),
         iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target inflation
@@ -51,8 +69,12 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
         dagPrices = SortedMap(
           EpochProgress(0L) -> NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
         )
-      ),
-      AppEnvironment.Integrationnet -> EmissionConfigEntry(
+      )
+    ).map(c => c.asOfEpoch -> c).toSortedMap
+
+  private val intnetEmission: SortedMap[EpochProgress, EmissionConfigEntry] =
+    List(
+      EmissionConfigEntry(
         epochsPerYear = PosLong(732000L),
         asOfEpoch = EpochProgress(751085L),
         iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target inflation
@@ -63,8 +85,12 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
         dagPrices = SortedMap(
           EpochProgress(0L) -> NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
         )
-      ),
-      AppEnvironment.Mainnet -> EmissionConfigEntry(
+      )
+    ).map(c => c.asOfEpoch -> c).toSortedMap
+
+  private val mainnetEmission: SortedMap[EpochProgress, EmissionConfigEntry] =
+    List(
+      EmissionConfigEntry(
         epochsPerYear = PosLong(485502L),
         asOfEpoch = EpochProgress(2311565L),
         iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target inflation
@@ -76,14 +102,18 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
           EpochProgress(0L) -> NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
         )
       )
-    ),
-    percentDistribution = Map(
-      AppEnvironment.Dev -> devnetDistributionProgram,
-      AppEnvironment.Testnet -> testnetDistributionProgram,
-      AppEnvironment.Integrationnet -> intnetDistributionProgram,
-      AppEnvironment.Mainnet -> mainnetDistributionProgram
-    )
-  )
+    ).map(c => c.asOfEpoch -> c).toSortedMap
+
+  private def emissionFunction(emission: SortedMap[EpochProgress, EmissionConfigEntry])(
+    epochProgress: EpochProgress
+  ): Option[EmissionConfigEntry] = emission.view.toList.reverse.collectFirst {
+    case (asOfEpoch, config) if asOfEpoch <= epochProgress => config
+  }
+
+  private val devnetEmissionFunction: EpochProgress => Option[EmissionConfigEntry] = emissionFunction(devnetEmission)(_)
+  private val testnetEmissionFunction: EpochProgress => Option[EmissionConfigEntry] = emissionFunction(testnetEmission)(_)
+  private val intnetEmissionFunction: EpochProgress => Option[EmissionConfigEntry] = emissionFunction(intnetEmission)(_)
+  private val mainnetEmissionFunction: EpochProgress => Option[EmissionConfigEntry] = emissionFunction(mainnetEmission)(_)
 
   private val devnetDistributionProgram: EpochProgress => ProgramsDistributionConfig =
     _ =>
@@ -133,4 +163,5 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
         validatorsWeight = NonNegFraction.unsafeFrom(88L, 1000L),
         delegatorsWeight = NonNegFraction.unsafeFrom(45L, 100L)
       )
+
 }
