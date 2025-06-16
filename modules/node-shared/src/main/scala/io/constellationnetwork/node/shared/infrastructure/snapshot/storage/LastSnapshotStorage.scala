@@ -1,9 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot.storage
 
 import cats.effect.kernel.Async
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.option._
+import cats.syntax.all._
 import cats.{Applicative, MonadThrow}
 
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
@@ -37,6 +35,7 @@ object LastSnapshotStorage {
       def set(snapshot: Hashed[S], state: SI): F[Unit] =
         snapshotR.modify {
           case Some((current, _)) if isNextSnapshot(current, snapshot.signed.value) => ((snapshot, state).some, Applicative[F].unit)
+          case s @ Some((current, _)) if current.hash === snapshot.hash             => (s, Applicative[F].unit)
           case other =>
             (other, MonadThrow[F].raiseError[Unit](new Throwable("Failure during setting new global snapshot!")))
         }.flatten

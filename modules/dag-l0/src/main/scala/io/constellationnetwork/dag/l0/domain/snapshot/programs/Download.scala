@@ -18,12 +18,13 @@ import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
-import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.Peer
+import io.constellationnetwork.schema.snapshot.SnapshotMetadata
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -62,56 +63,100 @@ object Download {
         fetchSnapshot(none, ordinal).flatMap(_.toHashed.map(_.some))
       }
 
+    private def setInitialSnapshots(
+      hashedSnapshot: Hashed[GlobalIncrementalSnapshot],
+      context: GlobalSnapshotContext
+    )(implicit hasherSelector: HasherSelector[F]): F[Unit] =
+      for {
+        _ <- hasherSelector.withCurrent { implicit hasher =>
+          lastNGlobalSnapshotStorage.setInitialFetchingGL0(
+            hashedSnapshot,
+            context,
+            none,
+            Some((hash, ordinal) => fetchSnapshot(hash, ordinal)(hasher))
+          )
+        }
+        _ <- lastGlobalSnapshotStorage.setInitial(hashedSnapshot, context)
+      } yield ()
+
+    private def updateSnapshots(
+      hashedSnapshot: Hashed[GlobalIncrementalSnapshot],
+      context: GlobalSnapshotContext
+    ): F[Unit] =
+      for {
+        _ <- lastNGlobalSnapshotStorage.set(hashedSnapshot, context)
+        _ <- lastGlobalSnapshotStorage.set(hashedSnapshot, context)
+      } yield ()
+
+    def updateStoragesWithDownloadedSnapshot(
+      snapshot: Signed[GlobalIncrementalSnapshot],
+      context: GlobalSnapshotContext
+    )(implicit hasherSelector: HasherSelector[F]): F[Unit] =
+      for {
+        hashedSnapshot <- hasherSelector.withCurrent(implicit hs => snapshot.toHashed)
+        alreadyInitializedStorage <- lastNGlobalSnapshotStorage.alreadyInitialized
+        _ <-
+          if (!alreadyInitializedStorage) setInitialSnapshots(hashedSnapshot, context)
+          else updateSnapshots(hashedSnapshot, context)
+      } yield ()
+
     def download(implicit hasherSelector: HasherSelector[F]): F[Unit] =
       nodeStorage
         .tryModifyState(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.WaitingForObserving)(start)
         .flatMap(observe)
         .flatMap { result =>
           val ((snapshot, context), observationLimit) = result
-          hasherSelector.withCurrent { implicit hasher =>
-            for {
-              hashedSnapshot <- snapshot.toHashed
-              _ <- lastNGlobalSnapshotStorage.setInitialFetchingGL0(
-                hashedSnapshot,
-                context,
-                none,
-                Some((hash, ordinal) => fetchSnapshot(hash, ordinal)(hasher))
-              )
-              _ <- lastGlobalSnapshotStorage.setInitial(
-                hashedSnapshot,
-                context
-              )
-              _ <- consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context)
-            } yield ()
-          }
+          for {
+            _ <- consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context)
+          } yield ()
         }
         .onError(logger.error(_)("Unexpected failure during download!"))
 
     def start(implicit hasherSelector: HasherSelector[F]): F[DownloadResult] = {
-      def latestMetadata = peerSelect.select.flatMap {
-        p2pClient.globalSnapshot.getLatestMetadata.run(_)
-      }
 
-      def go(startingPoint: SnapshotOrdinal, result: Option[DownloadResult]): F[DownloadResult] =
-        latestMetadata.flatTap { metadata =>
-          Async[F].whenA(result.isEmpty)(
-            logger.info(s"[Download] Cleanup for snapshots greater than ${metadata.ordinal}") >>
-              snapshotStorage.cleanupAbove(metadata.ordinal)
-          )
-        }.flatTap { metadata =>
-          logger.info(s"Download for startingPoint=${startingPoint}. Latest metadata=${metadata.show}")
-        }.flatMap { metadata =>
-          val batchSize = metadata.ordinal.value.value - startingPoint.value.value
+      def getLatestMetadata: F[SnapshotMetadata] =
+        peerSelect.select.flatMap(p2pClient.globalSnapshot.getLatestMetadata.run(_))
 
-          if (batchSize <= minBatchSizeToStartObserving && startingPoint =!= lastFullGlobalSnapshotOrdinal) {
-            result.map(_.pure[F]).getOrElse(UnexpectedState.raiseError[F, DownloadResult])
-          } else
-            download(metadata.hash, metadata.ordinal, result).flatMap {
-              case (snapshot, context) => go(snapshot.ordinal, (snapshot, context).some)
+      def performInitialCleanup(metadata: SnapshotMetadata, result: Option[DownloadResult]): F[Unit] =
+        Async[F].whenA(result.isEmpty)(
+          logger.info(s"[Download] Cleanup for snapshots greater than ${metadata.ordinal}") >>
+            snapshotStorage.cleanupAbove(metadata.ordinal)
+        )
+
+      def logDownloadInfo(startingPoint: SnapshotOrdinal, metadata: SnapshotMetadata): F[Unit] =
+        logger.info(s"Download for startingPoint=$startingPoint. Latest metadata=${metadata.show}")
+
+      def calculateBatchSize(metadata: SnapshotMetadata, startingPoint: SnapshotOrdinal): Long =
+        metadata.ordinal.value.value - startingPoint.value.value
+
+      def shouldStopDownloading(batchSize: Long, startingPoint: SnapshotOrdinal): Boolean =
+        batchSize <= minBatchSizeToStartObserving && startingPoint =!= lastFullGlobalSnapshotOrdinal
+
+      def downloadLoop(
+        startingPoint: SnapshotOrdinal,
+        result: Option[DownloadResult]
+      ): F[DownloadResult] =
+        for {
+          metadata <- getLatestMetadata
+          _ <- performInitialCleanup(metadata, result)
+          _ <- logDownloadInfo(startingPoint, metadata)
+
+          batchSize = calculateBatchSize(metadata, startingPoint)
+
+          finalResult <-
+            if (shouldStopDownloading(batchSize, startingPoint)) {
+              result
+                .map(_.pure[F])
+                .getOrElse(UnexpectedState.raiseError[F, DownloadResult])
+            } else {
+              for {
+                (snapshot, context) <- download(metadata.hash, metadata.ordinal, result)
+                nextResult <- downloadLoop(snapshot.ordinal, (snapshot, context).some)
+              } yield nextResult
             }
-        }
+        } yield finalResult
 
-      go(lastFullGlobalSnapshotOrdinal, none[DownloadResult])
+      downloadLoop(lastFullGlobalSnapshotOrdinal, none[DownloadResult])
     }
 
     def observe(result: DownloadResult)(implicit hasherSelector: HasherSelector[F]): F[(DownloadResult, ObservationLimit)] = {
@@ -120,11 +165,15 @@ object Download {
       val observationLimit = SnapshotOrdinal(lastSnapshot.ordinal.value |+| observationOffset)
 
       def go(result: DownloadResult): F[DownloadResult] = {
-        val (lastSnapshot, _) = result
+        val (lastSnapshot, lastState) = result
 
-        if (lastSnapshot.ordinal === observationLimit) {
-          result.pure[F]
-        } else fetchNextSnapshot(result) >>= go
+        for {
+          _ <- updateStoragesWithDownloadedSnapshot(lastSnapshot, lastState)
+          result <-
+            if (lastSnapshot.ordinal === observationLimit) {
+              result.pure[F]
+            } else fetchNextSnapshot(result) >>= go
+        } yield result
       }
 
       consensus.manager.registerForConsensus(observationLimit) >>
@@ -170,7 +219,11 @@ object Download {
       implicit hasherSelector: HasherSelector[F]
     ): F[DownloadResult] = {
 
-      def go(tmpMap: Map[SnapshotOrdinal, Hash], stepHash: Hash, stepOrdinal: SnapshotOrdinal): F[DownloadResult] =
+      def go(
+        tmpMap: Map[SnapshotOrdinal, Hash],
+        stepHash: Hash,
+        stepOrdinal: SnapshotOrdinal
+      ): F[DownloadResult] =
         isSnapshotPersistedOrReachedGenesis(stepHash, stepOrdinal).ifM(
           snapshotStorage.getHighestSnapshotInfoOrdinal(lte = stepOrdinal).flatMap {
             validateChain(tmpMap, _, ordinal, state)
@@ -286,7 +339,10 @@ object Download {
                           )
                       }
                   )
-                  .flatMap(go(snapshot, _))
+                  .flatMap { state =>
+                    updateStoragesWithDownloadedSnapshot(snapshot, state) >>
+                      go(snapshot, state)
+                  }
               case None => InvalidChain.raiseError[F, Agg]
             }
 
@@ -305,7 +361,11 @@ object Download {
               )
             }
         }
-        .flatMap { case (s, c) => go(s, c) }
+        .flatMap {
+          case (s, c) =>
+            updateStoragesWithDownloadedSnapshot(s, c) >>
+              go(s, c)
+        }
     }
 
     def getGenesisSnapshot(

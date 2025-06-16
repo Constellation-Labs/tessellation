@@ -188,7 +188,7 @@ object CurrencySnapshotAcceptanceManager {
       calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-      lastGlobalSyncView: Option[GlobalSyncView],
+      maybeLastGlobalSyncView: Option[GlobalSyncView],
       shouldValidateCollateral: Boolean
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
       initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
@@ -285,24 +285,31 @@ object CurrencySnapshotAcceptanceManager {
         .fromOption(maybeUnsyncLastGlobalSnapshot)
         .getOrRaise(new IllegalStateException("Could not get the last global snapshot info"))
 
-      ordinalToFetchGlobalSnapshot = maybeSnapshotOrdinalSync.orElse(lastGlobalSyncView.map(_.ordinal))
-      maybeLastGlobalSnapshot <- ordinalToFetchGlobalSnapshot match {
-        case Some(ordinal) =>
-          lastGlobalSnapshots.find(_.ordinal === ordinal) match {
-            case some @ Some(_) =>
-              some.pure[F]
-            case None =>
-              lastGlobalSnapshotsCached.get.flatMap { cache =>
-                cache.get(ordinal) match {
-                  case Some(snapshot) => snapshot.some.pure[F]
-                  case None           => getGlobalSnapshotWithRetry(ordinal, getGlobalSnapshotByOrdinal)
-                }
+      fallbackOrdinal = lastUnsyncGlobalSnapshot.ordinal
+
+      ordinalToFetchGlobalSnapshot <- maybeSnapshotOrdinalSync
+        .orElse(maybeLastGlobalSyncView.map(_.ordinal))
+        .filter(_ =!= SnapshotOrdinal.MinValue)
+        .fold {
+          logger.warn(
+            s"Could not get valid global snapshot ordinal sync, falling back to: ${fallbackOrdinal.show}"
+          ) >> fallbackOrdinal.pure[F]
+        } { ordinal =>
+          ordinal.pure[F]
+        }
+
+      maybeLastGlobalSnapshot <-
+        lastGlobalSnapshots.find(_.ordinal === ordinalToFetchGlobalSnapshot) match {
+          case some @ Some(_) =>
+            some.pure[F]
+          case None =>
+            lastGlobalSnapshotsCached.get.flatMap { cache =>
+              cache.get(ordinalToFetchGlobalSnapshot) match {
+                case Some(snapshot) => snapshot.some.pure[F]
+                case None           => getGlobalSnapshotWithRetry(ordinalToFetchGlobalSnapshot, getGlobalSnapshotByOrdinal)
               }
-          }
-        case None =>
-          logger.warn(s"Could not get global snapshot ordinal sync, using lastGlobalSyncView: ${lastGlobalSyncView.show}") >>
-            lastUnsyncGlobalSnapshot.some.pure[F]
-      }
+            }
+        }
 
       lastSyncGlobalSnapshot <- OptionT
         .fromOption(maybeLastGlobalSnapshot)
@@ -449,7 +456,7 @@ object CurrencySnapshotAcceptanceManager {
         } else {
           val fallbackOrdinal = lastGlobalSnapshots.lastOption
             .map(_.ordinal)
-            .getOrElse(lastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue))
+            .getOrElse(maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue))
           if (lastGlobalSnapshotOrdinal === SnapshotOrdinal.MinValue) fallbackOrdinal
           else lastGlobalSnapshotOrdinal
         }
@@ -480,7 +487,15 @@ object CurrencySnapshotAcceptanceManager {
         expiredTokenLocks
       )
 
-      globalSyncView = GlobalSyncView(lastSyncGlobalSnapshot.ordinal, lastSyncGlobalSnapshot.hash, lastSyncGlobalSnapshot.epochProgress)
+      globalSyncView = maybeLastGlobalSyncView match {
+        case Some(lastGlobalSyncView) =>
+          if (lastGlobalSyncView.ordinal < lastSyncGlobalSnapshot.ordinal) {
+            GlobalSyncView(lastSyncGlobalSnapshot.ordinal, lastSyncGlobalSnapshot.hash, lastSyncGlobalSnapshot.epochProgress)
+          } else {
+            lastGlobalSyncView
+          }
+        case None => GlobalSyncView(lastSyncGlobalSnapshot.ordinal, lastSyncGlobalSnapshot.hash, lastSyncGlobalSnapshot.epochProgress)
+      }
 
       _ <- logger.debug(s"Metagraph $metagraphId snapshot $snapshotOrdinal - globalSyncView: $globalSyncView")
     } yield
