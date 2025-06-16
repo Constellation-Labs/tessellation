@@ -429,16 +429,7 @@ object CurrencySnapshotAcceptanceManager {
       updatedAllowSpendsCleaned = updatedAllowSpends.filter { case (_, allowSpends) => allowSpends.nonEmpty }
       updatedActiveTokenLocksCleaned = updatedActiveTokenLocks.filter { case (_, tokenLocks) => tokenLocks.nonEmpty }
 
-      snapshotOrdinalToCheckFields =
-        if (lastGlobalSnapshotOrdinal <= checkSyncGlobalSnapshotField) {
-          lastGlobalSnapshotOrdinal
-        } else {
-          val fallbackOrdinal = lastGlobalSnapshots
-            .lastOption.map(_.ordinal)
-            .getOrElse(lastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue))
-          if (lastGlobalSnapshotOrdinal === SnapshotOrdinal.MinValue) fallbackOrdinal
-          else lastGlobalSnapshotOrdinal
-        }
+      snapshotOrdinalToCheckFields = SnapshotOrdinal.unsafeApply(999999999L)
 
       csi = CurrencySnapshotInfo(
         if (snapshotOrdinalToCheckFields < tessellation3MigrationStartingOrdinal)
