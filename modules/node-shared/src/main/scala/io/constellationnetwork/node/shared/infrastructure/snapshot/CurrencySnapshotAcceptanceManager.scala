@@ -7,6 +7,7 @@ import cats.{Applicative, Order, Parallel}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.collection.mutable
+import scala.concurrent.duration.DurationInt
 
 import io.constellationnetwork.currency.dataApplication.FeeTransaction
 import io.constellationnetwork.currency.schema.currency._
@@ -45,6 +46,7 @@ import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.concurrent.SignallingRef
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import retry.{RetryDetails, RetryPolicies, retryingOnAllErrors}
 
 case class CurrencyMessagesAcceptanceResult(
   contextUpdate: SortedMap[MessageType, Signed[CurrencyMessage]],
@@ -148,6 +150,21 @@ object CurrencySnapshotAcceptanceManager {
     lastGlobalSnapshotsCached: SignallingRef[F, Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]]
   ): CurrencySnapshotAcceptanceManager[F] = new CurrencySnapshotAcceptanceManager[F] {
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F]("CurrencySnapshotAcceptanceManager")
+
+    private def getGlobalSnapshotWithRetry(
+      ordinal: SnapshotOrdinal,
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+    ): F[Option[Hashed[GlobalIncrementalSnapshot]]] = {
+      val retryPolicy = RetryPolicies.exponentialBackoff[F](1.second).join(RetryPolicies.limitRetries(5))
+
+      retryingOnAllErrors(
+        policy = retryPolicy,
+        onError = (error: Throwable, details: RetryDetails) =>
+          logger.warn(error)(
+            s"action=fetch_global_snapshot ordinal=$ordinal attempt=${details.retriesSoFar + 1} cumulativeDelay=${details.cumulativeDelay}"
+          )
+      )(getGlobalSnapshotByOrdinal(ordinal))
+    }
 
     def accept(
       blocksForAcceptance: List[Signed[Block]],
@@ -265,7 +282,7 @@ object CurrencySnapshotAcceptanceManager {
               lastGlobalSnapshotsCached.get.flatMap { cache =>
                 cache.get(ordinal) match {
                   case Some(snapshot) => snapshot.some.pure[F]
-                  case None           => getGlobalSnapshotByOrdinal(ordinal)
+                  case None           => getGlobalSnapshotWithRetry(ordinal, getGlobalSnapshotByOrdinal)
                 }
               }
           }
@@ -604,7 +621,7 @@ object CurrencySnapshotAcceptanceManager {
 
               val fetchMissing: F[List[SortedMap[Address, List[SpendAction]]]] =
                 missing.parTraverse { ordinal =>
-                  getGlobalSnapshotByOrdinal(ordinal)
+                  getGlobalSnapshotWithRetry(ordinal, getGlobalSnapshotByOrdinal)
                     .map(_.flatMap(_.spendActions).getOrElse(SortedMap.empty))
                 }
 
