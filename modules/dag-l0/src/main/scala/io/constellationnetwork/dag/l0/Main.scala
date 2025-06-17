@@ -130,7 +130,8 @@ object Main
           TessellationVersion.unsafeFrom(BuildInfo.version),
           cfg.http,
           sharedValidators,
-          cfg.shared.delegatedStaking.withdrawalTimeLimit.getOrElse(sharedConfig.environment, EpochProgress.MinValue)
+          cfg.shared.delegatedStaking.withdrawalTimeLimit.getOrElse(sharedConfig.environment, EpochProgress.MinValue),
+          cfg.shared
         )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
