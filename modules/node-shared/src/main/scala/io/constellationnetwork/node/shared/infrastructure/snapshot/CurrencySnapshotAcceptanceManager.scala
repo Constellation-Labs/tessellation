@@ -46,7 +46,8 @@ import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.concurrent.SignallingRef
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-import retry.{RetryDetails, RetryPolicies, retryingOnAllErrors}
+import retry.RetryPolicies
+import retry.implicits.retrySyntaxError
 
 case class CurrencyMessagesAcceptanceResult(
   contextUpdate: SortedMap[MessageType, Signed[CurrencyMessage]],
@@ -156,14 +157,15 @@ object CurrencySnapshotAcceptanceManager {
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     ): F[Option[Hashed[GlobalIncrementalSnapshot]]] = {
       val retryPolicy = RetryPolicies.exponentialBackoff[F](1.second).join(RetryPolicies.limitRetries(5))
-
-      retryingOnAllErrors(
-        policy = retryPolicy,
-        onError = (error: Throwable, details: RetryDetails) =>
-          logger.warn(error)(
-            s"action=fetch_global_snapshot ordinal=$ordinal attempt=${details.retriesSoFar + 1} cumulativeDelay=${details.cumulativeDelay}"
-          )
-      )(getGlobalSnapshotByOrdinal(ordinal))
+      getGlobalSnapshotByOrdinal(ordinal)
+        .retryingOnFailuresAndAllErrors(
+          wasSuccessful = maybeSnapshot => maybeSnapshot.isDefined.pure[F],
+          policy = retryPolicy,
+          onFailure = (_, retryDetails) =>
+            logger.warn(s"Got None when trying to fetch incremental global snapshot {attempt=${retryDetails.retriesSoFar}}"),
+          onError = (err, retryDetails) =>
+            logger.error(err)(s"Error when trying to fetch incremental global snapshot {attempt=${retryDetails.retriesSoFar}}")
+        )
     }
 
     def accept(
@@ -450,8 +452,8 @@ object CurrencySnapshotAcceptanceManager {
         if (lastGlobalSnapshotOrdinal <= checkSyncGlobalSnapshotField) {
           lastGlobalSnapshotOrdinal
         } else {
-          val fallbackOrdinal = lastGlobalSnapshots
-            .lastOption.map(_.ordinal)
+          val fallbackOrdinal = lastGlobalSnapshots.lastOption
+            .map(_.ordinal)
             .getOrElse(lastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue))
           if (lastGlobalSnapshotOrdinal === SnapshotOrdinal.MinValue) fallbackOrdinal
           else lastGlobalSnapshotOrdinal
