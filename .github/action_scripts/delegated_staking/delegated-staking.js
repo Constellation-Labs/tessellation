@@ -386,8 +386,23 @@ const testCreateDelegatedStake = async (urls, account, nodeIds) => {
         urls,
         account.address,
       )
+      // the endpoint accepts the same create delegated stake, but it should add only one of them
+      const updatedStakeResponse2 = await getAccountDelegatedStakes(
+        urls,
+        account.address,
+      )
       return assertDelegatedStakes(
         updatedStakeResponse,
+        [
+          {
+            hash: stakeHash,
+            nodeId: nodeIds[0],
+            amount: lockAmount,
+          },
+        ],
+        [],
+      ) && assertDelegatedStakes(
+        updatedStakeResponse2,
         [
           {
             hash: stakeHash,
