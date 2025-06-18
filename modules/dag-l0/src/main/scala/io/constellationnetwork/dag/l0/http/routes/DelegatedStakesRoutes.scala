@@ -46,7 +46,6 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
   mkCell: DelegatedStakeOutput => Cell[F, StackF, _, Either[CellError, Ω], _],
   validator: UpdateDelegatedStakeValidator[F],
   snapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-  nodeStorage: NodeStorage[F],
   withdrawalTimeLimit: EpochProgress,
   delegatedRewardsDistributor: DelegatedRewardsDistributor[F]
 ) extends Http4sDsl[F]

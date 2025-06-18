@@ -49,11 +49,16 @@ trait DelegatedRewardsDistributor[F[_]] {
 
   def getEmissionConfig(epochProgress: EpochProgress): F[EmissionConfigEntry]
 
+  def getKnownRewardsTicks: F[SortedSet[(EpochProgress, SnapshotOrdinal)]]
+
+  def getEmissionConfig: F[EmissionConfigEntry]
+
   def calculateVariableInflation(epochProgress: EpochProgress): F[Amount]
 
   def distribute(
     lastSnapshotContext: GlobalSnapshotInfo,
     trigger: ConsensusTrigger,
+    ordinal: SnapshotOrdinal,
     epochProgress: EpochProgress,
     facilitators: List[(Address, PeerId)],
     delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,

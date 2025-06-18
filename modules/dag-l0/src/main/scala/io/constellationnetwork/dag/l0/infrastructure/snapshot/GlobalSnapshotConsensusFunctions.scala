@@ -204,9 +204,9 @@ object GlobalSnapshotConsensusFunctions {
             case ClassicRewardsInput(txs) =>
               classicRewardsFn(lastArtifact, snapshotContext.balances, txs, trigger, events, None)
 
-            case DelegateRewardsInput(udsar, psu, ep) =>
+            case DelegateRewardsInput(udsar, psu, ep, ord) =>
               if (shouldUseDelegatedRewards(lastArtifact.ordinal.next, ep)) {
-                delegatedRewards.distribute(snapshotContext, trigger, ep, faciltators, udsar, psu)
+                delegatedRewards.distribute(snapshotContext, trigger, ord, ep, faciltators, udsar, psu)
               } else {
                 classicRewardsFn(lastArtifact, snapshotContext.balances, SortedSet.empty, trigger, events, None)
               }

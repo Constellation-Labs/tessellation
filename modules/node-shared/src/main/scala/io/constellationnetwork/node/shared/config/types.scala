@@ -210,7 +210,8 @@ object types {
   case class DelegatedRewardsConfig(
     flatInflationRate: NonNegFraction,
     emissionConfig: Map[AppEnvironment, EpochProgress => EmissionConfigEntry],
-    percentDistribution: Map[AppEnvironment, EpochProgress => ProgramsDistributionConfig]
+    percentDistribution: Map[AppEnvironment, EpochProgress => ProgramsDistributionConfig],
+    maxKnownRewardTicks: Int
   ) extends RewardsConfig
 
   case class TrustStorageConfig(

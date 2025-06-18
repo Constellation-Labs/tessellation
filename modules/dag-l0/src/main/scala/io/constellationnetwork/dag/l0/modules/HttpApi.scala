@@ -165,7 +165,6 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
         mkDelegatedStakesCell,
         sharedValidators.updateDelegatedStakeValidator,
         storages.globalSnapshot,
-        storages.node,
         delegatedStakingWithdrawalTimeLimit,
         services.rewards.delegatedRewards
       )

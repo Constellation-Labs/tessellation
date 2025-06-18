@@ -249,7 +249,8 @@ object GlobalSnapshotAcceptanceManager {
                   unexpiredWithdrawalsDelegatedStaking,
                   expiredWithdrawalsDelegatedStaking
                 ),
-                epochProgress
+                epochProgress,
+                ordinal
               )
             )
           }

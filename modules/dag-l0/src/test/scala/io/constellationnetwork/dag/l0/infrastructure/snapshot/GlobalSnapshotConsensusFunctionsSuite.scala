@@ -255,6 +255,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     def distribute(
       lastSnapshotContext: GlobalSnapshotContext,
       trigger: ConsensusTrigger,
+      ordinal: GlobalSnapshotKey,
       epochProgress: EpochProgress,
       facilitators: List[(Address, PeerId)],
       delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
