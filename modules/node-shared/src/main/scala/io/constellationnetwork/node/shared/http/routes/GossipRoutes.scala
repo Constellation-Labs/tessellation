@@ -6,6 +6,9 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
+import scala.concurrent.duration._
+
+import io.constellationnetwork.node.shared.config.types.GossipTimeoutsConfig
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage
 import io.constellationnetwork.routes.internal._
@@ -18,16 +21,18 @@ import fs2.{Chunk, Stream}
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec._
 import org.http4s.dsl._
+import org.http4s.server.middleware.Timeout
 
 final case class GossipRoutes[F[_]: Async](
   rumorStorage: RumorStorage[F],
-  gossip: Gossip[F]
+  gossip: Gossip[F],
+  gossipTimeoutsConfig: GossipTimeoutsConfig
 ) extends Http4sDsl[F]
     with P2PRoutes[F] {
 
   protected val prefixPath: InternalUrlPrefix = "/rumors"
 
-  protected val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val p2p: HttpRoutes[F] = Timeout(gossipTimeoutsConfig.routes)(HttpRoutes.of[F] {
     case req @ POST -> Root / "peer" / "query" =>
       for {
         inquiryRequest <- req.as[PeerRumorInquiryRequest]
@@ -64,7 +69,7 @@ final case class GossipRoutes[F[_]: Async](
         seen <- rumorStorage.getCommonRumorSeenHashes
         result <- Ok(CommonRumorInitResponse(seen))
       } yield result
-  }
+  })
 
   private def peerRumorChain(ordinals: List[(PeerId, Ordinal)]): F[Chain[Signed[PeerRumorRaw]]] =
     Chain

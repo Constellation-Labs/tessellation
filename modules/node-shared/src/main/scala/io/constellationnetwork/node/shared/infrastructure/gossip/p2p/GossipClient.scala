@@ -1,11 +1,16 @@
 package io.constellationnetwork.node.shared.infrastructure.gossip.p2p
 
 import cats.effect.Async
+import cats.effect.implicits.genTemporalOps
 import cats.syntax.all._
 
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
+
+import io.constellationnetwork.node.shared.config.types.GossipTimeoutsConfig
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse.PeerResponse
+import io.constellationnetwork.node.shared.http.p2p.middlewares.TimeoutMiddleware.withTimeout
 import io.constellationnetwork.schema.gossip._
 import io.constellationnetwork.security.signature.Signed
 
@@ -33,41 +38,46 @@ trait GossipClient[F[_]] {
 }
 
 object GossipClient {
+  def make[F[_]: Async](
+    client: Client[F],
+    session: Session[F],
+    gossipTimeoutsConfig: GossipTimeoutsConfig
+  ): GossipClient[F] = {
+    val timeoutClient: Client[F] = withTimeout(client, gossipTimeoutsConfig.client)
 
-  def make[F[_]: Async](client: Client[F], session: Session[F]): GossipClient[F] =
     new GossipClient[F] {
-
       implicit val facade: Facade[Json] = new CirceSupportParser(None, false).facade
 
       def queryPeerRumors(request: PeerRumorInquiryRequest): PeerResponse[Stream[F, *], Signed[PeerRumorRaw]] =
-        PeerResponse("rumors/peer/query", POST)(client, session) { (req, c) =>
+        PeerResponse("rumors/peer/query", POST)(timeoutClient, session) { (req, c) =>
           c.stream(req.withEntity(request)).flatMap { resp =>
             resp.body.chunks.parseJsonStream[Json].evalMap(_.as[Signed[PeerRumorRaw]].liftTo[F])
           }
         }
 
       def getInitialPeerRumors: PeerResponse[Stream[F, *], Signed[PeerRumorRaw]] =
-        PeerResponse("rumors/peer/init", POST)(client, session) { (req, c) =>
+        PeerResponse("rumors/peer/init", POST)(timeoutClient, session) { (req, c) =>
           c.stream(req.withEmptyBody).flatMap { resp =>
             resp.body.chunks.parseJsonStream[Json].evalMap(_.as[Signed[PeerRumorRaw]].liftTo[F])
           }
         }
 
       def getCommonRumorOffer: PeerResponse[F, CommonRumorOfferResponse] =
-        PeerResponse("rumors/common/offer", GET)(client, session) { (req, c) =>
+        PeerResponse("rumors/common/offer", GET)(timeoutClient, session) { (req, c) =>
           c.expect[CommonRumorOfferResponse](req.withEmptyBody)
         }
 
       def queryCommonRumors(request: QueryCommonRumorsRequest): PeerResponse[Stream[F, *], Signed[CommonRumorRaw]] =
-        PeerResponse("rumors/common/query", POST)(client, session) { (req, c) =>
+        PeerResponse("rumors/common/query", POST)(timeoutClient, session) { (req, c) =>
           c.stream(req.withEntity(request)).flatMap { resp =>
             resp.body.chunks.parseJsonStream[Json].evalMap(_.as[Signed[CommonRumorRaw]].liftTo[F])
           }
         }
 
       def getInitialCommonRumorHashes: PeerResponse[F, CommonRumorInitResponse] =
-        PeerResponse("rumors/common/init", GET)(client, session) { (req, c) =>
+        PeerResponse("rumors/common/init", GET)(timeoutClient, session) { (req, c) =>
           c.expect[CommonRumorInitResponse](req.withEmptyBody)
         }
     }
+  }
 }
