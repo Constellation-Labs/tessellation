@@ -47,7 +47,7 @@ case class PartitionedStakeUpdates(
 
 trait DelegatedRewardsDistributor[F[_]] {
 
-  def getKnownRewardsTicks: F[SortedSet[(EpochProgress, SnapshotOrdinal)]]
+  def getKnownRewardsTicks: F[SortedSet[DelegateRewardsOutput]]
 
   def getEmissionConfig: F[EmissionConfigEntry]
 
