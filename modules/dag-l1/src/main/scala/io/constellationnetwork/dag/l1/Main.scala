@@ -149,7 +149,8 @@ object Main
           cfg.http,
           Hasher.forKryo[IO],
           validators,
-          sharedConfig.delegatedStaking
+          sharedConfig.delegatedStaking,
+          sharedConfig
         )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)

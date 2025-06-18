@@ -15,7 +15,7 @@ import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment.{Dev, Integrationnet, Testnet}
 import io.constellationnetwork.kernel._
-import io.constellationnetwork.node.shared.config.types.HttpConfig
+import io.constellationnetwork.node.shared.config.types.{HttpConfig, SharedConfig}
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
@@ -45,7 +45,8 @@ object HttpApi {
     mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
     maybeMetagraphVersion: Option[MetagraphVersion],
-    queues: Queues[F]
+    queues: Queues[F],
+    sharedConfig: SharedConfig
   ): HttpApi[F] =
     new HttpApi[F](
       validators,
@@ -60,7 +61,8 @@ object HttpApi {
       mkCell,
       maybeDataApplication,
       maybeMetagraphVersion,
-      queues
+      queues,
+      sharedConfig
     ) {}
 }
 
@@ -77,7 +79,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
   maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
   maybeMetagraphVersion: Option[MetagraphVersion],
-  queues: Queues[F]
+  queues: Queues[F],
+  sharedConfig: SharedConfig
 ) {
 
   private val snapshotRoutes = SnapshotRoutes[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
@@ -94,7 +97,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
 
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
-  private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
+  private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip, sharedConfig.gossip.timeouts)
   private val currencyBlockRoutes = CurrencyBlockRoutes[F](mkCell)
   private val allowSpendBlockRoutes = AllowSpendBlockRoutes[F](queues.l1Output)
   private val tokenLockBlockRoutes = TokenLockBlockRoutes[F](queues.l1Output)

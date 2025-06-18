@@ -101,9 +101,15 @@ object types {
     maxConcurrentRounds: PosInt
   )
 
+  case class GossipTimeoutsConfig(
+    routes: FiniteDuration,
+    client: FiniteDuration
+  )
+
   case class GossipConfig(
     storage: RumorStorageConfig,
-    daemon: GossipDaemonConfig
+    daemon: GossipDaemonConfig,
+    timeouts: GossipTimeoutsConfig
   )
 
   case class ConsensusConfig(

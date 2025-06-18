@@ -2,6 +2,7 @@ package io.constellationnetwork.node.shared.http.p2p
 
 import cats.effect.Async
 
+import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.http.p2p.clients._
 import io.constellationnetwork.node.shared.infrastructure.gossip.p2p.GossipClient
@@ -11,11 +12,15 @@ import org.http4s.client._
 
 object SharedP2PClient {
 
-  def make[F[_]: Async: SecurityProvider](client: Client[F], session: Session[F]): SharedP2PClient[F] =
+  def make[F[_]: Async: SecurityProvider](
+    client: Client[F],
+    session: Session[F],
+    sharedConfig: SharedConfig
+  ): SharedP2PClient[F] =
     new SharedP2PClient[F](
       SignClient.make[F](client),
       ClusterClient.make[F](client, session),
-      GossipClient.make[F](client, session),
+      GossipClient.make[F](client, session, sharedConfig.gossip.timeouts),
       NodeClient.make[F](client, session),
       TrustClient.make[F](client, session)
     ) {}
