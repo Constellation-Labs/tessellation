@@ -7,16 +7,14 @@ import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
 
-import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator.{
-  UpdateDelegatedStakeValidationError,
-  UpdateDelegatedStakeValidationErrorOr
-}
+import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
-import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, UpdateDelegatedStake}
+import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, DelegatedStakeReference, UpdateDelegatedStake}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.SecurityProvider
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 
@@ -35,6 +33,24 @@ trait UpdateDelegatedStakeAcceptanceManager[F[_]] {
 }
 
 object UpdateDelegatedStakeAcceptanceManager {
+
+  private type CreateDelegatedStakeAcceptanceResult = (
+    (
+      List[Signed[UpdateDelegatedStake.Create]],
+      List[(Signed[UpdateDelegatedStake.Create], NonEmptyChain[UpdateDelegatedStakeValidationError])]
+    ),
+    Set[DelegatedStakeReference],
+    Set[Hash]
+  )
+
+  private type WithdrawDelegatedStakeAcceptanceResult = (
+    (
+      List[Signed[UpdateDelegatedStake.Withdraw]],
+      List[(Signed[UpdateDelegatedStake.Withdraw], NonEmptyChain[UpdateDelegatedStakeValidationError])]
+    ),
+    Set[Hash]
+  )
+
   def make[F[_]: Async: SecurityProvider](validator: UpdateDelegatedStakeValidator[F]) =
     new UpdateDelegatedStakeAcceptanceManager[F] {
       def accept(
@@ -43,29 +59,44 @@ object UpdateDelegatedStakeAcceptanceManager {
         lastSnapshotContext: GlobalSnapshotInfo,
         currentGlobalEpochProgress: EpochProgress,
         currentSnapshotOrdinal: SnapshotOrdinal
-      ): F[UpdateDelegatedStakeAcceptanceResult] = {
-
-        def partitionAccepted[A](validated: List[UpdateDelegatedStakeValidationErrorOr[A]], signed: List[A]) =
-          validated
-            .zip(signed)
-            .foldLeft(
-              (
-                List.empty[A],
-                List.empty[(A, NonEmptyChain[UpdateDelegatedStakeValidationError])]
-              )
-            ) {
-              case ((accepted, notAccepted), (validated, signed)) =>
-                validated match {
-                  case Valid(a)   => (a :: accepted, notAccepted)
-                  case Invalid(e) => (accepted, (signed, e) :: notAccepted)
-                }
-            }
-
+      ): F[UpdateDelegatedStakeAcceptanceResult] =
         for {
-          validatedCreates <- creates.traverse(signed => validator.validateCreateDelegatedStake(signed, lastSnapshotContext))
-          validatedWithdrawals <- withdrawals.traverse(signed => validator.validateWithdrawDelegatedStake(signed, lastSnapshotContext))
-          (acceptedCreates, notAcceptedCreates) = partitionAccepted(validatedCreates, creates)
-          (acceptedWithdrawals, notAcceptedWithdrawals) = partitionAccepted(validatedWithdrawals, withdrawals)
+          ((acceptedCreates, notAcceptedCreates), _, _) <- creates.foldLeftM[F, CreateDelegatedStakeAcceptanceResult](
+            ((List.empty, List.empty), Set.empty, Set.empty)
+          ) { (acc, signed) =>
+            val ((accepted, rejected), parentRefsSeen, tokenLockRefsSeen) = acc
+            validator.validateCreateDelegatedStake(signed, lastSnapshotContext).map { validated =>
+              val res = validated match {
+                case Valid(a) =>
+                  if (parentRefsSeen(signed.parent)) {
+                    (accepted, (signed, NonEmptyChain.of(DuplicatedParent(signed.parent))) :: rejected)
+                  } else if (tokenLockRefsSeen(signed.tokenLockRef)) {
+                    (accepted, (signed, NonEmptyChain.of(DuplicatedTokenLock(signed.tokenLockRef))) :: rejected)
+                  } else {
+                    (a :: accepted, rejected)
+                  }
+                case Invalid(e) => (accepted, (signed, e) :: rejected)
+              }
+              (res, parentRefsSeen + signed.parent, tokenLockRefsSeen + signed.tokenLockRef)
+            }
+          }
+          ((acceptedWithdrawals, notAcceptedWithdrawals), _) <- withdrawals.foldLeftM[F, WithdrawDelegatedStakeAcceptanceResult](
+            ((List.empty, List.empty), Set.empty)
+          ) { (acc, signed) =>
+            val ((accepted, rejected), stakeRefsSeen) = acc
+            validator.validateWithdrawDelegatedStake(signed, lastSnapshotContext).map { validated =>
+              val res = validated match {
+                case Valid(a) =>
+                  if (stakeRefsSeen(signed.stakeRef)) {
+                    (accepted, (signed, NonEmptyChain.of(DuplicatedStake(signed.stakeRef))) :: rejected)
+                  } else {
+                    (a :: accepted, rejected)
+                  }
+                case Invalid(e) => (accepted, (signed, e) :: rejected)
+              }
+              (res, stakeRefsSeen + signed.stakeRef)
+            }
+          }
 
           acceptedCreatesMap <- acceptedCreates
             .map(c => (c, currentSnapshotOrdinal))
@@ -84,6 +115,5 @@ object UpdateDelegatedStakeAcceptanceManager {
             acceptedWithdrawalsMap,
             notAcceptedWithdrawals
           )
-      }
     }
 }
