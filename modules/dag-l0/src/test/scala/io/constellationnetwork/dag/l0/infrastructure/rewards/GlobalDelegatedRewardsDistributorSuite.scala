@@ -109,7 +109,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
           NonNegFraction.one
         )
       }
-    )
+    ),
+    maxKnownRewardTicks = 1000
   )
 
   val address1 = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
@@ -167,15 +168,14 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
+      // Create distributor once and reuse
+      distributor <- GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, testConfig)
+
       // Initial emission at epoch 100
-      initialEmission <- GlobalDelegatedRewardsDistributor
-        .make[IO](AppEnvironment.Dev, testConfig)
-        .calculateVariableInflation(EpochProgress(100L))
+      initialEmission <- distributor.calculateVariableInflation(EpochProgress(100L))
 
       // Emission after 6 months (0.5 years) with price doubling
-      laterEmission <- GlobalDelegatedRewardsDistributor
-        .make[IO](AppEnvironment.Dev, testConfig)
-        .calculateVariableInflation(EpochProgress(106L))
+      laterEmission <- distributor.calculateVariableInflation(EpochProgress(106L))
     } yield
       // With higher price and time decay, emissions should decrease
       // For a doubled price (halved DAG/USD ratio) with iImpact=0.5,
@@ -190,15 +190,14 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
+      // Create distributor once and reuse
+      distributor <- GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, delegatedRewardsConfig)
+
       // Test with epoch just at transition - should use formula
-      atTransition <- GlobalDelegatedRewardsDistributor
-        .make[IO](AppEnvironment.Dev, delegatedRewardsConfig)
-        .calculateVariableInflation(EpochProgress(5000000L))
+      atTransition <- distributor.calculateVariableInflation(EpochProgress(5000000L))
 
       // Test with epoch after transition - should use formula with time decay
-      afterTransition <- GlobalDelegatedRewardsDistributor
-        .make[IO](AppEnvironment.Dev, delegatedRewardsConfig)
-        .calculateVariableInflation(EpochProgress(5100000L))
+      afterTransition <- distributor.calculateVariableInflation(EpochProgress(5100000L))
     } yield {
       // At transition - with 10^8 scaling factor
       val expectedAtTransition = 30275317090L
@@ -336,12 +335,13 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Create distributor with test config
-      distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, testConfig)
+      distributor <- GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, testConfig)
 
       // Test with time trigger at transition epoch
       result <- distributor.distribute(
         context,
         TimeTrigger,
+        SnapshotOrdinal(100L),
         EpochProgress(100L), // At transition epoch
         List(address1 -> nodeId1, address2 -> nodeId2),
         stakeAcceptanceResult,
@@ -420,12 +420,13 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Create distributor with test config
-      distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, testConfig)
+      distributor <- GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, testConfig)
 
       // Test with event trigger - should return empty result
       result <- distributor.distribute(
         context,
         EventTrigger,
+        SnapshotOrdinal(100L),
         EpochProgress(100L), // At transition epoch
         List(address1 -> nodeId1),
         stakeAcceptanceResult,
@@ -533,12 +534,13 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Create distributor with specific test config
-      distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, testConfig)
+      distributor <- GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, testConfig)
 
       // First epoch distribution - at transition epoch
       result1 <- distributor.distribute(
         initialContext,
         TimeTrigger,
+        SnapshotOrdinal(100L),
         EpochProgress(100L), // Use transition epoch
         List(address1 -> nodeId1),
         emptyAcceptanceResult,
@@ -564,6 +566,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       result2 <- distributor.distribute(
         context2,
         TimeTrigger,
+        SnapshotOrdinal(101L),
         EpochProgress(101L), // Just after transition epoch
         List(address1 -> nodeId1),
         emptyAcceptanceResult,
@@ -669,12 +672,13 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Create distributor with our test config
-      distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, testConfig)
+      distributor <- GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, testConfig)
 
       // Test with time trigger at the transition epoch (100L)
       resultAtTransition <- distributor.distribute(
         context,
         TimeTrigger,
+        SnapshotOrdinal(100L),
         EpochProgress(100L), // At delegated rewards transition
         List(address1 -> nodeId1),
         emptyAcceptanceResult,
@@ -685,6 +689,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       resultAfterTransition <- distributor.distribute(
         context,
         TimeTrigger,
+        SnapshotOrdinal(150L),
         EpochProgress(150L), // After delegated rewards transition
         List(address1 -> nodeId1),
         emptyAcceptanceResult,
@@ -729,7 +734,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
-      distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, customConfig)
+      distributor <- GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, customConfig)
 
       // Test rewards calculation at different epochs relative to transition
       atTransition <- distributor.calculateVariableInflation(EpochProgress(1000L))
@@ -858,12 +863,13 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Create distributor with our test config
-      distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, testConfig)
+      distributor <- GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, testConfig)
 
       // Test with zero stakes and zero rewards configuration at the transition epoch
       resultZeroStakes <- distributor.distribute(
         context,
         TimeTrigger,
+        SnapshotOrdinal(100L),
         EpochProgress(100L), // Use exactly the transition epoch
         List(address1 -> nodeId1),
         emptyAcceptanceResult,
@@ -874,6 +880,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       resultEmptyContext <- distributor.distribute(
         emptyContext,
         TimeTrigger,
+        SnapshotOrdinal(100L),
         EpochProgress(100L), // Use exactly the transition epoch
         List(address1 -> nodeId1),
         emptyAcceptanceResult,
@@ -951,7 +958,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
               NonNegFraction.unsafeFrom(45, 100) // 45% to delegators
             )
           }
-        )
+        ),
+        maxKnownRewardTicks = 1000
       )
 
       // 3. Set up delegated stakes
@@ -1139,80 +1147,82 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       )
 
       // 7. Create the distributor and run the distribution
-      val distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, testConfig)
+      GlobalDelegatedRewardsDistributor
+        .make[IO](AppEnvironment.Dev, testConfig)
+        .flatMap { distributor =>
+          // Calculate inflation
+          distributor.distribute(
+            context,
+            TimeTrigger,
+            SnapshotOrdinal(NonNegLong.unsafeFrom(935952L)),
+            EpochProgress(NonNegLong.unsafeFrom(935952L)),
+            facilitators,
+            emptyAcceptanceResult,
+            partitionedUpdates
+          )
+        }
+        .map { result =>
+          val DelegatedRewardsResult(
+            delegatorRewardsMap,
+            _,
+            _,
+            nodeOperatorRewards,
+            reservedAddressRewards,
+            _,
+            totalEmittedRewardsAmount
+          ) = result
+          val getReservedReward =
+            (addr: Address) => reservedAddressRewards.find(_.destination == addr).map(_.amount.value.value).getOrElse(0L)
 
-      // Calculate inflation
-      distributor
-        .distribute(
-          context,
-          TimeTrigger,
-          EpochProgress(NonNegLong.unsafeFrom(935952L)),
-          facilitators,
-          emptyAcceptanceResult,
-          partitionedUpdates
-        )
-        .map {
-          case DelegatedRewardsResult(
-                delegatorRewardsMap,
-                _,
-                _,
-                nodeOperatorRewards,
-                reservedAddressRewards,
-                _,
-                totalEmittedRewardsAmount
-              ) =>
-            val getReservedReward =
-              (addr: Address) => reservedAddressRewards.find(_.destination == addr).map(_.amount.value.value).getOrElse(0L)
-
-            val getNodeOperatorRewards = (addr: Address) =>
-              nodeOperatorRewards.toList.collect {
-                case RewardTransaction(destination, amount) if destination == addr => amount.value.value
-              }
-
-            val getDelegateReward = (id: Id, addr: Address) =>
-              delegatorRewardsMap
-                .get(id.toPeerId)
-                .flatMap(_.get(addr))
-                .map(_.value.value)
-                .getOrElse(0L)
-
-            val withinErrorMargin = (actual: Long, expected: Long) => {
-              val diff = Math.abs(actual - expected)
-              val pctDiff = if (expected > 0) BigDecimal(diff) / BigDecimal(expected) else BigDecimal(0)
-
-              pctDiff <= 0.0000001
+          val getNodeOperatorRewards = (addr: Address) =>
+            nodeOperatorRewards.toList.collect {
+              case RewardTransaction(destination, amount) if destination == addr => amount.value.value
             }
 
-            val totalEmitted = totalEmittedRewardsAmount.value.value
+          val getDelegateReward = (id: Id, addr: Address) =>
+            delegatorRewardsMap
+              .get(id.toPeerId)
+              .flatMap(_.get(addr))
+              .map(_.value.value)
+              .getOrElse(0L)
 
-            val stardustReward = getReservedReward(stardustAddress)
-            val protocolReward = getReservedReward(protocolAddress)
+          val withinErrorMargin = (actual: Long, expected: Long) => {
+            val diff = Math.abs(actual - expected)
+            val pctDiff = if (expected > 0) BigDecimal(diff) / BigDecimal(expected) else BigDecimal(0)
 
-            val nodeAReward = getNodeOperatorRewards(nodeAAddress).sum
-            val nodeBReward = getNodeOperatorRewards(nodeBAddress).sum
-            val nodeCReward = getNodeOperatorRewards(nodeCAddress).sum
+            pctDiff <= 0.0000001
+          }
 
-            val userXNodeAReward = getDelegateReward(nodeAId, userXAddress)
-            val userYNodeAReward = getDelegateReward(nodeAId, userYAddress)
-            val userZNodeAReward = getDelegateReward(nodeAId, userZAddress)
-            val userXNodeBReward = getDelegateReward(nodeBId, userXAddress)
-            val userYNodeBReward = getDelegateReward(nodeBId, userYAddress)
-            val userZNodeBReward = getDelegateReward(nodeBId, userZAddress)
-            val userYNodeCReward = getDelegateReward(nodeCId, userYAddress)
+          val totalEmitted = totalEmittedRewardsAmount.value.value
 
-            expect(withinErrorMargin(totalEmitted, 29516015766L))
-              .and(expect(withinErrorMargin(stardustReward, 1475681017L)))
-              .and(expect(withinErrorMargin(protocolReward, 8854086100L)))
-              .and(expect(withinErrorMargin(nodeAReward, 2015177763L)))
-              .and(expect(withinErrorMargin(nodeBReward, 2596615316L)))
-              .and(expect(withinErrorMargin(nodeCReward, 1975508535L)))
-              .and(expect(withinErrorMargin(userXNodeAReward, 20401318L)))
-              .and(expect(withinErrorMargin(userYNodeAReward, 204013176L)))
-              .and(expect(withinErrorMargin(userZNodeAReward, 204013176L)))
-              .and(expect(withinErrorMargin(userXNodeBReward, 107673621L)))
-              .and(expect(withinErrorMargin(userYNodeBReward, 1076736208L)))
-              .and(expect(withinErrorMargin(userZNodeBReward, 10767362076L)))
-              .and(expect(withinErrorMargin(userYNodeCReward, 218747461L)))
+          val stardustReward = getReservedReward(stardustAddress)
+          val protocolReward = getReservedReward(protocolAddress)
+
+          val nodeAReward = getNodeOperatorRewards(nodeAAddress).sum
+          val nodeBReward = getNodeOperatorRewards(nodeBAddress).sum
+          val nodeCReward = getNodeOperatorRewards(nodeCAddress).sum
+
+          val userXNodeAReward = getDelegateReward(nodeAId, userXAddress)
+          val userYNodeAReward = getDelegateReward(nodeAId, userYAddress)
+          val userZNodeAReward = getDelegateReward(nodeAId, userZAddress)
+          val userXNodeBReward = getDelegateReward(nodeBId, userXAddress)
+          val userYNodeBReward = getDelegateReward(nodeBId, userYAddress)
+          val userZNodeBReward = getDelegateReward(nodeBId, userZAddress)
+          val userYNodeCReward = getDelegateReward(nodeCId, userYAddress)
+
+          expect(withinErrorMargin(totalEmitted, 29516015766L))
+            .and(expect(withinErrorMargin(stardustReward, 1475681017L)))
+            .and(expect(withinErrorMargin(protocolReward, 8854086100L)))
+            .and(expect(withinErrorMargin(nodeAReward, 2015177763L)))
+            .and(expect(withinErrorMargin(nodeBReward, 2596615316L)))
+            .and(expect(withinErrorMargin(nodeCReward, 1975508535L)))
+            .and(expect(withinErrorMargin(userXNodeAReward, 20401318L)))
+            .and(expect(withinErrorMargin(userYNodeAReward, 204013176L)))
+            .and(expect(withinErrorMargin(userZNodeAReward, 204013176L)))
+            .and(expect(withinErrorMargin(userXNodeBReward, 107673621L)))
+            .and(expect(withinErrorMargin(userYNodeBReward, 1076736208L)))
+            .and(expect(withinErrorMargin(userZNodeBReward, 10767362076L)))
+            .and(expect(withinErrorMargin(userYNodeCReward, 218747461L)))
         }
     }
   }

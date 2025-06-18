@@ -160,115 +160,33 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
         .flatMap(Async[F].fromEither(_))
         .map(Amount(_))
 
-  private def getRewardsInfo(
-    lastSnapshot: GlobalIncrementalSnapshot,
-    lastSnapshotInfo: GlobalSnapshotInfo
-  ): F[RewardsInfo] =
+  private def getRewardsInfo: F[RewardsInfo] =
     for {
-      emissionConfig <- delegatedRewardsDistributor.getEmissionConfig(lastSnapshot.epochProgress)
+      latestTick <- delegatedRewardsDistributor.getKnownRewardsTicks.map(_.headOption)
+      result <- latestTick match {
+        case Some(rewardsOutput) =>
+          for {
+            emissionConfig <- delegatedRewardsDistributor.getEmissionConfig
+            nextPrice <- getNextDagPrice(emissionConfig, rewardsOutput.ep)
+            avgRewardAmount <- calculateAverageReward(rewardsOutput.totalRewardPerEpoch, rewardsOutput.totalDelegatedAmount)
+            totalRewardsPerYear <- calculateAverageRewardOverAYear(avgRewardAmount, emissionConfig.epochsPerYear)
+          } yield
+            RewardsInfo(
+              epochsPerYear = emissionConfig.epochsPerYear,
+              currentDagPrice = rewardsOutput.currentDagPrice,
+              nextDagPrice = nextPrice,
+              totalDelegatedAmount = rewardsOutput.totalDelegatedAmount,
+              latestAverageRewardPerDag = avgRewardAmount,
+              totalDagAmount = rewardsOutput.totalDagAmount,
+              totalRewardPerEpoch = rewardsOutput.totalRewardPerEpoch,
+              totalRewardsPerYearEstimate = totalRewardsPerYear
+            )
+        case None =>
+          Async[F].raiseError(new RuntimeException("No rewards data available"))
+      }
+    } yield result
 
-      (_, _, totalDelegateStake, currentTotalSupply) <- processDelegations(lastSnapshotInfo)
-      latestDelegateRewardsNoCommission <- getLatestDelegateRewardTotal(lastSnapshot, lastSnapshotInfo)
-
-      currentPrice <- toAmount(getCurrentDagPrice(emissionConfig))
-      nextPrice <- getNextDagPrice(emissionConfig, lastSnapshot)
-
-      avgRewardAmount <- calculateAverageReward(latestDelegateRewardsNoCommission, totalDelegateStake)
-      totalRewardsPerYear <- calculateAverageRewardOverAYear(avgRewardAmount, emissionConfig.epochsPerYear)
-
-    } yield
-      RewardsInfo(
-        epochsPerYear = emissionConfig.epochsPerYear,
-        currentDagPrice = currentPrice,
-        nextDagPrice = nextPrice,
-        totalDelegatedAmount = totalDelegateStake,
-        latestAverageRewardPerDag = avgRewardAmount,
-        totalDagAmount = currentTotalSupply,
-        totalRewardPerEpoch = latestDelegateRewardsNoCommission,
-        totalRewardsPerYearEstimate = totalRewardsPerYear
-      )
-
-  private def processDelegations(info: GlobalSnapshotInfo): F[(Amount, Amount, Amount, Amount)] = {
-    val activeDelegatedStakes = info.activeDelegatedStakes
-      .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
-
-    val pendingWithdrawals = info.delegatedStakesWithdrawals
-      .getOrElse(SortedMap.empty[Address, List[PendingDelegatedStakeWithdrawal]])
-
-    val totalSpendableSupply = info.balances.values.map(_.value.value).sum
-    val totalPendingSupply = pendingWithdrawals.values.flatten.map(_.rewards.value.value).sum
-
-    val (totalStakeLocked, totalActiveRewards) = activeDelegatedStakes.values.flatten.foldLeft((0L, 0L)) {
-      case ((stakeAcc, rewardsAcc), record) =>
-        val stakeAmount = record.event.value.amount.value.value
-        val rewardsAmount = record.rewards.value
-        (stakeAcc + stakeAmount, rewardsAcc + rewardsAmount)
-    }
-
-    (
-      toAmount(totalStakeLocked),
-      toAmount(totalActiveRewards),
-      toAmount(totalStakeLocked + totalActiveRewards), // totalDelegateStake
-      toAmount(totalSpendableSupply + totalPendingSupply + totalActiveRewards) // currentTotalSupply
-    ).mapN(Tuple4.apply)
-  }
-
-  private def getLatestDelegateRewardTotal(snapshot: GlobalIncrementalSnapshot, info: GlobalSnapshotInfo): F[Amount] = {
-    val delegateRewards = snapshot.delegateRewards
-      .getOrElse(SortedMap.empty[PeerId, Map[Address, Amount]])
-
-    val nodeParams = info.updateNodeParameters
-      .getOrElse(SortedMap.empty[ID.Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)])
-
-    val calcFullReward: (Long, (PeerId, Map[Address, Amount])) => Long = {
-      case (acc, (peerId, rewards)) =>
-        val nodeCommissionValue = nodeParams.get(peerId.toId).map(_._1.delegatedStakeRewardParameters.reward).getOrElse(0.0)
-        val nodeCommission = BigDecimal(nodeCommissionValue)
-
-        val delegatePortion = if (nodeCommission >= 1.0) BigDecimal(0.0) else BigDecimal(1.0) - nodeCommission
-
-        val rewardsSum = rewards.values.map(_.value.value).sum
-        val rewardsBigDecimal = BigDecimal(rewardsSum)
-
-        if (delegatePortion == BigDecimal(0.0)) acc
-        else
-          acc + (rewardsBigDecimal / delegatePortion)
-            .setScale(0, RoundingMode.HALF_UP)
-            .longValue
-    }
-
-    delegateRewards
-      .foldLeft(0L)(calcFullReward)
-      .pure[F]
-      .flatMap(toAmount)
-  }
-
-  private def calculateAverageReward(latestRewards: Amount, totalStakedAmount: Amount): F[Amount] =
-    if (totalStakedAmount.value.value === 0) Amount.empty.pure[F]
-    else
-      toAmount(
-        (BigDecimal(latestRewards.value.value) / BigDecimal(totalStakedAmount.value.value))
-          .setScale(0, RoundingMode.HALF_UP)
-          .longValue
-      )
-
-  private def calculateAverageRewardOverAYear(avgReward: Amount, epochsPerYear: PosLong): F[Amount] =
-    toAmount(
-      (BigDecimal(avgReward.value.value) * BigDecimal(epochsPerYear.value))
-        .setScale(0, RoundingMode.HALF_UP)
-        .longValue
-    )
-
-  private def getCurrentDagPrice(emConfig: EmissionConfigEntry): Long = {
-    val dagPrices = emConfig.dagPrices
-    if (dagPrices.isEmpty) 0L
-    else {
-      val currentPrice = dagPrices.values.headOption.getOrElse(dagPrices.head._2)
-      (currentPrice.toBigDecimal * DecimalUtils.DATUM_USD).setScale(0, RoundingMode.HALF_UP).longValue
-    }
-  }
-
-  private def getNextDagPrice(emConfig: EmissionConfigEntry, lastSnapshot: GlobalIncrementalSnapshot): F[NextDagPrice] = {
+  private def getNextDagPrice(emConfig: EmissionConfigEntry, epochProgress: EpochProgress): F[NextDagPrice] = {
     val dagPrices = emConfig.dagPrices
 
     if (dagPrices.isEmpty) {
@@ -306,10 +224,8 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
             )
         }
 
-      val currentEpochProgress = lastSnapshot.epochProgress
-
       val maybeNext = sortedPrices.find {
-        case (epoch, _) => epoch.value.value > currentEpochProgress.value.value
+        case (epoch, _) => epoch.value.value > epochProgress.value.value
       }
 
       maybeNext match {
@@ -321,6 +237,22 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
       }
     }
   }
+
+  private def calculateAverageReward(latestRewards: Amount, totalStakedAmount: Amount): F[Amount] =
+    if (totalStakedAmount.value.value === 0) Amount.empty.pure[F]
+    else
+      toAmount(
+        (BigDecimal(latestRewards.value.value) / BigDecimal(totalStakedAmount.value.value))
+          .setScale(0, RoundingMode.HALF_UP)
+          .longValue
+      )
+
+  private def calculateAverageRewardOverAYear(avgReward: Amount, epochsPerYear: PosLong): F[Amount] =
+    toAmount(
+      (BigDecimal(avgReward.value.value) * BigDecimal(epochsPerYear.value))
+        .setScale(0, RoundingMode.HALF_UP)
+        .longValue
+    )
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root =>
@@ -384,15 +316,11 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
       }
 
     case GET -> Root / "rewards-info" =>
-      snapshotStorage.head.flatMap {
-        case Some((snapshot, info)) =>
-          getRewardsInfo(snapshot, info)
-            .flatMap(Ok(_))
-            .handleErrorWith { error =>
-              logger.error(error)(s"Error getting rewards info: ${error.getMessage}") >>
-                InternalServerError(s"Failed to get rewards info: ${error.getMessage}")
-            }
-        case None => ServiceUnavailable()
-      }
+      getRewardsInfo
+        .flatMap(Ok(_))
+        .handleErrorWith { error =>
+          logger.error(error)(s"Error getting rewards info: ${error.getMessage}") >>
+            InternalServerError(s"Failed to get rewards info: ${error.getMessage}")
+        }
   }
 }

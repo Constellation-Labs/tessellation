@@ -2,38 +2,37 @@ package io.constellationnetwork.dag.l0.infrastructure.rewards
 
 import java.math.MathContext
 
-import cats.Applicative
-import cats.effect.{Async, Ref, Sync}
+import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.math.BigDecimal.RoundingMode
 
 import io.constellationnetwork.env.AppEnvironment
-import io.constellationnetwork.node.shared.config.types._
+import io.constellationnetwork.node.shared.config.types.{DelegatedRewardsConfig, EmissionConfigEntry, _}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
-import io.constellationnetwork.node.shared.infrastructure.snapshot._
-import io.constellationnetwork.schema.AmountOps._
+import io.constellationnetwork.node.shared.infrastructure.snapshot.{DelegatedRewardsDistributor, _}
+import io.constellationnetwork.schema.AmountOps.BigDecimalOps
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.balance.Balance._
 import io.constellationnetwork.schema.balance.{Amount, Balance}
-import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, UpdateDelegatedStake}
+import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, PendingDelegatedStakeWithdrawal, UpdateDelegatedStake}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.{DelegatedStakeRewardParameters, RewardFraction, UpdateNodeParameters}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
-import io.constellationnetwork.security._
-import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 import io.constellationnetwork.utils.DecimalUtils
 
-import eu.timepit.refined.auto.autoUnwrap
-import eu.timepit.refined.types.all.{NonNegLong, PosLong}
+import eu.timepit.refined.auto._
+import eu.timepit.refined.types.all.NonNegLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+
+import AmountOps._
 
 object GlobalDelegatedRewardsDistributor {
 
@@ -41,17 +40,8 @@ object GlobalDelegatedRewardsDistributor {
     environment: AppEnvironment,
     delegatedRewardsConfig: DelegatedRewardsConfig
   ): F[DelegatedRewardsDistributor[F]] = {
-    implicit val reverseOrdering: Ordering[(EpochProgress, SnapshotOrdinal)] =
-      new Ordering[(EpochProgress, SnapshotOrdinal)] {
-        def compare(x: (EpochProgress, SnapshotOrdinal), y: (EpochProgress, SnapshotOrdinal)): Int = {
-          val epochCmp = x._1.compare(y._1)
-          val ordinalCmp = x._2.compare(y._2)
-          val result = if (epochCmp != 0) epochCmp else ordinalCmp
-          -result // negate the result to reverse the ordering
-        }
-      }
 
-    Ref.of[F, SortedSet[(EpochProgress, SnapshotOrdinal)]](SortedSet.empty).map { latestRewardsRef =>
+    Ref.of[F, SortedSet[DelegateRewardsOutput]](SortedSet.empty).map { latestRewardsRef =>
       new DelegatedRewardsDistributor[F] {
 
         // Define a high precision MathContext for consistent calculations
@@ -191,7 +181,7 @@ object GlobalDelegatedRewardsDistributor {
         private def calculateEmissionRewards(
           epochProgress: EpochProgress,
           emConfig: EmissionConfigEntry
-        ): F[Amount] = Sync[F].defer {
+        ): F[Amount] = Async[F].defer {
           val iTarget = emConfig.iTarget.toBigDecimal
           val iInitial = emConfig.iInitial.toBigDecimal
           val lambda = emConfig.lambda.toBigDecimal
@@ -274,6 +264,90 @@ object GlobalDelegatedRewardsDistributor {
               .map(_.leftMap(new IllegalArgumentException(_)))
               .flatMap(Async[F].fromEither(_))
               .map(Amount(_))
+          }
+
+        private def calculateTotalDelegatedAmount(
+          activeDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]]
+        ): F[Amount] = {
+          val totalStaked = activeDelegatedStakes.values.flatten.map(getStakedAmount).sum
+          NonNegLong
+            .from(totalStaked)
+            .pure[F]
+            .map(_.leftMap(new IllegalArgumentException(_)))
+            .flatMap(Async[F].fromEither(_))
+            .map(Amount(_))
+        }
+
+        private def calculateTotalRewardPerEpoch(
+          delegatorRewardsMap: Map[PeerId, Map[Address, Amount]],
+          nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)]
+        ): F[Amount] = {
+          val calcFullReward: (Long, (PeerId, Map[Address, Amount])) => Long = {
+            case (acc, (peerId, rewards)) =>
+              val nodeCommissionValue = nodeParametersMap.get(peerId.toId).map(_._1.delegatedStakeRewardParameters.reward).getOrElse(0.0)
+              val nodeCommission = BigDecimal(nodeCommissionValue)
+              val delegatePortion = if (nodeCommission >= 1.0) BigDecimal(0.0) else BigDecimal(1.0) - nodeCommission
+              val rewardsSum = rewards.values.map(_.value.value).sum
+              val rewardsBigDecimal = BigDecimal(rewardsSum)
+              if (delegatePortion == BigDecimal(0.0)) acc
+              else
+                acc + (rewardsBigDecimal / delegatePortion)
+                  .setScale(0, RoundingMode.HALF_UP)
+                  .longValue
+          }
+
+          val totalRewards = delegatorRewardsMap.foldLeft(0L)(calcFullReward)
+          NonNegLong
+            .from(totalRewards)
+            .pure[F]
+            .map(_.leftMap(new IllegalArgumentException(_)))
+            .flatMap(Async[F].fromEither(_))
+            .map(Amount(_))
+        }
+
+        private def calculateTotalDagAmount(
+          lastSnapshotContext: GlobalSnapshotInfo
+        ): F[Amount] = {
+          val totalSpendableSupply = lastSnapshotContext.balances.values.map(_.value.value).sum
+          val totalPendingSupply = lastSnapshotContext.delegatedStakesWithdrawals
+            .getOrElse(SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]])
+            .values
+            .flatten
+            .map(_.rewards.value.value)
+            .sum
+          val totalActiveRewards = lastSnapshotContext.activeDelegatedStakes
+            .getOrElse(SortedMap.empty[Address, SortedSet[DelegatedStakeRecord]])
+            .values
+            .flatten
+            .map(_.rewards.value.value)
+            .sum
+
+          val totalSupply = totalSpendableSupply + totalPendingSupply + totalActiveRewards
+          NonNegLong
+            .from(totalSupply)
+            .pure[F]
+            .map(_.leftMap(new IllegalArgumentException(_)))
+            .flatMap(Async[F].fromEither(_))
+            .map(Amount(_))
+        }
+
+        private def getCurrentDagPriceAmount(epochProgress: EpochProgress): F[Amount] =
+          getEmissionConfig.flatMap { emConfig =>
+            val dagPrices = emConfig.dagPrices
+            if (dagPrices.isEmpty) Amount.empty.pure[F]
+            else {
+              val currentPrice = getCurrentDagPrice(epochProgress, dagPrices)
+              val priceValue = (currentPrice.toBigDecimal * DecimalUtils.DATUM_USD).setScale(0, RoundingMode.HALF_UP).longValue
+              if (priceValue <= 0) Amount.empty.pure[F]
+              else {
+                NonNegLong
+                  .from(priceValue)
+                  .pure[F]
+                  .map(_.leftMap(new IllegalArgumentException(_)))
+                  .flatMap(Async[F].fromEither(_))
+                  .map(Amount(_))
+              }
+            }
           }
 
         private def calculateDelegatorRewards(
@@ -518,9 +592,28 @@ object GlobalDelegatedRewardsDistributor {
               delegatorRewardsMap
             )
 
+            totalDelegatedAmount <- calculateTotalDelegatedAmount(
+              lastSnapshotContext.activeDelegatedStakes.getOrElse(SortedMap.empty)
+            )
+            totalRewardPerEpoch <- calculateTotalRewardPerEpoch(
+              delegatorRewardsMap,
+              lastSnapshotContext.updateNodeParameters.getOrElse(SortedMap.empty)
+            )
+            totalDagAmount <- calculateTotalDagAmount(lastSnapshotContext)
+            currentDagPrice <- getCurrentDagPriceAmount(epochProgress)
+
+            rewardsOutput = DelegateRewardsOutput(
+              epochProgress,
+              ordinal,
+              totalDelegatedAmount,
+              totalRewardPerEpoch,
+              totalDagAmount,
+              currentDagPrice
+            )
+
             _ <- latestRewardsRef.update { current =>
               val maxSize = delegatedRewardsConfig.maxKnownRewardTicks
-              val updated = current + ((epochProgress, ordinal))
+              val updated = current + rewardsOutput
 
               if (updated.size > maxSize) updated.drop(updated.size - maxSize)
               else updated
@@ -537,7 +630,7 @@ object GlobalDelegatedRewardsDistributor {
               totalEmittedReward
             )
 
-        def getKnownRewardsTicks: F[SortedSet[(EpochProgress, SnapshotOrdinal)]] = latestRewardsRef.get
+        def getKnownRewardsTicks: F[SortedSet[DelegateRewardsOutput]] = latestRewardsRef.get
       }
     }
   }

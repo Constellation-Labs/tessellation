@@ -75,7 +75,8 @@ object TessellationV3RewardsMigrationSuite extends SimpleIOSuite with Checkers {
         )
       }
     ),
-    Map.empty
+    Map.empty,
+    maxKnownRewardTicks = 1000
   )
 
   def createClassicRewardsResult(amount: Long): DelegatedRewardsResult = {

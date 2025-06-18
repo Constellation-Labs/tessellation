@@ -399,7 +399,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
     // Simulate a basic DelegatedRewardsResult response for testing
     def mockRewardsFn(input: RewardsInput): IO[DelegatedRewardsResult] =
       input match {
-        case DelegateRewardsInput(delegatedStakeAcceptanceResult, partitionedRecords, _) =>
+        case DelegateRewardsInput(delegatedStakeAcceptanceResult, partitionedRecords, _, _) =>
           // Simple calculation: add 100L to each existing balance for unmodified stakes
           for {
             implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
@@ -479,7 +479,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
 
     for {
       result <- mockRewardsFn(
-        DelegateRewardsInput(delegatedStakeAcceptanceResult, partitionedRecords, EpochProgress(1L))
+        DelegateRewardsInput(delegatedStakeAcceptanceResult, partitionedRecords, EpochProgress(1L), SnapshotOrdinal(1L))
       )
 
       balance = result.updatedCreateDelegatedStakes.get(walletAddress).flatMap(_.headOption.map(_.rewards.value.value))

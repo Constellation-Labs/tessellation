@@ -279,6 +279,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         .head
         ._2(epochProgress)
         .pure[F]
+
+    def getKnownRewardsTicks: GlobalSnapshotConsensusFunctionsSuite.F[SortedSet[DelegateRewardsOutput]] = ???
   }
 
   val delegatedRewardsConfigProvider: DelegatedRewardsConfigProvider = new DelegatedRewardsConfigProvider {
@@ -286,7 +288,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       DelegatedRewardsConfig(
         flatInflationRate = io.constellationnetwork.schema.NonNegFraction.unsafeFrom(0, 100),
         emissionConfig = Map.empty,
-        percentDistribution = Map.empty
+        percentDistribution = Map.empty,
+        maxKnownRewardTicks = 1000
       )
   }
 
