@@ -75,10 +75,6 @@ docker network create \
   --subnet=${NET_PREFIX}.0/24 \
   tessellation_common
 
-
-# If we don't start the gl0/gl1 first, the metagraphs will actually crash gl0 with a runtime exception
-echo "Starting gl0/gl1 if configured"
-
 for i in 0 1 2; do
   cd ./nodes/$i/
 
@@ -114,9 +110,6 @@ for i in 0 1 2; do
   up -d
   cd ../../
 done
-
-# again due to gl0 runtime exception;
-sleep 60
 
 for i in 0 1 2; do
   cd ./nodes/$i/
