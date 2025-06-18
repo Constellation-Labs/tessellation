@@ -90,13 +90,13 @@ object Download {
 
     def updateStoragesWithDownloadedSnapshot(
       snapshot: Signed[GlobalIncrementalSnapshot],
-      context: GlobalSnapshotContext,
-      shouldSetInitial: Boolean = false
+      context: GlobalSnapshotContext
     )(implicit hasherSelector: HasherSelector[F]): F[Unit] =
       for {
         hashedSnapshot <- hasherSelector.withCurrent(implicit hs => snapshot.toHashed)
+        alreadyInitializedStorage <- lastNGlobalSnapshotStorage.alreadyInitialized
         _ <-
-          if (shouldSetInitial) setInitialSnapshots(hashedSnapshot, context)
+          if (!alreadyInitializedStorage) setInitialSnapshots(hashedSnapshot, context)
           else updateSnapshots(hashedSnapshot, context)
       } yield ()
 
@@ -134,8 +134,7 @@ object Download {
 
       def downloadLoop(
         startingPoint: SnapshotOrdinal,
-        result: Option[DownloadResult],
-        shouldSetInitial: Boolean
+        result: Option[DownloadResult]
       ): F[DownloadResult] =
         for {
           metadata <- getLatestMetadata
@@ -152,12 +151,12 @@ object Download {
             } else {
               for {
                 (snapshot, context) <- download(metadata.hash, metadata.ordinal, result)
-                nextResult <- downloadLoop(snapshot.ordinal, (snapshot, context).some, shouldSetInitial = false)
+                nextResult <- downloadLoop(snapshot.ordinal, (snapshot, context).some)
               } yield nextResult
             }
         } yield finalResult
 
-      downloadLoop(lastFullGlobalSnapshotOrdinal, none[DownloadResult], shouldSetInitial = true)
+      downloadLoop(lastFullGlobalSnapshotOrdinal, none[DownloadResult])
     }
 
     def observe(result: DownloadResult)(implicit hasherSelector: HasherSelector[F]): F[(DownloadResult, ObservationLimit)] = {
@@ -220,7 +219,11 @@ object Download {
       implicit hasherSelector: HasherSelector[F]
     ): F[DownloadResult] = {
 
-      def go(tmpMap: Map[SnapshotOrdinal, Hash], stepHash: Hash, stepOrdinal: SnapshotOrdinal): F[DownloadResult] =
+      def go(
+        tmpMap: Map[SnapshotOrdinal, Hash],
+        stepHash: Hash,
+        stepOrdinal: SnapshotOrdinal
+      ): F[DownloadResult] =
         isSnapshotPersistedOrReachedGenesis(stepHash, stepOrdinal).ifM(
           snapshotStorage.getHighestSnapshotInfoOrdinal(lte = stepOrdinal).flatMap {
             validateChain(tmpMap, _, ordinal, state)
@@ -360,7 +363,7 @@ object Download {
         }
         .flatMap {
           case (s, c) =>
-            updateStoragesWithDownloadedSnapshot(s, c, shouldSetInitial = true) >>
+            updateStoragesWithDownloadedSnapshot(s, c) >>
               go(s, c)
         }
     }

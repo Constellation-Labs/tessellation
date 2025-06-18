@@ -47,7 +47,8 @@ import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.concurrent.SignallingRef
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-import retry.{RetryDetails, RetryPolicies, retryingOnAllErrors}
+import retry.RetryPolicies
+import retry.implicits.retrySyntaxError
 
 case class CurrencyMessagesAcceptanceResult(
   contextUpdate: SortedMap[MessageType, Signed[CurrencyMessage]],
@@ -160,16 +161,23 @@ object CurrencySnapshotAcceptanceManager {
     private def getGlobalSnapshotWithRetry(
       ordinal: SnapshotOrdinal,
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
-    ): F[Option[Hashed[GlobalIncrementalSnapshot]]] = {
+    ): F[Hashed[GlobalIncrementalSnapshot]] = {
       val retryPolicy = RetryPolicies.exponentialBackoff[F](1.second).join(RetryPolicies.limitRetries(5))
-
-      retryingOnAllErrors(
-        policy = retryPolicy,
-        onError = (error: Throwable, details: RetryDetails) =>
-          logger.warn(error)(
-            s"action=fetch_global_snapshot ordinal=$ordinal attempt=${details.retriesSoFar + 1} cumulativeDelay=${details.cumulativeDelay}"
-          )
-      )(getGlobalSnapshotByOrdinal(ordinal))
+      getGlobalSnapshotByOrdinal(ordinal)
+        .retryingOnFailuresAndAllErrors(
+          wasSuccessful = maybeSnapshot => maybeSnapshot.isDefined.pure[F],
+          policy = retryPolicy,
+          onFailure = (_, retryDetails) =>
+            logger.warn(s"Got None when trying to fetch incremental global snapshot {attempt=${retryDetails.retriesSoFar}}"),
+          onError = (err, retryDetails) =>
+            logger.error(err)(s"Error when trying to fetch incremental global snapshot {attempt=${retryDetails.retriesSoFar}}")
+        )
+        .flatMap {
+          case Some(snapshot) => snapshot.pure[F]
+          case None =>
+            new RuntimeException(s"Global snapshot not found for ordinal $ordinal after retries")
+              .raiseError[F, Hashed[GlobalIncrementalSnapshot]]
+        }
     }
 
     def accept(
@@ -298,22 +306,18 @@ object CurrencySnapshotAcceptanceManager {
           ordinal.pure[F]
         }
 
-      maybeLastGlobalSnapshot <-
+      lastSyncGlobalSnapshot <-
         lastGlobalSnapshots.find(_.ordinal === ordinalToFetchGlobalSnapshot) match {
-          case some @ Some(_) =>
-            some.pure[F]
+          case Some(value) =>
+            value.pure[F]
           case None =>
             lastGlobalSnapshotsCached.get.flatMap { cache =>
               cache.get(ordinalToFetchGlobalSnapshot) match {
-                case Some(snapshot) => snapshot.some.pure[F]
+                case Some(snapshot) => snapshot.pure[F]
                 case None           => getGlobalSnapshotWithRetry(ordinalToFetchGlobalSnapshot, getGlobalSnapshotByOrdinal)
               }
             }
         }
-
-      lastSyncGlobalSnapshot <- OptionT
-        .fromOption(maybeLastGlobalSnapshot)
-        .getOrRaise(new IllegalStateException("Could not get the lastSync global snapshot"))
 
       _ <- lastGlobalSnapshotsCached.update { current =>
         val updated = current.updated(lastSyncGlobalSnapshot.ordinal, lastSyncGlobalSnapshot)
@@ -635,7 +639,7 @@ object CurrencySnapshotAcceptanceManager {
       }
       val fetchMissing = missing.toList.parTraverse { ordinal =>
         getGlobalSnapshotWithRetry(ordinal, getGlobalSnapshotByOrdinal)
-          .map(_.flatMap(_.spendActions).getOrElse(SortedMap.empty[Address, List[SpendAction]]))
+          .map(_.spendActions.getOrElse(SortedMap.empty[Address, List[SpendAction]]))
       }
 
       fetchMissing.map(fromFetched => combineSpendActions(fromCache ++ fromFetched))
