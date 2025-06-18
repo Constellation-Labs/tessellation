@@ -78,7 +78,6 @@ object Services {
             cfg.environment,
             DefaultDelegatedRewardsConfigProvider.getConfig()
           )
-          .pure[F]
       }
 
       rewardsService = RewardsService(

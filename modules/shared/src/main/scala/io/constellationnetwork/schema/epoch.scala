@@ -14,6 +14,7 @@ import io.constellationnetwork.schema.epoch.EpochProgress.{EpochOverflow, EpochU
 import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -40,6 +41,9 @@ object epoch {
   object EpochProgress {
     val MinValue: EpochProgress = EpochProgress(NonNegLong.MinValue)
     val MaxValue: EpochProgress = EpochProgress(NonNegLong.MaxValue)
+
+    def unsafeApply(value: Long): EpochProgress =
+      EpochProgress(Refined.unsafeApply(value))
 
     implicit val next: Next[EpochProgress] = new Next[EpochProgress] {
       def next(a: EpochProgress): EpochProgress = EpochProgress(a.value |+| NonNegLong(1L))

@@ -47,6 +47,8 @@ case class PartitionedStakeUpdates(
 
 trait DelegatedRewardsDistributor[F[_]] {
 
+  def getKnownRewardsTicks: F[SortedSet[(EpochProgress, SnapshotOrdinal)]]
+
   def getEmissionConfig: F[EmissionConfigEntry]
 
   def calculateVariableInflation(epochProgress: EpochProgress): F[Amount]
@@ -54,6 +56,7 @@ trait DelegatedRewardsDistributor[F[_]] {
   def distribute(
     lastSnapshotContext: GlobalSnapshotInfo,
     trigger: ConsensusTrigger,
+    ordinal: SnapshotOrdinal,
     epochProgress: EpochProgress,
     facilitators: List[(Address, PeerId)],
     delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,

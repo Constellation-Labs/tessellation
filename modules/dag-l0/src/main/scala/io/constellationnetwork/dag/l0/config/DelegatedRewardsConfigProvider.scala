@@ -82,7 +82,8 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
       AppEnvironment.Testnet -> testnetDistributionProgram,
       AppEnvironment.Integrationnet -> intnetDistributionProgram,
       AppEnvironment.Mainnet -> mainnetDistributionProgram
-    )
+    ),
+    512
   )
 
   private val devnetDistributionProgram: EpochProgress => ProgramsDistributionConfig =
