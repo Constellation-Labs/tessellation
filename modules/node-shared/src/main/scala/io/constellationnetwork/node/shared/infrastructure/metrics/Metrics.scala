@@ -100,7 +100,7 @@ object Metrics {
   )
 
   val timeSecondsBuckets: Array[Double] = Array(
-    0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 45.0, 60.0, 90.0, 120.0, 180.0, 300.0
+    0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 45.0, 90.0
   )
 
   def sizeInKB(obj: Any): Double =
@@ -315,7 +315,9 @@ object Metrics {
 
         // Alternative to above timer to add labels directly -- uses same format as above but
         // Adds labels as a workaround to missing information
-//        @deprecated("This does not properly record buckets due to a micrometer / prometheus mismatch")
+        // This function is still useful in the event where you need to record a distribution with lots of labels,
+        // to avoid an outer product of buckets times labels.
+        // It should be refactored away from the prior timer declarations however.
         def genericRecordDistributionWithTimeBuckets[A: Numeric](
           key: MetricKey,
           value: A,

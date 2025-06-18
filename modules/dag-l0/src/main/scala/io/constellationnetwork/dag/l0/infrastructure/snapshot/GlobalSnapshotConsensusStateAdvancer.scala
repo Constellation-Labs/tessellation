@@ -33,6 +33,7 @@ import io.constellationnetwork.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import io.constellationnetwork.security.hex.Hex
 
 abstract class GlobalSnapshotConsensusStateAdvancer[F[_]]
     extends ConsensusStateAdvancer[
@@ -163,6 +164,22 @@ object GlobalSnapshotConsensusStateAdvancer {
                           hash <- HasherSelector[F].forOrdinal(artifact.ordinal)(implicit hasher => artifact.hash)
                           effect = gossip.spread(ConsensusPeerDeclaration(state.key, Proposal(hash, facilitatorsHash))) *>
                             gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
+                          facilitators = state.facilitators.value
+                          _ = { 
+                            if (sys.env.get("CL_EXIT_ON_FOLLOWER_ADVANCER").contains("true")) {
+                              sys.env.get("CL_FOLLOWER_ID") match {
+                                case Some(id) =>
+                                  val peerId = PeerId(Hex(id))
+                                  val hasFollowerPeer = facilitators.contains(peerId)
+                                  if (!hasFollowerPeer) {
+                                    println("Exit in advancer to missing follower peer")
+                                    System.exit(1)
+                                  }
+                                case _ =>
+                              }
+                            }
+                      
+                          }
                           newState =
                             state.copy(status =
                               identity[GlobalSnapshotStatus](

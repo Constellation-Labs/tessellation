@@ -17,11 +17,15 @@ import org.http4s.headers.`X-Forwarded-For`
 
 object MetricsMiddleware {
 
+  def isHistogramRoute(path: String): Boolean = {
+    path.contains("rumor")
+  }
+
   def apply[F[_]: Async: Metrics](): HttpRoutes[F] => HttpRoutes[F] = { routes =>
     Kleisli { req =>
       val startTime = System.nanoTime()
       routes(req).semiflatMap { response =>
-        val scriptName = req.scriptName.renderString
+        // val scriptName = r?eq.scriptName.renderString
         val endTime = System.nanoTime()
         val duration = FiniteDuration(endTime - startTime, TimeUnit.NANOSECONDS)
         // Extract route path and normalize it for metric naming
@@ -33,8 +37,7 @@ object MetricsMiddleware {
           .getOrElse("none")
 
         // Cannot compile time infer type for Seq
-        val tags: Seq[(Metrics.LabelName, String)] = Seq(
-          Metrics.unsafeLabelName("script_name") -> scriptName,
+        var allTags: Seq[(Metrics.LabelName, String)] = Seq(
           Metrics.unsafeLabelName("method") -> req.method.name,
           Metrics.unsafeLabelName("status") -> response.status.code.toString,
           Metrics.unsafeLabelName("route") -> routePath,
@@ -42,24 +45,45 @@ object MetricsMiddleware {
           Metrics.unsafeLabelName("actual_ip") -> actualIp,
           Metrics.unsafeLabelName("forwarded_ip") -> forwardedIp
         )
+
+        // Use discrete label for per event counter metrics; higher granularity than time histogram
+        val bucket = Metrics.unsafeLabelName("time_bucket")
+        val bucketLabel = if (duration.toMillis > 1000) {
+          "gt_1s"
+        } else if (duration.toMillis > 10_000) {
+          "gt_10s"
+        } else {
+          "lt_1s"
+        }
+
+        allTags = allTags :+ (bucket -> bucketLabel)
+
+        val histogramTags: Seq[(Metrics.LabelName, String)] = Seq(
+          Metrics.unsafeLabelName("route") -> routePath,
+        )
+
         // Generic HTTP metrics with route as label
         val durationMetricKey: Metrics.MetricKey = "dag_http_request_time"
         val requestSizeMetricKey: Metrics.MetricKey = "dag_http_request_size"
         val responseSizeMetricKey: Metrics.MetricKey = "dag_http_response_size"
+        val requestCounterMetricKey: Metrics.MetricKey = "dag_http_request_count"
 
         // Record metrics asynchronously without blocking the response
         val metricsRecording = for {
-
-          _ <- Metrics[F].recordTimeHistogram(durationMetricKey, duration, tags)
+          _ <- Metrics[F].incrementCounter(requestCounterMetricKey, allTags)
+          _ <- if (isHistogramRoute(req.pathInfo.renderString)) {
+              Metrics[F].recordTimeHistogram(durationMetricKey, duration, histogramTags) >>
+              req.contentLength.traverse_ { size =>
+                Metrics[F].recordSizeHistogram(requestSizeMetricKey, size, histogramTags)
+              } >> 
+              response.contentLength.traverse_ { size =>
+                Metrics[F].recordSizeHistogram(responseSizeMetricKey, size, histogramTags)
+              }
+          } else {
+            Async[F].unit
+          }
           // 4. Request size histograms (both route-specific and generic)
 
-          _ <- req.contentLength.traverse_ { size =>
-            Metrics[F].recordSizeHistogram(requestSizeMetricKey, size, tags)
-          }
-          // 5. Response size histograms (both route-specific and generic)
-          _ <- response.contentLength.traverse_ { size =>
-            Metrics[F].recordSizeHistogram(responseSizeMetricKey, size, tags)
-          }
 
         } yield ()
         Async[F].start(metricsRecording) >> response.pure[F]
@@ -91,9 +115,11 @@ object MetricsMiddleware {
             "uuid"
           } else if (segment.matches("[0-9a-fA-F]{64}")) {
             "hash"
-          } else if (segment.matches("(?i).*dag[1-9A-HJ-NP-Za-km-z]{37}.*")) {
+          } else if (segment.matches("(?i).*dag[1-9A-HJ-NP-Za-km-z].*")) {
             // DAG address pattern (base58, case insensitive)
             "address"
+          } else if (segment.toLowerCase.startsWith("state_channel_dag")) {
+            "state_channel_dag"
           } else {
             // Replace non-alphanumeric chars with underscores and lowercase
             segment.replaceAll("[^a-zA-Z0-9]", "_").toLowerCase

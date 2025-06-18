@@ -27,12 +27,14 @@ import io.constellationnetwork.schema.peer.Peer
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.schema.peer.PeerId
 
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry.RetryPolicies._
 import retry._
+import io.constellationnetwork.security.hex.Hex
 
 object Download {
   def make[F[_]: Async: Parallel: Random: KryoSerializer](
@@ -333,14 +335,14 @@ object Download {
         .map(NodeState.ready)
         .map { peers =>
           if (sys.env.get("CL_EXIT_ON_FOLLOWER_DOWNLOAD").contains("true")) {
-            clusterStorage.prioritySeedlist match {
-              case Some(seeds) =>
-                val ids = seeds.map(x => x.peerId)
-                val hasPriorityPeer = peers.exists(p => ids.contains(p.id))
-                if (!hasPriorityPeer) {
-                  println("Exit on fork due to missing priority peer")
-                  System.exit(1)
-                }
+            sys.env.get("CL_FOLLOWER_ID") match {
+              case Some(id) =>
+              val peerId = PeerId(Hex(id))
+              val hasPriorityPeer = peers.exists(p => p.id === peerId)
+              if (!hasPriorityPeer) {
+                println("Exit on fork due to missing priority peer")
+                System.exit(1)
+              }
               case _ =>
             }
           }
