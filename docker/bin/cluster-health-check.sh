@@ -13,8 +13,8 @@ check_health() {
       
       # Check if curl returned valid JSON before using jq
       if [ -z "$CLUSTER_INFO" ] || [ "$CLUSTER_INFO" = "null" ] || [ "$CLUSTER_INFO" = "starting" ]; then
-        echo "Waiting for $service node $i on port $port/cluster/info to come online"
-        sleep 4
+        echo "Waiting for $service node $i on port $port/cluster/info to come online retry count $retry_count of $MAX_RETRIES"
+        sleep 5
         retry_count=$((retry_count+1))
         continue
       fi
@@ -27,12 +27,12 @@ check_health() {
         echo "Success: cluster $service $i has 3 nodes on port $port"
         break
       else
-        echo "Waiting for $service node $i on port $port to have 3 nodes, currently has $CLUSTER_INFO_LEN nodes"
+        echo "Waiting for $service node $i on port $port to have 3 nodes, currently $CLUSTER_INFO_LEN nodes retry $retry_count of $MAX_RETRIES"
         sleep 4
         retry_count=$((retry_count+1))
       fi
       
-      if [ $retry_count -eq $MAX_RETRIES ]; then
+      if [ $retry_count -gt $((MAX_RETRIES-2)) ]; then
         echo "ERROR: $service cluster $i doesn't have 3 nodes on port $port after $MAX_RETRIES attempts"
         return 1
       fi
@@ -42,7 +42,7 @@ check_health() {
 
 verify_healthy() {
   echo "Sending cluster poll health request for cluster info to check joined."
-  MAX_RETRIES=30
+  MAX_RETRIES=100
   for i in "0" "1" "2"; do
       l0_port="${DAG_L0_PORT_PREFIX}${i}0"
       l1_port="${DAG_L1_PORT_PREFIX}${i}0"

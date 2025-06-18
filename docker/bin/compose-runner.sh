@@ -32,18 +32,28 @@ source ./docker/bin/set-env.sh "$@"
 CLEANUP_PID=$!
 
 
+source ./docker/bin/assembly.sh
+
+export TESSELLATION_DOCKER_VERSION=test
+docker build -t constellationnetwork/tessellation:$TESSELLATION_DOCKER_VERSION -f docker/Dockerfile .
+
+# Wait for cleanup PID to finish
+wait $CLEANUP_PID
+
 if [ "$PURGE_CONFIG" = "true" ]; then
-  rm -rf ./nodes
+  echo "Purging config, removing $PROJECT_ROOT/nodes"
+  sleep 1
+  # strange issue with docker mount persistence, so we sleep and try twice, this may be removable now?
+  rm -rf $PROJECT_ROOT/nodes
+  sleep 1
+  rm -rf $PROJECT_ROOT/nodes || true
+  ls -la $PROJECT_ROOT/nodes || true
+  echo "removed config, $PROJECT_ROOT/nodes"
 fi
 
 for i in 0 1 2; do
   mkdir -p ./nodes/$i
 done
-
-source ./docker/bin/assembly.sh
-
-export TESSELLATION_DOCKER_VERSION=test
-docker build -t constellationnetwork/tessellation:$TESSELLATION_DOCKER_VERSION -f docker/Dockerfile .
 
 source ./docker/bin/node-key-env-setup.sh
 source ./docker/bin/docker-env-setup.sh
@@ -60,25 +70,17 @@ if [ "$BUILD_ONLY" = "true" ]; then
 fi
 
 
-# Wait for cleanup PID to finish
-wait $CLEANUP_PID
-
 docker network create \
   --driver=bridge \
   --subnet=${NET_PREFIX}.0/24 \
   tessellation_common
 
 
+# If we don't start the gl0/gl1 first, the metagraphs will actually crash gl0 with a runtime exception
+echo "Starting gl0/gl1 if configured"
+
 for i in 0 1 2; do
   cd ./nodes/$i/
-
-  docker compose down --remove-orphans --volumes > /dev/null 2>&1 || true;
-  cp ../../docker/docker-compose.yaml . ; \
-  cp ../../docker/docker-compose.test.yaml . ; \
-  cp ../../docker/docker-compose.volumes.yaml . ; \
-  cp ../../docker/docker-compose.metagraph.yaml . ;
-  cp ../../docker/docker-compose.metagraph-test.yaml . ;
-  cp ../../docker/docker-compose.metagraph-genesis.yaml . ;
 
   export PROFILE_GL0_ARG=""
   if [ "$i" -lt "$NUM_GL0_NODES" ]; then
@@ -90,6 +92,36 @@ for i in 0 1 2; do
     export PROFILE_GL1_ARG="--profile l1"
   fi
 
+  docker compose -f docker-compose.test.yaml \
+  -f docker-compose.yaml \
+  -f docker-compose.volumes.yaml \
+  down --remove-orphans --volumes > /dev/null 2>&1 || true;
+
+  cp ../../docker/docker-compose.yaml . ; \
+  cp ../../docker/docker-compose.test.yaml . ; \
+  cp ../../docker/docker-compose.volumes.yaml . ; \
+  cp ../../docker/docker-compose.metagraph.yaml . ;
+  cp ../../docker/docker-compose.metagraph-test.yaml . ;
+  cp ../../docker/docker-compose.metagraph-genesis.yaml . ;
+
+  docker_additional_args="$PROFILE_GL0_ARG $PROFILE_GL1_ARG"
+  echo "docker_additional_args: $docker_additional_args"
+  
+  docker compose -f docker-compose.test.yaml \
+  -f docker-compose.yaml \
+  -f docker-compose.volumes.yaml \
+  $docker_additional_args \
+  up -d
+  cd ../../
+done
+
+# again due to gl0 runtime exception;
+sleep 60
+
+for i in 0 1 2; do
+  cd ./nodes/$i/
+
+  
   export PROFILE_ML0_ARG=""
   if [ "$i" -lt "$NUM_ML0_NODES" ]; then
     export PROFILE_ML0_ARG="--profile ml0"
@@ -108,13 +140,14 @@ for i in 0 1 2; do
   metagraph_args=""
 
   if [ -n "$METAGRAPH" ]; then
-    metagraph_args="-f docker-compose.metagraph.yaml -f docker-compose.metagraph-test.yaml $PROFILE_ML0_ARG $PROFILE_CL1_ARG $PROFILE_DL1_ARG"
+    metagraph_profile_args="$PROFILE_ML0_ARG $PROFILE_CL1_ARG $PROFILE_DL1_ARG"
+    metagraph_args="-f docker-compose.metagraph.yaml -f docker-compose.metagraph-test.yaml"
     echo "Setting metagraph args to $metagraph_args"
     if [ ! -f "./genesis.snapshot" ] && [ "$i" -eq 0 ]; then
       echo "Generating metagraph genesis snapshot"
       cp .env .env.bak
       echo "CL_ML0_GENERATE_GENESIS=true" >> .env
-      docker compose -f docker-compose.metagraph.yaml -f docker-compose.metagraph-test.yaml -f docker-compose.metagraph-genesis.yaml --profile ml0 up
+      docker compose $metagraph_args -f docker-compose.metagraph-genesis.yaml --profile ml0 up
       docker stop ml0-0
       docker rm ml0-0
       cp ml0-data/genesis.snapshot .
@@ -125,16 +158,17 @@ for i in 0 1 2; do
     echo "METAGRAPH_ID=$METAGRAPH_ID" >> .env
     echo "CL_L0_TOKEN_IDENTIFIER=$METAGRAPH_ID" >> .env
 
+    # this can enabled as a double check after explicitly preventing it from picking up the main compose file, for now rely on initial cleanup
+    # docker compose $metagraph_args down --remove-orphans --volumes > /dev/null 2>&1 || true;
+
+    docker_additional_args="$metagraph_args $metagraph_profile_args"
+    echo "docker_additional_args: $docker_additional_args"
+    
+    docker compose \
+    $docker_additional_args \
+    up -d
   fi
 
-  docker_additional_args="$metagraph_args $PROFILE_GL0_ARG $PROFILE_GL1_ARG"
-  echo "docker_additional_args: $docker_additional_args"
-  
-  docker compose -f docker-compose.test.yaml \
-  -f docker-compose.yaml \
-  -f docker-compose.volumes.yaml \
-  $docker_additional_args \
-  up -d
   cd ../../
 done
 

@@ -84,6 +84,7 @@ if [ -z "$CL_GLOBAL_L0_PEER_ID" ]; then
   export CL_GLOBAL_L0_PEER_ID=$(java -jar /tessellation/jars/wallet.jar show-id)
 fi
 
+echo "Using CL_GLOBAL_L0_PEER_ID: $CL_GLOBAL_L0_PEER_ID"
 echo "Using L0 peer HTTP host: $CL_L0_PEER_HTTP_HOST"
 echo "Using L0 peer HTTP port: $CL_L0_PEER_HTTP_PORT"
 echo "Using L0 peer id: $CL_L0_PEER_ID"
@@ -99,9 +100,19 @@ if [ "$CL_DOCKER_GENESIS" == "true" ]; then
   if [ "$L0" == "false" ]; then
     RUN_COMMAND="run-initial-validator"
   elif [ "$ID" == "ml0" ]; then
-    RUN_COMMAND="run-genesis /tessellation/data/genesis.snapshot"
+    if [ ! -f "/tessellation/data/snapshot/ordinal/0/0" ]; then
+      RUN_COMMAND="run-genesis /tessellation/data/genesis.snapshot"
+    else
+      echo "Ordinal 0/0 exists, re-starting mode not yet supported"
+      exit 1
+    fi
   else
-    RUN_COMMAND="run-genesis /tessellation/genesis.csv"
+    if [ ! -f "/tessellation/data/snapshot/ordinal/0/0" ]; then
+      RUN_COMMAND="run-genesis /tessellation/genesis.csv"
+    else
+      echo "Ordinal 0/0 exists, re-starting mode not yet supported"
+      exit 1
+    fi
   fi
 fi
 
@@ -125,23 +136,9 @@ if [ "$ID" == "ml0" ] && [ "$CL_DOCKER_GENESIS" == "true" ] && [ -n "$CL_GENESIS
     ml0_log_file="/tessellation/logs/ml0-create-genesis.log"
     touch $ml0_log_file
     java -jar /tessellation/jars/ml0.jar create-genesis /tessellation/genesis.csv 2>&1 | tee -a $ml0_log_file  # &
-    # CREATE_GENESIS_PID=$!
-
-    # # Wait for genesis.snapshot to be created
-    # MAX_WAIT_TIME=60 
-    # elapsed_time=0
-    # while [ ! -f "/tessellation/genesis.snapshot" ]; do
-    #   sleep 1
-    #   elapsed_time=$((elapsed_time + 1))
-    #   if [ "$elapsed_time" -ge "$MAX_WAIT_TIME" ]; then
-    #     echo "Error: genesis.snapshot was not created within $MAX_WAIT_TIME seconds."
-    #     exit 1
-    #   fi
-    # done
     echo "genesis.snapshot created"
     cp /tessellation/genesis.snapshot /tessellation/data/genesis.snapshot
     cp /tessellation/genesis.address /tessellation/data/genesis.address
-    # kill -9 $CREATE_GENESIS_PID
     export RUN_MAIN="false"
   fi
 fi
@@ -162,9 +159,8 @@ if [ "$RUN_MAIN" == "true" ]; then
   java $CL_DOCKER_JAVA_OPTS -jar "$JAR_PATH" $RUN_COMMAND 2>&1 | tee -a $RUN_LOG_FILE
   # Capture Java’s exit code (PIPESTATUS[0] is Java; [1] would be tee)
   exit_code=${PIPESTATUS[0]}
+  echo "Exit code: $exit_code"
   exit $exit_code
-  # > $RUN_LOG_FILE 2>&1
-  # exec java $CL_DOCKER_JAVA_OPTS -jar "$JAR_PATH" $RUN_COMMAND
 else 
   echo "Skipping run-main"
 fi

@@ -332,7 +332,7 @@ object Download {
       clusterStorage.getResponsivePeers
         .map(NodeState.ready)
         .map { peers =>
-          if (sys.env.get("CL_EXIT_ON_FORK").contains("true")) {
+          if (sys.env.get("CL_EXIT_ON_FOLLOWER_DOWNLOAD").contains("true")) {
             clusterStorage.prioritySeedlist match {
               case Some(seeds) =>
                 val ids = seeds.map(x => x.peerId)

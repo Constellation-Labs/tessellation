@@ -283,7 +283,11 @@ fi
 
 
 if [ -z $NUM_GL0_NODES ]; then
-    export NUM_GL0_NODES=3
+    if [ -z "$METAGRAPH" ]; then
+        export NUM_GL0_NODES=3
+    else
+        export NUM_GL0_NODES=2
+    fi
 fi
 
 if [ -z $NUM_GL1_NODES ]; then
@@ -291,7 +295,7 @@ if [ -z $NUM_GL1_NODES ]; then
 fi
 
 if [ -z $NUM_ML0_NODES ]; then
-    export NUM_ML0_NODES=3
+    export NUM_ML0_NODES=2
 fi
 
 if [ -z $NUM_CL1_NODES ]; then
@@ -301,3 +305,14 @@ fi
 if [ -z $NUM_DL1_NODES ]; then
     export NUM_DL1_NODES=3
 fi
+
+
+if [ -z "$METAGRAPH" ]; then
+    export NUM_ML0_NODES="0"
+    export NUM_CL1_NODES="0"
+    export NUM_DL1_NODES="0"
+fi
+
+
+
+

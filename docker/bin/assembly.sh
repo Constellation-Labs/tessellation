@@ -54,14 +54,12 @@ mkdir -p ./docker/jars/
 for module in "dag-l0" "dag-l1" "keytool" "wallet"
 do
   path=$(ls -1t modules/${module}/target/scala-2.13/tessellation-${module}-assembly*.jar | head -n1)
-  cp $path ./docker/jars/${module}.jar
-  cp $path ./nodes/${module}.jar
+  dest="$PROJECT_ROOT/docker/jars/${module}.jar"
+  cp $path $dest
 done
 
 mv ./docker/jars/dag-l0.jar ./docker/jars/gl0.jar
-mv ./nodes/dag-l0.jar ./nodes/gl0.jar
 mv ./docker/jars/dag-l1.jar ./docker/jars/gl1.jar
-mv ./nodes/dag-l1.jar ./nodes/gl1.jar
 
 
 if [ -n "$PUBLISH" ]; then
@@ -86,8 +84,8 @@ move_metagraph_jar() {
   local module=$1
   local destination=$2
   path=$(ls -1t modules/${module}/target/scala-2.13/*-assembly*.jar | head -n1)
-  cp $path $PROJECT_ROOT/nodes/${destination}.jar
-  cp $path $PROJECT_ROOT/docker/jars/${destination}.jar
+  dest="$PROJECT_ROOT/docker/jars/${destination}.jar"
+  cp $path $dest
 }
 
 
@@ -143,7 +141,6 @@ if [ -n "$METAGRAPH" ]; then
 
   show_time "SBT Metagraph Assembly"
 
-  mkdir -p ./docker/jars/
 
   move_metagraph_jar $METAGRAPH_ML0_RELATIVE_PATH "ml0"
   move_metagraph_jar $METAGRAPH_CL1_RELATIVE_PATH "cl1"
