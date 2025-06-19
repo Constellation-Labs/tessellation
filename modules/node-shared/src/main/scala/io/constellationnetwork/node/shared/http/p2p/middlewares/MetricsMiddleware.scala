@@ -17,9 +17,8 @@ import org.http4s.headers.`X-Forwarded-For`
 
 object MetricsMiddleware {
 
-  def isHistogramRoute(path: String): Boolean = {
+  def isHistogramRoute(path: String): Boolean =
     path.contains("rumor")
-  }
 
   def apply[F[_]: Async: Metrics](): HttpRoutes[F] => HttpRoutes[F] = { routes =>
     Kleisli { req =>
@@ -59,7 +58,7 @@ object MetricsMiddleware {
         allTags = allTags :+ (bucket -> bucketLabel)
 
         val histogramTags: Seq[(Metrics.LabelName, String)] = Seq(
-          Metrics.unsafeLabelName("route") -> routePath,
+          Metrics.unsafeLabelName("route") -> routePath
         )
 
         // Generic HTTP metrics with route as label
@@ -71,19 +70,19 @@ object MetricsMiddleware {
         // Record metrics asynchronously without blocking the response
         val metricsRecording = for {
           _ <- Metrics[F].incrementCounter(requestCounterMetricKey, allTags)
-          _ <- if (isHistogramRoute(req.pathInfo.renderString)) {
+          _ <-
+            if (isHistogramRoute(req.pathInfo.renderString)) {
               Metrics[F].recordTimeHistogram(durationMetricKey, duration, histogramTags) >>
-              req.contentLength.traverse_ { size =>
-                Metrics[F].recordSizeHistogram(requestSizeMetricKey, size, histogramTags)
-              } >> 
-              response.contentLength.traverse_ { size =>
-                Metrics[F].recordSizeHistogram(responseSizeMetricKey, size, histogramTags)
-              }
-          } else {
-            Async[F].unit
-          }
+                req.contentLength.traverse_ { size =>
+                  Metrics[F].recordSizeHistogram(requestSizeMetricKey, size, histogramTags)
+                } >>
+                response.contentLength.traverse_ { size =>
+                  Metrics[F].recordSizeHistogram(responseSizeMetricKey, size, histogramTags)
+                }
+            } else {
+              Async[F].unit
+            }
           // 4. Request size histograms (both route-specific and generic)
-
 
         } yield ()
         Async[F].start(metricsRecording) >> response.pure[F]

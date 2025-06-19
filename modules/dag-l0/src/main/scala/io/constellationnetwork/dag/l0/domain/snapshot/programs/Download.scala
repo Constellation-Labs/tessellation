@@ -23,18 +23,17 @@ import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validato
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.node.NodeState
-import io.constellationnetwork.schema.peer.Peer
+import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.schema.peer.PeerId
 
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry.RetryPolicies._
 import retry._
-import io.constellationnetwork.security.hex.Hex
 
 object Download {
   def make[F[_]: Async: Parallel: Random: KryoSerializer](
@@ -337,12 +336,12 @@ object Download {
           if (sys.env.get("CL_EXIT_ON_FOLLOWER_DOWNLOAD").contains("true")) {
             sys.env.get("CL_FOLLOWER_ID") match {
               case Some(id) =>
-              val peerId = PeerId(Hex(id))
-              val hasPriorityPeer = peers.exists(p => p.id === peerId)
-              if (!hasPriorityPeer) {
-                println("Exit on fork due to missing priority peer")
-                System.exit(1)
-              }
+                val peerId = PeerId(Hex(id))
+                val hasPriorityPeer = peers.exists(p => p.id === peerId)
+                if (!hasPriorityPeer) {
+                  println("Exit on fork due to missing priority peer")
+                  System.exit(1)
+                }
               case _ =>
             }
           }

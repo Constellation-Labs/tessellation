@@ -26,6 +26,7 @@ import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.SnapshotConsensusFunctions.gossipForkInfo
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
+import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature._
 import io.constellationnetwork.security.{Hashed, HasherSelector, SecurityProvider}
@@ -33,7 +34,6 @@ import io.constellationnetwork.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-import io.constellationnetwork.security.hex.Hex
 
 abstract class GlobalSnapshotConsensusStateAdvancer[F[_]]
     extends ConsensusStateAdvancer[
@@ -165,7 +165,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                           effect = gossip.spread(ConsensusPeerDeclaration(state.key, Proposal(hash, facilitatorsHash))) *>
                             gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
                           facilitators = state.facilitators.value
-                          _ = { 
+                          _ = {
                             if (sys.env.get("CL_EXIT_ON_FOLLOWER_ADVANCER").contains("true")) {
                               sys.env.get("CL_FOLLOWER_ID") match {
                                 case Some(id) =>
@@ -178,7 +178,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                                 case _ =>
                               }
                             }
-                      
+
                           }
                           newState =
                             state.copy(status =
