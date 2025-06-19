@@ -3,6 +3,7 @@ package io.constellationnetwork.node.shared.infrastructure.metrics
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import java.util.{List => JList}
+
 import cats.Applicative
 import cats.effect.{Async, Resource}
 import cats.syntax.all._
@@ -10,16 +11,23 @@ import cats.syntax.all._
 import scala.concurrent.duration.FiniteDuration
 import scala.jdk.CollectionConverters._
 import scala.jdk.DurationConverters._
-import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.{MetricKey, TagSeq, sizeBytesBuckets, timeSecondsBuckets}
+
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics._
+
 import better.files.File
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
 import eu.timepit.refined.string.MatchesRegex
 import io.chrisdavenport.mapref.MapRef
-import io.micrometer.core.instrument.{DistributionSummary, Tag}
 import io.micrometer.core.instrument.binder.jvm._
 import io.micrometer.core.instrument.binder.logging.LogbackMetrics
-import io.micrometer.core.instrument.binder.system.{FileDescriptorMetrics, ProcessorMetrics, UptimeMetrics, DiskSpaceMetrics => SystemDiskSpaceMetrics}
+import io.micrometer.core.instrument.binder.system.{
+  DiskSpaceMetrics => SystemDiskSpaceMetrics,
+  FileDescriptorMetrics,
+  ProcessorMetrics,
+  UptimeMetrics
+}
+import io.micrometer.core.instrument.{DistributionSummary, Tag}
 import io.micrometer.prometheus.{PrometheusConfig, PrometheusMeterRegistry}
 import io.prometheus.client.exporter.common.TextFormat
 
@@ -67,18 +75,18 @@ trait Metrics[F[_]] {
   ): F[Unit]
 
   def recordTimeHistogram(
-                           key: MetricKey,
-                           duration: FiniteDuration,
-                           tags: TagSeq = Seq.empty,
-                           buckets: Array[Double] = timeSecondsBuckets
-                         ): F[Unit]
+    key: MetricKey,
+    duration: FiniteDuration,
+    tags: TagSeq = Seq.empty,
+    buckets: Array[Double] = timeSecondsBuckets
+  ): F[Unit]
 
   def recordSizeHistogram(
-                           key: MetricKey,
-                           sizeBytes: Long,
-                           tags: TagSeq = Seq.empty,
-                           buckets: Array[Double] = sizeBytesBuckets
-                         ): F[Unit]
+    key: MetricKey,
+    sizeBytes: Long,
+    tags: TagSeq = Seq.empty,
+    buckets: Array[Double] = sizeBytesBuckets
+  ): F[Unit]
 }
 
 object Metrics {
@@ -86,14 +94,13 @@ object Metrics {
   import org.openjdk.jol.info.GraphLayout
 
   val sizeBytesBuckets: Array[Double] = Array(
-    1e3, 5e3, 10e3,
-    100e3, 500e3, // 100KB to 500KB
+    1e3, 5e3, 10e3, 100e3, 500e3, // 100KB to 500KB
     1e6, 5e6, 10e6, // 1MB to 10MB
     25e6, 50e6, 100e6 // 25MB to 100MB
   )
 
   val timeSecondsBuckets: Array[Double] = Array(
-    0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 300.0
+    0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 45.0, 90.0
   )
 
   def sizeInKB(obj: Any): Double =
@@ -141,14 +148,15 @@ object Metrics {
       new Metrics[F] {
 
         def recordTimeHistogram(
-                                 key: MetricKey,
-                                 duration: FiniteDuration,
-                                 tags: TagSeq = Seq.empty,
-                                 buckets: Array[Double] = timeSecondsBuckets
-                               ): F[Unit] = {
+          key: MetricKey,
+          duration: FiniteDuration,
+          tags: TagSeq = Seq.empty,
+          buckets: Array[Double] = timeSecondsBuckets
+        ): F[Unit] = {
           val durationSeconds = duration.toUnit(TimeUnit.SECONDS)
           Async[F].delay {
-            DistributionSummary.builder(s"${key}_duration_seconds")
+            DistributionSummary
+              .builder(s"${key}_duration_seconds")
               .baseUnit("seconds")
               .serviceLevelObjectives(buckets: _*)
               .tags(toMicrometerTags(tags))
@@ -157,20 +165,20 @@ object Metrics {
           }
         }
         def recordSizeHistogram(
-                                 key: MetricKey,
-                                 sizeBytes: Long,
-                                 tags: TagSeq = Seq.empty,
-                                 buckets: Array[Double] = sizeBytesBuckets
-                               ): F[Unit] = {
+          key: MetricKey,
+          sizeBytes: Long,
+          tags: TagSeq = Seq.empty,
+          buckets: Array[Double] = sizeBytesBuckets
+        ): F[Unit] =
           Async[F].delay {
-            DistributionSummary.builder(s"${key}_bytes")
+            DistributionSummary
+              .builder(s"${key}_bytes")
               .baseUnit("bytes")
               .serviceLevelObjectives(buckets: _*)
               .tags(toMicrometerTags(tags))
               .register(registry)
               .record(sizeBytes.toDouble)
           }
-        }
         def updateGauge(key: MetricKey, value: Int): F[Unit] =
           genericUpdateGauge(key, value, Seq.empty)
 
@@ -299,7 +307,6 @@ object Metrics {
         def recordDistribution(key: MetricKey, value: Double, tags: TagSeq): F[Unit] =
           genericRecordDistribution(key, value, tags)
 
-
 //        @deprecated("This does not properly record buckets due to a micrometer / prometheus mismatch")
         private def genericRecordDistribution[A: Numeric](key: MetricKey, value: A, tags: TagSeq): F[Unit] =
           Async[F].delay {
@@ -308,7 +315,9 @@ object Metrics {
 
         // Alternative to above timer to add labels directly -- uses same format as above but
         // Adds labels as a workaround to missing information
-//        @deprecated("This does not properly record buckets due to a micrometer / prometheus mismatch")
+        // This function is still useful in the event where you need to record a distribution with lots of labels,
+        // to avoid an outer product of buckets times labels.
+        // It should be refactored away from the prior timer declarations however.
         def genericRecordDistributionWithTimeBuckets[A: Numeric](
           key: MetricKey,
           value: A,
