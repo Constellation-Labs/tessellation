@@ -1,0 +1,1 @@
+curl -X GET http://$IP:9000/node/info
