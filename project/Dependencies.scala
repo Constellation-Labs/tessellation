@@ -88,6 +88,7 @@ object Dependencies {
     val catsRetry = "com.github.cb372" %% "cats-retry" % V.catsRetry
 
     val squants = "org.typelevel" %% "squants" % V.squants
+    val jol = "org.openjdk.jol" % "jol-core" % "0.17"
     val comcast = "com.comcast" %% "ip4s-core" % V.comcast
 
     val fs2Core = fs2("core")
