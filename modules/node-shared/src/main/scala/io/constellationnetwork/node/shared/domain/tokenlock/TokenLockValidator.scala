@@ -10,7 +10,7 @@ import io.constellationnetwork.ext.cats.syntax.validated._
 import io.constellationnetwork.node.shared.config.types.DelegatedStakingConfig
 import io.constellationnetwork.node.shared.domain.tokenlock.TokenLockValidator.TokenLockValidationErrorOr
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.tokenLock.TokenLock
+import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockLimitsConfig}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
@@ -25,9 +25,9 @@ trait TokenLockValidator[F[_]] {
     signedTokenLock: Signed[TokenLock]
   )(implicit hasher: Hasher[F]): F[TokenLockValidationErrorOr[Signed[TokenLock]]]
 
-  def validateWithDelegatedStakeInfo(
+  def validateWithTokenLockLimits(
     signedTokenLock: Signed[TokenLock],
-    delegatedStakingCfg: DelegatedStakingConfig,
+    tokenLockLimitsConfig: TokenLockLimitsConfig,
     maybeCurrentTokenLocks: Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]
   )(implicit hasher: Hasher[F]): F[TokenLockValidationErrorOr[Signed[TokenLock]]]
 
@@ -50,16 +50,16 @@ object TokenLockValidator {
           signaturesV
             .productR(srcAddressSignatureV)
 
-      def validateWithDelegatedStakeInfo(
+      def validateWithTokenLockLimits(
         signedTokenLock: Signed[TokenLock],
-        delegatedStakingCfg: DelegatedStakingConfig,
+        tokenLockLimitsConfig: TokenLockLimitsConfig,
         maybeCurrentTokenLocks: Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]
       )(implicit hasher: Hasher[F]): F[TokenLockValidationErrorOr[Signed[TokenLock]]] =
         for {
           signatureValidations <- validate(signedTokenLock)
           tokenLocksLimitV = validateTokenLocksLimit(
             signedTokenLock,
-            delegatedStakingCfg,
+            tokenLockLimitsConfig,
             maybeCurrentTokenLocks.getOrElse(SortedMap.empty)
           )
         } yield
@@ -75,13 +75,13 @@ object TokenLockValidator {
 
       private def validateTokenLocksLimit(
         signedTx: Signed[TokenLock],
-        delegatedStakingCfg: DelegatedStakingConfig,
+        tokenLockLimitsConfig: TokenLockLimitsConfig,
         currentTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]]
       ): TokenLockValidationErrorOr[Signed[TokenLock]] = {
         val addressTokenLocks = currentTokenLocks.getOrElse(signedTx.source, SortedSet.empty[Signed[TokenLock]])
-        if (addressTokenLocks.size === delegatedStakingCfg.maxTokenLocksPerAddress.value)
+        if (addressTokenLocks.size === tokenLockLimitsConfig.maxTokenLocksPerAddress.value)
           TooManyTokenLocksForAddress.invalidNec
-        else if (signedTx.amount.value < delegatedStakingCfg.minTokenLockAmount)
+        else if (signedTx.amount.value < tokenLockLimitsConfig.minTokenLockAmount)
           TokenLockAmountBelowMinimum.invalidNec
         else
           signedTx.validNec

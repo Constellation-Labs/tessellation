@@ -25,6 +25,7 @@ import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.node.NodeState.SessionStarted
 import io.constellationnetwork.schema.semver.TessellationVersion
+import io.constellationnetwork.schema.tokenLock.TokenLockLimitsConfig
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.shared.{SharedKryoRegistrationIdRange, sharedKryoRegistrar}
 
@@ -102,27 +103,18 @@ object Main
         Hasher.forKryo[IO]
       )
 
-      lastNGlobalSnapshotStorage <- hasherSelector.withCurrent { implicit hasher =>
-        LastNGlobalSnapshotStorage
-          .make[IO](
-            sharedConfig.lastGlobalSnapshotsSync,
-            services.globalL0.asLeft
-          )
-          .asResource
-      }
-
       snapshotProcessor = DAGSnapshotProcessor.make(
-        sharedConfig.lastGlobalSnapshotsSync,
         storages.address,
         storages.block,
-        storages.lastSnapshot,
-        lastNGlobalSnapshotStorage,
+        sharedStorages.lastGlobalSnapshot,
+        sharedStorages.lastNGlobalSnapshot,
         storages.transaction,
         storages.allowSpend,
         storages.tokenLock,
         sharedServices.globalSnapshotContextFns,
         Hasher.forKryo[IO],
-        services.globalL0.pullGlobalSnapshot
+        services.globalL0.pullGlobalSnapshot,
+        services.globalL0
       )
       programs = Programs.make(sharedPrograms, p2pClient, storages, snapshotProcessor)
 
@@ -149,7 +141,11 @@ object Main
           cfg.http,
           Hasher.forKryo[IO],
           validators,
-          sharedConfig.delegatedStaking
+          TokenLockLimitsConfig(
+            sharedConfig.delegatedStaking.maxTokenLocksPerAddress,
+            sharedConfig.delegatedStaking.minTokenLockAmount
+          ),
+          sharedConfig
         )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)

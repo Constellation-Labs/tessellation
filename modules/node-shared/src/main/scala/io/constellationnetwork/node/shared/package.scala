@@ -1,6 +1,7 @@
 package io.constellationnetwork.node
 
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
+import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSyncView
 import io.constellationnetwork.ext.kryo._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
@@ -46,6 +47,7 @@ package object shared {
       EventTrigger.getClass -> 530,
       TimeTrigger.getClass -> 531,
       classOf[DataApplicationBlock] -> 532,
-      classOf[BinarySignature] -> 533
+      classOf[BinarySignature] -> 533,
+      classOf[GlobalSyncView] -> 534 // Since the genesis snapshot is kryo encoded we need this
     ).union(sharedKryoRegistrar)
 }

@@ -3,6 +3,7 @@ package io.constellationnetwork.currency.l0.snapshot.programs
 import cats.Applicative
 import cats.effect.Async
 import cats.effect.std.Random
+import cats.syntax.all.none
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.either._
@@ -53,11 +54,10 @@ object Download {
     peerSelect: PeerSelect[F],
     identifierStorage: IdentifierStorage[F],
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
-    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] with LatestBalances[F],
     currencySnapshotCleanupStorage: CurrencySnapshotCleanupStorage[F]
-  )(implicit l0NodeContext: L0NodeContext[F]): Download[F] = new Download[F] {
+  )(implicit l0NodeContext: L0NodeContext[F]): Download[F, CurrencyIncrementalSnapshot] = new Download[F, CurrencyIncrementalSnapshot] {
 
     val logger = Slf4jLogger.getLogger[F]
 
@@ -159,7 +159,6 @@ object Download {
                     CurrencySnapshotContext(currencyAddress, lastContext),
                     lastSnapshot,
                     snapshot,
-                    getLastNGlobalSnapshots,
                     getGlobalSnapshotByOrdinal
                   )
                   .handleErrorWith(_ => InvalidChain.raiseError[F, CurrencySnapshotContext])

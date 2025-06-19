@@ -14,13 +14,15 @@ import io.constellationnetwork.dag.l1.http.{Routes => DAGRoutes}
 import io.constellationnetwork.dag.l1.modules.Validators
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
-import io.constellationnetwork.node.shared.config.types.HttpConfig
+import io.constellationnetwork.node.shared.config.types.{HttpConfig, SharedConfig}
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
+import io.constellationnetwork.schema.tokenLock.TokenLockLimitsConfig
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
@@ -44,6 +46,7 @@ object HttpApi {
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
     ],
+    sharedStorages: SharedStorages[F],
     queues: Queues[F],
     privateKey: PrivateKey,
     services: Services[
@@ -65,11 +68,14 @@ object HttpApi {
     httpCfg: HttpConfig,
     maybeMetagraphVersion: Option[MetagraphVersion],
     txHasher: Hasher[F],
-    validators: Validators[F]
+    validators: Validators[F],
+    maybeTokenLockLimitsConfig: Option[TokenLockLimitsConfig],
+    sharedConfig: SharedConfig
   ): HttpApi[F, R] =
     new HttpApi[F, R](
       maybeDataApplication,
       storages,
+      sharedStorages,
       queues,
       privateKey,
       services,
@@ -79,7 +85,9 @@ object HttpApi {
       httpCfg,
       maybeMetagraphVersion,
       txHasher,
-      validators
+      validators,
+      maybeTokenLockLimitsConfig,
+      sharedConfig
     ) {}
 }
 
@@ -89,6 +97,7 @@ sealed abstract class HttpApi[
 ] private (
   maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
   storages: Storages[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+  sharedStorages: SharedStorages[F],
   queues: Queues[F],
   privateKey: PrivateKey,
   services: Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, R],
@@ -98,7 +107,9 @@ sealed abstract class HttpApi[
   httpCfg: HttpConfig,
   maybeMetagraphVersion: Option[MetagraphVersion],
   txHasher: Hasher[F],
-  validators: Validators[F]
+  validators: Validators[F],
+  maybeTokenLockLimitsConfig: Option[TokenLockLimitsConfig],
+  sharedConfig: SharedConfig
 ) {
 
   private val clusterRoutes =
@@ -106,7 +117,7 @@ sealed abstract class HttpApi[
       ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
     }
   private val registrationRoutes = HasherSelector[F].withCurrent(implicit hasher => RegistrationRoutes[F](services.cluster))
-  private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
+  private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip, sharedConfig.gossip.timeouts)
   private val dataApplicationRoutes = maybeDataApplication.map { da =>
     HasherSelector[F].withCurrent { implicit hasher =>
       DataApplicationRoutes[F](
@@ -114,7 +125,7 @@ sealed abstract class HttpApi[
         storages.l0Cluster,
         da,
         queues.dataTransactions,
-        storages.lastGlobalSnapshot,
+        sharedStorages.lastGlobalSnapshot,
         storages.lastSnapshot
       )
     }
@@ -138,7 +149,7 @@ sealed abstract class HttpApi[
         storages.tokenLock,
         storages.lastSnapshot,
         validators.tokenLock,
-        none
+        maybeTokenLockLimitsConfig
       )
     }
 

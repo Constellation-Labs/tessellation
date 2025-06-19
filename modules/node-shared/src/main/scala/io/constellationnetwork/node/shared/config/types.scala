@@ -28,7 +28,11 @@ object types {
     tessellation3Migration: Map[AppEnvironment, SnapshotOrdinal],
     tessellation301Migration: Map[AppEnvironment, SnapshotOrdinal],
     checkSyncGlobalSnapshotField: Map[AppEnvironment, SnapshotOrdinal],
-    globalSnapshotsWithCurrencySnapshots: Map[AppEnvironment, SnapshotOrdinal]
+    metagraphSyncData: Map[AppEnvironment, SnapshotOrdinal]
+  )
+
+  case class MetagraphsSyncConfig(
+    maxUnappliedGlobalChangeOrdinals: PosInt
   )
 
   case class SharedConfigReader(
@@ -48,7 +52,8 @@ object types {
     lastGlobalSnapshotsSync: LastGlobalSnapshotsSyncConfig,
     validationErrorStorage: ValidationErrorStorageConfig,
     delegatedStaking: DelegatedStakingConfig,
-    fieldsAddedOrdinals: FieldsAddedOrdinals
+    fieldsAddedOrdinals: FieldsAddedOrdinals,
+    metagraphsSync: MetagraphsSyncConfig
   )
 
   case class SharedConfig(
@@ -70,7 +75,8 @@ object types {
     lastGlobalSnapshotsSync: LastGlobalSnapshotsSyncConfig,
     validationErrorStorage: ValidationErrorStorageConfig,
     delegatedStaking: DelegatedStakingConfig,
-    fieldsAddedOrdinals: FieldsAddedOrdinals
+    fieldsAddedOrdinals: FieldsAddedOrdinals,
+    metagraphsSync: MetagraphsSyncConfig
   )
 
   case class SharedTrustConfig(
@@ -103,9 +109,15 @@ object types {
     maxConcurrentRounds: PosInt
   )
 
+  case class GossipTimeoutsConfig(
+    routes: FiniteDuration,
+    client: FiniteDuration
+  )
+
   case class GossipConfig(
     storage: RumorStorageConfig,
-    daemon: GossipDaemonConfig
+    daemon: GossipDaemonConfig,
+    timeouts: GossipTimeoutsConfig
   )
 
   case class ConsensusConfig(

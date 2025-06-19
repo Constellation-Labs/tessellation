@@ -8,7 +8,7 @@ import cats.syntax.all._
 
 import io.constellationnetwork.dag.l1.http.Routes
 import io.constellationnetwork.node.shared.cli.CliMethod
-import io.constellationnetwork.node.shared.config.types.{DelegatedStakingConfig, HttpConfig}
+import io.constellationnetwork.node.shared.config.types.{DelegatedStakingConfig, HttpConfig, SharedConfig}
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
@@ -17,6 +17,7 @@ import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
+import io.constellationnetwork.schema.tokenLock.TokenLockLimitsConfig
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
@@ -43,7 +44,8 @@ object HttpApi {
     httpCfg: HttpConfig,
     txHasher: Hasher[F],
     validators: Validators[F],
-    delegatedStakingCfg: DelegatedStakingConfig
+    tokenLockLimitsConfig: TokenLockLimitsConfig,
+    sharedConfig: SharedConfig
   ): HttpApi[F, P, S, SI, R] =
     new HttpApi[F, P, S, SI, R](
       storages,
@@ -56,7 +58,8 @@ object HttpApi {
       httpCfg,
       txHasher,
       validators,
-      delegatedStakingCfg
+      tokenLockLimitsConfig,
+      sharedConfig
     ) {}
 }
 
@@ -77,14 +80,15 @@ sealed abstract class HttpApi[
   httpCfg: HttpConfig,
   txHasher: Hasher[F],
   validators: Validators[F],
-  delegatedStakingCfg: DelegatedStakingConfig
+  tokenLockLimitsConfig: TokenLockLimitsConfig,
+  sharedConfig: SharedConfig
 ) {
   private val clusterRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>
       ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
     }
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
-  private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
+  private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip, sharedConfig.gossip.timeouts)
   private val allowSpendRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>
       AllowSpendRoutes[F](
@@ -103,7 +107,7 @@ sealed abstract class HttpApi[
         storages.tokenLock,
         storages.lastSnapshot,
         validators.tokenLock,
-        delegatedStakingCfg.some
+        tokenLockLimitsConfig.some
       )
     }
 

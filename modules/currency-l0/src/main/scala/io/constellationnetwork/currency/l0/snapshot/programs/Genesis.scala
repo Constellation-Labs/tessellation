@@ -14,6 +14,7 @@ import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
 import io.constellationnetwork.node.shared.domain.genesis.{GenesisFS => GenesisLoader}
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.http.p2p.clients.StateChannelSnapshotClient
 import io.constellationnetwork.node.shared.infrastructure.consensus._
@@ -55,7 +56,8 @@ object Genesis {
     nodeId: PeerId,
     consensusManager: CurrencyConsensusManager[F],
     genesisLoader: GenesisLoader[F, CurrencySnapshot],
-    identifierStorage: IdentifierStorage[F]
+    identifierStorage: IdentifierStorage[F],
+    l0Service: GlobalL0Service[F]
   ): Genesis[F] = new Genesis[F] {
     private val logger = Slf4jLogger.getLogger
 
@@ -136,7 +138,9 @@ object Genesis {
       for {
         balances <- mkBalances
         dataApplicationPart <- mkDataApplicationPart
-        genesis = CurrencySnapshot.mkGenesis(balances, dataApplicationPart)
+        (latestSnapshot, _) <- l0Service.pullLatestSnapshot
+
+        genesis = CurrencySnapshot.mkGenesis(balances, dataApplicationPart, latestSnapshot.some)
         signedGenesis <- genesis.sign(keyPair)
         signedBinary <- stateChannelSnapshotService.createGenesisBinary(signedGenesis)
         identifier = signedBinary.value.toAddress

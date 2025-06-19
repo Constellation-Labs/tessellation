@@ -42,7 +42,6 @@ object Storages {
       blockStorage <- BlockStorage.make[F]
       consensusStorage <- ConsensusStorage.make[F]
       l0ClusterStorage <- L0ClusterStorage.make[F](l0Peer)
-      lastSnapshotStorage <- LastSnapshotStorage.make[F, S, SI]
       transactionStorage <- TransactionStorage.make[F](TransactionReference.empty, contextualTransactionValidator)
       addressStorage <- AddressStorage.make[F]
       allowSpendStorage <- AllowSpendStorage.make[F](AllowSpendReference.empty, contextualAllowSpendValidator)
@@ -56,7 +55,7 @@ object Storages {
         val consensus = consensusStorage
         val cluster = sharedStorages.cluster
         val l0Cluster = l0ClusterStorage
-        val lastSnapshot = lastSnapshotStorage
+        val lastSnapshot = sharedStorages.lastGlobalSnapshot.asInstanceOf[LastSnapshotStorage[F, S, SI] with LatestBalances[F]]
         val node = sharedStorages.node
         val session = sharedStorages.session
         val rumor = sharedStorages.rumor

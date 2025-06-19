@@ -94,6 +94,7 @@ abstract class CurrencyL0App(
           sharedConfig,
           p2pClient,
           sharedServices,
+          sharedStorages,
           storages,
           sharedResources.client,
           sharedServices.session,
@@ -114,22 +115,21 @@ abstract class CurrencyL0App(
         .make[IO](
           storages.snapshot,
           hasherSelectorAlwaysCurrent,
-          storages.lastGlobalSnapshot,
+          storages.lastSyncGlobalSnapshot,
           storages.identifier
         )
 
       programs = Programs.make[IO, Run](
-        sharedConfig,
         keyPair,
         nodeShared.nodeId,
         cfg.globalL0Peer,
         sharedPrograms,
+        sharedStorages,
         storages,
         services,
         p2pClient,
         services.snapshotContextFunctions,
-        dataApplicationService.zip(storages.calculatedStateStorage),
-        services.lastNGlobalSnapshot
+        dataApplicationService.zip(storages.calculatedStateStorage)
       )
       rumorHandler = RumorHandlers
         .make[IO](storages.cluster, services.localHealthcheck, sharedStorages.forkInfo)
@@ -155,7 +155,8 @@ abstract class CurrencyL0App(
           mkCell,
           services.dataApplication,
           metagraphVersion.some,
-          queues
+          queues,
+          sharedConfig
         )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
@@ -341,7 +342,7 @@ abstract class CurrencyL0App(
               case _ => IO.unit
             }
             _ <- StateChannel
-              .run[IO](services, storages, programs, dataApplicationService, keyPair, mkCell, services.lastNGlobalSnapshot)
+              .run[IO](services, storages, sharedStorages, programs, dataApplicationService, keyPair, mkCell)
               .compile
               .drain
           } yield innerProgram

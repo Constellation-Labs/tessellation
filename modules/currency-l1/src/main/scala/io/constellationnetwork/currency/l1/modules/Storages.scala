@@ -54,7 +54,6 @@ object Storages {
       l0ClusterStorage <- L0ClusterStorage.make[F](l0Peer)
       globalL0ClusterStorage <- L0ClusterStorage.make[F](globalL0Peer)
       lastCurrencySnapshotStorage <- LastSnapshotStorage.make[F, S, SI]
-      lastGlobalSnapshotStorage <- LastSnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
       transactionStorage <- TransactionReference.emptyCurrency(currencyIdentifier).flatMap {
         TransactionStorage.make[F](_, contextualTransactionValidator)
@@ -78,7 +77,6 @@ object Storages {
         val l0Cluster = l0ClusterStorage
         val globalL0Cluster = globalL0ClusterStorage
         val lastSnapshot = lastCurrencySnapshotStorage
-        val lastGlobalSnapshot = lastGlobalSnapshotStorage
         val node = sharedStorages.node
         val session = sharedStorages.session
         val rumor = sharedStorages.rumor
@@ -99,6 +97,5 @@ sealed abstract class Storages[
 ] extends BaseStorages[F, P, S, SI] {
 
   val globalL0Cluster: L0ClusterStorage[F]
-  val lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
   val identifier: IdentifierStorage[F]
 }

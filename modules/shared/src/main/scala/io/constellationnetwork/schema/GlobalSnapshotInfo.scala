@@ -17,7 +17,7 @@ import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, Pend
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralRecord, PendingNodeCollateralWithdrawal}
 import io.constellationnetwork.schema.priceOracle.{PriceRecord, TokenPair}
-import io.constellationnetwork.schema.snapshot.{GlobalSnapshotWithCurrencyInfo, SnapshotInfo, StateProof}
+import io.constellationnetwork.schema.snapshot.{MetagraphSyncDataInfo, SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendReference}
 import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockReference}
 import io.constellationnetwork.schema.transaction.TransactionReference
@@ -230,7 +230,7 @@ case class GlobalSnapshotInfo(
   activeNodeCollaterals: Option[SortedMap[Address, SortedSet[NodeCollateralRecord]]],
   nodeCollateralWithdrawals: Option[SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]]],
   priceState: Option[SortedMap[TokenPair, PriceRecord]],
-  lastGlobalSnapshotsWithCurrency: Option[SortedMap[Address, GlobalSnapshotWithCurrencyInfo]]
+  metagraphSyncData: Option[SortedMap[Address, MetagraphSyncDataInfo]]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
   def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
@@ -253,7 +253,7 @@ case class GlobalSnapshotInfo(
       activeNodeCollaterals.traverse(_.hash),
       nodeCollateralWithdrawals.traverse(_.hash),
       priceState.traverse(_.hash),
-      lastGlobalSnapshotsWithCurrency.traverse(_.hash)
+      metagraphSyncData.traverse(_.hash)
     ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _, _, _))
   }
 

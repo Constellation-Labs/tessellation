@@ -80,6 +80,7 @@ object Main
         .make[IO, Run](
           sharedConfig,
           sharedServices,
+          sharedStorages,
           queues,
           storages,
           nodeShared.sharedValidators,
@@ -104,7 +105,8 @@ object Main
         p2pClient,
         sharedServices.globalSnapshotContextFns,
         hashSelect,
-        storages.lastNGlobalSnapshot
+        sharedStorages.lastNGlobalSnapshot,
+        sharedStorages.lastGlobalSnapshot
       )
 
       rumorHandler = RumorHandlers
@@ -128,7 +130,8 @@ object Main
           TessellationVersion.unsafeFrom(BuildInfo.version),
           cfg.http,
           sharedValidators,
-          cfg.shared.delegatedStaking.withdrawalTimeLimit.getOrElse(sharedConfig.environment, EpochProgress.MinValue)
+          cfg.shared.delegatedStaking.withdrawalTimeLimit.getOrElse(sharedConfig.environment, EpochProgress.MinValue),
+          cfg.shared
         )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
@@ -212,7 +215,13 @@ object Main
                   for {
                     _ <- storages.globalSnapshot.prepend(snapshot, snapshotInfo)
                     hashedSnapshot <- snapshot.toHashed[IO]
-                    _ <- storages.lastNGlobalSnapshot.setInitial(hashedSnapshot, snapshotInfo)
+                    _ <- sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
+                      hashedSnapshot,
+                      snapshotInfo,
+                      none,
+                      Some((hash, ordinal) => programs.download.fetchSnapshot(hash, ordinal)(hasher))
+                    )
+                    _ <- sharedStorages.lastGlobalSnapshot.setInitial(hashedSnapshot, snapshotInfo)
                   } yield ()
                 } >>
                   services.consensus.manager.startFacilitatingAfterRollback(
@@ -296,7 +305,16 @@ object Main
                                       .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA)
                                     _ <- storages.globalSnapshot.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info)
                                     hashedSnapshot <- signedFirstIncrementalSnapshot.toHashed[IO]
-                                    _ <- storages.lastNGlobalSnapshot.setInitial(hashedSnapshot, hashedGenesis.info)
+                                    _ <- sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
+                                      hashedSnapshot,
+                                      hashedGenesis.info,
+                                      none,
+                                      Some((hash, ordinal) => programs.download.fetchSnapshot(hash, ordinal)(hasher))
+                                    )
+                                    _ <- sharedStorages.lastGlobalSnapshot.setInitial(
+                                      hashedSnapshot,
+                                      hashedGenesis.info
+                                    )
                                     _ <- services.consensus.manager
                                       .startFacilitatingAfterRollback(
                                         signedFirstIncrementalSnapshot.ordinal,

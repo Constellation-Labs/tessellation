@@ -35,6 +35,7 @@ import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.node.NodeState.SessionStarted
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
 import io.constellationnetwork.schema.swap.CurrencyId
+import io.constellationnetwork.schema.tokenLock.TokenLockLimitsConfig
 import io.constellationnetwork.security.Hasher
 
 import com.monovore.decline.Opts
@@ -48,6 +49,7 @@ trait OverridableL1 extends TessellationIOApp[Run] {
   def dataApplication: Option[Resource[IO, BaseDataApplicationL1Service[IO]]] = None
   def transactionValidator: Option[CustomContextualTransactionValidator] = None
   def transactionFeeEstimator: Option[TransactionFeeEstimator[IO]] = None
+  def setTokenLockLimits: Option[TokenLockLimitsConfig] = None
 }
 
 abstract class CurrencyL1App(
@@ -121,7 +123,7 @@ abstract class CurrencyL1App(
       services = Services
         .make[IO, Run](
           storages,
-          storages.lastGlobalSnapshot,
+          sharedStorages.lastGlobalSnapshot,
           storages.globalL0Cluster,
           validators,
           sharedServices,
@@ -133,22 +135,12 @@ abstract class CurrencyL1App(
           Hasher.forKryo[IO]
         )
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[IO].asResource
-      lastNGlobalSnapshotStorage <- hasherSelector.withCurrent { implicit hasher =>
-        LastNGlobalSnapshotStorage
-          .make[IO](
-            sharedConfig.lastGlobalSnapshotsSync,
-            services.globalL0.asLeft
-          )
-          .asResource
-      }
-
       snapshotProcessor = CurrencySnapshotProcessor.make(
-        sharedConfig.lastGlobalSnapshotsSync,
         method.identifier,
         storages.address,
         storages.block,
-        storages.lastGlobalSnapshot,
-        lastNGlobalSnapshotStorage,
+        sharedStorages.lastGlobalSnapshot,
+        sharedStorages.lastNGlobalSnapshot,
         storages.lastSnapshot,
         storages.transaction,
         sharedServices.globalSnapshotContextFns,
@@ -160,7 +152,8 @@ abstract class CurrencyL1App(
         Hasher.forKryo[IO],
         storages.allowSpend,
         storages.tokenLock,
-        services.globalL0.pullGlobalSnapshot
+        services.globalL0.pullGlobalSnapshot,
+        services.globalL0
       )
       programs = Programs
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
@@ -182,12 +175,13 @@ abstract class CurrencyL1App(
         .asResource
 
       implicit0(nodeContext: L1NodeContext[IO]) = L1NodeContext
-        .make[IO](storages.lastGlobalSnapshot, storages.lastSnapshot, storages.identifier)
+        .make[IO](sharedStorages.lastGlobalSnapshot, storages.lastSnapshot, storages.identifier)
 
       api = HttpApi
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
           services.dataApplication,
           storages,
+          sharedStorages,
           queues,
           keyPair.getPrivate,
           services,
@@ -197,7 +191,9 @@ abstract class CurrencyL1App(
           cfg.http,
           metagraphVersion.some,
           txHasher,
-          validators
+          validators,
+          setTokenLockLimits,
+          sharedConfig
         )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
@@ -284,7 +280,7 @@ abstract class CurrencyL1App(
               cfg.dataConsensus,
               storages.cluster,
               storages.l0Cluster,
-              storages.lastGlobalSnapshot,
+              sharedStorages.lastGlobalSnapshot,
               storages.lastSnapshot,
               storages.node,
               p2pClient.l0BlockOutputClient,
@@ -307,7 +303,7 @@ abstract class CurrencyL1App(
               cfg.swap,
               storages.cluster,
               storages.l0Cluster,
-              storages.lastGlobalSnapshot,
+              sharedStorages.lastGlobalSnapshot,
               storages.node,
               p2pClient.l0BlockOutputClient,
               p2pClient.swapConsensusClient,
@@ -324,7 +320,7 @@ abstract class CurrencyL1App(
                 cfg.tokenLock,
                 storages.cluster,
                 storages.l0Cluster,
-                storages.lastGlobalSnapshot,
+                sharedStorages.lastGlobalSnapshot,
                 storages.node,
                 p2pClient.l0BlockOutputClient,
                 p2pClient.tokenLockConsensusClient,

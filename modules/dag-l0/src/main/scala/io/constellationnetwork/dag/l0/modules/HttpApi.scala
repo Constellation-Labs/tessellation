@@ -16,7 +16,7 @@ import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.GlobalConse
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment._
 import io.constellationnetwork.node.shared.cli.CliMethod
-import io.constellationnetwork.node.shared.config.types.{DelegatedStakingConfig, HttpConfig}
+import io.constellationnetwork.node.shared.config.types.{DelegatedStakingConfig, HttpConfig, SharedConfig}
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
@@ -48,7 +48,8 @@ object HttpApi {
     nodeVersion: TessellationVersion,
     httpCfg: HttpConfig,
     sharedValidators: SharedValidators[F],
-    delegatedStakingWithdrawalTimeLimit: EpochProgress
+    delegatedStakingWithdrawalTimeLimit: EpochProgress,
+    sharedConfig: SharedConfig
   ): HttpApi[F, R] =
     new HttpApi[F, R](
       storages,
@@ -61,7 +62,8 @@ object HttpApi {
       nodeVersion,
       httpCfg,
       sharedValidators,
-      delegatedStakingWithdrawalTimeLimit
+      delegatedStakingWithdrawalTimeLimit,
+      sharedConfig
     ) {}
 }
 
@@ -76,7 +78,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   nodeVersion: TessellationVersion,
   httpCfg: HttpConfig,
   sharedValidators: SharedValidators[F],
-  delegatedStakingWithdrawalTimeLimit: EpochProgress
+  delegatedStakingWithdrawalTimeLimit: EpochProgress,
+  sharedConfig: SharedConfig
 ) {
 
   private val mkDagCell = (block: Signed[Block]) =>
@@ -130,7 +133,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
 
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
-  private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
+  private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip, sharedConfig.gossip.timeouts)
   private val trustRoutes = TrustRoutes[F](storages.trust, programs.trustPush)
   private val stateChannelRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>

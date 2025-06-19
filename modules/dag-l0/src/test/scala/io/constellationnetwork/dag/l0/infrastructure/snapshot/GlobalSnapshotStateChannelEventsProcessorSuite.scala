@@ -22,6 +22,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlock
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.consensus.CurrencySnapshotEventValidationErrorStorage
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -42,6 +43,7 @@ import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSna
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
+import fs2.concurrent.SignallingRef
 import weaver.MutableIOSuite
 object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
   val TestValidationErrorStorageMaxSize: PosInt = PosInt(16)
@@ -95,6 +97,18 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
             Map(Dev -> EpochProgress(NonNegLong(7338977L)))
           )
         )
+      lastNSnapR <- SignallingRef
+        .of[IO, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](SortedMap.empty)
+      incLastNSnapR <- SignallingRef
+        .of[IO, SortedMap[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]](SortedMap.empty)
+      lastSnapR <- SignallingRef.of[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](None)
+
+      lastGlobalSnapshotsSyncConfig =
+        LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt.unsafeFrom(10), PosInt.unsafeFrom(5))
+      lastNSnapshotStorage =
+        LastNGlobalSnapshotStorage.make[IO](lastGlobalSnapshotsSyncConfig, lastNSnapR, incLastNSnapR)
+      lastGlobalSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
+
       currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager.make(
         FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty),
         Dev,
@@ -105,7 +119,9 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         Amount(0L),
         validators.currencyMessageValidator,
         validators.feeTransactionValidator,
-        validators.globalSnapshotSyncValidator
+        validators.globalSnapshotSyncValidator,
+        lastNSnapshotStorage,
+        lastGlobalSnapshotStorage
       )
       currencyEventsCutter = CurrencyEventsCutter.make[IO](None)
       validationErrorStorage <- CurrencySnapshotEventValidationErrorStorage.make(TestValidationErrorStorageMaxSize)
@@ -160,7 +176,6 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         snapshotInfo,
         output :: Nil,
         StateChannelValidationType.Full,
-        List.empty.pure[IO],
         _ => None.pure[IO]
       )
     } yield expect.eql(expected, result)
@@ -194,7 +209,6 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         snapshotInfo,
         output1 :: output2 :: Nil,
         StateChannelValidationType.Full,
-        List.empty.pure[IO],
         _ => None.pure[IO]
       )
     } yield expect.eql(expected, result)
@@ -229,7 +243,6 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         snapshotInfo,
         output1 :: output2 :: Nil,
         StateChannelValidationType.Full,
-        List.empty.pure[IO],
         _ => None.pure[IO]
       )
     } yield expect.eql(expected, result)

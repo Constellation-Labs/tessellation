@@ -13,7 +13,7 @@ import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.merkletree.syntax._
-import io.constellationnetwork.node.shared.config.types.FieldsAddedOrdinals
+import io.constellationnetwork.node.shared.config.types.{FieldsAddedOrdinals, MetagraphsSyncConfig}
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
   UpdateDelegatedStakeAcceptanceManager,
@@ -48,7 +48,7 @@ import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.priceOracle.{PriceRecord, TokenPair}
-import io.constellationnetwork.schema.snapshot.GlobalSnapshotWithCurrencyInfo
+import io.constellationnetwork.schema.snapshot.MetagraphSyncDataInfo
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction._
@@ -60,6 +60,7 @@ import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedS
 
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.disjunctionCodecs._
+import monocle.syntax.all._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait GlobalSnapshotAcceptanceManager[F[_]] {
@@ -80,7 +81,6 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
     lastDeprecatedTips: SortedSet[DeprecatedTip],
     calculateRewardsFn: RewardsInput => F[DelegatedRewardsResult],
     validationType: StateChannelValidationType,
-    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): F[
     (
@@ -108,6 +108,7 @@ object GlobalSnapshotAcceptanceManager {
 
   def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider](
     fieldsAddedOrdinals: FieldsAddedOrdinals,
+    metagraphsSyncConfig: MetagraphsSyncConfig,
     environment: AppEnvironment,
     blockAcceptanceManager: BlockAcceptanceManager[F],
     allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[F],
@@ -138,7 +139,6 @@ object GlobalSnapshotAcceptanceManager {
       lastDeprecatedTips: SortedSet[DeprecatedTip],
       calculateRewardsFn: RewardsInput => F[DelegatedRewardsResult],
       validationType: StateChannelValidationType,
-      getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     ): F[
       (
@@ -165,7 +165,7 @@ object GlobalSnapshotAcceptanceManager {
       val tessellation301MigrationStartingOrdinal = fieldsAddedOrdinals.tessellation301Migration
         .getOrElse(environment, SnapshotOrdinal.MinValue)
 
-      val globalSnapshotsWithCurrencySnapshotsStartingOrdinals = fieldsAddedOrdinals.globalSnapshotsWithCurrencySnapshots
+      val metagraphSyncDataStartingOrdinal = fieldsAddedOrdinals.metagraphSyncData
         .getOrElse(environment, SnapshotOrdinal.MinValue)
 
       for {
@@ -211,7 +211,6 @@ object GlobalSnapshotAcceptanceManager {
               lastSnapshotContext.copy(balances = updatedGlobalBalances),
               scEvents,
               validationType,
-              getLastNGlobalSnapshots,
               getGlobalSnapshotByOrdinal
             )
 
@@ -285,8 +284,8 @@ object GlobalSnapshotAcceptanceManager {
           currencyBalances ++ globalBalances
         )
 
-        _ <- Slf4jLogger.getLogger[F].debug(s"--- Accepted spend actions: ${acceptedSpendActions.show}")
-        _ <- Slf4jLogger.getLogger[F].debug(s"--- Rejected spend actions: ${rejectedSpendActions.show}")
+        _ <- Slf4jLogger.getLogger[F].debug(s"--- [ORDINAL=$ordinal] Accepted spend actions: ${acceptedSpendActions.show}")
+        _ <- Slf4jLogger.getLogger[F].debug(s"--- [ORDINAL=$ordinal] Rejected spend actions: ${rejectedSpendActions.show}")
 
         sCSnapshotHashes <- scSnapshots.toList.traverse {
           case (address, nel) => nel.last.toHashed.map(address -> _.hash)
@@ -527,14 +526,13 @@ object GlobalSnapshotAcceptanceManager {
         }
         updatedPriceState = SortedMap.empty[TokenPair, PriceRecord]
 
-        updatedLastGlobalSnapshotsWithCurrency = lastSnapshotContext.lastGlobalSnapshotsWithCurrency.map { current =>
-          val globalSnapshotWithCurrencyInfo = GlobalSnapshotWithCurrencyInfo(ordinal, epochProgress)
-          val updatedKeys = incomingCurrencySnapshots.keys.map { metagraphAddress =>
-            metagraphAddress -> globalSnapshotWithCurrencyInfo
-          }.toSortedMap
-
-          current ++ updatedKeys
-        }.getOrElse(SortedMap.empty[Address, GlobalSnapshotWithCurrencyInfo])
+        updatedAcceptedMetagraphSyncData = acceptMetagraphSyncData(
+          lastSnapshotContext,
+          incomingCurrencySnapshots,
+          acceptedSpendActions,
+          ordinal,
+          epochProgress
+        )
 
         gsi = GlobalSnapshotInfo(
           updatedLastStateChannelSnapshotHashes,
@@ -555,7 +553,7 @@ object GlobalSnapshotAcceptanceManager {
           if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedCreateNodeCollateralsCleaned.some,
           if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedWithdrawNodeCollateralsCleaned.some,
           if (ordinal < tessellation301MigrationStartingOrdinal) none else updatedPriceState.some,
-          if (ordinal < globalSnapshotsWithCurrencySnapshotsStartingOrdinals) none else updatedLastGlobalSnapshotsWithCurrency.some
+          if (ordinal < metagraphSyncDataStartingOrdinal) none else updatedAcceptedMetagraphSyncData.some
         )
 
         stateProof <- gsi.stateProof(maybeMerkleTree)
@@ -1127,6 +1125,94 @@ object GlobalSnapshotAcceptanceManager {
           .map(balance => (updatedBalances.updated(tx.destination, balance), acceptedTxs + tx))
           .getOrElse(acc)
       }
+
+    private def acceptMetagraphSyncData(
+      lastSnapshotContext: GlobalSnapshotInfo,
+      incomingCurrencySnapshots: SortedMap[Address, CurrencySnapshotWithState],
+      acceptedSpendActions: Map[Address, List[SpendAction]],
+      currentGlobalOrdinal: SnapshotOrdinal,
+      currentGlobalEpochProgress: EpochProgress
+    ): SortedMap[Address, MetagraphSyncDataInfo] =
+      lastSnapshotContext.metagraphSyncData.map { existingData =>
+        val updatedFromSnapshots = updateFromCurrencySnapshots(
+          existingData,
+          incomingCurrencySnapshots,
+          currentGlobalOrdinal,
+          currentGlobalEpochProgress
+        )
+
+        val updatedFromSpendActions = updateFromSpendActions(
+          updatedFromSnapshots,
+          acceptedSpendActions,
+          currentGlobalOrdinal
+        )
+
+        existingData ++ updatedFromSpendActions
+      }
+        .getOrElse(SortedMap.empty[Address, MetagraphSyncDataInfo])
+
+    private def updateFromCurrencySnapshots(
+      existingData: SortedMap[Address, MetagraphSyncDataInfo],
+      snapshots: SortedMap[Address, CurrencySnapshotWithState],
+      currentOrdinal: SnapshotOrdinal,
+      currentEpochProgress: EpochProgress
+    ): SortedMap[Address, MetagraphSyncDataInfo] =
+      snapshots.map {
+        case (address, snapshot) =>
+          val currentInfo = existingData.getOrElse(address, MetagraphSyncDataInfo.empty)
+          val lastSyncOrdinal = extractLastSynchronizedOrdinal(snapshot)
+
+          val updatedInfo = currentInfo
+            .focus(_.globalOrdinalLastAcceptedOn)
+            .replace(currentOrdinal)
+            .focus(_.globalEpochProgressLastAcceptedOn)
+            .replace(currentEpochProgress)
+            .focus(_.unappliedGlobalChangeOrdinals)
+            .modify(_.filter(_ >= lastSyncOrdinal))
+
+          address -> updatedInfo
+      }.toSortedMap
+
+    private def updateFromSpendActions(
+      currentData: SortedMap[Address, MetagraphSyncDataInfo],
+      spendActions: Map[Address, List[SpendAction]],
+      currentOrdinal: SnapshotOrdinal
+    ): SortedMap[Address, MetagraphSyncDataInfo] = {
+      val currencySpendTransactions = extractCurrencySpendTransactions(spendActions)
+
+      currencySpendTransactions.foldLeft(currentData) { (acc, transaction) =>
+        val metagraphId = transaction.currencyId.get.value
+        val currentInfo = acc.getOrElse(metagraphId, MetagraphSyncDataInfo.empty)
+
+        val updatedInfo = currentInfo
+          .focus(_.unappliedGlobalChangeOrdinals)
+          .modify(trimUnappliedOrdinals(_, currentOrdinal))
+
+        acc.updated(metagraphId, updatedInfo)
+      }
+    }
+
+    private def extractLastSynchronizedOrdinal(snapshot: CurrencySnapshotWithState): SnapshotOrdinal =
+      snapshot match {
+        case Left(value)  => value.globalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue)
+        case Right(value) => value._1.globalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue)
+      }
+
+    private def extractCurrencySpendTransactions(spendActions: Map[Address, List[SpendAction]]) =
+      spendActions.values.flatten
+        .flatMap(_.spendTransactions.toList)
+        .filter(_.currencyId.isDefined)
+
+    private def trimUnappliedOrdinals(
+      currentOrdinals: SortedSet[SnapshotOrdinal],
+      newOrdinal: SnapshotOrdinal
+    ): SortedSet[SnapshotOrdinal] = {
+      val maxSize = metagraphsSyncConfig.maxUnappliedGlobalChangeOrdinals.value
+      val updated = currentOrdinals + newOrdinal
+
+      if (updated.size <= maxSize) updated
+      else updated.dropRight(updated.size - maxSize)
+    }
 
     def emitAllowSpendsExpired(
       addressToSet: SortedMap[Address, SortedSet[Signed[AllowSpend]]]

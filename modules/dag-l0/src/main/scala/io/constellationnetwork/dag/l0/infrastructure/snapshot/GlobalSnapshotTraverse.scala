@@ -29,7 +29,6 @@ object GlobalSnapshotTraverse {
     loadInfo: SnapshotOrdinal => F[Option[GlobalSnapshotInfo]],
     contextFns: SnapshotContextFunctions[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
     rollbackHash: Hash,
-    getLastNGlobalSnapshots: => F[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): GlobalSnapshotTraverse[F] =
     new GlobalSnapshotTraverse[F] {
@@ -115,7 +114,7 @@ object GlobalSnapshotTraverse {
             case ((lastCtx, lastInc), hash) =>
               loadIncOrErr(hash).flatMap { inc =>
                 HasherSelector[F].forOrdinal(inc.ordinal) { implicit hasher =>
-                  contextFns.createContext(lastCtx, lastInc, inc, getLastNGlobalSnapshots, getGlobalSnapshotByOrdinal).map(_ -> inc)
+                  contextFns.createContext(lastCtx, lastInc, inc, getGlobalSnapshotByOrdinal).map(_ -> inc)
                 }
               }
           }

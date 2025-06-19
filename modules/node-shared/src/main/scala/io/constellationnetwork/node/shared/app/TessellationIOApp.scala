@@ -159,7 +159,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                         .asResource
                                       res <- SharedResources.make[IO](cfg, _keyPair.getPrivate, storages.session, selfId)
                                       session = Session.make[IO](storages.session, storages.node, storages.cluster)
-                                      p2pClient = SharedP2PClient.make[IO](res.client, session)
+                                      p2pClient = SharedP2PClient.make[IO](res.client, session, cfg)
                                       queues <- SharedQueues.make[IO].asResource
                                       validators = _hasherSelector.withCurrent { implicit hasher =>
                                         SharedValidators.make[IO](

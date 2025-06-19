@@ -10,7 +10,7 @@ import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncC
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.snapshot.Validator.isNextSnapshot
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
-import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.height.Height
@@ -27,17 +27,15 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 object LastNGlobalSnapshotStorage {
 
   def make[F[_]: Async: Hasher: Parallel](
-    lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
-    globalSnapshotFetcher: Either[GlobalL0Service[F], SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]]
+    lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig
   ): F[LastNGlobalSnapshotStorage[F] with LatestBalances[F]] = for {
     combinedSignalingRef <- SignallingRef
       .of[F, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](SortedMap.empty)
     incrementalSignalingRef <- SignallingRef.of[F, SortedMap[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]](SortedMap.empty)
-  } yield make(lastGlobalSnapshotsSyncConfig, globalSnapshotFetcher, combinedSignalingRef, incrementalSignalingRef)
+  } yield make(lastGlobalSnapshotsSyncConfig, combinedSignalingRef, incrementalSignalingRef)
 
   def make[F[_]: Async: Hasher: Parallel](
     lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
-    globalSnapshotFetcher: Either[GlobalL0Service[F], SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]],
     combinedSnapshotsR: SignallingRef[F, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]],
     incrementalSnapshotsR: SignallingRef[F, SortedMap[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]]
   ): LastNGlobalSnapshotStorage[F] with LatestBalances[F] =
@@ -47,10 +45,11 @@ object LastNGlobalSnapshotStorage {
       private def setInitialInternal(
         snapshot: Hashed[GlobalIncrementalSnapshot],
         state: GlobalSnapshotInfo,
+        globalSnapshotFetcher: Option[Either[GlobalL0Service[F], SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]]],
         fetchGL0Function: Option[(Option[Hash], SnapshotOrdinal) => F[Signed[GlobalIncrementalSnapshot]]]
       ): F[Unit] = for {
         _ <- validateAndSetInitialSnapshot(snapshot, state)
-        _ <- fetchAndStoreGlobalSnapshots(snapshot, fetchGL0Function)
+        _ <- fetchAndStoreGlobalSnapshots(snapshot, globalSnapshotFetcher, fetchGL0Function)
       } yield ()
 
       private def validateAndSetInitialSnapshot(
@@ -66,6 +65,7 @@ object LastNGlobalSnapshotStorage {
 
       private def fetchAndStoreGlobalSnapshots(
         snapshot: Hashed[GlobalIncrementalSnapshot],
+        globalSnapshotFetcher: Option[Either[GlobalL0Service[F], SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]]],
         fetchGL0Function: Option[(Option[Hash], SnapshotOrdinal) => F[Signed[GlobalIncrementalSnapshot]]]
       ): F[Unit] = {
         val ordinalsToFetch = (0 to lastGlobalSnapshotsSyncConfig.maxLastGlobalSnapshotsInMemory.value)
@@ -75,7 +75,13 @@ object LastNGlobalSnapshotStorage {
 
         for {
           globalSnapshotsFetched <- ordinalsToFetch
-            .parTraverse(ordinal => fetchSingleSnapshot(SnapshotOrdinal.unsafeApply(ordinal), fetchGL0Function))
+            .parTraverse(ordinal =>
+              fetchSingleSnapshot(
+                SnapshotOrdinal.unsafeApply(ordinal),
+                globalSnapshotFetcher,
+                fetchGL0Function
+              )
+            )
             .map(_.flatten)
             .map(_.sortBy(_.ordinal.value.value))
 
@@ -85,25 +91,30 @@ object LastNGlobalSnapshotStorage {
 
       private def fetchSingleSnapshot(
         snapshotOrdinal: SnapshotOrdinal,
+        globalSnapshotFetcher: Option[Either[GlobalL0Service[F], SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]]],
         fetchGL0Function: Option[(Option[Hash], SnapshotOrdinal) => F[Signed[GlobalIncrementalSnapshot]]]
       ): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
         globalSnapshotFetcher match {
-          case Left(globalL0Service) =>
-            globalL0Service.pullGlobalSnapshot(snapshotOrdinal)
+          case Some(value) =>
+            value match {
+              case Left(globalL0Service) =>
+                globalL0Service.pullGlobalSnapshot(snapshotOrdinal)
 
-          case Right(globalSnapshotStorage) =>
-            for {
-              maybeSnapshot <- globalSnapshotStorage.get(snapshotOrdinal)
-              result <- maybeSnapshot match {
-                case Some(snapshot) =>
-                  snapshot.toHashed.map(_.some)
-                case None =>
-                  fetchGL0Function match {
-                    case Some(fetchFn) => fetchFn(none, snapshotOrdinal).flatMap(_.toHashed.map(_.some))
-                    case None          => Option.empty[Hashed[GlobalIncrementalSnapshot]].pure[F]
+              case Right(globalSnapshotStorage) =>
+                for {
+                  maybeSnapshot <- globalSnapshotStorage.get(snapshotOrdinal)
+                  result <- maybeSnapshot match {
+                    case Some(snapshot) =>
+                      snapshot.toHashed.map(_.some)
+                    case None =>
+                      fetchGL0Function match {
+                        case Some(fetchFn) => fetchFn(none, snapshotOrdinal).flatMap(_.toHashed.map(_.some))
+                        case None          => Option.empty[Hashed[GlobalIncrementalSnapshot]].pure[F]
+                      }
                   }
-              }
-            } yield result
+                } yield result
+            }
+          case None => none[Hashed[GlobalIncrementalSnapshot]].pure[F]
         }
 
       private def updateIncrementalSnapshots(
@@ -117,22 +128,28 @@ object LastNGlobalSnapshotStorage {
           (updated, Applicative[F].unit)
         }.flatten
 
-      def setInitial(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] =
-        setInitialInternal(snapshot, state, None)
+      def setInitial(
+        snapshot: Hashed[GlobalIncrementalSnapshot],
+        state: GlobalSnapshotInfo
+      ): F[Unit] =
+        setInitialInternal(snapshot, state, None, None)
 
       def setInitialFetchingGL0(
         snapshot: Hashed[GlobalIncrementalSnapshot],
         state: GlobalSnapshotInfo,
-        fetchGL0Function: (Option[Hash], SnapshotOrdinal) => F[Signed[GlobalIncrementalSnapshot]]
+        globalSnapshotFetcher: Option[GlobalFetcher],
+        fetchGL0Function: Option[FetchFunction]
       ): F[Unit] =
         logger.info("Filling lastNGlobalSnapshots, this might need to download more snapshots from the network") >>
-          setInitialInternal(snapshot, state, Some(fetchGL0Function))
+          setInitialInternal(snapshot, state, globalSnapshotFetcher, fetchGL0Function)
 
       def set(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] = for {
         _ <- combinedSnapshotsR.modify { combinedSnapshots =>
           combinedSnapshots.lastOption match {
             case Some((_, (latest, _))) if isNextSnapshot(latest, snapshot.signed.value) =>
               (combinedSnapshots.updated(snapshot.ordinal, (snapshot, state)), Applicative[F].unit)
+            case Some((_, (latest, _))) if latest.hash === snapshot.hash =>
+              (combinedSnapshots, Applicative[F].unit)
             case _ => (combinedSnapshots, MonadThrow[F].raiseError[Unit](new Throwable("Failure during putting new global snapshot!")))
           }
         }.flatten
@@ -147,6 +164,8 @@ object LastNGlobalSnapshotStorage {
                 else
                   updated
               (trimmed, Applicative[F].unit)
+            case Some((_, latest)) if latest.hash === snapshot.hash =>
+              (incrementalSnapshots, Applicative[F].unit)
             case _ =>
               (incrementalSnapshots, MonadThrow[F].raiseError[Unit](new Throwable("Failure during putting new global snapshot!")))
           }
@@ -181,5 +200,8 @@ object LastNGlobalSnapshotStorage {
 
       def getLastN: F[List[Hashed[GlobalIncrementalSnapshot]]] =
         incrementalSnapshotsR.get.map(_.values.toList)
+
+      def alreadyInitialized: F[Boolean] =
+        incrementalSnapshotsR.get.map(_.nonEmpty)
     }
 }
