@@ -21,7 +21,7 @@ cleanup() {
         cleanup_container gl1-$i gl1-data-$i &
         cleanup_container dl1-$i dl1-data-$i &
         cleanup_container ml0-$i ml0-data-$i &
-        cleanup_container ml1-$i ml1-data-$i &
+        cleanup_container cl1-$i cl1-data-$i &
     done
     LAST_PID=$!
     wait $LAST_PID

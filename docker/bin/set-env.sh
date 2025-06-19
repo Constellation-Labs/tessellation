@@ -62,8 +62,8 @@ if [ -z "$ML0_PORT_PREFIX" ]; then
     export ML0_PORT_PREFIX=92
 fi
 
-if [ -z "$ML1_PORT_PREFIX" ]; then
-    export ML1_PORT_PREFIX=93
+if [ -z "$CL1_PORT_PREFIX" ]; then
+    export CL1_PORT_PREFIX=93
 fi
 
 if [ -z "$DL1_PORT_PREFIX" ]; then
@@ -87,8 +87,8 @@ if [ -z "$METAGRAPH_ML0" ]; then
     export METAGRAPH_ML0=true
 fi
 
-if [ -z "$METAGRAPH_ML1" ]; then
-    export METAGRAPH_ML1=false
+if [ -z "$METAGRAPH_CL1" ]; then
+    export METAGRAPH_CL1=false
 fi
 
 if [ -z "$METAGRAPH_DL1" ]; then
@@ -99,8 +99,8 @@ if [ -z $METAGRAPH_ML0_RELATIVE_PATH ]; then
     export METAGRAPH_ML0_RELATIVE_PATH="l0"
 fi
 
-if [ -z $METAGRAPH_ML1_RELATIVE_PATH ]; then
-    export METAGRAPH_ML1_RELATIVE_PATH="l1"
+if [ -z $METAGRAPH_CL1_RELATIVE_PATH ]; then
+    export METAGRAPH_CL1_RELATIVE_PATH="l1"
 fi
 
 if [ -z $METAGRAPH_DL1_RELATIVE_PATH ]; then
@@ -188,8 +188,8 @@ for arg in "$@"; do
     --ml0-path=*)
       export METAGRAPH_ML0_RELATIVE_PATH="${arg#*=}"
       ;;
-    --ml1-path=*)
-      export METAGRAPH_ML1_RELATIVE_PATH="${arg#*=}"
+    --cl1-path=*)
+      export METAGRAPH_CL1_RELATIVE_PATH="${arg#*=}"
       ;;
     --dl1-path=*)
       export METAGRAPH_DL1_RELATIVE_PATH="${arg#*=}"
@@ -197,8 +197,8 @@ for arg in "$@"; do
     --ml0=*)
       export METAGRAPH_ML0=true
       ;;
-    --ml1=*)
-      export METAGRAPH_ML1=true
+    --cl1=*)
+      export METAGRAPH_CL1=true
       ;;
     --dl1=*)
       export METAGRAPH_DL1=true
@@ -212,8 +212,8 @@ for arg in "$@"; do
     --num-ml0=*)
       export NUM_ML0_NODES="${arg#*=}"
       ;;
-    --num-ml1=*)
-      export NUM_ML1_NODES="${arg#*=}"
+    --num-cl1=*)
+      export NUM_CL1_NODES="${arg#*=}"
       ;;
     --num-dl1=*)
       export NUM_DL1_NODES="${arg#*=}"
@@ -256,8 +256,8 @@ if [ -n "$METAGRAPH" ]; then
   if [ -z "$NUM_ML0_NODES" ]; then
     export NUM_ML0_NODES=1
   fi
-  if [ -z "$NUM_ML1_NODES" ]; then
-    export NUM_ML1_NODES=3
+  if [ -z "$NUM_CL1_NODES" ]; then
+    export NUM_CL1_NODES=3
   fi
   if [ -z "$NUM_DL1_NODES" ]; then
     export NUM_DL1_NODES=3
@@ -283,7 +283,11 @@ fi
 
 
 if [ -z $NUM_GL0_NODES ]; then
-    export NUM_GL0_NODES=3
+    if [ -z "$METAGRAPH" ]; then
+        export NUM_GL0_NODES=3
+    else
+        export NUM_GL0_NODES=2
+    fi
 fi
 
 if [ -z $NUM_GL1_NODES ]; then
@@ -291,13 +295,24 @@ if [ -z $NUM_GL1_NODES ]; then
 fi
 
 if [ -z $NUM_ML0_NODES ]; then
-    export NUM_ML0_NODES=3
+    export NUM_ML0_NODES=2
 fi
 
-if [ -z $NUM_ML1_NODES ]; then
-    export NUM_ML1_NODES=3
+if [ -z $NUM_CL1_NODES ]; then
+    export NUM_CL1_NODES=3
 fi
 
 if [ -z $NUM_DL1_NODES ]; then
     export NUM_DL1_NODES=3
 fi
+
+
+if [ -z "$METAGRAPH" ]; then
+    export NUM_ML0_NODES="0"
+    export NUM_CL1_NODES="0"
+    export NUM_DL1_NODES="0"
+fi
+
+
+
+

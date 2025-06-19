@@ -3,7 +3,7 @@
 In this directory, there is a Dockerfile covering all major internal services within the same image, 
 using a unified entrypoint and health check. There is a docker-compose.yaml covering the GL0 / dag-l1 
 core services, along with additional compose overrides for common deployment or test patterns. There 
-is also a docker-compose.metagraph.yaml demonstrating the basic template used for running ML0/ML1/DL1 
+is also a docker-compose.metagraph.yaml demonstrating the basic template used for running ML0/CL1/DL1 
 services. Each set of compose files is meant to represent a single 'node' or deployment, with the expectation 
 that you would run N unique services per compute node (sharing the same keypair.)
 
@@ -48,7 +48,7 @@ The same as the prior command, except this will use the locally defined template
 `just test --metagraph=./your-path-to-a-different-metagraph`
 
 Rather than using a test metagraph, this uses a real metagraph repository located at a local directory. 
-By default, this will assemble the ML0, please use `--ml1` to also include metagraph layer 1, and `--dl1` to assemble data layer 1. By default, if any jars are missing, this will assemble them all. Additionally, 
+By default, this will assemble the ML0, please use `--cl1` to also include metagraph layer 1, and `--dl1` to assemble data layer 1. By default, if any jars are missing, this will assemble them all. Additionally, 
 if making changes to tessellation and a metagraph at the same time, please use `--publish` to enforce 
 locally publishing the required artifacts, or if you want to compile yourself with whatever options just use
 

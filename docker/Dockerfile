@@ -15,7 +15,7 @@ COPY docker/jars/gl0.jar /tessellation/jars/gl0.jar
 
 COPY docker/jars/ml0.jar /tessellation/jars/ml0.jar
 COPY docker/jars/dl1.jar /tessellation/jars/dl1.jar
-COPY docker/jars/ml1.jar /tessellation/jars/ml1.jar
+COPY docker/jars/cl1.jar /tessellation/jars/cl1.jar
 
 COPY docker/entrypoint.sh /tessellation/entrypoint.sh
 COPY docker/internal-health-check.sh /tessellation/internal-health-check.sh
