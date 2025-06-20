@@ -38,6 +38,9 @@ import pureconfig.module.enumeratum._
 trait OverridableL0 extends TessellationIOApp[Run] {
   def dataApplication: Option[Resource[IO, BaseDataApplicationL0Service[IO]]] = None
 
+  def dataApplication(nodeShared: NodeShared[IO, Run]): Option[Resource[IO, BaseDataApplicationL0Service[IO]]] =
+    this.dataApplication
+
   def rewards(
     implicit sp: SecurityProvider[IO]
   ): Option[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]] = None
@@ -73,7 +76,7 @@ abstract class CurrencyL0App(
       cfgR <- loadConfigAs[AppConfigReader].asResource
       cfg = method.appConfig(cfgR, sharedConfig)
 
-      dataApplicationService <- dataApplication.sequence
+      dataApplicationService <- dataApplication(nodeShared).sequence
 
       hasherSelectorAlwaysCurrent = HasherSelector.forSyncAlwaysCurrent[IO](hasherSelector.getCurrent)
 
