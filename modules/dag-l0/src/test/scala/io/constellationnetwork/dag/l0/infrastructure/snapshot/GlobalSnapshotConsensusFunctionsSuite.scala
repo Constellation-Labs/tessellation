@@ -285,7 +285,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       DelegatedRewardsConfig(
         flatInflationRate = io.constellationnetwork.schema.NonNegFraction.unsafeFrom(0, 100),
         emissionConfig = Map.empty,
-        percentDistribution = Map.empty
+        percentDistribution = Map.empty,
+        oneTimeRewards = Map.empty
       )
   }
 
