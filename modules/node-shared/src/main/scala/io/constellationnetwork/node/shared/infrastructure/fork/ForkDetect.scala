@@ -7,8 +7,25 @@ import io.constellationnetwork.node.shared.domain.fork.{ForkDetect, ForkInfo, Fo
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.trust.TrustScores
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.security.hex.Hex
 
 object ForkDetect {
+
+  def exitOnCheck(flag: String, facilitators: Set[PeerId]): Unit = {
+    if (sys.env.get(flag).contains("true")) {
+      sys.env.get("CL_FOLLOWER_ID") match {
+        case Some(id) =>
+        val peerId = PeerId(Hex(id))
+        val hasFollowerPeer = facilitators.contains(peerId)
+          if (!hasFollowerPeer) {
+            println(s"Exit in advancer to missing follower peer on $flag")
+            System.exit(1)
+          }
+        case _ =>
+      }
+    }
+  }
 
   def make[F[_]: Monad](
     getTrustScores: F[TrustScores],
