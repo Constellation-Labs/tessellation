@@ -67,11 +67,15 @@ if [ -n "$PUBLISH" ]; then
   sbt sdk/publishLocal
 fi
 
-
 assemble_all_metagraph() {
+
+  if [ -z "$PUBLISH" ]; then
+    echo "Publishing local due to missing jars and no publish flag set by default"
+    sbt sdk/publishLocal
+  fi
+
   sbt currencyL0/assembly currencyL1/assembly dataL1/assembly
 }
-
 
 
 if [ -z "$METAGRAPH" ]; then
