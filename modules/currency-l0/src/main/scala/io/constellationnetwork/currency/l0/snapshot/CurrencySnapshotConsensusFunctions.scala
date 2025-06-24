@@ -1,8 +1,8 @@
 package io.constellationnetwork.currency.l0.snapshot
 
+import cats.data.Validated.Invalid
 import cats.effect.Async
-import cats.syntax.functor._
-import cats.syntax.order._
+import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
 
@@ -19,6 +19,9 @@ import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
+
+import org.typelevel.log4cats.SelfAwareStructuredLogger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
     extends SnapshotConsensusFunctions[
@@ -37,7 +40,7 @@ object CurrencySnapshotConsensusFunctions {
     currencySnapshotCreator: CurrencySnapshotCreator[F],
     currencySnapshotValidator: CurrencySnapshotValidator[F]
   ): CurrencySnapshotConsensusFunctions[F] = new CurrencySnapshotConsensusFunctions[F] {
-
+    val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F]("CurrencySnapshotConsensusFunctions")
     override def triggerPredicate(event: CurrencySnapshotEvent): Boolean = event match {
       case GlobalSnapshotSyncEvent(_) => false // NOTE: Sync events should not trigger consensus to avoid infinite loop
       case _                          => true
@@ -56,8 +59,19 @@ object CurrencySnapshotConsensusFunctions {
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[Either[ConsensusFunctions.InvalidArtifact, (CurrencySnapshotArtifact, CurrencySnapshotContext)]] =
       currencySnapshotValidator
-        .validateSnapshot(lastSignedArtifact, lastContext, artifact, facilitators, getGlobalSnapshotByOrdinal)
-        .map(_.leftMap(_ => ArtifactMismatch).toEither)
+        .validateSnapshot(
+          lastSignedArtifact,
+          lastContext,
+          artifact,
+          facilitators,
+          getGlobalSnapshotByOrdinal
+        )
+        .flatTap {
+          case Invalid(errors) =>
+            logger.warn(s"Failed when validating currency artifact. Errors: ${errors.toList}")
+          case _ => Async[F].unit
+        }
+        .map(_.leftMap(errors => CurrencyArtifactMismatch(errors.toList)).toEither)
 
     def createProposalArtifact(
       lastKey: SnapshotOrdinal,
