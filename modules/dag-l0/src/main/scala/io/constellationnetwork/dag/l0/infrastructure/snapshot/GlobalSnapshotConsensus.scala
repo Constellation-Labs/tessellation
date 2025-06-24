@@ -143,6 +143,7 @@ object GlobalSnapshotConsensus {
 
       consensusStateAdvancer = GlobalSnapshotConsensusStateAdvancer
         .make[F](
+          appConfig.snapshot.consensus,
           keyPair,
           consensusStorage,
           globalSnapshotStorage,
