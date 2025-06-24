@@ -3,6 +3,9 @@ package io.constellationnetwork.node.shared.domain.seedlist
 import cats.data.NonEmptyList
 import cats.syntax.all._
 
+import io.constellationnetwork.domain.seedlist
+import io.constellationnetwork.domain.seedlist.{InvalidInput, ReversedRange, ranges}
+
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import weaver.FunSuite
@@ -11,15 +14,15 @@ import weaver.scalacheck.Checkers
 object RangesSuite extends FunSuite with Checkers {
 
   implicit class DecodeOps(input: String) {
-    def asRanges: Option[NonEmptyList[Range]] = ranges.decode(input).toOption
+    def asRanges: Option[NonEmptyList[seedlist.Range]] = ranges.decode(input).toOption
   }
 
   implicit class ExpectedOps(ranges: List[(Long, Long)]) {
-    def asExpected: Option[NonEmptyList[Range]] = NonEmptyList
+    def asExpected: Option[NonEmptyList[seedlist.Range]] = NonEmptyList
       .fromListUnsafe(ranges)
       .map {
         case (start, end) =>
-          Range(
+          seedlist.Range(
             NonNegLong.unsafeFrom(start),
             NonNegLong.unsafeFrom(end)
           )

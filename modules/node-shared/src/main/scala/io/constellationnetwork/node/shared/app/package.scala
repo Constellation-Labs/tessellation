@@ -4,8 +4,8 @@ import cats.data.NonEmptySet
 import cats.effect.Sync
 import cats.syntax.all._
 
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.env.AppEnvironment
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
 

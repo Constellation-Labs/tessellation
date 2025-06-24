@@ -1,10 +1,10 @@
-package io.constellationnetwork.node.shared.domain.seedlist
+package io.constellationnetwork.domain.seedlist
 
 import cats.Order
 import cats.syntax.all._
 
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry.Alias
-import io.constellationnetwork.node.shared.domain.seedlist.snapshotOrdinalTimeline.SnapshotOrdinalTimeline
+import io.constellationnetwork.domain.seedlist.SeedlistEntry.Alias
+import io.constellationnetwork.domain.seedlist.snapshotOrdinalTimeline.SnapshotOrdinalTimeline
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.trust._
 

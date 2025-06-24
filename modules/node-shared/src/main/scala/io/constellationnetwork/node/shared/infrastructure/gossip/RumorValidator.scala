@@ -5,8 +5,8 @@ import cats.data.{NonEmptySet, Validated, ValidatedNec}
 import cats.effect.Async
 import cats.syntax.all._
 
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.syntax.validated._
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorValidator.RumorValidationErrorOr
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.gossip._

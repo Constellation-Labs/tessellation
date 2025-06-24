@@ -3,13 +3,10 @@ package io.constellationnetwork.node.shared.infrastructure.seedlist
 import cats.effect.IO
 import cats.syntax.all._
 
+import io.constellationnetwork.domain.seedlist.SeedlistEntry.{Alias, AliasRefinement}
+import io.constellationnetwork.domain.seedlist.snapshotOrdinalTimeline.{SnapshotOrdinalTimeline, optionalSnapshotOrdinalTimelineCellDecoder}
+import io.constellationnetwork.domain.seedlist.{ConnectionInfo, SeedlistEntry}
 import io.constellationnetwork.env.env.SeedListPath
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry.{Alias, AliasRefinement}
-import io.constellationnetwork.node.shared.domain.seedlist.snapshotOrdinalTimeline.{
-  SnapshotOrdinalTimeline,
-  optionalSnapshotOrdinalTimelineCellDecoder
-}
-import io.constellationnetwork.node.shared.domain.seedlist.{ConnectionInfo, SeedlistEntry}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.trust.TrustValueRefinement
 import io.constellationnetwork.security.hex.Hex
