@@ -9,9 +9,9 @@ import cats.syntax.option._
 import cats.syntax.validated._
 
 import io.constellationnetwork.currency.schema.currency.SnapshotFee
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.syntax.validated._
 import io.constellationnetwork.json.{JsonSerializer, SizeCalculator}
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.StateChannelValidationErrorOr
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance

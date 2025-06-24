@@ -9,6 +9,7 @@ import io.constellationnetwork.dag.l0.config.types.IncrementalConfig
 import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.SnapshotDownloadStorage
 import io.constellationnetwork.dag.l0.infrastructure.trust.storage.TrustStorage
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
@@ -16,7 +17,6 @@ import io.constellationnetwork.node.shared.config.types.{SharedConfig, SnapshotC
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.domain.trust.storage.TrustStorage
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage

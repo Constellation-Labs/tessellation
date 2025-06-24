@@ -5,6 +5,7 @@ import cats.effect.Async
 
 import scala.collection.immutable.SortedMap
 
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.{AddressesConfig, DelegatedStakingConfig, PriceOracleConfig}
 import io.constellationnetwork.node.shared.domain.block.processing.BlockValidator
@@ -12,7 +13,6 @@ import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegated
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersValidator
 import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralValidator
 import io.constellationnetwork.node.shared.domain.priceOracle.PricingUpdateValidator
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig, StateChannelValidator}
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockValidator
 import io.constellationnetwork.node.shared.domain.swap.{AllowSpendChainValidator, AllowSpendValidator, SpendActionValidator}
