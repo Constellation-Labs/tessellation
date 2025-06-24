@@ -160,7 +160,7 @@ object DataApplicationSnapshotAcceptanceManager {
 
         processingResult <- OptionT.liftF {
           val blocksToProcess = NonEmptyList
-            .fromList(dataBlocks.distinctBy(_.value.roundId))
+            .fromList(dataBlocks.sortBy(_.roundId).distinctBy(_.value.roundId))
             .map(_.toList)
             .getOrElse(Nil)
 

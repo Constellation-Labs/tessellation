@@ -1,20 +1,11 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
 import cats.Order
+import cats.effect.Clock
 import cats.effect.kernel.{Async, Ref}
 import cats.effect.std.Semaphore
 import cats.kernel.Next
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
-import cats.syntax.contravariantSemigroupal._
-import cats.syntax.flatMap._
-import cats.syntax.foldable._
-import cats.syntax.functor._
-import cats.syntax.functorFilter._
-import cats.syntax.option._
-import cats.syntax.order._
-import cats.syntax.traverse._
-import cats.syntax.traverseFilter._
+import cats.syntax.all._
 
 import scala.concurrent.duration.FiniteDuration
 
@@ -154,8 +145,11 @@ object ConsensusStorage {
         def getState(key: Key): F[Option[ConsensusState[Key, Status, Outcome, Kind]]] =
           statesR(key).get
 
-        def getResources(key: Key): F[ConsensusResources[Artifact, Kind]] =
-          resourcesR(key).get.map(_.getOrElse(ConsensusResources.empty))
+        def getResources(key: Key): F[ConsensusResources[Artifact, Kind]] = for {
+          resources <- resourcesR(key).get
+          emptyResources <- ConsensusResources.empty[F, Artifact, Kind]
+          result = resources.getOrElse(emptyResources)
+        } yield result
 
         def getTimeTrigger: F[Option[FiniteDuration]] =
           timeTriggerR.get
@@ -376,16 +370,24 @@ object ConsensusStorage {
         )(
           f: ConsensusResources[Artifact, Kind] => ConsensusResources[Artifact, Kind]
         ): F[Option[ConsensusResources[Artifact, Kind]]] =
-          lastOutcomeR.get.map { maybeOutcomeWrapper =>
-            maybeOutcomeWrapper.forall { outcomeWrapper =>
+          lastOutcomeR.get.flatMap { maybeOutcomeWrapper =>
+            val allowUpdate = maybeOutcomeWrapper.forall { outcomeWrapper =>
               key >= _key.get(outcomeWrapper.value) && key <= outcomeWrapper.maxDeclarationKey
             }
-          }.ifM(
-            resourcesR(key).updateAndGet { maybeResource =>
-              f(maybeResource.getOrElse(ConsensusResources.empty)).some
-            },
-            none.pure[F]
-          )
+
+            if (allowUpdate) {
+              for {
+                now <- Clock[F].monotonic
+                emptyResources <- ConsensusResources.empty[F, Artifact, Kind]
+                updated <- resourcesR(key).updateAndGet { maybeResource =>
+                  val current = maybeResource.getOrElse(emptyResources)
+                  Some(f(current).copy(updatedAt = now))
+                }
+              } yield updated
+            } else {
+              none[ConsensusResources[Artifact, Kind]].pure[F]
+            }
+          }
 
         private def cleanResources(key: Key): F[Unit] =
           resourcesR(key).set(none)

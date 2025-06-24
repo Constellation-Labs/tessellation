@@ -14,7 +14,6 @@ import io.constellationnetwork.ext.cats.syntax.validated.validatedSyntax
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
-import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
@@ -58,7 +57,6 @@ object CurrencySnapshotValidator {
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     maybeDataApplication: Option[BaseDataApplicationService[F]]
   ): CurrencySnapshotValidator[F] = new CurrencySnapshotValidator[F] {
-
     def validateSignedSnapshot(
       lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,

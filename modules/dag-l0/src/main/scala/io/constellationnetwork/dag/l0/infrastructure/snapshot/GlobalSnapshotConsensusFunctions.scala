@@ -136,7 +136,7 @@ object GlobalSnapshotConsensusFunctions {
             if (recreatedArtifact === artifact)
               (artifact, context).asRight[InvalidArtifact]
             else
-              ArtifactMismatch.asLeft[(GlobalSnapshotArtifact, GlobalSnapshotContext)]
+              GlobalArtifactMismatch(artifact, recreatedArtifact).asLeft[(GlobalSnapshotArtifact, GlobalSnapshotContext)]
         }
 
       check(usingJson).flatMap {

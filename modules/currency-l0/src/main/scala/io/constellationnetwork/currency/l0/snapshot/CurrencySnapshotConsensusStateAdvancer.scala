@@ -15,6 +15,7 @@ import io.constellationnetwork.currency.l0.snapshot.services.StateChannelSnapsho
 import io.constellationnetwork.currency.schema.currency.CurrencySnapshotContext
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.ext.crypto._
+import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastNGlobalSnapshotStorage
@@ -33,7 +34,7 @@ import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdina
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature._
 import io.constellationnetwork.security.{Hashed, HasherSelector, SecurityProvider}
-import io.constellationnetwork.syntax.sortedCollection._
+import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -52,6 +53,7 @@ abstract class CurrencySnapshotConsensusStateAdvancer[F[_]]
 object CurrencySnapshotConsensusStateAdvancer {
 
   def make[F[_]: Async: SecurityProvider: Metrics: HasherSelector](
+    config: ConsensusConfig,
     keyPair: KeyPair,
     consensusStorage: CurrencyConsensusStorage[F],
     consensusFns: CurrencySnapshotConsensusFunctions[F],
@@ -91,179 +93,184 @@ object CurrencySnapshotConsensusStateAdvancer {
 
               state.status match {
                 case CollectingFacilities(_, ownFacilitatorsHash) =>
-                  val maybeFacilities = maybeGetAllDeclarations(state, resources)(_.facility)
-
-                  maybeFacilities.traverseTap { facilities =>
-                    recoverIfForking[F](ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
-                      facilities.map {
-                        case (peerId, facility) => (peerId, facility.facilitatorsHash)
-                      }
-                    )
-                  }.flatMap {
-                    _.map(_.foldMap(f => (f.upperBound, f.candidates.value, f.trigger.toList))).flatMap {
-                      case (bound, candidates, triggers) => pickMajority(triggers).map((bound, candidates, _))
-                    }.traverse {
-                      case (bound, candidates, majorityTrigger) =>
-                        Applicative[F].whenA(majorityTrigger === TimeTrigger)(consensusStorage.clearTimeTrigger) >>
-                          state.facilitators.value.hash.flatMap { facilitatorsHash =>
-                            for {
-                              peerEvents <- consensusStorage.pullEvents(bound)
-                              events = peerEvents.toList.flatMap(_._2).map(_._2).toSet
-                              (artifact, context, returnedEvents) <- consensusFns
-                                .createProposalArtifact(
-                                  state.key,
-                                  state.lastOutcome.finished.signedMajorityArtifact,
-                                  state.lastOutcome.finished.context,
-                                  hasher,
-                                  majorityTrigger,
-                                  events,
-                                  state.facilitators.value.toSet,
-                                  lastNGlobalSnapshotStorage.getLastN,
-                                  getGlobalSnapshotByOrdinal
-                                )
-                              returnedPeerEvents = peerEvents.map {
-                                case (peerId, events) =>
-                                  (peerId, events.filter { case (_, event) => returnedEvents.contains(event) })
-                              }.filter { case (_, events) => events.nonEmpty }
-                              _ <- consensusStorage.addEvents(returnedPeerEvents)
-                              hash <- artifact.hash
-                              effect = gossip.spread(ConsensusPeerDeclaration(state.key, Proposal(hash, facilitatorsHash))) *>
-                                gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
-                              newState =
-                                state.copy(status =
-                                  identity[CurrencySnapshotStatus](
-                                    CollectingProposals(
-                                      majorityTrigger,
-                                      ArtifactInfo(artifact, context, hash),
-                                      Candidates(candidates),
-                                      facilitatorsHash
-                                    )
-                                  )
-                                )
-                            } yield (newState, effect)
-                          }
-                    }
-                  }
-                case CollectingProposals(majorityTrigger, proposalInfo, candidates, ownFacilitatorsHash) =>
-                  val maybeAllProposals =
-                    maybeGetAllDeclarations(state, resources)(_.proposal)
-
-                  maybeAllProposals.traverseTap(d =>
-                    recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(d.map {
-                      case (peerId, proposal) => (peerId, proposal.facilitatorsHash)
-                    })
-                  ) >>
-                    maybeAllProposals
-                      .map(allProposals => allProposals.values.toList.map(_.hash))
-                      .flatTraverse { allProposalHashes =>
-                        pickValidatedMajorityArtifact(
-                          proposalInfo,
-                          state.lastOutcome.finished.signedMajorityArtifact,
-                          state.lastOutcome.finished.context,
-                          majorityTrigger,
-                          resources,
-                          allProposalHashes,
-                          state.facilitators.value.toSet,
-                          consensusFns,
-                          lastNGlobalSnapshotStorage.getLastN,
-                          getGlobalSnapshotByOrdinal
-                        ).flatMap { maybeMajorityArtifactInfo =>
-                          state.facilitators.value.hash.flatMap { facilitatorsHash =>
-                            maybeMajorityArtifactInfo.traverse { majorityArtifactInfo =>
-                              val newState =
-                                state.copy(status =
-                                  identity[CurrencySnapshotStatus](
-                                    CollectingSignatures(
-                                      majorityArtifactInfo,
-                                      majorityTrigger,
-                                      candidates,
-                                      facilitatorsHash
-                                    )
-                                  )
-                                )
-                              val effect = Signature.fromHash(keyPair.getPrivate, majorityArtifactInfo.hash).flatMap { signature =>
-                                gossip.spread(ConsensusPeerDeclaration(state.key, MajoritySignature(signature, facilitatorsHash)))
-                              } >> Metrics[F].recordDistribution(
-                                "dag_consensus_proposal_affinity",
-                                proposalAffinity(allProposalHashes, proposalInfo.hash)
-                              )
-                              (newState, effect).pure[F]
-                            }
-                          }
+                  for {
+                    maybeFacilities <- maybeGetAllDeclarations(state, resources, config)(_.facility)
+                    result <- maybeFacilities.traverseTap { facilities =>
+                      recoverIfForking[F](ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
+                        facilities.map {
+                          case (peerId, facility) => (peerId, facility.facilitatorsHash)
                         }
-                      }
-                case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, ownFacilitatorsHash) =>
-                  val maybeAllSignatures =
-                    maybeGetAllDeclarations(state, resources)(_.signature)
-
-                  val maybeGlobalSnapshotOrdinal =
-                    maybeGetAllDeclarations(state, resources)(_.facility)
-                      .map(_.map { case (_, f) => f.lastGlobalSnapshotOrdinal })
-                      .map(_.toList)
-                      .flatMap(pickMajority(_))
-
-                  maybeGlobalSnapshotOrdinal.flatTraverse { globalSnapshotOrdinal =>
-                    maybeAllSignatures
-                      .traverseTap(signatures =>
-                        recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
-                          signatures.map {
-                            case (peerId, majoritySignature) => (peerId, majoritySignature.facilitatorsHash)
-                          }
-                        )
                       )
-                      .flatMap {
-                        _.map(_.map { case (id, signature) => SignatureProof(PeerId._Id.get(id), signature.signature) }.toList).traverse {
-                          allSignatures =>
-                            allSignatures
-                              .filterA(verifySignatureProof(majorityArtifactInfo.hash, _))
-                              .flatTap { validSignatures =>
-                                logger
-                                  .warn(
-                                    s"Removed ${(allSignatures.size - validSignatures.size).show} invalid signatures during consensus for key ${state.key.show}, " +
-                                      s"${validSignatures.size.show} valid signatures left"
+                    }.flatMap {
+                      _.map(_.foldMap(f => (f.upperBound, f.candidates.value, f.trigger.toList))).flatMap {
+                        case (bound, candidates, triggers) => pickMajority(triggers).map((bound, candidates, _))
+                      }.traverse {
+                        case (bound, candidates, majorityTrigger) =>
+                          Applicative[F].whenA(majorityTrigger === TimeTrigger)(consensusStorage.clearTimeTrigger) >>
+                            state.facilitators.value.hash.flatMap { facilitatorsHash =>
+                              for {
+                                peerEvents <- consensusStorage.pullEvents(bound)
+                                events = peerEvents.toList.flatMap(_._2).map(_._2).toSet
+                                (artifact, context, returnedEvents) <- consensusFns
+                                  .createProposalArtifact(
+                                    state.key,
+                                    state.lastOutcome.finished.signedMajorityArtifact,
+                                    state.lastOutcome.finished.context,
+                                    hasher,
+                                    majorityTrigger,
+                                    events,
+                                    state.facilitators.value.toSet,
+                                    lastNGlobalSnapshotStorage.getLastN,
+                                    getGlobalSnapshotByOrdinal
                                   )
-                                  .whenA(allSignatures.size =!= validSignatures.size)
-                              }
-                        }.flatMap { maybeOnlyValidSignatures =>
-                          state.facilitators.value.hash.flatMap { facilitatorsHash =>
-                            maybeOnlyValidSignatures.flatMap(sigs => NonEmptySet.fromSet(sigs.toSortedSet)).traverse { validSignaturesNes =>
-                              val signedArtifact = Signed(majorityArtifactInfo.artifact, validSignaturesNes)
-                              val maybeStakingAddress = fetchStakingAddress(state.lastOutcome.finished.context.snapshotInfo)
-
-                              stateChannelSnapshotService
-                                .createBinary(
-                                  signedArtifact,
-                                  state.lastOutcome.finished.binaryArtifactHash,
-                                  globalSnapshotOrdinal.some,
-                                  maybeStakingAddress
-                                )
-                                .map { signedBinary =>
-                                  val newState = state.copy(status =
+                                returnedPeerEvents = peerEvents.map {
+                                  case (peerId, events) =>
+                                    (peerId, events.filter { case (_, event) => returnedEvents.contains(event) })
+                                }.filter { case (_, events) => events.nonEmpty }
+                                _ <- consensusStorage.addEvents(returnedPeerEvents)
+                                hash <- artifact.hash
+                                effect = gossip.spread(ConsensusPeerDeclaration(state.key, Proposal(hash, facilitatorsHash))) *>
+                                  gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
+                                newState =
+                                  state.copy(status =
                                     identity[CurrencySnapshotStatus](
-                                      CollectingBinarySignatures(
-                                        signedArtifact,
-                                        majorityArtifactInfo.context,
-                                        signedBinary.value,
+                                      CollectingProposals(
+                                        majorityTrigger,
+                                        ArtifactInfo(artifact, context, hash),
+                                        Candidates(candidates),
+                                        facilitatorsHash
+                                      )
+                                    )
+                                  )
+                              } yield (newState, effect)
+                            }
+                      }
+                    }
+                  } yield result
+
+                case CollectingProposals(majorityTrigger, proposalInfo, candidates, ownFacilitatorsHash) =>
+                  for {
+                    maybeAllProposals <- maybeGetAllDeclarations(state, resources, config)(_.proposal)
+                    result <- maybeAllProposals.traverseTap(d =>
+                      recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(d.map {
+                        case (peerId, proposal) => (peerId, proposal.facilitatorsHash)
+                      })
+                    ) >>
+                      maybeAllProposals
+                        .map(allProposals => allProposals.values.toList.map(_.hash))
+                        .flatTraverse { allProposalHashes =>
+                          pickValidatedMajorityArtifact(
+                            proposalInfo,
+                            state.lastOutcome.finished.signedMajorityArtifact,
+                            state.lastOutcome.finished.context,
+                            majorityTrigger,
+                            resources,
+                            allProposalHashes,
+                            state.facilitators.value.toSet,
+                            consensusFns,
+                            lastNGlobalSnapshotStorage.getLastN,
+                            getGlobalSnapshotByOrdinal
+                          ).flatMap { maybeMajorityArtifactInfo =>
+                            state.facilitators.value.hash.flatMap { facilitatorsHash =>
+                              maybeMajorityArtifactInfo.traverse { majorityArtifactInfo =>
+                                val newState =
+                                  state.copy(status =
+                                    identity[CurrencySnapshotStatus](
+                                      CollectingSignatures(
+                                        majorityArtifactInfo,
                                         majorityTrigger,
                                         candidates,
                                         facilitatorsHash
                                       )
                                     )
                                   )
-                                  val effect = gossip.spread(
-                                    ConsensusPeerDeclaration(
-                                      state.key,
-                                      BinarySignature(signedBinary.proofs.head.signature, facilitatorsHash)
-                                    )
-                                  )
-
-                                  (newState, effect)
-                                }
+                                val effect = Signature.fromHash(keyPair.getPrivate, majorityArtifactInfo.hash).flatMap { signature =>
+                                  gossip.spread(ConsensusPeerDeclaration(state.key, MajoritySignature(signature, facilitatorsHash)))
+                                } >> Metrics[F].recordDistribution(
+                                  "dag_consensus_proposal_affinity",
+                                  proposalAffinity(allProposalHashes, proposalInfo.hash)
+                                )
+                                (newState, effect).pure[F]
+                              }
                             }
                           }
                         }
-                      }
-                  }
+                  } yield result
+
+                case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, ownFacilitatorsHash) =>
+                  for {
+                    maybeAllSignatures <- maybeGetAllDeclarations(state, resources, config)(_.signature)
+                    maybeAllFacilities <- maybeGetAllDeclarations(state, resources, config)(_.facility)
+                    maybeGlobalSnapshotOrdinal =
+                      maybeAllFacilities
+                        .map(_.map { case (_, f) => f.lastGlobalSnapshotOrdinal })
+                        .map(_.toList)
+                        .flatMap(pickMajority(_))
+                    result <- maybeGlobalSnapshotOrdinal.flatTraverse { globalSnapshotOrdinal =>
+                      maybeAllSignatures
+                        .traverseTap(signatures =>
+                          recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
+                            signatures.map {
+                              case (peerId, majoritySignature) => (peerId, majoritySignature.facilitatorsHash)
+                            }
+                          )
+                        )
+                        .flatMap {
+                          _.map(_.map { case (id, signature) => SignatureProof(PeerId._Id.get(id), signature.signature) }.toList).traverse {
+                            allSignatures =>
+                              allSignatures
+                                .filterA(verifySignatureProof(majorityArtifactInfo.hash, _))
+                                .flatTap { validSignatures =>
+                                  logger
+                                    .warn(
+                                      s"Removed ${(allSignatures.size - validSignatures.size).show} invalid signatures during consensus for key ${state.key.show}, " +
+                                        s"${validSignatures.size.show} valid signatures left"
+                                    )
+                                    .whenA(allSignatures.size =!= validSignatures.size)
+                                }
+                          }.flatMap { maybeOnlyValidSignatures =>
+                            state.facilitators.value.hash.flatMap { facilitatorsHash =>
+                              maybeOnlyValidSignatures.flatMap(sigs => NonEmptySet.fromSet(sigs.toSortedSet)).traverse {
+                                validSignaturesNes =>
+                                  val signedArtifact = Signed(majorityArtifactInfo.artifact, validSignaturesNes)
+                                  val maybeStakingAddress = fetchStakingAddress(state.lastOutcome.finished.context.snapshotInfo)
+
+                                  stateChannelSnapshotService
+                                    .createBinary(
+                                      signedArtifact,
+                                      state.lastOutcome.finished.binaryArtifactHash,
+                                      globalSnapshotOrdinal.some,
+                                      maybeStakingAddress
+                                    )
+                                    .map { signedBinary =>
+                                      val newState = state.copy(status =
+                                        identity[CurrencySnapshotStatus](
+                                          CollectingBinarySignatures(
+                                            signedArtifact,
+                                            majorityArtifactInfo.context,
+                                            signedBinary.value,
+                                            majorityTrigger,
+                                            candidates,
+                                            facilitatorsHash
+                                          )
+                                        )
+                                      )
+                                      val effect = gossip.spread(
+                                        ConsensusPeerDeclaration(
+                                          state.key,
+                                          BinarySignature(signedBinary.proofs.head.signature, facilitatorsHash)
+                                        )
+                                      )
+
+                                      (newState, effect)
+                                    }
+                              }
+                            }
+                          }
+                        }
+                    }
+                  } yield result
+
                 case CollectingBinarySignatures(
                       signedMajorityArtifact,
                       context,
@@ -273,10 +280,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                       ownFacilitatorsHash
                     ) =>
                   {
-                    val maybeAllBinarySignatures =
-                      maybeGetAllDeclarations(state, resources)(_.binarySignature)
-
                     for {
+                      maybeAllBinarySignatures <- OptionT.liftF(maybeGetAllDeclarations(state, resources, config)(_.binarySignature))
                       binarySignatures <- OptionT.fromOption[F](maybeAllBinarySignatures)
                       _ <- OptionT.liftF(
                         recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
