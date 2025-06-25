@@ -9,7 +9,6 @@ import cats.syntax.traverse._
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.math.BigDecimal.{RoundingMode, double2bigDecimal}
 
-import io.constellationnetwork.dag.l0.config.DelegatedRewardsConfigProvider
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types._
@@ -84,20 +83,23 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
   val delegatedRewardsConfig = DelegatedRewardsConfig(
     flatInflationRate = NonNegFraction.zero,
     emissionConfig = Map(
-      AppEnvironment.Dev -> EmissionConfigEntry(
-        epochsPerYear = PosLong(732000L),
-        asOfEpoch = EpochProgress(5000000L),
-        iTarget = NonNegFraction.unsafeFrom(5, 1000),
-        iInitial = NonNegFraction.unsafeFrom(6, 100),
-        lambda = NonNegFraction.unsafeFrom(1, 10),
-        iImpact = NonNegFraction.unsafeFrom(35, 100),
-        totalSupply = Amount(3693588685_00000000L),
-        dagPrices = SortedMap(
-          // DAG per USD format (higher number = lower DAG price)
-          EpochProgress(5000000L) -> NonNegFraction.unsafeFrom(45, 1), // 45 DAG per USD ($0.022 per DAG)
-          EpochProgress(5100000L) -> NonNegFraction.unsafeFrom(40, 1) // 40 DAG per USD ($0.025 per DAG) - DAG price increased
+      AppEnvironment.Dev -> { epochProgress: EpochProgress =>
+        EmissionConfigEntry(
+          epochsPerYear = PosLong(732000L),
+          asOfEpoch = EpochProgress(5000000L),
+          iTarget = NonNegFraction.unsafeFrom(5, 1000),
+          iInitial = NonNegFraction.unsafeFrom(6, 100),
+          lambda = NonNegFraction.unsafeFrom(1, 10),
+          iImpact = NonNegFraction.unsafeFrom(35, 100),
+          totalSupply = Amount(3693588685_00000000L),
+          dagPrices = SortedMap(
+            // DAG per USD format (higher number = lower DAG price)
+            EpochProgress(5000000L) -> NonNegFraction.unsafeFrom(45, 1), // 45 DAG per USD ($0.022 per DAG)
+            EpochProgress(5100000L) -> NonNegFraction.unsafeFrom(40, 1) // 40 DAG per USD ($0.025 per DAG) - DAG price increased
+          ),
+          epochsPerMonth = NonNegLong(732000L / 12)
         )
-      )
+      }
     ),
     percentDistribution = Map(
       AppEnvironment.Dev -> { _ =>
@@ -119,39 +121,45 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
   // Create a test configuration with simple values to test the formula independently
   val simpleEmissionConfig = delegatedRewardsConfig.copy(
     emissionConfig = Map(
-      AppEnvironment.Dev -> EmissionConfigEntry(
-        epochsPerYear = PosLong(100L),
-        asOfEpoch = EpochProgress(100L), // Transition at epoch 100 (inclusive)
-        iTarget = NonNegFraction.unsafeFrom(1, 100), // 1% target
-        iInitial = NonNegFraction.unsafeFrom(2, 100), // 2% initial
-        lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda
-        iImpact = NonNegFraction.unsafeFrom(5, 10), // 0.5 iImpact
-        totalSupply = Amount(100_00000000L), // 100 tokens with 8 decimal places (10^8)
-        dagPrices = SortedMap(
-          EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1), // 10 DAG per USD ($0.1 per DAG) - original price
-          EpochProgress(125L) -> NonNegFraction.unsafeFrom(8, 1) // 8 DAG per USD ($0.125 per DAG) - price increased by 25%
+      AppEnvironment.Dev -> { epochProgress: EpochProgress =>
+        EmissionConfigEntry(
+          epochsPerYear = PosLong(100L),
+          asOfEpoch = EpochProgress(100L), // Transition at epoch 100 (inclusive)
+          iTarget = NonNegFraction.unsafeFrom(1, 100), // 1% target
+          iInitial = NonNegFraction.unsafeFrom(2, 100), // 2% initial
+          lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda
+          iImpact = NonNegFraction.unsafeFrom(5, 10), // 0.5 iImpact
+          totalSupply = Amount(100_00000000L), // 100 tokens with 8 decimal places (10^8)
+          dagPrices = SortedMap(
+            EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1), // 10 DAG per USD ($0.1 per DAG) - original price
+            EpochProgress(125L) -> NonNegFraction.unsafeFrom(8, 1) // 8 DAG per USD ($0.125 per DAG) - price increased by 25%
+          ),
+          epochsPerMonth = NonNegLong(100L / 12)
         )
-      )
+      }
     )
   )
 
   test("calculateTotalRewardsToMint verifies emission curve") {
     val testConfig = delegatedRewardsConfig.copy(
       emissionConfig = Map(
-        AppEnvironment.Dev -> EmissionConfigEntry(
-          epochsPerYear = PosLong(12L), // 12 epochs per year (monthly)
-          asOfEpoch = EpochProgress(100L),
-          iTarget = NonNegFraction.unsafeFrom(1, 100), // 1% target
-          iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial
-          lambda = NonNegFraction.unsafeFrom(25, 100), // 0.25 lambda - meaningful decay
-          iImpact = NonNegFraction.unsafeFrom(5, 10), // 0.5 impact factor
-          totalSupply = Amount(1000_00000000L),
-          dagPrices = SortedMap(
-            // DAG per USD format (fewer DAG per USD = higher price)
-            EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1), // 10 DAG per USD ($0.10 per DAG)
-            EpochProgress(106L) -> NonNegFraction.unsafeFrom(5, 1) // 5 DAG per USD ($0.20 per DAG) - price doubled
+        AppEnvironment.Dev -> { epochProgress: EpochProgress =>
+          EmissionConfigEntry(
+            epochsPerYear = PosLong(12L), // 12 epochs per year (monthly)
+            asOfEpoch = EpochProgress(100L),
+            iTarget = NonNegFraction.unsafeFrom(1, 100), // 1% target
+            iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial
+            lambda = NonNegFraction.unsafeFrom(25, 100), // 0.25 lambda - meaningful decay
+            iImpact = NonNegFraction.unsafeFrom(5, 10), // 0.5 impact factor
+            totalSupply = Amount(1000_00000000L),
+            dagPrices = SortedMap(
+              // DAG per USD format (fewer DAG per USD = higher price)
+              EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1), // 10 DAG per USD ($0.10 per DAG)
+              EpochProgress(106L) -> NonNegFraction.unsafeFrom(5, 1) // 5 DAG per USD ($0.20 per DAG) - price doubled
+            ),
+            epochsPerMonth = NonNegLong(1L)
           )
-        )
+        }
       )
     )
 
@@ -211,18 +219,21 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     // Use test configuration with transition at epoch 100
     val testConfig = delegatedRewardsConfig.copy(
       emissionConfig = Map(
-        AppEnvironment.Dev -> EmissionConfigEntry(
-          epochsPerYear = PosLong(100L),
-          asOfEpoch = EpochProgress(100L), // Transition at epoch 100 (inclusive)
-          iTarget = NonNegFraction.unsafeFrom(1, 100), // 1% target
-          iInitial = NonNegFraction.unsafeFrom(2, 100), // 2% initial
-          lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda
-          iImpact = NonNegFraction.unsafeFrom(5, 10), // 0.5 iImpact
-          totalSupply = Amount(100_00000000L), // 100 tokens with 8 decimal places
-          dagPrices = SortedMap(
-            EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1) // 10 DAG per USD
+        AppEnvironment.Dev -> { epochProgress: EpochProgress =>
+          EmissionConfigEntry(
+            epochsPerYear = PosLong(100L),
+            asOfEpoch = EpochProgress(100L), // Transition at epoch 100 (inclusive)
+            iTarget = NonNegFraction.unsafeFrom(1, 100), // 1% target
+            iInitial = NonNegFraction.unsafeFrom(2, 100), // 2% initial
+            lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda
+            iImpact = NonNegFraction.unsafeFrom(5, 10), // 0.5 iImpact
+            totalSupply = Amount(100_00000000L), // 100 tokens with 8 decimal places
+            dagPrices = SortedMap(
+              EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1) // 10 DAG per USD
+            ),
+            epochsPerMonth = NonNegLong(100L / 12)
           )
-        )
+        }
       )
     )
 
@@ -350,18 +361,21 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     // Use test configuration with transition at epoch 100
     val testConfig = delegatedRewardsConfig.copy(
       emissionConfig = Map(
-        AppEnvironment.Dev -> EmissionConfigEntry(
-          epochsPerYear = PosLong(100L),
-          asOfEpoch = EpochProgress(100L), // Transition at epoch 100 (inclusive)
-          iTarget = NonNegFraction.unsafeFrom(1, 100), // 1% target
-          iInitial = NonNegFraction.unsafeFrom(2, 100), // 2% initial
-          lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda
-          iImpact = NonNegFraction.unsafeFrom(5, 10), // 0.5 iImpact
-          totalSupply = Amount(100_00000000L), // 100 tokens with 8 decimal places
-          dagPrices = SortedMap(
-            EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1) // 10 DAG per USD
+        AppEnvironment.Dev -> { epochProgress: EpochProgress =>
+          EmissionConfigEntry(
+            epochsPerYear = PosLong(100L),
+            asOfEpoch = EpochProgress(100L), // Transition at epoch 100 (inclusive)
+            iTarget = NonNegFraction.unsafeFrom(1, 100), // 1% target
+            iInitial = NonNegFraction.unsafeFrom(2, 100), // 2% initial
+            lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda
+            iImpact = NonNegFraction.unsafeFrom(5, 10), // 0.5 iImpact
+            totalSupply = Amount(100_00000000L), // 100 tokens with 8 decimal places
+            dagPrices = SortedMap(
+              EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1) // 10 DAG per USD
+            ),
+            epochsPerMonth = NonNegLong(100L / 12)
           )
-        )
+        }
       )
     )
 
@@ -430,18 +444,21 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     // Define a specialized test config with a lower transition epoch
     val testConfig = delegatedRewardsConfig.copy(
       emissionConfig = Map(
-        AppEnvironment.Dev -> EmissionConfigEntry(
-          epochsPerYear = PosLong(100L),
-          asOfEpoch = EpochProgress(100L), // Transition at epoch 100 (inclusive)
-          iTarget = NonNegFraction.unsafeFrom(1, 100), // 1% target
-          iInitial = NonNegFraction.unsafeFrom(2, 100), // 2% initial
-          lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda
-          iImpact = NonNegFraction.unsafeFrom(5, 10), // 0.5 iImpact
-          totalSupply = Amount(100_00000000L), // 100 tokens with 8 decimal places (10^8)
-          dagPrices = SortedMap(
-            EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1) // 10 DAG per USD ($0.1 per DAG)
+        AppEnvironment.Dev -> { epochProgress: EpochProgress =>
+          EmissionConfigEntry(
+            epochsPerYear = PosLong(100L),
+            asOfEpoch = EpochProgress(100L), // Transition at epoch 100 (inclusive)
+            iTarget = NonNegFraction.unsafeFrom(1, 100), // 1% target
+            iInitial = NonNegFraction.unsafeFrom(2, 100), // 2% initial
+            lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda
+            iImpact = NonNegFraction.unsafeFrom(5, 10), // 0.5 iImpact
+            totalSupply = Amount(100_00000000L), // 100 tokens with 8 decimal places (10^8)
+            dagPrices = SortedMap(
+              EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1) // 10 DAG per USD ($0.1 per DAG)
+            ),
+            epochsPerMonth = NonNegLong(100L / 12)
           )
-        )
+        }
       )
     )
 
@@ -563,18 +580,21 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     // Define a specialized delegated rewards config with a lower transition epoch specifically for this test
     val testConfig = delegatedRewardsConfig.copy(
       emissionConfig = Map(
-        AppEnvironment.Dev -> EmissionConfigEntry(
-          epochsPerYear = PosLong(100L),
-          asOfEpoch = EpochProgress(100L), // Transition at epoch 100 (inclusive)
-          iTarget = NonNegFraction.unsafeFrom(1, 100), // 1% target
-          iInitial = NonNegFraction.unsafeFrom(2, 100), // 2% initial
-          lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda
-          iImpact = NonNegFraction.unsafeFrom(5, 10), // 0.5 iImpact
-          totalSupply = Amount(100_00000000L), // 100 tokens with 8 decimal places (10^8)
-          dagPrices = SortedMap(
-            EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1) // 10 DAG per USD ($0.1 per DAG)
+        AppEnvironment.Dev -> { epochProgress: EpochProgress =>
+          EmissionConfigEntry(
+            epochsPerYear = PosLong(100L),
+            asOfEpoch = EpochProgress(100L), // Transition at epoch 100 (inclusive)
+            iTarget = NonNegFraction.unsafeFrom(1, 100), // 1% target
+            iInitial = NonNegFraction.unsafeFrom(2, 100), // 2% initial
+            lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda
+            iImpact = NonNegFraction.unsafeFrom(5, 10), // 0.5 iImpact
+            totalSupply = Amount(100_00000000L), // 100 tokens with 8 decimal places (10^8)
+            dagPrices = SortedMap(
+              EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1) // 10 DAG per USD ($0.1 per DAG)
+            ),
+            epochsPerMonth = NonNegLong(100L / 12)
           )
-        )
+        }
       )
     )
 
@@ -687,18 +707,21 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     val transitionEpoch = EpochProgress(1000L)
     val customConfig = delegatedRewardsConfig.copy(
       emissionConfig = Map(
-        AppEnvironment.Dev -> EmissionConfigEntry(
-          epochsPerYear = PosLong(12L),
-          asOfEpoch = transitionEpoch, // Set specific transition epoch
-          iTarget = NonNegFraction.unsafeFrom(1, 100),
-          iInitial = NonNegFraction.unsafeFrom(2, 100),
-          lambda = NonNegFraction.unsafeFrom(25, 100),
-          iImpact = NonNegFraction.unsafeFrom(5, 10),
-          totalSupply = Amount(1000_00000000L),
-          dagPrices = SortedMap(
-            EpochProgress(1000L) -> NonNegFraction.unsafeFrom(10, 1)
+        AppEnvironment.Dev -> { epochProgress: EpochProgress =>
+          EmissionConfigEntry(
+            epochsPerYear = PosLong(12L),
+            asOfEpoch = transitionEpoch, // Set specific transition epoch
+            iTarget = NonNegFraction.unsafeFrom(1, 100),
+            iInitial = NonNegFraction.unsafeFrom(2, 100),
+            lambda = NonNegFraction.unsafeFrom(25, 100),
+            iImpact = NonNegFraction.unsafeFrom(5, 10),
+            totalSupply = Amount(1000_00000000L),
+            dagPrices = SortedMap(
+              EpochProgress(1000L) -> NonNegFraction.unsafeFrom(10, 1)
+            ),
+            epochsPerMonth = NonNegLong(100L / 12)
           )
-        )
+        }
       )
     )
 
@@ -724,18 +747,21 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     // Create test config with transition at epoch 100
     val testConfig = delegatedRewardsConfig.copy(
       emissionConfig = Map(
-        AppEnvironment.Dev -> EmissionConfigEntry(
-          epochsPerYear = PosLong(100L),
-          asOfEpoch = EpochProgress(100L), // Transition at epoch 100 (inclusive)
-          iTarget = NonNegFraction.unsafeFrom(1, 100), // 1% target
-          iInitial = NonNegFraction.unsafeFrom(2, 100), // 2% initial
-          lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda
-          iImpact = NonNegFraction.unsafeFrom(5, 10), // 0.5 iImpact
-          totalSupply = Amount(100_00000000L), // 100 tokens with 8 decimal places (10^8)
-          dagPrices = SortedMap(
-            EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1) // 10 DAG per USD ($0.1 per DAG)
+        AppEnvironment.Dev -> { epochProgress: EpochProgress =>
+          EmissionConfigEntry(
+            epochsPerYear = PosLong(100L),
+            asOfEpoch = EpochProgress(100L), // Transition at epoch 100 (inclusive)
+            iTarget = NonNegFraction.unsafeFrom(1, 100), // 1% target
+            iInitial = NonNegFraction.unsafeFrom(2, 100), // 2% initial
+            lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda
+            iImpact = NonNegFraction.unsafeFrom(5, 10), // 0.5 iImpact
+            totalSupply = Amount(100_00000000L), // 100 tokens with 8 decimal places (10^8)
+            dagPrices = SortedMap(
+              EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1) // 10 DAG per USD ($0.1 per DAG)
+            ),
+            epochsPerMonth = NonNegLong(100L / 12)
           )
-        )
+        }
       )
     )
 
@@ -898,18 +924,21 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         // Fixed inflation rate (3%)
         flatInflationRate = NonNegFraction.unsafeFrom(3, 100),
         emissionConfig = Map(
-          AppEnvironment.Dev -> EmissionConfigEntry(
-            epochsPerYear = PosLong(733897L),
-            asOfEpoch = EpochProgress(752477L), // Transition epoch
-            iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target
-            iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial
-            lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda
-            iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact
-            totalSupply = Amount(3693588685_00000000L), // Total supply
-            dagPrices = SortedMap(
-              EpochProgress(0L) -> NonNegFraction.unsafeFrom(25, 1) // 25 DAG per USD
+          AppEnvironment.Dev -> { epochProgress: EpochProgress =>
+            EmissionConfigEntry(
+              epochsPerYear = PosLong(733897L),
+              asOfEpoch = EpochProgress(752477L), // Transition epoch
+              iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target
+              iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial
+              lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda
+              iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact
+              totalSupply = Amount(3693588685_00000000L), // Total supply
+              dagPrices = SortedMap(
+                EpochProgress(0L) -> NonNegFraction.unsafeFrom(25, 1) // 25 DAG per USD
+              ),
+              epochsPerMonth = NonNegLong(733897L / 12)
             )
-          )
+          }
         ),
         percentDistribution = Map(
           AppEnvironment.Dev -> { _ =>

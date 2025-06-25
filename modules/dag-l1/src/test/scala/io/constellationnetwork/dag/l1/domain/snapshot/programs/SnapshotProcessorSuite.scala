@@ -16,15 +16,17 @@ import io.constellationnetwork.dag.l1.domain.block.BlockStorage
 import io.constellationnetwork.dag.l1.domain.block.BlockStorage._
 import io.constellationnetwork.dag.l1.domain.snapshot.programs.SnapshotProcessor._
 import io.constellationnetwork.dag.l1.domain.transaction._
-import io.constellationnetwork.env.AppEnvironment.Dev
+import io.constellationnetwork.env.AppEnvironment.{Dev, Mainnet}
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.collection.MapRefUtils._
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceManager
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAcceptanceManager
 import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralAcceptanceManager
+import io.constellationnetwork.node.shared.domain.priceOracle.PriceStateUpdater
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
@@ -123,7 +125,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                     PosInt(10),
                     PosLong((5000 * 1e8).toLong),
                     Map(Dev -> EpochProgress(NonNegLong(7338977L)))
-                  )
+                  ),
+                  PriceOracleConfig(None, NonNegLong(0))
                 )
               contextualTransactionValidator = ContextualTransactionValidator
                 .make(TransactionLimitConfig(Balance.empty, 0.hours, TransactionFee.zero, 1.second), None)
@@ -193,6 +196,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 .make(validators.updateDelegatedStakeValidator)
               updateNodeCollateralAcceptanceManager = UpdateNodeCollateralAcceptanceManager
                 .make(validators.updateNodeCollateralValidator)
+              priceStateUpdater = PriceStateUpdater.make(Dev, DefaultDelegatedRewardsConfigProvider)
 
               globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
                 FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty),
@@ -213,6 +217,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 updateDelegatedStakeAcceptanceManager,
                 updateNodeCollateralAcceptanceManager,
                 validators.spendActionValidator,
+                validators.pricingUpdateValidator,
+                priceStateUpdater,
                 Amount(0L),
                 EpochProgress(NonNegLong(136080L))
               )

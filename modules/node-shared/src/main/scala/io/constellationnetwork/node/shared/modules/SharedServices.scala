@@ -12,6 +12,7 @@ import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
+import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types.{CollateralConfig, SharedConfig}
 import io.constellationnetwork.node.shared.domain.cluster.services.{Cluster, Session}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceManager
@@ -19,8 +20,8 @@ import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAcceptanceManager
 import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralAcceptanceManager
+import io.constellationnetwork.node.shared.domain.priceOracle.PriceStateUpdater
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
-import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
@@ -32,16 +33,14 @@ import io.constellationnetwork.node.shared.infrastructure.healthcheck.LocalHealt
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.generation.Generation
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
-import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.concurrent.SignallingRef
 
 object SharedServices {
@@ -130,6 +129,7 @@ object SharedServices {
       updateNodeCollateralAcceptanceManager = UpdateNodeCollateralAcceptanceManager.make(
         validators.updateNodeCollateralValidator
       )
+      priceStateUpdater = PriceStateUpdater.make(cfg.environment, DefaultDelegatedRewardsConfigProvider)
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         cfg.fieldsAddedOrdinals,
         cfg.metagraphsSync,
@@ -149,6 +149,8 @@ object SharedServices {
         updateDelegatedStakeAcceptanceManager,
         updateNodeCollateralAcceptanceManager,
         validators.spendActionValidator,
+        validators.pricingUpdateValidator,
+        priceStateUpdater,
         collateral.amount,
         cfg.delegatedStaking.withdrawalTimeLimit.getOrElse(cfg.environment, EpochProgress.MinValue)
       )
@@ -171,7 +173,8 @@ object SharedServices {
         restart = restartService,
         updateNodeParametersAcceptanceManager = updateNodeParametersAcceptanceManager,
         updateDelegatedStakeAcceptanceManager = updateDelegatedStakeAcceptanceManager,
-        updateNodeCollateralAcceptanceManager = updateNodeCollateralAcceptanceManager
+        updateNodeCollateralAcceptanceManager = updateNodeCollateralAcceptanceManager,
+        priceStateUpdater = priceStateUpdater
       ) {}
 }
 
@@ -187,5 +190,6 @@ sealed abstract class SharedServices[F[_], A <: CliMethod] private (
   val restart: RestartService[F, A],
   val updateNodeParametersAcceptanceManager: UpdateNodeParametersAcceptanceManager[F],
   val updateDelegatedStakeAcceptanceManager: UpdateDelegatedStakeAcceptanceManager[F],
-  val updateNodeCollateralAcceptanceManager: UpdateNodeCollateralAcceptanceManager[F]
+  val updateNodeCollateralAcceptanceManager: UpdateNodeCollateralAcceptanceManager[F],
+  val priceStateUpdater: PriceStateUpdater[F]
 )

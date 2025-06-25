@@ -47,11 +47,12 @@ object GlobalDelegatedRewardsDistributor {
 
     /** Return emission configuration applied by this rewards distributor
       */
-    def getEmissionConfig: F[EmissionConfigEntry] =
+    def getEmissionConfig(epochProgress: EpochProgress): F[EmissionConfigEntry] =
       delegatedRewardsConfig.emissionConfig
         .get(environment)
         .pure[F]
         .flatMap(Async[F].fromOption(_, new RuntimeException(s"Could not retrieve emission config for env: $environment")))
+        .map(f => f(epochProgress))
 
     def getDistributionProgram(epochProgress: EpochProgress): F[ProgramsDistributionConfig] =
       delegatedRewardsConfig.percentDistribution
@@ -66,7 +67,7 @@ object GlobalDelegatedRewardsDistributor {
     /** Calculate the variable amount of rewards to mint for this epoch based on the config and epoch progress.
       */
     def calculateVariableInflation(epochProgress: EpochProgress): F[Amount] = for {
-      emConfig <- getEmissionConfig
+      emConfig <- getEmissionConfig(epochProgress)
       result <- calculateEmissionRewards(epochProgress, emConfig)
     } yield result
 
@@ -97,7 +98,7 @@ object GlobalDelegatedRewardsDistributor {
           for {
             emitFromFunction <- calculateVariableInflation(epochProgress)
             pctConfig <- getDistributionProgram(epochProgress)
-            epochSPerYear <- getEmissionConfig.map(_.epochsPerYear.value)
+            epochSPerYear <- getEmissionConfig(epochProgress).map(_.epochsPerYear.value)
             (reservedRewards, facilitatorRewardPool, delegatorRewardPool) <- calculateEmissionDistribution(
               lastSnapshotContext.activeDelegatedStakes.getOrElse(SortedMap.empty),
               emitFromFunction,
