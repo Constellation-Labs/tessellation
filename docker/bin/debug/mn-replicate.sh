@@ -18,7 +18,9 @@ if [ -z $SOURCE_HTTP ]; then
 fi
 
 if [ -z $RELEASE_TAG ]; then
-    export RELEASE_TAG="v3.3.0"
+    response=$(curl -s $SOURCE_HTTP:9000/node/info)
+    export RELEASE_TAG=$(echo "$response" | jq -r '.version')
+    echo "RELEASE_TAG: $RELEASE_TAG"
 fi
 
 
