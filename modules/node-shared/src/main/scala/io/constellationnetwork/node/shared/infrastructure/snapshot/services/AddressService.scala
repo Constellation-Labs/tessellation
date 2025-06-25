@@ -43,7 +43,7 @@ object AddressService {
             (balance, ordinal)
         })
 
-      def getFilteredOutTotalSupply: F[Option[(BigInt, SnapshotOrdinal)]] =
+      def getCirculatedSupply: F[Option[(BigInt, SnapshotOrdinal)]] =
         snapshotStorage.head.map(_.map {
           case (snapshot, state) =>
             calculateTotalSupply(
