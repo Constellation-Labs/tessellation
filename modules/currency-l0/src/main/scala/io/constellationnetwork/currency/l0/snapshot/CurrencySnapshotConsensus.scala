@@ -12,15 +12,14 @@ import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusKind, CurrencyConsensusOutcome}
 import io.constellationnetwork.currency.l0.snapshot.services.StateChannelSnapshotService
 import io.constellationnetwork.currency.schema.currency._
-import io.constellationnetwork.node.shared.config.types.{SharedConfig, SnapshotConfig}
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
+import io.constellationnetwork.node.shared.config.types.SnapshotConfig
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
-import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
-import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSyncGlobalSnapshotStorage}
+import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
@@ -28,7 +27,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencySnap
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.{Hashed, HasherSelector, SecurityProvider}
 
 import io.circe.Decoder
@@ -87,6 +86,7 @@ object CurrencySnapshotConsensus {
       )
       consensusStateAdvancer = CurrencySnapshotConsensusStateAdvancer
         .make[F](
+          snapshotConfig.consensus,
           keyPair,
           consensusStorage,
           consensusFunctions,

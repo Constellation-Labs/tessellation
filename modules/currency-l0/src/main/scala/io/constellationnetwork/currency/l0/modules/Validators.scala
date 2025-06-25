@@ -3,9 +3,9 @@ package io.constellationnetwork.currency.l0.modules
 import cats.data.NonEmptySet
 import cats.effect.Async
 
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.block.processing.BlockValidator
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockValidator
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorValidator

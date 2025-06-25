@@ -6,6 +6,8 @@ import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.L0NodeContext
 import io.constellationnetwork.currency.schema.currency._
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
+import io.constellationnetwork.node.shared.app.NodeShared
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSyncGlobalSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
 import io.constellationnetwork.schema.swap.CurrencyId
@@ -17,7 +19,8 @@ object L0NodeContext {
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     hasherSelector: HasherSelector[F],
     lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
-    identifierStorage: IdentifierStorage[F]
+    identifierStorage: IdentifierStorage[F],
+    l0Seedlist: Option[Set[SeedlistEntry]]
   ): L0NodeContext[F] = new L0NodeContext[F] {
     def getCurrencyId: F[CurrencyId] =
       identifierStorage.get.map(_.toCurrencyId)
@@ -44,5 +47,7 @@ object L0NodeContext {
 
     def getLastSynchronizedGlobalSnapshotCombined: F[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
       lastGlobalSnapshotStorage.getLastSynchronizedCombined
+
+    def getMetagraphL0Seedlist: Option[Set[SeedlistEntry]] = l0Seedlist
   }
 }

@@ -5,11 +5,11 @@ import cats.effect.Async
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.functor._
 
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.cluster.programs.{Joining, PeerDiscovery}
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.http.p2p.clients.{ClusterClient, SignClient}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash

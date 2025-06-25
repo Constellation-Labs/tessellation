@@ -3,9 +3,8 @@ package io.constellationnetwork.node.shared.infrastructure.seedlist
 import cats.effect.Async
 import cats.syntax.functor._
 
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.env.env.SeedListPath
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry._
 
 import fs2.data.csv._
 import fs2.io.file.Files

@@ -9,13 +9,13 @@ import cats.{Applicative, MonadThrow}
 
 import scala.concurrent.duration._
 
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.config.types.HttpConfig
 import io.constellationnetwork.node.shared.domain.cluster.services.Cluster
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.schema.cluster._
 import io.constellationnetwork.schema.node.NodeState

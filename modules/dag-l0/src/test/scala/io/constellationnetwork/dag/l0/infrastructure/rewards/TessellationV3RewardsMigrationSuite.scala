@@ -6,7 +6,6 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.dag.l0.config.DelegatedRewardsConfigProvider
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
@@ -59,19 +58,22 @@ object TessellationV3RewardsMigrationSuite extends SimpleIOSuite with Checkers {
   def createDelegatedRewardsConfig(asOfEpoch: EpochProgress = EpochProgress(100L)): DelegatedRewardsConfig = DelegatedRewardsConfig(
     flatInflationRate = NonNegFraction.zero,
     emissionConfig = Map(
-      AppEnvironment.Dev -> EmissionConfigEntry(
-        epochsPerYear = PosLong(12L),
-        asOfEpoch = asOfEpoch, // Configurable transition point
-        iTarget = NonNegFraction.unsafeFrom(1, 100),
-        iInitial = NonNegFraction.unsafeFrom(2, 100),
-        lambda = NonNegFraction.unsafeFrom(1, 10),
-        iImpact = NonNegFraction.unsafeFrom(5, 10),
-        totalSupply = Amount(100_00000000L),
-        dagPrices = SortedMap(
-          EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1),
-          EpochProgress(150L) -> NonNegFraction.unsafeFrom(8, 1)
+      AppEnvironment.Dev -> { epochProgress: EpochProgress =>
+        EmissionConfigEntry(
+          epochsPerYear = PosLong(12L),
+          asOfEpoch = asOfEpoch, // Configurable transition point
+          iTarget = NonNegFraction.unsafeFrom(1, 100),
+          iInitial = NonNegFraction.unsafeFrom(2, 100),
+          lambda = NonNegFraction.unsafeFrom(1, 10),
+          iImpact = NonNegFraction.unsafeFrom(5, 10),
+          totalSupply = Amount(100_00000000L),
+          dagPrices = SortedMap(
+            EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1),
+            EpochProgress(150L) -> NonNegFraction.unsafeFrom(8, 1)
+          ),
+          epochsPerMonth = NonNegLong(1L)
         )
-      )
+      }
     ),
     Map.empty
   )
@@ -119,8 +121,8 @@ object TessellationV3RewardsMigrationSuite extends SimpleIOSuite with Checkers {
     val lateConfig = createDelegatedRewardsConfig(EpochProgress(5000L))
 
     IO {
-      expect(earlyConfig.emissionConfig(AppEnvironment.Dev).asOfEpoch == EpochProgress(10L)) &&
-      expect(lateConfig.emissionConfig(AppEnvironment.Dev).asOfEpoch == EpochProgress(5000L))
+      expect(earlyConfig.emissionConfig(AppEnvironment.Dev)(EpochProgress(10L)).asOfEpoch == EpochProgress(10L)) &&
+      expect(lateConfig.emissionConfig(AppEnvironment.Dev)(EpochProgress(5000L)).asOfEpoch == EpochProgress(5000L))
     }
   }
 

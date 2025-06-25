@@ -1,4 +1,4 @@
-package io.constellationnetwork.node.shared.domain.seedlist
+package io.constellationnetwork.domain.seedlist
 
 import cats.data.ValidatedNel
 import cats.syntax.all._

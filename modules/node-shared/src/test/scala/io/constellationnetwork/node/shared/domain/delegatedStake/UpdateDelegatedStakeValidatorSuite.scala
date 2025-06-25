@@ -10,11 +10,11 @@ import cats.implicits.{catsSyntaxOptionId, catsSyntaxValidatedIdBinCompat0}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator._
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}

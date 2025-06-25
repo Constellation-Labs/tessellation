@@ -24,6 +24,7 @@ import io.constellationnetwork.node.shared.domain.nodeCollateral.{
   UpdateNodeCollateralAcceptanceManager,
   UpdateNodeCollateralAcceptanceResult
 }
+import io.constellationnetwork.node.shared.domain.priceOracle.{PriceStateUpdater, PricingUpdateValidator}
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
@@ -118,6 +119,8 @@ object GlobalSnapshotAcceptanceManager {
     updateDelegatedStakeAcceptanceManager: UpdateDelegatedStakeAcceptanceManager[F],
     updateNodeCollateralAcceptanceManager: UpdateNodeCollateralAcceptanceManager[F],
     spendActionValidator: SpendActionValidator[F],
+    pricingUpdateValidator: PricingUpdateValidator[F],
+    priceStateUpdater: PriceStateUpdater[F],
     collateral: Amount,
     withdrawalTimeLimit: EpochProgress
   ) = new GlobalSnapshotAcceptanceManager[F] {
@@ -264,14 +267,21 @@ object GlobalSnapshotAcceptanceManager {
 
         globalBalances = Map(none[Address] -> updatedBalancesByRewards)
 
-        spendActions = incomingCurrencySnapshots.toList.map {
+        sharedArtifacts = incomingCurrencySnapshots.toList.map {
           case (_, Left(_))             => Map.empty[Address, List[SharedArtifact]]
           case (address, Right((s, _))) => Map(address -> (s.artifacts.getOrElse(SortedSet.empty[SharedArtifact]).toList))
         }
           .foldLeft(Map.empty[Address, List[SharedArtifact]])(_ |+| _)
           .view
+
+        spendActions = sharedArtifacts
           .mapValues(_.collect { case sa: SpendAction => sa })
           .filter { case (_, actions) => actions.nonEmpty }
+          .toMap
+
+        pricingUpdates = sharedArtifacts
+          .mapValues(_.collect { case pu: PricingUpdate => pu })
+          .filter { case (_, updates) => updates.nonEmpty }
           .toMap
 
         lastActiveAllowSpends = lastSnapshotContext.activeAllowSpends.getOrElse(
@@ -286,6 +296,15 @@ object GlobalSnapshotAcceptanceManager {
 
         _ <- Slf4jLogger.getLogger[F].debug(s"--- [ORDINAL=$ordinal] Accepted spend actions: ${acceptedSpendActions.show}")
         _ <- Slf4jLogger.getLogger[F].debug(s"--- [ORDINAL=$ordinal] Rejected spend actions: ${rejectedSpendActions.show}")
+
+        (acceptedPricingUpdates, rejectedPricingUpdates) <- pricingUpdateValidator.validateReturningAcceptedAndRejected(
+          pricingUpdates,
+          lastSnapshotContext,
+          epochProgress
+        )
+
+        _ <- Slf4jLogger.getLogger[F].debug(s"--- Accepted pricing updates: ${acceptedPricingUpdates.show}")
+        _ <- Slf4jLogger.getLogger[F].debug(s"--- Rejected pricing updates: ${rejectedPricingUpdates.show}")
 
         sCSnapshotHashes <- scSnapshots.toList.traverse {
           case (address, nel) => nel.last.toHashed.map(address -> _.hash)
@@ -524,7 +543,12 @@ object GlobalSnapshotAcceptanceManager {
           case (_, updatedNodeCollateralsRecords) =>
             updatedNodeCollateralsRecords.nonEmpty
         }
-        updatedPriceState = SortedMap.empty[TokenPair, PriceRecord]
+
+        updatedPriceState <- priceStateUpdater.updatePriceState(
+          lastSnapshotContext.priceState.getOrElse(SortedMap.empty),
+          acceptedPricingUpdates,
+          epochProgress
+        )
 
         updatedAcceptedMetagraphSyncData = acceptMetagraphSyncData(
           lastSnapshotContext,

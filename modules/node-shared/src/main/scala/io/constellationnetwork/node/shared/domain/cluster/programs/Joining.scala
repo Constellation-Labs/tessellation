@@ -17,6 +17,7 @@ import cats.{Applicative, MonadThrow, Parallel}
 
 import scala.util.control.NoStackTrace
 
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.effects.GenUUID
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment.Dev
@@ -26,7 +27,6 @@ import io.constellationnetwork.node.shared.domain.cluster.services.{Cluster, Ses
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.http.p2p.clients.SignClient
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.cluster._
