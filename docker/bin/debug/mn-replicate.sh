@@ -20,6 +20,7 @@ fi
 if [ -z $RELEASE_TAG ]; then
     response=$(curl -s $SOURCE_HTTP:9000/node/info)
     export RELEASE_TAG=$(echo "$response" | jq -r '.version')
+    export RELEASE_TAG="v$RELEASE_TAG"
     echo "RELEASE_TAG: $RELEASE_TAG"
 fi
 
@@ -29,6 +30,7 @@ ssh $REMOTE_DESTINATION_NODE "bash -c \"rm -rf /root/docker/mainnet-seedlist; rm
 
 wget https://github.com/Constellation-Labs/tessellation/releases/download/$RELEASE_TAG/mainnet-seedlist -O mainnet-seedlist
 scp mainnet-seedlist $REMOTE_DESTINATION_NODE:/root/docker/mainnet-seedlist
+echo "Copying mainnet-seedlist to $REMOTE_DESTINATION_NODE"
 rm mainnet-seedlist
 
 cd $PROJECT_ROOT
