@@ -107,6 +107,8 @@ object currency {
         activeTokenLocks.traverse(_.hash)
       ).tupled
         .map(CurrencySnapshotStateProof.apply)
+
+    override def getActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = activeTokenLocks.getOrElse(SortedMap.empty)
   }
 
   @derive(encoder, decoder, eqv, show)

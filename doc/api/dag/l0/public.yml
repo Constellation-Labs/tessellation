@@ -78,6 +78,26 @@ paths:
               schema:
                 $ref: '../../models/schemas/TotalSupply.yml'
 
+  /dag/circulated-supply:
+    get:
+      tags:
+        - DAG
+      description: Get $DAG circulated supply on latest snapshot
+      responses:
+        200:
+          description: Circulated supply on latest snapshot
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/CirculatedSupply.yml'
+
   /dag/{address}/balance:
     get:
       tags:

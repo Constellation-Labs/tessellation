@@ -38,6 +38,13 @@ final case class WalletRoutes[F[_]: Async, S <: Snapshot](
         case _ => NotFound()
       }
 
+    case GET -> Root / "circulated-supply" =>
+      addressService.getFilteredOutCirculatedSupply.flatMap {
+        case Some((supply, ordinal)) =>
+          Ok(("circulated" ->> supply) :: ("ordinal" ->> ordinal.value.value) :: HNil)
+        case _ => NotFound()
+      }
+
     case GET -> Root / "wallet-count" =>
       addressService.getWalletCount.flatMap {
         case Some((wallets, ordinal)) =>
