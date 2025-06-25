@@ -10,12 +10,15 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
+import io.constellationnetwork.schema.delegatedStake.DelegatedStakeRecord
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.semver.SnapshotVersion
+import io.constellationnetwork.schema.tokenLock.TokenLock
 import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection._
 
 import derevo.cats.{order, show}
@@ -60,6 +63,8 @@ object snapshot {
     val balances: SortedMap[Address, Balance]
 
     def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[P]
+    def getActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = SortedMap.empty
+    def getActiveDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]] = SortedMap.empty
   }
 
   @derive(encoder, decoder, show)
