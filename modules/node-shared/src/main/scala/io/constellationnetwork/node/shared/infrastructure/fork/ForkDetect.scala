@@ -12,12 +12,12 @@ import io.constellationnetwork.security.hex.Hex
 
 object ForkDetect {
 
-  def exitOnCheck(flag: String, facilitators: Set[PeerId]): Unit = {
+  def exitOnCheck(flag: String, facilitators: Set[PeerId]): Unit =
     if (sys.env.get(flag).contains("true")) {
       sys.env.get("CL_FOLLOWER_ID") match {
         case Some(id) =>
-        val peerId = PeerId(Hex(id))
-        val hasFollowerPeer = facilitators.contains(peerId)
+          val peerId = PeerId(Hex(id))
+          val hasFollowerPeer = facilitators.contains(peerId)
           if (!hasFollowerPeer) {
             println(s"Exit in advancer to missing follower peer on $flag")
             System.exit(1)
@@ -25,7 +25,6 @@ object ForkDetect {
         case _ =>
       }
     }
-  }
 
   def make[F[_]: Monad](
     getTrustScores: F[TrustScores],
