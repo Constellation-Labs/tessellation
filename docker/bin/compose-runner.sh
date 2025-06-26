@@ -31,11 +31,14 @@ source ./docker/bin/set-env.sh "$@"
 ./docker/bin/tessellation-docker-cleanup.sh & 
 CLEANUP_PID=$!
 
-
+echo "Starting assembly"
 source ./docker/bin/assembly.sh
 
 export TESSELLATION_DOCKER_VERSION=test
+
+echo "Finished assembly, building docker image"
 docker build -t constellationnetwork/tessellation:$TESSELLATION_DOCKER_VERSION -f docker/Dockerfile .
+
 
 # Wait for cleanup PID to finish
 wait $CLEANUP_PID

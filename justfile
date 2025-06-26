@@ -46,3 +46,7 @@ clean:
 debug-main:
 	@just _check_deps
 	@bash docker/bin/debug/mn-replicate.sh
+
+# Generate test user keys for bulk transaction testing
+generate-test-keys num_keys='10':
+	@bash docker/bin/generate-test-user-keys.sh {{ num_keys }}
