@@ -49,6 +49,7 @@ object Dependencies {
     val organizeImports = "0.5.0"
     val semanticDB = "4.13.1.1"
     val weaver = "0.8.1"
+    val jol = "0.17"
   }
 
   object Libraries {
@@ -88,6 +89,7 @@ object Dependencies {
     val catsRetry = "com.github.cb372" %% "cats-retry" % V.catsRetry
 
     val squants = "org.typelevel" %% "squants" % V.squants
+    val jol = "org.openjdk.jol" % "jol-core" % V.jol
     val comcast = "com.comcast" %% "ip4s-core" % V.comcast
 
     val fs2Core = fs2("core")

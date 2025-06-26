@@ -149,7 +149,10 @@ abstract class TessellationIOApp[A <: CliMethod](
                                     for {
                                       _ <- logger.info(s"Self peerId: $selfId").asResource
                                       _generation <- Generation.make[IO].asResource
-                                      versionHash <- _hasherSelector.withCurrent(_.hash(version)).asResource
+                                      versionHash <- _hasherSelector
+                                        .withCurrent(_.hash(version))
+                                        .asResource
+                                        .map(x => sys.env.get("CL_VERSION_HASH").map(Hash(_)).getOrElse(x))
                                       _seedlist <- loadSeedlist("Seedlist", method.seedlistPath).asResource
                                       _l0Seedlist <- loadSeedlist("l0Seedlist", method.l0SeedlistPath).asResource
                                       _prioritySeedlist <- loadSeedlist("prioritySeedlist", method.prioritySeedlistPath).asResource
@@ -280,6 +283,7 @@ abstract class TessellationIOApp[A <: CliMethod](
         case _ if currentEnv === Dev =>
           logger.warn(s"Using mock value for dev environment.") >> Hash.empty.pure[IO]
       }
+      .map(x => sys.env.get("CL_JAR_HASH").map(Hash(_)).getOrElse(x))
 
   private def loadKeyPair[F[_]: Async: SecurityProvider](
     keyStore: StorePath,
