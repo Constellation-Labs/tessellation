@@ -63,22 +63,22 @@ object NoOpMetrics {
 
       override private[shared] def getAllAsText: IO[String] = IO("Metrics.noopIO")
 
-      def timedMetric[A](operation: IO[A], metricKey: MetricKey, tags: TagSeq = Seq.empty): IO[A] = operation
-      def genericRecordDistributionWithTimeBuckets[A: Numeric](
+      override def timedMetric[A](operation: IO[A], metricKey: MetricKey, tags: TagSeq = Seq.empty): IO[A] = operation
+      override def genericRecordDistributionWithTimeBuckets[A: Numeric](
         key: MetricKey,
         value: A,
         timeSeconds: Float,
         tags: TagSeq = Seq()
       ): IO[Unit] = IO.unit
 
-      def recordTimeHistogram(
+      override def recordTimeHistogram(
         key: MetricKey,
         duration: FiniteDuration,
         tags: TagSeq = Seq.empty,
         buckets: Array[Double] = Metrics.timeSecondsBuckets
       ): IO[Unit] = IO.unit
 
-      def recordSizeHistogram(
+      override def recordSizeHistogram(
         key: MetricKey,
         sizeBytes: Long,
         tags: TagSeq = Seq.empty,
