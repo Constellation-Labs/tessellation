@@ -151,14 +151,17 @@ object GlobalSnapshotStateChannelEventsProcessor {
       private def calculateLastCurrencySnapshots(
         processedCurrencySnapshots: SortedMap[Address, MetagraphAcceptanceResult],
         lastGlobalSnapshotInfo: GlobalSnapshotInfo
-      ): (SortedMap[Address, CurrencySnapshotWithState], SortedMap[Address, CurrencySnapshotWithState]) = {
-        val lastCurrencySnapshots =
+      ): (SortedMap[Address, CurrencySnapshotWithState], SortedMap[Address, List[CurrencySnapshotWithState]]) = {
+        val lastCurrencySnapshotPerAddress =
           processedCurrencySnapshots.map { case (k, (v, _)) => k -> v.toList.flatMap(_._2).lastOption }.collect {
             case (key, Some(state)) => key -> state
           }
 
+        val lastCurrencySnapshots =
+          processedCurrencySnapshots.map { case (k, (v, _)) => k -> v.toList.flatMap(_._2) }.filterNot { case (_, list) => list.isEmpty }
+
         (
-          lastGlobalSnapshotInfo.lastCurrencySnapshots.concat(lastCurrencySnapshots),
+          lastGlobalSnapshotInfo.lastCurrencySnapshots.concat(lastCurrencySnapshotPerAddress),
           lastCurrencySnapshots
         )
       }
