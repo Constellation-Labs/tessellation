@@ -8,7 +8,6 @@ import cats.syntax.all._
 import cats.{Applicative, MonadThrow}
 
 import scala.concurrent.duration.FiniteDuration
-import io.constellationnetwork.node.shared.infrastructure.fork.ForkDetect
 
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema._
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
@@ -22,6 +21,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.TimeTrigger
+import io.constellationnetwork.node.shared.infrastructure.fork.ForkDetect
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.SnapshotConsensusFunctions.gossipForkInfo
@@ -136,7 +136,10 @@ object GlobalSnapshotConsensusStateAdvancer {
                             effect = gossip.spread(ConsensusPeerDeclaration(state.key, Proposal(hash, facilitatorsHash))) *>
                               gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
                             facilitators = state.facilitators.value
-                            _ = ForkDetect.exitOnCheck("CL_EXIT_ON_FOLLOWER_ADVANCER", () => facilitators)
+                            _ = {
+                              ForkDetect.exitOnCheck("CL_EXIT_ON_FOLLOWER_ADVANCER", () => facilitators.toSet)
+                              ()
+                            }
                             newState =
                               state.copy(status =
                                 identity[GlobalSnapshotStatus](

@@ -5,8 +5,10 @@ import cats.syntax.contravariantSemigroupal._
 
 import io.constellationnetwork.node.shared.domain.fork.{ForkDetect, ForkInfo, ForkInfoMap}
 import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.trust.TrustScores
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.hex.Hex
 
 object ForkDetect {
 
