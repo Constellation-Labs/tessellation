@@ -6,6 +6,7 @@ import cats.data.NonEmptySet
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.http4s.AddressVar
+import io.constellationnetwork.node.shared.config.types.PriceOracleConfig
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculatorConfig
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
@@ -49,4 +50,6 @@ package object pureconfig {
   implicit val tokenPairToBigdecimalReader: ConfigReader[Map[TokenPair, BigDecimal]] = genericMapReader(catchReadError {
     case "DAG::USD" => DAG_USD
   })
+  implicit val envToPriceOracleConfigReader: ConfigReader[Map[AppEnvironment, PriceOracleConfig]] =
+    genericMapReader(catchReadError(AppEnvironment.withName))
 }

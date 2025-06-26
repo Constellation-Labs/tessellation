@@ -61,7 +61,7 @@ object method {
       c.delegatedStaking,
       c.fieldsAddedOrdinals,
       c.metagraphsSync,
-      c.priceOracle
+      c.priceOracle.getOrElse(environment, PriceOracleConfig.default)
     )
   }
 
