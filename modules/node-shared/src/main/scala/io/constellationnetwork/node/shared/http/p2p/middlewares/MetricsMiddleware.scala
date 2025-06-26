@@ -2,8 +2,8 @@ package io.constellationnetwork.node.shared.http.p2p.middlewares
 
 import java.util.concurrent.TimeUnit
 
-import cats.data.Kleisli
-import cats.effect.kernel.Async
+import cats.data.{Kleisli, OptionT}
+import cats.effect.kernel.{Async, Clock}
 import cats.syntax.all._
 
 import scala.concurrent.duration.FiniteDuration
@@ -22,70 +22,72 @@ object MetricsMiddleware {
 
   def apply[F[_]: Async: Metrics](): HttpRoutes[F] => HttpRoutes[F] = { routes =>
     Kleisli { req =>
-      val startTime = System.nanoTime()
-      routes(req).semiflatMap { response =>
-        // val scriptName = r?eq.scriptName.renderString
-        val endTime = System.nanoTime()
-        val duration = FiniteDuration(endTime - startTime, TimeUnit.NANOSECONDS)
-        // Extract route path and normalize it for metric naming
-        val routePath = normalizeRoutePath(req.pathInfo.renderString)
-        val actualIp = req.remote.map(_.host.toString).getOrElse("unknown")
-        val forwardedIp = req.headers
-          .get[`X-Forwarded-For`]
-          .map(_.values.head.toString.split(",").head.trim)
-          .getOrElse("none")
+      OptionT.liftF(Clock[F].monotonic).flatMap { startTime =>
+        routes(req).semiflatMap { response =>
+          for {
+            endTime <- Clock[F].monotonic
+            duration = endTime - startTime
+            // Extract route path and normalize it for metric naming
+            routePath = normalizeRoutePath(req.pathInfo.renderString)
+            actualIp = req.remote.map(_.host.toString).getOrElse("unknown")
+            forwardedIp = req.headers
+              .get[`X-Forwarded-For`]
+              .map(_.values.head.toString.split(",").head.trim)
+              .getOrElse("none")
 
-        // Cannot compile time infer type for Seq
-        var allTags: Seq[(Metrics.LabelName, String)] = Seq(
-          Metrics.unsafeLabelName("method") -> req.method.name,
-          Metrics.unsafeLabelName("status") -> response.status.code.toString,
-          Metrics.unsafeLabelName("route") -> routePath,
-          Metrics.unsafeLabelName("status_class") -> s"${response.status.code / 100}xx",
-          Metrics.unsafeLabelName("actual_ip") -> actualIp,
-          Metrics.unsafeLabelName("forwarded_ip") -> forwardedIp
-        )
+            // Cannot compile time infer type for Seq
+            allTags: Seq[(Metrics.LabelName, String)] = {
+              val bucket = Metrics.unsafeLabelName("time_bucket")
+              val bucketLabel = if (duration.toMillis > 1000) {
+                "gt_1s"
+              } else if (duration.toMillis > 10_000) {
+                "gt_10s"
+              } else {
+                "lt_1s"
+              }
 
-        // Use discrete label for per event counter metrics; higher granularity than time histogram
-        val bucket = Metrics.unsafeLabelName("time_bucket")
-        val bucketLabel = if (duration.toMillis > 1000) {
-          "gt_1s"
-        } else if (duration.toMillis > 10_000) {
-          "gt_10s"
-        } else {
-          "lt_1s"
-        }
-
-        allTags = allTags :+ (bucket -> bucketLabel)
-
-        val histogramTags: Seq[(Metrics.LabelName, String)] = Seq(
-          Metrics.unsafeLabelName("route") -> routePath
-        )
-
-        // Generic HTTP metrics with route as label
-        val durationMetricKey: Metrics.MetricKey = "dag_http_request_time"
-        val requestSizeMetricKey: Metrics.MetricKey = "dag_http_request_size"
-        val responseSizeMetricKey: Metrics.MetricKey = "dag_http_response_size"
-        val requestCounterMetricKey: Metrics.MetricKey = "dag_http_request_count"
-
-        // Record metrics asynchronously without blocking the response
-        val metricsRecording = for {
-          _ <- Metrics[F].incrementCounter(requestCounterMetricKey, allTags)
-          _ <-
-            if (isHistogramRoute(req.pathInfo.renderString)) {
-              Metrics[F].recordTimeHistogram(durationMetricKey, duration, histogramTags) >>
-                req.contentLength.traverse_ { size =>
-                  Metrics[F].recordSizeHistogram(requestSizeMetricKey, size, histogramTags)
-                } >>
-                response.contentLength.traverse_ { size =>
-                  Metrics[F].recordSizeHistogram(responseSizeMetricKey, size, histogramTags)
-                }
-            } else {
-              Async[F].unit
+              Seq(
+                Metrics.unsafeLabelName("method") -> req.method.name,
+                Metrics.unsafeLabelName("status") -> response.status.code.toString,
+                Metrics.unsafeLabelName("route") -> routePath,
+                Metrics.unsafeLabelName("status_class") -> s"${response.status.code / 100}xx",
+                Metrics.unsafeLabelName("actual_ip") -> actualIp,
+                Metrics.unsafeLabelName("forwarded_ip") -> forwardedIp,
+                bucket -> bucketLabel
+              )
             }
-          // 4. Request size histograms (both route-specific and generic)
 
-        } yield ()
-        Async[F].start(metricsRecording) >> response.pure[F]
+            histogramTags: Seq[(Metrics.LabelName, String)] = Seq(
+              Metrics.unsafeLabelName("route") -> routePath
+            )
+
+            // Generic HTTP metrics with route as label
+            durationMetricKey: Metrics.MetricKey = "dag_http_request_time"
+            requestSizeMetricKey: Metrics.MetricKey = "dag_http_request_size"
+            responseSizeMetricKey: Metrics.MetricKey = "dag_http_response_size"
+            requestCounterMetricKey: Metrics.MetricKey = "dag_http_request_count"
+
+            // Record metrics asynchronously without blocking the response
+            metricsRecording = for {
+              _ <- Metrics[F].incrementCounter(requestCounterMetricKey, allTags)
+              _ <-
+                if (isHistogramRoute(req.pathInfo.renderString)) {
+                  Metrics[F].recordTimeHistogram(durationMetricKey, duration, histogramTags) >>
+                    req.contentLength.traverse_ { size =>
+                      Metrics[F].recordSizeHistogram(requestSizeMetricKey, size, histogramTags)
+                    } >>
+                    response.contentLength.traverse_ { size =>
+                      Metrics[F].recordSizeHistogram(responseSizeMetricKey, size, histogramTags)
+                    }
+                } else {
+                  Async[F].unit
+                }
+              // 4. Request size histograms (both route-specific and generic)
+
+            } yield ()
+            _ <- Async[F].start(metricsRecording)
+          } yield response
+        }
       }
     }
   }
