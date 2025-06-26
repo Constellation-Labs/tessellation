@@ -15,7 +15,7 @@ import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.errorShow
 import io.constellationnetwork.schema.peer.Peer
-
+import io.constellationnetwork.node.shared.infrastructure.fork.ForkDetect
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 

@@ -8,6 +8,7 @@ import cats.syntax.all._
 import cats.{Applicative, MonadThrow}
 
 import scala.concurrent.duration.FiniteDuration
+import io.constellationnetwork.node.shared.infrastructure.fork.ForkDetect
 
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema._
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
