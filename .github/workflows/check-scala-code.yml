@@ -23,6 +23,6 @@ jobs:
         uses: "./.github/templates/actions/setup_java_and_scala"
 
       - name: Run with 11 🚀
-        run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test'
+        run: sbt --error 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
