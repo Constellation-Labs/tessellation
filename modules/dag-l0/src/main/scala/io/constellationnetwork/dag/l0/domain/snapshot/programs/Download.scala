@@ -398,6 +398,10 @@ object Download {
     def fetchSnapshot(hash: Option[Hash], ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Signed[GlobalIncrementalSnapshot]] =
       clusterStorage.getResponsivePeers
         .map(NodeState.ready)
+        .map { peers =>
+          ForkDetect.exitOnCheck("CL_EXIT_ON_FOLLOWER_DOWNLOAD", () => peers.map(_.id))
+          peers
+        }
         .map(_.toList)
         .flatMap(Random[F].shuffleList)
         .flatTap { _ =>

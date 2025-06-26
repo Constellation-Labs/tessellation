@@ -225,6 +225,7 @@ object ConsensusStateUpdater {
       val isForked = majorityObservationHash =!= ownObservationHash
 
       if (isForked) {
+        ForkDetect.exitOnFeature("CL_EXIT_ON_FORK")
         val majorityForkPeers = observations.collect {
           case (peerId, observationHash) if observationHash === majorityObservationHash => peerId
         }.toList

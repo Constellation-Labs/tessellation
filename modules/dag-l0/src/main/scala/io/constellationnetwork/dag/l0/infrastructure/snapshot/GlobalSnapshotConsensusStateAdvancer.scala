@@ -134,6 +134,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                             hash <- HasherSelector[F].forOrdinal(artifact.ordinal)(implicit hasher => artifact.hash)
                             effect = gossip.spread(ConsensusPeerDeclaration(state.key, Proposal(hash, facilitatorsHash))) *>
                               gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
+                            facilitators = state.facilitators.value
+                            _ = ForkDetect.exitOnCheck("CL_EXIT_ON_FOLLOWER_ADVANCER", () => facilitators)
                             newState =
                               state.copy(status =
                                 identity[GlobalSnapshotStatus](

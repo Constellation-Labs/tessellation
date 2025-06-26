@@ -68,6 +68,7 @@ object GossipRoundRunner {
           for {
             _ <- Temporal[F].sleep(cfg.interval)
             allPeers <- clusterStorage.getResponsivePeers
+            _ = ForkDetect.exitOnCheck("CL_EXIT_ON_FOLLOWER_GOSSIP", () => allPeers.map(_.id))
             selectedPeers <- selectedPeersR.get
             availablePeers = allPeers.diff(selectedPeers)
             drawnPeers <- Random[F].shuffleList(availablePeers.toList).map(_.take(cfg.fanout.value))

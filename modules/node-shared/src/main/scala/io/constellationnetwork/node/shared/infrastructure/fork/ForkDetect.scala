@@ -10,6 +10,30 @@ import io.constellationnetwork.security.hash.Hash
 
 object ForkDetect {
 
+  def hasFlag(flag: String): Boolean =
+    sys.env.get(flag).contains("true")
+
+  def exitOnFeature(flag: String): Unit =
+    if (hasFlag(flag)) {
+      println(s"Exit due to feature flag on $flag")
+      System.exit(1)
+    }
+
+  def exitOnCheck(flag: String, facilitators: () => Set[PeerId]): Unit =
+    if (hasFlag(flag)) {
+      sys.env.get("CL_FOLLOWER_ID") match {
+        case Some(id) =>
+          val peerId = PeerId(Hex(id))
+          val hasFollowerPeer = facilitators().contains(peerId)
+          if (!hasFollowerPeer) {
+            // Println to avoid logger shutdown
+            println(s"Exit due to missing follower peer on $flag")
+            System.exit(1)
+          }
+        case _ =>
+      }
+    }
+
   def make[F[_]: Monad](
     getTrustScores: F[TrustScores],
     getForkInfo: F[ForkInfoMap]
