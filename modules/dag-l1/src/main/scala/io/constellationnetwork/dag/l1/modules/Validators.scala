@@ -7,9 +7,9 @@ import io.constellationnetwork.dag.l1.domain.transaction.{
   CustomContextualTransactionValidator,
   TransactionLimitConfig
 }
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.block.processing.BlockValidator
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockValidator
 import io.constellationnetwork.node.shared.domain.swap.{AllowSpendChainValidator, AllowSpendValidator, ContextualAllowSpendValidator}
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockValidator

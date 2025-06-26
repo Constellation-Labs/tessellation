@@ -7,7 +7,7 @@ import cats.syntax.all._
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.currency.schema.globalSnapshotSync.{GlobalSnapshotSync, GlobalSnapshotSyncOrdinal}
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotSyncValidator.GlobalSnapshotSyncOrError
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.PeerId

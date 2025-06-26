@@ -7,13 +7,13 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.DataCalculatedState
-import io.constellationnetwork.dag.l0.config.DelegatedRewardsConfigProvider
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.UpdateNodeParametersCutter
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.config.DelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions.InvalidArtifact
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
@@ -133,7 +133,7 @@ object GlobalSnapshotConsensusFunctions {
             if (recreatedArtifact === artifact)
               (artifact, context).asRight[InvalidArtifact]
             else
-              ArtifactMismatch.asLeft[(GlobalSnapshotArtifact, GlobalSnapshotContext)]
+              GlobalArtifactMismatch(artifact, recreatedArtifact).asLeft[(GlobalSnapshotArtifact, GlobalSnapshotContext)]
         }
 
       check(usingJson).flatMap {
@@ -166,11 +166,16 @@ object GlobalSnapshotConsensusFunctions {
       val dagEvents = dagEventsBeforeCut.filter(_.value.height > lastArtifact.height)
 
       val delegatedConfig = delegatedRewardsConfigProvider.getConfig()
-      val asOfEpoch = delegatedConfig.emissionConfig.get(environment).map(_.asOfEpoch).getOrElse(EpochProgress.MaxValue)
 
-      def shouldUseDelegatedRewards(currentOrdinal: SnapshotOrdinal, currentEpochProgress: EpochProgress): Boolean =
+      def shouldUseDelegatedRewards(currentOrdinal: SnapshotOrdinal, currentEpochProgress: EpochProgress): Boolean = {
+        val asOfEpoch = delegatedConfig.emissionConfig
+          .get(environment)
+          .map(f => f(currentEpochProgress))
+          .map(_.asOfEpoch)
+          .getOrElse(EpochProgress.MaxValue)
         currentOrdinal.value >= v3MigrationOrdinal.value &&
-          currentEpochProgress.value.value >= asOfEpoch.value.value
+        currentEpochProgress.value.value >= asOfEpoch.value.value
+      }
 
       val classicRewardsFn = classicRewards
         .distribute(

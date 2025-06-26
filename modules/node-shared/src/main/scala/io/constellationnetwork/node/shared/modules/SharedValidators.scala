@@ -5,13 +5,14 @@ import cats.effect.Async
 
 import scala.collection.immutable.SortedMap
 
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.json.JsonSerializer
-import io.constellationnetwork.node.shared.config.types.{AddressesConfig, DelegatedStakingConfig}
+import io.constellationnetwork.node.shared.config.types.{AddressesConfig, DelegatedStakingConfig, PriceOracleConfig}
 import io.constellationnetwork.node.shared.domain.block.processing.BlockValidator
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersValidator
 import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralValidator
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
+import io.constellationnetwork.node.shared.domain.priceOracle.PricingUpdateValidator
 import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig, StateChannelValidator}
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockValidator
 import io.constellationnetwork.node.shared.domain.swap.{AllowSpendChainValidator, AllowSpendValidator, SpendActionValidator}
@@ -39,7 +40,8 @@ object SharedValidators {
     feeConfigs: SortedMap[SnapshotOrdinal, FeeCalculatorConfig],
     maxBinarySizeInBytes: PosLong,
     txHasher: Hasher[F],
-    delegatedStaking: DelegatedStakingConfig
+    delegatedStaking: DelegatedStakingConfig,
+    priceOracleConfig: PriceOracleConfig
   ): SharedValidators[F] = {
     val signedValidator = SignedValidator.make[F]
     val transactionChainValidator = TransactionChainValidator.make[F](txHasher)
@@ -78,6 +80,9 @@ object SharedValidators {
 
     val spendActionValidator = SpendActionValidator.make[F]
 
+    val pricingUpdateValidator =
+      PricingUpdateValidator.make[F](priceOracleConfig.allowedMetagraphIds, priceOracleConfig.minEpochsBetweenUpdates)
+
     new SharedValidators[F](
       signedValidator,
       transactionChainValidator,
@@ -98,7 +103,8 @@ object SharedValidators {
       updateNodeParametersValidator,
       spendActionValidator,
       updateDelegatedStakeValidator,
-      updateNodeCollateralValidator
+      updateNodeCollateralValidator,
+      pricingUpdateValidator
     ) {}
   }
 }
@@ -123,5 +129,6 @@ sealed abstract class SharedValidators[F[_]] private (
   val updateNodeParametersValidator: UpdateNodeParametersValidator[F],
   val spendActionValidator: SpendActionValidator[F],
   val updateDelegatedStakeValidator: UpdateDelegatedStakeValidator[F],
-  val updateNodeCollateralValidator: UpdateNodeCollateralValidator[F]
+  val updateNodeCollateralValidator: UpdateNodeCollateralValidator[F],
+  val pricingUpdateValidator: PricingUpdateValidator[F]
 )

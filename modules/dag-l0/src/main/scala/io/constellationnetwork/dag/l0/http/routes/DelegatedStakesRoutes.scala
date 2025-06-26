@@ -166,7 +166,7 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
     lastSnapshotInfo: GlobalSnapshotInfo
   ): F[RewardsInfo] =
     for {
-      emissionConfig <- delegatedRewardsDistributor.getEmissionConfig
+      emissionConfig <- delegatedRewardsDistributor.getEmissionConfig(lastSnapshot.epochProgress)
 
       (_, _, totalDelegateStake, currentTotalSupply) <- processDelegations(lastSnapshotInfo)
       latestDelegateRewardsNoCommission <- getLatestDelegateRewardTotal(lastSnapshot, lastSnapshotInfo)

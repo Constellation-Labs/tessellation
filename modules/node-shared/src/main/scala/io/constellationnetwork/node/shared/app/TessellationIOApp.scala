@@ -8,6 +8,7 @@ import cats.syntax.all._
 
 import scala.reflect.ClassTag
 
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.env.AppEnvironment.Dev
 import io.constellationnetwork.env.env._
 import io.constellationnetwork.env.{AppEnvironment, JarSignature}
@@ -19,7 +20,6 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared._
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types._
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.http.p2p.SharedP2PClient
 import io.constellationnetwork.node.shared.infrastructure.cluster.services.Session
@@ -159,7 +159,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                         .asResource
                                       res <- SharedResources.make[IO](cfg, _keyPair.getPrivate, storages.session, selfId)
                                       session = Session.make[IO](storages.session, storages.node, storages.cluster)
-                                      p2pClient = SharedP2PClient.make[IO](res.client, session)
+                                      p2pClient = SharedP2PClient.make[IO](res.client, session, cfg)
                                       queues <- SharedQueues.make[IO].asResource
                                       validators = _hasherSelector.withCurrent { implicit hasher =>
                                         SharedValidators.make[IO](
@@ -170,7 +170,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                                           cfg.feeConfigs,
                                           cfg.snapshotSize.maxStateChannelSnapshotBinarySizeInBytes,
                                           Hasher.forKryo[IO],
-                                          cfg.delegatedStaking
+                                          cfg.delegatedStaking,
+                                          cfg.priceOracle
                                         )
                                       }
                                       services <- SharedServices

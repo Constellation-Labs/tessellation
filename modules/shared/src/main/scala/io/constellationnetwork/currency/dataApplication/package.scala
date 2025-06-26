@@ -17,6 +17,7 @@ import io.constellationnetwork.currency.dataApplication.dataApplication.{DataApp
 import io.constellationnetwork.currency.http.Codecs.{dataTransactionsDecoder, feeTransactionResponseEncoder}
 import io.constellationnetwork.currency.schema.EstimatedFee
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.routes.internal.ExternalUrlPrefix
@@ -830,4 +831,5 @@ trait L0NodeContext[F[_]] {
   def getLastCurrencySnapshotCombined: F[Option[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]
   def securityProvider: SecurityProvider[F]
   def getCurrencyId: F[CurrencyId]
+  def getMetagraphL0Seedlist: Option[Set[SeedlistEntry]]
 }

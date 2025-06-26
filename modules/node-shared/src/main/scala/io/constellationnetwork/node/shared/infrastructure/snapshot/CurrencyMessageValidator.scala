@@ -6,7 +6,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.validateIfAddressAlreadyUsed
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencyMessageValidator.CurrencyMessageOrError
 import io.constellationnetwork.schema.address.Address

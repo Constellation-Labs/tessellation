@@ -6,7 +6,8 @@ set -e
 
 check_java_home() {
     echo "Checking if JAVA_HOME env is set"
-    if [ -z "$JAVA_HOME" ]; then
+
+  if [ -z "$JAVA_HOME" ] || ! grep -q 'JAVA_HOME' "$HOME/.bashrc"; then
         JAVA_HOME_LINE='export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(which java)")")")"'
         echo "JAVA_HOME is not set. Attempting to set automatically"
         echo "Please ensure the following line is in your ~/.bashrc or ~/.zshrc file:"
@@ -15,10 +16,6 @@ check_java_home() {
         echo "$JAVA_HOME_LINE" >> $HOME/.bashrc
         echo "Adding JAVA_HOME to current environment"
         eval $JAVA_HOME_LINE
-        if [ -z $JAVA_HOME ]; then
-            echo "Failed to set JAVA_HOME automatically. Please set it manually and rerun the script."
-            return 1
-        fi
         echo "JAVA_HOME is now set to: $JAVA_HOME"
     fi
     
@@ -314,7 +311,7 @@ check_docker() {
 # Check and install Node.js
 check_node() {
   echo "Checking for Node.js..."
-  if command -v node >/dev/null 2>&1; then
+  if [ -d "$HOME/.nvm" ]; then
     echo "✅ Node.js is already installed."
     return 0
   fi

@@ -95,7 +95,8 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
             PosInt(10),
             PosLong((5000 * 1e8).toLong),
             Map(Dev -> EpochProgress(NonNegLong(7338977L)))
-          )
+          ),
+          PriceOracleConfig(None, NonNegLong(0))
         )
       lastNSnapR <- SignallingRef
         .of[IO, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](SortedMap.empty)
@@ -169,7 +170,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState],
         Set.empty,
         Map.empty,
-        SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState]
+        SortedMap.empty[Address, List[StateChannelAcceptanceResult.CurrencySnapshotWithState]]
       )
       result <- service.process(
         SnapshotOrdinal(1L),
@@ -202,7 +203,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState],
         Set.empty,
         Map.empty,
-        SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState]
+        SortedMap.empty[Address, List[StateChannelAcceptanceResult.CurrencySnapshotWithState]]
       )
       result <- service.process(
         SnapshotOrdinal(1L),
@@ -236,7 +237,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState],
         Set.empty,
         Map.empty,
-        SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState]
+        SortedMap.empty[Address, List[StateChannelAcceptanceResult.CurrencySnapshotWithState]]
       )
       result <- service.process(
         SnapshotOrdinal(1L),

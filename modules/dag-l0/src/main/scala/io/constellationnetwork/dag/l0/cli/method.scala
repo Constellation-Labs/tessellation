@@ -10,6 +10,7 @@ import io.constellationnetwork.ext.decline.WithOpts
 import io.constellationnetwork.ext.decline.decline._
 import io.constellationnetwork.node.shared.cli.opts.{genesisPathOpts, trustRatingsPathOpts}
 import io.constellationnetwork.node.shared.cli.{CliMethod, CollateralAmountOpts}
+import io.constellationnetwork.node.shared.config.MainnetRewardsConfig
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.infrastructure.statechannel.StateChannelAllowanceLists
 import io.constellationnetwork.schema.balance.Amount
