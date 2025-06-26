@@ -64,6 +64,12 @@ object GlobalDelegatedRewardsDistributor {
         )
         .map(f => f(epochProgress))
 
+    def getOneTimeRewardsConfig: F[List[OneTimeReward]] =
+      delegatedRewardsConfig.oneTimeRewards
+        .get(environment)
+        .pure[F]
+        .flatMap(Async[F].fromOption(_, new RuntimeException(s"Could not retrieve one time rewards config for env: $environment")))
+
     /** Calculate the variable amount of rewards to mint for this epoch based on the config and epoch progress.
       */
     def calculateVariableInflation(epochProgress: EpochProgress): F[Amount] = for {
@@ -91,6 +97,7 @@ object GlobalDelegatedRewardsDistributor {
             delegatedStakeDiffs,
             partitionedRecords,
             List.empty,
+            List.empty,
             BigDecimal(0L, mc),
             BigDecimal(0L, mc)
           )
@@ -105,6 +112,7 @@ object GlobalDelegatedRewardsDistributor {
               pctConfig,
               epochSPerYear
             )
+            oneTimeRewards <- getOneTimeRewardsConfig.map(_.filter(_.epoch === epochProgress))
             result <- applyDistribution(
               lastSnapshotContext,
               epochProgress,
@@ -112,6 +120,7 @@ object GlobalDelegatedRewardsDistributor {
               delegatedStakeDiffs,
               partitionedRecords,
               reservedRewards,
+              oneTimeRewards,
               facilitatorRewardPool,
               delegatorRewardPool
             )
@@ -445,6 +454,7 @@ object GlobalDelegatedRewardsDistributor {
       delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
       partitionedRecords: PartitionedStakeUpdates,
       reservedRewardDistribution: List[(Address, BigDecimal)],
+      oneTimeRewards: List[OneTimeReward],
       facilitatorRewardPool: BigDecimal,
       delegatorRewardPool: BigDecimal
     ): F[DelegatedRewardsResult] =
@@ -466,6 +476,8 @@ object GlobalDelegatedRewardsDistributor {
             lastSnapshotContext,
             delegatedStakeDiffs.acceptedCreates
           )
+        oneTimeRewardsTxs = SortedSet.from(oneTimeRewards.map(otr => RewardTransaction(otr.address, otr.amount)))
+        nodeOperatorRewardsTxs = nodeOperatorRewards ++ oneTimeRewardsTxs
 
         reservedAddressRewards <-
           calculateReservedRewards(
@@ -498,16 +510,15 @@ object GlobalDelegatedRewardsDistributor {
 
         totalEmittedReward <- DelegatedRewardsDistributor.sumMintedAmount(
           reservedAddressRewards,
-          nodeOperatorRewards,
+          nodeOperatorRewardsTxs,
           delegatorRewardsMap
         )
-
       } yield
         DelegatedRewardsResult(
           delegatorRewardsMap,
           updatedCreateDelegatedStakes,
           updatedWithdrawDelegatedStakes,
-          nodeOperatorRewards,
+          nodeOperatorRewardsTxs,
           reservedAddressRewards,
           withdrawalRewardTxs,
           totalEmittedReward

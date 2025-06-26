@@ -8,8 +8,10 @@ import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.config.MainnetRewardsConfig._
 import io.constellationnetwork.node.shared.config.types.{DelegatedRewardsConfig, _}
 import io.constellationnetwork.schema.NonNegFraction
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.transaction.TransactionAmount
 import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 
 import eu.timepit.refined.auto._
@@ -23,6 +25,9 @@ trait DelegatedRewardsConfigProvider {
 }
 
 object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvider {
+
+  val wallet1: Address = Address("DAG6bg5PHo9etT9wbnbxyDbnRdv7ge12RujwfeKR")
+  val wallet23: Address = Address("DAG4ARHfARnth2EW94GNVhWwwtZV6hqMkYYAEf46")
 
   def getConfig(): DelegatedRewardsConfig = DelegatedRewardsConfig(
     flatInflationRate = NonNegFraction.unsafeFrom(3, 100), // 3% flat inflation rate
@@ -108,6 +113,15 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
       AppEnvironment.Testnet -> testnetDistributionProgram,
       AppEnvironment.Integrationnet -> intnetDistributionProgram,
       AppEnvironment.Mainnet -> mainnetDistributionProgram
+    ),
+    oneTimeRewards = Map(
+      AppEnvironment.Dev -> List(),
+      AppEnvironment.Testnet -> List(),
+      AppEnvironment.Integrationnet -> List(),
+      AppEnvironment.Mainnet -> List(
+        OneTimeReward(EpochProgress(2957280L), wallet1, TransactionAmount(22_088_904_680_692_84L)),
+        OneTimeReward(EpochProgress(2957280L), wallet23, TransactionAmount(3_525_684_639_889_21L)) // 3_168_965_177_964_44L + 356_719_461_924_77L = 3_525_684_639_889_21L
+      )
     )
   )
 

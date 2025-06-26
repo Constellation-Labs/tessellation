@@ -75,6 +75,7 @@ object TessellationV3RewardsMigrationSuite extends SimpleIOSuite with Checkers {
         )
       }
     ),
+    Map.empty,
     Map.empty
   )
 
