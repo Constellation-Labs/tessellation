@@ -47,14 +47,14 @@ object GlobalDelegatedRewardsDistributor {
         // Define a high precision MathContext for consistent calculations
         private val mc: MathContext = new java.math.MathContext(24, java.math.RoundingMode.HALF_UP)
 
-    /** Return emission configuration applied by this rewards distributor
-      */
-    def getEmissionConfig(epochProgress: EpochProgress): F[EmissionConfigEntry] =
-      delegatedRewardsConfig.emissionConfig
-        .get(environment)
-        .pure[F]
-        .flatMap(Async[F].fromOption(_, new RuntimeException(s"Could not retrieve emission config for env: $environment")))
-        .map(f => f(epochProgress))
+        /** Return emission configuration applied by this rewards distributor
+          */
+        def getEmissionConfig(epochProgress: EpochProgress): F[EmissionConfigEntry] =
+          delegatedRewardsConfig.emissionConfig
+            .get(environment)
+            .pure[F]
+            .flatMap(Async[F].fromOption(_, new RuntimeException(s"Could not retrieve emission config for env: $environment")))
+            .map(f => f(epochProgress))
 
         def getDistributionProgram(epochProgress: EpochProgress): F[ProgramsDistributionConfig] =
           delegatedRewardsConfig.percentDistribution
@@ -66,12 +66,12 @@ object GlobalDelegatedRewardsDistributor {
             )
             .map(f => f(epochProgress))
 
-    /** Calculate the variable amount of rewards to mint for this epoch based on the config and epoch progress.
-      */
-    def calculateVariableInflation(epochProgress: EpochProgress): F[Amount] = for {
-      emConfig <- getEmissionConfig(epochProgress)
-      result <- calculateEmissionRewards(epochProgress, emConfig)
-    } yield result
+        /** Calculate the variable amount of rewards to mint for this epoch based on the config and epoch progress.
+          */
+        def calculateVariableInflation(epochProgress: EpochProgress): F[Amount] = for {
+          emConfig <- getEmissionConfig(epochProgress)
+          result <- calculateEmissionRewards(epochProgress, emConfig)
+        } yield result
 
         /** Implements the distribute method that encapsulates all reward calculation logic for a consensus cycle. This method replaces the
           * reward calculation functionality that was previously spread across the GlobalSnapshotAcceptanceManager.
@@ -332,23 +332,7 @@ object GlobalDelegatedRewardsDistributor {
         }
 
         private def getCurrentDagPriceAmount(epochProgress: EpochProgress): F[Amount] =
-          getEmissionConfig.flatMap { emConfig =>
-            val dagPrices = emConfig.dagPrices
-            if (dagPrices.isEmpty) Amount.empty.pure[F]
-            else {
-              val currentPrice = getCurrentDagPrice(epochProgress, dagPrices)
-              val priceValue = (currentPrice.toBigDecimal * DecimalUtils.DATUM_USD).setScale(0, RoundingMode.HALF_UP).longValue
-              if (priceValue <= 0) Amount.empty.pure[F]
-              else {
-                NonNegLong
-                  .from(priceValue)
-                  .pure[F]
-                  .map(_.leftMap(new IllegalArgumentException(_)))
-                  .flatMap(Async[F].fromEither(_))
-                  .map(Amount(_))
-              }
-            }
-          }
+          latestRewardsRef.get.map(_.head.currentDagPrice)
 
         private def calculateDelegatorRewards(
           activeDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]],

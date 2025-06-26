@@ -162,28 +162,25 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
 
   private def getRewardsInfo: F[RewardsInfo] =
     for {
-      latestTick <- delegatedRewardsDistributor.getKnownRewardsTicks.map(_.headOption)
-      result <- latestTick match {
-        case Some(rewardsOutput) =>
-          for {
-            emissionConfig <- delegatedRewardsDistributor.getEmissionConfig
-            nextPrice <- getNextDagPrice(emissionConfig, rewardsOutput.ep)
-            avgRewardAmount <- calculateAverageReward(rewardsOutput.totalRewardPerEpoch, rewardsOutput.totalDelegatedAmount)
-            totalRewardsPerYear <- calculateAverageRewardOverAYear(avgRewardAmount, emissionConfig.epochsPerYear)
-          } yield
-            RewardsInfo(
-              epochsPerYear = emissionConfig.epochsPerYear,
-              currentDagPrice = rewardsOutput.currentDagPrice,
-              nextDagPrice = nextPrice,
-              totalDelegatedAmount = rewardsOutput.totalDelegatedAmount,
-              latestAverageRewardPerDag = avgRewardAmount,
-              totalDagAmount = rewardsOutput.totalDagAmount,
-              totalRewardPerEpoch = rewardsOutput.totalRewardPerEpoch,
-              totalRewardsPerYearEstimate = totalRewardsPerYear
-            )
-        case None =>
-          Async[F].raiseError(new RuntimeException("No rewards data available"))
-      }
+      latestRewardOutput <- delegatedRewardsDistributor.getKnownRewardsTicks
+        .map(_.headOption)
+        .flatMap(Async[F].fromOption(_, new RuntimeException(s"Could not retrieve latest reward output")))
+      result <- for {
+        emissionConfig <- delegatedRewardsDistributor.getEmissionConfig(latestRewardOutput.ep)
+        nextPrice <- getNextDagPrice(emissionConfig, latestRewardOutput.ep)
+        avgRewardAmount <- calculateAverageReward(latestRewardOutput.totalRewardPerEpoch, latestRewardOutput.totalDelegatedAmount)
+        totalRewardsPerYear <- calculateAverageRewardOverAYear(avgRewardAmount, emissionConfig.epochsPerYear)
+      } yield
+        RewardsInfo(
+          epochsPerYear = emissionConfig.epochsPerYear,
+          currentDagPrice = latestRewardOutput.currentDagPrice,
+          nextDagPrice = nextPrice,
+          totalDelegatedAmount = latestRewardOutput.totalDelegatedAmount,
+          latestAverageRewardPerDag = avgRewardAmount,
+          totalDagAmount = latestRewardOutput.totalDagAmount,
+          totalRewardPerEpoch = latestRewardOutput.totalRewardPerEpoch,
+          totalRewardsPerYearEstimate = totalRewardsPerYear
+        )
     } yield result
 
   private def getNextDagPrice(emConfig: EmissionConfigEntry, epochProgress: EpochProgress): F[NextDagPrice] = {

@@ -108,7 +108,8 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
       AppEnvironment.Testnet -> testnetDistributionProgram,
       AppEnvironment.Integrationnet -> intnetDistributionProgram,
       AppEnvironment.Mainnet -> mainnetDistributionProgram
-    )
+    ),
+    maxKnownRewardTicks = 1440 // 24 * 60 = 1440 or approx. 24 hours at 1 EpochProgress per min
   )
 
   private val devnetDistributionProgram: EpochProgress => ProgramsDistributionConfig =
