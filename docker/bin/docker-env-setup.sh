@@ -56,9 +56,12 @@ CL_DOCKER_CL1_JOIN_PORT=${CL1_PORT_PREFIX}01
 CL_DOCKER_DL1_JOIN_PORT=${DL1_PORT_PREFIX}01
 
 
-CL_DOCKER_JAVA_OPTS="-Xms512M -Xss256K -Xmx8192M"
 
 EOF
+
+# maybe re-enable later.
+# CL_DOCKER_JAVA_OPTS="-Xms512M -Xss256K -Xmx8192M"
+
 
 for i in 0 1 2; do
   cp ./nodes/.env ./nodes/$i/.env

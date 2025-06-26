@@ -24,7 +24,7 @@ clean-docker:
 	@bash docker/bin/tessellation-docker-cleanup.sh
 
 clean-configs:
-	@rm -rf ./nodes
+	@bash docker/bin/clean-configs.sh
 
 clean:
 	@bash sbt clean
