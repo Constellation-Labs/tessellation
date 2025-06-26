@@ -1,7 +1,7 @@
 package io.constellationnetwork.node.shared.config
 
 import cats.data.NonEmptySet
-import cats.implicits.catsSyntaxPartialOrder
+import cats.syntax.option._
 
 import scala.collection.immutable.SortedMap
 import scala.concurrent.duration.FiniteDuration
@@ -56,7 +56,7 @@ object types {
     delegatedStaking: DelegatedStakingConfig,
     fieldsAddedOrdinals: FieldsAddedOrdinals,
     metagraphsSync: MetagraphsSyncConfig,
-    priceOracle: PriceOracleConfig
+    priceOracle: Map[AppEnvironment, PriceOracleConfig]
   )
 
   case class SharedConfig(
@@ -247,4 +247,8 @@ object types {
     allowedMetagraphIds: Option[List[Address]],
     minEpochsBetweenUpdates: NonNegLong
   )
+
+  object PriceOracleConfig {
+    val default = PriceOracleConfig(List.empty.some, NonNegLong.MaxValue)
+  }
 }
