@@ -19,6 +19,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusSto
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.consensus.update.UnlockConsensusUpdate
+import io.constellationnetwork.node.shared.infrastructure.fork.ForkDetect
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.schema.node.NodeState
@@ -227,10 +228,8 @@ object ConsensusStateUpdater {
         val isForked = majorityObservationHash =!= ownObservationHash
 
         if (isForked) {
+          ForkDetect.exitOnFeature("CL_EXIT_ON_FORK")
 
-          if (scala.sys.env.get("CL_EXIT_ON_FORK").exists(_ == "true")) {
-            System.exit(1)
-          }
           val majorityForkPeers = observations.collect {
             case (peerId, observationHash) if observationHash === majorityObservationHash => peerId
           }.toList

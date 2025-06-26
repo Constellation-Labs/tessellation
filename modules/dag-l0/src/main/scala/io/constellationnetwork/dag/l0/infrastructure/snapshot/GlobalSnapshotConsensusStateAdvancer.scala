@@ -21,6 +21,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
+import io.constellationnetwork.node.shared.infrastructure.fork.ForkDetect
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.SnapshotConsensusFunctions.gossipForkInfo
@@ -166,19 +167,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                             gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
                           facilitators = state.facilitators.value
                           _ = {
-                            if (sys.env.get("CL_EXIT_ON_FOLLOWER_ADVANCER").contains("true")) {
-                              sys.env.get("CL_FOLLOWER_ID") match {
-                                case Some(id) =>
-                                  val peerId = PeerId(Hex(id))
-                                  val hasFollowerPeer = facilitators.contains(peerId)
-                                  if (!hasFollowerPeer) {
-                                    println("Exit in advancer to missing follower peer")
-                                    System.exit(1)
-                                  }
-                                case _ =>
-                              }
-                            }
-
+                            ForkDetect.exitOnCheck("CL_EXIT_ON_FOLLOWER_ADVANCER", () => facilitators.toSet)
+                            ()
                           }
                           newState =
                             state.copy(status =

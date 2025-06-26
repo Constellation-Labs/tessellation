@@ -16,10 +16,12 @@ import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
+import io.constellationnetwork.node.shared.domain.fork.ForkDetect
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
+import io.constellationnetwork.node.shared.infrastructure.fork
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.node.NodeState
@@ -333,18 +335,7 @@ object Download {
       clusterStorage.getResponsivePeers
         .map(NodeState.ready)
         .map { peers =>
-          if (sys.env.get("CL_EXIT_ON_FOLLOWER_DOWNLOAD").contains("true")) {
-            sys.env.get("CL_FOLLOWER_ID") match {
-              case Some(id) =>
-                val peerId = PeerId(Hex(id))
-                val hasPriorityPeer = peers.exists(p => p.id === peerId)
-                if (!hasPriorityPeer) {
-                  println("Exit on fork due to missing priority peer")
-                  System.exit(1)
-                }
-              case _ =>
-            }
-          }
+          fork.ForkDetect.exitOnCheck("CL_EXIT_ON_FOLLOWER_DOWNLOAD", () => peers.map(_.id))
           peers
         }
         .map(_.toList)

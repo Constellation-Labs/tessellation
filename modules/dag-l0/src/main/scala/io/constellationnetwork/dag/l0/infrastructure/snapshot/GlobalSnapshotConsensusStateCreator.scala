@@ -4,7 +4,6 @@ import cats.effect.Async
 import cats.effect.kernel.{Clock, Sync}
 import cats.syntax.all._
 
-import io.constellationnetwork.dag.l0.infrastructure.metrics.ConsensusMetrics
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{CollectingFacilities, GlobalConsensusKind, GlobalConsensusOutcome}
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.node.shared.domain.gossip.Gossip

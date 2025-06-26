@@ -12,6 +12,7 @@ import cats.syntax.traverse._
 import io.constellationnetwork.node.shared.config.types.GossipRoundConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
+import io.constellationnetwork.node.shared.infrastructure.fork.ForkDetect
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.errorShow
 import io.constellationnetwork.schema.peer.Peer
@@ -19,7 +20,6 @@ import io.constellationnetwork.schema.peer.Peer
 import eu.timepit.refined.auto._
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-import io.constellationnetwork.node.shared.infrastructure.fork.ForkDetect
 
 trait GossipRoundRunner[F[_]] {
 
@@ -71,7 +71,7 @@ object GossipRoundRunner {
           for {
             _ <- Temporal[F].sleep(cfg.interval)
             allPeers <- clusterStorage.getResponsivePeers
-            _ = ForkDetect.exitOnCheck("CL_EXIT_ON_FOLLOWER_GOSSIP", allPeers.map(_.id))
+            _ = ForkDetect.exitOnCheck("CL_EXIT_ON_FOLLOWER_GOSSIP", () => allPeers.map(_.id))
             selectedPeers <- selectedPeersR.get
             availablePeers = allPeers.diff(selectedPeers)
             drawnPeers <- Random[F].shuffleList(availablePeers.toList).map(_.take(cfg.fanout.value))
