@@ -44,9 +44,9 @@ if [ "$PURGE_CONFIG" = "true" ]; then
   echo "Purging config, removing $PROJECT_ROOT/nodes"
   sleep 1
   # strange issue with docker mount persistence, so we sleep and try twice, this may be removable now?
-  rm -rf $PROJECT_ROOT/nodes
+  ./docker/bin/clean-configs.sh
   sleep 1
-  rm -rf $PROJECT_ROOT/nodes || true
+  ./docker/bin/clean-configs.sh
   ls -la $PROJECT_ROOT/nodes || true
   echo "removed config, $PROJECT_ROOT/nodes"
 fi
