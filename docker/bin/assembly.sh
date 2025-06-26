@@ -64,12 +64,12 @@ mv ./docker/jars/dag-l1.jar ./docker/jars/gl1.jar
 
 if [ -n "$PUBLISH" ]; then
   echo "Publishing local"
-  sbt sdk/publishLocal
+  sbt --error sdk/publishLocal
 fi
 
 
 assemble_all_metagraph() {
-  sbt currencyL0/assembly currencyL1/assembly dataL1/assembly
+  sbt --error currencyL0/assembly currencyL1/assembly dataL1/assembly
 }
 
 
@@ -113,25 +113,25 @@ if [ -n "$METAGRAPH" ]; then
       if [ "$METAGRAPH_ML0" == "true" ]; then
         echo "Assembling L0"
         echo "Assembling currencyL0 with explicit version: $TESSELLATION_VERSION"
-        sbt currencyL0/assembly
+        sbt --error currencyL0/assembly
         override_set=true
       fi
       if [ "$METAGRAPH_CL1" == "true" ]; then
         echo "Assembling CL1"
         echo "Assembling currencyL1 with explicit version: $TESSELLATION_VERSION"
-        sbt currencyL1/assembly
+        sbt --error currencyL1/assembly
         override_set=true
       fi
       if [ "$METAGRAPH_DL1" == "true" ]; then
         echo "Assembling DL1"
         echo "Assembling dataL1 with explicit version: $TESSELLATION_VERSION"
-        sbt dataL1/assembly
+        sbt --error dataL1/assembly
         override_set=true
       fi
       if [ "$override_set" == "false" ]; then
         echo "Assembling ML0 according to default behavior"
         echo "Assembling currencyL0 with explicit version: $TESSELLATION_VERSION"
-        sbt currencyL0/assembly
+        sbt --error currencyL0/assembly
       fi
     else
       echo "Found existing assemblies, and skip assembly was set to true"
