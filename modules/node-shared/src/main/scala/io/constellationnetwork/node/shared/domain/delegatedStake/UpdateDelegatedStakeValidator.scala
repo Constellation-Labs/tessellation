@@ -273,13 +273,19 @@ object UpdateDelegatedStakeValidator {
 
   case class InvalidStake(parent: Hash) extends UpdateDelegatedStakeValidationError
 
+  case class DuplicatedStake(parent: Hash) extends UpdateDelegatedStakeValidationError
+
   case class InvalidTokenLock(tokenLockRef: Hash) extends UpdateDelegatedStakeValidationError
+
+  case class DuplicatedTokenLock(tokenLockRef: Hash) extends UpdateDelegatedStakeValidationError
 
   case class InvalidSourceAddress(tokenLockRef: Hash) extends UpdateDelegatedStakeValidationError
 
   case class AlreadyWithdrawn(parent: Hash) extends UpdateDelegatedStakeValidationError
 
   case class InvalidParent(parent: DelegatedStakeReference) extends UpdateDelegatedStakeValidationError
+
+  case class DuplicatedParent(parent: DelegatedStakeReference) extends UpdateDelegatedStakeValidationError
 
   case class NodeIdParamsNotFilled(nodeId: PeerId) extends UpdateDelegatedStakeValidationError
 
