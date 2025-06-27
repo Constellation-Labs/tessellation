@@ -20,6 +20,7 @@ import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
+import io.constellationnetwork.node.shared.infrastructure.fork.ForkDetect
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.node.NodeState
@@ -398,6 +399,10 @@ object Download {
     def fetchSnapshot(hash: Option[Hash], ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Signed[GlobalIncrementalSnapshot]] =
       clusterStorage.getResponsivePeers
         .map(NodeState.ready)
+        .map { peers =>
+          ForkDetect.exitOnCheck("CL_EXIT_ON_FOLLOWER_DOWNLOAD", () => peers.map(_.id))
+          peers
+        }
         .map(_.toList)
         .flatMap(Random[F].shuffleList)
         .flatTap { _ =>
