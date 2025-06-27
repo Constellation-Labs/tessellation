@@ -120,26 +120,28 @@ object CurrencySnapshotAcceptanceManager {
     globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
-  ): F[CurrencySnapshotAcceptanceManager[F]] =
-    SignallingRef
+  ): F[CurrencySnapshotAcceptanceManager[F]] = for {
+    lastGlobalSnapshotsCached <- SignallingRef
       .of[F, Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]](SortedMap.empty)
-      .map(
-        make[F](
-          fieldsAddedOrdinals,
-          environment,
-          lastGlobalSnapshotsSyncConfig,
-          blockAcceptanceManager,
-          tokenLockBlockAcceptanceManager,
-          allowSpendBlockAcceptanceManager,
-          collateral,
-          messageValidator,
-          feeTransactionValidator,
-          globalSnapshotSyncValidator,
-          lastNGlobalSnapshotStorage,
-          lastGlobalSnapshotStorage,
-          _
-        )
-      )
+    globalOrdinalsQueriedForSpendActions <- SignallingRef
+      .of[F, SortedSet[SnapshotOrdinal]](SortedSet.empty)
+    result = make[F](
+      fieldsAddedOrdinals,
+      environment,
+      lastGlobalSnapshotsSyncConfig,
+      blockAcceptanceManager,
+      tokenLockBlockAcceptanceManager,
+      allowSpendBlockAcceptanceManager,
+      collateral,
+      messageValidator,
+      feeTransactionValidator,
+      globalSnapshotSyncValidator,
+      lastNGlobalSnapshotStorage,
+      lastGlobalSnapshotStorage,
+      lastGlobalSnapshotsCached,
+      globalOrdinalsQueriedForSpendActions
+    )
+  } yield result
 
   def make[F[_]: Async: Parallel](
     fieldsAddedOrdinals: FieldsAddedOrdinals,
@@ -154,7 +156,8 @@ object CurrencySnapshotAcceptanceManager {
     globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    lastGlobalSnapshotsCached: SignallingRef[F, Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]]
+    lastGlobalSnapshotsCached: SignallingRef[F, Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]],
+    globalOrdinalsQueriedForSpendActions: SignallingRef[F, SortedSet[SnapshotOrdinal]]
   ): CurrencySnapshotAcceptanceManager[F] = new CurrencySnapshotAcceptanceManager[F] {
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F]("CurrencySnapshotAcceptanceManager")
 
@@ -611,17 +614,31 @@ object CurrencySnapshotAcceptanceManager {
           metagraphSyncData.get(currencyId) match {
             case None => empty
             case Some(syncDataInfo) =>
-              val unappliedOrdinals = syncDataInfo.unappliedGlobalChangeOrdinals
-                .filter(_ < lastSyncGlobalSnapshot.ordinal)
-
-              if (unappliedOrdinals.isEmpty) {
-                empty
-              } else {
-                logger.info(
-                  s"Metagraph $currencyId: Extracting spend actions from ordinals: ${unappliedOrdinals.map(_.show).mkString(",")}"
-                ) >>
-                  processUnappliedOrdinals(unappliedOrdinals, lastGlobalSnapshots, getGlobalSnapshotByOrdinal)
-              }
+              for {
+                ordinalsAlreadyQueried <- globalOrdinalsQueriedForSpendActions.get
+                unappliedOrdinals = syncDataInfo.unappliedGlobalChangeOrdinals
+                  .filter(globalOrdinal =>
+                    globalOrdinal < lastSyncGlobalSnapshot.ordinal && !ordinalsAlreadyQueried.contains(globalOrdinal)
+                  )
+                result <-
+                  if (unappliedOrdinals.isEmpty) {
+                    empty
+                  } else {
+                    for {
+                      _ <- logger.info(
+                        s"Metagraph $currencyId: Extracting spend actions from ordinals: ${unappliedOrdinals.map(_.show).mkString(",")}"
+                      )
+                      ordinalsProcessed <- processUnappliedOrdinals(unappliedOrdinals, lastGlobalSnapshots, getGlobalSnapshotByOrdinal)
+                      _ <- globalOrdinalsQueriedForSpendActions.update { current =>
+                        (current ++ unappliedOrdinals).toList
+                          .sortBy(_.value.value)(Ordering[Long].reverse)
+                          .take(lastGlobalSnapshotsSyncConfig.maxLastGlobalSnapshotsInMemory)
+                          .sorted
+                          .toSortedSet
+                      }
+                    } yield ordinalsProcessed
+                  }
+              } yield result
           }
       }
     }
