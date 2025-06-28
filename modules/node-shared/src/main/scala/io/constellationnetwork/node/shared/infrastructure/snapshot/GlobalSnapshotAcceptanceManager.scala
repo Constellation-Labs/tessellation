@@ -1234,7 +1234,7 @@ object GlobalSnapshotAcceptanceManager {
       snapshots.flatMap {
         case Left(left)           => left.globalSyncView.map(_.ordinal)
         case Right((snapshot, _)) => snapshot.globalSyncView.map(_.ordinal)
-      }.foldLeft(SnapshotOrdinal.MinValue)(_ max _)
+      }.foldLeft(SnapshotOrdinal.MinValue)(_ min _)
 
     private def extractCurrencySpendTransactions(spendActions: Map[Address, List[SpendAction]]) =
       spendActions.values.flatten
