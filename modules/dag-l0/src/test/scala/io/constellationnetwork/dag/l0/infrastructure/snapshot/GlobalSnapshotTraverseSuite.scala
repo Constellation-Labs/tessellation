@@ -368,7 +368,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager
         .make[IO](
           FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty),
-          MetagraphsSyncConfig(PosInt(100)),
+          MetagraphsSyncConfig(PosInt(100), NonNegLong(10)),
           Dev,
           blockAcceptanceManager,
           allowSpendBlockAcceptanceManager,
