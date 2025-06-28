@@ -1199,6 +1199,7 @@ object GlobalSnapshotAcceptanceManager {
         case (address, snapshots) =>
           val currentInfo = existingData.getOrElse(address, MetagraphSyncDataInfo.empty)
           val lastSyncOrdinal = extractLastSynchronizedOrdinal(snapshots)
+          val lastSyncOrdinalWithOffset = lastSyncOrdinal.plus(metagraphsSyncConfig.offsetToCleanUnappliedOrdinals)
 
           val updatedInfo = currentInfo
             .focus(_.globalOrdinalLastAcceptedOn)
@@ -1206,7 +1207,7 @@ object GlobalSnapshotAcceptanceManager {
             .focus(_.globalEpochProgressLastAcceptedOn)
             .replace(currentEpochProgress)
             .focus(_.unappliedGlobalChangeOrdinals)
-            .modify(_.filter(_ >= lastSyncOrdinal))
+            .modify(_.filter(_ >= lastSyncOrdinalWithOffset))
 
           address -> updatedInfo
       }.toSortedMap
