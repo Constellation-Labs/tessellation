@@ -307,7 +307,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       GlobalSnapshotAcceptanceManager
         .make[IO](
           FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty),
-          MetagraphsSyncConfig(PosInt(100), NonNegLong(10)),
+          MetagraphsSyncConfig(PosInt(100)),
           Dev,
           bam,
           asbam,

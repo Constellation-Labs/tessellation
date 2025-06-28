@@ -200,7 +200,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
               globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
                 FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty),
-                MetagraphsSyncConfig(PosInt(100), NonNegLong(10)),
+                MetagraphsSyncConfig(PosInt(100)),
                 Dev,
                 BlockAcceptanceManager.make[IO](validators.blockValidator, Hasher.forKryo[IO]),
                 AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
