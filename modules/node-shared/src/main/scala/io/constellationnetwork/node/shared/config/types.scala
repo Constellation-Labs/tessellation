@@ -34,7 +34,8 @@ object types {
   )
 
   case class MetagraphsSyncConfig(
-    maxUnappliedGlobalChangeOrdinals: PosInt
+    maxUnappliedGlobalChangeOrdinals: PosInt,
+    offsetToCleanUnappliedOrdinals: NonNegLong
   )
 
   case class SharedConfigReader(
