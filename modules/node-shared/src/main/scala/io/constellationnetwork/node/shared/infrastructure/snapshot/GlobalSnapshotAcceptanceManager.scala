@@ -5,6 +5,7 @@ import cats.effect.Async
 import cats.syntax.all._
 import cats.{MonadThrow, Parallel}
 
+import scala.collection.MapView
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
@@ -267,7 +268,7 @@ object GlobalSnapshotAcceptanceManager {
 
         globalBalances = Map(none[Address] -> updatedBalancesByRewards)
 
-        sharedArtifacts: Map[Address, List[SharedArtifact]] =
+        sharedArtifacts: MapView[Address, List[SharedArtifact]] =
           incomingCurrencySnapshots.toList.map {
             case (address, snapshots) =>
               val artifacts: List[SharedArtifact] = snapshots.flatMap {
@@ -277,13 +278,14 @@ object GlobalSnapshotAcceptanceManager {
               Map(address -> artifacts)
           }
             .foldLeft(Map.empty[Address, List[SharedArtifact]])(_ |+| _)
+            .view
 
-        spendActions = sharedArtifacts.view
+        spendActions = sharedArtifacts
           .mapValues(_.collect { case sa: SpendAction => sa })
           .filter { case (_, actions) => actions.nonEmpty }
           .toMap
 
-        pricingUpdates = sharedArtifacts.view
+        pricingUpdates = sharedArtifacts
           .mapValues(_.collect { case pu: PricingUpdate => pu })
           .filter { case (_, updates) => updates.nonEmpty }
           .toMap
@@ -332,13 +334,9 @@ object GlobalSnapshotAcceptanceManager {
         acceptedGlobalAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
         acceptedGlobalTokenLocks = tokenLockBlockAcceptanceResult.accepted.flatMap(_.value.tokenLocks.toList)
 
-        activeAllowSpendsFromCurrencySnapshots = incomingCurrencySnapshots.flatMap {
-          case (address, snapshots) =>
-            snapshots.reverse.collectFirst {
-              case Right((_, info)) if info.activeAllowSpends.isDefined =>
-                address -> info.activeAllowSpends.get
-            }
-        }
+        activeAllowSpendsFromCurrencySnapshots = currencySnapshots.map { case (key, value) => (key, value) }
+          .mapFilter(_.toOption.flatMap { case (_, info) => info.activeAllowSpends })
+
         globalAllowSpends = acceptedGlobalAllowSpends
           .groupBy(_.value.source)
           .view
@@ -428,7 +426,7 @@ object GlobalSnapshotAcceptanceManager {
         )
 
         updatedTokenLockBalances = updateTokenLockBalances(
-          incomingCurrencySnapshots,
+          currencySnapshots,
           lastSnapshotContext.tokenLockBalances
         )
 
@@ -560,7 +558,7 @@ object GlobalSnapshotAcceptanceManager {
 
         updatedAcceptedMetagraphSyncData = acceptMetagraphSyncData(
           lastSnapshotContext,
-          incomingCurrencySnapshots,
+          currencySnapshots,
           acceptedSpendActions,
           ordinal,
           epochProgress
@@ -891,23 +889,17 @@ object GlobalSnapshotAcceptanceManager {
     }
 
     private def updateTokenLockBalances(
-      currencySnapshots: SortedMap[Address, List[CurrencySnapshotWithState]],
+      currencySnapshots: SortedMap[Address, CurrencySnapshotWithState],
       maybeLastTokenLockBalances: Option[SortedMap[Address, SortedMap[Address, Balance]]]
     ): SortedMap[Address, SortedMap[Address, Balance]] = {
       val lastTokenLockBalances = maybeLastTokenLockBalances.getOrElse(SortedMap.empty[Address, SortedMap[Address, Balance]])
 
       currencySnapshots.foldLeft(lastTokenLockBalances) {
         case (accTokenLockBalances, (metagraphId, currencySnapshotWithState)) =>
-          val activeTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] =
-            currencySnapshotWithState.collect {
-              case Right((_, info)) => info.activeTokenLocks.getOrElse(SortedMap.empty[Address, SortedSet[Signed[TokenLock]]])
-            }.foldLeft(SortedMap.empty[Address, SortedSet[Signed[TokenLock]]]) { (acc, curr) =>
-              curr.foldLeft(acc) {
-                case (accMap, (address, locks)) =>
-                  val mergedLocks = accMap.getOrElse(address, SortedSet.empty[Signed[TokenLock]]) ++ locks
-                  accMap.updated(address, mergedLocks)
-              }
-            }
+          val activeTokenLocks = currencySnapshotWithState match {
+            case Left(_)          => SortedMap.empty[Address, SortedSet[Signed[TokenLock]]]
+            case Right((_, info)) => info.activeTokenLocks.getOrElse(SortedMap.empty[Address, SortedSet[Signed[TokenLock]]])
+          }
 
           val metagraphTokenLocksAmounts = activeTokenLocks.foldLeft(SortedMap.empty[Address, Balance]) {
             case (accTokenLockBalances, addressTokenLocks) =>
@@ -1166,7 +1158,7 @@ object GlobalSnapshotAcceptanceManager {
 
     private def acceptMetagraphSyncData(
       lastSnapshotContext: GlobalSnapshotInfo,
-      incomingCurrencySnapshots: SortedMap[Address, List[CurrencySnapshotWithState]],
+      currencySnapshots: SortedMap[Address, CurrencySnapshotWithState],
       acceptedSpendActions: Map[Address, List[SpendAction]],
       currentGlobalOrdinal: SnapshotOrdinal,
       currentGlobalEpochProgress: EpochProgress
@@ -1174,7 +1166,7 @@ object GlobalSnapshotAcceptanceManager {
       lastSnapshotContext.metagraphSyncData.map { existingData =>
         val updatedFromSnapshots = updateFromCurrencySnapshots(
           existingData,
-          incomingCurrencySnapshots,
+          currencySnapshots,
           currentGlobalOrdinal,
           currentGlobalEpochProgress
         )
@@ -1191,14 +1183,14 @@ object GlobalSnapshotAcceptanceManager {
 
     private def updateFromCurrencySnapshots(
       existingData: SortedMap[Address, MetagraphSyncDataInfo],
-      currencySnapshots: SortedMap[Address, List[CurrencySnapshotWithState]],
+      snapshots: SortedMap[Address, CurrencySnapshotWithState],
       currentOrdinal: SnapshotOrdinal,
       currentEpochProgress: EpochProgress
     ): SortedMap[Address, MetagraphSyncDataInfo] =
-      currencySnapshots.map {
-        case (address, snapshots) =>
+      snapshots.map {
+        case (address, snapshot) =>
           val currentInfo = existingData.getOrElse(address, MetagraphSyncDataInfo.empty)
-          val lastSyncOrdinal = extractLastSynchronizedOrdinal(snapshots)
+          val lastSyncOrdinal = extractLastSynchronizedOrdinal(snapshot)
 
           val updatedInfo = currentInfo
             .focus(_.globalOrdinalLastAcceptedOn)
@@ -1230,11 +1222,11 @@ object GlobalSnapshotAcceptanceManager {
       }
     }
 
-    private def extractLastSynchronizedOrdinal(snapshots: List[CurrencySnapshotWithState]): SnapshotOrdinal =
-      snapshots.flatMap {
-        case Left(left)           => left.globalSyncView.map(_.ordinal)
-        case Right((snapshot, _)) => snapshot.globalSyncView.map(_.ordinal)
-      }.foldLeft(SnapshotOrdinal.MinValue)(_ min _)
+    private def extractLastSynchronizedOrdinal(snapshot: CurrencySnapshotWithState): SnapshotOrdinal =
+      snapshot match {
+        case Left(value)  => value.globalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue)
+        case Right(value) => value._1.globalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue)
+      }
 
     private def extractCurrencySpendTransactions(spendActions: Map[Address, List[SpendAction]]) =
       spendActions.values.flatten
