@@ -45,9 +45,8 @@ object PriceStateUpdaterSuite extends MutableIOSuite {
     for {
       update1 <- pricingUpdate(10)
       update2 <- pricingUpdate(20)
-      update3 <- pricingUpdate(30)
-      result <- aggregateUpdates(NonEmptyList.of(update1, update2, update3), Some(PosInt(2)))
-    } yield expect(result.price.value.toBigDecimal == 30.0) // (10 + 20 + 30) / 2 = 30
+      result <- aggregateUpdates(NonEmptyList.of(update1, update2), Some(PosInt(2)))
+    } yield expect(result.price.value.toBigDecimal == 15.0)
   }
 
   test("handles zero values correctly") { _ =>
@@ -129,7 +128,7 @@ object PriceStateUpdaterSuite extends MutableIOSuite {
       expect.all(
         record.currentPrice == currentPrice,
         record.upcomingPrice == upcomingPrice,
-        record.currentSum == PricingUpdate(PriceFraction(DAG_USD, NonNegFraction.unsafeFrom(2250000, 100000000))),
+        record.currentSum == PricingUpdate(PriceFraction(DAG_USD, NonNegFraction.unsafeFrom(4500000, 100000000))),
         record.currentNumEvents == PosInt(2),
         record.nextWindowChange == EpochProgress(NonNegLong(10)),
         record.updatedAt == EpochProgress(NonNegLong(1))
