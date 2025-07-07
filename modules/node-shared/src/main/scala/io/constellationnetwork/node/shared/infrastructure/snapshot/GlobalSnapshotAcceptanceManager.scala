@@ -5,6 +5,7 @@ import cats.effect.Async
 import cats.syntax.all._
 import cats.{MonadThrow, Parallel}
 
+import scala.collection.MapView
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
@@ -48,7 +49,6 @@ import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral._
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.priceOracle.{PriceRecord, TokenPair}
 import io.constellationnetwork.schema.snapshot.MetagraphSyncDataInfo
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock._
@@ -338,7 +338,7 @@ object GlobalSnapshotAcceptanceManager {
         acceptedGlobalAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
         acceptedGlobalTokenLocks = tokenLockBlockAcceptanceResult.accepted.flatMap(_.value.tokenLocks.toList)
 
-        activeAllowSpendsFromCurrencySnapshots = currencySnapshots.map { case (key, value) => (key, value) }
+        activeAllowSpendsFromCurrencySnapshots = currencySnapshots
           .mapFilter(_.toOption.flatMap { case (_, info) => info.activeAllowSpends })
 
         globalAllowSpends = acceptedGlobalAllowSpends

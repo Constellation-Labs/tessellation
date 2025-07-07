@@ -120,7 +120,11 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
       AppEnvironment.Integrationnet -> List(),
       AppEnvironment.Mainnet -> List(
         OneTimeReward(EpochProgress(2957280L), wallet1, TransactionAmount(22_088_904_680_692_84L)),
-        OneTimeReward(EpochProgress(2957280L), wallet23, TransactionAmount(3_525_684_639_889_21L)) // 3_168_965_177_964_44L + 356_719_461_924_77L = 3_525_684_639_889_21L
+        OneTimeReward(
+          EpochProgress(2957280L),
+          wallet23,
+          TransactionAmount(3_525_684_639_889_21L)
+        ) // 3_168_965_177_964_44L + 356_719_461_924_77L = 3_525_684_639_889_21L
       )
     )
   )
