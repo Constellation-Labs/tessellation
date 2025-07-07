@@ -2,9 +2,10 @@ package io.constellationnetwork.schema
 
 import cats.data.NonEmptyList
 
+import scala.collection.immutable.SortedSet
+
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.priceOracle._
 import io.constellationnetwork.schema.swap.{CurrencyId, SwapAmount}
 import io.constellationnetwork.schema.tokenLock.TokenLockAmount
@@ -47,4 +48,9 @@ object artifact {
   case class PricingUpdate(price: PriceFraction) extends SharedArtifact {
     def tokenPair: TokenPair = price.tokenPair
   }
+
+  @derive(decoder, encoder, order, ordering, show)
+  case class GlobalSnapshotsProcessed(
+    ordinals: SortedSet[SnapshotOrdinal]
+  ) extends SharedArtifact
 }
