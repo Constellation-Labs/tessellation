@@ -202,6 +202,14 @@ cd $PROJECT_ROOT/.github/action_scripts/delegated_staking
 node delegated-staking.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX testDelegatedStaking
 
 echo "------------------------------------------------"
+echo "Running bulk submit test"
+echo "------------------------------------------------"
+
+cd $PROJECT_ROOT/.github/action_scripts/send_transactions
+node bulk-submit-test.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX
+show_time "Bulk submit test completed"
+
+echo "------------------------------------------------"
 echo "End-to-end tests completed"
 echo "------------------------------------------------"
 
