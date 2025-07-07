@@ -35,6 +35,7 @@ object PriceStateUpdater {
     environment: AppEnvironment,
     delegatedRewardsConfigProvider: DelegatedRewardsConfigProvider
   ): PriceStateUpdater[F] = new PriceStateUpdater[F] {
+
     override def updatePriceState(
       lastPriceState: SortedMap[TokenPair, PriceRecord],
       acceptedPricingUpdates: List[PricingUpdate],
@@ -66,22 +67,25 @@ object PriceStateUpdater {
                           updatedAt = epochProgress
                         )
                     case Some(lastPriceRecord) =>
-                      if (lastPriceRecord.nextWindowChange === epochProgress) {
-                        PriceRecord(
-                          currentPrice = lastPriceRecord.upcomingPrice,
-                          upcomingPrice = lastPriceRecord.currentSum,
-                          currentSum = aggregatedPricingUpdate,
-                          currentNumEvents = PosInt(1),
-                          nextWindowChange = epochProgress |+| EpochProgress(emissionConfig.epochsPerMonth),
-                          updatedAt = epochProgress
-                        ).pure[F]
+                      if (lastPriceRecord.nextWindowChange <= epochProgress) {
+                        for {
+                          newUpcomingPrice <- aggregateUpdates(
+                            NonEmptyList.of(lastPriceRecord.currentSum),
+                            lastPriceRecord.currentNumEvents.some
+                          )
+                        } yield
+                          PriceRecord(
+                            currentPrice = lastPriceRecord.upcomingPrice,
+                            upcomingPrice = newUpcomingPrice,
+                            currentSum = aggregatedPricingUpdate,
+                            currentNumEvents = PosInt(1),
+                            nextWindowChange = lastPriceRecord.nextWindowChange |+| EpochProgress(emissionConfig.epochsPerMonth),
+                            updatedAt = epochProgress
+                          )
                       } else {
                         val newCurrentNumEvents = lastPriceRecord.currentNumEvents |+| PosInt(1)
                         for {
-                          newCurrentSum <- aggregateUpdates(
-                            NonEmptyList.of(lastPriceRecord.currentSum, aggregatedPricingUpdate),
-                            newCurrentNumEvents.some
-                          )
+                          newCurrentSum <- addUpdates(lastPriceRecord.currentSum, aggregatedPricingUpdate)
                         } yield
                           lastPriceRecord
                             .focus(_.currentSum)
@@ -110,17 +114,27 @@ object PriceStateUpdater {
         .map(f => f(epochProgress))
   }
 
-  def aggregateUpdates[F[_]: Async](updates: NonEmptyList[PricingUpdate], numEvents: Option[PosInt] = None): F[PricingUpdate] =
-    if (updates.size == 1) {
+  def aggregateUpdates[F[_]: Async](updates: NonEmptyList[PricingUpdate], numEvents: Option[PosInt] = None): F[PricingUpdate] = {
+    val n = numEvents.map(_.value).getOrElse(updates.size)
+    if (n == 1) {
       updates.head.pure[F]
     } else {
       val sum = updates.toList.view.map(_.price.value.toBigDecimal).sum
-      val n = numEvents.map(_.value).getOrElse(updates.size)
       for {
         value <- NonNegFraction.fromBigDecimal(sum / n)
         price = PriceFraction(tokenPair = updates.head.tokenPair, value = value)
       } yield PricingUpdate(price)
     }
+  }
+
+  def addUpdates[F[_]: Async](update1: PricingUpdate, update2: PricingUpdate): F[PricingUpdate] = {
+    val value1 = update1.price.value.toBigDecimal
+    val value2 = update2.price.value.toBigDecimal
+    for {
+      value <- NonNegFraction.fromBigDecimal(value1 + value2)
+      price = PriceFraction(tokenPair = update1.tokenPair, value = value)
+    } yield PricingUpdate(price)
+  }
 
   private def initialPrice[F[_]: Async](tokenPair: TokenPair, emConfig: EmissionConfigEntry): F[PricingUpdate] = {
     val dagPrices = emConfig.dagPrices
