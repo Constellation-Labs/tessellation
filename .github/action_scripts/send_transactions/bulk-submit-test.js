@@ -165,6 +165,10 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
 }
 
 const bulkSubmitTest = async () => {
+  // Configuration flags
+  const ENABLE_TRANSACTIONS = true // Set to true to actually send transactions
+  const numTransactionsToSend = 100 // Number of transactions to send
+  
   const args = process.argv.slice(2)
   
   if (args.length < 2) {
@@ -187,25 +191,34 @@ const bulkSubmitTest = async () => {
   logMessage('Loading private keys...')
   const keys = loadPrivateKeys()
   
-  // We need at least 30 keys for this test
-  const requiredKeys = 30
-  
   logMessage(`Found ${keys.length} keys`)
   
   logMessage('Setting up accounts...')
-  const accounts = await setupAccounts(keys.slice(0, Math.min(keys.length, requiredKeys)), networkConfig)
+  // Use all available keys instead of limiting to requiredKeys
+  const accounts = ENABLE_TRANSACTIONS 
+    ? await setupAccounts(keys, networkConfig)
+    : keys.map((key, index) => ({ 
+        account: null, 
+        address: key.address, 
+        index: key.index 
+      }))
   
   // Check initial balances
-  for (const acc of accounts) {
-    try {
-      const balance = await acc.account.getBalance()
-      logMessage(`Account ${acc.index} (${acc.address}) balance: ${balance}`)
-    } catch (error) {
-      logMessage(`Failed to get balance for account ${acc.index}: ${error.message}`)
+  if (ENABLE_TRANSACTIONS) {
+    for (const acc of accounts) {
+      try {
+        const balance = await acc.account.getBalance()
+        logMessage(`Account ${acc.index} (${acc.address}) balance: ${balance}`)
+      } catch (error) {
+        logMessage(`Failed to get balance for account ${acc.index}: ${error.message}`)
+      }
     }
+  } else {
+    logMessage('Skipping balance checks in debug mode')
   }
   
-  logMessage(`Starting bulk submit test. Will submit ${requiredKeys} transactions, one every 5 seconds.`)
+  logMessage(`Starting bulk submit test. Will submit ${numTransactionsToSend} transactions, one every 5 seconds.`)
+  logMessage(`Transaction sending is ${ENABLE_TRANSACTIONS ? 'ENABLED' : 'DISABLED (debug mode)'}`)
   
   // Track test start time
   const testStartTime = Date.now()
@@ -218,68 +231,77 @@ const bulkSubmitTest = async () => {
   const submittedTransactions = []
   
   // Submit transactions rotating through available accounts
-  for (let i = 0; i < requiredKeys; i++) {
+  for (let i = 0; i < numTransactionsToSend; i++) {
     const fromAccountIndex = i % accounts.length
     const toAccountIndex = (i + 1) % accounts.length
     
     const fromAccount = accounts[fromAccountIndex]
     const toAccount = accounts[toAccountIndex]
     
-    // logMessage(`[${i + 1}/${requiredKeys}] Submitting transaction from account ${fromAccount.index} to account ${toAccount.index}`)
+    logMessage(`[${i + 1}/${numTransactionsToSend}] Submitting transaction from account ${fromAccount.index} to account ${toAccount.index}`)
     
     const startTime = Date.now()
-    // const hash = await submitTransaction(
-    //   fromAccount.account,
-    //   toAccount.address,
-    //   1, // amount
-    //   0  // fee
-    // )
-    const hash = "0x1234567890"
+    let hash = null
+    
+    if (ENABLE_TRANSACTIONS) {
+      hash = await submitTransaction(
+        fromAccount.account,
+        toAccount.address,
+        1, // amount
+        0  // fee
+      )
+    } else {
+      // Debug mode - simulate successful transaction
+      hash = `debug_hash_${i + 1}`
+      await sleep(10) // Small delay to simulate transaction time
+    }
     if (hash) {
       transactionCount++
-      // submittedTransactions.push({
-      //   hash,
-      //   from: fromAccount.address,
-      //   to: toAccount.address,
-      //   timestamp: new Date().toISOString()
-      // })
-      logMessage(`Transaction ${transactionCount} submitted successfully. Hash: ${hash}`)
+      submittedTransactions.push({
+        hash,
+        from: fromAccount.address,
+        to: toAccount.address,
+        timestamp: new Date().toISOString()
+      })
     } else {
       logMessage(`Transaction ${i + 1} submission failed`)
     }
     
     // Wait 5 seconds before next transaction (unless it's the last one)
-    if (i < requiredKeys - 1) {
+    if (i < numTransactionsToSend - 1) {
       const elapsedTime = Date.now() - startTime
       const waitTime = Math.max(0, 5000 - elapsedTime)
       if (waitTime > 0) {
-        // logMessage(`Waiting ${waitTime}ms before next transaction...`)
         await sleep(waitTime)
       }
     }
   }
   
-  logMessage(`Bulk submit test completed. Successfully submitted ${transactionCount}/${requiredKeys} transactions.`)
+  logMessage(`Bulk submit test completed. Successfully submitted ${transactionCount}/${numTransactionsToSend} transactions.`)
   
   // Final balance check
-  logMessage('Final account balances:')
-  for (const acc of accounts) {
-    try {
-      const balance = await acc.account.getBalance()
-      logMessage(`Account ${acc.index} (${acc.address}) balance: ${balance}`)
-    } catch (error) {
-      logMessage(`Failed to get final balance for account ${acc.index}: ${error.message}`)
+  if (ENABLE_TRANSACTIONS) {
+    logMessage('Final account balances:')
+    for (const acc of accounts) {
+      try {
+        const balance = await acc.account.getBalance()
+        logMessage(`Account ${acc.index} (${acc.address}) balance: ${balance}`)
+      } catch (error) {
+        logMessage(`Failed to get final balance for account ${acc.index}: ${error.message}`)
+      }
     }
+  } else {
+    logMessage('Skipping final balance checks in debug mode')
   }
   
   // Summary
   logMessage('\n=== Test Summary ===')
   logMessage(`Total transactions submitted: ${transactionCount}`)
-  logMessage(`Total time: ~${requiredKeys * 5} seconds`)
-  logMessage(`Success rate: ${((transactionCount / requiredKeys) * 100).toFixed(1)}%`)
+  logMessage(`Total time: ~${numTransactionsToSend * 5} seconds`)
+  logMessage(`Success rate: ${((transactionCount / numTransactionsToSend) * 100).toFixed(1)}%`)
   
-  if (transactionCount < requiredKeys) {
-    throw new Error(`Failed to submit all transactions. Only ${transactionCount}/${requiredKeys} succeeded.`)
+  if (transactionCount < numTransactionsToSend) {
+    throw new Error(`Failed to submit all transactions. Only ${transactionCount}/${numTransactionsToSend} succeeded.`)
   }
   
   logMessage('Bulk submit test passed!')
