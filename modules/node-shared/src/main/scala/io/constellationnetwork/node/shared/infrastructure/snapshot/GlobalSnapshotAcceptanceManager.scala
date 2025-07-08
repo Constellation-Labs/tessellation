@@ -48,7 +48,6 @@ import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral._
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.priceOracle.{PriceRecord, TokenPair}
 import io.constellationnetwork.schema.snapshot.MetagraphSyncDataInfo
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock._
@@ -285,6 +284,11 @@ object GlobalSnapshotAcceptanceManager {
 
         pricingUpdates = sharedArtifacts.view
           .mapValues(_.collect { case pu: PricingUpdate => pu })
+          .filter { case (_, updates) => updates.nonEmpty }
+          .toMap
+
+        globalSnapshotsProcessed = sharedArtifacts.view
+          .mapValues(_.collect { case pu: GlobalSnapshotsProcessed => pu })
           .filter { case (_, updates) => updates.nonEmpty }
           .toMap
 
@@ -561,6 +565,7 @@ object GlobalSnapshotAcceptanceManager {
         updatedAcceptedMetagraphSyncData = acceptMetagraphSyncData(
           lastSnapshotContext,
           incomingCurrencySnapshots,
+          globalSnapshotsProcessed,
           acceptedSpendActions,
           ordinal,
           epochProgress
@@ -1167,6 +1172,7 @@ object GlobalSnapshotAcceptanceManager {
     private def acceptMetagraphSyncData(
       lastSnapshotContext: GlobalSnapshotInfo,
       incomingCurrencySnapshots: SortedMap[Address, List[CurrencySnapshotWithState]],
+      globalSnapshotsProcessed: Map[Address, List[GlobalSnapshotsProcessed]],
       acceptedSpendActions: Map[Address, List[SpendAction]],
       currentGlobalOrdinal: SnapshotOrdinal,
       currentGlobalEpochProgress: EpochProgress
@@ -1175,6 +1181,7 @@ object GlobalSnapshotAcceptanceManager {
         val updatedFromSnapshots = updateFromCurrencySnapshots(
           existingData,
           incomingCurrencySnapshots,
+          globalSnapshotsProcessed,
           currentGlobalOrdinal,
           currentGlobalEpochProgress
         )
@@ -1192,13 +1199,18 @@ object GlobalSnapshotAcceptanceManager {
     private def updateFromCurrencySnapshots(
       existingData: SortedMap[Address, MetagraphSyncDataInfo],
       currencySnapshots: SortedMap[Address, List[CurrencySnapshotWithState]],
+      globalSnapshotsProcessed: Map[Address, List[GlobalSnapshotsProcessed]],
       currentOrdinal: SnapshotOrdinal,
       currentEpochProgress: EpochProgress
     ): SortedMap[Address, MetagraphSyncDataInfo] =
       currencySnapshots.map {
-        case (address, snapshots) =>
+        case (address, _) =>
           val currentInfo = existingData.getOrElse(address, MetagraphSyncDataInfo.empty)
-          val lastSyncOrdinal = extractLastSynchronizedOrdinal(snapshots)
+          val metagraphGlobalSnapshotsProcessed =
+            globalSnapshotsProcessed.getOrElse(address, List.empty).flatMap(_.ordinals).toSet
+
+          val updatedUnappliedGlobalChangeOrdinals =
+            currentInfo.unappliedGlobalChangeOrdinals.diff(metagraphGlobalSnapshotsProcessed)
 
           val updatedInfo = currentInfo
             .focus(_.globalOrdinalLastAcceptedOn)
@@ -1206,7 +1218,7 @@ object GlobalSnapshotAcceptanceManager {
             .focus(_.globalEpochProgressLastAcceptedOn)
             .replace(currentEpochProgress)
             .focus(_.unappliedGlobalChangeOrdinals)
-            .modify(_.filter(_ >= lastSyncOrdinal))
+            .replace(updatedUnappliedGlobalChangeOrdinals)
 
           address -> updatedInfo
       }.toSortedMap
@@ -1229,12 +1241,6 @@ object GlobalSnapshotAcceptanceManager {
         acc.updated(metagraphId, updatedInfo)
       }
     }
-
-    private def extractLastSynchronizedOrdinal(snapshots: List[CurrencySnapshotWithState]): SnapshotOrdinal =
-      snapshots.flatMap {
-        case Left(left)           => left.globalSyncView.map(_.ordinal)
-        case Right((snapshot, _)) => snapshot.globalSyncView.map(_.ordinal)
-      }.foldLeft(SnapshotOrdinal.MinValue)(_ max _)
 
     private def extractCurrencySpendTransactions(spendActions: Map[Address, List[SpendAction]]) =
       spendActions.values.flatten
