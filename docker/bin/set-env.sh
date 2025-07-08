@@ -313,6 +313,8 @@ if [ -z "$METAGRAPH" ]; then
     export NUM_DL1_NODES="0"
 fi
 
-
-
-
+if [ -n "$METAGRAPH" ]; then
+    if [ -z "$PUBLISH" ]; then
+        export PUBLISH=true
+    fi
+fi

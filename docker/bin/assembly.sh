@@ -62,7 +62,7 @@ mv ./docker/jars/dag-l0.jar ./docker/jars/gl0.jar
 mv ./docker/jars/dag-l1.jar ./docker/jars/gl1.jar
 
 
-if [ -n "$PUBLISH" ]; then
+if [ "$PUBLISH" == "true" ]; then
   echo "Publishing local"
   sbt --error sdk/publishLocal
 fi
