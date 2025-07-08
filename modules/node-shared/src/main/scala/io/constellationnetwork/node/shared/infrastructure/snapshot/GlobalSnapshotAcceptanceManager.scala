@@ -124,6 +124,7 @@ object GlobalSnapshotAcceptanceManager {
     collateral: Amount,
     withdrawalTimeLimit: EpochProgress
   ) = new GlobalSnapshotAcceptanceManager[F] {
+    val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
     def accept(
       ordinal: SnapshotOrdinal,
@@ -304,8 +305,8 @@ object GlobalSnapshotAcceptanceManager {
           currencyBalances ++ globalBalances
         )
 
-        _ <- Slf4jLogger.getLogger[F].debug(s"--- [ORDINAL=$ordinal] Accepted spend actions: ${acceptedSpendActions.show}")
-        _ <- Slf4jLogger.getLogger[F].debug(s"--- [ORDINAL=$ordinal] Rejected spend actions: ${rejectedSpendActions.show}")
+        _ <- logger.debug(s"--- [ORDINAL=$ordinal] Accepted spend actions: ${acceptedSpendActions.show}")
+        _ <- logger.debug(s"--- [ORDINAL=$ordinal] Rejected spend actions: ${rejectedSpendActions.show}")
 
         (acceptedPricingUpdates, rejectedPricingUpdates) <- pricingUpdateValidator.validateReturningAcceptedAndRejected(
           pricingUpdates,
@@ -313,8 +314,8 @@ object GlobalSnapshotAcceptanceManager {
           epochProgress
         )
 
-        _ <- Slf4jLogger.getLogger[F].debug(s"--- Accepted pricing updates: ${acceptedPricingUpdates.show}")
-        _ <- Slf4jLogger.getLogger[F].debug(s"--- Rejected pricing updates: ${rejectedPricingUpdates.show}")
+        _ <- logger.debug(s"--- Accepted pricing updates: ${acceptedPricingUpdates.show}")
+        _ <- logger.debug(s"--- Rejected pricing updates: ${rejectedPricingUpdates.show}")
 
         sCSnapshotHashes <- scSnapshots.toList.traverse {
           case (address, nel) => nel.last.toHashed.map(address -> _.hash)
@@ -560,7 +561,7 @@ object GlobalSnapshotAcceptanceManager {
           epochProgress
         )
 
-        updatedAcceptedMetagraphSyncData = acceptMetagraphSyncData(
+        updatedAcceptedMetagraphSyncData <- acceptMetagraphSyncData(
           lastSnapshotContext,
           currencySnapshots,
           globalSnapshotsProcessed,
@@ -613,8 +614,7 @@ object GlobalSnapshotAcceptanceManager {
             )
         )
 
-        _ <- Slf4jLogger
-          .getLogger[F]
+        _ <- logger
           .debug(
             s"[TokenUnlock][Ordinal=${ordinal.show}][EpochProgress=${epochProgress.show}] Token unlocks events generated: $tokenUnlocksEvents generated token unlocks $generatedTokenUnlockArtifacts"
           )
@@ -1168,25 +1168,25 @@ object GlobalSnapshotAcceptanceManager {
       acceptedSpendActions: Map[Address, List[SpendAction]],
       currentGlobalOrdinal: SnapshotOrdinal,
       currentGlobalEpochProgress: EpochProgress
-    ): SortedMap[Address, MetagraphSyncDataInfo] =
+    ): F[SortedMap[Address, MetagraphSyncDataInfo]] =
       lastSnapshotContext.metagraphSyncData.map { existingData =>
-        val updatedFromSnapshots = updateFromCurrencySnapshots(
-          existingData,
-          currencySnapshots,
-          globalSnapshotsProcessed,
-          currentGlobalOrdinal,
-          currentGlobalEpochProgress
-        )
+        for {
+          updatedFromSnapshots <- updateFromCurrencySnapshots(
+            existingData,
+            currencySnapshots,
+            globalSnapshotsProcessed,
+            currentGlobalOrdinal,
+            currentGlobalEpochProgress
+          )
 
-        val updatedFromSpendActions = updateFromSpendActions(
-          updatedFromSnapshots,
-          acceptedSpendActions,
-          currentGlobalOrdinal
-        )
+          updatedFromSpendActions = updateFromSpendActions(
+            updatedFromSnapshots,
+            acceptedSpendActions,
+            currentGlobalOrdinal
+          )
 
-        existingData ++ updatedFromSpendActions
-      }
-        .getOrElse(SortedMap.empty[Address, MetagraphSyncDataInfo])
+        } yield existingData ++ updatedFromSpendActions
+      }.getOrElse(SortedMap.empty[Address, MetagraphSyncDataInfo].pure[F])
 
     private def updateFromCurrencySnapshots(
       existingData: SortedMap[Address, MetagraphSyncDataInfo],
@@ -1194,13 +1194,12 @@ object GlobalSnapshotAcceptanceManager {
       globalSnapshotsProcessed: Map[Address, List[GlobalSnapshotsProcessed]],
       currentOrdinal: SnapshotOrdinal,
       currentEpochProgress: EpochProgress
-    ): SortedMap[Address, MetagraphSyncDataInfo] =
-      snapshots.map {
+    ): F[SortedMap[Address, MetagraphSyncDataInfo]] =
+      snapshots.toList.traverse {
         case (address, _) =>
           val currentInfo = existingData.getOrElse(address, MetagraphSyncDataInfo.empty)
           val metagraphGlobalSnapshotsProcessed =
             globalSnapshotsProcessed.getOrElse(address, List.empty).flatMap(_.ordinals).toSet
-
           val updatedUnappliedGlobalChangeOrdinals =
             currentInfo.unappliedGlobalChangeOrdinals.diff(metagraphGlobalSnapshotsProcessed)
 
@@ -1212,8 +1211,10 @@ object GlobalSnapshotAcceptanceManager {
             .focus(_.unappliedGlobalChangeOrdinals)
             .replace(updatedUnappliedGlobalChangeOrdinals)
 
-          address -> updatedInfo
-      }.toSortedMap
+          logger.info(
+            s"[CURRENCY=$address][GlobalOrdinal=$currentOrdinal] Updated unapplied global change ordinals: $updatedUnappliedGlobalChangeOrdinals"
+          ) >> (address -> updatedInfo).pure[F]
+      }.map(SortedMap.from(_))
 
     private def updateFromSpendActions(
       currentData: SortedMap[Address, MetagraphSyncDataInfo],
