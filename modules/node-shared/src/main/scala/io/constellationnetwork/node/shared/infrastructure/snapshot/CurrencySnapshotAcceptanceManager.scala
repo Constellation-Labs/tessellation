@@ -330,12 +330,23 @@ object CurrencySnapshotAcceptanceManager {
       lastGlobalSnapshotEpochProgress = lastSyncGlobalSnapshot.epochProgress
       lastGlobalSnapshotOrdinal = lastSyncGlobalSnapshot.ordinal
 
+      globalSyncView = maybeLastGlobalSyncView
+        .filter(_.ordinal >= lastSyncGlobalSnapshot.ordinal)
+        .getOrElse(
+          GlobalSyncView(
+            lastSyncGlobalSnapshot.ordinal,
+            lastSyncGlobalSnapshot.hash,
+            lastSyncGlobalSnapshot.epochProgress
+          )
+        )
+
       (globalSnapshotsSpendActions, globalSnapshotsProcessed) <- getLastGlobalSnapshotsSpendActions(
-        lastSyncGlobalSnapshot,
+        globalSyncView.ordinal,
         lastGlobalSnapshots,
         getGlobalSnapshotByOrdinal,
         metagraphId,
-        lastUnsyncGlobalSnapshotInfo
+        lastUnsyncGlobalSnapshotInfo,
+        snapshotOrdinal
       )
 
       metagraphIdSpendTransactions = globalSnapshotsSpendActions.flatMap {
@@ -348,7 +359,9 @@ object CurrencySnapshotAcceptanceManager {
       _ <- metagraphIdSpendTransactions.nonEmpty
         .pure[F]
         .ifM(
-          logger.info(s"--- [CURRENCY] Currency $metagraphId spend transactions: $metagraphIdSpendTransactions"),
+          logger.info(
+            s"--- [CURRENCY=$metagraphId][Ordinal=$snapshotOrdinal][GlobalSyncViewOrdinal=${globalSyncView.ordinal}] Extracted spend transactions: $metagraphIdSpendTransactions"
+          ),
           Applicative[F].unit
         )
 
@@ -491,18 +504,12 @@ object CurrencySnapshotAcceptanceManager {
         expiredTokenLocks
       )
 
-      globalSyncView = maybeLastGlobalSyncView match {
-        case Some(lastGlobalSyncView) =>
-          if (lastGlobalSyncView.ordinal < lastSyncGlobalSnapshot.ordinal) {
-            GlobalSyncView(lastSyncGlobalSnapshot.ordinal, lastSyncGlobalSnapshot.hash, lastSyncGlobalSnapshot.epochProgress)
-          } else {
-            lastGlobalSyncView
-          }
-        case None => GlobalSyncView(lastSyncGlobalSnapshot.ordinal, lastSyncGlobalSnapshot.hash, lastSyncGlobalSnapshot.epochProgress)
-      }
+      maybeGlobalSnapshotProcessedEvent: SortedSet[SharedArtifact] =
+        if (globalSnapshotsProcessed.nonEmpty)
+          SortedSet(GlobalSnapshotsProcessed(globalSnapshotsProcessed))
+        else
+          SortedSet.empty[SharedArtifact]
 
-      _ <- logger.debug(s"Metagraph $metagraphId snapshot $snapshotOrdinal - globalSyncView: $globalSyncView")
-      globalSnapshotProcessedEvents: SharedArtifact = GlobalSnapshotsProcessed(globalSnapshotsProcessed)
     } yield
       CurrencySnapshotAcceptanceResult(
         acceptanceBlocksResult,
@@ -511,7 +518,7 @@ object CurrencySnapshotAcceptanceManager {
         messagesAcceptanceResult,
         globalSnapshotSyncAcceptanceResult,
         acceptedRewardTxs,
-        acceptedSharedArtifacts ++ allowSpendsExpiredEvents ++ tokenUnlocksEvents + globalSnapshotProcessedEvents,
+        acceptedSharedArtifacts ++ allowSpendsExpiredEvents ++ tokenUnlocksEvents ++ maybeGlobalSnapshotProcessedEvent,
         acceptedFeeTxs,
         csi,
         stateProof,
@@ -598,11 +605,12 @@ object CurrencySnapshotAcceptanceManager {
     }
 
     private def getLastGlobalSnapshotsSpendActions(
-      lastSyncGlobalSnapshot: Hashed[GlobalIncrementalSnapshot],
+      globalSnapshotViewOrdinal: SnapshotOrdinal,
       lastGlobalSnapshots: List[Hashed[GlobalIncrementalSnapshot]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       currencyId: Address,
-      lastGlobalSnapshotInfo: GlobalSnapshotInfo
+      lastGlobalSnapshotInfo: GlobalSnapshotInfo,
+      currentCurrencySnapshotOrdinal: SnapshotOrdinal
     ): F[(SortedMap[Address, List[SpendAction]], SortedSet[SnapshotOrdinal])] = {
       val emptySpendActions = SortedMap.empty[Address, List[SpendAction]]
       val emptyProcessedGlobalSnapshots = SortedSet.empty[SnapshotOrdinal]
@@ -614,14 +622,14 @@ object CurrencySnapshotAcceptanceManager {
             case None => (emptySpendActions, emptyProcessedGlobalSnapshots).pure[F]
             case Some(syncDataInfo) =>
               val unappliedOrdinals = syncDataInfo.unappliedGlobalChangeOrdinals
-                .filter(_ < lastSyncGlobalSnapshot.ordinal)
+                .filter(_ <= globalSnapshotViewOrdinal)
 
               if (unappliedOrdinals.isEmpty) {
                 (emptySpendActions, emptyProcessedGlobalSnapshots).pure[F]
               } else {
                 for {
                   _ <- logger.info(
-                    s"Metagraph $currencyId: Extracting spend actions from ordinals: ${unappliedOrdinals.map(_.show).mkString(",")}"
+                    s"[CURRENCY=$currencyId][Ordinal=$currentCurrencySnapshotOrdinal][GlobalSyncView=$globalSnapshotViewOrdinal] Extracting spend actions from global ordinals: ${unappliedOrdinals.map(_.show).mkString(",")}"
                   )
                   spendActions <- processUnappliedOrdinals(unappliedOrdinals, lastGlobalSnapshots, getGlobalSnapshotByOrdinal)
                 } yield (spendActions, unappliedOrdinals)
