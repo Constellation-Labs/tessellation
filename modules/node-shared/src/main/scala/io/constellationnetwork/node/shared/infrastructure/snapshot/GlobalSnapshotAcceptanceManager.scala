@@ -563,7 +563,7 @@ object GlobalSnapshotAcceptanceManager {
 
         updatedAcceptedMetagraphSyncData <- acceptMetagraphSyncData(
           lastSnapshotContext,
-          currencySnapshots,
+          incomingCurrencySnapshots,
           globalSnapshotsProcessed,
           acceptedSpendActions,
           ordinal,
@@ -1163,7 +1163,7 @@ object GlobalSnapshotAcceptanceManager {
 
     private def acceptMetagraphSyncData(
       lastSnapshotContext: GlobalSnapshotInfo,
-      currencySnapshots: SortedMap[Address, CurrencySnapshotWithState],
+      incomingCurrencySnapshots: SortedMap[Address, List[CurrencySnapshotWithState]],
       globalSnapshotsProcessed: Map[Address, List[GlobalSnapshotsProcessed]],
       acceptedSpendActions: Map[Address, List[SpendAction]],
       currentGlobalOrdinal: SnapshotOrdinal,
@@ -1173,7 +1173,7 @@ object GlobalSnapshotAcceptanceManager {
         for {
           updatedFromSnapshots <- updateFromCurrencySnapshots(
             existingData,
-            currencySnapshots,
+            incomingCurrencySnapshots,
             globalSnapshotsProcessed,
             currentGlobalOrdinal,
             currentGlobalEpochProgress
@@ -1190,12 +1190,12 @@ object GlobalSnapshotAcceptanceManager {
 
     private def updateFromCurrencySnapshots(
       existingData: SortedMap[Address, MetagraphSyncDataInfo],
-      snapshots: SortedMap[Address, CurrencySnapshotWithState],
+      incomingCurrencySnapshots: SortedMap[Address, List[CurrencySnapshotWithState]],
       globalSnapshotsProcessed: Map[Address, List[GlobalSnapshotsProcessed]],
       currentOrdinal: SnapshotOrdinal,
       currentEpochProgress: EpochProgress
     ): F[SortedMap[Address, MetagraphSyncDataInfo]] =
-      snapshots.toList.traverse {
+      incomingCurrencySnapshots.toList.traverse {
         case (address, _) =>
           val currentInfo = existingData.getOrElse(address, MetagraphSyncDataInfo.empty)
           val metagraphGlobalSnapshotsProcessed =
