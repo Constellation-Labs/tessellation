@@ -109,6 +109,7 @@ object types {
   case class ConsensusConfig(
     timeTriggerInterval: FiniteDuration,
     declarationTimeout: FiniteDuration,
+    peersDeclarationTimeout: FiniteDuration,
     declarationRangeLimit: NonNegLong,
     lockDuration: FiniteDuration,
     eventCutter: EventCutterConfig

@@ -1,5 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
+import scala.concurrent.duration._
+
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 
@@ -14,9 +16,11 @@ case class ConsensusResources[A, Kind](
   acksMap: Map[(PeerId, Kind), Set[PeerId]],
   withdrawalsMap: Map[PeerId, Kind],
   ackKinds: Set[Kind],
-  artifacts: Map[Hash, A]
+  artifacts: Map[Hash, A],
+  updatedAt: FiniteDuration
 )
 
 object ConsensusResources {
-  def empty[A, Kind]: ConsensusResources[A, Kind] = ConsensusResources(Map.empty, Map.empty, Map.empty, Set.empty, Map.empty)
+  def empty[A, Kind]: ConsensusResources[A, Kind] =
+    ConsensusResources(Map.empty, Map.empty, Map.empty, Set.empty, Map.empty, 0.seconds)
 }

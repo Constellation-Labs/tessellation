@@ -12,7 +12,7 @@ import scala.concurrent.duration.FiniteDuration
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema._
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.ext.crypto._
-import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
+import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, LastGlobalSnapshotsSyncConfig}
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, SnapshotStorage}
@@ -58,7 +58,8 @@ object GlobalSnapshotConsensusStateAdvancer {
     nodeStorage: NodeStorage[F],
     leavingDelay: FiniteDuration,
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
-    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    consensusConfig: ConsensusConfig
   ): GlobalSnapshotConsensusStateAdvancer[F] = new GlobalSnapshotConsensusStateAdvancer[F] {
     val logger = Slf4jLogger.getLogger[F]
     val facilitatorsObservationName = "facilitators"
@@ -90,100 +91,103 @@ object GlobalSnapshotConsensusStateAdvancer {
         else {
           state.status match {
             case CollectingFacilities(_, ownFacilitatorsHash) =>
-              val maybeFacilities = maybeGetAllDeclarations(state, resources)(_.facility)
-
-              maybeFacilities.traverseTap { facilities =>
-                Metrics[F].recordDistribution("dag_gl0_consensus_advancer_collecting_facilities", facilities.size) >>
-                  recoverIfForking[F](ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
-                    facilities.map {
-                      case (peer, facility) => (peer, facility.facilitatorsHash)
-                    }
-                  )
-              }.flatMap {
-                _.map(_.foldMap(f => (f.upperBound, f.candidates.value, f.trigger.toList))).traverse {
-                  case (bound, candidates, triggers) =>
-                    Metrics[F].recordDistribution("dag_gl0_consensus_advancer_collecting_facilities_bound", bound.size) >>
-                      Metrics[F].recordDistribution("dag_gl0_consensus_advancer_collecting_facilities_candidates", candidates.size) >>
-                      Metrics[F].recordDistribution("dag_gl0_consensus_advancer_collecting_facilities_triggers", triggers.size) >>
-                      Metrics[F].recordDistribution(
-                        "dag_gl0_consensus_advancer_collecting_facilities_triggers_event",
-                        triggers.count(x => x == EventTrigger)
-                      ) >>
-                      pickMajority(triggers).map((bound, candidates, _)).pure[F]
-                }.flatMap(_.flatten.traverse {
-                  case (bound, candidates, majorityTrigger) =>
-                    Applicative[F].whenA(majorityTrigger === TimeTrigger)(consensusStorage.clearTimeTrigger) >>
-                      HasherSelector[F].withCurrent { implicit hasher =>
-                        state.facilitators.value.hash
-                      }.flatMap { facilitatorsHash =>
-                        for {
-                          _ <- Metrics[F]
-                            .recordDistribution("dag_gl0_consensus_advancer_collecting_facilities_state_duration", state.timeDeltaSeconds())
-                          peerEvents <- consensusStorage.pullEvents(bound)
-                          _ <- Metrics[F]
-                            .recordDistribution("dag_gl0_consensus_advancer_collecting_facilities_peer_events", peerEvents.size)
-                          events = peerEvents.toList.flatMap(_._2).map(_._2).toSet
-                          _ <- Metrics[F]
-                            .recordDistribution("dag_gl0_consensus_advancer_collecting_facilities_peer_events", events.size)
-                          _ <- Metrics[F].genericRecordDistributionWithTimeBuckets(
-                            "dag_gl0_consensus_advancer_collecting_facilities_peer_events_by_time",
-                            events.size,
-                            state.timeDeltaSeconds()
-                          )(Numeric[Int])
-                          (artifact, context, returnedEvents) <- HasherSelector[F].forOrdinal(state.key) { implicit hasher =>
-                            val lastArtifact = state.lastOutcome.finished.signedMajorityArtifact
-                            lastArtifact.toHashed.flatMap { hashedLastArtifact =>
-                              consensusFns
-                                .createProposalArtifact(
-                                  state.key,
-                                  hashedLastArtifact.signed,
-                                  state.lastOutcome.finished.context,
-                                  HasherSelector[F].getForOrdinal(lastArtifact.ordinal),
-                                  majorityTrigger,
-                                  events,
-                                  state.facilitators.value.toSet,
-                                  lastNGlobalSnapshotStorage.getLastN,
-                                  getGlobalSnapshotByOrdinal
-                                )
+              maybeGetAllDeclarations(state, resources, consensusConfig)(_.facility)(Async[F], logger).flatMap { maybeFacilities =>
+                maybeFacilities.traverseTap { facilities =>
+                  Metrics[F].recordDistribution("dag_gl0_consensus_advancer_collecting_facilities", facilities.size) >>
+                    recoverIfForking[F](ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
+                      facilities.map {
+                        case (peer, facility) => (peer, facility.facilitatorsHash)
+                      }
+                    )
+                }.flatMap {
+                  _.map(_.foldMap(f => (f.upperBound, f.candidates.value, f.trigger.toList))).traverse {
+                    case (bound, candidates, triggers) =>
+                      Metrics[F].recordDistribution("dag_gl0_consensus_advancer_collecting_facilities_bound", bound.size) >>
+                        Metrics[F].recordDistribution("dag_gl0_consensus_advancer_collecting_facilities_candidates", candidates.size) >>
+                        Metrics[F].recordDistribution("dag_gl0_consensus_advancer_collecting_facilities_triggers", triggers.size) >>
+                        Metrics[F].recordDistribution(
+                          "dag_gl0_consensus_advancer_collecting_facilities_triggers_event",
+                          triggers.count(x => x == EventTrigger)
+                        ) >>
+                        pickMajority(triggers).map((bound, candidates, _)).pure[F]
+                  }.flatMap(_.flatten.traverse {
+                    case (bound, candidates, majorityTrigger) =>
+                      Applicative[F].whenA(majorityTrigger === TimeTrigger)(consensusStorage.clearTimeTrigger) >>
+                        HasherSelector[F].withCurrent { implicit hasher =>
+                          state.facilitators.value.hash
+                        }.flatMap { facilitatorsHash =>
+                          for {
+                            _ <- Metrics[F]
+                              .recordDistribution(
+                                "dag_gl0_consensus_advancer_collecting_facilities_state_duration",
+                                state.timeDeltaSeconds()
+                              )
+                            peerEvents <- consensusStorage.pullEvents(bound)
+                            _ <- Metrics[F]
+                              .recordDistribution("dag_gl0_consensus_advancer_collecting_facilities_peer_events", peerEvents.size)
+                            events = peerEvents.toList.flatMap(_._2).map(_._2).toSet
+                            _ <- Metrics[F]
+                              .recordDistribution("dag_gl0_consensus_advancer_collecting_facilities_peer_events", events.size)
+                            _ <- Metrics[F].genericRecordDistributionWithTimeBuckets(
+                              "dag_gl0_consensus_advancer_collecting_facilities_peer_events_by_time",
+                              events.size,
+                              state.timeDeltaSeconds()
+                            )(Numeric[Int])
+                            (artifact, context, returnedEvents) <- HasherSelector[F].forOrdinal(state.key) { implicit hasher =>
+                              val lastArtifact = state.lastOutcome.finished.signedMajorityArtifact
+                              lastArtifact.toHashed.flatMap { hashedLastArtifact =>
+                                consensusFns
+                                  .createProposalArtifact(
+                                    state.key,
+                                    hashedLastArtifact.signed,
+                                    state.lastOutcome.finished.context,
+                                    HasherSelector[F].getForOrdinal(lastArtifact.ordinal),
+                                    majorityTrigger,
+                                    events,
+                                    state.facilitators.value.toSet,
+                                    lastNGlobalSnapshotStorage.getLastN,
+                                    getGlobalSnapshotByOrdinal
+                                  )
+                              }
                             }
-                          }
-                          returnedPeerEvents = peerEvents.map {
-                            case (peerId, events) =>
-                              (peerId, events.filter { case (_, event) => returnedEvents.contains(event) })
-                          }.filter { case (_, events) => events.nonEmpty }
-                          _ <- Metrics[F].genericRecordDistributionWithTimeBuckets(
-                            "dag_gl0_consensus_advancer_collecting_facilities_returned_peer_events_by_time",
-                            returnedPeerEvents.size,
-                            state.timeDeltaSeconds()
-                          )(Numeric[Int])
-                          _ <- Metrics[F]
-                            .recordDistribution(
-                              "dag_gl0_consensus_advancer_collecting_facilities_returned_peer_events",
-                              returnedPeerEvents.size
-                            )
-                          _ <- consensusStorage.addEvents(returnedPeerEvents)
-                          hash <- HasherSelector[F].forOrdinal(artifact.ordinal)(implicit hasher => artifact.hash)
-                          effect = gossip.spread(ConsensusPeerDeclaration(state.key, Proposal(hash, facilitatorsHash))) *>
-                            gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
-                          facilitators = state.facilitators.value
-                          _ = {
-                            ForkDetect.exitOnCheck("CL_EXIT_ON_FOLLOWER_ADVANCER", () => facilitators.toSet)
-                            ()
-                          }
-                          newState =
-                            state.copy(status =
-                              identity[GlobalSnapshotStatus](
-                                CollectingProposals(
-                                  majorityTrigger,
-                                  ArtifactInfo(artifact, context, hash),
-                                  Candidates(candidates),
-                                  facilitatorsHash
+                            returnedPeerEvents = peerEvents.map {
+                              case (peerId, events) =>
+                                (peerId, events.filter { case (_, event) => returnedEvents.contains(event) })
+                            }.filter { case (_, events) => events.nonEmpty }
+                            _ <- Metrics[F].genericRecordDistributionWithTimeBuckets(
+                              "dag_gl0_consensus_advancer_collecting_facilities_returned_peer_events_by_time",
+                              returnedPeerEvents.size,
+                              state.timeDeltaSeconds()
+                            )(Numeric[Int])
+                            _ <- Metrics[F]
+                              .recordDistribution(
+                                "dag_gl0_consensus_advancer_collecting_facilities_returned_peer_events",
+                                returnedPeerEvents.size
+                              )
+                            _ <- consensusStorage.addEvents(returnedPeerEvents)
+                            hash <- HasherSelector[F].forOrdinal(artifact.ordinal)(implicit hasher => artifact.hash)
+                            effect = gossip.spread(ConsensusPeerDeclaration(state.key, Proposal(hash, facilitatorsHash))) *>
+                              gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
+                            facilitators = state.facilitators.value
+                            _ = {
+                              ForkDetect.exitOnCheck("CL_EXIT_ON_FOLLOWER_ADVANCER", () => facilitators.toSet)
+                              ()
+                            }
+                            newState =
+                              state.copy(status =
+                                identity[GlobalSnapshotStatus](
+                                  CollectingProposals(
+                                    majorityTrigger,
+                                    ArtifactInfo(artifact, context, hash),
+                                    Candidates(candidates),
+                                    facilitatorsHash
+                                  )
                                 )
                               )
-                            )
-                        } yield (newState, effect)
-                      }
-                })
+                          } yield (newState, effect)
+                        }
+                  })
+                }
               }
             case CollectingProposals(majorityTrigger, proposalInfo, candidates, ownFacilitatorsHash) =>
               Metrics[F]
@@ -192,149 +196,148 @@ object GlobalSnapshotConsensusStateAdvancer {
                   state.timeDeltaSeconds()
                 ) >>
                 HasherSelector[F].withCurrent { implicit hasher =>
-                  val maybeAllProposals =
-                    maybeGetAllDeclarations(state, resources)(_.proposal)
+                  maybeGetAllDeclarations(state, resources, consensusConfig)(_.proposal)(Async[F], logger).flatMap { maybeAllProposals =>
+                    maybeAllProposals.traverseTap(d =>
+                      recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(d.map {
+                        case (peerId, proposal) => (peerId, proposal.facilitatorsHash)
+                      })
+                    ) >>
+                      maybeAllProposals
+                        .map(allProposals => allProposals.values.toList.map(_.hash))
+                        .flatTraverse { allProposalHashes =>
+                          val lastArtifact = state.lastOutcome.finished.signedMajorityArtifact
 
-                  maybeAllProposals.traverseTap(d =>
-                    recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(d.map {
-                      case (peerId, proposal) => (peerId, proposal.facilitatorsHash)
-                    })
-                  ) >>
-                    maybeAllProposals
-                      .map(allProposals => allProposals.values.toList.map(_.hash))
-                      .flatTraverse { allProposalHashes =>
-                        val lastArtifact = state.lastOutcome.finished.signedMajorityArtifact
-
-                        lastArtifact.toHashed.flatMap { hashedLastArtifact =>
-                          Metrics[F]
-                            .recordDistribution(
-                              "dag_gl0_consensus_advancer_collecting_proposals_hashes_len",
-                              allProposalHashes.size
-                            ) >>
-                            pickValidatedMajorityArtifact(
-                              proposalInfo,
-                              hashedLastArtifact.signed,
-                              state.lastOutcome.finished.context,
-                              majorityTrigger,
-                              resources,
-                              allProposalHashes,
-                              state.facilitators.value.toSet,
-                              consensusFns,
-                              lastNGlobalSnapshotStorage.getLastN,
-                              getGlobalSnapshotByOrdinal
-                            ).flatMap { maybeMajorityArtifactInfo =>
-                              state.facilitators.value.hash.flatMap { facilitatorsHash =>
-                                maybeMajorityArtifactInfo.traverse { majorityArtifactInfo =>
-                                  val newState =
-                                    state.copy(status =
-                                      identity[GlobalSnapshotStatus](
-                                        CollectingSignatures(
-                                          majorityArtifactInfo,
-                                          majorityTrigger,
-                                          candidates,
-                                          facilitatorsHash
-                                        )
-                                      )
-                                    )
-                                  val effect = Signature.fromHash(keyPair.getPrivate, majorityArtifactInfo.hash).flatMap { signature =>
-                                    gossip.spread(ConsensusPeerDeclaration(state.key, MajoritySignature(signature, facilitatorsHash)))
-                                  } >> Metrics[F].recordDistribution(
-                                    "dag_consensus_proposal_affinity",
-                                    proposalAffinity(allProposalHashes, proposalInfo.hash)
-                                  ) >> Metrics[F]
-                                    .recordDistribution(
-                                      "dag_gl0_consensus_advancer_collecting_proposals_state_transitioned",
-                                      state.timeDeltaSeconds()
-                                    )
-                                  (newState, effect).pure[F]
-                                }
-                              }
-                            }
-                        }
-                      }
-                }
-            case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, ownFacilitatorsHash) =>
-              val maybeAllSignatures =
-                maybeGetAllDeclarations(state, resources)(_.signature)
-              Metrics[F]
-                .recordDistribution(
-                  "dag_gl0_consensus_advancer_collecting_signatures_state_duration",
-                  state.timeDeltaSeconds()
-                ) >>
-                maybeAllSignatures
-                  .traverseTap(signatures =>
-                    recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
-                      signatures.map {
-                        case (peerId, majoritySignature) => (peerId, majoritySignature.facilitatorsHash)
-                      }
-                    )
-                  )
-                  .flatMap {
-                    _.map(_.map { case (id, signature) => SignatureProof(PeerId._Id.get(id), signature.signature) }.toList).traverse {
-                      allSignatures =>
-                        allSignatures
-                          .filterA(verifySignatureProof(majorityArtifactInfo.hash, _))
-                          .flatTap { validSignatures =>
+                          lastArtifact.toHashed.flatMap { hashedLastArtifact =>
                             Metrics[F]
                               .recordDistribution(
-                                "dag_gl0_consensus_advancer_collecting_signatures_valid_signatures",
-                                validSignatures.size
+                                "dag_gl0_consensus_advancer_collecting_proposals_hashes_len",
+                                allProposalHashes.size
                               ) >>
-                              logger
-                                .warn(
-                                  s"Removed ${(allSignatures.size - validSignatures.size).show} invalid signatures during consensus for key ${state.key.show}, " +
-                                    s"${validSignatures.size.show} valid signatures left"
-                                )
-                                .whenA(allSignatures.size =!= validSignatures.size)
-                          }
-                    }.flatMap { maybeOnlyValidSignatures =>
-                      HasherSelector[F].withCurrent { implicit hasher =>
-                        state.facilitators.value.hash
-                      }.map { facilitatorsHash =>
-                        maybeOnlyValidSignatures.flatMap { validSignatures =>
-                          NonEmptySet.fromSet(validSignatures.toSortedSet).map { validSignaturesNes =>
-                            val signedArtifact = Signed(majorityArtifactInfo.artifact, validSignaturesNes)
-
-                            val newState = state.copy(status =
-                              identity[GlobalSnapshotStatus](
-                                Finished(
-                                  signedArtifact,
-                                  majorityArtifactInfo.context,
-                                  majorityTrigger,
-                                  candidates,
-                                  facilitatorsHash
-                                )
-                              )
-                            )
-
-                            val effect =
-                              HasherSelector[F]
-                                .forOrdinal(signedArtifact.ordinal) { implicit hasher =>
-                                  for {
-                                    hashedSnapshot <- signedArtifact.toHashed
-                                    _ <- lastNGlobalSnapshotStorage.set(hashedSnapshot, majorityArtifactInfo.context)
-                                    result <- globalSnapshotStorage.prepend(signedArtifact, majorityArtifactInfo.context)
-                                  } yield result
+                              pickValidatedMajorityArtifact(
+                                proposalInfo,
+                                hashedLastArtifact.signed,
+                                state.lastOutcome.finished.context,
+                                majorityTrigger,
+                                resources,
+                                allProposalHashes,
+                                state.facilitators.value.toSet,
+                                consensusFns,
+                                lastNGlobalSnapshotStorage.getLastN,
+                                getGlobalSnapshotByOrdinal
+                              ).flatMap { maybeMajorityArtifactInfo =>
+                                state.facilitators.value.hash.flatMap { facilitatorsHash =>
+                                  maybeMajorityArtifactInfo.traverse { majorityArtifactInfo =>
+                                    val newState =
+                                      state.copy(status =
+                                        identity[GlobalSnapshotStatus](
+                                          CollectingSignatures(
+                                            majorityArtifactInfo,
+                                            majorityTrigger,
+                                            candidates,
+                                            facilitatorsHash
+                                          )
+                                        )
+                                      )
+                                    val effect = Signature.fromHash(keyPair.getPrivate, majorityArtifactInfo.hash).flatMap { signature =>
+                                      gossip.spread(ConsensusPeerDeclaration(state.key, MajoritySignature(signature, facilitatorsHash)))
+                                    } >> Metrics[F].recordDistribution(
+                                      "dag_consensus_proposal_affinity",
+                                      proposalAffinity(allProposalHashes, proposalInfo.hash)
+                                    ) >> Metrics[F]
+                                      .recordDistribution(
+                                        "dag_gl0_consensus_advancer_collecting_proposals_state_transitioned",
+                                        state.timeDeltaSeconds()
+                                      )
+                                    (newState, effect).pure[F]
+                                  }
                                 }
-                                .ifM(
-                                  metrics.globalSnapshot(signedArtifact),
-                                  logger.error("Cannot save GlobalSnapshot into the storage")
-                                ) >> Metrics[F]
-                                .recordDistribution(
-                                  "dag_gl0_consensus_advancer_collecting_signatures_state_transitioned",
-                                  state.timeDeltaSeconds()
-                                ) >>
-                                HasherSelector[F].withCurrent { implicit hasher =>
-                                  gossipForkInfo(gossip, signedArtifact)
-                                }
-
-                            (newState, effect)
+                              }
                           }
                         }
+                  }
+                }
+            case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, ownFacilitatorsHash) =>
+              maybeGetAllDeclarations(state, resources, consensusConfig)(_.signature)(Async[F], logger).flatMap { maybeAllSignatures =>
+                Metrics[F]
+                  .recordDistribution(
+                    "dag_gl0_consensus_advancer_collecting_signatures_state_duration",
+                    state.timeDeltaSeconds()
+                  ) >>
+                  maybeAllSignatures
+                    .traverseTap(signatures =>
+                      recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
+                        signatures.map {
+                          case (peerId, majoritySignature) => (peerId, majoritySignature.facilitatorsHash)
+                        }
+                      )
+                    )
+                    .flatMap {
+                      _.map(_.map { case (id, signature) => SignatureProof(PeerId._Id.get(id), signature.signature) }.toList).traverse {
+                        allSignatures =>
+                          allSignatures
+                            .filterA(verifySignatureProof(majorityArtifactInfo.hash, _))
+                            .flatTap { validSignatures =>
+                              Metrics[F]
+                                .recordDistribution(
+                                  "dag_gl0_consensus_advancer_collecting_signatures_valid_signatures",
+                                  validSignatures.size
+                                ) >>
+                                logger
+                                  .warn(
+                                    s"Removed ${(allSignatures.size - validSignatures.size).show} invalid signatures during consensus for key ${state.key.show}, " +
+                                      s"${validSignatures.size.show} valid signatures left"
+                                  )
+                                  .whenA(allSignatures.size =!= validSignatures.size)
+                            }
+                      }.flatMap { maybeOnlyValidSignatures =>
+                        HasherSelector[F].withCurrent { implicit hasher =>
+                          state.facilitators.value.hash
+                        }.map { facilitatorsHash =>
+                          maybeOnlyValidSignatures.flatMap { validSignatures =>
+                            NonEmptySet.fromSet(validSignatures.toSortedSet).map { validSignaturesNes =>
+                              val signedArtifact = Signed(majorityArtifactInfo.artifact, validSignaturesNes)
 
+                              val newState = state.copy(status =
+                                identity[GlobalSnapshotStatus](
+                                  Finished(
+                                    signedArtifact,
+                                    majorityArtifactInfo.context,
+                                    majorityTrigger,
+                                    candidates,
+                                    facilitatorsHash
+                                  )
+                                )
+                              )
+
+                              val effect =
+                                HasherSelector[F]
+                                  .forOrdinal(signedArtifact.ordinal) { implicit hasher =>
+                                    for {
+                                      hashedSnapshot <- signedArtifact.toHashed
+                                      _ <- lastNGlobalSnapshotStorage.set(hashedSnapshot, majorityArtifactInfo.context)
+                                      result <- globalSnapshotStorage.prepend(signedArtifact, majorityArtifactInfo.context)
+                                    } yield result
+                                  }
+                                  .ifM(
+                                    metrics.globalSnapshot(signedArtifact),
+                                    logger.error("Cannot save GlobalSnapshot into the storage")
+                                  ) >> Metrics[F]
+                                  .recordDistribution(
+                                    "dag_gl0_consensus_advancer_collecting_signatures_state_transitioned",
+                                    state.timeDeltaSeconds()
+                                  ) >>
+                                  HasherSelector[F].withCurrent { implicit hasher =>
+                                    gossipForkInfo(gossip, signedArtifact)
+                                  }
+
+                              (newState, effect)
+                            }
+                          }
+
+                        }
                       }
                     }
-                  }
+              }
             case Finished(_, _, _, _, _) =>
               none[(GlobalSnapshotConsensusState, F[Unit])]
                 .pure[F]

@@ -12,7 +12,7 @@ import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusKind, CurrencyConsensusOutcome}
 import io.constellationnetwork.currency.l0.snapshot.services.StateChannelSnapshotService
 import io.constellationnetwork.currency.schema.currency._
-import io.constellationnetwork.node.shared.config.types.{SharedConfig, SnapshotConfig}
+import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, SharedConfig, SnapshotConfig}
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
@@ -99,7 +99,8 @@ object CurrencySnapshotConsensus {
           nodeStorage,
           leavingDelay,
           lastNGlobalSnapshotStorage,
-          getGlobalSnapshotByOrdinal
+          getGlobalSnapshotByOrdinal,
+          snapshotConfig.consensus
         )
       consensusStateCreator = CurrencySnapshotConsensusStateCreator
         .make[F](consensusFunctions, consensusStorage, lastGlobalSnapshotStorage, gossip, selfId, seedlist)
