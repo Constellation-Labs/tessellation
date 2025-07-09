@@ -1,13 +1,16 @@
 package io.constellationnetwork.node.shared.resources
 
 import java.security.PrivateKey
+
 import cats.effect.{Async, Resource}
+
 import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.SessionStorage
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{ClientMetricsMiddleware, PeerAuthMiddleware}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.SecurityProvider
+
 import org.http4s.client.Client
 import org.http4s.client.middleware.{RequestLogger, ResponseLogger}
 
