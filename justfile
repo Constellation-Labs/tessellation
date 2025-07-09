@@ -49,3 +49,7 @@ debug-main:
 
 check:
     @bash sbt --error 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test'
+
+# Generate test user keys for bulk transaction testing
+generate-test-keys num_keys='10':
+	@bash docker/bin/generate-test-user-keys.sh {{ num_keys }}
