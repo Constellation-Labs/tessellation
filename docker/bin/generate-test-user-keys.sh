@@ -58,9 +58,6 @@ for i in $(seq 0 $((NUM_KEYS - 1))); do
     # Get address
     address=$(java -jar wallet.jar show-address)
     
-    # Get peer ID
-    peer_id=$(java -jar wallet.jar show-id)
-    
     # Export private key
     java -jar keytool.jar export > /dev/null 2>&1
     
