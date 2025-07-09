@@ -164,20 +164,27 @@ object ConsensusManager {
           )
 
       private def scheduleFacility: F[Unit] =
-        Clock[F].monotonic.map(_ + config.timeTriggerInterval).flatMap { nextTimeValue =>
-          consensusStorage.setTimeTrigger(nextTimeValue) >>
-            S.supervise {
-              val condTriggerWithTime = for {
-                maybeTimeTrigger <- consensusStorage.getTimeTrigger
-                currentTime <- Clock[F].monotonic
-                _ <- Applicative[F]
-                  .whenA(maybeTimeTrigger.exists(currentTime >= _))(internalFacilitateWith(TimeTrigger.some))
-              } yield ()
-
-              Temporal[F].sleep(config.timeTriggerInterval) >> condTriggerWithTime
-                .handleErrorWith(logger.error(_)(s"Error triggering consensus with time trigger"))
-            }.void
-        }
+        for {
+          currentTime <- Clock[F].monotonic
+          triggerTime = currentTime + config.timeTriggerInterval
+          _ <- consensusStorage.setTimeTrigger(triggerTime)
+          _ <- S.supervise {
+            Clock[F].monotonic.flatMap { now =>
+              val delay = (triggerTime - now).max(1.second)
+              Temporal[F].sleep(delay) >>
+                consensusStorage.getTimeTrigger.flatMap { maybeTrigger =>
+                  Clock[F].monotonic.flatMap { currentTime =>
+                    maybeTrigger match {
+                      case Some(trigger) if currentTime >= trigger =>
+                        internalFacilitateWith(TimeTrigger.some)
+                      case _ =>
+                        Applicative[F].unit
+                    }
+                  }
+                }.handleErrorWith(logger.error(_)(s"Error triggering consensus with time trigger"))
+            }
+          }.void
+        } yield ()
 
       def withdrawFromConsensus: F[Unit] =
         for {

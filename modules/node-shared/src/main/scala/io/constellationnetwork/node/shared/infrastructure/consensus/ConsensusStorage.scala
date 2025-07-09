@@ -377,11 +377,16 @@ object ConsensusStorage {
 
             if (allowUpdate) {
               for {
-                now <- Clock[F].monotonic
                 emptyResources <- ConsensusResources.empty[F, Artifact, Kind]
                 updated <- resourcesR(key).updateAndGet { maybeResource =>
                   val current = maybeResource.getOrElse(emptyResources)
-                  Some(f(current).copy(updatedAt = now))
+                  Some(f(current))
+                }.flatMap { maybeUpdated =>
+                  Clock[F].monotonic.flatMap { now =>
+                    maybeUpdated.traverse { updated =>
+                      resourcesR(key).set(Some(updated.copy(updatedAt = now))).as(updated.copy(updatedAt = now))
+                    }
+                  }
                 }
               } yield updated
             } else {
