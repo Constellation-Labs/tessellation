@@ -18,7 +18,10 @@ if [ -z $SOURCE_HTTP ]; then
 fi
 
 if [ -z $RELEASE_TAG ]; then
-    export RELEASE_TAG="v3.3.0"
+    response=$(curl -s $SOURCE_HTTP:9000/node/info)
+    export RELEASE_TAG=$(echo "$response" | jq -r '.version')
+    export RELEASE_TAG="v$RELEASE_TAG"
+    echo "RELEASE_TAG: $RELEASE_TAG"
 fi
 
 
@@ -27,6 +30,7 @@ ssh $REMOTE_DESTINATION_NODE "bash -c \"rm -rf /root/docker/mainnet-seedlist; rm
 
 wget https://github.com/Constellation-Labs/tessellation/releases/download/$RELEASE_TAG/mainnet-seedlist -O mainnet-seedlist
 scp mainnet-seedlist $REMOTE_DESTINATION_NODE:/root/docker/mainnet-seedlist
+echo "Copying mainnet-seedlist to $REMOTE_DESTINATION_NODE"
 rm mainnet-seedlist
 
 cd $PROJECT_ROOT
@@ -94,6 +98,7 @@ CL_DOCKER_GL0_JOIN_RETRIES=1
 CL_DOCKER_GL0_JOIN_INITIAL_DELAY=100
 CL_EXIT_ON_FOLLOWER_DOWNLOAD=true
 CL_EXIT_ON_FOLLOWER_ADVANCER=true
+CL_EXIT_ON_FOLLOWER_GOSSIP=true
 CL_EXIT_ON_FORK=true
 CL_TRACE_METRICS=true
 CL_GLOBAL_L0_PEER_ID=e0c1ee6ec43510f0e16d2969a7a7c074a5c8cdb477c074fe9c32a9aad8cbc8ff1dff60bb81923e0db437d2686a9b65b86c403e6a21fa32b6acc4e61be4d70925

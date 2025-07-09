@@ -223,6 +223,9 @@ for arg in "$@"; do
       ;;
     --use-test-metagraph)
       export USE_TEST_METAGRAPH=true
+      ;;    
+    --fail)
+      export SET_FAILURE_BREAKPOINT_TIME=true
       ;;
     --up)
       export DOCKER_UP=true
@@ -313,6 +316,8 @@ if [ -z "$METAGRAPH" ]; then
     export NUM_DL1_NODES="0"
 fi
 
-
-
-
+if [ -n "$METAGRAPH" ]; then
+    if [ -z "$PUBLISH" ]; then
+        export PUBLISH=true
+    fi
+fi
