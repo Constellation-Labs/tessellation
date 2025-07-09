@@ -3,11 +3,12 @@ package io.constellationnetwork.keytool
 import java.security.KeyStore
 
 import cats.effect.{Async, ExitCode, IO}
+import cats.syntax.traverse._
 
 import io.constellationnetwork.BuildInfo
 import io.constellationnetwork.env.env._
 import io.constellationnetwork.keytool.cert.DistinguishedName
-import io.constellationnetwork.keytool.cli.method.{ExportPrivateKeyHex, GenerateWallet, MigrateExistingKeyStoreToStorePassOnly}
+import io.constellationnetwork.keytool.cli.method._
 import io.constellationnetwork.security.SecurityProvider
 import io.constellationnetwork.security.hex.Hex
 
@@ -32,6 +33,10 @@ object Main
           case GenerateWallet(keyStore, alias, password, distinguishedName, certificateValidityDays) =>
             generateKeyStoreWithKeyPair[IO](keyStore, alias, password, distinguishedName, certificateValidityDays).void
               .handleErrorWith(err => logger.error(err)(s"Error while generating a keystore."))
+              .as(ExitCode.Success)
+          case GenerateMultipleWallets(baseKeyStorePath, baseAlias, password, count, distinguishedName, certificateValidityDays) =>
+            generateMultipleKeyStores[IO](baseKeyStorePath, baseAlias, password, count, distinguishedName, certificateValidityDays).void
+              .handleErrorWith(err => logger.error(err)(s"Error while generating multiple keystores."))
               .as(ExitCode.Success)
           case MigrateExistingKeyStoreToStorePassOnly(
                 keyStore,
@@ -74,6 +79,27 @@ object Main
         distinguishedName = distinguishedName,
         certificateValidityDays = certificateValidityDays
       )
+
+  private def generateMultipleKeyStores[F[_]: Async: SecurityProvider](
+    baseKeyStorePath: StorePath,
+    baseAlias: KeyAlias,
+    password: Password,
+    count: Int,
+    distinguishedName: DistinguishedName,
+    certificateValidityDays: Long
+  ): F[List[KeyStore]] =
+    (1 to count).toList.traverse { i =>
+      val keyStorePath = s"${baseKeyStorePath.coerce.toString}_$i.p12"
+      val aliasStr = s"${baseAlias.coerce.value}_$i"
+
+      KeyStoreUtils.generateKeyPairToStore(
+        path = keyStorePath,
+        alias = aliasStr,
+        password = password.coerce.value.toCharArray,
+        distinguishedName = distinguishedName,
+        certificateValidityDays = certificateValidityDays
+      )
+    }
 
   private def migrateKeyStoreToSinglePassword[F[_]: Async: SecurityProvider](
     keyStore: StorePath,

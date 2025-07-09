@@ -35,6 +35,28 @@ object method {
       }
   }
 
+  case class GenerateMultipleWallets(
+    baseKeyStorePath: StorePath,
+    baseAlias: KeyAlias,
+    password: Password,
+    count: Int,
+    distinguishedName: DistinguishedName = distinguishedName,
+    certificateValidityDays: Long = certificateValidityDays
+  ) extends CliMethod
+
+  object GenerateMultipleWallets extends WithOpts[GenerateMultipleWallets] {
+
+    val opts =
+      Opts.subcommand("generate-multiple", "Generate multiple wallets") {
+        (
+          StorePath.opts,
+          KeyAlias.opts,
+          Password.opts,
+          Opts.option[Int]("count", help = "Number of wallets to generate").withDefault(5)
+        ).mapN(GenerateMultipleWallets.apply(_, _, _, _))
+      }
+  }
+
   case class MigrateExistingKeyStoreToStorePassOnly(
     keyStore: StorePath,
     alias: KeyAlias,
@@ -75,5 +97,8 @@ object method {
   }
 
   val opts: Opts[CliMethod] =
-    GenerateWallet.opts.orElse(MigrateExistingKeyStoreToStorePassOnly.opts).orElse(ExportPrivateKeyHex.opts)
+    GenerateWallet.opts
+      .orElse(GenerateMultipleWallets.opts)
+      .orElse(MigrateExistingKeyStoreToStorePassOnly.opts)
+      .orElse(ExportPrivateKeyHex.opts)
 }
