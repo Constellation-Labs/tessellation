@@ -3,7 +3,6 @@ package io.constellationnetwork.node.shared.http.p2p.middlewares
 import cats.data.{Kleisli, OptionT}
 import cats.effect.Async
 import cats.effect.kernel.Clock
-import cats.effect.syntax.all._
 import cats.implicits._
 
 import scala.concurrent.duration._
@@ -17,7 +16,7 @@ object FailureMiddleware {
       sys.env.get(envVarName).map(_.toLong)
     }.flatMap {
       case Some(failTime) =>
-        Clock[F].monotonic.flatMap { currentTime =>
+        Clock[F].realTime.flatMap { currentTime =>
           val currentTimeSeconds = currentTime.toSeconds
           if (currentTimeSeconds > failTime) {
             Async[F].sleep(300.seconds)
