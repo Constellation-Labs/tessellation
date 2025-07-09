@@ -31,11 +31,14 @@ source ./docker/bin/set-env.sh "$@"
 ./docker/bin/tessellation-docker-cleanup.sh & 
 CLEANUP_PID=$!
 
-
+echo "Starting assembly"
 source ./docker/bin/assembly.sh
 
 export TESSELLATION_DOCKER_VERSION=test
+
+echo "Finished assembly, building docker image"
 docker build -t constellationnetwork/tessellation:$TESSELLATION_DOCKER_VERSION -f docker/Dockerfile .
+
 
 # Wait for cleanup PID to finish
 wait $CLEANUP_PID
@@ -195,8 +198,16 @@ source ../../docker/bin/cluster-health-check.sh
 verify_healthy
 show_time "Cluster became healthy"
 
-cd $PROJECT_ROOT/.github/action_scripts/delegated_staking
-node delegated-staking.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX testDelegatedStaking
+# cd $PROJECT_ROOT/.github/action_scripts/delegated_staking
+# node delegated-staking.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX testDelegatedStaking
+
+echo "------------------------------------------------"
+echo "Running bulk submit test"
+echo "------------------------------------------------"
+
+cd $PROJECT_ROOT/.github/action_scripts/send_transactions
+node bulk-submit-test.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX
+show_time "Bulk submit test completed"
 
 echo "------------------------------------------------"
 echo "End-to-end tests completed"

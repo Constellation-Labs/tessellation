@@ -56,12 +56,23 @@ CL_DOCKER_CL1_JOIN_PORT=${CL1_PORT_PREFIX}01
 CL_DOCKER_DL1_JOIN_PORT=${DL1_PORT_PREFIX}01
 
 
+CL_DOCKER_JAVA_OPTS="-Xms512M -Xss256K -Xmx8192M"
 
 EOF
 
-# maybe re-enable later.
-# CL_DOCKER_JAVA_OPTS="-Xms512M -Xss256K -Xmx8192M"
+# Append any CL_TEST_* environment variables from the current bash environment
+echo "" >> ./nodes/.env
+echo "# Test environment variables from host" >> ./nodes/.env
+env | grep "^CL_TEST_" | while IFS= read -r line; do
+  echo "$line" >> ./nodes/.env
+done
 
+if [ "$SET_FAILURE_BREAKPOINT_TIME" == "true" ]; then
+  # Default failure time +90 seconds, adjust if needed.
+  FAILURE_TIME=$(($(date +%s) + 90))
+  echo "CL_TEST_SIMULATE_GOSSIP_FAIL_TIME=$FAILURE_TIME" >> ./nodes/.env
+  echo "Setting gossip failure simulation to trigger at $(date -d @$FAILURE_TIME 2>/dev/null || date -r $FAILURE_TIME) (80 seconds from now)"
+fi
 
 for i in 0 1 2; do
   cp ./nodes/.env ./nodes/$i/.env
