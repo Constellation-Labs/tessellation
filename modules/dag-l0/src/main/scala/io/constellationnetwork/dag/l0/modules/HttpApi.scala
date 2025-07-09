@@ -237,7 +237,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
               PeerAuthMiddleware.requestCollateralVerifierMiddleware(services.collateral)(
                 clusterRoutes.p2pRoutes <+>
                   nodeRoutes.p2pRoutes <+>
-                  gossipRoutes.p2pRoutes <+>
+                  GossipRoutes.withFailureSimulator[F].apply(gossipRoutes.p2pRoutes) <+>
                   trustRoutes.p2pRoutes <+>
                   snapshotRoutes.p2pRoutes <+>
                   consensusRoutes

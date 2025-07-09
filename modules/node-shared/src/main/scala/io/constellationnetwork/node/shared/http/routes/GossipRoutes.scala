@@ -1,6 +1,6 @@
 package io.constellationnetwork.node.shared.http.routes
 
-import cats.data.Chain
+import cats.data.{Chain, Kleisli, OptionT}
 import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
@@ -40,6 +40,14 @@ object GossipRoutes {
         Async[F].unit
     }
   }
+
+  def withFailureSimulator[F[_]: Async]: HttpRoutes[F] => HttpRoutes[F] = { routes =>
+    Kleisli { req =>
+      OptionT.liftF(failureSimulatorFeatureCheck[F]()).flatMap { _ =>
+        routes(req)
+      }
+    }
+  }
 }
 
 final case class GossipRoutes[F[_]: Async](
@@ -53,7 +61,6 @@ final case class GossipRoutes[F[_]: Async](
   protected val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "peer" / "query" =>
       for {
-        _ <- GossipRoutes.failureSimulatorFeatureCheck[F]()
         inquiryRequest <- req.as[PeerRumorInquiryRequest]
         inquiryOrdinals = inquiryRequest.ordinals
         localPeerIds <- rumorStorage.getPeerIds
@@ -65,14 +72,12 @@ final case class GossipRoutes[F[_]: Async](
 
     case POST -> Root / "peer" / "init" =>
       for {
-        _ <- GossipRoutes.failureSimulatorFeatureCheck[F]()
         rumors <- rumorStorage.getLastPeerRumors
         result <- Ok(streamFromChain(rumors))
       } yield result
 
     case GET -> Root / "common" / "offer" =>
       for {
-        _ <- GossipRoutes.failureSimulatorFeatureCheck[F]()
         offer <- rumorStorage.getCommonRumorActiveHashes
         response = CommonRumorOfferResponse(offer)
         result <- Ok(response)
@@ -80,7 +85,6 @@ final case class GossipRoutes[F[_]: Async](
 
     case req @ POST -> Root / "common" / "query" =>
       for {
-        _ <- GossipRoutes.failureSimulatorFeatureCheck[F]()
         queryRequest <- req.as[QueryCommonRumorsRequest]
         rumors <- rumorStorage.getCommonRumors(queryRequest.query)
         result <- Ok(streamFromChain(rumors))
@@ -88,7 +92,6 @@ final case class GossipRoutes[F[_]: Async](
 
     case GET -> Root / "common" / "init" =>
       for {
-        _ <- GossipRoutes.failureSimulatorFeatureCheck[F]()
         seen <- rumorStorage.getCommonRumorSeenHashes
         result <- Ok(CommonRumorInitResponse(seen))
       } yield result
