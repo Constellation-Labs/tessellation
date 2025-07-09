@@ -1,12 +1,10 @@
 package io.constellationnetwork.dag.l0.modules
 
 import java.security.PrivateKey
-
 import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.option._
 import cats.syntax.semigroupk._
-
 import io.constellationnetwork.dag.l0.domain.cell.{L0Cell, L0CellInput}
 import io.constellationnetwork.dag.l0.domain.delegatedStake.DelegatedStakeOutput
 import io.constellationnetwork.dag.l0.domain.nodeCollateral.NodeCollateralOutput
@@ -17,7 +15,7 @@ import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment._
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.{DelegatedStakingConfig, HttpConfig, SharedConfig}
-import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
+import io.constellationnetwork.node.shared.http.p2p.middlewares.{FailureMiddleware, PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.modules.SharedValidators
@@ -28,7 +26,6 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
-
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
@@ -235,8 +232,9 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
             PeerAuthMiddleware.requestCollateralVerifierMiddleware(services.collateral)(
               clusterRoutes.p2pRoutes <+>
                 nodeRoutes.p2pRoutes <+>
-                gossipRoutes.p2pRoutes <+>
-                trustRoutes.p2pRoutes <+>
+                FailureMiddleware.withFailureSimulator[F]("CL_TEST_SIMULATE_GOSSIP_FAIL_TIME")(implicitly[Async[F]])(
+                  gossipRoutes.p2pRoutes
+                ) <+>                trustRoutes.p2pRoutes <+>
                 snapshotRoutes.p2pRoutes <+>
                 consensusRoutes
             )
