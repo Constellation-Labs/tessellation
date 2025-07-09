@@ -46,3 +46,6 @@ clean:
 debug-main:
 	@just _check_deps
 	@bash docker/bin/debug/mn-replicate.sh
+
+check:
+    @bash sbt --error 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test'
