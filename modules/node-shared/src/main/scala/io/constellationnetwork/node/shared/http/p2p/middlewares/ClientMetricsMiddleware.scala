@@ -2,12 +2,12 @@ package io.constellationnetwork.node.shared.http.p2p.middlewares
 
 import java.util.concurrent.TimeUnit
 
-import cats.effect.kernel.{Async, Resource}
+import cats.effect.kernel.{Async, Clock, Resource}
 import cats.syntax.all._
 
 import scala.concurrent.duration.FiniteDuration
 
-import io.constellationnetwork.node.shared.http.p2p.middlewares.MetricsMiddleware.normalizeRoutePath
+import io.constellationnetwork.node.shared.http.p2p.middlewares.MetricsMiddleware._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 
 import eu.timepit.refined.auto._
@@ -18,45 +18,57 @@ object ClientMetricsMiddleware {
 
   def fromClient[F[_]: Async: Metrics](client: Client[F]): Client[F] =
     Client { (req: Request[F]) =>
-      val startTime = System.nanoTime()
+      Resource.liftK[F](Clock[F].monotonic).flatMap { startTime =>
+        client.run(req).flatMap { response =>
+          Resource.liftK[F] {
+            for {
+              endTime <- Clock[F].monotonic
+              duration = endTime - startTime
 
-      client.run(req).flatMap { response =>
-        Resource.liftK[F] {
-          val endTime = System.nanoTime()
-          val duration = FiniteDuration(endTime - startTime, TimeUnit.NANOSECONDS)
+              // Extract and normalize target information
+              targetHost = req.uri.host.map(_.value).getOrElse("unknown")
+              targetPort = req.uri.port.map(_.toString).getOrElse("default")
+              routePath = normalizeRoutePath(req.uri.path.renderString)
 
-          // Extract and normalize target information
-          val targetHost = req.uri.host.map(_.value).getOrElse("unknown")
-          val targetPort = req.uri.port.map(_.toString).getOrElse("default")
-          val routePath = normalizeRoutePath(req.uri.path.renderString)
+              // All tags for counter metrics (similar to server-side)
+              allTags: Seq[(Metrics.LabelName, String)] = Seq(
+                Metrics.unsafeLabelName("method") -> req.method.name,
+                Metrics.unsafeLabelName("status") -> response.status.code.toString,
+                Metrics.unsafeLabelName("status_class") -> s"${response.status.code / 100}xx",
+                Metrics.unsafeLabelName("target_host") -> targetHost,
+                Metrics.unsafeLabelName("target_port") -> targetPort,
+                Metrics.unsafeLabelName("route") -> routePath,
+                bucketName -> bucketLabel(duration)
+              )
 
-          val tags: Seq[(Metrics.LabelName, String)] = Seq(
-            Metrics.unsafeLabelName("method") -> req.method.name,
-            Metrics.unsafeLabelName("status") -> response.status.code.toString,
-            Metrics.unsafeLabelName("status_class") -> s"${response.status.code / 100}xx",
-            Metrics.unsafeLabelName("target_host") -> targetHost,
-            Metrics.unsafeLabelName("target_port") -> targetPort,
-            Metrics.unsafeLabelName("route") -> routePath
-          )
+              // Histogram tags (limited labels)
+              histogramTagsSeq: Seq[(Metrics.LabelName, String)] = histogramTags(routePath)
 
-          // Client-specific metric keys
-          val durationMetricKey: Metrics.MetricKey = "dag_http_client_request_time"
-          val requestSizeMetricKey: Metrics.MetricKey = "dag_http_client_request_size"
-          val responseSizeMetricKey: Metrics.MetricKey = "dag_http_client_response_size"
+              // Client-specific metric keys
+              durationMetricKey: Metrics.MetricKey = "dag_http_client_request_time"
+              requestSizeMetricKey: Metrics.MetricKey = "dag_http_client_request_size"
+              responseSizeMetricKey: Metrics.MetricKey = "dag_http_client_response_size"
+              requestCounterMetricKey: Metrics.MetricKey = "dag_http_client_request_count"
 
-          val metricsRecording = for {
-            _ <- Metrics[F].recordTimeHistogram(durationMetricKey, duration, tags)
+              metricsRecording = for {
+                _ <- Metrics[F].incrementCounter(requestCounterMetricKey, allTags)
+                _ <-
+                  if (isHistogramRoute(req.uri.path.renderString)) {
+                    Metrics[F].recordTimeHistogram(durationMetricKey, duration, histogramTagsSeq) >>
+                      req.contentLength.traverse_ { size =>
+                        Metrics[F].recordSizeHistogram(requestSizeMetricKey, size, histogramTagsSeq)
+                      } >>
+                      response.contentLength.traverse_ { size =>
+                        Metrics[F].recordSizeHistogram(responseSizeMetricKey, size, histogramTagsSeq)
+                      }
+                  } else {
+                    Async[F].unit
+                  }
+              } yield ()
 
-            _ <- req.contentLength.traverse_ { size =>
-              Metrics[F].recordSizeHistogram(requestSizeMetricKey, size, tags)
-            }
-
-            _ <- response.contentLength.traverse_ { size =>
-              Metrics[F].recordSizeHistogram(responseSizeMetricKey, size, tags)
-            }
-          } yield ()
-
-          Async[F].start(metricsRecording) >> response.pure[F]
+              _ <- Async[F].start(metricsRecording)
+            } yield response
+          }
         }
       }
     }
