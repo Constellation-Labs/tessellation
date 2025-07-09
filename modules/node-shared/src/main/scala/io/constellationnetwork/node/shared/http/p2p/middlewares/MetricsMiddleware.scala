@@ -22,10 +22,10 @@ object MetricsMiddleware {
   def bucketName: Metrics.LabelName = Metrics.unsafeLabelName("time_bucket")
 
   def bucketLabel(duration: FiniteDuration): String =
-    if (duration.toMillis > 1000) {
-      "gt_1s"
-    } else if (duration.toMillis > 10_000) {
+    if (duration.toMillis > 10_000) {
       "gt_10s"
+    } else if (duration.toMillis > 1000) {
+      "gt_1s"
     } else {
       "lt_1s"
     }
