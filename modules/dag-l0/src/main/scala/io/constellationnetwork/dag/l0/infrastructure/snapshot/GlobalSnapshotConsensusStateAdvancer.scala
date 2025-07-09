@@ -21,7 +21,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.TimeTrigger
-import io.constellationnetwork.node.shared.infrastructure.fork.ForkDetect
+import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.SnapshotConsensusFunctions.gossipForkInfo
@@ -136,10 +136,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                             effect = gossip.spread(ConsensusPeerDeclaration(state.key, Proposal(hash, facilitatorsHash))) *>
                               gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
                             facilitators = state.facilitators.value
-                            _ = {
-                              ForkDetect.exitOnCheck("CL_EXIT_ON_FOLLOWER_ADVANCER", () => facilitators.toSet)
-                              ()
-                            }
+                            _ <- ExitOnFork.exitOnCheck("CL_EXIT_ON_FOLLOWER_ADVANCER", () => facilitators.toSet)
                             newState =
                               state.copy(status =
                                 identity[GlobalSnapshotStatus](
