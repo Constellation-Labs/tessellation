@@ -375,22 +375,16 @@ object ConsensusStorage {
               key >= _key.get(outcomeWrapper.value) && key <= outcomeWrapper.maxDeclarationKey
             }
 
-            if (allowUpdate) {
+            if (!allowUpdate) none[ConsensusResources[Artifact, Kind]].pure[F]
+            else {
               for {
+                now <- Clock[F].monotonic
                 emptyResources <- ConsensusResources.empty[F, Artifact, Kind]
                 updated <- resourcesR(key).updateAndGet { maybeResource =>
                   val current = maybeResource.getOrElse(emptyResources)
-                  Some(f(current))
-                }.flatMap { maybeUpdated =>
-                  Clock[F].monotonic.flatMap { now =>
-                    maybeUpdated.traverse { updated =>
-                      resourcesR(key).set(Some(updated.copy(updatedAt = now))).as(updated.copy(updatedAt = now))
-                    }
-                  }
+                  f(current).copy(updatedAt = now).some
                 }
               } yield updated
-            } else {
-              none[ConsensusResources[Artifact, Kind]].pure[F]
             }
           }
 
