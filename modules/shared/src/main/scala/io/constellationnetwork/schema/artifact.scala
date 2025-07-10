@@ -49,6 +49,7 @@ object artifact {
     def tokenPair: TokenPair = price.tokenPair
   }
 
+  // format: off
   /**
    * Temporary artifact used to indicate which global snapshot ordinals have already been
    * processed during the construction of a currency snapshot.
@@ -73,6 +74,7 @@ object artifact {
    *
    * @param ordinals A sorted set of global snapshot ordinals that were processed in the current currency snapshot.
    */
+  // format: on
   @derive(decoder, encoder, order, ordering, show)
   case class GlobalSnapshotsProcessed(
     ordinals: SortedSet[SnapshotOrdinal]

@@ -1,10 +1,12 @@
 package io.constellationnetwork.dag.l0.modules
 
 import java.security.PrivateKey
+
 import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.option._
 import cats.syntax.semigroupk._
+
 import io.constellationnetwork.dag.l0.domain.cell.{L0Cell, L0CellInput}
 import io.constellationnetwork.dag.l0.domain.delegatedStake.DelegatedStakeOutput
 import io.constellationnetwork.dag.l0.domain.nodeCollateral.NodeCollateralOutput
@@ -26,6 +28,7 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
+
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
@@ -234,7 +237,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
                 nodeRoutes.p2pRoutes <+>
                 FailureMiddleware.withFailureSimulator[F]("CL_TEST_SIMULATE_GOSSIP_FAIL_TIME")(implicitly[Async[F]])(
                   gossipRoutes.p2pRoutes
-                ) <+>                trustRoutes.p2pRoutes <+>
+                ) <+> trustRoutes.p2pRoutes <+>
                 snapshotRoutes.p2pRoutes <+>
                 consensusRoutes
             )
