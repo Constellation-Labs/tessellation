@@ -64,7 +64,13 @@ object CurrencySnapshotValidator {
       validateSigned(artifact).flatMap { signedV =>
         val facilitators = artifact.proofs.map(_.id).map(PeerId.fromId).toSortedSet
 
-        validateSnapshot(lastArtifact, lastContext, artifact, facilitators, getGlobalSnapshotByOrdinal).map { snapshotV =>
+        validateSnapshot(
+          lastArtifact,
+          lastContext,
+          artifact,
+          facilitators,
+          getGlobalSnapshotByOrdinal
+        ).map { snapshotV =>
           signedV.product(snapshotV.map { case (_, info) => info })
         }
       }

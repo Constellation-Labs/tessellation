@@ -133,7 +133,12 @@ object CurrencySnapshotProcessor {
         snapshot: Signed[GlobalIncrementalSnapshot],
         getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] =
-        globalSnapshotContextFns.createContext(lastState, lastSnapshot, snapshot, getGlobalSnapshotByOrdinal)
+        globalSnapshotContextFns.createContext(
+          lastState,
+          lastSnapshot,
+          snapshot,
+          getGlobalSnapshotByOrdinal
+        )
 
       def applySnapshotFn(
         lastState: CurrencySnapshotInfo,

@@ -120,26 +120,37 @@ object CurrencySnapshotAcceptanceManager {
     globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
-  ): F[CurrencySnapshotAcceptanceManager[F]] =
-    SignallingRef
-      .of[F, Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]](SortedMap.empty)
-      .map(
-        make[F](
-          fieldsAddedOrdinals,
-          environment,
-          lastGlobalSnapshotsSyncConfig,
-          blockAcceptanceManager,
-          tokenLockBlockAcceptanceManager,
-          allowSpendBlockAcceptanceManager,
-          collateral,
-          messageValidator,
-          feeTransactionValidator,
-          globalSnapshotSyncValidator,
-          lastNGlobalSnapshotStorage,
-          lastGlobalSnapshotStorage,
-          _
-        )
-      )
+  ): F[CurrencySnapshotAcceptanceManager[F]] = for {
+
+    // Holds a cache of the most recent GlobalIncrementalSnapshots by their SnapshotOrdinal.
+    // Used to avoid redundant network calls and repeated deserialization of global snapshots
+    // when multiple currency snapshots are being processed concurrently or in sequence.
+    lastGlobalSnapshotsCached <- SignallingRef.of[F, Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]](Map.empty)
+
+    // Tracks which global snapshot ordinals have already been processed for each metagraph address.
+    // This avoids re-extracting global-layer artifacts such as SpendActions when multiple
+    // currency snapshots are produced before lastGlobalSnapshotInfo is updated.
+    // Not maintaining this state would result in applying the same actions multiple times,
+    // leading to inconsistencies like double deduction and snapshot diff mismatches.
+    globalSnapshotsAlreadyProcessed <- SignallingRef.of[F, Map[Address, Map[SnapshotOrdinal, List[SnapshotOrdinal]]]](Map.empty)
+
+  } yield
+    make[F](
+      fieldsAddedOrdinals,
+      environment,
+      lastGlobalSnapshotsSyncConfig,
+      blockAcceptanceManager,
+      tokenLockBlockAcceptanceManager,
+      allowSpendBlockAcceptanceManager,
+      collateral,
+      messageValidator,
+      feeTransactionValidator,
+      globalSnapshotSyncValidator,
+      lastNGlobalSnapshotStorage,
+      lastGlobalSnapshotStorage,
+      lastGlobalSnapshotsCached,
+      globalSnapshotsAlreadyProcessed
+    )
 
   def make[F[_]: Async: Parallel](
     fieldsAddedOrdinals: FieldsAddedOrdinals,
@@ -154,7 +165,8 @@ object CurrencySnapshotAcceptanceManager {
     globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    lastGlobalSnapshotsCached: SignallingRef[F, Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]]
+    lastGlobalSnapshotsCached: SignallingRef[F, Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]],
+    globalSnapshotsAlreadyProcessed: SignallingRef[F, Map[Address, Map[SnapshotOrdinal, List[SnapshotOrdinal]]]]
   ): CurrencySnapshotAcceptanceManager[F] = new CurrencySnapshotAcceptanceManager[F] {
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F]("CurrencySnapshotAcceptanceManager")
 
@@ -621,19 +633,58 @@ object CurrencySnapshotAcceptanceManager {
           metagraphSyncData.get(currencyId) match {
             case None => (emptySpendActions, emptyProcessedGlobalSnapshots).pure[F]
             case Some(syncDataInfo) =>
-              val unappliedOrdinals = syncDataInfo.unappliedGlobalChangeOrdinals
-                .filter(_ <= globalSnapshotViewOrdinal)
+              for {
+                allMetagraphsGlobalSnapshotsAlreadyProcessed <- globalSnapshotsAlreadyProcessed.get
 
-              if (unappliedOrdinals.isEmpty) {
-                (emptySpendActions, emptyProcessedGlobalSnapshots).pure[F]
-              } else {
-                for {
-                  _ <- logger.info(
-                    s"[CURRENCY=$currencyId][Ordinal=$currentCurrencySnapshotOrdinal][GlobalSyncView=$globalSnapshotViewOrdinal] Extracting spend actions from global ordinals: ${unappliedOrdinals.map(_.show).mkString(",")}"
-                  )
-                  spendActions <- processUnappliedOrdinals(unappliedOrdinals, lastGlobalSnapshots, getGlobalSnapshotByOrdinal)
-                } yield (spendActions, unappliedOrdinals)
-              }
+                metagraphOrdinalsByCurrencyOrdinal =
+                  allMetagraphsGlobalSnapshotsAlreadyProcessed.getOrElse(currencyId, Map.empty)
+
+                allProcessedOrdinals =
+                  metagraphOrdinalsByCurrencyOrdinal.values.flatten.toSet
+
+                alreadyProcessedForCurrentOrdinal =
+                  metagraphOrdinalsByCurrencyOrdinal.getOrElse(currentCurrencySnapshotOrdinal, List.empty)
+
+                unappliedGlobalOrdinalsToProcess = syncDataInfo.unappliedGlobalChangeOrdinals
+                  .filter(o => o <= globalSnapshotViewOrdinal && !allProcessedOrdinals.contains(o))
+
+                globalOrdinalsToProcess = (alreadyProcessedForCurrentOrdinal ++ unappliedGlobalOrdinalsToProcess).toSet
+
+                result <-
+                  if (globalOrdinalsToProcess.isEmpty) {
+                    (emptySpendActions, emptyProcessedGlobalSnapshots).pure[F]
+                  } else {
+                    for {
+                      _ <- logger.info(
+                        s"[CURRENCY=$currencyId][Ordinal=$currentCurrencySnapshotOrdinal][GlobalSyncView=$globalSnapshotViewOrdinal] Extracting spend actions from global ordinals: ${globalOrdinalsToProcess.map(_.show).mkString(",")}"
+                      )
+                      spendActions <- processUnappliedOrdinals(
+                        globalOrdinalsToProcess,
+                        lastGlobalSnapshots,
+                        getGlobalSnapshotByOrdinal
+                      )
+                      _ <- globalSnapshotsAlreadyProcessed.update { current =>
+                        val currentMetagraphProcessedOrdinals = current.getOrElse(currencyId, Map.empty)
+
+                        val updatedMetagraphProcessedOrdinals = currentMetagraphProcessedOrdinals
+                          .updated(
+                            currentCurrencySnapshotOrdinal,
+                            currentMetagraphProcessedOrdinals
+                              .getOrElse(currentCurrencySnapshotOrdinal, List.empty)
+                              ++ unappliedGlobalOrdinalsToProcess
+                          )
+                          .view
+                          .mapValues(_.distinct.sorted)
+                          .toSeq
+                          .sortBy(_._1.value.value)
+                          .takeRight(lastGlobalSnapshotsSyncConfig.maxLastGlobalSnapshotsInMemory)
+                          .toMap
+
+                        current.updated(currencyId, updatedMetagraphProcessedOrdinals)
+                      }
+                    } yield (spendActions, unappliedGlobalOrdinalsToProcess)
+                  }
+              } yield result
           }
       }
     }
