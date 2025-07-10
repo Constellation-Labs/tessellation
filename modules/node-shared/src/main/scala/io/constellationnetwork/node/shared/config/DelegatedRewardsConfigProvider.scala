@@ -118,7 +118,7 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
       AppEnvironment.Dev -> List(),
       AppEnvironment.Testnet -> List(
         OneTimeReward(
-          EpochProgress(1038040L), // approx. 2025-07-09 16:30:00 +UTC
+          EpochProgress(1001105L), // approx. 2025-07-11 15:30:00 +UTC
           Address("DAG0WJjvo8s1h2Mn8g9G3HXuSTN12UGF4RzF7whp"),
           TransactionAmount(12_345_000_000_00L)
         )
