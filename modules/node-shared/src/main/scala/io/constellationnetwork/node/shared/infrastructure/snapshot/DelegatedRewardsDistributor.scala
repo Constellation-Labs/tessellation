@@ -49,7 +49,7 @@ trait DelegatedRewardsDistributor[F[_]] {
 
   def getEmissionConfig(epochProgress: EpochProgress): F[EmissionConfigEntry]
 
-  def calculateVariableInflation(epochProgress: EpochProgress): F[Amount]
+  def calculateVariableInflation(epochProgress: EpochProgress, lastSnapshotContext: GlobalSnapshotInfo): F[Amount]
 
   def distribute(
     lastSnapshotContext: GlobalSnapshotInfo,

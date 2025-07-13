@@ -17,11 +17,13 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{Eve
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{DelegatedRewardsResult, PartitionedStakeUpdates}
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.artifact.PricingUpdate
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.priceOracle.{PriceFraction, PriceRecord, TokenPair}
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, NonNegFraction, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
@@ -31,7 +33,7 @@ import io.constellationnetwork.security.signature.signature.{Signature, Signatur
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
 import org.scalacheck.Gen
 import weaver.SimpleIOSuite
 import weaver.scalacheck.Checkers
@@ -94,8 +96,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
           totalSupply = Amount(3693588685_00000000L),
           dagPrices = SortedMap(
             // DAG per USD format (higher number = lower DAG price)
-            EpochProgress(5000000L) -> NonNegFraction.unsafeFrom(45, 1), // 45 DAG per USD ($0.022 per DAG)
-            EpochProgress(5100000L) -> NonNegFraction.unsafeFrom(40, 1) // 40 DAG per USD ($0.025 per DAG) - DAG price increased
+            EpochProgress(5000000L) -> NonNegFraction.unsafeFrom(45, 1) // 45 DAG per USD ($0.022 per DAG)
           ),
           epochsPerMonth = NonNegLong(732000L / 12)
         )
@@ -155,13 +156,27 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
             totalSupply = Amount(1000_00000000L),
             dagPrices = SortedMap(
               // DAG per USD format (fewer DAG per USD = higher price)
-              EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1), // 10 DAG per USD ($0.10 per DAG)
-              EpochProgress(106L) -> NonNegFraction.unsafeFrom(5, 1) // 5 DAG per USD ($0.20 per DAG) - price doubled
+              EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1) // 10 DAG per USD ($0.10 per DAG)
             ),
             epochsPerMonth = NonNegLong(1L)
           )
         }
       )
+    )
+
+    val context = GlobalSnapshotInfo.empty.copy(priceState =
+      SortedMap(
+        TokenPair.DAG_USD -> PriceRecord(
+          currentPrice = PricingUpdate(
+            PriceFraction(TokenPair.DAG_USD, NonNegFraction.unsafeFrom(5, 1))
+          ), // 5 DAG per USD ($0.20 per DAG) - price doubled
+          upcomingPrice = PricingUpdate.zero,
+          currentSum = PricingUpdate.zero,
+          currentNumEvents = PosInt(1),
+          nextWindowChange = EpochProgress(110L),
+          updatedAt = EpochProgress(106L)
+        )
+      ).some
     )
 
     for {
@@ -171,12 +186,12 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       // Initial emission at epoch 100
       initialEmission <- GlobalDelegatedRewardsDistributor
         .make[IO](AppEnvironment.Dev, testConfig)
-        .calculateVariableInflation(EpochProgress(100L))
+        .calculateVariableInflation(EpochProgress(100L), context)
 
       // Emission after 6 months (0.5 years) with price doubling
       laterEmission <- GlobalDelegatedRewardsDistributor
         .make[IO](AppEnvironment.Dev, testConfig)
-        .calculateVariableInflation(EpochProgress(106L))
+        .calculateVariableInflation(EpochProgress(106L), context)
     } yield
       // With higher price and time decay, emissions should decrease
       // For a doubled price (halved DAG/USD ratio) with iImpact=0.5,
@@ -187,6 +202,21 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
 
   test("calculateTotalRewardsToMint should follow the emission formula with deterministic precision") {
 
+    val context = GlobalSnapshotInfo.empty.copy(priceState =
+      SortedMap(
+        TokenPair.DAG_USD -> PriceRecord(
+          currentPrice = PricingUpdate(
+            PriceFraction(TokenPair.DAG_USD, NonNegFraction.unsafeFrom(40, 1))
+          ), // 40 DAG per USD ($0.025 per DAG) - DAG price increased
+          upcomingPrice = PricingUpdate.zero,
+          currentSum = PricingUpdate.zero,
+          currentNumEvents = PosInt(1),
+          nextWindowChange = EpochProgress(5200000L),
+          updatedAt = EpochProgress(5100000L)
+        )
+      ).some
+    )
+
     for {
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
@@ -194,12 +224,12 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       // Test with epoch just at transition - should use formula
       atTransition <- GlobalDelegatedRewardsDistributor
         .make[IO](AppEnvironment.Dev, delegatedRewardsConfig)
-        .calculateVariableInflation(EpochProgress(5000000L))
+        .calculateVariableInflation(EpochProgress(5000000L), context)
 
       // Test with epoch after transition - should use formula with time decay
       afterTransition <- GlobalDelegatedRewardsDistributor
         .make[IO](AppEnvironment.Dev, delegatedRewardsConfig)
-        .calculateVariableInflation(EpochProgress(5100000L))
+        .calculateVariableInflation(EpochProgress(5100000L), context)
     } yield {
       // At transition - with 10^8 scaling factor
       val expectedAtTransition = 30275317090L
@@ -878,6 +908,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       )
     )
 
+    val context = GlobalSnapshotInfo.empty
+
     for {
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
@@ -885,8 +917,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, customConfig)
 
       // Test rewards calculation at different epochs relative to transition
-      atTransition <- distributor.calculateVariableInflation(EpochProgress(1000L))
-      afterTransition <- distributor.calculateVariableInflation(EpochProgress(1001L))
+      atTransition <- distributor.calculateVariableInflation(EpochProgress(1000L), context)
+      afterTransition <- distributor.calculateVariableInflation(EpochProgress(1001L), context)
     } yield
       // Emission formula activates at transition epoch
       expect(atTransition.value.value > 100L) &&

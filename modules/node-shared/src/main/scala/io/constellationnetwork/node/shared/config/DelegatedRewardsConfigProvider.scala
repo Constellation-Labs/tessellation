@@ -28,6 +28,7 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
 
   val wallet1: Address = Address("DAG6bg5PHo9etT9wbnbxyDbnRdv7ge12RujwfeKR")
   val wallet23: Address = Address("DAG4ARHfARnth2EW94GNVhWwwtZV6hqMkYYAEf46")
+  val initialDagPrice: NonNegFraction = NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
 
   def getConfig(): DelegatedRewardsConfig = DelegatedRewardsConfig(
     flatInflationRate = NonNegFraction.unsafeFrom(3, 100), // 3% flat inflation rate
@@ -42,7 +43,7 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
           iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
           totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
           dagPrices = SortedMap(
-            EpochProgress(0L) -> NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
+            EpochProgress(0L) -> initialDagPrice
           ),
           epochsPerMonth = NonNegLong(10L)
         )
@@ -58,7 +59,7 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
             iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
             totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
             dagPrices = SortedMap(
-              EpochProgress(0L) -> NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
+              EpochProgress(0L) -> initialDagPrice
             ),
             epochsPerMonth = NonNegLong(84L) // one hour
           )
@@ -72,7 +73,7 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
             iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
             totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
             dagPrices = SortedMap(
-              EpochProgress(0L) -> NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
+              EpochProgress(0L) -> initialDagPrice
             ),
             epochsPerMonth = NonNegLong(61000L) // 732000 / 12
           )
@@ -87,7 +88,7 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
           iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
           totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
           dagPrices = SortedMap(
-            EpochProgress(0L) -> NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
+            EpochProgress(0L) -> initialDagPrice
           ),
           epochsPerMonth = NonNegLong(61000L) // 732000 / 12
         )
@@ -102,7 +103,7 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
           iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
           totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
           dagPrices = SortedMap(
-            EpochProgress(0L) -> NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
+            EpochProgress(0L) -> initialDagPrice
           ),
           epochsPerMonth = NonNegLong(40458L) // 485502 / 12
         )

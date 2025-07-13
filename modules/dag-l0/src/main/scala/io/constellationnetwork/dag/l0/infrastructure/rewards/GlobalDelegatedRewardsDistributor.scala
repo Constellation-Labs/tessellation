@@ -10,6 +10,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.math.BigDecimal.RoundingMode
 
 import io.constellationnetwork.env.AppEnvironment
+import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
@@ -24,6 +25,7 @@ import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, Upda
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.{DelegatedStakeRewardParameters, RewardFraction, UpdateNodeParameters}
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.priceOracle.{PriceRecord, TokenPair}
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -72,9 +74,9 @@ object GlobalDelegatedRewardsDistributor {
 
     /** Calculate the variable amount of rewards to mint for this epoch based on the config and epoch progress.
       */
-    def calculateVariableInflation(epochProgress: EpochProgress): F[Amount] = for {
+    def calculateVariableInflation(epochProgress: EpochProgress, lastSnapshotContext: GlobalSnapshotInfo): F[Amount] = for {
       emConfig <- getEmissionConfig(epochProgress)
-      result <- calculateEmissionRewards(epochProgress, emConfig)
+      result <- calculateEmissionRewards(epochProgress, emConfig, lastSnapshotContext)
     } yield result
 
     /** Implements the distribute method that encapsulates all reward calculation logic for a consensus cycle. This method replaces the
@@ -103,7 +105,7 @@ object GlobalDelegatedRewardsDistributor {
           )
         case TimeTrigger =>
           for {
-            emitFromFunction <- calculateVariableInflation(epochProgress)
+            emitFromFunction <- calculateVariableInflation(epochProgress, lastSnapshotContext)
             pctConfig <- getDistributionProgram(epochProgress)
             epochSPerYear <- getEmissionConfig(epochProgress).map(_.epochsPerYear.value)
             (reservedRewards, facilitatorRewardPool, delegatorRewardPool) <- calculateEmissionDistribution(
@@ -184,7 +186,8 @@ object GlobalDelegatedRewardsDistributor {
       */
     private def calculateEmissionRewards(
       epochProgress: EpochProgress,
-      emConfig: EmissionConfigEntry
+      emConfig: EmissionConfigEntry,
+      lastSnapshotContext: GlobalSnapshotInfo
     ): F[Amount] = Sync[F].defer {
       val iTarget = emConfig.iTarget.toBigDecimal
       val iInitial = emConfig.iInitial.toBigDecimal
@@ -198,8 +201,9 @@ object GlobalDelegatedRewardsDistributor {
         Slf4jLogger.getLogger[F].error("Empty DAG price configuration").as(Amount.empty)
       } else {
         val dagPrices = emConfig.dagPrices
-        val initialPrice = dagPrices.head._2.toBigDecimal
-        val currentPrice = getCurrentDagPrice(epochProgress, dagPrices).toBigDecimal
+        val initialDagPrice = dagPrices.headOption.map(_._2).getOrElse(DefaultDelegatedRewardsConfigProvider.initialDagPrice)
+        val initialPrice = initialDagPrice.toBigDecimal
+        val currentPrice = getCurrentDagPrice(lastSnapshotContext).getOrElse(initialDagPrice).toBigDecimal
         val yearDiff = DecimalUtils.safeDivide(BigDecimal(epochProgress.value.value - transitionEpoch.toLong, mc), epochsPerYear)
 
         for {
@@ -239,13 +243,12 @@ object GlobalDelegatedRewardsDistributor {
     }
 
     private def getCurrentDagPrice(
-      epochProgress: EpochProgress,
-      dagPrices: Map[EpochProgress, NonNegFraction]
-    ): NonNegFraction =
-      dagPrices.filter { case (epoch, _) => epoch.value <= epochProgress.value }
-        .maxByOption(_._1.value.value)
-        .map(_._2)
-        .getOrElse(dagPrices.head._2)
+      lastSnapshotContext: GlobalSnapshotInfo
+    ): Option[NonNegFraction] =
+      lastSnapshotContext.priceState
+        .getOrElse(SortedMap.empty[TokenPair, PriceRecord])
+        .get(TokenPair.DAG_USD)
+        .map(priceRecord => priceRecord.currentPrice.price.value)
 
     private def getStakedAmount(stakeRecord: DelegatedStakeRecord): Long =
       stakeRecord.event.value.amount.value.value + stakeRecord.rewards.value
