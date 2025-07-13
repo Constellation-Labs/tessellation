@@ -19,7 +19,8 @@ import io.constellationnetwork.kernel.{:: => _, _}
 import io.constellationnetwork.node.shared.domain.snapshot.Validator
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.modules.SharedStorages
-import io.constellationnetwork.node.shared.snapshot.currency.{CurrencySnapshotEvent, GlobalSnapshotSyncEvent}
+import io.constellationnetwork.node.shared.snapshot.currency.{CurrencySnapshotEvent, ForceGlobalSyncEvent, GlobalSnapshotSyncEvent}
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security._
@@ -54,6 +55,11 @@ object StateChannel {
           case None => Applicative[F].unit
         }
 
+      def checkIfShouldForceEventTrigger(snapshot: GlobalIncrementalSnapshot, currencyId: Address): Boolean =
+        snapshot.spendActions.fold(false) { spendActions =>
+          spendActions.contains(currencyId)
+        }
+
       def sendGlobalSnapshotSyncConsensusEvent(snapshot: Hashed[GlobalIncrementalSnapshot])(implicit hs: Hasher[F]) = {
         val selfPeerId = selfKeyPair.getPublic.toId.toPeerId
 
@@ -70,13 +76,23 @@ object StateChannel {
         (lastSentGlobalSnapshotSync, storages.session.getToken).flatMapN {
           case (Some(lastGlobalSnapshotSyncRef), Some(session)) =>
             val sync = GlobalSnapshotSync(lastGlobalSnapshotSyncRef.ordinal, snapshot.ordinal, snapshot.hash, session)
-            Signed
-              .forAsyncHasher(sync, selfKeyPair)
-              .map(GlobalSnapshotSyncEvent(_))
-              .flatMap { event =>
-                enqueueConsensusEventFn(event).run() >> storages.lastGlobalSnapshotSync.set(event.value)
-              }
-              .void
+            for {
+              signedGlobalSnapshotSync <- Signed.forAsyncHasher(sync, selfKeyPair)
+              globalSyncEvent = GlobalSnapshotSyncEvent(signedGlobalSnapshotSync)
+
+              _ <- enqueueConsensusEventFn(globalSyncEvent).run()
+              _ <- storages.lastGlobalSnapshotSync.set(globalSyncEvent.value)
+
+              currencyId <- storages.identifier.get
+
+              shouldForceEventTrigger = checkIfShouldForceEventTrigger(snapshot, currencyId)
+              _ <-
+                if (shouldForceEventTrigger) {
+                  enqueueConsensusEventFn(ForceGlobalSyncEvent()).run()
+                } else {
+                  ().pure
+                }
+            } yield ()
           case (Some(_), None) =>
             logger.warn("Couldn't send GlobalSnapshotSyncEvent. Session is missing.")
           case (None, Some(_)) =>
