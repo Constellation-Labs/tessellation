@@ -20,11 +20,13 @@ import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.artifact.PricingUpdate
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.priceOracle.{PriceRecord, TokenPair}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.utils.DecimalUtils
@@ -171,8 +173,8 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
       (_, _, totalDelegateStake, currentTotalSupply) <- processDelegations(lastSnapshotInfo)
       latestDelegateRewardsNoCommission <- getLatestDelegateRewardTotal(lastSnapshot, lastSnapshotInfo)
 
-      currentPrice <- toAmount(getCurrentDagPrice(emissionConfig))
-      nextPrice <- getNextDagPrice(emissionConfig, lastSnapshot)
+      currentPrice <- toAmount(getCurrentDagPrice(lastSnapshotInfo))
+      nextPrice <- getNextDagPrice(lastSnapshotInfo)
 
       avgRewardAmount <- calculateAverageReward(latestDelegateRewardsNoCommission, totalDelegateStake)
       totalRewardsPerYear <- calculateAverageRewardOverAYear(avgRewardAmount, emissionConfig.epochsPerYear)
@@ -260,66 +262,45 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
         .longValue
     )
 
-  private def getCurrentDagPrice(emConfig: EmissionConfigEntry): Long = {
-    val dagPrices = emConfig.dagPrices
-    if (dagPrices.isEmpty) 0L
-    else {
-      val currentPrice = dagPrices.values.headOption.getOrElse(dagPrices.head._2)
-      (currentPrice.toBigDecimal * DecimalUtils.DATUM_USD).setScale(0, RoundingMode.HALF_UP).longValue
-    }
-  }
+  private def priceToLong(pricingUpdate: PricingUpdate): Long =
+    (pricingUpdate.price.value.toBigDecimal * DecimalUtils.DATUM_USD).setScale(0, RoundingMode.HALF_UP).longValue
 
-  private def getNextDagPrice(emConfig: EmissionConfigEntry, lastSnapshot: GlobalIncrementalSnapshot): F[NextDagPrice] = {
-    val dagPrices = emConfig.dagPrices
+  private def getCurrentDagPrice(info: GlobalSnapshotInfo): Long =
+    info.priceState
+      .getOrElse(SortedMap.empty[TokenPair, PriceRecord])
+      .get(TokenPair.DAG_USD)
+      .map(priceRecord => priceToLong(priceRecord.currentPrice))
+      .getOrElse(0L)
 
-    if (dagPrices.isEmpty) {
-      PosLong
-        .from(1L)
-        .fold(
-          err => Async[F].raiseError(new IllegalArgumentException(s"Failed to create positive epoch: $err")),
-          posLong =>
-            NextDagPrice(
-              price = Amount.empty,
-              asOfEpoch = EpochProgress(posLong)
-            ).pure[F]
-        )
-    } else {
-      val sortedPrices = dagPrices.toList.sortBy(_._1.value.value)
+  private def getNextDagPrice(info: GlobalSnapshotInfo): F[NextDagPrice] = {
+    val maybePriceRecord = info.priceState
+      .getOrElse(SortedMap.empty[TokenPair, PriceRecord])
+      .get(TokenPair.DAG_USD)
 
-      val priceValue = (sortedPrices.head._2.toBigDecimal * DecimalUtils.DATUM_USD).setScale(0, RoundingMode.HALF_UP).longValue
-
-      val defaultPriceF: F[NextDagPrice] =
-        if (priceValue <= 0) {
-          NextDagPrice(
-            price = Amount.empty,
-            asOfEpoch = sortedPrices.head._1
-          ).pure[F]
-        } else {
-          PosLong
-            .from(priceValue)
-            .fold(
-              err => Async[F].raiseError(new IllegalArgumentException(s"Failed to create positive price: $err")),
-              posLong =>
-                NextDagPrice(
-                  price = Amount(posLong),
-                  asOfEpoch = sortedPrices.head._1
-                ).pure[F]
-            )
-        }
-
-      val currentEpochProgress = lastSnapshot.epochProgress
-
-      val maybeNext = sortedPrices.find {
-        case (epoch, _) => epoch.value.value > currentEpochProgress.value.value
-      }
-
-      maybeNext match {
-        case Some((epoch, price)) =>
-          toAmount((price.toBigDecimal * DecimalUtils.DATUM_USD).setScale(0, RoundingMode.HALF_UP).longValue).map { amt =>
-            NextDagPrice(price = amt, asOfEpoch = epoch)
-          }
-        case None => defaultPriceF
-      }
+    maybePriceRecord match {
+      case Some(priceRecord) =>
+        val priceValue = priceToLong(priceRecord.upcomingPrice)
+        PosLong
+          .from(priceValue)
+          .fold(
+            err => Async[F].raiseError(new IllegalArgumentException(s"Failed to create positive price: $err")),
+            posLong =>
+              NextDagPrice(
+                price = Amount(posLong),
+                asOfEpoch = priceRecord.nextWindowChange
+              ).pure[F]
+          )
+      case None =>
+        PosLong
+          .from(1L)
+          .fold(
+            err => Async[F].raiseError(new IllegalArgumentException(s"Failed to create positive epoch: $err")),
+            posLong =>
+              NextDagPrice(
+                price = Amount.empty,
+                asOfEpoch = EpochProgress(posLong)
+              ).pure[F]
+          )
     }
   }
 

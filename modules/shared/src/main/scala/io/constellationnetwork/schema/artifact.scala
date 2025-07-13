@@ -49,6 +49,11 @@ object artifact {
     def tokenPair: TokenPair = price.tokenPair
   }
 
+  object PricingUpdate {
+    val zero = PricingUpdate(PriceFraction(TokenPair.DAG_USD, NonNegFraction.zero))
+    val one = PricingUpdate(PriceFraction(TokenPair.DAG_USD, NonNegFraction.one))
+  }
+
   /** Temporary artifact used to indicate which global snapshot ordinals have already been processed during the construction of a currency
     * snapshot.
     *
