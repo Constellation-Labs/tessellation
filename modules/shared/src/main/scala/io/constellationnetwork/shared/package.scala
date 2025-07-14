@@ -106,7 +106,9 @@ package object shared {
     DataCancellationReason.CreatedEmptyBlock.getClass -> 636,
     DataCancellationReason.PeerCancelled.getClass -> 637,
     classOf[DelegatedStakeRecord] -> 640,
-    classOf[PendingDelegatedStakeWithdrawal] -> 641
+    classOf[PendingDelegatedStakeWithdrawal] -> 641,
+    classOf[GlobalIncrementalSnapshot] -> 642,
+    classOf[GlobalSnapshotStateProof] -> 643
   )
 
 }
