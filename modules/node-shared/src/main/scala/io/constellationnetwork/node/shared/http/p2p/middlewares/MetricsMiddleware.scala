@@ -10,7 +10,6 @@ import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 
-import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
 import org.http4s.HttpRoutes
 import org.http4s.headers.`X-Forwarded-For`
@@ -19,6 +18,21 @@ object MetricsMiddleware {
 
   def isHistogramRoute(path: String): Boolean =
     path.contains("rumor")
+
+  def bucketName: Metrics.LabelName = Metrics.unsafeLabelName("time_bucket")
+
+  def bucketLabel(duration: FiniteDuration): String =
+    if (duration.toMillis > 10_000) {
+      "gt_10s"
+    } else if (duration.toMillis > 1000) {
+      "gt_1s"
+    } else {
+      "lt_1s"
+    }
+
+  def histogramTags(routePath: String): Seq[(Metrics.LabelName, String)] = Seq(
+    Metrics.unsafeLabelName("route") -> routePath
+  )
 
   def apply[F[_]: Async: Metrics](): HttpRoutes[F] => HttpRoutes[F] = { routes =>
     Kleisli { req =>
@@ -36,16 +50,7 @@ object MetricsMiddleware {
               .getOrElse("none")
 
             // Cannot compile time infer type for Seq
-            allTags: Seq[(Metrics.LabelName, String)] = {
-              val bucket = Metrics.unsafeLabelName("time_bucket")
-              val bucketLabel = if (duration.toMillis > 1000) {
-                "gt_1s"
-              } else if (duration.toMillis > 10_000) {
-                "gt_10s"
-              } else {
-                "lt_1s"
-              }
-
+            allTags: Seq[(Metrics.LabelName, String)] =
               Seq(
                 Metrics.unsafeLabelName("method") -> req.method.name,
                 Metrics.unsafeLabelName("status") -> response.status.code.toString,
@@ -53,13 +58,10 @@ object MetricsMiddleware {
                 Metrics.unsafeLabelName("status_class") -> s"${response.status.code / 100}xx",
                 Metrics.unsafeLabelName("actual_ip") -> actualIp,
                 Metrics.unsafeLabelName("forwarded_ip") -> forwardedIp,
-                bucket -> bucketLabel
+                bucketName -> bucketLabel(duration)
               )
-            }
 
-            histogramTags: Seq[(Metrics.LabelName, String)] = Seq(
-              Metrics.unsafeLabelName("route") -> routePath
-            )
+            histogramTagsSeq: Seq[(Metrics.LabelName, String)] = histogramTags(routePath)
 
             // Generic HTTP metrics with route as label
             durationMetricKey: Metrics.MetricKey = "dag_http_request_time"
@@ -72,12 +74,12 @@ object MetricsMiddleware {
               _ <- Metrics[F].incrementCounter(requestCounterMetricKey, allTags)
               _ <-
                 if (isHistogramRoute(req.pathInfo.renderString)) {
-                  Metrics[F].recordTimeHistogram(durationMetricKey, duration, histogramTags) >>
+                  Metrics[F].recordTimeHistogram(durationMetricKey, duration, histogramTagsSeq) >>
                     req.contentLength.traverse_ { size =>
-                      Metrics[F].recordSizeHistogram(requestSizeMetricKey, size, histogramTags)
+                      Metrics[F].recordSizeHistogram(requestSizeMetricKey, size, histogramTagsSeq)
                     } >>
                     response.contentLength.traverse_ { size =>
-                      Metrics[F].recordSizeHistogram(responseSizeMetricKey, size, histogramTags)
+                      Metrics[F].recordSizeHistogram(responseSizeMetricKey, size, histogramTagsSeq)
                     }
                 } else {
                   Async[F].unit

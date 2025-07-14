@@ -266,13 +266,13 @@ object Metrics {
             registry.counter(key, toMicrometerTags(tags)).increment(Numeric[A].toDouble(value))
           }
 
-//        @deprecated("This does not properly record buckets due to a micrometer / prometheus mismatch")
+        //        @deprecated("This does not properly record buckets due to a micrometer / prometheus mismatch")
         def recordTime(key: MetricKey, duration: FiniteDuration, tags: TagSeq): F[Unit] =
           Async[F].delay {
             registry.timer(key, toMicrometerTags(tags)).record(duration.toJava)
           }
 
-//        @deprecated("This does not properly record buckets due to a micrometer / prometheus mismatch")
+        //        @deprecated("This does not properly record buckets due to a micrometer / prometheus mismatch")
         def timedMetric[A](operation: F[A], metricKey: MetricKey, tags: TagSeq): F[A] =
           Async[F].realTime.flatMap { start =>
             operation.flatTap { _ =>
@@ -307,7 +307,7 @@ object Metrics {
         def recordDistribution(key: MetricKey, value: Double, tags: TagSeq): F[Unit] =
           genericRecordDistribution(key, value, tags)
 
-//        @deprecated("This does not properly record buckets due to a micrometer / prometheus mismatch")
+        //        @deprecated("This does not properly record buckets due to a micrometer / prometheus mismatch")
         private def genericRecordDistribution[A: Numeric](key: MetricKey, value: A, tags: TagSeq): F[Unit] =
           Async[F].delay {
             registry.summary(key, toMicrometerTags(tags)).record(Numeric[A].toDouble(value))

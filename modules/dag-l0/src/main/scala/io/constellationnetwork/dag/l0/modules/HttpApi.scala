@@ -17,7 +17,7 @@ import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment._
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.{DelegatedStakingConfig, HttpConfig, SharedConfig}
-import io.constellationnetwork.node.shared.http.p2p.middlewares.{FailureMiddleware, PeerAuthMiddleware, `X-Id-Middleware`}
+import io.constellationnetwork.node.shared.http.p2p.middlewares.{MetricsMiddleware, FailureMiddleware, PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.modules.SharedValidators
@@ -203,47 +203,51 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
 
   private val openRoutes: HttpRoutes[F] =
     CORS.policy.withAllowOriginAll.withAllowHeadersAll.withAllowCredentials(false).apply {
-      PeerAuthMiddleware
-        .responseSignerMiddleware(privateKey, storages.session, selfId) {
-          `X-Id-Middleware`.responseMiddleware(selfId) {
-            (if (Seq(Dev, Integrationnet, Testnet).contains(environment)) debugRoutes else HttpRoutes.empty) <+>
-              metricRoutes <+>
-              targetRoutes <+>
-              stateChannelRoutes.publicRoutes <+>
-              clusterRoutes.publicRoutes <+>
-              snapshotRoutes.publicRoutes <+>
-              dagRoutes.publicRoutes <+>
-              walletRoutes.publicRoutes <+>
-              nodeRoutes.publicRoutes <+>
-              consensusInfoRoutes.publicRoutes <+>
-              trustRoutes.publicRoutes <+>
-              allowSpendRoutes.publicRoutes <+>
-              tokenLockRoutes.publicRoutes <+>
-              nodeParametersRoutes.publicRoutes <+>
-              delegatedStakesRoutes.publicRoutes <+>
-              nodeCollateralsRoutes.publicRoutes
+      MetricsMiddleware[F]()(implicitly[Async[F]], implicitly[Metrics[F]]) {
+        PeerAuthMiddleware
+          .responseSignerMiddleware(privateKey, storages.session, selfId) {
+            `X-Id-Middleware`.responseMiddleware(selfId) {
+              (if (Seq(Dev, Integrationnet, Testnet).contains(environment)) debugRoutes else HttpRoutes.empty) <+>
+                metricRoutes <+>
+                targetRoutes <+>
+                stateChannelRoutes.publicRoutes <+>
+                clusterRoutes.publicRoutes <+>
+                snapshotRoutes.publicRoutes <+>
+                dagRoutes.publicRoutes <+>
+                walletRoutes.publicRoutes <+>
+                nodeRoutes.publicRoutes <+>
+                consensusInfoRoutes.publicRoutes <+>
+                trustRoutes.publicRoutes <+>
+                allowSpendRoutes.publicRoutes <+>
+                tokenLockRoutes.publicRoutes <+>
+                nodeParametersRoutes.publicRoutes <+>
+                delegatedStakesRoutes.publicRoutes <+>
+                nodeCollateralsRoutes.publicRoutes
+            }
           }
-        }
+      }
     }
 
   private val p2pRoutes: HttpRoutes[F] =
-    PeerAuthMiddleware.responseSignerMiddleware(privateKey, storages.session, selfId)(
-      registrationRoutes.p2pPublicRoutes <+>
-        clusterRoutes.p2pPublicRoutes <+>
-        PeerAuthMiddleware.requestVerifierMiddleware(
-          PeerAuthMiddleware.requestTokenVerifierMiddleware(services.session)(
-            PeerAuthMiddleware.requestCollateralVerifierMiddleware(services.collateral)(
-              clusterRoutes.p2pRoutes <+>
-                nodeRoutes.p2pRoutes <+>
-                FailureMiddleware.withFailureSimulator[F]("CL_TEST_SIMULATE_GOSSIP_FAIL_TIME")(implicitly[Async[F]])(
+    MetricsMiddleware[F]()(implicitly[Async[F]], implicitly[Metrics[F]]) {
+      PeerAuthMiddleware.responseSignerMiddleware(privateKey, storages.session, selfId)(
+        registrationRoutes.p2pPublicRoutes <+>
+          clusterRoutes.p2pPublicRoutes <+>
+          PeerAuthMiddleware.requestVerifierMiddleware(
+            PeerAuthMiddleware.requestTokenVerifierMiddleware(services.session)(
+              PeerAuthMiddleware.requestCollateralVerifierMiddleware(services.collateral)(
+                clusterRoutes.p2pRoutes <+>
+                  nodeRoutes.p2pRoutes <+>
+                  FailureMiddleware.withFailureSimulator[F]("CL_TEST_SIMULATE_GOSSIP_FAIL_TIME")(implicitly[Async[F]])(
                   gossipRoutes.p2pRoutes
                 ) <+> trustRoutes.p2pRoutes <+>
-                snapshotRoutes.p2pRoutes <+>
-                consensusRoutes
+                  snapshotRoutes.p2pRoutes <+>
+                  consensusRoutes
+              )
             )
           )
-        )
-    )
+      )
+    }
 
   private val cliRoutes: HttpRoutes[F] =
     clusterRoutes.cliRoutes <+>
