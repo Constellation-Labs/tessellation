@@ -23,6 +23,7 @@ object CurrencySnapshotEventValidationErrorStorage {
       case CurrencyMessageEvent(message)        => message.value.hash.map(List(_))
       case AllowSpendBlockEvent(allowSpend)     => allowSpend.hash.map(List(_))
       case GlobalSnapshotSyncEvent(sync)        => sync.hash.map(List(_))
+      case ForceGlobalSyncEvent()               => List(Hash.empty).pure[F]
       case TokenLockBlockEvent(tokenLock)       => tokenLock.hash.map(List(_))
     }
 }

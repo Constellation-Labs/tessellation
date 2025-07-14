@@ -51,5 +51,9 @@ object currency {
   @derive(encoder, decoder, eqv)
   case class GlobalSnapshotSyncEvent(value: Signed[GlobalSnapshotSync]) extends CurrencySnapshotEvent
 
+  // Represents a wrapper event used to force the synchronization of a global snapshot.
+  @derive(encoder, decoder, eqv)
+  case class ForceGlobalSyncEvent() extends CurrencySnapshotEvent
+
   type CurrencySnapshotArtifact = CurrencyIncrementalSnapshot
 }

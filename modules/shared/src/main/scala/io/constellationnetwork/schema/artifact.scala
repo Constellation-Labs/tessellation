@@ -49,32 +49,33 @@ object artifact {
     def tokenPair: TokenPair = price.tokenPair
   }
 
-  // format: off
-  /**
-   * Temporary artifact used to indicate which global snapshot ordinals have already been
-   * processed during the construction of a currency snapshot.
-   *
-   * This case class is included in the `artifacts` field of a `CurrencySnapshot`
-   * at the moment it is created. It signals that the listed `GlobalIncrementalSnapshot` ordinals
-   * have already been consumed for extracting data — such as `SpendAction`s — and should not be
-   * reprocessed in the future.
-   *
-   * ⚠️ Note: This artifact is not persisted long-term. It is only populated during snapshot
-   * creation, and once the currency snapshot is finalized, this information is discarded.
-   *
-   * Motivation:
-   * Without this mechanism, the same global snapshot data could be reprocessed multiple times
-   * across currency snapshots. This would lead to inconsistencies when validating the currency
-   * snapshot inside a global snapshot — especially during `SnapshotDiff` checks — where repeated
-   * application of the same state transitions (e.g. duplicated spend actions) would cause balance
-   * mismatches or invalid diffs.
-   *
-   * While it currently tracks only ordinals used for `SpendAction` extraction, this design is
-   * extensible for future artifact types derived from global snapshots.
-   *
-   * @param ordinals A sorted set of global snapshot ordinals that were processed in the current currency snapshot.
-   */
-  // format: on
+
+  object PricingUpdate {
+    val zero = PricingUpdate(PriceFraction(TokenPair.DAG_USD, NonNegFraction.zero))
+    val one = PricingUpdate(PriceFraction(TokenPair.DAG_USD, NonNegFraction.one))
+  }
+
+  /** Temporary artifact used to indicate which global snapshot ordinals have already been processed during the construction of a currency
+    * snapshot.
+    *
+    * This case class is included in the `artifacts` field of a `CurrencySnapshot` at the moment it is created. It signals that the listed
+    * `GlobalIncrementalSnapshot` ordinals have already been consumed for extracting data — such as `SpendAction`s — and should not be
+    * reprocessed in the future.
+    *
+    * ⚠️ Note: This artifact is not persisted long-term. It is only populated during snapshot creation, and once the currency snapshot is
+    * finalized, this information is discarded.
+    *
+    * Motivation: Without this mechanism, the same global snapshot data could be reprocessed multiple times across currency snapshots. This
+    * would lead to inconsistencies when validating the currency snapshot inside a global snapshot — especially during `SnapshotDiff` checks
+    * — where repeated application of the same state transitions (e.g. duplicated spend actions) would cause balance mismatches or invalid
+    * diffs.
+    *
+    * While it currently tracks only ordinals used for `SpendAction` extraction, this design is extensible for future artifact types derived
+    * from global snapshots.
+    *
+    * @param ordinals
+    *   A sorted set of global snapshot ordinals that were processed in the current currency snapshot.
+    */
   @derive(decoder, encoder, order, ordering, show)
   case class GlobalSnapshotsProcessed(
     ordinals: SortedSet[SnapshotOrdinal]

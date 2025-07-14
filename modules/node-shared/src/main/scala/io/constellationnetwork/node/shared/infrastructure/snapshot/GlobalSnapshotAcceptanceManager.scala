@@ -563,7 +563,7 @@ object GlobalSnapshotAcceptanceManager {
 
         updatedAcceptedMetagraphSyncData <- acceptMetagraphSyncData(
           lastSnapshotContext,
-          currencySnapshots,
+          incomingCurrencySnapshots,
           globalSnapshotsProcessed,
           acceptedSpendActions,
           ordinal,
@@ -1163,7 +1163,7 @@ object GlobalSnapshotAcceptanceManager {
 
     private def acceptMetagraphSyncData(
       lastSnapshotContext: GlobalSnapshotInfo,
-      currencySnapshots: SortedMap[Address, CurrencySnapshotWithState],
+      incomingCurrencySnapshots: SortedMap[Address, List[CurrencySnapshotWithState]],
       globalSnapshotsProcessed: Map[Address, List[GlobalSnapshotsProcessed]],
       acceptedSpendActions: Map[Address, List[SpendAction]],
       currentGlobalOrdinal: SnapshotOrdinal,
@@ -1173,30 +1173,35 @@ object GlobalSnapshotAcceptanceManager {
         for {
           updatedFromSnapshots <- updateFromCurrencySnapshots(
             existingData,
-            currencySnapshots,
+            incomingCurrencySnapshots,
             globalSnapshotsProcessed,
             currentGlobalOrdinal,
             currentGlobalEpochProgress
           )
 
-          updatedFromSpendActions = updateFromSpendActions(
+          updatedFromSpendActions <- updateFromSpendActions(
             updatedFromSnapshots,
             acceptedSpendActions,
             currentGlobalOrdinal
           )
 
-        } yield existingData ++ updatedFromSpendActions
+        } yield updatedFromSpendActions
       }.getOrElse(SortedMap.empty[Address, MetagraphSyncDataInfo].pure[F])
 
     private def updateFromCurrencySnapshots(
       existingData: SortedMap[Address, MetagraphSyncDataInfo],
-      snapshots: SortedMap[Address, CurrencySnapshotWithState],
+      incomingCurrencySnapshots: SortedMap[Address, List[CurrencySnapshotWithState]],
       globalSnapshotsProcessed: Map[Address, List[GlobalSnapshotsProcessed]],
       currentOrdinal: SnapshotOrdinal,
       currentEpochProgress: EpochProgress
     ): F[SortedMap[Address, MetagraphSyncDataInfo]] =
-      snapshots.toList.traverse {
-        case (address, _) =>
+      incomingCurrencySnapshots.toList.traverse {
+        case (address, snapshots) =>
+          val snapshotsOrdinals = snapshots.map {
+            case Left(value)  => value.ordinal
+            case Right(value) => value._1.ordinal
+          }
+
           val currentInfo = existingData.getOrElse(address, MetagraphSyncDataInfo.empty)
           val metagraphGlobalSnapshotsProcessed =
             globalSnapshotsProcessed.getOrElse(address, List.empty).flatMap(_.ordinals).toSet
@@ -1212,33 +1217,47 @@ object GlobalSnapshotAcceptanceManager {
             .replace(updatedUnappliedGlobalChangeOrdinals)
 
           logger.info(
-            s"[CURRENCY=$address][GlobalOrdinal=$currentOrdinal] Updated unapplied global change ordinals: $updatedUnappliedGlobalChangeOrdinals"
-          ) >> (address -> updatedInfo).pure[F]
-      }.map(SortedMap.from(_))
+            s"[CURRENCY=$address][GlobalOrdinal=$currentOrdinal][CurrencySnapshots=$snapshotsOrdinals] Removing processed ordinals: $metagraphGlobalSnapshotsProcessed"
+          ) >>
+            logger.info(
+              s"[CURRENCY=$address][GlobalOrdinal=$currentOrdinal][CurrencySnapshots=$snapshotsOrdinals] Updated unapplied global change ordinals: $updatedUnappliedGlobalChangeOrdinals"
+            ) >> (address -> updatedInfo).pure[F]
+      }.map { updatedEntries =>
+        val updatedMap = SortedMap.from(updatedEntries)
+        existingData ++ updatedMap
+      }
 
     private def updateFromSpendActions(
       currentData: SortedMap[Address, MetagraphSyncDataInfo],
       spendActions: Map[Address, List[SpendAction]],
       currentOrdinal: SnapshotOrdinal
-    ): SortedMap[Address, MetagraphSyncDataInfo] = {
-      val currencySpendTransactions = extractCurrencySpendTransactions(spendActions)
+    ): F[SortedMap[Address, MetagraphSyncDataInfo]] = {
+      val allCurrencySpendTransactions = extractCurrencySpendTransactions(spendActions)
 
-      currencySpendTransactions.foldLeft(currentData) { (acc, transaction) =>
-        val metagraphId = transaction.currencyId.get.value
-        val currentInfo = acc.getOrElse(metagraphId, MetagraphSyncDataInfo.empty)
+      val transactionsByMetagraph = allCurrencySpendTransactions.groupBy(_.currencyId.get.value)
 
-        val updatedInfo = currentInfo
-          .focus(_.unappliedGlobalChangeOrdinals)
-          .modify(trimUnappliedOrdinals(_, currentOrdinal))
+      transactionsByMetagraph.toList.foldM(currentData) {
+        case (acc, (metagraphId, transactions)) =>
+          val currentInfo = acc.getOrElse(metagraphId, MetagraphSyncDataInfo.empty)
 
-        acc.updated(metagraphId, updatedInfo)
+          val updatedUnappliedGlobalChangeOrdinals =
+            trimUnappliedOrdinals(currentInfo.unappliedGlobalChangeOrdinals, currentOrdinal)
+
+          val updatedInfo = currentInfo
+            .focus(_.unappliedGlobalChangeOrdinals)
+            .replace(updatedUnappliedGlobalChangeOrdinals)
+
+          logger.info(
+            s"[CURRENCY=$metagraphId][GlobalOrdinal=$currentOrdinal][TransactionCount=${transactions.length}] Updated unapplied global change ordinals: $updatedUnappliedGlobalChangeOrdinals"
+          ) >> acc.updated(metagraphId, updatedInfo).pure[F]
       }
     }
 
-    private def extractCurrencySpendTransactions(spendActions: Map[Address, List[SpendAction]]) =
+    private def extractCurrencySpendTransactions(spendActions: Map[Address, List[SpendAction]]): List[SpendTransaction] =
       spendActions.values.flatten
         .flatMap(_.spendTransactions.toList)
         .filter(_.currencyId.isDefined)
+        .toList
 
     private def trimUnappliedOrdinals(
       currentOrdinals: SortedSet[SnapshotOrdinal],

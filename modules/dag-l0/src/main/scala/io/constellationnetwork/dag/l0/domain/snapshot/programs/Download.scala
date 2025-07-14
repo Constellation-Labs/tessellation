@@ -203,7 +203,12 @@ object Download {
             HasherSelector[F]
               .forOrdinal(snapshot.ordinal) { implicit hasher =>
                 globalSnapshotContextFns
-                  .createContext(lastContext, lastSnapshot, snapshot, fetchSnapshotByOrdinal)
+                  .createContext(
+                    lastContext,
+                    lastSnapshot,
+                    snapshot,
+                    fetchSnapshotByOrdinal
+                  )
               }
               .handleErrorWith(_ => InvalidChain.raiseError[F, GlobalSnapshotContext])
               .flatTap { _ =>
@@ -316,7 +321,12 @@ object Download {
                 HasherSelector[F]
                   .forOrdinal(snapshot.ordinal) { implicit hasher =>
                     globalSnapshotContextFns
-                      .createContext(context, lastSnapshot, snapshot, fetchSnapshotByOrdinal)
+                      .createContext(
+                        context,
+                        lastSnapshot,
+                        snapshot,
+                        fetchSnapshotByOrdinal
+                      )
                   }
                   .flatTap(newContext =>
                     hasherSelector
