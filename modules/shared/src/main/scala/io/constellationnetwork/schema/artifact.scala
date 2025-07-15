@@ -49,7 +49,6 @@ object artifact {
     def tokenPair: TokenPair = price.tokenPair
   }
 
-
   object PricingUpdate {
     val zero = PricingUpdate(PriceFraction(TokenPair.DAG_USD, NonNegFraction.zero))
     val one = PricingUpdate(PriceFraction(TokenPair.DAG_USD, NonNegFraction.one))

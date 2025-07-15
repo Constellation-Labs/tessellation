@@ -17,7 +17,7 @@ import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment._
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.{DelegatedStakingConfig, HttpConfig, SharedConfig}
-import io.constellationnetwork.node.shared.http.p2p.middlewares.{MetricsMiddleware, FailureMiddleware, PeerAuthMiddleware, `X-Id-Middleware`}
+import io.constellationnetwork.node.shared.http.p2p.middlewares._
 import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.modules.SharedValidators
@@ -239,8 +239,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
                 clusterRoutes.p2pRoutes <+>
                   nodeRoutes.p2pRoutes <+>
                   FailureMiddleware.withFailureSimulator[F]("CL_TEST_SIMULATE_GOSSIP_FAIL_TIME")(implicitly[Async[F]])(
-                  gossipRoutes.p2pRoutes
-                ) <+> trustRoutes.p2pRoutes <+>
+                    gossipRoutes.p2pRoutes
+                  ) <+> trustRoutes.p2pRoutes <+>
                   snapshotRoutes.p2pRoutes <+>
                   consensusRoutes
               )
