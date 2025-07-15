@@ -80,7 +80,8 @@ object method {
     collateralAmount: Option[Amount],
     globalL0Peer: L0Peer,
     trustRatingsPath: Option[Path],
-    lastKryoHashOrdinal: SnapshotOrdinal
+    lastKryoHashOrdinal: SnapshotOrdinal,
+    allowanceListPath: Option[AllowanceListPath]
   ) extends Run
 
   object CreateGenesis extends WithOpts[CreateGenesis] {
@@ -98,7 +99,8 @@ object method {
         CollateralAmountOpts.opts,
         GlobalL0PeerOpts.opts,
         trustRatingsPathOpts,
-        Opts.apply(SnapshotOrdinal.MinValue)
+        Opts.apply(SnapshotOrdinal.MinValue),
+        AllowanceListPath.opts
       ).mapN(CreateGenesis.apply)
     }
   }
@@ -115,7 +117,8 @@ object method {
     collateralAmount: Option[Amount],
     globalL0Peer: L0Peer,
     trustRatingsPath: Option[Path],
-    lastKryoHashOrdinal: SnapshotOrdinal
+    lastKryoHashOrdinal: SnapshotOrdinal,
+    allowanceListPath: Option[AllowanceListPath]
   ) extends Run
 
   object RunGenesis extends WithOpts[RunGenesis] {
@@ -133,7 +136,8 @@ object method {
         CollateralAmountOpts.opts,
         GlobalL0PeerOpts.opts,
         trustRatingsPathOpts,
-        Opts.apply(SnapshotOrdinal.MinValue)
+        Opts.apply(SnapshotOrdinal.MinValue),
+        AllowanceListPath.opts
       ).mapN(RunGenesis.apply)
     }
   }
@@ -149,7 +153,8 @@ object method {
     collateralAmount: Option[Amount],
     globalL0Peer: L0Peer,
     identifier: Address,
-    trustRatingsPath: Option[Path]
+    trustRatingsPath: Option[Path],
+    allowanceListPath: Option[AllowanceListPath]
   ) extends Run
 
   case class RunValidatorWithJoinAttempt(
@@ -164,7 +169,8 @@ object method {
     globalL0Peer: L0Peer,
     identifier: Address,
     trustRatingsPath: Option[Path],
-    majorityForkPeerIds: NonEmptySet[PeerToJoin]
+    majorityForkPeerIds: NonEmptySet[PeerToJoin],
+    allowanceListPath: Option[AllowanceListPath]
   ) extends Run
 
   object RunValidator extends WithOpts[RunValidator] {
@@ -181,7 +187,8 @@ object method {
         CollateralAmountOpts.opts,
         GlobalL0PeerOpts.opts,
         L0TokenIdentifierOpts.opts,
-        trustRatingsPathOpts
+        trustRatingsPathOpts,
+        AllowanceListPath.opts
       ).mapN(RunValidator.apply)
     }
   }
@@ -197,7 +204,8 @@ object method {
     collateralAmount: Option[Amount],
     globalL0Peer: L0Peer,
     identifier: Address,
-    trustRatingsPath: Option[Path]
+    trustRatingsPath: Option[Path],
+    allowanceListPath: Option[AllowanceListPath]
   ) extends Run
 
   object RunRollback extends WithOpts[RunRollback] {
@@ -214,7 +222,8 @@ object method {
         CollateralAmountOpts.opts,
         GlobalL0PeerOpts.opts,
         L0TokenIdentifierOpts.opts,
-        trustRatingsPathOpts
+        trustRatingsPathOpts,
+        AllowanceListPath.opts
       ).mapN(RunRollback.apply)
     }
   }

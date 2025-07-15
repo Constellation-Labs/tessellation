@@ -8,6 +8,7 @@ import cats.syntax.all._
 
 import scala.reflect.ClassTag
 
+import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.env.AppEnvironment.Dev
 import io.constellationnetwork.env.env._
@@ -22,6 +23,7 @@ import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.http.p2p.SharedP2PClient
+import io.constellationnetwork.node.shared.infrastructure.allowance_list.{Loader => AllowanceListLoader}
 import io.constellationnetwork.node.shared.infrastructure.cluster.services.Session
 import io.constellationnetwork.node.shared.infrastructure.logs.LoggerConfigurator
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
@@ -146,6 +148,18 @@ abstract class TessellationIOApp[A <: CliMethod](
                                             }
                                         }
 
+                                    def loadAllowanceList(name: String, allowanceListPath: Option[AllowanceListPath])
+                                      : IO[Option[Set[AllowanceListEntry]]] =
+                                      allowanceListPath
+                                        .traverse(AllowanceListLoader.make[IO].load)
+                                        .flatTap { allowanceList =>
+                                          allowanceList
+                                            .map(_.size)
+                                            .fold(logger.info(s"$name disabled.")) { size =>
+                                              logger.info(s"$name enabled. Allowed nodes: $size")
+                                            }
+                                        }
+
                                     for {
                                       _ <- logger.info(s"Self peerId: $selfId").asResource
                                       _generation <- Generation.make[IO].asResource
@@ -157,6 +171,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                       _l0Seedlist <- loadSeedlist("l0Seedlist", method.l0SeedlistPath).asResource
                                       _prioritySeedlist <- loadSeedlist("prioritySeedlist", method.prioritySeedlistPath).asResource
                                       _trustRatings <- method.trustRatingsPath.traverse(TrustRatingCsvLoader.make[IO].load).asResource
+                                      maybeCustomAllowanceList <- loadAllowanceList("allowanceList", method.allowanceListPath).asResource
                                       storages <- _hasherSelector
                                         .withCurrent(implicit hasher => SharedStorages.make[IO](clusterId, cfg))
                                         .asResource
@@ -195,7 +210,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                                           cfg.collateral,
                                           method.stateChannelAllowanceLists,
                                           cfg.environment,
-                                          Hasher.forKryo[IO]
+                                          Hasher.forKryo[IO],
+                                          maybeCustomAllowanceList
                                         )
                                         .asResource
 
@@ -209,7 +225,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                                           services.localHealthcheck,
                                           _seedlist,
                                           selfId,
-                                          versionHash
+                                          versionHash,
+                                          maybeCustomAllowanceList
                                         )
                                         .asResource
 
@@ -239,6 +256,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                         val sharedPrograms = programs
                                         val sharedValidators = validators
                                         val prioritySeedlist = _prioritySeedlist
+                                        val customAllowanceList = maybeCustomAllowanceList
 
                                         def restartSignal = _restartSignal
 

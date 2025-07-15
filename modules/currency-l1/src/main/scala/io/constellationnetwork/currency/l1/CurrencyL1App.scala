@@ -251,7 +251,8 @@ abstract class CurrencyL1App(
                   cfg.seedlistPath,
                   cfg.collateralAmount,
                   cfg.trustRatingsPath,
-                  cfg.prioritySeedlistPath
+                  cfg.prioritySeedlistPath,
+                  cfg.allowanceListPath
                 )
               )
 

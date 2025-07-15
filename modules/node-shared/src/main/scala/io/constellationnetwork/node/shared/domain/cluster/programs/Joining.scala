@@ -17,6 +17,7 @@ import cats.{Applicative, MonadThrow, Parallel}
 
 import scala.util.control.NoStackTrace
 
+import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.effects.GenUUID
 import io.constellationnetwork.env.AppEnvironment
@@ -64,7 +65,8 @@ class Joining[
   selfId: PeerId,
   stateAfterJoining: NodeState,
   versionHash: Hash,
-  peerDiscovery: PeerDiscovery[F]
+  peerDiscovery: PeerDiscovery[F],
+  allowanceList: Option[Set[AllowanceListEntry]]
 ) {
 
   private val logger = Slf4jLogger.getLogger[F]
@@ -259,6 +261,9 @@ class Joining[
 
       seedlistHash <- seedlist.map(_.map(_.peerId)).hash
       _ <- Applicative[F].unlessA(registrationRequest.seedlist === seedlistHash)(SeedlistDoesNotMatch.raiseError[F, Unit])
+
+      allowanceListHash <- allowanceList.map(_.map(_.peerId)).hash
+      _ <- Applicative[F].unlessA(registrationRequest.allowanceList === allowanceListHash)(AllowanceListDoesNotMatch.raiseError[F, Unit])
 
     } yield ()
 

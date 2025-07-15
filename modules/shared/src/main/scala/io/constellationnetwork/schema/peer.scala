@@ -183,7 +183,8 @@ object peer {
     seedlist: Hash,
     version: Hash,
     jar: Hash,
-    environment: AppEnvironment
+    environment: AppEnvironment,
+    allowanceList: Hash
   )
 
   @derive(eqv, decoder, encoder, show)

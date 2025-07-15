@@ -167,7 +167,8 @@ object Main
                 m.collateralAmount,
                 m.trustRatingsPath,
                 m.prioritySeedlistPath,
-                _
+                _,
+                m.allowanceListPath
               )
             )
         case m: RunValidatorWithJoinAttempt =>
@@ -185,7 +186,8 @@ object Main
                 m.seedlistPath,
                 m.collateralAmount,
                 m.trustRatingsPath,
-                m.prioritySeedlistPath
+                m.prioritySeedlistPath,
+                m.allowanceListPath
               )
             ) >>
             services.restart.setNodeForkedRestartMethod(
@@ -200,7 +202,8 @@ object Main
                 m.collateralAmount,
                 m.trustRatingsPath,
                 m.prioritySeedlistPath,
-                _
+                _,
+                m.allowanceListPath
               )
             )
         case m: RunRollback =>
@@ -254,7 +257,8 @@ object Main
                 m.seedlistPath,
                 m.collateralAmount,
                 m.trustRatingsPath,
-                m.prioritySeedlistPath
+                m.prioritySeedlistPath,
+                m.allowanceListPath
               )
             ) >>
             services.restart.setNodeForkedRestartMethod(
@@ -269,7 +273,8 @@ object Main
                 m.collateralAmount,
                 m.trustRatingsPath,
                 m.prioritySeedlistPath,
-                _
+                _,
+                m.allowanceListPath
               )
             )
         case m: RunGenesis =>
@@ -355,7 +360,8 @@ object Main
                 m.seedlistPath,
                 m.collateralAmount,
                 m.trustRatingsPath,
-                m.prioritySeedlistPath
+                m.prioritySeedlistPath,
+                m.allowanceListPath
               )
             ) >>
             services.restart.setNodeForkedRestartMethod(
@@ -370,7 +376,8 @@ object Main
                 m.collateralAmount,
                 m.trustRatingsPath,
                 m.prioritySeedlistPath,
-                _
+                _,
+                m.allowanceListPath
               )
             )
       }).asResource
