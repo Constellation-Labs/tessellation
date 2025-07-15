@@ -28,11 +28,7 @@ import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.L0Peer
 import io.constellationnetwork.security.HasherSelector
 
-import fs2.io.file.Path
-
 object Storages {
-
-  def dataApplicationCalculatedStatePath = Path("data/calculated_state")
 
   def make[F[+_]: Async: Parallel: KryoSerializer: JsonSerializer: Supervisor: Random](
     sharedCfg: SharedConfig,
@@ -59,7 +55,7 @@ object Storages {
       globalL0ClusterStorage <- L0ClusterStorage.make[F](globalL0Peer)
       identifierStorage <- IdentifierStorage.make[F]
       maybeCalculatedStateStorage <- dataApplication.traverse { _ =>
-        CalculatedStateLocalFileSystemStorage.make[F](dataApplicationCalculatedStatePath)
+        CalculatedStateLocalFileSystemStorage.make[F](snapshotConfig.calculatedStatePath)
       }
       lastGlobalSnapshotSyncStorage <- hasherSelector.withCurrent(implicit hs => LastSentGlobalSnapshotSyncStorage.make())
       currencySnapshotCleanupStorage = CurrencySnapshotCleanupStorage

@@ -144,7 +144,8 @@ object types {
     snapshotPath: Path,
     snapshotInfoPath: Path,
     incrementalTmpSnapshotPath: Path,
-    incrementalPersistedSnapshotPath: Path
+    incrementalPersistedSnapshotPath: Path,
+    calculatedStatePath: Path
   )
 
   case class HttpClientConfig(
