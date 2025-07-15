@@ -13,18 +13,39 @@ import cats.{Applicative, Show}
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
 
+import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.http.p2p.clients.NodeClient
+import io.constellationnetwork.node.shared.http.p2p.middlewares.TimeoutMiddleware.withTimeout
 import io.constellationnetwork.schema.cluster.SessionToken
 import io.constellationnetwork.schema.peer._
 
 import io.chrisdavenport.mapref.MapRef
+import org.http4s.client.Client
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry._
 
 object LocalHealthcheck {
   def make[F[_]: Async: Supervisor](nodeClient: NodeClient[F], clusterStorage: ClusterStorage[F]): F[LocalHealthcheck[F]] = {
+    def mkPeersR = MapRef.ofConcurrentHashMap[F, PeerId, F[Fiber[F, Throwable, Unit]]]()
+    def retryPolicy: RetryPolicy[F] = RetryPolicies.fibonacciBackoff[F](2.seconds)
+
+    mkPeersR.map(make(_, retryPolicy, nodeClient, clusterStorage))
+  }
+
+  def make[F[_]: Async: Supervisor: io.constellationnetwork.security.SecurityProvider](
+    client: Client[F],
+    session: Session[F],
+    clusterStorage: ClusterStorage[F],
+    healthcheckTimeout: FiniteDuration = 5.seconds
+  ): F[LocalHealthcheck[F]] = {
+    // Apply timeout middleware (same pattern as GossipClient)
+    val timeoutClient: Client[F] = withTimeout(client, healthcheckTimeout)
+
+    // Create NodeClient with timeout-wrapped client
+    val nodeClient = NodeClient.make[F](timeoutClient, session)
+
     def mkPeersR = MapRef.ofConcurrentHashMap[F, PeerId, F[Fiber[F, Throwable, Unit]]]()
     def retryPolicy: RetryPolicy[F] = RetryPolicies.fibonacciBackoff[F](2.seconds)
 

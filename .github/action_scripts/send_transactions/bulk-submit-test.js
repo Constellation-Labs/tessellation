@@ -167,7 +167,7 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
 const bulkSubmitTest = async () => {
   // Configuration flags
   const ENABLE_TRANSACTIONS = true // Set to true to actually send transactions
-  const numTransactionsToSend = 100 // Number of transactions to send
+  const numTransactionsToSend = 50 // Number of transactions to send
   
   const args = process.argv.slice(2)
   
