@@ -112,7 +112,7 @@ abstract class CurrencyL0App(
           maybeMajorityPeerIds,
           hasherSelectorAlwaysCurrent,
           maybeAllowanceList,
-          method.stateChannelAllowanceLists
+          nodeShared.customAllowanceList
         )
         .asResource
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext
