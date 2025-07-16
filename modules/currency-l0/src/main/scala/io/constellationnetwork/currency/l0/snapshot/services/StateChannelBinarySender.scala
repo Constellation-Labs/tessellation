@@ -362,7 +362,7 @@ object StateChannelBinarySender {
                 binary,
                 lastCurrencySnapshotSigners,
                 lastGlobalSnapshotSigners,
-                List.empty
+                customPeersAllowed
               )
             } else {
               none[PeerId].pure
