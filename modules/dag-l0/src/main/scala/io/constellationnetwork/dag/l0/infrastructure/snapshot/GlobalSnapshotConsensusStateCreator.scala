@@ -51,14 +51,26 @@ object GlobalSnapshotConsensusStateCreator {
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind]
     ): F[(GlobalSnapshotConsensusState, F[Unit])] =
       for {
+        _ <- Sync[F].delay(
+          println(s"[DEBUG] Attempting to create consensus state for key=${key.show}, lastOutcomeKey=${lastOutcome.key.show}")
+        )
 
         candidates <- consensusStorage.getCandidates(key.next)
+        _ <- Sync[F].delay(
+          println(
+            s"[DEBUG] Found ${candidates.value.size} candidates for key=${key.next.show}: ${candidates.value.map(_.show).mkString(", ")}"
+          )
+        )
 
         facilitators <- lastOutcome.facilitators.value
           .concat(lastOutcome.finished.candidates.value)
           .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
           .filterA(consensusFns.facilitatorFilter(lastOutcome.finished.signedMajorityArtifact, lastOutcome.finished.context, _))
           .map(_.prepended(selfId).distinct.sorted)
+
+        _ <- Sync[F].delay(
+          println(s"[DEBUG] Facilitators for key=${key.show}: ${facilitators.map(_.show).mkString(", ")}")
+        )
 
         (withdrawn, remained) = facilitators.partition { peerId =>
           resources.withdrawalsMap.get(peerId).contains(GlobalConsensusKind.Facility)

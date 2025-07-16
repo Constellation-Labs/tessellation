@@ -142,6 +142,7 @@ object ConsensusManager {
               .trySetInitialConsensusOutcome(outcome)
               .ifM(
                 nodeStorage.tryModifyState(Observing, WaitingForReady) >>
+                  scheduleFacility >>
                   internalFacilitateWith(none),
                 new Throwable("Error initializing consensus storage").raiseError[F, Unit]
               )
@@ -164,20 +165,25 @@ object ConsensusManager {
           )
 
       private def scheduleFacility: F[Unit] =
-        Clock[F].monotonic.map(_ + config.timeTriggerInterval).flatMap { nextTimeValue =>
-          consensusStorage.setTimeTrigger(nextTimeValue) >>
-            S.supervise {
-              val condTriggerWithTime = for {
-                maybeTimeTrigger <- consensusStorage.getTimeTrigger
-                currentTime <- Clock[F].monotonic
-                _ <- Applicative[F]
-                  .whenA(maybeTimeTrigger.exists(currentTime >= _))(internalFacilitateWith(TimeTrigger.some))
-              } yield ()
+        S.supervise {
+          def runTimeTriggerLoop: F[Unit] = for {
+            nextTimeValue <- Clock[F].monotonic.map(_ + config.timeTriggerInterval)
+            _ <- consensusStorage.setTimeTrigger(nextTimeValue)
+            _ <- Temporal[F].sleep(config.timeTriggerInterval)
+            maybeTimeTrigger <- consensusStorage.getTimeTrigger
+            currentTime <- Clock[F].monotonic
+            _ <- Applicative[F]
+              .whenA(maybeTimeTrigger.exists(currentTime >= _)) {
+                logger.debug(s"Time trigger firing at ${currentTime}") >>
+                  internalFacilitateWith(TimeTrigger.some)
+              }
+            _ <- runTimeTriggerLoop // Continue the loop
+          } yield ()
 
-              Temporal[F].sleep(config.timeTriggerInterval) >> condTriggerWithTime
-                .handleErrorWith(logger.error(_)(s"Error triggering consensus with time trigger"))
-            }.void
-        }
+          runTimeTriggerLoop
+            .handleErrorWith(logger.error(_)(s"Error in time trigger loop, restarting"))
+            .foreverM // Ensure it runs forever even if errors occur
+        }.void
 
       def withdrawFromConsensus: F[Unit] =
         for {
@@ -198,21 +204,35 @@ object ConsensusManager {
         trigger: Option[ConsensusTrigger]
       ): F[Unit] =
         consensusStorage.getLastConsensusOutcome.flatMap { maybeLastOutcome =>
-          maybeLastOutcome.traverse { lastOutcome =>
-            val nextKey = _key.get(lastOutcome).next
+          maybeLastOutcome match {
+            case None =>
+              logger.debug(s"No last consensus outcome available, cannot facilitate")
+            case Some(lastOutcome) =>
+              val nextKey = _key.get(lastOutcome).next
 
-            consensusStorage
-              .getResources(nextKey)
-              .flatMap { resources =>
-                logger.debug(s"Trying to facilitate consensus {key=${nextKey.show}, trigger=${trigger.show}}") >>
-                  consensusStateCreator.tryFacilitateConsensus(nextKey, lastOutcome, trigger, resources).flatMap {
-                    case Some(state) =>
-                      stallDetection(nextKey, state) >>
-                        internalCheckForStateUpdate(nextKey, resources)
-                    case None => Applicative[F].unit
-                  }
-              }
-          }.void
+              consensusStorage
+                .getResources(nextKey)
+                .flatMap { resources =>
+                  logger.debug(s"Trying to facilitate consensus {key=${nextKey.show}, trigger=${trigger.show}}") >>
+                    consensusStateCreator.tryFacilitateConsensus(nextKey, lastOutcome, trigger, resources).flatMap {
+                      case Some(state) =>
+                        logger.debug(s"Created new consensus state for {key=${nextKey.show}}") >>
+                          stallDetection(nextKey, state) >>
+                          internalCheckForStateUpdate(nextKey, resources)
+                      case None =>
+                        logger.debug(s"Could not create consensus state for {key=${nextKey.show}}") >>
+                          // Even if we can't create a new state, check if existing state needs updating
+                          consensusStorage.getState(nextKey).flatMap {
+                            case Some(_) =>
+                              logger.debug(s"Found existing state for {key=${nextKey.show}}, checking for updates") >>
+                                internalCheckForStateUpdate(nextKey, resources)
+                            case None =>
+                              logger.debug(s"No existing state for {key=${nextKey.show}}, nothing to do") >>
+                                Applicative[F].unit
+                          }
+                    }
+                }
+          }
         }
 
       private def internalCheckForStateUpdate(
