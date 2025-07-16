@@ -77,7 +77,8 @@ object method {
     seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     trustRatingsPath: Option[Path],
-    prioritySeedlistPath: Option[SeedListPath]
+    prioritySeedlistPath: Option[SeedListPath],
+    allowanceListPath: Option[AllowanceListPath]
   ) extends Run
 
   object RunInitialValidator {
@@ -95,7 +96,8 @@ object method {
         SeedListPath.opts,
         CollateralAmountOpts.opts,
         trustRatingsPathOpts,
-        SeedListPath.priorityOpts
+        SeedListPath.priorityOpts,
+        AllowanceListPath.opts
       ).mapN(RunInitialValidator.apply)
     }
   }
@@ -113,7 +115,8 @@ object method {
     collateralAmount: Option[Amount],
     trustRatingsPath: Option[Path],
     prioritySeedlistPath: Option[SeedListPath],
-    majorityForkPeerIds: NonEmptySet[PeerToJoin]
+    majorityForkPeerIds: NonEmptySet[PeerToJoin],
+    allowanceListPath: Option[AllowanceListPath]
   ) extends Run
 
   case class RunValidator(
@@ -128,7 +131,8 @@ object method {
     seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     trustRatingsPath: Option[Path],
-    prioritySeedlistPath: Option[SeedListPath]
+    prioritySeedlistPath: Option[SeedListPath],
+    allowanceListPath: Option[AllowanceListPath]
   ) extends Run
 
   object RunValidator {
@@ -146,7 +150,8 @@ object method {
         SeedListPath.opts,
         CollateralAmountOpts.opts,
         trustRatingsPathOpts,
-        SeedListPath.priorityOpts
+        SeedListPath.priorityOpts,
+        AllowanceListPath.opts
       ).mapN(RunValidator.apply)
     }
   }

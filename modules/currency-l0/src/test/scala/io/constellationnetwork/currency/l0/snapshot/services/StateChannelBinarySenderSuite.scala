@@ -143,7 +143,8 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         stateChannelSnapshotClient,
         stateChannelAllowanceLists,
         selfId,
-        environment
+        environment,
+        none
       )
     } yield (sender, stateRef, postedRef)
 

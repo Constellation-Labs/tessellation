@@ -6,9 +6,7 @@ import cats.syntax.all._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hex.Hex
 
-
 object ExitOnFork {
-
 
   def panicExit(flag: String): Unit = {
     // Avoid F logger due to immediate kill

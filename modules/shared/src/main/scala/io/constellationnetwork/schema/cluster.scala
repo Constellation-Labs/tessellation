@@ -88,6 +88,7 @@ object cluster {
   case object InvalidRemoteAddress extends RegistrationRequestValidation
   case object IdDuplicationFound extends RegistrationRequestValidation
   case object SeedlistDoesNotMatch extends RegistrationRequestValidation
+  case object AllowanceListDoesNotMatch extends RegistrationRequestValidation
   case object CollateralNotSatisfied extends RegistrationRequestValidation
   case object VersionMismatch extends RegistrationRequestValidation
   case object EnvMismatch extends RegistrationRequestValidation

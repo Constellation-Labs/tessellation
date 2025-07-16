@@ -244,7 +244,8 @@ object Main
                   cfg.seedlistPath,
                   cfg.collateralAmount,
                   cfg.trustRatingsPath,
-                  cfg.prioritySeedlistPath
+                  cfg.prioritySeedlistPath,
+                  cfg.allowanceListPath
                 )
               ) >>
               services.restart.setNodeForkedRestartMethod(
@@ -259,7 +260,8 @@ object Main
                   cfg.collateralAmount,
                   cfg.trustRatingsPath,
                   cfg.prioritySeedlistPath,
-                  _
+                  _,
+                  cfg.allowanceListPath
                 )
               )
 
@@ -279,7 +281,8 @@ object Main
                   cfg.collateralAmount,
                   cfg.trustRatingsPath,
                   cfg.prioritySeedlistPath,
-                  _
+                  _,
+                  cfg.allowanceListPath
                 )
               )
 
@@ -299,7 +302,8 @@ object Main
                   cfg.seedlistPath,
                   cfg.collateralAmount,
                   cfg.trustRatingsPath,
-                  cfg.prioritySeedlistPath
+                  cfg.prioritySeedlistPath,
+                  cfg.allowanceListPath
                 )
               ) >>
               services.restart.setNodeForkedRestartMethod(
@@ -314,7 +318,8 @@ object Main
                   cfg.collateralAmount,
                   cfg.trustRatingsPath,
                   cfg.prioritySeedlistPath,
-                  _
+                  _,
+                  cfg.allowanceListPath
                 )
               )
         }
