@@ -101,6 +101,9 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
   let previousOrdinal = null
   let monitoring = true
   let lastOrdinalChangeTime = Date.now()
+  const ordinalDeltas = [] // Track all ordinal change deltas
+  
+  const CHECK_INTERVAL_MS = 500 // Check every 500ms
   
   const getLatestSnapshot = async () => {
     try {
@@ -144,12 +147,20 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
           
           logMessage(`[ORDINAL MONITOR] [${timestamp}] Ordinal changed: ${previousOrdinal} → ${currentOrdinal} (change: +${change}) | Total test time: ${formatTime(totalElapsed)} | Time since last change: ${formatTime(timeSinceLastChange)}`)
           
+          // Track this delta
+          ordinalDeltas.push({
+            fromOrdinal: previousOrdinal,
+            toOrdinal: currentOrdinal,
+            deltaMs: timeSinceLastChange,
+            timestamp: currentTime
+          })
+          
           previousOrdinal = currentOrdinal
           lastOrdinalChangeTime = currentTime
         }
       }
       
-      await sleep(500)
+      await sleep(CHECK_INTERVAL_MS)
     }
   }
   
@@ -158,9 +169,15 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
     logMessage(`[ORDINAL MONITOR] Monitor error: ${err.message}`)
   })
   
-  // Return stop function
-  return () => {
-    monitoring = false
+  // Return stop function and data getter
+  return {
+    stop: () => {
+      monitoring = false
+    },
+    getTimingData: () => ({
+      ordinalDeltas,
+      lastOrdinalChangeTime
+    })
   }
 }
 
@@ -225,7 +242,7 @@ const bulkSubmitTest = async () => {
   
   // Start ordinal monitor
   logMessage('Starting ordinal monitor...')
-  const stopMonitor = await startOrdinalMonitor(networkConfig.l0Url, testStartTime)
+  const ordinalMonitor = await startOrdinalMonitor(networkConfig.l0Url, testStartTime)
   
   let transactionCount = 0
   const submittedTransactions = []
@@ -294,21 +311,77 @@ const bulkSubmitTest = async () => {
     logMessage('Skipping final balance checks in debug mode')
   }
   
+  // Stop the ordinal monitor and get timing data
+  ordinalMonitor.stop()
+  await sleep(1000) // Give monitor time to finish
+  
+  const { ordinalDeltas, lastOrdinalChangeTime } = ordinalMonitor.getTimingData()
+  const testEndTime = Date.now()
+  const finalDelta = testEndTime - lastOrdinalChangeTime
+  
   // Summary
   logMessage('\n=== Test Summary ===')
   logMessage(`Total transactions submitted: ${transactionCount}`)
   logMessage(`Total time: ~${numTransactionsToSend * 5} seconds`)
   logMessage(`Success rate: ${((transactionCount / numTransactionsToSend) * 100).toFixed(1)}%`)
   
+  // Ordinal timing analysis
+  logMessage('\n=== Ordinal Timing Analysis ===')
+  logMessage(`Total ordinal changes: ${ordinalDeltas.length}`)
+  
+  if (ordinalDeltas.length > 0) {
+    logMessage('\nOrdinal change deltas:')
+    ordinalDeltas.forEach((delta, idx) => {
+      const seconds = (delta.deltaMs / 1000).toFixed(1)
+      logMessage(`  [${idx + 1}] Ordinal ${delta.fromOrdinal} → ${delta.toOrdinal}: ${seconds}s`)
+    })
+    
+    const maxDelta = Math.max(...ordinalDeltas.map(d => d.deltaMs))
+    const avgDelta = ordinalDeltas.reduce((sum, d) => sum + d.deltaMs, 0) / ordinalDeltas.length
+    
+    logMessage(`\nMax ordinal delta: ${(maxDelta / 1000).toFixed(1)}s`)
+    logMessage(`Average ordinal delta: ${(avgDelta / 1000).toFixed(1)}s`)
+  }
+  
+  logMessage(`\nFinal delta (test end to last ordinal): ${(finalDelta / 1000).toFixed(1)}s`)
+  
+  // Assertions
+  const MAX_DELTA_SECONDS = 20
+  const MAX_DELTA_MS = MAX_DELTA_SECONDS * 1000
+  
+  logMessage('\n=== Timing Assertions ===')
+  
+  // Check all ordinal deltas
+  let allDeltasPass = true
+  ordinalDeltas.forEach((delta, idx) => {
+    if (delta.deltaMs > MAX_DELTA_MS) {
+      logMessage(`❌ FAIL: Ordinal delta ${idx + 1} exceeded ${MAX_DELTA_SECONDS}s: ${(delta.deltaMs / 1000).toFixed(1)}s`)
+      allDeltasPass = false
+    }
+  })
+  
+  if (allDeltasPass && ordinalDeltas.length > 0) {
+    logMessage(`✅ PASS: All ${ordinalDeltas.length} ordinal deltas were under ${MAX_DELTA_SECONDS}s`)
+  }
+  
+  // Check final delta
+  if (finalDelta > MAX_DELTA_MS) {
+    logMessage(`❌ FAIL: Final delta exceeded ${MAX_DELTA_SECONDS}s: ${(finalDelta / 1000).toFixed(1)}s`)
+    logMessage(`   This indicates the network stopped producing ordinals`)
+  } else {
+    logMessage(`✅ PASS: Final delta was under ${MAX_DELTA_SECONDS}s: ${(finalDelta / 1000).toFixed(1)}s`)
+  }
+  
+  // Overall test result
   if (transactionCount < numTransactionsToSend) {
     throw new Error(`Failed to submit all transactions. Only ${transactionCount}/${numTransactionsToSend} succeeded.`)
   }
   
-  logMessage('Bulk submit test passed!')
+  if (!allDeltasPass || finalDelta > MAX_DELTA_MS) {
+    throw new Error('Test failed due to ordinal timing violations')
+  }
   
-  // Stop the ordinal monitor
-  stopMonitor()
-  await sleep(1000) // Give monitor time to finish
+  logMessage('\n✅ Bulk submit test passed!')
 }
 
 // Run the script

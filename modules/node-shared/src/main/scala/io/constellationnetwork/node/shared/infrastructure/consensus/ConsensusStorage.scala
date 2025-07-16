@@ -381,7 +381,9 @@ object ConsensusStorage {
                 emptyResources <- ConsensusResources.empty[F, Artifact, Kind]
                 updated <- resourcesR(key).updateAndGet { maybeResource =>
                   val current = maybeResource.getOrElse(emptyResources)
-                  Some(f(current).copy(updatedAt = now))
+                  // Only update the timestamp when creating new resources, not on updates
+                  val updatedTimestamp = if (maybeResource.isDefined) current.updatedAt else now
+                  Some(f(current).copy(updatedAt = updatedTimestamp))
                 }
               } yield updated
             } else {
