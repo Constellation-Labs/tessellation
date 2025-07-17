@@ -224,6 +224,11 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       seedlist: Option[Set[PeerId]],
       signed: Signed[A]
     ): SignedValidationErrorOr[Signed[A]] = ???
+
+    override def validateAtLeastOneSignatureInSeedlist[A](
+      seedlist: Option[Set[PeerId]],
+      signed: Signed[A]
+    ): SignedValidationErrorOr[Signed[A]] = ???
   }
 
   def updateNodeParametersAcceptanceManager(implicit txHasher: Hasher[IO]) = {

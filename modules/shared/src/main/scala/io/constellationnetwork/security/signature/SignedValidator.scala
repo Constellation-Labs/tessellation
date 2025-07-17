@@ -55,6 +55,8 @@ trait SignedValidator[F[_]] {
 
   def validateSignaturesWithSeedlist[A <: AnyRef](seedlist: Option[Set[PeerId]], signed: Signed[A]): SignedValidationErrorOr[Signed[A]]
 
+  def validateAtLeastOneSignatureInSeedlist[A](seedlist: Option[Set[PeerId]], signed: Signed[A]): SignedValidationErrorOr[Signed[A]]
+
   def validateSignedBySeedlistMajority[A](seedlist: Option[Set[PeerId]], signed: Signed[A]): SignedValidationErrorOr[Signed[A]]
 }
 
@@ -145,6 +147,27 @@ object SignedValidator {
             signed,
             NotEnoughSeedlistSignatures(signingPeers.size, minRequired)
           )
+      }
+
+    def validateAtLeastOneSignatureInSeedlist[A](
+      seedlist: Option[Set[PeerId]],
+      signed: Signed[A]
+    ): SignedValidationErrorOr[Signed[A]] =
+      seedlist match {
+        case None => signed.validNec
+        case Some(allowedPeers) =>
+          val signerPeerIds = signed.proofs.map(_.id.toPeerId).toSortedSet
+          val hasValidSigner = signerPeerIds.intersect(allowedPeers).nonEmpty
+
+          if (hasValidSigner) {
+            signed.validNec
+          } else {
+            val invalidSignerIds = signerPeerIds.map(_.toId)
+            NonEmptySet
+              .fromSet(invalidSignerIds)
+              .map(SignersNotInSeedlist(_).invalidNec)
+              .getOrElse(signed.validNec)
+          }
       }
 
     private def duplicatedValues[B: Order](values: NonEmptyList[B]): List[B] =
