@@ -58,9 +58,14 @@ object env {
 
   @newtype
   case class SeedListPath(value: Path)
-
   object SeedListPath {
     val opts: Opts[Option[SeedListPath]] = Opts.option[SeedListPath]("seedlist", "").orNone
     val priorityOpts: Opts[Option[SeedListPath]] = Opts.option[SeedListPath]("prioritySeedlist", "").orNone
+  }
+
+  @newtype
+  case class AllowanceListPath(value: Path)
+  object AllowanceListPath {
+    val opts: Opts[Option[AllowanceListPath]] = Opts.option[AllowanceListPath]("allowanceList", "Path to allowance list file").orNone
   }
 }

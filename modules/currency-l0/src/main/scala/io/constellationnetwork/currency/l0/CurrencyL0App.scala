@@ -12,11 +12,14 @@ import io.constellationnetwork.currency.l0.http.p2p.P2PClient
 import io.constellationnetwork.currency.l0.modules._
 import io.constellationnetwork.currency.l0.node.L0NodeContext
 import io.constellationnetwork.currency.schema.currency._
+import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
+import io.constellationnetwork.env.env.AllowanceListPath
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.kryo._
 import io.constellationnetwork.node.shared.app.{NodeShared, TessellationIOApp, getMajorityPeerIds}
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.ext.pureconfig._
+import io.constellationnetwork.node.shared.infrastructure.allowance_list.{Loader => AllowanceListLoader}
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.statechannel.StateChannelAllowanceLists
@@ -108,7 +111,8 @@ abstract class CurrencyL0App(
           sharedServices.globalSnapshotContextFns,
           maybeMajorityPeerIds,
           hasherSelectorAlwaysCurrent,
-          maybeAllowanceList
+          maybeAllowanceList,
+          nodeShared.customAllowanceList
         )
         .asResource
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext
@@ -209,7 +213,8 @@ abstract class CurrencyL0App(
                       rv.globalL0Peer,
                       rv.identifier,
                       rv.trustRatingsPath,
-                      _
+                      _,
+                      rv.allowanceListPath
                     )
                   )
 
@@ -231,7 +236,8 @@ abstract class CurrencyL0App(
                       m.collateralAmount,
                       m.globalL0Peer,
                       m.identifier,
-                      m.trustRatingsPath
+                      m.trustRatingsPath,
+                      m.allowanceListPath
                     )
                   ) >>
                   services.restart.setNodeForkedRestartMethod(
@@ -247,7 +253,8 @@ abstract class CurrencyL0App(
                       m.globalL0Peer,
                       m.identifier,
                       m.trustRatingsPath,
-                      _
+                      _,
+                      m.allowanceListPath
                     )
                   )
 
@@ -275,7 +282,8 @@ abstract class CurrencyL0App(
                       rr.collateralAmount,
                       rr.globalL0Peer,
                       rr.identifier,
-                      rr.trustRatingsPath
+                      rr.trustRatingsPath,
+                      rr.allowanceListPath
                     )
                   ) >>
                   services.restart.setNodeForkedRestartMethod(
@@ -291,7 +299,8 @@ abstract class CurrencyL0App(
                       rr.globalL0Peer,
                       rr.identifier,
                       rr.trustRatingsPath,
-                      _
+                      _,
+                      rr.allowanceListPath
                     )
                   )
 
@@ -319,7 +328,8 @@ abstract class CurrencyL0App(
                         m.collateralAmount,
                         m.globalL0Peer,
                         identifier,
-                        m.trustRatingsPath
+                        m.trustRatingsPath,
+                        m.allowanceListPath
                       )
                     ) >>
                       services.restart.setNodeForkedRestartMethod(
@@ -335,7 +345,8 @@ abstract class CurrencyL0App(
                           m.globalL0Peer,
                           identifier,
                           m.trustRatingsPath,
-                          _
+                          _,
+                          m.allowanceListPath
                         )
                       )
                   }

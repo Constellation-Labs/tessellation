@@ -9,6 +9,7 @@ import cats.{Applicative, MonadThrow}
 
 import scala.concurrent.duration._
 
+import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.crypto._
@@ -38,7 +39,8 @@ object Cluster {
     restartService: RestartService[F, _],
     versionHash: Hash,
     jarHash: Hash,
-    environment: AppEnvironment
+    environment: AppEnvironment,
+    allowanceList: Option[Set[AllowanceListEntry]]
   ): Cluster[F] =
     new Cluster[F] {
 
@@ -55,6 +57,7 @@ object Cluster {
           clusterId = clusterStorage.getClusterId
           state <- nodeStorage.getNodeState
           seedlistHash <- seedlist.map(_.map(_.peerId)).hash
+          allowanceListHash <- allowanceList.map(_.map(_.peerId)).hash
         } yield
           RegistrationRequest(
             selfId,
@@ -68,7 +71,8 @@ object Cluster {
             seedlistHash,
             versionHash,
             jarHash,
-            environment
+            environment,
+            allowanceListHash
           )
 
       def signRequest(signRequest: SignRequest)(implicit hasher: Hasher[F]): F[Signed[SignRequest]] =

@@ -162,7 +162,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       peerId1 = NonEmptySet.one(PeerId.fromPublic(keyPair1.getPublic))
       peerId2 = NonEmptySet.one(PeerId.fromPublic(keyPair2.getPublic))
       address = testStateChannel.toAddress
-      signedSCBinary <- forAsyncHasher(testStateChannel, keyPair1).flatMap(_.signAlsoWith(keyPair2))
+      signedSCBinary <- forAsyncHasher(testStateChannel, keyPair2)
       scOutput = StateChannelOutput(address, signedSCBinary)
       validator = mkValidator(
         peerId1.toSortedSet.map(SeedlistEntry(_, none, none, none, none)).some,
@@ -174,6 +174,24 @@ object StateChannelValidatorSuite extends MutableIOSuite {
         StateChannelValidator.SignersNotInSeedlist(SignedValidator.SignersNotInSeedlist(peerId2.map(_.toId))).invalidNec,
         result
       )
+  }
+
+  test("should success when any of signatures are from allowed peer on seedlist") { res =>
+    implicit val (json, h, sp) = res
+
+    for {
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
+      peerId1 = NonEmptySet.one(PeerId.fromPublic(keyPair1.getPublic))
+      address = testStateChannel.toAddress
+      signedSCBinary <- forAsyncHasher(testStateChannel, keyPair1).flatMap(_.signAlsoWith(keyPair2))
+      scOutput = StateChannelOutput(address, signedSCBinary)
+      validator = mkValidator(
+        peerId1.toSortedSet.map(SeedlistEntry(_, none, none, none, none)).some,
+        Map(address -> peerId1).some
+      )
+      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, SnapshotFeesInfo.empty)
+    } yield expect.same(Valid(scOutput), result)
   }
 
   test("should succeed when there is signature not from seedlist but is validated as historical") { res =>

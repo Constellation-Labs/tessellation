@@ -9,7 +9,10 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStora
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
+import io.constellationnetwork.schema.delegatedStake.DelegatedStakeRecord
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo}
+import io.constellationnetwork.schema.tokenLock.TokenLock
+import io.constellationnetwork.security.signature.Signed
 
 import io.estatico.newtype.ops._
 
@@ -31,7 +34,13 @@ object AddressService {
 
       def getTotalSupply: F[Option[(BigInt, SnapshotOrdinal)]] =
         snapshotStorage.head.map(_.map {
-          case (snapshot, state) => calculateTotalSupply(state.balances.values, snapshot.value.ordinal)
+          case (snapshot, state) =>
+            calculateTotalSupply(
+              state.balances.values,
+              state.getActiveTokenLocks.values.flatten,
+              state.getActiveDelegatedStakes.values.flatten,
+              snapshot.value.ordinal
+            )
         })
 
       def getWalletCount: F[Option[(Int, SnapshotOrdinal)]] =
@@ -48,18 +57,51 @@ object AddressService {
           case (snapshot, state) =>
             calculateTotalSupply(
               state.balances.filterNot { case (a, _) => addressCfg.locked.contains(a) }.values,
+              state.getActiveTokenLocks.filterNot { case (a, _) => addressCfg.locked.contains(a) }.values.flatten,
+              state.getActiveDelegatedStakes.filterNot { case (a, _) => addressCfg.locked.contains(a) }.values.flatten,
               snapshot.value.ordinal
             )
         })
 
-      private def calculateTotalSupply(balances: Iterable[Balance], ordinal: SnapshotOrdinal): (BigInt, SnapshotOrdinal) = {
+      private def calculateTotalSupply(
+        balances: Iterable[Balance],
+        tokenLocks: Iterable[Signed[TokenLock]],
+        delegatedStakes: Iterable[DelegatedStakeRecord],
+        ordinal: SnapshotOrdinal
+      ): (BigInt, SnapshotOrdinal) = {
         val empty = BigInt(Balance.empty.coerce.value)
-        val supply = balances
-          .foldLeft(empty) { (acc, b) =>
-            acc + BigInt(b.coerce.value)
-          }
+        val supply = balances.foldLeft(empty) { (acc, b) =>
+          acc + BigInt(b.coerce.value)
+        } + tokenLocks.foldLeft(empty) { (acc, t) =>
+          acc + BigInt(t.amount.coerce.value)
+        } + delegatedStakes.foldLeft(empty) { (acc, s) =>
+          acc + BigInt(s.rewards.coerce.value)
+        }
 
         (supply, ordinal)
       }
+
+      def getCirculatedSupply: F[Option[(BigInt, SnapshotOrdinal)]] =
+        snapshotStorage.head.map(_.map {
+          case (snapshot, state) =>
+            calculateTotalSupply(
+              state.balances.values,
+              List.empty,
+              List.empty,
+              snapshot.value.ordinal
+            )
+        })
+
+      def getFilteredOutCirculatedSupply: F[Option[(BigInt, SnapshotOrdinal)]] =
+        snapshotStorage.head.map(_.map {
+          case (snapshot, state) =>
+            calculateTotalSupply(
+              state.balances.filterNot { case (a, _) => addressCfg.locked.contains(a) }.values,
+              List.empty,
+              List.empty,
+              snapshot.value.ordinal
+            )
+        })
+
     }
 }

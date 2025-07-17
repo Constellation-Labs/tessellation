@@ -5,6 +5,7 @@ import cats.effect.Async
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.functor._
 
+import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.SharedConfig
@@ -26,7 +27,8 @@ object SharedPrograms {
     localHealthcheck: LocalHealthcheck[F],
     seedlist: Option[Set[SeedlistEntry]],
     nodeId: PeerId,
-    versionHash: Hash
+    versionHash: Hash,
+    allowanceList: Option[Set[AllowanceListEntry]]
   ): F[SharedPrograms[F, A]] =
     for {
       pd <- PeerDiscovery.make(clusterClient, storages.cluster, nodeId)
@@ -44,7 +46,8 @@ object SharedPrograms {
           nodeId,
           cfg.stateAfterJoining,
           versionHash,
-          pd
+          pd,
+          allowanceList
         )
       }
     } yield new SharedPrograms[F, A](pd, joining) {}

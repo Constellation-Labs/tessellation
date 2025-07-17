@@ -257,6 +257,10 @@ case class GlobalSnapshotInfo(
     ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _, _, _))
   }
 
+  override def getActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = activeTokenLocks.getOrElse(SortedMap.empty)
+
+  override def getActiveDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]] =
+    activeDelegatedStakes.getOrElse(SortedMap.empty)
 }
 
 object GlobalSnapshotInfo {

@@ -15,6 +15,7 @@ import io.constellationnetwork.currency.l0.node.L0NodeContext
 import io.constellationnetwork.currency.l0.snapshot._
 import io.constellationnetwork.currency.l0.snapshot.services.{StateChannelBinarySender, StateChannelSnapshotService}
 import io.constellationnetwork.currency.schema.currency._
+import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
@@ -66,7 +67,8 @@ object Services {
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]],
     hasherSelector: HasherSelector[F],
-    stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]]
+    stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
+    customPeersAllowanceList: Option[Set[AllowanceListEntry]]
   ): F[Services[F, R]] =
     for {
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[F]
@@ -79,7 +81,8 @@ object Services {
         p2PClient.stateChannelSnapshot,
         stateChannelAllowanceLists,
         selfId,
-        cfg.environment
+        cfg.environment,
+        customPeersAllowanceList
       )
 
       l0NodeContext = L0NodeContext

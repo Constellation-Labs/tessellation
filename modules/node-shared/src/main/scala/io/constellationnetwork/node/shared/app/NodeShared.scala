@@ -4,6 +4,7 @@ import java.security.KeyPair
 
 import cats.effect.std.{Random, Supervisor}
 
+import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
@@ -45,6 +46,7 @@ trait NodeShared[F[_], A <: CliMethod] {
   val sharedPrograms: SharedPrograms[F, A]
   val sharedValidators: SharedValidators[F]
   val prioritySeedlist: Option[Set[SeedlistEntry]]
+  val customAllowanceList: Option[Set[AllowanceListEntry]]
 
   val hashSelect: HashSelect
 

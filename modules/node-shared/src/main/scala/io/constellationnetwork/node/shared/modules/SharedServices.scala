@@ -8,6 +8,7 @@ import cats.effect.Async
 import cats.effect.std.Supervisor
 import cats.syntax.all._
 
+import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
@@ -62,7 +63,8 @@ object SharedServices {
     collateral: CollateralConfig,
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     environment: AppEnvironment,
-    txHasher: Hasher[F]
+    txHasher: Hasher[F],
+    allowanceList: Option[Set[AllowanceListEntry]]
   ): F[SharedServices[F, A]] =
     for {
       restartService <- RestartService.make(restartSignal, storages.cluster)
@@ -80,7 +82,8 @@ object SharedServices {
           restartService,
           versionHash,
           jarHash,
-          environment
+          environment,
+          allowanceList
         )
 
       localHealthcheck <- LocalHealthcheck.make[F](nodeClient, storages.cluster)

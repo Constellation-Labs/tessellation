@@ -161,7 +161,7 @@ object StateChannelValidator {
       signed: Signed[StateChannelSnapshotBinary]
     ): StateChannelValidationErrorOr[Signed[StateChannelSnapshotBinary]] =
       signedValidator
-        .validateSignaturesWithSeedlist(l0Seedlist.map(_.map(_.peerId)), signed)
+        .validateAtLeastOneSignatureInSeedlist(l0Seedlist.map(_.map(_.peerId)), signed)
         .errorMap(SignersNotInSeedlist)
 
     private def validateStateChannelAddress(address: Address): StateChannelValidationErrorOr[Address] =

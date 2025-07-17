@@ -60,7 +60,8 @@ object method {
     collateralAmount: Option[Amount],
     startingEpochProgress: EpochProgress,
     trustRatingsPath: Option[Path],
-    prioritySeedlistPath: Option[SeedListPath]
+    prioritySeedlistPath: Option[SeedListPath],
+    allowanceListPath: Option[AllowanceListPath]
   ) extends Run {}
 
   object RunGenesis extends WithOpts[RunGenesis] {
@@ -83,7 +84,8 @@ object method {
         CollateralAmountOpts.opts,
         startingEpochProgressOpts,
         trustRatingsPathOpts,
-        SeedListPath.priorityOpts
+        SeedListPath.priorityOpts,
+        AllowanceListPath.opts
       ).mapN(RunGenesis.apply)
     }
   }
@@ -99,7 +101,8 @@ object method {
     collateralAmount: Option[Amount],
     rollbackHash: Hash,
     trustRatingsPath: Option[Path],
-    prioritySeedlistPath: Option[SeedListPath]
+    prioritySeedlistPath: Option[SeedListPath],
+    allowanceListPath: Option[AllowanceListPath]
   ) extends Run
 
   object RunRollback extends WithOpts[RunRollback] {
@@ -118,7 +121,8 @@ object method {
         CollateralAmountOpts.opts,
         rollbackHashOpts,
         trustRatingsPathOpts,
-        SeedListPath.priorityOpts
+        SeedListPath.priorityOpts,
+        AllowanceListPath.opts
       ).mapN(RunRollback.apply)
     }
   }
@@ -134,7 +138,8 @@ object method {
     collateralAmount: Option[Amount],
     trustRatingsPath: Option[Path],
     prioritySeedlistPath: Option[SeedListPath],
-    peerToJoinPool: NonEmptySet[PeerToJoin]
+    peerToJoinPool: NonEmptySet[PeerToJoin],
+    allowanceListPath: Option[AllowanceListPath]
   ) extends Run
 
   case class RunValidator(
@@ -147,7 +152,8 @@ object method {
     seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     trustRatingsPath: Option[Path],
-    prioritySeedlistPath: Option[SeedListPath]
+    prioritySeedlistPath: Option[SeedListPath],
+    allowanceListPath: Option[AllowanceListPath]
   ) extends Run
 
   object RunValidator extends WithOpts[RunValidator] {
@@ -163,7 +169,8 @@ object method {
         SeedListPath.opts,
         CollateralAmountOpts.opts,
         trustRatingsPathOpts,
-        SeedListPath.priorityOpts
+        SeedListPath.priorityOpts,
+        AllowanceListPath.opts
       ).mapN(RunValidator.apply)
     }
   }

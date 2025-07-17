@@ -47,6 +47,8 @@ trait CliMethod {
 
   val collateralAmount: Option[Amount]
 
+  val allowanceListPath: Option[AllowanceListPath]
+
   def nodeSharedConfig(c: SharedConfigReader): SharedConfig = SharedConfig(
     environment,
     c.gossip,
@@ -68,7 +70,7 @@ trait CliMethod {
     c.delegatedStaking,
     c.fieldsAddedOrdinals,
     c.metagraphsSync,
-    c.priceOracle
+    c.priceOracle.getOrElse(environment, PriceOracleConfig.default)
   )
 
 }

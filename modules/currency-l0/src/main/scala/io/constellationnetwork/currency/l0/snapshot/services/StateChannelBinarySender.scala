@@ -10,6 +10,7 @@ import cats.syntax.all._
 import scala.collection.immutable.Queue
 
 import io.constellationnetwork.currency.l0.metrics.updateStateChannelRetryParametersMetrics
+import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment._
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
@@ -99,7 +100,8 @@ object StateChannelBinarySender {
     stateChannelSnapshotClient: StateChannelSnapshotClient[F],
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     selfId: PeerId,
-    environment: AppEnvironment
+    environment: AppEnvironment,
+    customPeersAllowanceList: Option[Set[AllowanceListEntry]]
   ): F[StateChannelBinarySender[F]] =
     Ref
       .of[F, State](State.empty)
@@ -112,7 +114,8 @@ object StateChannelBinarySender {
           stateChannelSnapshotClient,
           stateChannelAllowanceLists,
           selfId,
-          environment
+          environment,
+          customPeersAllowanceList
         )
       )
 
@@ -124,7 +127,8 @@ object StateChannelBinarySender {
     stateChannelSnapshotClient: StateChannelSnapshotClient[F],
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     selfId: PeerId,
-    environment: AppEnvironment
+    environment: AppEnvironment,
+    customPeersAllowanceList: Option[Set[AllowanceListEntry]]
   ): StateChannelBinarySender[F] =
     new StateChannelBinarySender[F] {
 
@@ -315,7 +319,10 @@ object StateChannelBinarySender {
         binary: Hashed[StateChannelSnapshotBinary],
         lastCurrencySnapshotSigners: List[PeerId],
         lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]]
-      ): F[Option[PeerId]] =
+      ): F[Option[PeerId]] = {
+        val customPeersAllowed: List[PeerId] =
+          customPeersAllowanceList.map(_.map(_.peerId).toList).getOrElse(Nil)
+
         stateChannelAllowanceLists match {
           case Some(allowanceLists) =>
             for {
@@ -327,7 +334,7 @@ object StateChannelBinarySender {
                       binary,
                       lastCurrencySnapshotSigners,
                       lastGlobalSnapshotSigners,
-                      allowedPeers.toList
+                      customPeersAllowed.filter(allowedPeers.contains)
                     )
                   } else {
                     none[PeerId].pure
@@ -338,7 +345,7 @@ object StateChannelBinarySender {
                       binary,
                       lastCurrencySnapshotSigners,
                       lastGlobalSnapshotSigners,
-                      List.empty
+                      customPeersAllowed
                     )
                   } else {
                     logger
@@ -355,12 +362,13 @@ object StateChannelBinarySender {
                 binary,
                 lastCurrencySnapshotSigners,
                 lastGlobalSnapshotSigners,
-                List.empty
+                customPeersAllowed
               )
             } else {
               none[PeerId].pure
             }
         }
+      }
 
       private def pickPeerAndSendCurrencySnapshot(
         binary: Hashed[StateChannelSnapshotBinary],
