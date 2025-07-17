@@ -111,7 +111,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         )
       }
     ),
-    oneTimeRewards = Map(AppEnvironment.Dev -> List.empty)
+    oneTimeRewards = Map(AppEnvironment.Dev -> List.empty),
+    priceOracleEpoch = Map(AppEnvironment.Dev -> EpochProgress(106L))
   )
 
   val address1 = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
@@ -1137,7 +1138,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
             )
           }
         ),
-        oneTimeRewards = Map(AppEnvironment.Dev -> List.empty)
+        oneTimeRewards = Map(AppEnvironment.Dev -> List.empty),
+        priceOracleEpoch = Map(AppEnvironment.Dev -> EpochProgress.MaxValue)
       )
 
       // 3. Set up delegated stakes
