@@ -142,6 +142,9 @@ object ConsensusManager {
               .trySetInitialConsensusOutcome(outcome)
               .ifM(
                 nodeStorage.tryModifyState(Observing, WaitingForReady) >>
+                  // FIX: Start time trigger immediately after download
+                  // Previously, time trigger was only scheduled after successful consensus completion.
+                  // If the first consensus attempt failed, no periodic retry mechanism was active.
                   scheduleFacility >>
                   internalFacilitateWith(none),
                 new Throwable("Error initializing consensus storage").raiseError[F, Unit]
@@ -166,6 +169,10 @@ object ConsensusManager {
 
       private def scheduleFacility: F[Unit] =
         S.supervise {
+          // FIX: Make time trigger run continuously instead of just once
+          // Previously, the time trigger would only fire once and then stop, causing consensus
+          // to stall when peers timed out. This continuous loop ensures consensus attempts
+          // continue even if individual rounds fail due to network issues or peer timeouts.
           def runTimeTriggerLoop: F[Unit] = for {
             nextTimeValue <- Clock[F].monotonic.map(_ + config.timeTriggerInterval)
             _ <- consensusStorage.setTimeTrigger(nextTimeValue)
@@ -177,7 +184,7 @@ object ConsensusManager {
                 logger.debug(s"Time trigger firing at ${currentTime}") >>
                   internalFacilitateWith(TimeTrigger.some)
               }
-            _ <- runTimeTriggerLoop // Continue the loop
+            _ <- runTimeTriggerLoop // Continue the loop recursively
           } yield ()
 
           runTimeTriggerLoop
