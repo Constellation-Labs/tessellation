@@ -22,6 +22,7 @@ import io.chrisdavenport.mapref.MapRef
 import io.circe.Encoder
 import monocle.Lens
 import monocle.syntax.all._
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kind] {
   def getState(key: Key): F[Option[ConsensusState[Key, Status, Outcome, Kind]]]
@@ -141,6 +142,8 @@ object ConsensusStorage {
       resourcesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusResources[Artifact, Kind]]()
     } yield
       new ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind] {
+
+        private val logger = Slf4jLogger.getLogger[F]
 
         def getState(key: Key): F[Option[ConsensusState[Key, Status, Outcome, Kind]]] =
           statesR(key).get
@@ -382,9 +385,11 @@ object ConsensusStorage {
                 updated <- resourcesR(key).updateAndGet { maybeResource =>
                   val current = maybeResource.getOrElse(emptyResources)
                   // Only update the timestamp when creating new resources, not on updates
-                  val updatedTimestamp = if (maybeResource.isDefined) current.updatedAt else now
-                  Some(f(current).copy(updatedAt = updatedTimestamp))
+                  // val updatedTimestamp = if (maybeResource.isDefined) current.updatedAt else now
+                  // Some(f(current).copy(updatedAt = updatedTimestamp))
+                  Some(f(current).copy(updatedAt = now))
                 }
+                _ <- logger.info(s"Updated resources for key: $key, updated: $now")
               } yield updated
             } else {
               none[ConsensusResources[Artifact, Kind]].pure[F]

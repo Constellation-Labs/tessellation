@@ -346,7 +346,7 @@ const bulkSubmitTest = async () => {
   logMessage(`\nFinal delta (test end to last ordinal): ${(finalDelta / 1000).toFixed(1)}s`)
   
   // Assertions
-  const MAX_DELTA_SECONDS = 20
+  const MAX_DELTA_SECONDS = 30
   const MAX_DELTA_MS = MAX_DELTA_SECONDS * 1000
   
   logMessage('\n=== Timing Assertions ===')

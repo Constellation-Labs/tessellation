@@ -20,6 +20,7 @@ import io.constellationnetwork.schema.peer.Peer
 
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import cats.Applicative
 
 trait GossipRoundRunner[F[_]] {
 
@@ -62,11 +63,11 @@ object GossipRoundRunner {
                       .attempt // Catch all errors from the round itself
                     _ <- result match {
                       case Right((duration, _)) =>
-                        logger.debug(s"Gossip round succeeded {peer=${peer.show}, duration=${duration.toMillis}ms}") >>
+                        // logger.debug(s"Gossip round succeeded {peer=${peer.show}, duration=${duration.toMillis}ms}") >>
                           metrics.recordRoundDuration(duration, roundLabel) >>
                           metrics.incrementGossipRoundSucceeded
                       case Left(err) =>
-                        logger.error(s"Error running gossip round {peer=${peer.show}, reason=${err.show}") >>
+                        // logger.error(s"Error running gossip round {peer=${peer.show}, reason=${err.show}") >>
                           Temporal[F].start(localHealthcheck.start(peer)).void // Fire and forget the health check
                     }
                   } yield ()).handleErrorWith { err =>
@@ -89,9 +90,6 @@ object GossipRoundRunner {
             selectedPeers <- selectedPeersR.get
             availablePeers = allPeers.diff(selectedPeers)
             drawnPeers <- Random[F].shuffleList(availablePeers.toList).map(_.take(cfg.fanout.value))
-            _ <- logger.debug(
-              s"Selecting peers for gossip: allPeers=${allPeers.size}, selectedPeers=${selectedPeers.size}, availablePeers=${availablePeers.size}, drawnPeers=${drawnPeers.size}"
-            )
             _ <- drawnPeers.traverse { peer =>
               selectedPeersR.modify { selectedPeers =>
                 if (selectedPeers.contains(peer))
@@ -102,10 +100,12 @@ object GossipRoundRunner {
                 selectedPeersQueue
                   .tryOffer(peer)
                   .ifM(
-                    logger.debug(s"Queued peer for gossip round: {peer=${peer.show}}"),
-                    selectedPeersR.update(_.excl(peer)) >> logger.debug(s"Queue full, removed peer: {peer=${peer.show}}")
+                    Applicative[F].unit,
+                    // logger.debug(s"Queued peer for gossip round: {peer=${peer.show}}"), >> logger.debug(s"Queue full, removed peer: {peer=${peer.show}}
+                    selectedPeersR.update(_.excl(peer))
                   ),
-                logger.debug(s"Peer already selected, skipping: {peer=${peer.show}}")
+                  Applicative[F].unit
+                // logger.debug(s"Peer already selected, skipping: {peer=${peer.show}}")
               )
             }
           } yield ()
