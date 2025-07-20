@@ -51,7 +51,7 @@ sealed abstract class L0PeerDiscovery[F[_]: Sync: Random] private (
           .flatMap(_.traverse_(l0ClusterStorage.setPeers))
       })
       .handleErrorWith { error =>
-        logger.warn(error)(s"An error occured during L0 peer discovery")
+        logger.warn(error)(s"An error occurred during L0 peer discovery")
       }
 
   private def getPeersFrom(peer: P2PContext): F[NonEmptySet[L0Peer]] =

@@ -194,7 +194,7 @@ class Joining[
             .flatMap(signClient.joinRequest(_).run(withPeer))
             .ifM(
               Applicative[F].unit,
-              new Throwable(s"Unexpected error occured when joining with peer=${withPeer.id}.").raiseError[F, Unit]
+              new Throwable(s"Unexpected error occurred when joining with peer=${withPeer.id}.").raiseError[F, Unit]
             )
         }
 

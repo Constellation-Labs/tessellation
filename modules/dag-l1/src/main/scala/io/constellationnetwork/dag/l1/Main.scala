@@ -334,7 +334,7 @@ object Main
         .compile
         .drain
         .handleErrorWith { error =>
-          logger.error(error)("An error occured during state channel runtime") >> error.raiseError[IO, Unit]
+          logger.error(error)("An error occurred during state channel runtime") >> error.raiseError[IO, Unit]
         }
         .asResource
     } yield ()

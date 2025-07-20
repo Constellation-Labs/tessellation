@@ -34,7 +34,7 @@ paths:
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
         409:
-          description: An error occured - peer not allowed to join the network
+          description: An error occurred - peer not allowed to join the network
           headers:
             X-Id:
               $ref: '../../models/headers/X-Id.yml'
@@ -82,7 +82,7 @@ paths:
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
         409:
-          description: An error occured
+          description: An error occurred
           headers:
             X-Id:
               $ref: '../../models/headers/X-Id.yml'

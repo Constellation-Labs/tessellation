@@ -137,7 +137,7 @@ final case class TokenLockRoutes[
         }
         .flatMap(_ => Ok())
         .handleErrorWith { err =>
-          logger.error(err)("An error occured") >> InternalServerError()
+          logger.error(err)("An error occurred") >> InternalServerError()
         }
   }
 }

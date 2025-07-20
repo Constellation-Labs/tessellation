@@ -42,7 +42,7 @@ final case class RegistrationRoutes[F[_]: Async: HasherSelector](cluster: Cluste
             .signRequest(signRequest)
         }
           .flatMap(Ok(_))
-          .handleErrorWith(e => logger.error(e)(s"An error occured!") >> BadRequest())
+          .handleErrorWith(e => logger.error(e)(s"An error occurred!") >> BadRequest())
       }
   }
 }
