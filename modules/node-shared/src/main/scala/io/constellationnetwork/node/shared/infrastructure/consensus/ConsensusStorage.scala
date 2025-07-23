@@ -298,16 +298,46 @@ object ConsensusStorage {
         def addFacility(peerId: PeerId, key: Key, facility: Facility): F[Option[ConsensusResources[Artifact, Kind]]] =
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
             peerDeclaration.focus(_.facility).modify(_.orElse(facility.some))
+          }.flatMap { result =>
+            result match {
+              case Some(resources) if resources.facilities.isEmpty =>
+                Clock[F].realTime.flatMap { realTime =>
+                  updateResources(key) { r =>
+                    r.copy(facilities = realTime.some)
+                  }.as(result)
+                }
+              case _ => result.pure[F]
+            }
           }
 
         def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[Option[ConsensusResources[Artifact, Kind]]] =
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
             peerDeclaration.focus(_.proposal).modify(_.orElse(proposal.some))
+          }.flatMap { result =>
+            result match {
+              case Some(resources) if resources.proposals.isEmpty =>
+                Clock[F].realTime.flatMap { realTime =>
+                  updateResources(key) { r =>
+                    r.copy(proposals = realTime.some)
+                  }.as(result)
+                }
+              case _ => result.pure[F]
+            }
           }
 
         def addSignature(peerId: PeerId, key: Key, signature: MajoritySignature): F[Option[ConsensusResources[Artifact, Kind]]] =
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
             peerDeclaration.focus(_.signature).modify(_.orElse(signature.some))
+          }.flatMap { result =>
+            result match {
+              case Some(resources) if resources.signatures.isEmpty =>
+                Clock[F].realTime.flatMap { realTime =>
+                  updateResources(key) { r =>
+                    r.copy(signatures = realTime.some)
+                  }.as(result)
+                }
+              case _ => result.pure[F]
+            }
           }
 
         def addBinarySignature(peerId: PeerId, key: Key, signature: BinarySignature): F[Option[ConsensusResources[Artifact, Kind]]] =
@@ -384,9 +414,6 @@ object ConsensusStorage {
                 emptyResources <- ConsensusResources.empty[F, Artifact, Kind]
                 updated <- resourcesR(key).updateAndGet { maybeResource =>
                   val current = maybeResource.getOrElse(emptyResources)
-                  // Only update the timestamp when creating new resources, not on updates
-                  // val updatedTimestamp = if (maybeResource.isDefined) current.updatedAt else now
-                  // Some(f(current).copy(updatedAt = updatedTimestamp))
                   Some(f(current).copy(updatedAt = now))
                 }
                 _ <- logger.info(s"Updated resources for key: $key, updated: $now")
