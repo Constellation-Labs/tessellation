@@ -86,7 +86,8 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       fee = TokenLockFee(NonNegLong(0L)),
       parent = parent,
       currencyId = None,
-      unlockEpoch = tokenLockUnlockEpoch
+      unlockEpoch = tokenLockUnlockEpoch,
+      replaceTokenLockRef = None
     )
     for {
       signed <- forAsyncHasher(testTokenLock, keyPair)
@@ -232,7 +233,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       context = lastContext.copy(activeDelegatedStakes =
         Some(
           SortedMap(
-            address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty))
+            address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, None, None))
           )
         )
       )
@@ -258,7 +259,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       context = lastContext.copy(activeDelegatedStakes =
         Some(
           SortedMap(
-            address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty))
+            address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, None, None))
           )
         )
       )
@@ -283,13 +284,13 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       context = lastContext.copy(
         activeDelegatedStakes = Some(
           SortedMap(
-            address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty))
+            address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, None, None))
           )
         ),
         delegatedStakesWithdrawals = Some(
           SortedMap(
             address -> SortedSet(
-              PendingDelegatedStakeWithdrawal(signedParent, Amount.empty, SnapshotOrdinal.MinValue, EpochProgress.MinValue)
+              PendingDelegatedStakeWithdrawal(signedParent, Amount.empty, SnapshotOrdinal.MinValue, EpochProgress.MinValue, None, None)
             )
           )
         )
@@ -314,7 +315,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       context = lastContext.copy(activeDelegatedStakes =
         Some(
           SortedMap(
-            address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty))
+            address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, None, None))
           )
         )
       )
@@ -388,7 +389,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       address <- signedParent.proofs.head.id.toAddress
       context = mkGlobalContext(
         SortedMap(
-          address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty))
+          address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, None, None))
         )
       )
       lastRef <- DelegatedStakeReference.of(signedParent)
@@ -409,7 +410,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       address <- signedParent.proofs.head.id.toAddress
       context = mkGlobalContext(
         SortedMap(
-          address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty))
+          address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, None, None))
         )
       )
       lastRef <- DelegatedStakeReference.of(signedParent)
@@ -444,7 +445,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       address <- signedParent.proofs.head.id.toAddress
       context = mkGlobalContext(
         SortedMap(
-          address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty))
+          address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, None, None))
         )
       )
       lastRef <- DelegatedStakeReference.of(signedParent)
@@ -500,7 +501,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       address <- signedParent.proofs.head.id.toAddress
       context = mkGlobalContext(
         SortedMap(
-          address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty))
+          address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, None, None))
         )
       )
       lastRef <- DelegatedStakeReference.of(signedParent)
@@ -540,7 +541,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
         address <- signedParent.proofs.head.id.toAddress
         context = mkGlobalContext(
           SortedMap(
-            address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty))
+            address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, None, None))
           )
         )
         lastRef <- DelegatedStakeReference.of(signedParent)
@@ -564,11 +565,11 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       signed <- forAsyncHasher(validWithdraw, keyPair)
       context = mkGlobalContext(
         SortedMap(
-          address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty))
+          address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, None, None))
         ),
         withdrawals = SortedMap(
           address -> SortedSet(
-            PendingDelegatedStakeWithdrawal(signedParent, Amount.empty, SnapshotOrdinal.MinValue, EpochProgress.MinValue)
+            PendingDelegatedStakeWithdrawal(signedParent, Amount.empty, SnapshotOrdinal.MinValue, EpochProgress.MinValue, None, None)
           )
         )
       )

@@ -63,7 +63,7 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
           SortedMap(
             sourceAddress ->
               SortedSet(
-                DelegatedStakeRecord(parent1, SnapshotOrdinal.MinValue, Amount(NonNegLong(0L)))
+                DelegatedStakeRecord(parent1, SnapshotOrdinal.MinValue, Amount(NonNegLong(0L)), None, None)
               )
           )
         )
@@ -103,7 +103,7 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
           SortedMap(
             sourceAddress ->
               SortedSet(
-                DelegatedStakeRecord(parent1, SnapshotOrdinal.MinValue, Amount(NonNegLong(0L)))
+                DelegatedStakeRecord(parent1, SnapshotOrdinal.MinValue, Amount(NonNegLong(0L)), None, None)
               )
           )
         )
@@ -145,8 +145,8 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
           SortedMap(
             sourceAddress ->
               SortedSet(
-                DelegatedStakeRecord(parent1, SnapshotOrdinal.MinValue, Amount(NonNegLong(0L))),
-                DelegatedStakeRecord(parent2, SnapshotOrdinal.MinValue, Amount(NonNegLong(0L)))
+                DelegatedStakeRecord(parent1, SnapshotOrdinal.MinValue, Amount(NonNegLong(0L)), None, None),
+                DelegatedStakeRecord(parent2, SnapshotOrdinal.MinValue, Amount(NonNegLong(0L)), None, None)
               )
           )
         )
@@ -209,7 +209,8 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
       fee = TokenLockFee(NonNegLong(0L)),
       parent = parent,
       currencyId = None,
-      unlockEpoch = tokenLockUnlockEpoch
+      unlockEpoch = tokenLockUnlockEpoch,
+      replaceTokenLockRef = None
     )
     for {
       signed <- forAsyncHasher(testTokenLock, keyPair)

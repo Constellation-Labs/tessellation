@@ -67,7 +67,7 @@ object GlobalSnapshotContextFunctions {
         val unexpiredWithdrawals = existingWithdrawals.map {
           case (address, withdrawals) =>
             address -> withdrawals.filterNot {
-              case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch) =>
+              case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch, _, _) =>
                 isWithdrawalExpired(withdrawalEpoch)
             }
         }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
@@ -75,7 +75,7 @@ object GlobalSnapshotContextFunctions {
         val expiredWithdrawals = existingWithdrawals.map {
           case (address, withdrawals) =>
             address -> withdrawals.filter {
-              case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch) =>
+              case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch, _, _) =>
                 isWithdrawalExpired(withdrawalEpoch)
             }
         }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }

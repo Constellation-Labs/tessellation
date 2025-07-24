@@ -72,62 +72,62 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
 
     for {
       stakes <- lastStakes.toList.traverse {
-        case DelegatedStakeRecord(stake, ord, bal) =>
+        case record: DelegatedStakeRecord =>
           DelegatedStakeReference
-            .of(stake)
-            .map(ref => (stake, ord, bal, ref))
+            .of(record.event)
+            .map(ref => (record, ref))
       }
       active <- stakes.traverse {
-        case (stake, acceptedOrdinal, rewardsBalance, delegatedStakeRef) =>
+        case (record, delegatedStakeRef) =>
           val totalAmountF = Async[F].fromEither(
             NonNegLong
-              .from(rewardsBalance.value + stake.amount.value)
+              .from(record.rewards.value + record.amount.value)
               .leftMap(err => new IllegalArgumentException(s"Failed to create non-negative total: $err"))
               .map(Amount(_))
           )
 
           totalAmountF.map { total =>
             DelegatedStakeInfo(
-              nodeId = stake.nodeId,
-              acceptedOrdinal = acceptedOrdinal,
-              tokenLockRef = stake.tokenLockRef,
-              amount = stake.amount,
-              fee = stake.fee,
+              nodeId = record.event.nodeId,
+              acceptedOrdinal = record.createdAt,
+              tokenLockRef = record.tokenLockRef,
+              amount = record.amount,
+              fee = record.event.fee,
               hash = delegatedStakeRef.hash,
               withdrawalStartEpoch = None,
               withdrawalEndEpoch = None,
-              rewardAmount = rewardsBalance,
+              rewardAmount = record.rewards,
               totalBalance = total
             )
           }
       }
 
       withdrawals <- lastWithdrawals.toList.traverse {
-        case PendingDelegatedStakeWithdrawal(stake, bal, acceptedOrdinal, epochProgress) =>
+        case w: PendingDelegatedStakeWithdrawal =>
           DelegatedStakeReference
-            .of(stake)
-            .map(ref => (stake, epochProgress, bal, ref, acceptedOrdinal))
+            .of(w.event)
+            .map(ref => (w, ref))
       }
       pending <- withdrawals.traverse {
-        case (stake, epochProgress, rewardsBalance, delegatedStakeRef, acceptedOrdinal) =>
+        case (record, delegatedStakeRef) =>
           val totalAmountF = Async[F].fromEither(
             NonNegLong
-              .from(rewardsBalance.value + stake.amount.value)
+              .from(record.rewards.value + record.amount.value)
               .leftMap(err => new IllegalArgumentException(s"Failed to create non-negative total: $err"))
               .map(Amount(_))
           )
 
           totalAmountF.map { total =>
             DelegatedStakeInfo(
-              nodeId = stake.nodeId,
-              acceptedOrdinal = acceptedOrdinal,
-              tokenLockRef = stake.tokenLockRef,
-              amount = stake.amount,
-              fee = stake.fee,
+              nodeId = record.event.nodeId,
+              acceptedOrdinal = record.acceptedOrdinal,
+              tokenLockRef = record.tokenLockRef,
+              amount = record.amount,
+              fee = record.event.fee,
               hash = delegatedStakeRef.hash,
-              withdrawalStartEpoch = epochProgress.some,
-              withdrawalEndEpoch = (epochProgress |+| withdrawalTimeLimit).some,
-              rewardAmount = rewardsBalance,
+              withdrawalStartEpoch = record.createdAt.some,
+              withdrawalEndEpoch = (record.createdAt |+| withdrawalTimeLimit).some,
+              rewardAmount = record.rewards,
               totalBalance = total
             )
           }
@@ -147,10 +147,8 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
     info.activeDelegatedStakes
       .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
       .get(address)
-      .flatMap(stakes =>
-        Option.when(stakes.nonEmpty)(stakes.maxBy { case DelegatedStakeRecord(delegatedStaking, _, _) => delegatedStaking.ordinal })
-      )
-      .traverse { case DelegatedStakeRecord(delegatedStaking, _, _) => DelegatedStakeReference.of(delegatedStaking) }
+      .flatMap(stakes => Option.when(stakes.nonEmpty)(stakes.maxBy(_.event.ordinal)))
+      .traverse(record => DelegatedStakeReference.of(record.event))
       .map(_.getOrElse(DelegatedStakeReference.empty))
 
   private def toAmount(value: Long): F[Amount] =

@@ -76,8 +76,8 @@ object DelegatedRewardsDistributor {
           case (ev, _) =>
             existingRecords
               .get(addr)
-              .filter(_.exists(_.event.value.tokenLockRef === ev.value.tokenLockRef))
-              .map(_ => addr -> ev.value.tokenLockRef)
+              .filter(_.exists(_.event.tokenLockRef === ev.tokenLockRef))
+              .map(_ => addr -> ev.tokenLockRef)
         }
     }.toSet
 
@@ -92,7 +92,7 @@ object DelegatedRewardsDistributor {
       case (address, records) =>
         val filtered = records.filterNot { record =>
           modifiedStakes.contains(
-            (address, record.event.value.tokenLockRef)
+            (address, record.tokenLockRef)
           )
         }
 
@@ -116,13 +116,15 @@ object DelegatedRewardsDistributor {
           stakeList.traverse {
             case (ev, ord) =>
               val matchingExistingRecord = existingRecordsForAddr.find { record =>
-                record.event.value.tokenLockRef === ev.value.tokenLockRef
+                record.tokenLockRef === ev.tokenLockRef
               }
 
               DelegatedStakeRecord(
                 ev,
                 ord,
-                matchingExistingRecord.map(_.rewards).getOrElse(Balance.empty)
+                matchingExistingRecord.map(_.rewards).getOrElse(Balance.empty),
+                matchingExistingRecord.flatMap(_.currentTokenLockRef),
+                matchingExistingRecord.flatMap(_.currentAmount)
               ).pure[F]
           }.map(records => addr -> records.toSortedSet)
       }.map(_.toSortedMap)
@@ -152,13 +154,13 @@ object DelegatedRewardsDistributor {
       }.map(_.map {
         case (addr, recs) =>
           addr -> recs.map { record =>
-            val isModified = modifiedStakes.contains((addr, record.event.value.tokenLockRef))
+            val isModified = modifiedStakes.contains((addr, record.tokenLockRef))
 
             val nodeSpecificReward =
               if (isModified) Amount.empty
               else
                 delegatorRewardsMap
-                  .get(record.event.value.nodeId)
+                  .get(record.event.nodeId)
                   .flatMap(_.get(addr))
                   .getOrElse(Amount.empty)
 
@@ -167,7 +169,7 @@ object DelegatedRewardsDistributor {
               if (isModified) record.rewards
               else record.rewards.plus(nodeSpecificReward).toOption.getOrElse(Amount.empty)
 
-            DelegatedStakeRecord(record.event, record.createdAt, disbursedBalance)
+            DelegatedStakeRecord(record.event, record.createdAt, disbursedBalance, record.currentTokenLockRef, record.currentAmount)
           }.toSortedSet
       }.filterNot(_._2.isEmpty).toSortedMap)
     } yield activeStakes
@@ -186,7 +188,11 @@ object DelegatedRewardsDistributor {
               .flatTraverse(_.get(addr).flatTraverse {
                 _.findM { s =>
                   DelegatedStakeReference.of(s.event).map(_.hash === ev.stakeRef)
-                }.map(_.map(rec => PendingDelegatedStakeWithdrawal(rec.event, rec.rewards, rec.createdAt, ep)))
+                }.map(
+                  _.map(rec =>
+                    PendingDelegatedStakeWithdrawal(rec.event, rec.rewards, rec.createdAt, ep, rec.currentTokenLockRef, rec.currentAmount)
+                  )
+                )
               })
               .flatMap(Async[F].fromOption(_, new RuntimeException("Unexpected None when processing user delegations")))
         }.map { records =>

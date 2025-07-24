@@ -187,7 +187,8 @@ object TokenLockRoutesSuite extends HttpSuite {
       fee,
       parent,
       currencyId.some,
-      lastValidEpochProgress.some
+      lastValidEpochProgress.some,
+      None
     )
 
     Signed.forAsyncHasher(tokenLock, keyPair)
@@ -232,7 +233,8 @@ object TokenLockRoutesSuite extends HttpSuite {
               "hash" -> Json.fromString(Hash.empty.value)
             ),
             "currencyId" -> Json.fromString(currencyId.value.value.value),
-            "unlockEpoch" -> Json.fromLong(500L)
+            "unlockEpoch" -> Json.fromLong(500L),
+            "replaceTokenLockRef" -> Json.Null
           ),
           "hash" -> Json.fromString(hashedTokenLock.hash.value),
           "status" -> Json.fromString("Waiting")

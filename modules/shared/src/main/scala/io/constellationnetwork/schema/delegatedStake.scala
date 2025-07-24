@@ -118,8 +118,13 @@ object delegatedStake {
   case class DelegatedStakeRecord(
     event: Signed[UpdateDelegatedStake.Create],
     createdAt: SnapshotOrdinal,
-    rewards: Amount
-  )
+    rewards: Amount,
+    currentTokenLockRef: Option[Hash],
+    currentAmount: Option[DelegatedStakeAmount]
+  ) {
+    def amount: DelegatedStakeAmount = currentAmount.getOrElse(event.amount)
+    def tokenLockRef: Hash = currentTokenLockRef.getOrElse(event.tokenLockRef)
+  }
 
   object DelegatedStakeRecord {
     implicit val order: Order[DelegatedStakeRecord] = Order[SnapshotOrdinal].contramap(_.createdAt)
@@ -133,8 +138,13 @@ object delegatedStake {
     event: Signed[UpdateDelegatedStake.Create],
     rewards: Amount,
     acceptedOrdinal: SnapshotOrdinal,
-    createdAt: EpochProgress
-  )
+    createdAt: EpochProgress,
+    currentTokenLockRef: Option[Hash],
+    currentAmount: Option[DelegatedStakeAmount]
+  ) {
+    def amount: DelegatedStakeAmount = currentAmount.getOrElse(event.amount)
+    def tokenLockRef: Hash = currentTokenLockRef.getOrElse(event.tokenLockRef)
+  }
 
   object PendingDelegatedStakeWithdrawal {
     implicit val order: Order[PendingDelegatedStakeWithdrawal] = Order[EpochProgress].contramap(_.createdAt)
