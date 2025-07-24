@@ -222,7 +222,8 @@ object types {
     flatInflationRate: NonNegFraction,
     emissionConfig: Map[AppEnvironment, EpochProgress => EmissionConfigEntry],
     percentDistribution: Map[AppEnvironment, EpochProgress => ProgramsDistributionConfig],
-    oneTimeRewards: Map[AppEnvironment, List[OneTimeReward]]
+    oneTimeRewards: Map[AppEnvironment, List[OneTimeReward]],
+    priceOracleEpoch: Map[AppEnvironment, EpochProgress]
   ) extends RewardsConfig
 
   case class TrustStorageConfig(

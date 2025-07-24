@@ -133,6 +133,12 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
           TransactionAmount(3_525_684_639_889_21L)
         ) // 3_168_965_177_964_44L + 356_719_461_924_77L = 3_525_684_639_889_21L
       )
+    ),
+    priceOracleEpoch = Map(
+      AppEnvironment.Dev -> EpochProgress.MinValue,
+      AppEnvironment.Testnet -> EpochProgress(1001105L), // approx. 2025-07-11
+      AppEnvironment.Integrationnet -> EpochProgress(835520L), // approx. 07-22-2025
+      AppEnvironment.Mainnet -> EpochProgress.MaxValue
     )
   )
 
