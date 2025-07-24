@@ -15,6 +15,8 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 case class Previous[A](a: A)
 
+object ConsensusStateAdvancer {}
+
 trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind] {
 
   type State = ConsensusState[Key, Status, Outcome, Kind]
@@ -26,8 +28,6 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
 
   def advanceStatus(resources: ConsensusResources[Artifact, Kind]): StateT[F, ConsensusState[Key, Status, Outcome, Kind], F[Unit]]
 
-  def logger(implicit async: Async[F]): SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F]("ConsensusStateAdvancer")
-
   protected def maybeGetAllDeclarations[A](
     state: State,
     resources: Resources,
@@ -36,6 +36,8 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     getter: PeerDeclarations => Option[A],
     staleTimer: Resources => Option[FiniteDuration]
   )(implicit asyncF: Async[F]): F[Option[SortedMap[PeerId, A]]] = {
+
+    val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](ConsensusStateAdvancer.getClass)
 
     def processNonStale = {
       println(s"[CONSENSUS-ADVANCE] processNonStale: facilitators=${state.facilitators.value}")
@@ -68,7 +70,7 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
       uniqueDelta = latestUnique.map(_ - started)
       elapsed = now - latestUnique.getOrElse(resources.updatedAt)
       isStale = elapsed > config.peersDeclarationTimeout
-      _ <- logger.debug(
+      _ <- logger.info(
         s"Checking staleness: state.key=${state.key}, elapsed=${elapsed.toSeconds}s, " +
           s"timeout=${config.peersDeclarationTimeout.toSeconds}s, isStale=$isStale, " +
           s"latestUnique=${latestUnique.map(_.toSeconds).getOrElse("None")}s, " +

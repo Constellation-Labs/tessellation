@@ -62,7 +62,7 @@ object GlobalSnapshotConsensusStateAdvancer {
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): GlobalSnapshotConsensusStateAdvancer[F] = new GlobalSnapshotConsensusStateAdvancer[F] {
-    val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLogger[F]
+    val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotConsensusStateAdvancer.getClass)
     val facilitatorsObservationName = "facilitators"
 
     def getConsensusOutcome(
@@ -103,7 +103,9 @@ object GlobalSnapshotConsensusStateAdvancer {
                        _ = println(s"[GLOBAL-ADVANCE] resources.peerDeclarationsMap.keys=${resources.peerDeclarationsMap.keys}")
                        maybeFacilities <- maybeGetAllDeclarations(state, resources, config)(_.facility, _.facilitiesLatestUnique)
                        _ <- logger.debug(s"maybeGetAllDeclarations returned ${maybeFacilities.isDefined} for facilities, key=${state.key}")
-                       _ = println(s"[GLOBAL-ADVANCE] maybeGetAllDeclarations returned ${maybeFacilities.isDefined} for facilities, key=${state.key}")
+                       _ = println(
+                         s"[GLOBAL-ADVANCE] maybeGetAllDeclarations returned ${maybeFacilities.isDefined} for facilities, key=${state.key}"
+                       )
                        result <- maybeFacilities.traverseTap { facilities =>
                          recoverIfForking[F](ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
                            facilities.map {
