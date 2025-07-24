@@ -246,39 +246,43 @@ object ConsensusManager {
         key: Key,
         resources: ConsensusResources[Artifact, Kind]
       ): F[Unit] =
-        consensusStateUpdater.tryUpdateConsensus(key, resources).flatMap {
-          case Some((oldState, newState)) =>
-            consensusStateAdvancer.getConsensusOutcome(newState) match {
-              case Some((previousKey, newOutcome)) =>
-                logger.debug(
-                  s"internalCheckForStateUpdate tryUpdateConsensus yielded state change with outcome " +
-                    s"key=${key.show}, oldState=${oldState}, newState=${newState} previousKey=${previousKey} newOutcome=${newOutcome}"
-                ) >>
-                  Clock[F].monotonic.flatMap { finishedAt =>
-                    Metrics[F].recordTime("dag_consensus_duration", finishedAt - newState.createdAt)
-                  } >>
-                  consensusStorage
-                    .tryUpdateLastConsensusOutcomeWithCleanup(previousKey, newOutcome)
-                    .ifM(
-                      afterConsensusFinish(_trigger.get(newOutcome)),
-                      logger.info("Skip triggering another consensus")
+        logger.debug(s"internalCheckForStateUpdate called for key=$key") >>
+          consensusStateUpdater.tryUpdateConsensus(key, resources).flatMap {
+            case Some((oldState, newState)) =>
+              logger.debug(s"tryUpdateConsensus returned Some for key=$key, oldStatus=${oldState.status}, newStatus=${newState.status}") >>
+                (consensusStateAdvancer.getConsensusOutcome(newState) match {
+                  case Some((previousKey, newOutcome)) =>
+                    logger.debug(
+                      s"internalCheckForStateUpdate tryUpdateConsensus yielded state change with outcome " +
+                        s"key=${key.show}, oldState=${oldState}, newState=${newState} previousKey=${previousKey} newOutcome=${newOutcome}"
                     ) >>
-                  nodeStorage.tryModifyStateGetResult(WaitingForReady, Ready).void
-              case None =>
-                logger.debug(
-                  s"internalCheckForStateUpdate tryUpdateConsensus yielded state change with None for outcome " +
-                    s"key=${key.show}, oldState=${oldState}, newState=${newState}"
-                ) >>
-                  stallDetection(key, newState).whenA(oldState.status =!= newState.status) >>
-                  internalCheckForStateUpdate(key, resources)
-            }
-          case None =>
-            logger.debug(
-              s"internalCheckForStateUpdate tryUpdateConsensus yielded None for outcome " +
-                s"key=${key.show}, resources=${resources}"
-            ) >>
-              Applicative[F].unit
-        }
+                      Clock[F].monotonic.flatMap { finishedAt =>
+                        Metrics[F].recordTime("dag_consensus_duration", finishedAt - newState.createdAt)
+                      } >>
+                      consensusStorage
+                        .tryUpdateLastConsensusOutcomeWithCleanup(previousKey, newOutcome)
+                        .ifM(
+                          afterConsensusFinish(_trigger.get(newOutcome)),
+                          logger.info("Skip triggering another consensus")
+                        ) >>
+                      nodeStorage.tryModifyStateGetResult(WaitingForReady, Ready).void
+                  case None =>
+                    logger.debug(
+                      s"internalCheckForStateUpdate tryUpdateConsensus yielded state change with None for outcome " +
+                        s"key=${key.show}, oldState=${oldState}, newState=${newState}"
+                    ) >>
+                      logger.debug(s"About to check stallDetection, statusChanged=${oldState.status =!= newState.status}") >>
+                      stallDetection(key, newState).whenA(oldState.status =!= newState.status) >>
+                      logger.debug(s"About to recurse internalCheckForStateUpdate for key=$key") >>
+                      internalCheckForStateUpdate(key, resources)
+                })
+            case None =>
+              logger.debug(
+                s"internalCheckForStateUpdate tryUpdateConsensus yielded None for outcome " +
+                  s"key=${key.show}, resources=${resources}"
+              ) >>
+                Applicative[F].unit
+          }
 
       private def afterConsensusFinish(majorityTrigger: ConsensusTrigger): F[Unit] =
         majorityTrigger match {

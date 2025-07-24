@@ -167,6 +167,7 @@ object ConsensusStorage {
           stateUpdateSemaphore.permit.use { _ =>
             for {
               (maybeState, setter) <- statesR(key).access
+              _ <- logger.debug(s"condModifyState for key=$key, stateExists=${maybeState.isDefined}")
               maybeResult <- modifyStateFn(maybeState)
 
               maybeB <- maybeResult.traverse {
