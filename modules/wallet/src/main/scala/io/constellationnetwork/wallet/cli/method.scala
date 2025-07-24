@@ -9,6 +9,7 @@ import io.constellationnetwork.ext.decline.WithOpts
 import io.constellationnetwork.ext.decline.decline._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.currencyMessage.MessageOrdinal
+import io.constellationnetwork.schema.tokenLock.TokenLockReference
 import io.constellationnetwork.schema.transaction.{TransactionAmount, TransactionFee}
 
 import com.monovore.decline.Opts
@@ -83,7 +84,8 @@ object method {
     amount: TransactionAmount,
     parent: Option[Path],
     currencyId: Option[Address],
-    unlockEpoch: Option[Long]
+    unlockEpoch: Option[Long],
+    replaceTokenLockRef: Option[TokenLockReference]
   ) extends CliMethod
 
   object CreateTokenLock extends WithOpts[CreateTokenLock] {
@@ -115,7 +117,8 @@ object method {
             "c"
           )
           .orNone,
-        Opts.option[Long]("unlockEpoch", "Epoch to unlock, defaults to infinite", "u").orNone
+        Opts.option[Long]("unlockEpoch", "Epoch to unlock, defaults to infinite", "u").orNone,
+        Opts.option[TokenLockReference]("replaceTokenLockRef", "Token lock reference to replace", "r").orNone
       ).mapN(CreateTokenLock.apply)
     }
   }

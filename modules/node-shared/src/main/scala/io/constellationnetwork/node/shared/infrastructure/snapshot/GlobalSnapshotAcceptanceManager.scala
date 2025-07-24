@@ -695,14 +695,14 @@ object GlobalSnapshotAcceptanceManager {
       expiredWithdrawalsDelegatedStaking.toList.traverse {
         case (address, withdrawals) =>
           withdrawals.toList.traverse {
-            case PendingDelegatedStakeWithdrawal(delegatedStaking, _, _, _) =>
+            case pw: PendingDelegatedStakeWithdrawal =>
               for {
                 activeTokenLock <- globalActiveTokenLocksByRef
-                  .get(delegatedStaking.tokenLockRef)
-                  .toRight(MissingTokenLock(s"Missing TokenLock for tokenLockRef: ${delegatedStaking.tokenLockRef}"))
+                  .get(pw.tokenLockRef)
+                  .toRight(MissingTokenLock(s"Missing TokenLock for tokenLockRef: ${pw.tokenLockRef}"))
               } yield
                 TokenUnlock(
-                  delegatedStaking.tokenLockRef,
+                  pw.tokenLockRef,
                   activeTokenLock.amount,
                   activeTokenLock.currencyId,
                   activeTokenLock.source
@@ -732,7 +732,7 @@ object GlobalSnapshotAcceptanceManager {
       val unexpiredWithdrawals = existingWithdrawals.map {
         case (address, withdrawals) =>
           address -> withdrawals.filterNot {
-            case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch) =>
+            case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch, _, _) =>
               isWithdrawalExpired(withdrawalEpoch)
           }
       }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
@@ -740,7 +740,7 @@ object GlobalSnapshotAcceptanceManager {
       val expiredWithdrawals = existingWithdrawals.map {
         case (address, withdrawals) =>
           address -> withdrawals.filter {
-            case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch) =>
+            case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch, _, _) =>
               isWithdrawalExpired(withdrawalEpoch)
           }
       }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }

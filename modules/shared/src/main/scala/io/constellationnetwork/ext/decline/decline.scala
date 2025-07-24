@@ -4,10 +4,16 @@ import cats.Show
 import cats.data.ValidatedNel
 import cats.syntax.validated._
 
+import scala.util.{Failure, Success, Try}
+
+import io.constellationnetwork.schema.tokenLock.{TokenLockOrdinal, TokenLockReference}
+import io.constellationnetwork.security.hash.Hash
+
 import _root_.ciris.Secret
 import com.comcast.ip4s.{Host, Port}
 import com.monovore.decline.Argument
 import enumeratum.{Enum, EnumEntry}
+import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.io.file.Path
 import io.estatico.newtype.Coercible
 
@@ -56,6 +62,22 @@ package object decline {
         case None    => invalidChoice(string, `enum`.values.map(_.entryName)).invalidNel
       }
     override def defaultMetavar: String = "value"
+  }
+
+  implicit val tokenLockReferenceArgument: Argument[TokenLockReference] = new Argument[TokenLockReference] {
+    override def read(string: String): ValidatedNel[String, TokenLockReference] = string.split(':') match {
+      case Array(ordinalStr, hashStr) =>
+        Try {
+          val ordinal = TokenLockOrdinal(NonNegLong.unsafeFrom(ordinalStr.toLong))
+          val hash = Hash(hashStr)
+          TokenLockReference(ordinal, hash)
+        } match {
+          case Success(tokenLockReference) => tokenLockReference.validNel
+          case Failure(ex)                 => s"Provided token lock reference is invalid: ${ex.getMessage}".invalidNel[TokenLockReference]
+        }
+      case _ => "Provided token lock reference is invalid".invalidNel[TokenLockReference]
+    }
+    override def defaultMetavar: String = "tokenLockRef"
   }
 
 }
