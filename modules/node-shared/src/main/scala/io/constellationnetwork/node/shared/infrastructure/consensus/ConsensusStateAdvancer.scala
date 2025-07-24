@@ -37,13 +37,17 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     staleTimer: Resources => Option[FiniteDuration]
   )(implicit asyncF: Async[F]): F[Option[SortedMap[PeerId, A]]] = {
 
-    def processNonStale =
-      state.facilitators.value.traverse { peerId =>
-        resources.peerDeclarationsMap
-          .get(peerId)
-          .flatMap(getter)
-          .map((peerId, _))
+    def processNonStale = {
+      println(s"[CONSENSUS-ADVANCE] processNonStale: facilitators=${state.facilitators.value}")
+      val result = state.facilitators.value.traverse { peerId =>
+        val decl = resources.peerDeclarationsMap.get(peerId)
+        val extracted = decl.flatMap(getter)
+        println(s"[CONSENSUS-ADVANCE] processNonStale: peerId=$peerId, hasDecl=${decl.isDefined}, extracted=${extracted.isDefined}")
+        extracted.map((peerId, _))
       }.map(SortedMap.from(_))
+      println(s"[CONSENSUS-ADVANCE] processNonStale result=${result.isDefined}")
+      result
+    }
 
     def processStale = {
       val results = state.facilitators.value.flatMap { peerId =>

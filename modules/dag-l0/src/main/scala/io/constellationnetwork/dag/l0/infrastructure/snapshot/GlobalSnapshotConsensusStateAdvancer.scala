@@ -62,7 +62,7 @@ object GlobalSnapshotConsensusStateAdvancer {
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): GlobalSnapshotConsensusStateAdvancer[F] = new GlobalSnapshotConsensusStateAdvancer[F] {
-    val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F]("GlobalSnapshotConsensusStateAdvancer")
+    val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLogger[F]
     val facilitatorsObservationName = "facilitators"
 
     def getConsensusOutcome(
@@ -86,18 +86,24 @@ object GlobalSnapshotConsensusStateAdvancer {
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind]
     ): StateT[F, GlobalSnapshotConsensusState, F[Unit]] =
       StateT[F, GlobalSnapshotConsensusState, F[Unit]] { state =>
+        println(s"[GLOBAL-ADVANCE] GlobalSnapshotConsensusStateAdvancer.advanceStatus called for key=${state.key}")
         logger.debug(s"advanceStatus called for key=${state.key}, status=${state.status}, lockStatus=${state.lockStatus}") >>
-          (if (state.lockStatus === LockStatus.Closed)
-             (state, Applicative[F].unit).pure[F]
-           else {
+          (if (state.lockStatus === LockStatus.Closed) {
+             logger.debug(s"advanceStatus: State is LOCKED for key=${state.key}, returning immediately") >>
+               (state, Applicative[F].unit).pure[F]
+           } else {
              logger.debug(s"advanceStatus proceeding with status match for key=${state.key}") >>
                (state.status match {
                  case CollectingFacilities(_, ownFacilitatorsHash) =>
                    logger.debug(s"advanceStatus: CollectingFacilities for key=${state.key}") >>
                      (for {
                        _ <- logger.debug(s"About to call maybeGetAllDeclarations for facilities, key=${state.key}")
+                       _ = println(s"[GLOBAL-ADVANCE] About to call maybeGetAllDeclarations for facilities, key=${state.key}")
+                       _ = println(s"[GLOBAL-ADVANCE] state.facilitators=${state.facilitators.value}")
+                       _ = println(s"[GLOBAL-ADVANCE] resources.peerDeclarationsMap.keys=${resources.peerDeclarationsMap.keys}")
                        maybeFacilities <- maybeGetAllDeclarations(state, resources, config)(_.facility, _.facilitiesLatestUnique)
                        _ <- logger.debug(s"maybeGetAllDeclarations returned ${maybeFacilities.isDefined} for facilities, key=${state.key}")
+                       _ = println(s"[GLOBAL-ADVANCE] maybeGetAllDeclarations returned ${maybeFacilities.isDefined} for facilities, key=${state.key}")
                        result <- maybeFacilities.traverseTap { facilities =>
                          recoverIfForking[F](ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
                            facilities.map {

@@ -312,7 +312,9 @@ object ConsensusManager {
 
       private def stallDetection(key: Key, state: ConsensusState[Key, Status, Outcome, Kind]): F[Unit] =
         S.supervise {
-          Temporal[F].sleep(config.declarationTimeout) >>
+          logger.debug(s"stallDetection: Starting timer for key=$key, declarationTimeout=${config.declarationTimeout.toSeconds}s") >>
+            Temporal[F].sleep(config.declarationTimeout) >>
+            logger.debug(s"stallDetection: Timer expired for key=$key, attempting to lock consensus") >>
             consensusStateUpdater.tryLockConsensus(key, state).flatMap { maybeResult =>
               maybeResult.traverse {
                 case (_, lockedState) =>

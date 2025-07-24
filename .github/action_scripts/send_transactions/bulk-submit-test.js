@@ -88,7 +88,19 @@ const setupAccounts = async (keys, networkConfig) => {
 // Submit a transaction from one account to another
 const submitTransaction = async (fromAccount, toAddress, amount = 1, fee = 0) => {
   try {
-    const hash = await fromAccount.transferDag(toAddress, amount, fee)
+    const result = await fromAccount.transferDag(toAddress, amount, fee)
+    
+    // Debug what we get back from transferDag
+    logMessage(`[DEBUG] transferDag returned: ${JSON.stringify(result)}`)
+    logMessage(`[DEBUG] Type of result: ${typeof result}`)
+    
+    // The result might be an object with a hash property, or just the hash string
+    let hash = result
+    if (typeof result === 'object' && result !== null) {
+      hash = result.hash || result.txHash || result.transactionHash || result
+    }
+    
+    logMessage(`[DEBUG] Final hash extracted: ${hash}`)
     return hash
   } catch (error) {
     logMessage(`Error submitting transaction: ${error.message}`)
@@ -112,7 +124,7 @@ const fetchSnapshot = async (l0Url, ordinal) => {
 }
 
 // Monitor ordinal changes in the background
-const startOrdinalMonitor = async (l0Url, testStartTime, submittedTransactions) => {
+const startOrdinalMonitor = async (l0Url, testStartTime) => {
   let previousOrdinal = null
   let monitoring = true
   let lastOrdinalChangeTime = Date.now()
@@ -120,6 +132,7 @@ const startOrdinalMonitor = async (l0Url, testStartTime, submittedTransactions) 
   const encounteredOrdinals = new Set() // Track all ordinals we've seen
   const snapshots = new Map() // Store fetched snapshots
   const acceptedTransactionHashes = new Set() // Track accepted transaction hashes
+  const submittedTransactionHashes = [] // Track submitted transaction hashes (will be populated externally)
   let totalTransactionsInSnapshots = 0
   
   const CHECK_INTERVAL_MS = 500 // Check every 500ms
@@ -185,36 +198,84 @@ const startOrdinalMonitor = async (l0Url, testStartTime, submittedTransactions) 
             
             // Check for our transactions in this snapshot
             let transactionsInThisSnapshot = 0
-            if (snapshot.signed && snapshot.signed.value && snapshot.signed.value.blocks) {
+            let blocksFound = 0
+            
+            // First, let's debug the snapshot structure
+            if (!snapshot || !snapshot.signed || !snapshot.signed.value) {
+              logMessage(`[DEBUG] Invalid snapshot structure for ordinal ${currentOrdinal}`)
+            } else if (!snapshot.signed.value.blocks || snapshot.signed.value.blocks.length === 0) {
+              logMessage(`[DEBUG] No blocks in snapshot for ordinal ${currentOrdinal}`)
+            } else {
+              blocksFound = snapshot.signed.value.blocks.length
+              logMessage(`[DEBUG] Found ${blocksFound} blocks in ordinal ${currentOrdinal}`)
+              
+              // Check each block
               for (const blockWrapper of snapshot.signed.value.blocks) {
-                if (blockWrapper.block && blockWrapper.block.signed && blockWrapper.block.signed.value && 
-                    blockWrapper.block.signed.value.transactions) {
-                  const transactions = blockWrapper.block.signed.value.transactions
+                let txCount = 0
+                
+                // Navigate the nested structure - blocks might be in different formats
+                let transactions = null
+                
+                // Try different paths to find transactions
+                if (blockWrapper.block && blockWrapper.block.signed && blockWrapper.block.signed.value && blockWrapper.block.signed.value.transactions) {
+                  transactions = blockWrapper.block.signed.value.transactions
+                } else if (blockWrapper.block && blockWrapper.block.transactions) {
+                  transactions = blockWrapper.block.transactions
+                } else if (blockWrapper.transactions) {
+                  transactions = blockWrapper.transactions
+                }
+                
+                if (transactions) {
+                  // Convert to array if it's not already
+                  const txArray = Array.isArray(transactions) ? transactions : Object.values(transactions)
+                  txCount = txArray.length
                   
-                  for (const txn of transactions) {
-                    const txHash = txn.hash || (txn.signed && txn.signed.hash)
+                  logMessage(`[DEBUG] Block has ${txCount} transactions`)
+                  
+                  for (const txn of txArray) {
+                    // Try to find the hash in various locations
+                    let txHash = null
+                    
+                    if (typeof txn === 'string') {
+                      txHash = txn
+                    } else if (txn.hash) {
+                      txHash = txn.hash
+                    } else if (txn.signed && txn.signed.hash) {
+                      txHash = txn.signed.hash
+                    } else if (txn.value && txn.value.hash) {
+                      txHash = txn.value.hash
+                    }
+                    
                     if (txHash) {
                       totalTransactionsInSnapshots++
                       
+                      // Debug first few transaction hashes
+                      if (totalTransactionsInSnapshots <= 3) {
+                        logMessage(`[DEBUG] Transaction hash found: ${txHash}`)
+                        logMessage(`[DEBUG] Our submitted hashes: ${submittedTransactionHashes.slice(0, 3).join(', ')}`)
+                      }
+                      
                       // Check if this is one of our submitted transactions
-                      const ourTxn = submittedTransactions.find(st => st.hash === txHash)
-                      if (ourTxn && !acceptedTransactionHashes.has(txHash)) {
+                      if (submittedTransactionHashes.includes(txHash) && !acceptedTransactionHashes.has(txHash)) {
                         acceptedTransactionHashes.add(txHash)
                         transactionsInThisSnapshot++
+                        logMessage(`[DEBUG] ✅ Found our transaction: ${txHash}`)
                       }
                     }
                   }
+                } else {
+                  logMessage(`[DEBUG] No transactions found in block structure: ${JSON.stringify(Object.keys(blockWrapper))}`)
                 }
               }
             }
             
             // Log progress
-            const acceptanceRate = submittedTransactions.length > 0 
-              ? ((acceptedTransactionHashes.size / submittedTransactions.length) * 100).toFixed(1)
+            const acceptanceRate = submittedTransactionHashes.length > 0 
+              ? ((acceptedTransactionHashes.size / submittedTransactionHashes.length) * 100).toFixed(1)
               : 0
             
             logMessage(`[ORDINAL MONITOR] Ordinal ${currentOrdinal}: Found ${transactionsInThisSnapshot} of our transactions. ` +
-                      `Total progress: ${acceptedTransactionHashes.size}/${submittedTransactions.length} (${acceptanceRate}%)`)
+                      `Total progress: ${acceptedTransactionHashes.size}/${submittedTransactionHashes.length} (${acceptanceRate}%)`)
           }
           
           previousOrdinal = currentOrdinal
@@ -243,7 +304,10 @@ const startOrdinalMonitor = async (l0Url, testStartTime, submittedTransactions) 
       snapshots,
       acceptedTransactionHashes,
       totalTransactionsInSnapshots
-    })
+    }),
+    addSubmittedTransaction: (hash) => {
+      submittedTransactionHashes.push(hash)
+    }
   }
 }
 
@@ -306,9 +370,9 @@ const bulkSubmitTest = async () => {
   // Track test start time
   const testStartTime = Date.now()
   
-  // Start ordinal monitor (pass empty array initially, will update after first transaction)
+  // Start ordinal monitor
   logMessage('Starting ordinal monitor...')
-  const ordinalMonitor = await startOrdinalMonitor(networkConfig.l0Url, testStartTime, [])
+  const ordinalMonitor = await startOrdinalMonitor(networkConfig.l0Url, testStartTime)
   
   let transactionCount = 0
   const submittedTransactions = []
@@ -349,6 +413,8 @@ const bulkSubmitTest = async () => {
         amount,
         timestamp: new Date().toISOString()
       })
+      // Notify the ordinal monitor about this transaction
+      ordinalMonitor.addSubmittedTransaction(hash)
     } else {
       logMessage(`Transaction ${i + 1} submission failed`)
     }
