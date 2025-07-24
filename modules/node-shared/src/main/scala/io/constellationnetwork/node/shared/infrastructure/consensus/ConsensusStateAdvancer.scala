@@ -5,7 +5,7 @@ import cats.effect.{Async, Clock}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
-import scala.concurrent.duration.DurationInt
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.schema.peer.PeerId
@@ -33,7 +33,8 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     resources: Resources,
     config: ConsensusConfig
   )(
-    getter: PeerDeclarations => Option[A]
+    getter: PeerDeclarations => Option[A],
+    staleTimer: Resources => Option[FiniteDuration]
   )(implicit asyncF: Async[F]): F[Option[SortedMap[PeerId, A]]] = {
 
     def processNonStale =
@@ -58,12 +59,26 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
 
     for {
       now <- Clock[F].monotonic
-      elapsed = now - resources.updatedAt
+      started = resources.createdAt
+      latestUnique = staleTimer(resources)
+      uniqueDelta = latestUnique.map(_ - started)
+      elapsed = now - latestUnique.getOrElse(resources.updatedAt)
       isStale = elapsed > config.peersDeclarationTimeout
+      _ <- logger.debug(
+        s"Checking staleness: state.key=${state.key}, elapsed=${elapsed.toSeconds}s, " +
+          s"timeout=${config.peersDeclarationTimeout.toSeconds}s, isStale=$isStale, " +
+          s"latestUnique=${latestUnique.map(_.toSeconds).getOrElse("None")}s, " +
+          s"uniqueDelta=${uniqueDelta.map(_.toSeconds).getOrElse("None")}s, " +
+          s"now=${now.toSeconds}s, started=${started.toSeconds}s, " +
+          s"updatedAt=${resources.updatedAt.toSeconds}s"
+      )
       result <-
         if (isStale) {
           logger.warn(
-            s"The process is stale when getting all declarations. Elapsed: ${elapsed.toSeconds}s, Timeout: ${config.peersDeclarationTimeout.toSeconds}s"
+            s"The process is stale when getting all declarations. Elapsed: ${elapsed.toSeconds}s, " +
+              s"Timeout: ${config.peersDeclarationTimeout.toSeconds}s " +
+              s"latestUnique ${latestUnique.map(_.toSeconds).getOrElse(0)}s " +
+              s"uniqueDelta ${uniqueDelta.map(_.toSeconds).getOrElse(0)}s"
           ) >> processStale.pure
         } else {
           processNonStale.pure

@@ -250,9 +250,13 @@ object ConsensusManager {
           case Some((oldState, newState)) =>
             consensusStateAdvancer.getConsensusOutcome(newState) match {
               case Some((previousKey, newOutcome)) =>
-                Clock[F].monotonic.flatMap { finishedAt =>
-                  Metrics[F].recordTime("dag_consensus_duration", finishedAt - newState.createdAt)
-                } >>
+                logger.debug(
+                  s"internalCheckForStateUpdate tryUpdateConsensus yielded state change with outcome " +
+                    s"key=${key.show}, oldState=${oldState}, newState=${newState} previousKey=${previousKey} newOutcome=${newOutcome}"
+                ) >>
+                  Clock[F].monotonic.flatMap { finishedAt =>
+                    Metrics[F].recordTime("dag_consensus_duration", finishedAt - newState.createdAt)
+                  } >>
                   consensusStorage
                     .tryUpdateLastConsensusOutcomeWithCleanup(previousKey, newOutcome)
                     .ifM(
@@ -261,10 +265,19 @@ object ConsensusManager {
                     ) >>
                   nodeStorage.tryModifyStateGetResult(WaitingForReady, Ready).void
               case None =>
-                stallDetection(key, newState).whenA(oldState.status =!= newState.status) >>
+                logger.debug(
+                  s"internalCheckForStateUpdate tryUpdateConsensus yielded state change with None for outcome " +
+                    s"key=${key.show}, oldState=${oldState}, newState=${newState}"
+                ) >>
+                  stallDetection(key, newState).whenA(oldState.status =!= newState.status) >>
                   internalCheckForStateUpdate(key, resources)
             }
-          case None => Applicative[F].unit
+          case None =>
+            logger.debug(
+              s"internalCheckForStateUpdate tryUpdateConsensus yielded None for outcome " +
+                s"key=${key.show}, resources=${resources}"
+            ) >>
+              Applicative[F].unit
         }
 
       private def afterConsensusFinish(majorityTrigger: ConsensusTrigger): F[Unit] =

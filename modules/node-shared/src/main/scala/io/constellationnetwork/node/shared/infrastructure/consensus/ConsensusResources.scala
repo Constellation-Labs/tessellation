@@ -24,8 +24,11 @@ case class ConsensusResources[A, Kind](
   updatedAt: FiniteDuration,
   createdAt: FiniteDuration,
   facilities: Option[FiniteDuration],
+  facilitiesLatestUnique: Option[FiniteDuration],
   proposals: Option[FiniteDuration],
-  signatures: Option[FiniteDuration]
+  proposalsLatestUnique: Option[FiniteDuration],
+  signatures: Option[FiniteDuration],
+  signaturesLatestUnique: Option[FiniteDuration]
 )
 
 object ConsensusResources {
@@ -40,6 +43,9 @@ object ConsensusResources {
       Map.empty[Hash, A],
       updatedAt,
       createdAt,
+      None,
+      None,
+      None,
       None,
       None,
       None

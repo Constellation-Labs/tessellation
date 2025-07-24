@@ -29,28 +29,10 @@ import retry._
 object LocalHealthcheck {
   def make[F[_]: Async: Supervisor](nodeClient: NodeClient[F], clusterStorage: ClusterStorage[F]): F[LocalHealthcheck[F]] = {
     def mkPeersR = MapRef.ofConcurrentHashMap[F, PeerId, F[Fiber[F, Throwable, Unit]]]()
-    def retryPolicy: RetryPolicy[F] = RetryPolicies.fibonacciBackoff[F](2.seconds)
+    def retryPolicy: RetryPolicy[F] = RetryPolicies.limitRetries[F](3).join(RetryPolicies.constantDelay[F](2.seconds))
 
     mkPeersR.map(make(_, retryPolicy, nodeClient, clusterStorage))
   }
-
-  // def make[F[_]: Async: Supervisor: io.constellationnetwork.security.SecurityProvider](
-  //   client: Client[F],
-  //   session: Session[F],
-  //   clusterStorage: ClusterStorage[F],
-  //   healthcheckTimeout: FiniteDuration = 5.seconds
-  // ): F[LocalHealthcheck[F]] = {
-  //   // Apply timeout middleware (same pattern as GossipClient)
-  //   val timeoutClient: Client[F] = withTimeout(client, healthcheckTimeout)
-
-  //   // Create NodeClient with timeout-wrapped client
-  //   val nodeClient = NodeClient.make[F](timeoutClient, session)
-
-  //   def mkPeersR = MapRef.ofConcurrentHashMap[F, PeerId, F[Fiber[F, Throwable, Unit]]]()
-  //   def retryPolicy: RetryPolicy[F] = RetryPolicies.fibonacciBackoff[F](2.seconds)
-
-  //   mkPeersR.map(make(_, retryPolicy, nodeClient, clusterStorage))
-  // }
 
   case class PeerUnresponsive(id: PeerId) extends NoStackTrace {
     implicit val show: Show[PeerId] = PeerId.shortShow

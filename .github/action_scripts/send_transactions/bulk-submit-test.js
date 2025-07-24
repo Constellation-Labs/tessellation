@@ -96,12 +96,31 @@ const submitTransaction = async (fromAccount, toAddress, amount = 1, fee = 0) =>
   }
 }
 
+// Fetch global snapshot for a specific ordinal
+const fetchSnapshot = async (l0Url, ordinal) => {
+  try {
+    const response = await axios.get(`${l0Url}/global-snapshots/${ordinal}`)
+    return response.data
+  } catch (error) {
+    if (error.response && error.response.status === 404) {
+      logMessage(`Snapshot for ordinal ${ordinal} not found (404)`)
+    } else {
+      logMessage(`Failed to fetch snapshot for ordinal ${ordinal}: ${error.message}`)
+    }
+    return null
+  }
+}
+
 // Monitor ordinal changes in the background
-const startOrdinalMonitor = async (l0Url, testStartTime) => {
+const startOrdinalMonitor = async (l0Url, testStartTime, submittedTransactions) => {
   let previousOrdinal = null
   let monitoring = true
   let lastOrdinalChangeTime = Date.now()
   const ordinalDeltas = [] // Track all ordinal change deltas
+  const encounteredOrdinals = new Set() // Track all ordinals we've seen
+  const snapshots = new Map() // Store fetched snapshots
+  const acceptedTransactionHashes = new Set() // Track accepted transaction hashes
+  let totalTransactionsInSnapshots = 0
   
   const CHECK_INTERVAL_MS = 500 // Check every 500ms
   
@@ -139,6 +158,7 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
           logMessage(`[ORDINAL MONITOR] Initial ordinal: ${currentOrdinal}`)
           previousOrdinal = currentOrdinal
           lastOrdinalChangeTime = currentTime
+          encounteredOrdinals.add(currentOrdinal)
         } else if (currentOrdinal !== previousOrdinal) {
           const timestamp = new Date().toISOString()
           const change = currentOrdinal - previousOrdinal
@@ -154,6 +174,48 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
             deltaMs: timeSinceLastChange,
             timestamp: currentTime
           })
+          
+          // Add new ordinal to encountered set
+          encounteredOrdinals.add(currentOrdinal)
+          
+          // Fetch the snapshot for this ordinal
+          const snapshot = await fetchSnapshot(l0Url, currentOrdinal)
+          if (snapshot) {
+            snapshots.set(currentOrdinal, snapshot)
+            
+            // Check for our transactions in this snapshot
+            let transactionsInThisSnapshot = 0
+            if (snapshot.signed && snapshot.signed.value && snapshot.signed.value.blocks) {
+              for (const blockWrapper of snapshot.signed.value.blocks) {
+                if (blockWrapper.block && blockWrapper.block.signed && blockWrapper.block.signed.value && 
+                    blockWrapper.block.signed.value.transactions) {
+                  const transactions = blockWrapper.block.signed.value.transactions
+                  
+                  for (const txn of transactions) {
+                    const txHash = txn.hash || (txn.signed && txn.signed.hash)
+                    if (txHash) {
+                      totalTransactionsInSnapshots++
+                      
+                      // Check if this is one of our submitted transactions
+                      const ourTxn = submittedTransactions.find(st => st.hash === txHash)
+                      if (ourTxn && !acceptedTransactionHashes.has(txHash)) {
+                        acceptedTransactionHashes.add(txHash)
+                        transactionsInThisSnapshot++
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            
+            // Log progress
+            const acceptanceRate = submittedTransactions.length > 0 
+              ? ((acceptedTransactionHashes.size / submittedTransactions.length) * 100).toFixed(1)
+              : 0
+            
+            logMessage(`[ORDINAL MONITOR] Ordinal ${currentOrdinal}: Found ${transactionsInThisSnapshot} of our transactions. ` +
+                      `Total progress: ${acceptedTransactionHashes.size}/${submittedTransactions.length} (${acceptanceRate}%)`)
+          }
           
           previousOrdinal = currentOrdinal
           lastOrdinalChangeTime = currentTime
@@ -176,7 +238,11 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
     },
     getTimingData: () => ({
       ordinalDeltas,
-      lastOrdinalChangeTime
+      lastOrdinalChangeTime,
+      encounteredOrdinals: Array.from(encounteredOrdinals).sort((a, b) => a - b),
+      snapshots,
+      acceptedTransactionHashes,
+      totalTransactionsInSnapshots
     })
   }
 }
@@ -240,9 +306,9 @@ const bulkSubmitTest = async () => {
   // Track test start time
   const testStartTime = Date.now()
   
-  // Start ordinal monitor
+  // Start ordinal monitor (pass empty array initially, will update after first transaction)
   logMessage('Starting ordinal monitor...')
-  const ordinalMonitor = await startOrdinalMonitor(networkConfig.l0Url, testStartTime)
+  const ordinalMonitor = await startOrdinalMonitor(networkConfig.l0Url, testStartTime, [])
   
   let transactionCount = 0
   const submittedTransactions = []
@@ -255,7 +321,9 @@ const bulkSubmitTest = async () => {
     const fromAccount = accounts[fromAccountIndex]
     const toAccount = accounts[toAccountIndex]
     
-    logMessage(`[${i + 1}/${numTransactionsToSend}] Submitting transaction from account ${fromAccount.index} to account ${toAccount.index}`)
+    const amount = Math.floor(Math.random() * 10) + 1 // Random amount between 1-10
+    
+    logMessage(`[${i + 1}/${numTransactionsToSend}] Submitting transaction from account ${fromAccount.index} to account ${toAccount.index} (amount: ${amount})`)
     
     const startTime = Date.now()
     let hash = null
@@ -264,7 +332,7 @@ const bulkSubmitTest = async () => {
       hash = await submitTransaction(
         fromAccount.account,
         toAccount.address,
-        1, // amount
+        amount,
         0  // fee
       )
     } else {
@@ -278,6 +346,7 @@ const bulkSubmitTest = async () => {
         hash,
         from: fromAccount.address,
         to: toAccount.address,
+        amount,
         timestamp: new Date().toISOString()
       })
     } else {
@@ -315,7 +384,81 @@ const bulkSubmitTest = async () => {
   ordinalMonitor.stop()
   await sleep(1000) // Give monitor time to finish
   
-  const { ordinalDeltas, lastOrdinalChangeTime } = ordinalMonitor.getTimingData()
+  const { ordinalDeltas, lastOrdinalChangeTime, encounteredOrdinals, snapshots, acceptedTransactionHashes, totalTransactionsInSnapshots } = ordinalMonitor.getTimingData()
+  
+  // Wait a bit for any final snapshots
+  logMessage('\nWaiting 5 seconds for any final snapshots...')
+  await sleep(5000)
+  
+  // Check for any missed ordinals at the end
+  const latestSnapshot = await getLatestSnapshot(networkConfig.l0Url)
+  if (latestSnapshot && latestSnapshot.value && latestSnapshot.value.ordinal) {
+    const latestOrdinal = latestSnapshot.value.ordinal
+    if (!encounteredOrdinals.includes(latestOrdinal)) {
+      logMessage(`\nFetching final ordinal ${latestOrdinal}...`)
+      const snapshot = await fetchSnapshot(networkConfig.l0Url, latestOrdinal)
+      if (snapshot) {
+        snapshots.set(latestOrdinal, snapshot)
+        // Check for any final transactions
+        if (snapshot.signed && snapshot.signed.value && snapshot.signed.value.blocks) {
+          for (const blockWrapper of snapshot.signed.value.blocks) {
+            if (blockWrapper.block && blockWrapper.block.signed && blockWrapper.block.signed.value && 
+                blockWrapper.block.signed.value.transactions) {
+              const transactions = blockWrapper.block.signed.value.transactions
+              
+              for (const txn of transactions) {
+                const txHash = txn.hash || (txn.signed && txn.signed.hash)
+                if (txHash) {
+                  const ourTxn = submittedTransactions.find(st => st.hash === txHash)
+                  if (ourTxn && !acceptedTransactionHashes.has(txHash)) {
+                    acceptedTransactionHashes.add(txHash)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  // Helper function to get latest snapshot
+  async function getLatestSnapshot(l0Url) {
+    try {
+      const response = await axios.get(`${l0Url}/global-snapshots/latest`)
+      return response.data
+    } catch (error) {
+      return null
+    }
+  }
+  
+  logMessage(`\n=== Final Transaction Summary ===`)
+  logMessage(`Total snapshots fetched: ${snapshots.size}`)
+  logMessage(`Total transactions in all snapshots: ${totalTransactionsInSnapshots}`)
+  
+  // Verify our transactions were accepted
+  logMessage('\n=== Transaction Verification ===')
+  
+  const acceptedTransactions = acceptedTransactionHashes.size
+  const rejectedTransactions = []
+  
+  // Find which transactions were not accepted
+  for (const txn of submittedTransactions) {
+    if (!acceptedTransactionHashes.has(txn.hash)) {
+      rejectedTransactions.push(txn)
+    }
+  }
+  
+  logMessage(`\nTransaction verification complete:`)
+  logMessage(`Accepted: ${acceptedTransactions}/${submittedTransactions.length}`)
+  logMessage(`Rejected: ${rejectedTransactions.length}/${submittedTransactions.length}`)
+  
+  if (rejectedTransactions.length > 0) {
+    logMessage('\nRejected transactions:')
+    rejectedTransactions.forEach(txn => {
+      logMessage(`  Hash: ${txn.hash}, From: ${txn.from}, To: ${txn.to}, Amount: ${txn.amount}, Time: ${txn.timestamp}`)
+    })
+  }
   const testEndTime = Date.now()
   const finalDelta = testEndTime - lastOrdinalChangeTime
   
@@ -379,6 +522,10 @@ const bulkSubmitTest = async () => {
   
   if (!allDeltasPass || finalDelta > MAX_DELTA_MS) {
     throw new Error('Test failed due to ordinal timing violations')
+  }
+  
+  if (rejectedTransactions.length > 0) {
+    throw new Error(`Test failed: ${rejectedTransactions.length}/${submittedTransactions.length} transactions were not accepted by the network`)
   }
   
   logMessage('\n✅ Bulk submit test passed!')

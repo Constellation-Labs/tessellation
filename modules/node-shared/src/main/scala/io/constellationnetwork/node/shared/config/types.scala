@@ -39,6 +39,7 @@ object types {
 
   case class SharedConfigReader(
     gossip: GossipConfig,
+    healthcheck: HealthcheckConfig,
     leavingDelay: FiniteDuration,
     stateAfterJoining: NodeState,
     collateral: Option[CollateralConfig],
@@ -62,6 +63,7 @@ object types {
   case class SharedConfig(
     environment: AppEnvironment,
     gossip: GossipConfig,
+    healthcheck: HealthcheckConfig,
     http: HttpConfig,
     leavingDelay: FiniteDuration,
     stateAfterJoining: NodeState,
@@ -122,6 +124,14 @@ object types {
     storage: RumorStorageConfig,
     daemon: GossipDaemonConfig,
     timeouts: GossipTimeoutsConfig
+  )
+
+  case class HealthcheckTimeoutsConfig(
+    client: FiniteDuration
+  )
+
+  case class HealthcheckConfig(
+    timeouts: HealthcheckTimeoutsConfig
   )
 
   case class ConsensusConfig(

@@ -92,7 +92,7 @@ object GlobalSnapshotConsensusStateAdvancer {
           state.status match {
             case CollectingFacilities(_, ownFacilitatorsHash) =>
               for {
-                maybeFacilities <- maybeGetAllDeclarations(state, resources, config)(_.facility)
+                maybeFacilities <- maybeGetAllDeclarations(state, resources, config)(_.facility, _.facilitiesLatestUnique)
                 result <- maybeFacilities.traverseTap { facilities =>
                   recoverIfForking[F](ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
                     facilities.map {
@@ -157,7 +157,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             case CollectingProposals(majorityTrigger, proposalInfo, candidates, ownFacilitatorsHash) =>
               HasherSelector[F].withCurrent { implicit hasher =>
                 for {
-                  maybeAllProposals <- maybeGetAllDeclarations(state, resources, config)(_.proposal)
+                  maybeAllProposals <- maybeGetAllDeclarations(state, resources, config)(_.proposal, _.proposalsLatestUnique)
                   result <- maybeAllProposals.traverseTap(d =>
                     recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(d.map {
                       case (peerId, proposal) => (peerId, proposal.facilitatorsHash)
@@ -210,7 +210,7 @@ object GlobalSnapshotConsensusStateAdvancer {
 
             case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, ownFacilitatorsHash) =>
               for {
-                maybeAllSignatures <- maybeGetAllDeclarations(state, resources, config)(_.signature)
+                maybeAllSignatures <- maybeGetAllDeclarations(state, resources, config)(_.signature, _.signaturesLatestUnique)
                 result <- maybeAllSignatures
                   .traverseTap(signatures =>
                     recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
