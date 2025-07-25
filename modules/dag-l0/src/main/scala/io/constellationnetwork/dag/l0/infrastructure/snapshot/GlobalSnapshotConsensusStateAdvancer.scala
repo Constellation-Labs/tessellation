@@ -86,10 +86,9 @@ object GlobalSnapshotConsensusStateAdvancer {
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind]
     ): StateT[F, GlobalSnapshotConsensusState, F[Unit]] =
       StateT[F, GlobalSnapshotConsensusState, F[Unit]] { state =>
-        println(s"[GLOBAL-ADVANCE] GlobalSnapshotConsensusStateAdvancer.advanceStatus called for key=${state.key}")
-        logger.debug(s"advanceStatus called for key=${state.key}, status=${state.status}, lockStatus=${state.lockStatus}") >>
+        logger.debug(s"advanceStatus called for key=${state.key}, lockStatus=${state.lockStatus}") >>
           (if (state.lockStatus === LockStatus.Closed) {
-             logger.debug(s"advanceStatus: State is LOCKED for key=${state.key}, returning immediately") >>
+             logger.debug(s"advanceStatus: State is LOCKED for key=${state.key}, returning immTXediately") >>
                (state, Applicative[F].unit).pure[F]
            } else {
              logger.debug(s"advanceStatus proceeding with status match for key=${state.key}") >>
@@ -101,7 +100,11 @@ object GlobalSnapshotConsensusStateAdvancer {
                        _ = println(s"[GLOBAL-ADVANCE] About to call maybeGetAllDeclarations for facilities, key=${state.key}")
                        _ = println(s"[GLOBAL-ADVANCE] state.facilitators=${state.facilitators.value}")
                        _ = println(s"[GLOBAL-ADVANCE] resources.peerDeclarationsMap.keys=${resources.peerDeclarationsMap.keys}")
-                       maybeFacilities <- maybeGetAllDeclarations(state, resources, config)(_.facility, _.facilitiesLatestUnique)
+                       maybeFacilities <- maybeGetAllDeclarations(state, resources, config)(
+                         _.facility,
+                         _.facilitiesLatestUnique,
+                         "facilities"
+                       )
                        _ <- logger.debug(s"maybeGetAllDeclarations returned ${maybeFacilities.isDefined} for facilities, key=${state.key}")
                        _ = println(
                          s"[GLOBAL-ADVANCE] maybeGetAllDeclarations returned ${maybeFacilities.isDefined} for facilities, key=${state.key}"
@@ -172,7 +175,11 @@ object GlobalSnapshotConsensusStateAdvancer {
                      HasherSelector[F].withCurrent { implicit hasher =>
                        for {
                          _ <- logger.debug(s"About to call maybeGetAllDeclarations for proposals, key=${state.key}")
-                         maybeAllProposals <- maybeGetAllDeclarations(state, resources, config)(_.proposal, _.proposalsLatestUnique)
+                         maybeAllProposals <- maybeGetAllDeclarations(state, resources, config)(
+                           _.proposal,
+                           _.proposalsLatestUnique,
+                           "proposals"
+                         )
                          _ <- logger.debug(
                            s"maybeGetAllDeclarations returned ${maybeAllProposals.isDefined} for proposals, key=${state.key}"
                          )
@@ -232,7 +239,11 @@ object GlobalSnapshotConsensusStateAdvancer {
                    logger.debug(s"advanceStatus: CollectingSignatures for key=${state.key}") >>
                      (for {
                        _ <- logger.debug(s"About to call maybeGetAllDeclarations for signatures, key=${state.key}")
-                       maybeAllSignatures <- maybeGetAllDeclarations(state, resources, config)(_.signature, _.signaturesLatestUnique)
+                       maybeAllSignatures <- maybeGetAllDeclarations(state, resources, config)(
+                         _.signature,
+                         _.signaturesLatestUnique,
+                         "signatures"
+                       )
                        _ <- logger.debug(
                          s"maybeGetAllDeclarations returned ${maybeAllSignatures.isDefined} for signatures, key=${state.key}"
                        )
@@ -283,6 +294,15 @@ object GlobalSnapshotConsensusStateAdvancer {
                                        .forOrdinal(signedArtifact.ordinal) { implicit hasher =>
                                          for {
                                            hashedSnapshot <- signedArtifact.toHashed
+                                           numBlocks = signedArtifact.blocks.size
+                                           numTransactions = signedArtifact.blocks.map(_.block.transactions.size).sum
+                                           _ <- logger.debug(
+                                             s"Adding GlobalSnapshot to storage for " +
+                                               s"ordinal=${signedArtifact.ordinal.value.value} with hash=${hashedSnapshot.hash.value} " +
+                                               s"numSigners=${signedArtifact.proofs.size} " +
+                                               s"numBlocks=$numBlocks " +
+                                               s"numTransactions=$numTransactions"
+                                           )
                                            _ <- lastNGlobalSnapshotStorage.set(hashedSnapshot, majorityArtifactInfo.context)
                                            _ <- lastGlobalSnapshotStorage.set(hashedSnapshot, majorityArtifactInfo.context)
                                            result <- globalSnapshotStorage.prepend(signedArtifact, majorityArtifactInfo.context)
@@ -306,6 +326,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                          }
                      } yield result)
                  case Finished(_, _, _, _, _) =>
+                   // This never actually seems to be getting triggered in local E2E, don't rely on it.
                    logger.debug(s"advanceStatus: Finished state for key=${state.key}") >>
                      none[(GlobalSnapshotConsensusState, F[Unit])]
                        .pure[F]

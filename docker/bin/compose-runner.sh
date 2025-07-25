@@ -14,6 +14,13 @@ show_time() {
   echo "$stage took: $DELTA_SECONDS seconds - total time: $DELTA_SECONDS_TOTAL seconds"
 }
 
+cleanup_end() {
+  if [ "$CLEANUP_DOCKER_AT_END" == "true" ]; then
+    ./docker/bin/tessellation-docker-cleanup.sh
+  fi
+}
+
+trap cleanup_end EXIT
 
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -215,11 +222,6 @@ echo "------------------------------------------------"
 
 cd $PROJECT_ROOT
 
-
-# TODO: Use a trap function
-if [ "$CLEANUP_DOCKER_AT_END" == "true" ]; then
-  ./docker/bin/tessellation-docker-cleanup.sh
-fi
 
 
 

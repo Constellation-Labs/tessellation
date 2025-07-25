@@ -167,7 +167,7 @@ object ConsensusStorage {
           stateUpdateSemaphore.permit.use { _ =>
             for {
               (maybeState, setter) <- statesR(key).access
-              _ <- logger.debug(s"condModifyState for key=$key, stateExists=${maybeState.isDefined}")
+              _ <- logger.trace(s"condModifyState for key=$key, stateExists=${maybeState.isDefined}")
               maybeResult <- modifyStateFn(maybeState)
 
               maybeB <- maybeResult.traverse {
@@ -467,7 +467,7 @@ object ConsensusStorage {
 
             if (allowUpdate) {
               for {
-                now <- Clock[F].monotonic
+                now <- Clock[F].realTime
                 emptyResources <- ConsensusResources.empty[F, Artifact, Kind]
                 updated <- resourcesR(key).updateAndGet { maybeResource =>
                   val current = maybeResource.getOrElse(emptyResources)

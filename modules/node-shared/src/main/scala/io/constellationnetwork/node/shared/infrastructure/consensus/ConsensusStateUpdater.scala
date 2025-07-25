@@ -114,7 +114,7 @@ object ConsensusStateUpdater {
           fn(oldState).flatTap {
             case (newState, _) =>
               val stateChanged = newState =!= oldState
-              logger.debug(s"toUpdateStateFn: stateChanged=$stateChanged, oldStatus=${oldState.status}, newStatus=${newState.status}")
+              logger.trace(s"toUpdateStateFn: stateChanged=$stateChanged, oldStatus=${oldState.status}, newStatus=${newState.status}")
           }.map {
             case (newState, effect) =>
               Option.when(newState =!= oldState)((newState.some, ((oldState, newState).some, effect)))
@@ -155,17 +155,12 @@ object ConsensusStateUpdater {
       private def updateConsensus(resources: ConsensusResources[Artifact, Kind])(
         state: ConsensusState[Key, Status, Outcome, Kind]
       ): F[(ConsensusState[Key, Status, Outcome, Kind], F[Unit])] =
-        logger.debug(s"updateConsensus called for state.key=${state.key}, state.status=${state.status}") >> {
+        logger.trace(s"updateConsensus called for state.key=${state.key}, state.status=${state.status}") >> {
           val stateAndEffect = for {
-            _ <- StateT.liftF(logger.debug(s"About to call unlockConsensusFn for key=${state.key}"))
             _ <- unlockConsensusFn(resources)
-            _ <- StateT.liftF(logger.debug(s"About to call updateFacilitators for key=${state.key}"))
             _ <- updateFacilitators(resources)
-            _ <- StateT.liftF(logger.debug(s"About to call spreadHistoricalAck for key=${state.key}"))
             effect1 <- spreadHistoricalAck(resources)
-            _ <- StateT.liftF(logger.debug(s"About to call advanceStatus for key=${state.key}"))
             effect2 <- consensusStateAdvancer.advanceStatus(resources)
-            _ <- StateT.liftF(logger.debug(s"advanceStatus completed for key=${state.key}"))
           } yield effect1 >> effect2
 
           stateAndEffect

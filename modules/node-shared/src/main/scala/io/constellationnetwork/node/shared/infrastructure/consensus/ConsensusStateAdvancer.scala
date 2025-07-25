@@ -34,7 +34,8 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     config: ConsensusConfig
   )(
     getter: PeerDeclarations => Option[A],
-    staleTimer: Resources => Option[FiniteDuration]
+    staleTimer: Resources => Option[FiniteDuration],
+    label: String
   )(implicit asyncF: Async[F]): F[Option[SortedMap[PeerId, A]]] = {
 
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](ConsensusStateAdvancer.getClass)
@@ -64,18 +65,31 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     }
 
     for {
-      now <- Clock[F].monotonic
+      now <- Clock[F].realTime
       started = resources.createdAt
       latestUnique = staleTimer(resources)
       uniqueDelta = latestUnique.map(_ - started)
-      elapsed = now - latestUnique.getOrElse(resources.updatedAt)
+      updatedAtDelta = now - resources.updatedAt
+      elapsed = now - latestUnique.getOrElse(started)
       isStale = elapsed > config.peersDeclarationTimeout
       _ <- logger.info(
-        s"Checking staleness: state.key=${state.key}, elapsed=${elapsed.toSeconds}s, " +
-          s"timeout=${config.peersDeclarationTimeout.toSeconds}s, isStale=$isStale, " +
-          s"latestUnique=${latestUnique.map(_.toSeconds).getOrElse("None")}s, " +
+        s"Checking staleness: " +
+          s"label=$label " +
+          s"isStale=$isStale, " +
+          s"state.key=${state.key}, " +
+          s"now=${now.toSeconds}s, " +
+          s"started=${started.toSeconds}s, " +
+          s"elapsed=${elapsed.toSeconds}s, " +
           s"uniqueDelta=${uniqueDelta.map(_.toSeconds).getOrElse("None")}s, " +
-          s"now=${now.toSeconds}s, started=${started.toSeconds}s, " +
+          s"latestUnique=${latestUnique.map(_.toSeconds).getOrElse("None")}s, " +
+          s"facilitiesDelta=${resources.facilities.map(_ - started).map(_.toSeconds).getOrElse("None")}s, " +
+          s"proposalsDelta=${resources.proposals.map(_ - started).map(_.toSeconds).getOrElse("None")}s, " +
+          s"signaturesDelta=${resources.signatures.map(_ - started).map(_.toSeconds).getOrElse("None")}s, " +
+          s"facilitiesLatestUniqueDelta=${resources.facilitiesLatestUnique.map(_ - started).map(_.toSeconds).getOrElse("None")}s, " +
+          s"proposalsLatestUniqueDelta=${resources.proposalsLatestUnique.map(_ - started).map(_.toSeconds).getOrElse("None")}s, " +
+          s"signaturesLatestUniqueDelta=${resources.signaturesLatestUnique.map(_ - started).map(_.toSeconds).getOrElse("None")}s, " +
+          s"updatedAtDelta=${updatedAtDelta.toSeconds}s, " +
+          s"timeout=${config.peersDeclarationTimeout.toSeconds}s, " +
           s"updatedAt=${resources.updatedAt.toSeconds}s"
       )
       result <-

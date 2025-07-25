@@ -221,7 +221,7 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
 const bulkSubmitTest = async () => {
   // Configuration flags
   const ENABLE_TRANSACTIONS = true // Set to true to actually send transactions
-  const numTransactionsToSend = 50 // Number of transactions to send
+  const numTransactionsToSend = 20 // Number of transactions to send
   
   const args = process.argv.slice(2)
   
@@ -296,7 +296,6 @@ const bulkSubmitTest = async () => {
     
     const amount = 1
 
-    logMessage(`[${i + 1}/${numTransactionsToSend}] Submitting transaction from account ${fromAccount.index} to account ${toAccount.index} (amount: ${amount})`)
     
     const startTime = Date.now()
     let hash = null
@@ -324,6 +323,8 @@ const bulkSubmitTest = async () => {
       })
       // Notify the ordinal monitor about this transaction
       ordinalMonitor.addSubmittedTransaction(hash)
+      logMessage(`[${i + 1}/${numTransactionsToSend}] Submit from account ${fromAccount.index} amount: ${amount} hash ${hash}`)
+
     } else {
       logMessage(`Transaction ${i + 1} submission failed`)
     }
