@@ -2,8 +2,8 @@ package io.constellationnetwork.node.shared.infrastructure.gossip
 
 import cats.Applicative
 import cats.data.Ior
-import cats.effect.Async
 import cats.effect.std.{Queue, Random, Supervisor}
+import cats.effect.{Async, Clock}
 import cats.syntax.all._
 
 import io.constellationnetwork.ext.cats.syntax.next._
@@ -49,7 +49,7 @@ object GossipDaemon {
     collateral: Collateral[F]
   )(implicit S: Supervisor[F], hasherSelector: HasherSelector[F]): GossipDaemon[F] = {
     new GossipDaemon[F] {
-      private val logger = Slf4jLogger.getLogger[F]
+      private val logger = Slf4jLogger.getLoggerFromClass[F](GossipDaemon.getClass)
       private val rumorLogger = Slf4jLogger.getLoggerFromName[F](rumorLoggerName)
 
       def startAsInitialValidator: F[Unit] =
@@ -95,7 +95,9 @@ object GossipDaemon {
       private def logConsumption(hashedRumor: Hashed[RumorRaw]): F[Unit] =
         rumorLogger.info(
           s"Rumor consumed {hash=${hashedRumor.hash.show}, rumor=${hashedRumor.signed.value.show}}"
-        )
+        ) >> Clock[F].realTime.flatMap { now =>
+          logger.trace(s"Rumor consumed at ${now.toSeconds}s {hash=${hashedRumor.hash.show}, rumor=${hashedRumor.signed.value.show}}")
+        }
 
       private def validateRumor(hashedRumor: Hashed[RumorRaw]): F[Boolean] =
         hasherSelector.withCurrent { implicit hasher =>

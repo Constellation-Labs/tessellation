@@ -74,7 +74,14 @@ object UnlockConsensusUpdateSuite extends SimpleIOSuite with Checkers {
         withdrawalsMap = Map.empty,
         ackKinds = Set.empty,
         artifacts = Map.empty[Hash, Artifact],
-        updatedAt = FiniteDuration(10, "seconds")
+        updatedAt = FiniteDuration(10, "seconds"),
+        createdAt = FiniteDuration(10, "seconds"),
+        facilities = None,
+        facilitiesLatestUnique = None,
+        proposals = None,
+        proposalsLatestUnique = None,
+        signatures = None,
+        signaturesLatestUnique = None
       )
     } yield (state, resources)
 
