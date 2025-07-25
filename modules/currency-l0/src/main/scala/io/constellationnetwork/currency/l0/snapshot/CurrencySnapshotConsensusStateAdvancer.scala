@@ -195,8 +195,16 @@ object CurrencySnapshotConsensusStateAdvancer {
 
                 case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, ownFacilitatorsHash) =>
                   for {
-                    maybeAllSignatures <- maybeGetAllDeclarations(state, resources, config)(_.signature, _.signaturesLatestUnique, "signatures")
-                    maybeAllFacilities <- maybeGetAllDeclarations(state, resources, config)(_.facility, _.facilitiesLatestUnique, "facilities")
+                    maybeAllSignatures <- maybeGetAllDeclarations(state, resources, config)(
+                      _.signature,
+                      _.signaturesLatestUnique,
+                      "signatures"
+                    )
+                    maybeAllFacilities <- maybeGetAllDeclarations(state, resources, config)(
+                      _.facility,
+                      _.facilitiesLatestUnique,
+                      "facilities"
+                    )
                     maybeGlobalSnapshotOrdinal =
                       maybeAllFacilities
                         .map(_.map { case (_, f) => f.lastGlobalSnapshotOrdinal })
