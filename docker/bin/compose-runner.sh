@@ -14,6 +14,13 @@ show_time() {
   echo "$stage took: $DELTA_SECONDS seconds - total time: $DELTA_SECONDS_TOTAL seconds"
 }
 
+cleanup_end() {
+  if [ "$CLEANUP_DOCKER_AT_END" == "true" ]; then
+    ./docker/bin/tessellation-docker-cleanup.sh
+  fi
+}
+
+trap cleanup_end EXIT
 
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -198,17 +205,16 @@ source ../../docker/bin/cluster-health-check.sh
 verify_healthy
 show_time "Cluster became healthy"
 
-cd $PROJECT_ROOT/.github/action_scripts/delegated_staking
-node delegated-staking.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX testDelegatedStaking
+# cd $PROJECT_ROOT/.github/action_scripts/delegated_staking
+# node delegated-staking.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX testDelegatedStaking
 
-# Long running debug test if needed
-# echo "------------------------------------------------"
-# echo "Running bulk submit test"
-# echo "------------------------------------------------"
+echo "------------------------------------------------"
+echo "Running bulk submit test"
+echo "------------------------------------------------"
 
-# cd $PROJECT_ROOT/.github/action_scripts/send_transactions
-# node bulk-submit-test.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX
-# show_time "Bulk submit test completed"
+cd $PROJECT_ROOT/.github/action_scripts/send_transactions
+node bulk-submit-test.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX
+show_time "Bulk submit test completed"
 
 echo "------------------------------------------------"
 echo "End-to-end tests completed"
@@ -216,11 +222,6 @@ echo "------------------------------------------------"
 
 cd $PROJECT_ROOT
 
-
-# TODO: Use a trap function
-if [ "$CLEANUP_DOCKER_AT_END" == "true" ]; then
-  ./docker/bin/tessellation-docker-cleanup.sh
-fi
 
 
 

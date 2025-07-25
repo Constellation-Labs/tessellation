@@ -14,6 +14,8 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.message.Cons
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.schema.peer.PeerId
 
+import org.typelevel.log4cats.slf4j.Slf4jLogger
+
 abstract class GlobalSnapshotConsensusStateCreator[F[_]: Sync]
     extends ConsensusStateCreator[
       F,
@@ -39,10 +41,11 @@ object GlobalSnapshotConsensusStateCreator {
       maybeTrigger: Option[ConsensusTrigger],
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind]
     ): F[StateCreateResult] =
-      consensusStorage
-        .condModifyState(key)(toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources)))
-        .flatMap(evalEffect)
-        .flatTap(logIfCreatedState)
+      Slf4jLogger.getLogger[F].debug(s"tryFacilitateConsensus called for key=$key, trigger=$maybeTrigger") >>
+        consensusStorage
+          .condModifyState(key)(toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources)))
+          .flatMap(evalEffect)
+          .flatTap(logIfCreatedState)
 
     private def facilitateConsensus(
       key: GlobalSnapshotKey,

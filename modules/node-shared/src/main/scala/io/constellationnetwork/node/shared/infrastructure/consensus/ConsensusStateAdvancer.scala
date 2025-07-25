@@ -5,7 +5,7 @@ import cats.effect.{Async, Clock}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
-import scala.concurrent.duration.DurationInt
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.schema.peer.PeerId
@@ -14,6 +14,8 @@ import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 case class Previous[A](a: A)
+
+object ConsensusStateAdvancer {}
 
 trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind] {
 
@@ -26,23 +28,29 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
 
   def advanceStatus(resources: ConsensusResources[Artifact, Kind]): StateT[F, ConsensusState[Key, Status, Outcome, Kind], F[Unit]]
 
-  def logger(implicit async: Async[F]): SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F]("ConsensusStateAdvancer")
-
   protected def maybeGetAllDeclarations[A](
     state: State,
     resources: Resources,
     config: ConsensusConfig
   )(
-    getter: PeerDeclarations => Option[A]
+    getter: PeerDeclarations => Option[A],
+    staleTimer: Resources => Option[FiniteDuration],
+    label: String
   )(implicit asyncF: Async[F]): F[Option[SortedMap[PeerId, A]]] = {
 
-    def processNonStale =
-      state.facilitators.value.traverse { peerId =>
-        resources.peerDeclarationsMap
-          .get(peerId)
-          .flatMap(getter)
-          .map((peerId, _))
+    val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](ConsensusStateAdvancer.getClass)
+
+    def processNonStale = {
+      println(s"[CONSENSUS-ADVANCE] processNonStale: facilitators=${state.facilitators.value}")
+      val result = state.facilitators.value.traverse { peerId =>
+        val decl = resources.peerDeclarationsMap.get(peerId)
+        val extracted = decl.flatMap(getter)
+        println(s"[CONSENSUS-ADVANCE] processNonStale: peerId=$peerId, hasDecl=${decl.isDefined}, extracted=${extracted.isDefined}")
+        extracted.map((peerId, _))
       }.map(SortedMap.from(_))
+      println(s"[CONSENSUS-ADVANCE] processNonStale result=${result.isDefined}")
+      result
+    }
 
     def processStale = {
       val results = state.facilitators.value.flatMap { peerId =>
@@ -57,13 +65,40 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     }
 
     for {
-      now <- Clock[F].monotonic
-      elapsed = now - resources.updatedAt
+      now <- Clock[F].realTime
+      started = resources.createdAt
+      latestUnique = staleTimer(resources)
+      uniqueDelta = latestUnique.map(_ - started)
+      updatedAtDelta = now - resources.updatedAt
+      elapsed = now - latestUnique.getOrElse(started)
       isStale = elapsed > config.peersDeclarationTimeout
+      _ <- logger.info(
+        s"Checking staleness: " +
+          s"label=$label " +
+          s"isStale=$isStale, " +
+          s"state.key=${state.key}, " +
+          s"now=${now.toSeconds}s, " +
+          s"started=${started.toSeconds}s, " +
+          s"elapsed=${elapsed.toSeconds}s, " +
+          s"uniqueDelta=${uniqueDelta.map(_.toSeconds).getOrElse("None")}s, " +
+          s"latestUnique=${latestUnique.map(_.toSeconds).getOrElse("None")}s, " +
+          s"facilitiesDelta=${resources.facilities.map(_ - started).map(_.toSeconds).getOrElse("None")}s, " +
+          s"proposalsDelta=${resources.proposals.map(_ - started).map(_.toSeconds).getOrElse("None")}s, " +
+          s"signaturesDelta=${resources.signatures.map(_ - started).map(_.toSeconds).getOrElse("None")}s, " +
+          s"facilitiesLatestUniqueDelta=${resources.facilitiesLatestUnique.map(_ - started).map(_.toSeconds).getOrElse("None")}s, " +
+          s"proposalsLatestUniqueDelta=${resources.proposalsLatestUnique.map(_ - started).map(_.toSeconds).getOrElse("None")}s, " +
+          s"signaturesLatestUniqueDelta=${resources.signaturesLatestUnique.map(_ - started).map(_.toSeconds).getOrElse("None")}s, " +
+          s"updatedAtDelta=${updatedAtDelta.toSeconds}s, " +
+          s"timeout=${config.peersDeclarationTimeout.toSeconds}s, " +
+          s"updatedAt=${resources.updatedAt.toSeconds}s"
+      )
       result <-
         if (isStale) {
           logger.warn(
-            s"The process is stale when getting all declarations. Elapsed: ${elapsed.toSeconds}s, Timeout: ${config.peersDeclarationTimeout.toSeconds}s"
+            s"The process is stale when getting all declarations. Elapsed: ${elapsed.toSeconds}s, " +
+              s"Timeout: ${config.peersDeclarationTimeout.toSeconds}s " +
+              s"latestUnique ${latestUnique.map(_.toSeconds).getOrElse(0)}s " +
+              s"uniqueDelta ${uniqueDelta.map(_.toSeconds).getOrElse(0)}s"
           ) >> processStale.pure
         } else {
           processNonStale.pure

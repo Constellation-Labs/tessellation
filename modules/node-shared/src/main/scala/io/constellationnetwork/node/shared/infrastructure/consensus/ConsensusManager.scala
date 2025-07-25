@@ -142,6 +142,10 @@ object ConsensusManager {
               .trySetInitialConsensusOutcome(outcome)
               .ifM(
                 nodeStorage.tryModifyState(Observing, WaitingForReady) >>
+                  // FIX: Start time trigger immediately after download
+                  // Previously, time trigger was only scheduled after successful consensus completion.
+                  // If the first consensus attempt failed, no periodic retry mechanism was active.
+                  scheduleFacility >>
                   internalFacilitateWith(none),
                 new Throwable("Error initializing consensus storage").raiseError[F, Unit]
               )
@@ -164,20 +168,29 @@ object ConsensusManager {
           )
 
       private def scheduleFacility: F[Unit] =
-        Clock[F].monotonic.map(_ + config.timeTriggerInterval).flatMap { nextTimeValue =>
-          consensusStorage.setTimeTrigger(nextTimeValue) >>
-            S.supervise {
-              val condTriggerWithTime = for {
-                maybeTimeTrigger <- consensusStorage.getTimeTrigger
-                currentTime <- Clock[F].monotonic
-                _ <- Applicative[F]
-                  .whenA(maybeTimeTrigger.exists(currentTime >= _))(internalFacilitateWith(TimeTrigger.some))
-              } yield ()
+        S.supervise {
+          // FIX: Make time trigger run continuously instead of just once
+          // Previously, the time trigger would only fire once and then stop, causing consensus
+          // to stall when peers timed out. This continuous loop ensures consensus attempts
+          // continue even if individual rounds fail due to network issues or peer timeouts.
+          def runTimeTriggerLoop: F[Unit] = for {
+            nextTimeValue <- Clock[F].monotonic.map(_ + config.timeTriggerInterval)
+            _ <- consensusStorage.setTimeTrigger(nextTimeValue)
+            _ <- Temporal[F].sleep(config.timeTriggerInterval)
+            maybeTimeTrigger <- consensusStorage.getTimeTrigger
+            currentTime <- Clock[F].monotonic
+            _ <- Applicative[F]
+              .whenA(maybeTimeTrigger.exists(currentTime >= _)) {
+                logger.debug(s"Time trigger firing at ${currentTime}") >>
+                  internalFacilitateWith(TimeTrigger.some)
+              }
+            _ <- runTimeTriggerLoop // Continue the loop recursively
+          } yield ()
 
-              Temporal[F].sleep(config.timeTriggerInterval) >> condTriggerWithTime
-                .handleErrorWith(logger.error(_)(s"Error triggering consensus with time trigger"))
-            }.void
-        }
+          runTimeTriggerLoop
+            .handleErrorWith(logger.error(_)(s"Error in time trigger loop, restarting"))
+            .foreverM // Ensure it runs forever even if errors occur
+        }.void
 
       def withdrawFromConsensus: F[Unit] =
         for {
@@ -198,47 +211,78 @@ object ConsensusManager {
         trigger: Option[ConsensusTrigger]
       ): F[Unit] =
         consensusStorage.getLastConsensusOutcome.flatMap { maybeLastOutcome =>
-          maybeLastOutcome.traverse { lastOutcome =>
-            val nextKey = _key.get(lastOutcome).next
+          maybeLastOutcome match {
+            case None =>
+              logger.debug(s"No last consensus outcome available, cannot facilitate")
+            case Some(lastOutcome) =>
+              val nextKey = _key.get(lastOutcome).next
 
-            consensusStorage
-              .getResources(nextKey)
-              .flatMap { resources =>
-                logger.debug(s"Trying to facilitate consensus {key=${nextKey.show}, trigger=${trigger.show}}") >>
-                  consensusStateCreator.tryFacilitateConsensus(nextKey, lastOutcome, trigger, resources).flatMap {
-                    case Some(state) =>
-                      stallDetection(nextKey, state) >>
-                        internalCheckForStateUpdate(nextKey, resources)
-                    case None => Applicative[F].unit
-                  }
-              }
-          }.void
+              consensusStorage
+                .getResources(nextKey)
+                .flatMap { resources =>
+                  logger.debug(s"Trying to facilitate consensus {key=${nextKey.show}, trigger=${trigger.show}}") >>
+                    consensusStateCreator.tryFacilitateConsensus(nextKey, lastOutcome, trigger, resources).flatMap {
+                      case Some(state) =>
+                        // logger.debug(s"Created new consensus state for {key=${nextKey.show}}") >>
+                        stallDetection(nextKey, state) >>
+                          internalCheckForStateUpdate(nextKey, resources)
+                      case None =>
+                        logger.debug(s"Could not create consensus state for {key=${nextKey.show}}") >>
+                          // Even if we can't create a new state, check if existing state needs updating
+                          consensusStorage.getState(nextKey).flatMap {
+                            case Some(_) =>
+                              logger.debug(s"Found existing state for {key=${nextKey.show}}, checking for updates") >>
+                                internalCheckForStateUpdate(nextKey, resources)
+                            case None =>
+                              logger.debug(s"No existing state for {key=${nextKey.show}}, nothing to do") >>
+                                Applicative[F].unit
+                          }
+                    }
+                }
+          }
         }
 
       private def internalCheckForStateUpdate(
         key: Key,
         resources: ConsensusResources[Artifact, Kind]
       ): F[Unit] =
-        consensusStateUpdater.tryUpdateConsensus(key, resources).flatMap {
-          case Some((oldState, newState)) =>
-            consensusStateAdvancer.getConsensusOutcome(newState) match {
-              case Some((previousKey, newOutcome)) =>
-                Clock[F].monotonic.flatMap { finishedAt =>
-                  Metrics[F].recordTime("dag_consensus_duration", finishedAt - newState.createdAt)
-                } >>
-                  consensusStorage
-                    .tryUpdateLastConsensusOutcomeWithCleanup(previousKey, newOutcome)
-                    .ifM(
-                      afterConsensusFinish(_trigger.get(newOutcome)),
-                      logger.info("Skip triggering another consensus")
+        logger.debug(s"internalCheckForStateUpdate called for key=$key") >>
+          consensusStateUpdater.tryUpdateConsensus(key, resources).flatMap {
+            case Some((oldState, newState)) =>
+              logger.trace(s"tryUpdateConsensus returned Some for key=$key, oldStatus=${oldState.status}, newStatus=${newState.status}") >>
+                (consensusStateAdvancer.getConsensusOutcome(newState) match {
+                  case Some((previousKey, newOutcome)) =>
+                    logger.trace(
+                      s"internalCheckForStateUpdate tryUpdateConsensus yielded state change with outcome " +
+                        s"key=${key.show}, oldState=${oldState}, newState=${newState} previousKey=${previousKey} newOutcome=${newOutcome}"
                     ) >>
-                  nodeStorage.tryModifyStateGetResult(WaitingForReady, Ready).void
-              case None =>
-                stallDetection(key, newState).whenA(oldState.status =!= newState.status) >>
-                  internalCheckForStateUpdate(key, resources)
-            }
-          case None => Applicative[F].unit
-        }
+                      Clock[F].monotonic.flatMap { finishedAt =>
+                        Metrics[F].recordTime("dag_consensus_duration", finishedAt - newState.createdAt)
+                      } >>
+                      consensusStorage
+                        .tryUpdateLastConsensusOutcomeWithCleanup(previousKey, newOutcome)
+                        .ifM(
+                          afterConsensusFinish(_trigger.get(newOutcome)),
+                          logger.info("Skip triggering another consensus")
+                        ) >>
+                      nodeStorage.tryModifyStateGetResult(WaitingForReady, Ready).void
+                  case None =>
+                    logger.trace(
+                      s"internalCheckForStateUpdate tryUpdateConsensus yielded state change with None for outcome " +
+                        s"key=${key.show}, oldState=${oldState.status}, newState=${newState.status}"
+                    ) >>
+                      logger.debug(s"About to check stallDetection, statusChanged=${oldState.status =!= newState.status}") >>
+                      stallDetection(key, newState).whenA(oldState.status =!= newState.status) >>
+                      logger.debug(s"About to recurse internalCheckForStateUpdate for key=$key") >>
+                      internalCheckForStateUpdate(key, resources)
+                })
+            case None =>
+              logger.debug(
+                s"internalCheckForStateUpdate tryUpdateConsensus yielded None for outcome " +
+                  s"key=${key.show}"
+              ) >>
+                Applicative[F].unit
+          }
 
       private def afterConsensusFinish(majorityTrigger: ConsensusTrigger): F[Unit] =
         majorityTrigger match {
@@ -268,18 +312,28 @@ object ConsensusManager {
 
       private def stallDetection(key: Key, state: ConsensusState[Key, Status, Outcome, Kind]): F[Unit] =
         S.supervise {
-          Temporal[F].sleep(config.declarationTimeout) >>
-            consensusStateUpdater.tryLockConsensus(key, state).flatMap { maybeResult =>
-              maybeResult.traverse {
-                case (_, lockedState) =>
-                  Temporal[F].sleep(config.lockDuration) >>
-                    consensusOps.maybeCollectingKind(lockedState.status).traverse { ackKind =>
-                      consensusStorage.getResources(key).flatMap { resources =>
-                        consensusStateUpdater.trySpreadAck(key, ackKind, resources)
+          Clock[F].realTime.flatMap { now =>
+            logger.debug(
+              s"stallDetection: Starting timer for key=$key, now=${now.toSeconds}s, declarationTimeout=${config.declarationTimeout.toSeconds}s"
+            ) >>
+              Temporal[F].sleep(config.declarationTimeout) >>
+              consensusStateUpdater.tryLockConsensus(key, state).flatMap { maybeResult =>
+                maybeResult.traverse {
+                  case (_, lockedState) =>
+                    Temporal[F].sleep(config.lockDuration) >>
+                      consensusOps.maybeCollectingKind(lockedState.status).traverse { ackKind =>
+                        consensusStorage.getResources(key).flatMap { resources =>
+                          Clock[F].realTime.flatMap { expiredAt =>
+                            logger.debug(
+                              s"stallDetection: Timer expired for key=$key, at ${expiredAt.toSeconds}s, spreading ack $ackKind"
+                            )
+                          } >>
+                            consensusStateUpdater.trySpreadAck(key, ackKind, resources)
+                        }
                       }
-                    }
+                }
               }
-            }
+          }
         }.void
 
     }
