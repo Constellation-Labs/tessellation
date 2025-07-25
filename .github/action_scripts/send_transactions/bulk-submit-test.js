@@ -94,7 +94,7 @@ const submitTransaction = async (fromAccount, toAddress, amount = 1, fee = 0) =>
       hash = result.hash
     }
     
-    logMessage(`[DEBUG] Transaction hash extracted: ${hash}`)
+    // logMessage(`[DEBUG] Transaction hash extracted: ${hash}`)
     return hash
   } catch (error) {
     logMessage(`Error submitting transaction: ${error.message}`)
@@ -171,8 +171,25 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
           const change = currentOrdinal - previousOrdinal
           const totalElapsed = currentTime - testStartTime
           const timeSinceLastChange = currentTime - lastOrdinalChangeTime
+
+          const snapshot = await fetchSnapshot(l0Url, currentOrdinal)
+          var totalTransactions = "?";
+          var totalBlocks = "?";
+          if (snapshot.value) {
+                        // Get total number of blocks
+            totalBlocks = snapshot.value.blocks.length
+            
+            // Calculate total sum of transactions across all blocks
+            totalTransactions = snapshot.value.blocks.reduce((sum, blockWrapper) => {
+              // Each block has a transactions array
+              return sum + (blockWrapper.block.value.transactions?.length || 0)
+            }, 0)
+            
+          }
           
-          logMessage(`[ORDINAL MONITOR] [${timestamp}] Ordinal changed: ${previousOrdinal} → ${currentOrdinal} (change: +${change}) | Total test time: ${formatTime(totalElapsed)} | Time since last change: ${formatTime(timeSinceLastChange)}`)
+          logMessage(`[ORDINAL MONITOR] [${timestamp}] Ordinal changed: ${previousOrdinal} → ${currentOrdinal} (change: +${change}) 
+            | Total test time: ${formatTime(totalElapsed)} | Time since last change: ${formatTime(timeSinceLastChange)}
+            | Total blocks: ${totalBlocks} | Total transactions: ${totalTransactions}`)
           
           // Track this delta
           ordinalDeltas.push({
@@ -285,6 +302,8 @@ const bulkSubmitTest = async () => {
   
   let transactionCount = 0
   const submittedTransactions = []
+
+  submit_delay = 4000;
   
   // Submit transactions rotating through available accounts
   for (let i = 0; i < numTransactionsToSend; i++) {
@@ -332,7 +351,7 @@ const bulkSubmitTest = async () => {
     // Wait 5 seconds before next transaction (unless it's the last one)
     if (i < numTransactionsToSend - 1) {
       const elapsedTime = Date.now() - startTime
-      const waitTime = Math.max(0, 5000 - elapsedTime)
+      const waitTime = Math.max(0, submit_delay - elapsedTime)
       if (waitTime > 0) {
         await sleep(waitTime)
       }

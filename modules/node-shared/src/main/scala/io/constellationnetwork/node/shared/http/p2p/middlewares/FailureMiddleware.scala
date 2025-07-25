@@ -17,11 +17,11 @@ object FailureMiddleware {
     }.flatMap {
       case Some(failTime) =>
         Clock[F].monotonic.flatMap { monotonic =>
-        Clock[F].realTime.flatMap { currentTime =>
-          val currentTimeSeconds = currentTime.toSeconds
-          if (currentTimeSeconds > failTime) {
-            println(s"FailureMiddleware: Simulating failure at ${currentTimeSeconds}s, monotonic=${monotonic.toSeconds}s")
-            Async[F].sleep(300.seconds)
+          Clock[F].realTime.flatMap { currentTime =>
+            val currentTimeSeconds = currentTime.toSeconds
+            if (currentTimeSeconds > failTime) {
+              println(s"FailureMiddleware: Simulating failure at ${currentTimeSeconds}s, monotonic=${monotonic.toSeconds}s")
+              Async[F].sleep(300.seconds)
             } else {
               Async[F].unit
             }
