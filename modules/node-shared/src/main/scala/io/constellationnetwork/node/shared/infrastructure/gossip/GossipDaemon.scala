@@ -24,7 +24,6 @@ import io.constellationnetwork.security.{Hashed, HasherSelector}
 
 import eu.timepit.refined.auto._
 import fs2.Stream
-import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait GossipDaemon[F[_]] {

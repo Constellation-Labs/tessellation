@@ -90,10 +90,7 @@ const submitTransaction = async (fromAccount, toAddress, amount = 1, fee = 0) =>
   try {
     const result = await fromAccount.transferDag(toAddress, amount, fee)
 
-    if (typeof result === 'object' && result !== null) {
-      hash = result.hash
-    }
-    
+    let hash = result.hash
     // logMessage(`[DEBUG] Transaction hash extracted: ${hash}`)
     return hash
   } catch (error) {
@@ -186,9 +183,9 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
               // Each block has a transactions array
               return sum + (blockWrapper.block.value.transactions?.length || 0)
             }, 0)
-            proofLen = snapshot.proofs.length
+            const proofLen = snapshot.proofs.length
             numSignersAll.push(proofLen)
-            numSigners = snapshot.proofs.length
+            numSigners = proofLen
           }
           
           logMessage(`[ORDINAL] [${timestamp}] From: ${previousOrdinal} → ${currentOrdinal} (change: +${change}) time: ${formatTime(totalElapsed)} | TimeDelta: ${formatTime(timeSinceLastChange)} blocks: ${totalBlocks} | transactions: ${totalTransactions} | signers: ${numSigners}`)
