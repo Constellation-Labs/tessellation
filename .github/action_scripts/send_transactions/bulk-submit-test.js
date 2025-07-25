@@ -175,6 +175,7 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
           const snapshot = await fetchSnapshot(l0Url, currentOrdinal)
           var totalTransactions = "?";
           var totalBlocks = "?";
+          var numSigners = "?";
           if (snapshot.value) {
                         // Get total number of blocks
             totalBlocks = snapshot.value.blocks.length
@@ -184,7 +185,7 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
               // Each block has a transactions array
               return sum + (blockWrapper.block.value.transactions?.length || 0)
             }, 0)
-            
+            numSigners = snapshot.proofs.length
           }
           
           logMessage(`[ORDINAL MONITOR] [${timestamp}] Ordinal changed: ${previousOrdinal} → ${currentOrdinal} (change: +${change}) 
