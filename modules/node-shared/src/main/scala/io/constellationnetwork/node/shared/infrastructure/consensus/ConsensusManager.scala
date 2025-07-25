@@ -164,29 +164,20 @@ object ConsensusManager {
           )
 
       private def scheduleFacility: F[Unit] =
-        S.supervise {
-          // FIX: Make time trigger run continuously instead of just once
-          // Previously, the time trigger would only fire once and then stop, causing consensus
-          // to stall when peers timed out. This continuous loop ensures consensus attempts
-          // continue even if individual rounds fail due to network issues or peer timeouts.
-          def runTimeTriggerLoop: F[Unit] = for {
-            nextTimeValue <- Clock[F].monotonic.map(_ + config.timeTriggerInterval)
-            _ <- consensusStorage.setTimeTrigger(nextTimeValue)
-            _ <- Temporal[F].sleep(config.timeTriggerInterval)
-            maybeTimeTrigger <- consensusStorage.getTimeTrigger
-            currentTime <- Clock[F].monotonic
-            _ <- Applicative[F]
-              .whenA(maybeTimeTrigger.exists(currentTime >= _)) {
-                logger.debug(s"Time trigger firing at ${currentTime}") >>
-                  internalFacilitateWith(TimeTrigger.some)
-              }
-            _ <- runTimeTriggerLoop // Continue the loop recursively
-          } yield ()
+        Clock[F].monotonic.map(_ + config.timeTriggerInterval).flatMap { nextTimeValue =>
+          consensusStorage.setTimeTrigger(nextTimeValue) >>
+            S.supervise {
+              val condTriggerWithTime = for {
+                maybeTimeTrigger <- consensusStorage.getTimeTrigger
+                currentTime <- Clock[F].monotonic
+                _ <- Applicative[F]
+                  .whenA(maybeTimeTrigger.exists(currentTime >= _))(internalFacilitateWith(TimeTrigger.some))
+              } yield ()
 
-          runTimeTriggerLoop
-            .handleErrorWith(logger.error(_)(s"Error in time trigger loop, restarting"))
-            .foreverM // Ensure it runs forever even if errors occur
-        }.void
+              Temporal[F].sleep(config.timeTriggerInterval) >> condTriggerWithTime
+                .handleErrorWith(logger.error(_)(s"Error triggering consensus with time trigger"))
+            }.void
+        }
 
       def withdrawFromConsensus: F[Unit] =
         for {
