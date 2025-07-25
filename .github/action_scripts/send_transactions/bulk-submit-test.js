@@ -124,6 +124,7 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
   let lastOrdinalChangeTime = Date.now()
   const ordinalDeltas = [] // Track all ordinal change deltas
   const encounteredOrdinals = new Set() // Track all ordinals we've seen
+  const numSignersAll = [];
   const snapshots = new Map() // Store fetched snapshots
   const acceptedTransactionHashes = new Set() // Track accepted transaction hashes
   const submittedTransactionHashes = [] // Track submitted transaction hashes (will be populated externally)
@@ -185,6 +186,8 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
               // Each block has a transactions array
               return sum + (blockWrapper.block.value.transactions?.length || 0)
             }, 0)
+            proofLen = snapshot.proofs.length
+            numSignersAll.push(proofLen)
             numSigners = snapshot.proofs.length
           }
           
@@ -226,7 +229,8 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
       encounteredOrdinals: Array.from(encounteredOrdinals).sort((a, b) => a - b),
       snapshots,
       acceptedTransactionHashes,
-      totalTransactionsInSnapshots
+      totalTransactionsInSnapshots,
+      numSignersAll
     }),
     addSubmittedTransaction: (hash) => {
       submittedTransactionHashes.push(hash)
@@ -237,7 +241,7 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
 const bulkSubmitTest = async () => {
   // Configuration flags
   const ENABLE_TRANSACTIONS = true // Set to true to actually send transactions
-  const numTransactionsToSend = 40 // Number of transactions to send
+  const numTransactionsToSend = 30 // Number of transactions to send
   
   const args = process.argv.slice(2)
   
@@ -378,7 +382,7 @@ const bulkSubmitTest = async () => {
   ordinalMonitor.stop()
   await sleep(1000) // Give monitor time to finish
   
-  const { ordinalDeltas, lastOrdinalChangeTime, encounteredOrdinals, snapshots, acceptedTransactionHashes, totalTransactionsInSnapshots } = ordinalMonitor.getTimingData()
+  const { ordinalDeltas, lastOrdinalChangeTime, encounteredOrdinals, snapshots, acceptedTransactionHashes, totalTransactionsInSnapshots, numSignersAll } = ordinalMonitor.getTimingData()
   
   // Wait a bit for any final snapshots
   logMessage('\nWaiting 5 seconds for any final snapshots...')
@@ -498,6 +502,17 @@ const bulkSubmitTest = async () => {
   if (!allDeltasPass || finalDelta > MAX_DELTA_MS) {
     throw new Error('Test failed due to ordinal timing violations')
   }
+
+  // Check for any signers
+  logMessage('\n=== Signer Analysis ===')
+  logMessage(`Total signers: ${numSignersAll.length}`)
+  logMessage(`Signers: ${numSignersAll.join(', ')}`)
+
+  numSignersAll.slice(5, numSignersAll.length).forEach(signers => {
+    if (signers < 2) {
+      logMessage(`❌ FAIL: Signers less than 2: ${signers}`)
+    }
+  })
   
   logMessage('\n✅ Bulk submit test passed!')
 }

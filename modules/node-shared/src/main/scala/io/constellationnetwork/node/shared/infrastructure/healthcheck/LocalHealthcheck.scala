@@ -30,8 +30,8 @@ object LocalHealthcheck {
   def make[F[_]: Async: Supervisor](nodeClient: NodeClient[F], clusterStorage: ClusterStorage[F]): F[LocalHealthcheck[F]] = {
     def mkPeersR = MapRef.ofConcurrentHashMap[F, PeerId, F[Fiber[F, Throwable, Unit]]]()
     // TODO: Attempt a stricter retry policy to prevent dead forks:
-    // def retryPolicy: RetryPolicy[F] = RetryPolicies.limitRetries[F](3).join(RetryPolicies.constantDelay[F](2.seconds))
-    def retryPolicy: RetryPolicy[F] = RetryPolicies.fibonacciBackoff[F](2.seconds)
+    def retryPolicy: RetryPolicy[F] = RetryPolicies.limitRetries[F](3).join(RetryPolicies.constantDelay[F](5.seconds))
+    // def retryPolicy: RetryPolicy[F] = RetryPolicies.fibonacciBackoff[F](2.seconds)
 
     mkPeersR.map(make(_, retryPolicy, nodeClient, clusterStorage))
   }
