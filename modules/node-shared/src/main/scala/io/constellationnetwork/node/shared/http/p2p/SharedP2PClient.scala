@@ -21,7 +21,7 @@ object SharedP2PClient {
       SignClient.make[F](client),
       ClusterClient.make[F](client, session),
       GossipClient.make[F](client, session, sharedConfig.gossip.timeouts),
-      NodeClient.make[F](client, session),
+      NodeClient.make[F](client, session, sharedConfig.healthcheck.timeouts.client),
       TrustClient.make[F](client, session)
     ) {}
 

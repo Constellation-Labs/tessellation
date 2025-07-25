@@ -21,19 +21,34 @@ case class ConsensusResources[A, Kind](
   withdrawalsMap: Map[PeerId, Kind],
   ackKinds: Set[Kind],
   artifacts: Map[Hash, A],
-  updatedAt: FiniteDuration
+  updatedAt: FiniteDuration,
+  createdAt: FiniteDuration,
+  facilities: Option[FiniteDuration],
+  facilitiesLatestUnique: Option[FiniteDuration],
+  proposals: Option[FiniteDuration],
+  proposalsLatestUnique: Option[FiniteDuration],
+  signatures: Option[FiniteDuration],
+  signaturesLatestUnique: Option[FiniteDuration]
 )
 
 object ConsensusResources {
   def empty[F[_]: Async, A, Kind]: F[ConsensusResources[A, Kind]] = for {
-    time <- Clock[F].monotonic
+    updatedAt <- Clock[F].realTime
+    createdAt <- Clock[F].realTime
     consensusResources = ConsensusResources(
       Map.empty[PeerId, PeerDeclarations],
       Map.empty[(PeerId, Kind), Set[PeerId]],
       Map.empty[PeerId, Kind],
       Set.empty[Kind],
       Map.empty[Hash, A],
-      time
+      updatedAt,
+      createdAt,
+      None,
+      None,
+      None,
+      None,
+      None,
+      None
     )
   } yield consensusResources
 }

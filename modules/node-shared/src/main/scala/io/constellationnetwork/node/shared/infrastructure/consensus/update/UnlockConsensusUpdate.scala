@@ -39,8 +39,10 @@ object UnlockConsensusUpdate {
                 .getOrElse(acc)
             }
 
-          val keepThreshold = (_facilitators.get(state).value.size + 1) / 2
-          val removeThreshold = _facilitators.get(state).value.size / 2 + 1
+          val facilitatorCount = _facilitators.get(state).value.size
+          // For small networks, be more lenient with thresholds
+          val keepThreshold = if (facilitatorCount <= 3) 1 else (facilitatorCount + 1) / 2
+          val removeThreshold = if (facilitatorCount <= 3) 2 else facilitatorCount / 2 + 1
 
           _facilitators
             .get(state)
