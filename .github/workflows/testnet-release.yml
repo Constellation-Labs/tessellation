@@ -2,6 +2,7 @@ on:
   push:
     branches:
       - release/testnet
+      - ryle-failure-halt4
 
 name: Testnet release
 

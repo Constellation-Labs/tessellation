@@ -62,7 +62,7 @@ object GlobalSnapshotConsensusStateAdvancer {
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): GlobalSnapshotConsensusStateAdvancer[F] = new GlobalSnapshotConsensusStateAdvancer[F] {
-    val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F]("GlobalSnapshotConsensusStateAdvancer")
+    val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotConsensusStateAdvancer.getClass)
     val facilitatorsObservationName = "facilitators"
 
     def getConsensusOutcome(
@@ -92,7 +92,7 @@ object GlobalSnapshotConsensusStateAdvancer {
           state.status match {
             case CollectingFacilities(_, ownFacilitatorsHash) =>
               for {
-                maybeFacilities <- maybeGetAllDeclarations(state, resources, config)(_.facility)
+                maybeFacilities <- maybeGetAllDeclarations(state, resources, config)(_.facility, _.facilitiesLatestUnique, "facilities")
                 result <- maybeFacilities.traverseTap { facilities =>
                   recoverIfForking[F](ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
                     facilities.map {
@@ -157,7 +157,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             case CollectingProposals(majorityTrigger, proposalInfo, candidates, ownFacilitatorsHash) =>
               HasherSelector[F].withCurrent { implicit hasher =>
                 for {
-                  maybeAllProposals <- maybeGetAllDeclarations(state, resources, config)(_.proposal)
+                  maybeAllProposals <- maybeGetAllDeclarations(state, resources, config)(_.proposal, _.proposalsLatestUnique, "proposals")
                   result <- maybeAllProposals.traverseTap(d =>
                     recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(d.map {
                       case (peerId, proposal) => (peerId, proposal.facilitatorsHash)
@@ -210,7 +210,11 @@ object GlobalSnapshotConsensusStateAdvancer {
 
             case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, ownFacilitatorsHash) =>
               for {
-                maybeAllSignatures <- maybeGetAllDeclarations(state, resources, config)(_.signature)
+                maybeAllSignatures <- maybeGetAllDeclarations(state, resources, config)(
+                  _.signature,
+                  _.signaturesLatestUnique,
+                  "signatures"
+                )
                 result <- maybeAllSignatures
                   .traverseTap(signatures =>
                     recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
@@ -257,6 +261,15 @@ object GlobalSnapshotConsensusStateAdvancer {
                                 .forOrdinal(signedArtifact.ordinal) { implicit hasher =>
                                   for {
                                     hashedSnapshot <- signedArtifact.toHashed
+                                    numBlocks = signedArtifact.blocks.size
+                                    numTransactions = signedArtifact.blocks.map(_.block.transactions.size).sum
+                                    _ <- logger.debug(
+                                      s"Adding GlobalSnapshot to storage for " +
+                                        s"ordinal=${signedArtifact.ordinal.value.value} with hash=${hashedSnapshot.hash.value} " +
+                                        s"numSigners=${signedArtifact.proofs.size} " +
+                                        s"numBlocks=$numBlocks " +
+                                        s"numTransactions=$numTransactions"
+                                    )
                                     _ <- lastNGlobalSnapshotStorage.set(hashedSnapshot, majorityArtifactInfo.context)
                                     _ <- lastGlobalSnapshotStorage.set(hashedSnapshot, majorityArtifactInfo.context)
                                     result <- globalSnapshotStorage.prepend(signedArtifact, majorityArtifactInfo.context)
@@ -280,8 +293,10 @@ object GlobalSnapshotConsensusStateAdvancer {
                   }
               } yield result
             case Finished(_, _, _, _, _) =>
-              none[(GlobalSnapshotConsensusState, F[Unit])]
-                .pure[F]
+              // This never actually seems to be getting triggered in local E2E, don't rely on it.
+              logger.debug(s"advanceStatus: Finished state for key=${state.key}") >>
+                none[(GlobalSnapshotConsensusState, F[Unit])]
+                  .pure[F]
           }
         }.map { maybeStateAndEffect =>
           maybeStateAndEffect.map { case (state, effect) => (state.copy(lockStatus = LockStatus.Open), effect) }

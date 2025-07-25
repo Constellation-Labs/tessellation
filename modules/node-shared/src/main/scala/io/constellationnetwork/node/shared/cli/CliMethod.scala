@@ -52,6 +52,7 @@ trait CliMethod {
   def nodeSharedConfig(c: SharedConfigReader): SharedConfig = SharedConfig(
     environment,
     c.gossip,
+    c.healthcheck,
     httpConfig,
     c.leavingDelay,
     c.stateAfterJoining,

@@ -22,6 +22,7 @@ import io.chrisdavenport.mapref.MapRef
 import io.circe.Encoder
 import monocle.Lens
 import monocle.syntax.all._
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kind] {
   def getState(key: Key): F[Option[ConsensusState[Key, Status, Outcome, Kind]]]
@@ -142,6 +143,8 @@ object ConsensusStorage {
     } yield
       new ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind] {
 
+        private val logger = Slf4jLogger.getLogger[F]
+
         def getState(key: Key): F[Option[ConsensusState[Key, Status, Outcome, Kind]]] =
           statesR(key).get
 
@@ -164,6 +167,7 @@ object ConsensusStorage {
           stateUpdateSemaphore.permit.use { _ =>
             for {
               (maybeState, setter) <- statesR(key).access
+              _ <- logger.trace(s"condModifyState for key=$key, stateExists=${maybeState.isDefined}")
               maybeResult <- modifyStateFn(maybeState)
 
               maybeB <- maybeResult.traverse {
@@ -293,18 +297,60 @@ object ConsensusStorage {
           } yield bound.toMap
 
         def addFacility(peerId: PeerId, key: Key, facility: Facility): F[Option[ConsensusResources[Artifact, Kind]]] =
-          updatePeerDeclaration(key, peerId) { peerDeclaration =>
-            peerDeclaration.focus(_.facility).modify(_.orElse(facility.some))
+          Clock[F].realTime.flatMap { realTime =>
+            logger.trace(s"addFacility called for key=$key, peerId=$peerId, facility=$facility") >>
+              updatePeerDeclarationWithChange(key, peerId, "facility") { peerDeclaration =>
+                peerDeclaration.focus(_.facility).modify(_.orElse(facility.some))
+              } { resources =>
+                resources.copy(facilitiesLatestUnique = realTime.some)
+              }.flatMap { result =>
+                result match {
+                  case Some(resources) if resources.facilities.isEmpty =>
+                    logger.trace(s"Setting initial facilities timestamp for key=$key") >>
+                      updateResources(key) { r =>
+                        r.copy(facilities = realTime.some)
+                      }.as(result)
+                  case _ => result.pure[F]
+                }
+              }
           }
 
         def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[Option[ConsensusResources[Artifact, Kind]]] =
-          updatePeerDeclaration(key, peerId) { peerDeclaration =>
-            peerDeclaration.focus(_.proposal).modify(_.orElse(proposal.some))
+          Clock[F].realTime.flatMap { realTime =>
+            logger.trace(s"addProposal called for key=$key, peerId=$peerId, proposal=$proposal") >>
+              updatePeerDeclarationWithChange(key, peerId, "proposal") { peerDeclaration =>
+                peerDeclaration.focus(_.proposal).modify(_.orElse(proposal.some))
+              } { resources =>
+                resources.copy(proposalsLatestUnique = realTime.some)
+              }.flatMap { result =>
+                result match {
+                  case Some(resources) if resources.proposals.isEmpty =>
+                    logger.trace(s"Setting initial proposals timestamp for key=$key") >>
+                      updateResources(key) { r =>
+                        r.copy(proposals = realTime.some)
+                      }.as(result)
+                  case _ => result.pure[F]
+                }
+              }
           }
 
         def addSignature(peerId: PeerId, key: Key, signature: MajoritySignature): F[Option[ConsensusResources[Artifact, Kind]]] =
-          updatePeerDeclaration(key, peerId) { peerDeclaration =>
-            peerDeclaration.focus(_.signature).modify(_.orElse(signature.some))
+          Clock[F].realTime.flatMap { realTime =>
+            logger.trace(s"addSignature called for key=$key, peerId=$peerId, signature=$signature") >>
+              updatePeerDeclarationWithChange(key, peerId, "signature") { peerDeclaration =>
+                peerDeclaration.focus(_.signature).modify(_.orElse(signature.some))
+              } { resources =>
+                resources.copy(signaturesLatestUnique = realTime.some)
+              }.flatMap { result =>
+                result match {
+                  case Some(resources) if resources.signatures.isEmpty =>
+                    logger.trace(s"Setting initial signatures timestamp for key=$key") >>
+                      updateResources(key) { r =>
+                        r.copy(signatures = realTime.some)
+                      }.as(result)
+                  case _ => result.pure[F]
+                }
+              }
           }
 
         def addBinarySignature(peerId: PeerId, key: Key, signature: BinarySignature): F[Option[ConsensusResources[Artifact, Kind]]] =
@@ -353,6 +399,51 @@ object ConsensusStorage {
             }
           }
 
+        private def updatePeerDeclarationWithChange(key: Key, peerId: PeerId, label: String = "")(
+          f: PeerDeclarations => PeerDeclarations
+        )(
+          onUniqueChange: ConsensusResources[Artifact, Kind] => ConsensusResources[Artifact, Kind]
+        ): F[Option[ConsensusResources[Artifact, Kind]]] = {
+          var wasUnique = false
+          var oldDecl: Option[PeerDeclarations] = None
+          var newDecl: Option[PeerDeclarations] = None
+
+          updateResources(key) { resources =>
+            val currentDeclaration = resources.peerDeclarationsMap.get(peerId).getOrElse(PeerDeclarations.empty)
+            val newDeclaration = f(currentDeclaration)
+            oldDecl = Some(currentDeclaration)
+            newDecl = Some(newDeclaration)
+
+            if (currentDeclaration != newDeclaration) {
+              wasUnique = true
+              onUniqueChange(
+                resources
+                  .focus(_.peerDeclarationsMap)
+                  .at(peerId)
+                  .replace(newDeclaration.some)
+              )
+            } else {
+              resources
+            }
+          }.flatTap { result =>
+            logger.trace(
+              s"updatePeerDeclarationWithChange for key=$key, peerId=$peerId: " +
+                s"wasUnique=$wasUnique, result=${result.isDefined}, " +
+                s"oldDecl=$oldDecl, newDecl=$newDecl"
+            ) >> (result match {
+              case Some(resources) if wasUnique =>
+                Clock[F].realTime.flatMap { realTime =>
+                  val deltaTime = realTime - resources.createdAt
+                  logger.debug(
+                    s"Unique Event Delta: label=$label key=$key peerId=$peerId " +
+                      s"time=${realTime.toSeconds} deltaTime=${deltaTime.toSeconds} "
+                  )
+                }
+              case _ => Async[F].unit
+            })
+          }
+        }
+
         private def updatePeerDeclaration(key: Key, peerId: PeerId)(
           f: PeerDeclarations => PeerDeclarations
         ): F[Option[ConsensusResources[Artifact, Kind]]] =
@@ -377,12 +468,13 @@ object ConsensusStorage {
 
             if (allowUpdate) {
               for {
-                now <- Clock[F].monotonic
+                now <- Clock[F].realTime
                 emptyResources <- ConsensusResources.empty[F, Artifact, Kind]
                 updated <- resourcesR(key).updateAndGet { maybeResource =>
                   val current = maybeResource.getOrElse(emptyResources)
                   Some(f(current).copy(updatedAt = now))
                 }
+                _ <- logger.trace(s"Updated resources for key: $key, updated: $now")
               } yield updated
             } else {
               none[ConsensusResources[Artifact, Kind]].pure[F]
