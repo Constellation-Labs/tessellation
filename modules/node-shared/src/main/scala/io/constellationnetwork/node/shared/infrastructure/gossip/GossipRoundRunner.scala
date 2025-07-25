@@ -109,9 +109,9 @@ object GossipRoundRunner {
                   .tryOffer(peer)
                   .ifM(
                     Applicative[F].unit,
-                    Applicative[F].unit
+                    // Applicative[F].unit
                     // logger.debug(s"Queued peer for gossip round: {peer=${peer.show}}"), >> logger.debug(s"Queue full, removed peer: {peer=${peer.show}}
-                    // selectedPeersR.update(_.excl(peer))
+                    selectedPeersR.update(_.excl(peer))
                   ),
                 Applicative[F].unit
                 // logger.debug(s"Peer already selected, skipping: {peer=${peer.show}}")

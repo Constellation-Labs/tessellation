@@ -18,15 +18,15 @@ object FailureMiddleware {
       case Some(failTime) =>
         // Monotonic is off by about 30 seconds here, ideal to switch to in future.
         // Clock[F].monotonic.flatMap { monotonic =>
-          Clock[F].realTime.flatMap { currentTime =>
-            val currentTimeSeconds = currentTime.toSeconds
-            if (currentTimeSeconds > failTime) {
-              Async[F].sleep(300.seconds)
-            } else {
-              Async[F].unit
-            }
+        Clock[F].realTime.flatMap { currentTime =>
+          val currentTimeSeconds = currentTime.toSeconds
+          if (currentTimeSeconds > failTime) {
+            Async[F].sleep(300.seconds)
+          } else {
+            Async[F].unit
           }
-        // }
+        }
+      // }
       case None =>
         Async[F].unit
     }

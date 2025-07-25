@@ -188,9 +188,7 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
             numSigners = snapshot.proofs.length
           }
           
-          logMessage(`[ORDINAL MONITOR] [${timestamp}] Ordinal changed: ${previousOrdinal} → ${currentOrdinal} (change: +${change}) 
-            | Total test time: ${formatTime(totalElapsed)} | Time since last change: ${formatTime(timeSinceLastChange)}
-            | Total blocks: ${totalBlocks} | Total transactions: ${totalTransactions}`)
+          logMessage(`[ORDINAL] [${timestamp}] From: ${previousOrdinal} → ${currentOrdinal} (change: +${change}) time: ${formatTime(totalElapsed)} | TimeDelta: ${formatTime(timeSinceLastChange)} blocks: ${totalBlocks} | transactions: ${totalTransactions} | signers: ${numSigners}`)
           
           // Track this delta
           ordinalDeltas.push({
@@ -239,7 +237,7 @@ const startOrdinalMonitor = async (l0Url, testStartTime) => {
 const bulkSubmitTest = async () => {
   // Configuration flags
   const ENABLE_TRANSACTIONS = true // Set to true to actually send transactions
-  const numTransactionsToSend = 20 // Number of transactions to send
+  const numTransactionsToSend = 40 // Number of transactions to send
   
   const args = process.argv.slice(2)
   
@@ -291,7 +289,8 @@ const bulkSubmitTest = async () => {
     logMessage('Skipping balance checks in debug mode')
   }
   
-  logMessage(`Starting bulk submit test. Will submit ${numTransactionsToSend} transactions, one every 5 seconds.`)
+  submit_delay = 4000;
+  logMessage(`Starting bulk submit test. Will submit ${numTransactionsToSend} transactions, one every ${submit_delay} milliseconds.`)
   logMessage(`Transaction sending is ${ENABLE_TRANSACTIONS ? 'ENABLED' : 'DISABLED (debug mode)'}`)
   
   // Track test start time
@@ -304,7 +303,6 @@ const bulkSubmitTest = async () => {
   let transactionCount = 0
   const submittedTransactions = []
 
-  submit_delay = 4000;
   
   // Submit transactions rotating through available accounts
   for (let i = 0; i < numTransactionsToSend; i++) {
