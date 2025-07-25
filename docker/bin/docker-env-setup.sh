@@ -75,10 +75,10 @@ for i in 0 1 2; do
 done
 
 if [ "$SET_FAILURE_BREAKPOINT_TIME" == "true" ]; then
-  # Default failure time +90 seconds, adjust if needed.
-  FAILURE_TIME=$(($(date +%s) + 90))
+  # Default failure time +100 seconds, adjust if needed.
+  FAILURE_TIME=$(($(date +%s) + 100))
   echo "CL_TEST_SIMULATE_GOSSIP_FAIL_TIME=$FAILURE_TIME" >> ./nodes/1/.env
-  echo "Setting gossip failure simulation to trigger at $(date -d @$FAILURE_TIME 2>/dev/null || date -r $FAILURE_TIME) (90 seconds from now)"
+  echo "Setting gossip failure simulation to trigger at $(date -d @$FAILURE_TIME 2>/dev/null || date -r $FAILURE_TIME) (100 seconds from now) $FAILURE_TIME"
 fi
 
 
