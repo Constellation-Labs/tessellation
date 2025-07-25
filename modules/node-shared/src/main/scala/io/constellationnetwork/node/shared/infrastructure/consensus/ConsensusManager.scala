@@ -142,10 +142,6 @@ object ConsensusManager {
               .trySetInitialConsensusOutcome(outcome)
               .ifM(
                 nodeStorage.tryModifyState(Observing, WaitingForReady) >>
-                  // FIX: Start time trigger immediately after download
-                  // Previously, time trigger was only scheduled after successful consensus completion.
-                  // If the first consensus attempt failed, no periodic retry mechanism was active.
-                  scheduleFacility >>
                   internalFacilitateWith(none),
                 new Throwable("Error initializing consensus storage").raiseError[F, Unit]
               )
