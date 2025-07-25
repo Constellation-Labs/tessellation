@@ -66,8 +66,9 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
       started = resources.createdAt
       latestUnique = staleTimer(resources)
       uniqueDelta = latestUnique.map(_ - started)
+      anyLastUpdate = resources.updatedAt
       updatedAtDelta = now - resources.updatedAt
-      elapsed = now - latestUnique.getOrElse(started)
+      elapsed = now - latestUnique.getOrElse(anyLastUpdate)
       isStale = elapsed > config.peersDeclarationTimeout
       _ <- logger.info(
         s"Checking staleness: " +

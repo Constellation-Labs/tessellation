@@ -92,7 +92,7 @@ object CurrencySnapshotConsensusStateAdvancer {
               state.status match {
                 case CollectingFacilities(_, ownFacilitatorsHash) =>
                   for {
-                    maybeFacilities <- maybeGetAllDeclarations(state, resources, config)(_.facility, _.facilitiesLatestUnique)
+                    maybeFacilities <- maybeGetAllDeclarations(state, resources, config)(_.facility, _.facilitiesLatestUnique, "facilities")
                     result <- maybeFacilities.traverseTap { facilities =>
                       recoverIfForking[F](ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
                         facilities.map {
@@ -147,7 +147,7 @@ object CurrencySnapshotConsensusStateAdvancer {
 
                 case CollectingProposals(majorityTrigger, proposalInfo, candidates, ownFacilitatorsHash) =>
                   for {
-                    maybeAllProposals <- maybeGetAllDeclarations(state, resources, config)(_.proposal, _.proposalsLatestUnique)
+                    maybeAllProposals <- maybeGetAllDeclarations(state, resources, config)(_.proposal, _.proposalsLatestUnique, "proposals")
                     result <- maybeAllProposals.traverseTap(d =>
                       recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(d.map {
                         case (peerId, proposal) => (peerId, proposal.facilitatorsHash)
@@ -195,8 +195,8 @@ object CurrencySnapshotConsensusStateAdvancer {
 
                 case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, ownFacilitatorsHash) =>
                   for {
-                    maybeAllSignatures <- maybeGetAllDeclarations(state, resources, config)(_.signature, _.signaturesLatestUnique)
-                    maybeAllFacilities <- maybeGetAllDeclarations(state, resources, config)(_.facility, _.facilitiesLatestUnique)
+                    maybeAllSignatures <- maybeGetAllDeclarations(state, resources, config)(_.signature, _.signaturesLatestUnique, "signatures")
+                    maybeAllFacilities <- maybeGetAllDeclarations(state, resources, config)(_.facility, _.facilitiesLatestUnique, "facilities")
                     maybeGlobalSnapshotOrdinal =
                       maybeAllFacilities
                         .map(_.map { case (_, f) => f.lastGlobalSnapshotOrdinal })
@@ -278,7 +278,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                   {
                     for {
                       maybeAllBinarySignatures <- OptionT.liftF(
-                        maybeGetAllDeclarations(state, resources, config)(_.binarySignature, _.signaturesLatestUnique)
+                        // TODO: Implement binary signature unique event stale check.
+                        maybeGetAllDeclarations(state, resources, config)(_.binarySignature, _ => None, "binarySignatures")
                       )
                       binarySignatures <- OptionT.fromOption[F](maybeAllBinarySignatures)
                       _ <- OptionT.liftF(
