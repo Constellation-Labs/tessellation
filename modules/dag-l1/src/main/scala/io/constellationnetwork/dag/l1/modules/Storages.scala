@@ -13,6 +13,7 @@ import io.constellationnetwork.dag.l1.domain.transaction.{ContextualTransactionV
 import io.constellationnetwork.dag.l1.infrastructure.address.storage.AddressStorage
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage, SessionStorage}
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
+import io.constellationnetwork.node.shared.domain.globalAlignment.GlobalL0AlignmentStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockStorage
@@ -48,6 +49,7 @@ object Storages {
       allowSpendBlockStorage <- AllowSpendBlockStorage.make[F]
       tokenLockStorage <- TokenLockStorage.make[F](TokenLockReference.empty, contextualTokenLockValidator)
       tokenLockBlockStorage <- TokenLockBlockStorage.make[F]
+      globalL0AlignmentStorage <- GlobalL0AlignmentStorage.make[F]
     } yield
       new Storages[F, P, S, SI] {
         val address = addressStorage
@@ -64,6 +66,7 @@ object Storages {
         val allowSpendBlock = allowSpendBlockStorage
         val tokenLock = tokenLockStorage
         val tokenLockBlock = tokenLockBlockStorage
+        val globalL0Alignment = globalL0AlignmentStorage
       }
 }
 
@@ -82,4 +85,5 @@ trait Storages[F[_], P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]] {
   val allowSpendBlock: AllowSpendBlockStorage[F]
   val tokenLock: TokenLockStorage[F]
   val tokenLockBlock: TokenLockBlockStorage[F]
+  val globalL0Alignment: GlobalL0AlignmentStorage[F]
 }

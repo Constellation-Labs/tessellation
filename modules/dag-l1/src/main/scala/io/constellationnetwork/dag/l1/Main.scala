@@ -114,7 +114,8 @@ object Main
         sharedServices.globalSnapshotContextFns,
         Hasher.forKryo[IO],
         services.globalL0.pullGlobalSnapshot,
-        services.globalL0
+        services.globalL0,
+        storages.globalL0Alignment
       )
       programs = Programs.make(sharedPrograms, p2pClient, storages, snapshotProcessor)
 
@@ -187,7 +188,8 @@ object Main
           queues,
           validators.allowSpend,
           keyPair,
-          nodeId
+          nodeId,
+          storages.globalL0Alignment
         )
       }
 
@@ -206,7 +208,8 @@ object Main
           queues,
           validators.tokenLock,
           keyPair,
-          nodeId
+          nodeId,
+          storages.globalL0Alignment
         )
       }
 

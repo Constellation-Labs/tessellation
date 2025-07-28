@@ -21,7 +21,7 @@ import scala.concurrent.duration.DurationInt
 import io.constellationnetwork.dag.l1.config.types.AppConfig
 import io.constellationnetwork.dag.l1.domain.consensus.block.BlockConsensusInput._
 import io.constellationnetwork.dag.l1.domain.consensus.block.BlockConsensusOutput.{CleanedConsensuses, FinalBlock, NoData}
-import io.constellationnetwork.dag.l1.domain.consensus.block.Validator.{canStartOwnConsensus, isPeerInputValid}
+import io.constellationnetwork.dag.l1.domain.consensus.block.Validator.{canStartInspectionTrigger, canStartOwnConsensus, isPeerInputValid}
 import io.constellationnetwork.dag.l1.domain.consensus.block._
 import io.constellationnetwork.dag.l1.http.p2p.P2PClient
 import io.constellationnetwork.dag.l1.modules._
@@ -79,6 +79,14 @@ class StateChannel[
 
   private val inspectionTriggerInput: Stream[F, OwnerBlockConsensusInput] = Stream
     .awakeEvery(5.seconds)
+    .evalMap { _ =>
+      canStartInspectionTrigger(
+        storages.lastSnapshot.getOrdinal
+      ).handleErrorWith { e =>
+        logger.warn(e)("Failure checking if inspection trigger consensus can be kicked off!").map(_ => false)
+      }
+    }
+    .filter(identity)
     .as(InspectionTrigger)
 
   private val ownRoundTriggerInput: Stream[F, OwnerBlockConsensusInput] = Stream
@@ -203,8 +211,15 @@ class StateChannel[
                 HasherSelector[F].withCurrent { implicit hasher =>
                   services.block
                     .accept(signedBlock)
+                }.handleErrorWith { error =>
+                  for {
+                    _ <- logger.warn(error)(s"Failed acceptance of a block with ${hash.show}")
+                    _ <- storages.globalL0Alignment.updateShouldRedownload(
+                      value = true,
+                      reasons = List(s"Block acceptance failed for ${hash.show}: ${error.getMessage}")
+                    )
+                  } yield ()
                 }
-                  .handleErrorWith(logger.warn(_)(s"Failed acceptance of a block with ${hash.show}"))
           }
           .void
       )

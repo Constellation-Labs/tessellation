@@ -1,8 +1,7 @@
 package io.constellationnetwork.dag.l1.domain.consensus.block
 
 import cats.effect.Async
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.syntax.all._
 import cats.{Applicative, Monad}
 
 import io.constellationnetwork.dag.l1.domain.block.BlockStorage
@@ -11,6 +10,8 @@ import io.constellationnetwork.dag.l1.domain.consensus.block.storage.ConsensusSt
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionStorage
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.node.NodeState.Ready
 import io.constellationnetwork.schema.peer.PeerId
@@ -81,6 +82,22 @@ object Validator {
             if (!enoughTxs) "No transactions" else ""
           ).filter(_.nonEmpty).mkString(", ")
           logger.debug(s"Cannot start own consensus: ${reason} " + stats.toLogString)
+        }
+    } yield res
+
+  def canStartInspectionTrigger[F[_]: Async](
+    lastSnapshotOrdinalF: F[Option[SnapshotOrdinal]]
+  ): F[Boolean] =
+    for {
+      lastSnapshotOrdinal <- lastSnapshotOrdinalF
+      lastSnapshotFilled = lastSnapshotOrdinal.isDefined
+      res = lastSnapshotFilled
+      _ <-
+        Applicative[F].whenA(!res) {
+          val reason = Seq(
+            if (!lastSnapshotFilled) "Last snapshot ordinal not found" else ""
+          ).filter(_.nonEmpty).mkString(", ")
+          logger.debug(s"Cannot start inspection trigger consensus: ${reason} ")
         }
     } yield res
 
