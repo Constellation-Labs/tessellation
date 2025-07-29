@@ -7,6 +7,7 @@ import io.constellationnetwork.dag.l1.domain.address.storage.AddressStorage
 import io.constellationnetwork.dag.l1.domain.block.BlockStorage
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionStorage
 import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
+import io.constellationnetwork.node.shared.domain.globalAlignment.GlobalL0AlignmentStorage
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
@@ -30,7 +31,8 @@ object DAGSnapshotProcessor {
     globalSnapshotContextFns: SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     txHasher: Hasher[F],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    l0Service: GlobalL0Service[F]
+    l0Service: GlobalL0Service[F],
+    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F]
   ): SnapshotProcessor[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] =
     new SnapshotProcessor[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
 
@@ -63,7 +65,8 @@ object DAGSnapshotProcessor {
           blockStorage,
           lastGlobalSnapshotStorage,
           txHasher,
-          getGlobalSnapshotByOrdinal
+          getGlobalSnapshotByOrdinal,
+          globalL0AlignmentStorage
         )
           .flatMap(
             processAlignment(

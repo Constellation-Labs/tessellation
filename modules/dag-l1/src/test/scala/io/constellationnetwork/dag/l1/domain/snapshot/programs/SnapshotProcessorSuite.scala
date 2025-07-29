@@ -24,6 +24,7 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceManager
+import io.constellationnetwork.node.shared.domain.globalAlignment.GlobalL0AlignmentStorage
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAcceptanceManager
 import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralAcceptanceManager
 import io.constellationnetwork.node.shared.domain.priceOracle.PriceStateUpdater
@@ -150,6 +151,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 )
                 .asResource
 
+              globalL0AlignmentStorage <- GlobalL0AlignmentStorage.make[IO].asResource
               lastGlobalSnapshotsSyncConfig =
                 LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt.unsafeFrom(10), PosInt.unsafeFrom(5))
               lastNSnapshotStorage =
@@ -275,7 +277,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                     globalSnapshotContextFns,
                     Hasher.forKryo[IO],
                     globalL0Service.pullGlobalSnapshot,
-                    globalL0Service
+                    globalL0Service,
+                    globalL0AlignmentStorage
                   )
               }
               keys <- (

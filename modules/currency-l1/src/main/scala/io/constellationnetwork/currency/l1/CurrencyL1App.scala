@@ -153,7 +153,8 @@ abstract class CurrencyL1App(
         storages.allowSpend,
         storages.tokenLock,
         services.globalL0.pullGlobalSnapshot,
-        services.globalL0
+        services.globalL0,
+        storages.globalL0Alignment
       )
       programs = Programs
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
@@ -314,7 +315,8 @@ abstract class CurrencyL1App(
               dagL1Queues,
               validators.allowSpend,
               keyPair,
-              nodeId
+              nodeId,
+              storages.globalL0Alignment
             )
             .merge {
               TokenLock.run[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
@@ -331,7 +333,8 @@ abstract class CurrencyL1App(
                 dagL1Queues,
                 validators.tokenLock,
                 keyPair,
-                nodeId
+                nodeId,
+                storages.globalL0Alignment
               )
             }
             .merge(stateChannel.runtime)

@@ -16,6 +16,7 @@ import io.constellationnetwork.dag.l1.modules.{Queues, Services}
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
+import io.constellationnetwork.node.shared.domain.globalAlignment.GlobalL0AlignmentStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockStorage
@@ -52,7 +53,8 @@ object TokenLock {
     queues: Queues[F],
     tokenLockValidator: TokenLockValidator[F],
     selfKeyPair: KeyPair,
-    selfId: PeerId
+    selfId: PeerId,
+    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F]
   ): Stream[F, Unit] = {
 
     def logger = Slf4jLogger.getLogger[F]
@@ -159,7 +161,7 @@ object TokenLock {
       }
 
     def blockAcceptance: Stream[F, Unit] = Stream
-      .awakeEvery(1.seconds)
+      .awakeEvery(1.second)
       .evalMap { _ =>
         tokenLockBlockStorage.getWaiting.flatTap { awaiting =>
           Applicative[F].whenA(awaiting.nonEmpty) {
@@ -170,7 +172,15 @@ object TokenLock {
             case (hash, signedBlock) =>
               services.tokenLockBlock
                 .accept(signedBlock, SnapshotOrdinal.MinValue)
-                .handleErrorWith(logger.warn(_)(s"Failed acceptance of an token lock block with ${hash.show}"))
+                .handleErrorWith { error =>
+                  for {
+                    _ <- logger.warn(error)(s"Failed acceptance of a token lock block with ${hash.show}")
+                    _ <- globalL0AlignmentStorage.updateShouldRedownload(
+                      value = true,
+                      reasons = List(s"Token Lock block acceptance failed for ${hash.show}: ${error.getMessage}")
+                    )
+                  } yield ()
+                }
           }
         }.void
       }
