@@ -1,12 +1,7 @@
 package io.constellationnetwork.dag.l1
 
 import cats.effect.Async
-import cats.syntax.applicative._
-import cats.syntax.either._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.show._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import scala.concurrent.duration.DurationInt
 
@@ -30,22 +25,52 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
   storages: Storages[F, P, S, SI]
 ) {
 
-  private implicit val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLogger[F]
+  private implicit val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
+
+  private def withRetry[A](
+    operation: F[A],
+    operationName: String,
+    maxRetries: Int = 3
+  ): F[A] = {
+    import retry._
+
+    retryingOnSomeErrors(
+      policy = RetryPolicies.limitRetries[F](maxRetries),
+      isWorthRetrying = (_: Throwable) => true.pure[F], // Retry all errors
+      onError = (err: Throwable, details: RetryDetails) => logger.warn(err)(s"$operationName failed on attempt ${details.retriesSoFar + 1}")
+    )(operation).handleErrorWith { e =>
+      logger.error(e)(s"$operationName failed after $maxRetries retries") >>
+        Async[F].raiseError(e)
+    }
+  }
 
   private val l0PeerDiscovery: Stream[F, Unit] = Stream
     .awakeEvery(10.seconds)
     .evalMap { _ =>
-      storages.lastSnapshot.get.flatMap {
-        case None =>
-          storages.l0Cluster.getRandomPeer.flatMap(p => programs.l0PeerDiscovery.discoverFrom(p))
-        case Some(latestSnapshot) =>
-          programs.l0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
-      }
+      withRetry(
+        operation = services.globalL0.pullLatestSnapshot.flatMap {
+          case (latestSnapshot, _) =>
+            val peerIds = latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet)
+            programs.l0PeerDiscovery.discover(peerIds)
+        }.handleErrorWith { err =>
+          logger.warn(err)("Could not fetch latest snapshot from global L0, discovering L0 peers from random peer") >>
+            storages.l0Cluster.getRandomPeer.flatMap(p => programs.l0PeerDiscovery.discoverFrom(p))
+        },
+        operationName = "L0 peer discovery"
+      )
+    }
+    .handleErrorWith { e =>
+      Stream.eval(logger.error(e)("L0 peer discovery stream failed, restarting")) ++ l0PeerDiscovery
     }
 
   private val globalSnapshotProcessing: Stream[F, Unit] = Stream
     .awakeEvery(10.seconds)
-    .evalMap(_ => services.globalL0.pullGlobalSnapshots)
+    .evalMap { _ =>
+      withRetry(
+        operation = services.globalL0.pullGlobalSnapshots,
+        operationName = "Pull global snapshots"
+      )
+    }
     .evalTap { snapshots =>
       def log(snapshot: Hashed[GlobalIncrementalSnapshot]) =
         logger.info(s"Pulled following global snapshot: ${SnapshotReference.fromHashedSnapshot(snapshot).show}")
@@ -57,28 +82,49 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
     }
     .evalMap {
       case Left((snapshot, state)) =>
-        HasherSelector[F].withCurrent { implicit hasher =>
-          programs.snapshotProcessor.process((snapshot, state).asLeft[Hashed[GlobalIncrementalSnapshot]]).map(List(_))
-        }
+        withRetry(
+          operation = HasherSelector[F].withCurrent { implicit hasher =>
+            programs.snapshotProcessor.process((snapshot, state).asLeft[Hashed[GlobalIncrementalSnapshot]]).map(List(_))
+          },
+          operationName = s"Process single snapshot ${SnapshotReference.fromHashedSnapshot(snapshot).show}"
+        )
       case Right(snapshots) =>
-        (snapshots, List.empty[SnapshotProcessingResult]).tailRecM {
-          case (snapshot :: nextSnapshots, aggResults) =>
-            HasherSelector[F].withCurrent { implicit hasher =>
-              programs.snapshotProcessor
-                .process(snapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
-            }
-              .map(result => (nextSnapshots, aggResults :+ result).asLeft[List[SnapshotProcessingResult]])
+        withRetry(
+          operation = (snapshots, List.empty[SnapshotProcessingResult]).tailRecM {
+            case (snapshot :: nextSnapshots, aggResults) =>
+              HasherSelector[F].withCurrent { implicit hasher =>
+                programs.snapshotProcessor
+                  .process(snapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
+              }
+                .map(result => (nextSnapshots, aggResults :+ result).asLeft[List[SnapshotProcessingResult]])
+                .handleErrorWith { e =>
+                  logger.error(e)(s"Failed to process snapshot ${SnapshotReference.fromHashedSnapshot(snapshot).show}, skipping") >>
+                    (nextSnapshots, aggResults).asLeft[List[SnapshotProcessingResult]].pure[F]
+                }
 
-          case (Nil, aggResults) =>
-            aggResults.asRight[(List[Hashed[GlobalIncrementalSnapshot]], List[SnapshotProcessingResult])].pure[F]
-        }
+            case (Nil, aggResults) =>
+              aggResults.asRight[(List[Hashed[GlobalIncrementalSnapshot]], List[SnapshotProcessingResult])].pure[F]
+          },
+          operationName = s"Process ${snapshots.size} snapshots batch"
+        )
     }
-    .evalMap {
-      _.traverse(result => logger.info(s"Snapshot processing result: ${result.show}")).void
+    .evalMap { results =>
+      results.traverse(result => logger.info(s"Snapshot processing result: ${result.show}")).void.handleErrorWith { e =>
+        logger.warn(e)("Failed to log snapshot processing results")
+      }
+    }
+    .handleErrorWith { e =>
+      Stream.eval(logger.error(e)("Global snapshot processing stream failed, restarting")) ++ globalSnapshotProcessing
     }
 
-  val runtime = globalSnapshotProcessing.merge(l0PeerDiscovery)
-
+  val runtime: Stream[F, Unit] = Stream(
+    l0PeerDiscovery.handleErrorWith { e =>
+      Stream.eval(logger.error(e)("L0 peer discovery stream terminated unexpectedly, restarting")) ++ l0PeerDiscovery
+    },
+    globalSnapshotProcessing.handleErrorWith { e =>
+      Stream.eval(logger.error(e)("Global snapshot processing stream terminated unexpectedly, restarting")) ++ globalSnapshotProcessing
+    }
+  ).parJoinUnbounded
 }
 
 object GlobalSnapshotAlignment {

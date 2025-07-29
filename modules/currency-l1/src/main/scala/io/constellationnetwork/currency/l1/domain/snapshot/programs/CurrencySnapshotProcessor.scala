@@ -14,7 +14,8 @@ import io.constellationnetwork.dag.l1.domain.snapshot.programs.SnapshotProcessor
 import io.constellationnetwork.dag.l1.domain.transaction.{ContextualTransactionValidator, TransactionLimitConfig, TransactionStorage}
 import io.constellationnetwork.dag.l1.infrastructure.address.storage.AddressStorage
 import io.constellationnetwork.json.JsonBrotliBinarySerializer
-import io.constellationnetwork.node.shared.config.types.{AllowSpendsConfig, TokenLocksConfig}
+import io.constellationnetwork.node.shared.config.types.{AllowSpendsConfig, LastGlobalSnapshotsSyncConfig, TokenLocksConfig}
+import io.constellationnetwork.node.shared.domain.globalAlignment.GlobalL0AlignmentStorage
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage._
 import io.constellationnetwork.node.shared.domain.snapshot.{SnapshotContextFunctions, Validator}
@@ -60,7 +61,8 @@ object CurrencySnapshotProcessor {
     allowSpendStorage: AllowSpendStorage[F],
     tokenLockStorage: TokenLockStorage[F],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    l0Service: GlobalL0Service[F]
+    l0Service: GlobalL0Service[F],
+    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F]
   ): CurrencySnapshotProcessor[F] =
     new CurrencySnapshotProcessor[F] {
       def process(
@@ -193,7 +195,14 @@ object CurrencySnapshotProcessor {
                       case Some(Right((_, stateToDownload))) =>
                         val toPass = (snapshotToDownload, stateToDownload).asLeft[Hashed[CurrencyIncrementalSnapshot]]
 
-                        checkAlignment(toPass, bs, lcss, txHasher, getGlobalSnapshotByOrdinal).map { alignment =>
+                        checkAlignment(
+                          toPass,
+                          bs,
+                          lcss,
+                          txHasher,
+                          getGlobalSnapshotByOrdinal,
+                          globalL0AlignmentStorage
+                        ).map { alignment =>
                           NonEmptyList.one(alignment).some
                         }
                       case _ => (new Throwable("unexpected state")).raiseError[F, Option[Success]]
@@ -204,7 +213,14 @@ object CurrencySnapshotProcessor {
                       case (NonEmptyList(snapshot, nextSnapshots), agg) =>
                         val toPass = snapshot.asRight[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]
 
-                        checkAlignment(toPass, bs, lcss, txHasher, getGlobalSnapshotByOrdinal).flatMap {
+                        checkAlignment(
+                          toPass,
+                          bs,
+                          lcss,
+                          txHasher,
+                          getGlobalSnapshotByOrdinal,
+                          globalL0AlignmentStorage
+                        ).flatMap {
                           case _: Ignore =>
                             Applicative[F].pure(none[Success].asRight[Agg])
                           case alignment =>

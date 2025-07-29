@@ -58,7 +58,7 @@ object GlobalL0Service {
     new GlobalL0Service[F] {
 
       private val numConcurrentQueries = 10
-      private val logger = Slf4jLogger.getLogger[F]
+      private val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
       private val maybeMajorityPeerIds = maybeMajorityPeerIdSet.map(_.toNonEmptyList)
       private val ordinalRange = 0L to 3L
 
@@ -126,7 +126,7 @@ object GlobalL0Service {
         for {
           peers <- globalL0ClusterStorage.getPeers.map(nes => Random.shuffle(nes.toSortedSet))
 
-          _ <- logger.debug(s"Pulling latest snapshot using ${peers.size} peers")
+          _ <- logger.info(s"Pulling latest snapshot using ${peers.size} peers")
           _ <- logger.trace(s"${peers.map(_.id.show)}")
 
           majorityPeers <- getL0Peers(majorityPeerIds)
@@ -278,16 +278,43 @@ object GlobalL0Service {
 
       private case class MajoritySnapshotData(ordinal: SnapshotOrdinal, hash: Hash)
 
-      private def getMajoritySnapshotData(peerIds: NonEmptyList[PeerId], nextOrdinal: SnapshotOrdinal): F[MajoritySnapshotData] = {
-        val maybeData =
-          for {
-            peers <- OptionT.liftF(getL0Peers(peerIds))
-            majorityOrdinal <- OptionT(getMajorityOrdinal(peers))
-            lastOrdinal = calculateLastOrdinal(nextOrdinal, majorityOrdinal)
-            majorityHash <- OptionT(getMajorityHash(peers, lastOrdinal))
-          } yield MajoritySnapshotData(lastOrdinal, majorityHash)
+      private def getMajoritySnapshotData(majorityPeerIds: NonEmptyList[PeerId], nextOrdinal: SnapshotOrdinal): F[MajoritySnapshotData] = {
+        val result = for {
+          peers <- OptionT.liftF {
+            getL0Peers(majorityPeerIds).handleErrorWith { e =>
+              logger.error(e)(s"Failed to get L0 peers for majorityPeerIds: ${majorityPeerIds.toList}") >>
+                Async[F].raiseError(e)
+            }
+          }
 
-        maybeData.getOrElseF(NoMajoritySnapshotData.raiseError[F, MajoritySnapshotData])
+          majorityOrdinal <- OptionT {
+            getMajorityOrdinal(peers).flatTap {
+              case Some(_) => Async[F].unit
+              case None =>
+                logger.warn(s"No majority ordinal found among ${peers.size} peers. This will cause the operation to fail.")
+            }
+          }
+
+          lastOrdinal = calculateLastOrdinal(nextOrdinal, majorityOrdinal)
+
+          majorityHash <- OptionT {
+            getMajorityHash(peers, lastOrdinal).flatTap {
+              case Some(_) => Async[F].unit
+              case None =>
+                logger.warn(
+                  s"No majority hash found among ${peers.size} peers for ordinal: $lastOrdinal. This will cause the operation to fail."
+                )
+            }
+          }
+
+        } yield MajoritySnapshotData(lastOrdinal, majorityHash)
+
+        result.getOrElseF {
+          logger.error(
+            s"Failed to get majority snapshot data. Either majority ordinal or majority hash consensus could not be achieved among peers: ${majorityPeerIds.toList}"
+          ) >>
+            NoMajoritySnapshotData.raiseError[F, MajoritySnapshotData]
+        }
       }
 
       private def getMajorityHash(peers: NonEmptyList[L0Peer], ordinal: SnapshotOrdinal): F[Option[Hash]] =

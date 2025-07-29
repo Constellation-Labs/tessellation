@@ -13,6 +13,7 @@ import io.constellationnetwork.dag.l1.domain.address.storage.AddressStorage
 import io.constellationnetwork.dag.l1.domain.block.BlockStorage.MajorityReconciliationData
 import io.constellationnetwork.dag.l1.domain.block.{BlockRelations, BlockStorage}
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionStorage
+import io.constellationnetwork.node.shared.domain.globalAlignment.{GlobalL0AlignmentStorage, ShouldRedownload}
 import io.constellationnetwork.node.shared.domain.snapshot.Validator
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.swap.AllowSpendStorage
@@ -31,6 +32,7 @@ import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
 import derevo.cats.show
 import derevo.derive
 import eu.timepit.refined.types.numeric.NonNegLong
+import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class SnapshotProcessor[
@@ -41,6 +43,8 @@ abstract class SnapshotProcessor[
 ] {
 
   import SnapshotProcessor._
+
+  val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
   def process(
     snapshot: Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), Hashed[GlobalIncrementalSnapshot]]
@@ -252,7 +256,8 @@ abstract class SnapshotProcessor[
     blockStorage: BlockStorage[F],
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI],
     txHasher: Hasher[F],
-    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F]
   )(implicit hasher: Hasher[F]): F[Alignment] = {
     val snapshot = snapshotWithState.fold({ case (snapshot, _) => snapshot }, identity)
     val (blocks, allowSpendBlocks, tokenLockBlocks) = snapshot.signed.value match {
@@ -355,38 +360,59 @@ abstract class SnapshotProcessor[
                           lazy val tokenLocksToMarkMajority = extractMajorityTokenLocksTxRefs(acceptedTokenLockInMajority, state)
                           lazy val postponedToWaiting = relatedPostponed -- toAdd.map(_._1.proofsHash) -- toReset
 
-                          if (!areTipsAligned)
-                            MonadThrow[F].raiseError[Alignment](TipsGotMisaligned(deprecatedTipsToAdd, tipsToDeprecate))
-                          else if (onlyInMajority.isEmpty)
-                            Applicative[F].pure[Alignment](
-                              AlignedAtNewOrdinal(
-                                snapshot,
-                                state,
-                                toMarkMajority.toSet,
-                                tipsToDeprecate,
-                                tipsToRemove,
-                                txRefsToMarkMajority,
-                                allowSpendsToMarkMajority,
-                                tokenLocksToMarkMajority,
-                                postponedToWaiting
-                              )
+                          def validateTipsAlignment(): F[Unit] =
+                            if (!areTipsAligned)
+                              MonadThrow[F].raiseError(TipsGotMisaligned(deprecatedTipsToAdd, tipsToDeprecate))
+                            else
+                              Applicative[F].unit
+
+                          def determineAlignment(shouldRedownload: ShouldRedownload): F[Alignment] =
+                            if (shouldRedownload.value) {
+                              handleRedownloadRequired(shouldRedownload)
+                            } else if (onlyInMajority.isEmpty) {
+                              createAlignedAtNewOrdinal().pure[F]
+                            } else {
+                              createRedownloadNeeded().pure[F]
+                            }
+
+                          def handleRedownloadRequired(shouldRedownload: ShouldRedownload): F[Alignment] =
+                            for {
+                              _ <- logger.info(s"Should redownload provided. Reason: ${shouldRedownload.reason.mkString(",")}")
+                              _ <- globalL0AlignmentStorage.clean()
+                              alignment = createRedownloadNeeded()
+                            } yield alignment
+
+                          def createRedownloadNeeded(): Alignment =
+                            RedownloadNeeded(
+                              snapshot,
+                              state,
+                              toAdd,
+                              toMarkMajority.toSet,
+                              Set.empty,
+                              Set.empty,
+                              toReset,
+                              tipsToDeprecate,
+                              tipsToRemove,
+                              postponedToWaiting
                             )
-                          else
-                            Applicative[F]
-                              .pure[Alignment](
-                                RedownloadNeeded(
-                                  snapshot,
-                                  state,
-                                  toAdd,
-                                  toMarkMajority.toSet,
-                                  Set.empty,
-                                  Set.empty,
-                                  toReset,
-                                  tipsToDeprecate,
-                                  tipsToRemove,
-                                  postponedToWaiting
-                                )
-                              )
+
+                          def createAlignedAtNewOrdinal(): Alignment =
+                            AlignedAtNewOrdinal(
+                              snapshot,
+                              state,
+                              toMarkMajority.toSet,
+                              tipsToDeprecate,
+                              tipsToRemove,
+                              txRefsToMarkMajority,
+                              allowSpendsToMarkMajority,
+                              tokenLocksToMarkMajority,
+                              postponedToWaiting
+                            )
+
+                          globalL0AlignmentStorage.getShouldRedownload.flatMap { shouldRedownload =>
+                            validateTipsAlignment() >>
+                              determineAlignment(shouldRedownload)
+                          }
                       }
                     }
 
@@ -427,38 +453,63 @@ abstract class SnapshotProcessor[
                           lazy val tokenLocksToMarkMajority = extractMajorityTokenLocksTxRefs(acceptedTokenLockInMajority, state)
                           lazy val postponedToWaiting = relatedPostponed -- obsoleteToRemove -- toAdd.map(_._1.proofsHash) -- toReset
 
-                          if (!areTipsAligned)
-                            MonadThrow[F].raiseError[Alignment](TipsGotMisaligned(deprecatedTipsToAdd, tipsToDeprecate))
-                          else if (onlyInMajority.isEmpty && acceptedToRemove.isEmpty)
-                            Applicative[F].pure[Alignment](
-                              AlignedAtNewHeight(
-                                snapshot,
-                                state,
-                                toMarkMajority.toSet,
-                                obsoleteToRemove,
-                                tipsToDeprecate,
-                                tipsToRemove,
-                                txRefsToMarkMajority,
-                                allowSpendsToMarkMajority,
-                                tokenLocksToMarkMajority,
-                                postponedToWaiting
-                              )
+                          def validateTipsAlignment(): F[Unit] =
+                            if (!areTipsAligned)
+                              MonadThrow[F].raiseError(TipsGotMisaligned(deprecatedTipsToAdd, tipsToDeprecate))
+                            else
+                              Applicative[F].unit
+
+                          def determineHeightAlignment(shouldRedownload: ShouldRedownload): F[Alignment] =
+                            if (shouldRedownload.value) {
+                              handleRedownloadRequired(shouldRedownload)
+                            } else if (canAlignAtNewHeight) {
+                              createAlignedAtNewHeight().pure[F]
+                            } else {
+                              createRedownloadNeeded().pure[F]
+                            }
+
+                          def canAlignAtNewHeight: Boolean =
+                            onlyInMajority.isEmpty && acceptedToRemove.isEmpty
+
+                          def handleRedownloadRequired(shouldRedownload: ShouldRedownload): F[Alignment] =
+                            for {
+                              _ <- logger.info(s"Should redownload provided. Reason: ${shouldRedownload.reason.mkString(",")}")
+                              _ <- globalL0AlignmentStorage.clean()
+                              alignment = createRedownloadNeeded()
+                            } yield alignment
+
+                          def createAlignedAtNewHeight(): Alignment =
+                            AlignedAtNewHeight(
+                              snapshot,
+                              state,
+                              toMarkMajority.toSet,
+                              obsoleteToRemove,
+                              tipsToDeprecate,
+                              tipsToRemove,
+                              txRefsToMarkMajority,
+                              allowSpendsToMarkMajority,
+                              tokenLocksToMarkMajority,
+                              postponedToWaiting
                             )
-                          else
-                            Applicative[F].pure[Alignment](
-                              RedownloadNeeded(
-                                snapshot,
-                                state,
-                                toAdd,
-                                toMarkMajority.toSet,
-                                acceptedToRemove,
-                                obsoleteToRemove,
-                                toReset,
-                                tipsToDeprecate,
-                                tipsToRemove,
-                                postponedToWaiting
-                              )
+
+                          def createRedownloadNeeded(): Alignment =
+                            RedownloadNeeded(
+                              snapshot,
+                              state,
+                              toAdd,
+                              toMarkMajority.toSet,
+                              acceptedToRemove,
+                              obsoleteToRemove,
+                              toReset,
+                              tipsToDeprecate,
+                              tipsToRemove,
+                              postponedToWaiting
                             )
+
+                          globalL0AlignmentStorage.getShouldRedownload.flatMap { shouldRedownload =>
+                            validateTipsAlignment() >>
+                              determineHeightAlignment(shouldRedownload)
+                          }
                       }
                     }
 

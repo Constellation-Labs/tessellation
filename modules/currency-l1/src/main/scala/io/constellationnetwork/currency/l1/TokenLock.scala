@@ -18,6 +18,7 @@ import io.constellationnetwork.currency.tokenlock.{ConsensusInput, ConsensusOutp
 import io.constellationnetwork.dag.l1.http.p2p.L0BlockOutputClient
 import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
+import io.constellationnetwork.node.shared.domain.globalAlignment.GlobalL0AlignmentStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockStorage
@@ -47,7 +48,8 @@ object TokenLock {
     queues: Queues[F],
     tokenLockValidator: TokenLockValidator[F],
     selfKeyPair: KeyPair,
-    selfId: PeerId
+    selfId: PeerId,
+    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F]
   ): Stream[F, Unit] = {
 
     def logger = Slf4jLogger.getLogger[F]
@@ -167,7 +169,15 @@ object TokenLock {
                 case (hash, signedBlock) =>
                   services.tokenLockBlock
                     .accept(signedBlock, snapshotOrdinal)
-                    .handleErrorWith(logger.warn(_)(s"Failed acceptance of an token lock block with ${hash.show}"))
+                    .handleErrorWith { error =>
+                      for {
+                        _ <- logger.warn(error)(s"Failed acceptance of a token lock block with ${hash.show}")
+                        _ <- globalL0AlignmentStorage.updateShouldRedownload(
+                          value = true,
+                          reasons = List(s"Token Lock block acceptance failed for ${hash.show}: ${error.getMessage}")
+                        )
+                      } yield ()
+                    }
               }
             }.void
           case None => ().pure[F]

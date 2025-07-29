@@ -17,6 +17,7 @@ import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
 import io.constellationnetwork.node.shared.domain.consensus.config.SwapConsensusConfig
+import io.constellationnetwork.node.shared.domain.globalAlignment.GlobalL0AlignmentStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockStorage
@@ -56,7 +57,8 @@ object Swap {
     queues: Queues[F],
     allowSpendValidator: AllowSpendValidator[F],
     selfKeyPair: KeyPair,
-    selfId: PeerId
+    selfId: PeerId,
+    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F]
   ): Stream[F, Unit] = {
 
     def logger = Slf4jLogger.getLogger[F]
@@ -176,7 +178,15 @@ object Swap {
                 case (hash, signedBlock) =>
                   services.allowSpendBlock
                     .accept(signedBlock, snapshotOrdinal)
-                    .handleErrorWith(logger.warn(_)(s"Failed acceptance of an allow spend block with ${hash.show}"))
+                    .handleErrorWith { error =>
+                      for {
+                        _ <- logger.warn(error)(s"Failed acceptance of an allow spend block with ${hash.show}")
+                        _ <- globalL0AlignmentStorage.updateShouldRedownload(
+                          value = true,
+                          reasons = List(s"Allow spend block acceptance failed for ${hash.show}: ${error.getMessage}")
+                        )
+                      } yield ()
+                    }
               }
             }.void
           case None => ().pure[F]
