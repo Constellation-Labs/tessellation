@@ -53,7 +53,7 @@ object currency {
 
   // Represents a wrapper event used to force the synchronization of a global snapshot.
   @derive(encoder, decoder, eqv)
-  case class ForceGlobalSyncEvent() extends CurrencySnapshotEvent
+  case class ForceEventTrigger() extends CurrencySnapshotEvent
 
   type CurrencySnapshotArtifact = CurrencyIncrementalSnapshot
 }
