@@ -6,10 +6,7 @@ import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.kernel.Async
 import cats.effect.std.Random
 import cats.effect.{IO, Resource}
-import cats.syntax.applicative._
-import cats.syntax.eq._
-import cats.syntax.foldable._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
@@ -24,6 +21,8 @@ import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegated
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAcceptanceManager
 import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralAcceptanceManager
 import io.constellationnetwork.node.shared.domain.priceOracle.PriceStateUpdater
+import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
+import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.domain.swap.block.{
   AllowSpendBlockAcceptanceLogic,
@@ -389,6 +388,32 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         EpochProgress(NonNegLong.unsafeFrom(1L)),
         SnapshotOrdinal.MinValue
       )
+      lastNSnapshotStorage =
+        LastNGlobalSnapshotStorage.make[IO](lastGlobalSnapshotsSyncConfig, lastNSnapR, incLastNSnapR)
+
+      lastSnapshotStorage = new LastSnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
+        def set(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ???
+
+        def setInitial(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ().pure[IO]
+
+        def get: IO[Option[Hashed[GlobalIncrementalSnapshot]]] = none.pure[IO]
+
+        def getCombined: IO[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
+
+        def getCombinedStream: fs2.Stream[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
+
+        def getOrdinal: IO[Option[SnapshotOrdinal]] = ???
+
+        def getHeight: IO[Option[height.Height]] = ???
+      }
+      download = new Download[IO, GlobalIncrementalSnapshot] {
+
+        override def download(implicit hasherSelector: HasherSelector[IO]): IO[Unit] = ???
+
+        override def fetchSnapshot(hash: Option[Hash], ordinal: GlobalSnapshotKey)(
+          implicit hasher: Hasher[IO]
+        ): IO[Signed[GlobalSnapshotArtifact]] = ???
+      }
     } yield
       GlobalSnapshotTraverse
         .make[IO](
@@ -397,7 +422,10 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           loadInfo,
           snapshotContextFunctions,
           rollbackHash,
-          _ => None.pure[IO]
+          _ => None.pure[IO],
+          lastNSnapshotStorage,
+          lastSnapshotStorage,
+          download
         )
   }
 

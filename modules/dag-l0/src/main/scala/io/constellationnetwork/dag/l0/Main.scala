@@ -212,19 +212,27 @@ object Main
             NodeState.RollbackInProgress,
             NodeState.RollbackDone
           ) {
-            programs.rollbackLoader.load(m.rollbackHash).flatMap {
+            programs.rollbackLoader.load(m.rollbackHash, programs.download).flatMap {
               case (snapshotInfo, snapshot) =>
                 hasherSelector.forOrdinal(snapshot.ordinal) { implicit hasher =>
                   for {
                     _ <- storages.globalSnapshot.prepend(snapshot, snapshotInfo)
-                    hashedSnapshot <- snapshot.toHashed[IO]
-                    _ <- sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
-                      hashedSnapshot,
-                      snapshotInfo,
-                      none,
-                      Some((hash, ordinal) => programs.download.fetchSnapshot(hash, ordinal)(hasher))
-                    )
-                    _ <- sharedStorages.lastGlobalSnapshot.setInitial(hashedSnapshot, snapshotInfo)
+                    lastNAlreadyInitialized <- sharedStorages.lastNGlobalSnapshot.alreadyInitialized
+                    _ <-
+                      if (!lastNAlreadyInitialized) {
+                        for {
+                          hashedSnapshot <- snapshot.toHashed[IO]
+                          _ <- sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
+                            hashedSnapshot,
+                            snapshotInfo,
+                            none,
+                            Some((hash, ordinal) => programs.download.fetchSnapshot(hash, ordinal)(hasher))
+                          )
+                          _ <- sharedStorages.lastGlobalSnapshot.setInitial(hashedSnapshot, snapshotInfo)
+                        } yield ()
+                      } else {
+                        ().pure[IO]
+                      }
                   } yield ()
                 } >>
                   services.consensus.manager.startFacilitatingAfterRollback(
