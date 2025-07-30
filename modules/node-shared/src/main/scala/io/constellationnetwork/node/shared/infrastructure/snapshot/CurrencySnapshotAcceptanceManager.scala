@@ -180,9 +180,9 @@ object CurrencySnapshotAcceptanceManager {
           wasSuccessful = maybeSnapshot => maybeSnapshot.isDefined.pure[F],
           policy = retryPolicy,
           onFailure = (_, retryDetails) =>
-            logger.warn(s"Got None when trying to fetch incremental global snapshot {attempt=${retryDetails.retriesSoFar}}"),
+            logger.warn(s"Got None when trying to fetch incremental global snapshot $ordinal {attempt=${retryDetails.retriesSoFar}}"),
           onError = (err, retryDetails) =>
-            logger.error(err)(s"Error when trying to fetch incremental global snapshot {attempt=${retryDetails.retriesSoFar}}")
+            logger.error(err)(s"Error when trying to fetch incremental global snapshot $ordinal {attempt=${retryDetails.retriesSoFar}}")
         )
         .flatMap {
           case Some(snapshot) => snapshot.pure[F]

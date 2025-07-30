@@ -68,7 +68,9 @@ object Programs {
         storages.snapshotDownload,
         globalSnapshotContextFns,
         hashSelect,
-        storages.globalSnapshot.getHashed
+        storages.globalSnapshot.getHashed,
+        lastNGlobalSnapshotStorage,
+        lastGlobalSnapshotStorage
       )
 
       new Programs[F](sharedPrograms.peerDiscovery, sharedPrograms.joining, trustPush, download, rollbackLoader) {}

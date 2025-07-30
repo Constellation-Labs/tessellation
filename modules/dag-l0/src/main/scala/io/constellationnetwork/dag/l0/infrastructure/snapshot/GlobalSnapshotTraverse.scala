@@ -10,6 +10,8 @@ import scala.util.control.NoStackTrace
 import io.constellationnetwork.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
 import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
+import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -29,7 +31,10 @@ object GlobalSnapshotTraverse {
     loadInfo: SnapshotOrdinal => F[Option[GlobalSnapshotInfo]],
     contextFns: SnapshotContextFunctions[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
     rollbackHash: Hash,
-    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    download: Download[F, GlobalIncrementalSnapshot]
   ): GlobalSnapshotTraverse[F] =
     new GlobalSnapshotTraverse[F] {
       val logger = Slf4jLogger.getLogger[F]
@@ -109,6 +114,29 @@ object GlobalSnapshotTraverse {
           _ <- (new Exception(s"Snapshot info does not match the snapshot at ordinal=${firstInc.ordinal.show}"))
             .raiseError[F, Unit]
             .whenA(stateProofInvalid)
+
+          lastNAlreadyInitialized <- lastNGlobalSnapshotStorage.alreadyInitialized
+          _ <-
+            if (!lastNAlreadyInitialized) {
+              for {
+                _ <-
+                  HasherSelector[F].forOrdinal(firstInc.ordinal)(implicit hasher =>
+                    lastNGlobalSnapshotStorage.setInitialFetchingGL0(
+                      hashedFirstInc,
+                      firstInfo,
+                      none,
+                      Some((hash, ordinal) => download.fetchSnapshot(hash, ordinal)(hasher))
+                    )
+                  )
+                _ <- lastGlobalSnapshotStorage.setInitial(
+                  hashedFirstInc,
+                  firstInfo
+                )
+              } yield ()
+
+            } else {
+              ().pure
+            }
 
           (info, lastInc) <- incHashesNec.tail.foldLeftM((firstInfo, firstInc)) {
             case ((lastCtx, lastInc), hash) =>
