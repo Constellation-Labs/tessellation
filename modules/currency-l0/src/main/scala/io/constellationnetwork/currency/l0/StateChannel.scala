@@ -96,20 +96,22 @@ object StateChannel {
         spendTransactionIssuedFromThisMetagraph || spendTransactionsReferencesCurrentMetagraph || activeAllowSpendsFromThisMetagraphs || allowSpendsReferencesCurrentMetagraph
       }
 
-      def maybeForceEventTrigger(currentSnapshot: Hashed[GlobalIncrementalSnapshot], snapshotState: GlobalSnapshotInfo): F[Unit] =
+      def maybeForceEventTrigger(
+        currentSnapshot: Hashed[GlobalIncrementalSnapshot],
+        currentSnapshotState: GlobalSnapshotInfo,
+        lastGlobalSnapshotSyncOrdinal: Option[SnapshotOrdinal]
+      ): F[Unit] =
         for {
           lastGlobalSnapshotsInCache <- sharedStorages.lastNGlobalSnapshot.getLastN
           currencyId <- storages.identifier.get
-          lastSyncCombined <- storages.lastSyncGlobalSnapshot.getLastSynchronizedCombined
-          lastSyncOrdinal = lastSyncCombined
-            .map(_._1.ordinal)
+          lastSyncOrdinal = lastGlobalSnapshotSyncOrdinal
             .getOrElse(currentSnapshot.ordinal)
 
           ordinals = generateOrdinalRange(lastSyncOrdinal, currentSnapshot.ordinal)
           snapshotsToCheck <- fetchSnapshotsForOrdinals(ordinals, lastGlobalSnapshotsInCache)
 
           shouldForceEventTrigger = snapshotsToCheck.exists { snapshot =>
-            checkIfShouldForceEventTrigger(snapshot, currencyId, snapshotState)
+            checkIfShouldForceEventTrigger(snapshot, currencyId, currentSnapshotState)
           }
 
           _ <-
@@ -221,12 +223,21 @@ object StateChannel {
                   ().pure
                 }
               _ <- triggerOnGlobalSnapshotPullHook(snapshot, state)
-              _ <- maybeForceEventTrigger(snapshot, state)
+              _ <- maybeForceEventTrigger(snapshot, state, none)
             } yield ()
 
           case Right(snapshots) =>
             snapshots.tailRecM {
-              case Nil => Applicative[F].pure(().asRight[List[Hashed[GlobalIncrementalSnapshot]]])
+              case Nil =>
+                for {
+                  lastSyncGlobalSnapshot <- storages.lastSyncGlobalSnapshot.getLastSynchronizedCombined
+                  lastSyncGlobalSnapshotOrdinal = lastSyncGlobalSnapshot.map(_._1.ordinal)
+                  lastGlobalSnapshotCombined <- sharedStorages.lastGlobalSnapshot.getCombined
+                  _ <- lastGlobalSnapshotCombined.traverse { combinedSnapshot =>
+                    val (latestSnapshot, latestState) = combinedSnapshot
+                    maybeForceEventTrigger(latestSnapshot, latestState, lastSyncGlobalSnapshotOrdinal)
+                  }
+                } yield ().asRight[List[Hashed[GlobalIncrementalSnapshot]]]
 
               case snapshot :: nextSnapshots =>
                 storages.lastSyncGlobalSnapshot.get.map {
@@ -268,10 +279,6 @@ object StateChannel {
                             } yield ()
                           }
                     }
-                    lastGlobalSnapshotCombined <- sharedStorages.lastGlobalSnapshot.getCombined
-                    _ <- lastGlobalSnapshotCombined.traverse_(combinedSnapshot =>
-                      maybeForceEventTrigger(combinedSnapshot._1, combinedSnapshot._2)
-                    )
                   } yield (),
                   Applicative[F].unit
                 ) >> Applicative[F].pure(nextSnapshots.asLeft[Unit])
