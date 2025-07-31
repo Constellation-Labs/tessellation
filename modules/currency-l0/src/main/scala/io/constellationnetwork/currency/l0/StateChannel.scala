@@ -29,6 +29,7 @@ import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.types.all.NonNegLong
 import fs2.Stream
+import fs2.concurrent.SignallingRef
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object StateChannel {
@@ -43,7 +44,8 @@ object StateChannel {
     programs: Programs[F],
     dataApplicationService: Option[BaseDataApplicationL0Service[F]],
     selfKeyPair: KeyPair,
-    enqueueConsensusEventFn: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _]
+    enqueueConsensusEventFn: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
+    currentLastSyncGlobalSnapshotRef: SignallingRef[F, Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit S: Supervisor[F]): Stream[F, Unit] = {
     val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
@@ -159,8 +161,8 @@ object StateChannel {
 
       def conditionallyTriggerEvent(shouldTrigger: Boolean) =
         if (shouldTrigger) {
-          logger.info("Forcing event trigger due to conditions met")
-          enqueueConsensusEventFn(ForceEventTrigger()).run()
+          logger.info("Forcing event trigger due to conditions met") >>
+            enqueueConsensusEventFn(ForceEventTrigger()).run()
         } else {
           ().pure[F]
         }
@@ -227,61 +229,85 @@ object StateChannel {
             } yield ()
 
           case Right(snapshots) =>
-            snapshots.tailRecM {
+            snapshots match {
               case Nil =>
-                for {
-                  lastSyncGlobalSnapshot <- storages.lastSyncGlobalSnapshot.getLastSynchronizedCombined
-                  lastSyncGlobalSnapshotOrdinal = lastSyncGlobalSnapshot.map(_._1.ordinal)
-                  lastGlobalSnapshotCombined <- sharedStorages.lastGlobalSnapshot.getCombined
-                  _ <- lastGlobalSnapshotCombined.traverse { combinedSnapshot =>
-                    val (latestSnapshot, latestState) = combinedSnapshot
-                    maybeForceEventTrigger(latestSnapshot, latestState, lastSyncGlobalSnapshotOrdinal)
-                  }
-                } yield ().asRight[List[Hashed[GlobalIncrementalSnapshot]]]
+                Applicative[F].unit
+              case nonEmptySnapshots =>
+                nonEmptySnapshots.tailRecM {
+                  case Nil =>
+                    for {
+                      currentLastSyncGlobalSnapshot <- currentLastSyncGlobalSnapshotRef.get
+                      currentLastSyncGlobalSnapshotOrdinal = currentLastSyncGlobalSnapshot.map(_.ordinal)
 
-              case snapshot :: nextSnapshots =>
-                storages.lastSyncGlobalSnapshot.get.map {
-                  case Some(lastSnapshot) => Validator.isNextSnapshot(lastSnapshot, snapshot.signed.value)
-                  case None               => true
-                }.ifM(
-                  for {
-                    _ <- storages.lastSyncGlobalSnapshot.getCombined.flatMap {
-                      case None => Applicative[F].unit
-                      case Some((lastSnapshot, lastState)) =>
-                        HasherSelector[F]
-                          .forOrdinal(snapshot.ordinal) { implicit hasher =>
-                            services.globalSnapshotContextFunctions
-                              .createContext(
-                                lastState,
-                                lastSnapshot.signed,
-                                snapshot.signed,
-                                services.globalL0.pullGlobalSnapshot
-                              )
+                      lastSyncGlobalSnapshot <- storages.lastSyncGlobalSnapshot.getLastSynchronizedCombined
+
+                      lastSyncGlobalSnapshotOrdinal = lastSyncGlobalSnapshot.map(_._1.ordinal)
+                      lastGlobalSnapshotCombined <- sharedStorages.lastGlobalSnapshot.getCombined
+
+                      // The current and last global snapshot ordinal should be filled to not start a infinity loop of events
+                      _ <-
+                        if (
+                          currentLastSyncGlobalSnapshotOrdinal.isDefined && lastSyncGlobalSnapshotOrdinal.isDefined &&
+                          currentLastSyncGlobalSnapshotOrdinal.get < lastSyncGlobalSnapshotOrdinal.get
+                        ) {
+                          lastGlobalSnapshotCombined.traverse { combinedSnapshot =>
+                            val (latestSnapshot, latestState) = combinedSnapshot
+                            logger.info("Trying to force event trigger") >>
+                              maybeForceEventTrigger(latestSnapshot, latestState, lastSyncGlobalSnapshotOrdinal)
                           }
-                          .flatMap { context =>
-                            for {
-                              _ <- storages.lastSyncGlobalSnapshot.set(snapshot, context)
-                              _ <- sharedStorages.lastNGlobalSnapshot.set(snapshot, context)
-                              _ <- sharedStorages.lastGlobalSnapshot.set(snapshot, context)
-                              _ <- HasherSelector[F].withCurrent { implicit hasher =>
-                                sendGlobalSnapshotSyncConsensusEvent(snapshot)
+                        } else {
+                          Applicative[F].unit
+                        }
+
+                      _ <- currentLastSyncGlobalSnapshotRef.set(lastSyncGlobalSnapshot.map(_._1))
+                    } yield ().asRight[List[Hashed[GlobalIncrementalSnapshot]]]
+
+                  case snapshot :: nextSnapshots =>
+                    storages.lastSyncGlobalSnapshot.get.map {
+                      case Some(lastSnapshot) => Validator.isNextSnapshot(lastSnapshot, snapshot.signed.value)
+                      case None               => true
+                    }.ifM(
+                      for {
+                        _ <- storages.lastSyncGlobalSnapshot.getCombined.flatMap {
+                          case None => Applicative[F].unit
+                          case Some((lastSnapshot, lastState)) =>
+                            HasherSelector[F]
+                              .forOrdinal(snapshot.ordinal) { implicit hasher =>
+                                services.globalSnapshotContextFunctions
+                                  .createContext(
+                                    lastState,
+                                    lastSnapshot.signed,
+                                    snapshot.signed,
+                                    services.globalL0.pullGlobalSnapshot
+                                  )
                               }
-                              _ <- triggerOnGlobalSnapshotPullHook(snapshot, context)
-                              _ <- services.stateChannelBinarySender.confirm(snapshot).handleErrorWith { error =>
-                                logger.error(error)("Error when confirming state channel binary") >>
-                                  updateFailedConfirmingStateChannelBinaryMetrics() >>
-                                  Async[F].unit
+                              .flatMap { context =>
+                                for {
+                                  _ <- storages.lastSyncGlobalSnapshot.set(snapshot, context)
+                                  _ <- sharedStorages.lastNGlobalSnapshot.set(snapshot, context)
+                                  _ <- sharedStorages.lastGlobalSnapshot.set(snapshot, context)
+                                  _ <- HasherSelector[F].withCurrent { implicit hasher =>
+                                    sendGlobalSnapshotSyncConsensusEvent(snapshot)
+                                  }
+                                  _ <- triggerOnGlobalSnapshotPullHook(snapshot, context)
+                                  _ <- services.stateChannelBinarySender.confirm(snapshot).handleErrorWith { error =>
+                                    logger.error(error)("Error when confirming state channel binary") >>
+                                      updateFailedConfirmingStateChannelBinaryMetrics() >>
+                                      Async[F].unit
+                                  }
+                                  _ <- S
+                                    .supervise(services.stateChannelBinarySender.processPending(snapshot, context))
+                                    .void
+                                    .handleErrorWith { error =>
+                                      logger.error(error)("Error when process pending state channel binary") >> Async[F].unit
+                                    }
+                                } yield ()
                               }
-                              _ <- S.supervise(services.stateChannelBinarySender.processPending(snapshot, context)).void.handleErrorWith {
-                                error =>
-                                  logger.error(error)("Error when process pending state channel binary") >> Async[F].unit
-                              }
-                            } yield ()
-                          }
-                    }
-                  } yield (),
-                  Applicative[F].unit
-                ) >> Applicative[F].pure(nextSnapshots.asLeft[Unit])
+                        }
+                      } yield (),
+                      Applicative[F].unit
+                    ) >> Applicative[F].pure(nextSnapshots.asLeft[Unit])
+                }
             }
         }
         .handleErrorWith { error =>

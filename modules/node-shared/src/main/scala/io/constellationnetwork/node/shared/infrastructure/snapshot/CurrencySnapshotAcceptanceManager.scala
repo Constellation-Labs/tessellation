@@ -222,6 +222,8 @@ object CurrencySnapshotAcceptanceManager {
         .getOrElse(environment, SnapshotOrdinal.MinValue)
       metagraphSyncDataStartingOrdinal = fieldsAddedOrdinals.metagraphSyncData
         .getOrElse(environment, SnapshotOrdinal.MinValue)
+      updatedLastSyncGlobalOrder = fieldsAddedOrdinals.updatedLastSyncGlobalOrder
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
 
       acceptanceBlocksResult <- acceptBlocks(
         blocksForAcceptance,
@@ -290,15 +292,6 @@ object CurrencySnapshotAcceptanceManager {
         facilitators
       )
 
-      maybeSnapshotOrdinalSync = globalSnapshotSyncAcceptanceResult.contextUpdate.values
-        .map(_.globalSnapshotOrdinal)
-        .groupBy(identity)
-        .maxByOption { case (ordinal, occurrences) => (occurrences.size, -ordinal.value.value) }
-        .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value - lastGlobalSnapshotsSyncConfig.syncOffset) }
-
-      lastGlobalSnapshots <- lastNGlobalSnapshotStorage.getLastN
-      _ <- logger.debug(s"Metagraph $metagraphId snapshot $snapshotOrdinal - maybeSnapshotOrdinalSync: $maybeSnapshotOrdinalSync")
-
       maybeUnsyncLastGlobalSnapshot <- lastGlobalSnapshotStorage.getCombined
 
       (lastUnsyncGlobalSnapshot, lastUnsyncGlobalSnapshotInfo) <- OptionT
@@ -306,6 +299,22 @@ object CurrencySnapshotAcceptanceManager {
         .getOrRaise(new IllegalStateException("Could not get the last global snapshot info"))
 
       fallbackOrdinal = lastUnsyncGlobalSnapshot.ordinal
+
+      maybeSnapshotOrdinalSync = globalSnapshotSyncAcceptanceResult.contextUpdate.values
+        .map(_.globalSnapshotOrdinal)
+        .groupBy(identity)
+        .maxByOption {
+          case (ordinal, occurrences) =>
+            if (lastUnsyncGlobalSnapshot.ordinal > updatedLastSyncGlobalOrder) {
+              (occurrences.size, ordinal.value.value)
+            } else {
+              (occurrences.size, -ordinal.value.value)
+            }
+        }
+        .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value - lastGlobalSnapshotsSyncConfig.syncOffset) }
+
+      lastGlobalSnapshots <- lastNGlobalSnapshotStorage.getLastN
+      _ <- logger.debug(s"Metagraph $metagraphId snapshot $snapshotOrdinal - maybeSnapshotOrdinalSync: $maybeSnapshotOrdinalSync")
 
       ordinalToFetchGlobalSnapshot <- maybeSnapshotOrdinalSync
         .orElse(maybeLastGlobalSyncView.map(_.ordinal))
@@ -367,15 +376,6 @@ object CurrencySnapshotAcceptanceManager {
             .flatMap(_.spendTransactions.toList)
             .filter(_.currencyId.exists(_.value == metagraphId))
       }.toList
-
-      _ <- metagraphIdSpendTransactions.nonEmpty
-        .pure[F]
-        .ifM(
-          logger.info(
-            s"--- [CURRENCY=$metagraphId][Ordinal=$snapshotOrdinal][GlobalSyncViewOrdinal=${globalSyncView.ordinal}] Extracted spend transactions: $metagraphIdSpendTransactions"
-          ),
-          Applicative[F].unit
-        )
 
       incomingTokenLocks = acceptanceTokenLockBlocksResult.accepted.flatMap { tokenLockBlock =>
         tokenLockBlock.value.tokenLocks.toSortedSet
@@ -655,9 +655,6 @@ object CurrencySnapshotAcceptanceManager {
                     (emptySpendActions, emptyProcessedGlobalSnapshots).pure[F]
                   } else {
                     for {
-                      _ <- logger.info(
-                        s"[CURRENCY=$currencyId][Ordinal=$currentCurrencySnapshotOrdinal][GlobalSyncView=$globalSnapshotViewOrdinal] Extracting spend actions from global ordinals: ${globalOrdinalsToProcess.map(_.show).mkString(",")}"
-                      )
                       spendActions <- processUnappliedOrdinals(
                         globalOrdinalsToProcess,
                         lastGlobalSnapshots,
