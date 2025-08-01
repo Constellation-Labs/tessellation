@@ -7,14 +7,15 @@ import cats.{Applicative, MonadThrow}
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
+import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
 import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.snapshot.Validator.isNextSnapshot
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSnapshotStorage, LastSyncGlobalSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.security.Hashed
+import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.all.NonNegLong
 import fs2.Stream
 import fs2.concurrent.SignallingRef
 
@@ -80,17 +81,24 @@ object LastSyncGlobalSnapshotStorage {
       def getLastSynchronizedCombined: F[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
         currencySnapshotStorage.head.flatMap {
           _.flatTraverse {
-            case (_, info) =>
+            case (snapshot, info) =>
               val offset = lastGlobalSnapshotsSyncConfig.syncOffset
-
-              info.globalSnapshotSyncView.flatTraverse {
-                _.values
-                  .map(_.globalSnapshotOrdinal)
-                  .groupBy(identity)
-                  .maxByOption { case (ordinal, occurrences) => (occurrences.size, ordinal.value.value) }
-                  .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value - offset) }
-                  .flatTraverse(getCombined)
+              val lastPeersParticipatedOnConsensus = snapshot.proofs.map(_.id.toPeerId)
+              val peersToGetSnapshotOrdinalSync = info.globalSnapshotSyncView match {
+                case Some(value) =>
+                  value.filter {
+                    case (peerId, _) =>
+                      lastPeersParticipatedOnConsensus.contains(peerId)
+                  }
+                case None => SortedMap.empty[peer.PeerId, Signed[GlobalSnapshotSync]]
               }
+
+              peersToGetSnapshotOrdinalSync.values
+                .map(_.globalSnapshotOrdinal)
+                .groupBy(identity)
+                .maxByOption { case (ordinal, occurrences) => (occurrences.size, ordinal.value.value) }
+                .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value - offset) }
+                .fold(none[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F])(getCombined)
           }
         }
     }

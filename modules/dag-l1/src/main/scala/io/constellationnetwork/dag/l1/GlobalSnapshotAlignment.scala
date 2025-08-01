@@ -48,13 +48,11 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
     .awakeEvery(10.seconds)
     .evalMap { _ =>
       withRetry(
-        operation = services.globalL0.pullLatestSnapshot.flatMap {
-          case (latestSnapshot, _) =>
-            val peerIds = latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet)
-            programs.l0PeerDiscovery.discover(peerIds)
-        }.handleErrorWith { err =>
-          logger.warn(err)("Could not fetch latest snapshot from global L0, discovering L0 peers from random peer") >>
+        operation = storages.lastSnapshot.get.flatMap {
+          case None =>
             storages.l0Cluster.getRandomPeer.flatMap(p => programs.l0PeerDiscovery.discoverFrom(p))
+          case Some(latestSnapshot) =>
+            programs.l0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
         },
         operationName = "L0 peer discovery"
       )
