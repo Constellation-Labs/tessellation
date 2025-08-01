@@ -46,6 +46,7 @@ object GlobalDelegatedRewardsDistributor {
 
     // Define a high precision MathContext for consistent calculations
     private val mc: MathContext = new java.math.MathContext(24, java.math.RoundingMode.HALF_UP)
+    private val priceOracleEpoch: EpochProgress = delegatedRewardsConfig.priceOracleEpoch.getOrElse(environment, EpochProgress.MaxValue)
 
     /** Return emission configuration applied by this rewards distributor
       */
@@ -203,7 +204,7 @@ object GlobalDelegatedRewardsDistributor {
         val dagPrices = emConfig.dagPrices
         val initialDagPrice = dagPrices.headOption.map(_._2).getOrElse(DefaultDelegatedRewardsConfigProvider.initialDagPrice)
         val initialPrice = initialDagPrice.toBigDecimal
-        val currentPrice = getCurrentDagPrice(lastSnapshotContext).getOrElse(initialDagPrice).toBigDecimal
+        val currentPrice = getCurrentDagPrice(epochProgress, dagPrices, lastSnapshotContext).getOrElse(initialDagPrice).toBigDecimal
         val yearDiff = DecimalUtils.safeDivide(BigDecimal(epochProgress.value.value - transitionEpoch.toLong, mc), epochsPerYear)
 
         for {
@@ -241,14 +242,20 @@ object GlobalDelegatedRewardsDistributor {
         } yield amount
       }
     }
-
     private def getCurrentDagPrice(
+      epochProgress: EpochProgress,
+      dagPrices: Map[EpochProgress, NonNegFraction],
       lastSnapshotContext: GlobalSnapshotInfo
-    ): Option[NonNegFraction] =
+    ): Option[NonNegFraction] = if (epochProgress >= priceOracleEpoch) {
       lastSnapshotContext.priceState
         .getOrElse(SortedMap.empty[TokenPair, PriceRecord])
         .get(TokenPair.DAG_USD)
         .map(priceRecord => priceRecord.currentPrice.price.value)
+    } else {
+      dagPrices.filter { case (epoch, _) => epoch.value <= epochProgress.value }
+        .maxByOption(_._1.value.value)
+        .map(_._2)
+    }
 
     private def getStakedAmount(stakeRecord: DelegatedStakeRecord): Long =
       stakeRecord.event.value.amount.value.value + stakeRecord.rewards.value

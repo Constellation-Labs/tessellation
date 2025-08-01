@@ -294,7 +294,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         flatInflationRate = io.constellationnetwork.schema.NonNegFraction.unsafeFrom(0, 100),
         emissionConfig = Map.empty,
         percentDistribution = Map.empty,
-        oneTimeRewards = Map.empty
+        oneTimeRewards = Map.empty,
+        priceOracleEpoch = Map.empty
       )
   }
 
@@ -315,7 +316,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
       GlobalSnapshotAcceptanceManager
         .make[IO](
-          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty),
+          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
           MetagraphsSyncConfig(PosInt(100)),
           Dev,
           bam,

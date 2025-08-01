@@ -30,11 +30,13 @@ import io.constellationnetwork.node.shared.{NodeSharedOrSharedRegistrationIdRang
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
-import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import io.constellationnetwork.security._
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.pureconfig._
+import fs2.concurrent.SignallingRef
 import pureconfig.generic.auto._
 import pureconfig.module.enumeratum._
 
@@ -353,8 +355,9 @@ abstract class CurrencyL0App(
 
               case _ => IO.unit
             }
+            currentLastSyncGlobalSnapshot <- SignallingRef.of[IO, Option[Hashed[GlobalIncrementalSnapshot]]](None)
             _ <- StateChannel
-              .run[IO](services, storages, sharedStorages, programs, dataApplicationService, keyPair, mkCell)
+              .run[IO](services, storages, sharedStorages, programs, dataApplicationService, keyPair, mkCell, currentLastSyncGlobalSnapshot)
               .compile
               .drain
           } yield innerProgram

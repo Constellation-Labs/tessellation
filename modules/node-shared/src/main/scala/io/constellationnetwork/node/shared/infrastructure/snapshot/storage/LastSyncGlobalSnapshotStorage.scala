@@ -87,7 +87,7 @@ object LastSyncGlobalSnapshotStorage {
                 _.values
                   .map(_.globalSnapshotOrdinal)
                   .groupBy(identity)
-                  .maxByOption { case (ordinal, occurrences) => (occurrences.size, -ordinal.value.value) }
+                  .maxByOption { case (ordinal, occurrences) => (occurrences.size, ordinal.value.value) }
                   .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value - offset) }
                   .flatTraverse(getCombined)
               }

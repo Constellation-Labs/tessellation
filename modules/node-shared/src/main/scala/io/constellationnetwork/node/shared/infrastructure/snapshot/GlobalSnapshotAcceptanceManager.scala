@@ -1197,11 +1197,6 @@ object GlobalSnapshotAcceptanceManager {
     ): F[SortedMap[Address, MetagraphSyncDataInfo]] =
       incomingCurrencySnapshots.toList.traverse {
         case (address, snapshots) =>
-          val snapshotsOrdinals = snapshots.map {
-            case Left(value)  => value.ordinal
-            case Right(value) => value._1.ordinal
-          }
-
           val currentInfo = existingData.getOrElse(address, MetagraphSyncDataInfo.empty)
           val metagraphGlobalSnapshotsProcessed =
             globalSnapshotsProcessed.getOrElse(address, List.empty).flatMap(_.ordinals).toSet
@@ -1216,12 +1211,7 @@ object GlobalSnapshotAcceptanceManager {
             .focus(_.unappliedGlobalChangeOrdinals)
             .replace(updatedUnappliedGlobalChangeOrdinals)
 
-          logger.info(
-            s"[CURRENCY=$address][GlobalOrdinal=$currentOrdinal][CurrencySnapshots=$snapshotsOrdinals] Removing processed ordinals: $metagraphGlobalSnapshotsProcessed"
-          ) >>
-            logger.info(
-              s"[CURRENCY=$address][GlobalOrdinal=$currentOrdinal][CurrencySnapshots=$snapshotsOrdinals] Updated unapplied global change ordinals: $updatedUnappliedGlobalChangeOrdinals"
-            ) >> (address -> updatedInfo).pure[F]
+          (address -> updatedInfo).pure[F]
       }.map { updatedEntries =>
         val updatedMap = SortedMap.from(updatedEntries)
         existingData ++ updatedMap
@@ -1247,9 +1237,7 @@ object GlobalSnapshotAcceptanceManager {
             .focus(_.unappliedGlobalChangeOrdinals)
             .replace(updatedUnappliedGlobalChangeOrdinals)
 
-          logger.info(
-            s"[CURRENCY=$metagraphId][GlobalOrdinal=$currentOrdinal][TransactionCount=${transactions.length}] Updated unapplied global change ordinals: $updatedUnappliedGlobalChangeOrdinals"
-          ) >> acc.updated(metagraphId, updatedInfo).pure[F]
+          acc.updated(metagraphId, updatedInfo).pure[F]
       }
     }
 
