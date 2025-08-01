@@ -31,7 +31,8 @@ object types {
     tessellation301Migration: Map[AppEnvironment, SnapshotOrdinal],
     checkSyncGlobalSnapshotField: Map[AppEnvironment, SnapshotOrdinal],
     metagraphSyncData: Map[AppEnvironment, SnapshotOrdinal],
-    updatedLastSyncGlobalOrder: Map[AppEnvironment, SnapshotOrdinal]
+    updatedLastSyncGlobalOrder: Map[AppEnvironment, SnapshotOrdinal],
+    updatedLastSyncGlobalFromPeersInConsensus: Map[AppEnvironment, SnapshotOrdinal]
   )
 
   case class MetagraphsSyncConfig(

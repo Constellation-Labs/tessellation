@@ -1,9 +1,9 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
-import cats.data.{NonEmptyList, OptionT, Validated}
+import cats.data._
 import cats.effect.Async
 import cats.syntax.all._
-import cats.{Applicative, Order, Parallel}
+import cats.{Order, Parallel}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.collection.mutable
@@ -39,6 +39,7 @@ import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.signature.SignatureProof
 import io.constellationnetwork.security.{Hashed, Hasher}
 import io.constellationnetwork.syntax.sortedCollection._
 
@@ -96,7 +97,8 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     facilitators: Set[PeerId],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     lastGlobalSyncView: Option[GlobalSyncView],
-    shouldValidateCollateral: Boolean
+    shouldValidateCollateral: Boolean,
+    lastArtifactProofs: NonEmptySet[SignatureProof]
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult]
 
   def acceptRewardTxs(
@@ -209,7 +211,8 @@ object CurrencySnapshotAcceptanceManager {
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       maybeLastGlobalSyncView: Option[GlobalSyncView],
-      shouldValidateCollateral: Boolean
+      shouldValidateCollateral: Boolean,
+      lastArtifactProofs: NonEmptySet[SignatureProof]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
       initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
       tokenLockInitialTxRef <- TokenLockReference.emptyCurrency(lastSnapshotContext.address)
@@ -223,6 +226,8 @@ object CurrencySnapshotAcceptanceManager {
       metagraphSyncDataStartingOrdinal = fieldsAddedOrdinals.metagraphSyncData
         .getOrElse(environment, SnapshotOrdinal.MinValue)
       updatedLastSyncGlobalOrder = fieldsAddedOrdinals.updatedLastSyncGlobalOrder
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
+      updatedLastSyncGlobalFromPeersInConsensus = fieldsAddedOrdinals.updatedLastSyncGlobalFromPeersInConsensus
         .getOrElse(environment, SnapshotOrdinal.MinValue)
 
       acceptanceBlocksResult <- acceptBlocks(
@@ -300,7 +305,18 @@ object CurrencySnapshotAcceptanceManager {
 
       fallbackOrdinal = lastUnsyncGlobalSnapshot.ordinal
 
-      maybeSnapshotOrdinalSync = globalSnapshotSyncAcceptanceResult.contextUpdate.values
+      lastPeersParticipatedOnConsensus = lastArtifactProofs.map(_.id.toPeerId)
+      peersToGetSnapshotOrdinalSync =
+        if (lastUnsyncGlobalSnapshot.ordinal > updatedLastSyncGlobalFromPeersInConsensus) {
+          globalSnapshotSyncAcceptanceResult.contextUpdate.filter {
+            case (peerId, _) =>
+              lastPeersParticipatedOnConsensus.contains(peerId)
+          }
+        } else {
+          globalSnapshotSyncAcceptanceResult.contextUpdate
+        }
+
+      maybeSnapshotOrdinalSync = peersToGetSnapshotOrdinalSync.values
         .map(_.globalSnapshotOrdinal)
         .groupBy(identity)
         .maxByOption {
