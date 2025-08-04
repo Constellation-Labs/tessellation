@@ -205,7 +205,8 @@ object CurrencySnapshotCreator {
                 facilitators,
                 getGlobalSnapshotByOrdinal,
                 lastArtifact.globalSyncView,
-                shouldValidateCollateral
+                shouldValidateCollateral,
+                lastArtifact.proofs
               )
 
           rejectedBlockEvents = currencySnapshotAcceptanceResult.block.notAccepted.collect {
