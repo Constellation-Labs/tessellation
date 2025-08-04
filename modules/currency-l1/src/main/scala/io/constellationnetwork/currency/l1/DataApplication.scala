@@ -115,7 +115,8 @@ object DataApplication {
           )
           .run
       }.handleErrorWith { e =>
-        Stream.eval(logger.error(e)("Error during data block creation")) >> Stream.empty
+        Stream.eval(logger.error(e)("Error during data block creation")) >>
+          Stream.raiseError(e)
       }.flatMap {
         case (_, fb @ ConsensusOutput.FinalBlock(hashedBlock)) =>
           Stream
@@ -145,10 +146,18 @@ object DataApplication {
           }
       }
 
-    blockConsensusInputs
-      .through(runConsensus)
-      .through(sendBlockToL0)
-      .void
-  }
+    def processing: Stream[F, Unit] =
+      blockConsensusInputs
+        .through(runConsensus)
+        .through(sendBlockToL0)
+        .void
 
+    def consensusStream: Stream[F, Unit] =
+      processing.handleErrorWith { e =>
+        Stream.eval(logger.error(e)("Consensus processing failed, restarting")) >>
+          consensusStream
+      }
+
+    consensusStream
+  }
 }
