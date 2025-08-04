@@ -468,11 +468,16 @@ object StateChannelBinarySender {
       val offset = (hashValue % sortedSigners.size).toInt
       sortedSigners(offset)
     } else {
-      val sortedAllowed = allowedPeers.sortBy(_.toString)
-      val seed = lastSnapshotHash.value + sortedAllowed.map(_.toString).mkString("|")
-      val digest = MessageDigest.getInstance("SHA-256").digest(seed.getBytes("UTF-8"))
-      val hashValue = BigInt(digest.take(4)).abs
-      val offset = (hashValue % sortedAllowed.size).toInt
-      sortedAllowed(offset)
+      val eligiblePeers = lastSigners.filter(allowedPeers.contains)
+      if (eligiblePeers.isEmpty) {
+        selfId
+      } else {
+        val sortedEligible = eligiblePeers.sortBy(_.toString)
+        val seed = lastSnapshotHash.value + sortedEligible.map(_.toString).mkString("|")
+        val digest = MessageDigest.getInstance("SHA-256").digest(seed.getBytes("UTF-8"))
+        val hashValue = BigInt(digest.take(4)).abs
+        val offset = (hashValue % sortedEligible.size).toInt
+        sortedEligible(offset)
+      }
     }
 }
