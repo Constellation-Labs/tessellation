@@ -164,8 +164,8 @@ for arg in "$@"; do
     --gl1-port-prefix=*)
       export DAG_L1_PORT_PREFIX="${arg#*=}"
       ;;
-    --cleanup-docker-at-end=*)
-      export CLEANUP_DOCKER_AT_END="${arg#*=}"
+    --cleanup)
+      export CLEANUP_DOCKER_AT_END=true
       ;;
     --tessellation-docker-version=*)
       export TESSELLATION_DOCKER_VERSION="${arg#*=}"
