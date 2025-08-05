@@ -31,7 +31,9 @@ lazy val commonSettings = Seq(
   scalafmtOnCompile := true,
   scalafixOnCompile := true,
   resolvers ++= List(
-    Resolver.sonatypeRepo("snapshots")
+    Resolver.sonatypeRepo("snapshots"),
+    "jitpack" at "https://jitpack.io",
+    "consensys" at "https://artifacts.consensys.net/public/maven/maven/"
   )
 )
 
@@ -75,7 +77,7 @@ lazy val root = (project in file("."))
     name := "tessellation",
     publish / skip := true
   )
-  .aggregate(testShared, shared, keytool, kernel, wallet, nodeShared, sdk, dagL0, dagL1, currencyL0, currencyL1, tools, rosetta)
+  .aggregate(testShared, shared, keytool, kernel, wallet, nodeShared, sdk, dagL0, dagL1, currencyL0, currencyL1, tools, rosetta, libp2pGossip)
 
 lazy val kernel = (project in file("modules/kernel"))
   .enablePlugins(AshScriptPlugin)
@@ -325,6 +327,65 @@ lazy val nodeShared = (project in file("modules/node-shared"))
       Libraries.declineCore,
       Libraries.declineEffect,
       Libraries.declineRefined,
+      Libraries.logback,
+      Libraries.logstashLogbackEncoder % Runtime,
+      Libraries.log4cats,
+      Libraries.micrometerPrometheusRegistry,
+      Libraries.pureconfigCore,
+      Libraries.pureconfigCats,
+      Libraries.pureconfigCatsEffect,
+      Libraries.pureconfigEnumeratum,
+      Libraries.pureconfigHttp4s,
+      Libraries.pureconfigIp4s,
+      Libraries.refinedPureconfig,
+      Libraries.shapeless,
+      Libraries.jol
+    )
+  )
+
+lazy val libp2pGossip = (project in file("modules/libp2p-gossip"))
+  .dependsOn(shared % "compile->compile;test->test", testShared % Test, keytool, kernel)
+  .configs(IntegrationTest)
+  .settings(
+    name := "tessellation-libp2p-gossip",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    publish / skip := true,
+    libraryDependencies ++= Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.betterMonadicFor,
+      CompilerPlugin.semanticDB,
+      Libraries.cats,
+      Libraries.catsEffect,
+      Libraries.catsRetry,
+      Libraries.circeCore,
+      Libraries.circeGeneric,
+      Libraries.circeParser,
+      Libraries.circeRefined,
+      Libraries.circeShapes,
+      Libraries.derevoCore,
+      Libraries.derevoCats,
+      Libraries.derevoCirce,
+      Libraries.fs2Core,
+      Libraries.fs2DataCsv,
+      Libraries.fs2DataCsvGeneric,
+      Libraries.http4sCore,
+      Libraries.http4sDsl,
+      Libraries.http4sServer,
+      Libraries.http4sClient,
+      Libraries.http4sCirce,
+      Libraries.http4sJwtAuth,
+      Libraries.httpSignerCore,
+      Libraries.httpSignerHttp4s,
+      Libraries.jawnParser,
+      Libraries.jawnAst,
+      Libraries.jawnFs2,
+      Libraries.declineCore,
+      Libraries.declineEffect,
+      Libraries.declineRefined,
+      Libraries.libp2p,
       Libraries.logback,
       Libraries.logstashLogbackEncoder % Runtime,
       Libraries.log4cats,
