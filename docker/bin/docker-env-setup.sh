@@ -58,16 +58,22 @@ CL_DOCKER_DL1_JOIN_PORT=${DL1_PORT_PREFIX}01
 
 EOF
 
+
+EXTRA_ENV=$(cat $EXTRA_ENV_PATH)
+echo "Extra env: $EXTRA_ENV"
+echo "$EXTRA_ENV" >> ./nodes/.env
+
 # maybe re-enable later -- these are the current mainnet defaults
 # CL_DOCKER_JAVA_OPTS="-Xms512M -Xss256K -Xmx8192M"
 
 # Append any CL_TEST_* environment variables from the current bash environment
 echo "" >> ./nodes/.env
 echo "# Test environment variables from host" >> ./nodes/.env
-env | grep "^CL_TEST_" | while IFS= read -r line; do
-  echo "$line" >> ./nodes/.env
-done
-
+if env | grep -q "^CL_TEST_"; then
+  env | grep "^CL_TEST_" | while IFS= read -r line; do
+    echo "$line" >> ./nodes/.env
+  done
+fi
 
 for i in 0 1 2; do
   cp ./nodes/.env ./nodes/$i/.env

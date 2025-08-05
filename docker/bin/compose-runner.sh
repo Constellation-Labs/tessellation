@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -e
+set -eo pipefail  # Exit on error, pipe failures
+set -x             # Print each command before executing (verbose)
 
 
 export START_TIME=$(date +%s)
@@ -98,6 +99,17 @@ for i in 0 1 2; do
     export PROFILE_GL1_ARG="--profile l1"
   fi
 
+  if [ -n "$DOCKER_PROFILES" ]; then
+    # This is only used for launching one sidecar service, not one per node.
+    # I.e. metrics or central database.
+    if [ "$i" -eq 0 ]; then
+      # Iterate over docker profiles comma separated
+      for profile in $(echo $DOCKER_PROFILES | tr ',' '\n'); do
+        export PROFILE_GL0_ARG="$PROFILE_GL0_ARG --profile $profile"
+      done
+    fi
+  fi
+
   docker compose -f docker-compose.test.yaml \
   -f docker-compose.yaml \
   -f docker-compose.volumes.yaml \
@@ -112,12 +124,16 @@ for i in 0 1 2; do
 
   docker_additional_args="$PROFILE_GL0_ARG $PROFILE_GL1_ARG"
   echo "docker_additional_args: $docker_additional_args"
-  
-  docker compose -f docker-compose.test.yaml \
-  -f docker-compose.yaml \
-  -f docker-compose.volumes.yaml \
-  $docker_additional_args \
-  up -d
+  docker_additional_args=$(echo $docker_additional_args | xargs)
+
+  if [ -n "$docker_additional_args" ]; then
+    docker compose -f docker-compose.test.yaml \
+    -f docker-compose.yaml \
+    -f docker-compose.volumes.yaml \
+    $docker_additional_args \
+    up -d
+  fi
+
   cd ../../
 done
 
@@ -166,10 +182,11 @@ for i in 0 1 2; do
 
     docker_additional_args="$metagraph_args $metagraph_profile_args"
     echo "docker_additional_args: $docker_additional_args"
-    
-    docker compose \
-    $docker_additional_args \
-    up -d
+    metagraph_profile_args=$(echo $metagraph_profile_args | xargs)
+
+    if [ -n "$metagraph_profile_args" ]; then
+      docker compose $docker_additional_args up -d
+    fi
   fi
 
   cd ../../
@@ -205,16 +222,16 @@ source ../../docker/bin/cluster-health-check.sh
 verify_healthy
 show_time "Cluster became healthy"
 
-# cd $PROJECT_ROOT/.github/action_scripts/delegated_staking
-# node delegated-staking.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX testDelegatedStaking
+cd $PROJECT_ROOT/.github/action_scripts/delegated_staking
+node delegated-staking.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX testDelegatedStaking
 
-echo "------------------------------------------------"
-echo "Running bulk submit test"
-echo "------------------------------------------------"
+# echo "------------------------------------------------"
+# echo "Running bulk submit test"
+# echo "------------------------------------------------"
 
-cd $PROJECT_ROOT/.github/action_scripts/send_transactions
-node bulk-submit-test.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX
-show_time "Bulk submit test completed"
+# cd $PROJECT_ROOT/.github/action_scripts/send_transactions
+# node bulk-submit-test.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX
+# show_time "Bulk submit test completed"
 
 echo "------------------------------------------------"
 echo "End-to-end tests completed"

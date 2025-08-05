@@ -1,6 +1,6 @@
 FROM ubuntu:22.04
 
-RUN apt update && apt install -y openjdk-11-jre
+RUN apt update && apt install -y openjdk-11-jre ca-certificates
 
 # Dev tools
 RUN apt install -y curl iproute2 iputils-ping jq

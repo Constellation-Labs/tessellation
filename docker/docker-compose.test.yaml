@@ -13,6 +13,10 @@ services:
         aliases:
           - gl1${CONTAINER_NAME_SUFFIX:-}
         ipv4_address: ${NET_PREFIX}.2${CONTAINER_OFFSET:-0}
+  postgres:
+    networks:
+      tessellation_common:
+        ipv4_address: ${NET_PREFIX}.9${CONTAINER_OFFSET:-0}
 # declare the external network (must already exist)
 networks:
   tessellation_common:

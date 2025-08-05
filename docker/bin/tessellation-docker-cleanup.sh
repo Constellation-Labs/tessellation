@@ -23,6 +23,8 @@ cleanup() {
         cleanup_container ml0-$i ml0-data-$i &
         cleanup_container cl1-$i cl1-data-$i &
     done
+    # TODO: Cleanup based on network affiliation as well.
+    cleanup_container pg-0 pg-data-0 &
     LAST_PID=$!
     wait $LAST_PID
 }

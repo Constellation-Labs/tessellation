@@ -86,3 +86,28 @@ services:
       retries: 5
       start_period: 3s
     profiles: ["l1"]
+  # Standard supported postgres add-on; not required, metagraph specific.
+  # Enable with --profile postgres
+  postgres:
+    image: postgres:16
+    container_name: pg${CONTAINER_NAME_SUFFIX:-}
+    environment:
+      POSTGRES_USER: ${CL_DATABASE_USER:-myuser}
+      POSTGRES_PASSWORD: ${CL_DATABASE_PASSWORD:-mypassword}
+      POSTGRES_DB: ${CL_DATABASE_NAME:-mydb}
+    ports:
+      - "${CL_DATABASE_PORT:-5432}:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ${CL_DATABASE_MIGRATIONS:-./migrations}:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CL_DATABASE_USER:-myuser} -d ${CL_DATABASE_NAME:-mydb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    profiles: ["postgres"]
+
+volumes:
+  pg-data:
+    name: pg-data-${CONTAINER_NAME_SUFFIX:-}
