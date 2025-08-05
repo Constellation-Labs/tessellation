@@ -8,9 +8,16 @@ if [ -n "$IS_DED" ]; then
     export DOCKER_PROFILES="postgres"
     export METAGRAPH="../ded"
     export EXTRA_ENV_PATH="../ded/.env"
+    # This is convenient for general purpose metagraph data testing, may be worth abstracting out.
+    export NUM_GL0_NODES=1
+    export NUM_GL1_NODES=0
+    export NUM_ML0_NODES=1
+    export NUM_CL1_NODES=0
+    export NUM_DL1_NODES=3
 
-  # just up --metagraph=../ded --ml0-path=l0 --cl1-path=l1 --dl1-path=data_l1 --num-gl0=1 --num-gl1=3 --num-ml0=1 --num-cl1=3 --num-dl1=3
-    # These should be removed
+    # TODO: These should be removed
+    # Temporary defaults for testing below.
+    # just up --metagraph=../ded --ml0-path=l0 --cl1-path=l1 --dl1-path=data_l1 --num-gl0=1 --num-gl1=3 --num-ml0=1 --num-cl1=3 --num-dl1=3
     export CL_DATABASE_ENABLED=true
     export CL_DATABASE_TYPE=postgres
     export CL_DATABASE_HOST=database
@@ -22,11 +29,19 @@ if [ -n "$IS_DED" ]; then
     export CL_DATABASE_MAX_CONNECTIONS=10
     export CL_DATABASE_MIGRATIONS=$METAGRAPH/db/migration
 
-    export NUM_GL0_NODES=1
-    export NUM_GL1_NODES=0
-    export NUM_ML0_NODES=1
-    export NUM_CL1_NODES=0
-    export NUM_DL1_NODES=3
+    cat <<EOF > $EXTRA_ENV_PATH
+CL_DATABASE_ENABLED=true
+CL_DATABASE_TYPE=postgres
+CL_DATABASE_HOST=database
+CL_DATABASE_PORT=5432
+CL_DATABASE_NAME=mydb
+CL_DATABASE_USER=myuser
+CL_DATABASE_PASSWORD=mypassword
+CL_DATABASE_SSL_MODE=disable
+CL_DATABASE_MAX_CONNECTIONS=10
+CL_DATABASE_MIGRATIONS=../../../ded/db/migration
+EOF
+
 fi
 
 export EXTRA_ENV_PATH=${EXTRA_ENV_PATH:-""}
@@ -153,13 +168,13 @@ for arg in "$@"; do
     --dl1-path=*)
       export METAGRAPH_DL1_RELATIVE_PATH="${arg#*=}"
       ;;
-    --ml0=*)
+    --ml0)
       export METAGRAPH_ML0=true
       ;;
-    --cl1=*)
+    --cl1)
       export METAGRAPH_CL1=true
       ;;
-    --dl1=*)
+    --dl1)
       export METAGRAPH_DL1=true
       ;;  
     --num-gl0=*)

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
+echo "Environment before entrypoint:"
+env
+
 join_process() {
   JOIN_RETRIES=${CL_DOCKER_JOIN_RETRIES:-10}
   JOIN_RETRY_DELAY=${CL_DOCKER_JOIN_DELAY:-10}
