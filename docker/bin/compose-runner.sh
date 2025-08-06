@@ -99,16 +99,16 @@ for i in 0 1 2; do
     export PROFILE_GL1_ARG="--profile l1"
   fi
 
-  if [ -n "$DOCKER_PROFILES" ]; then
-    # This is only used for launching one sidecar service, not one per node.
-    # I.e. metrics or central database.
-    if [ "$i" -eq 0 ]; then
-      # Iterate over docker profiles comma separated
-      for profile in $(echo $DOCKER_PROFILES | tr ',' '\n'); do
-        export PROFILE_GL0_ARG="$PROFILE_GL0_ARG --profile $profile"
-      done
-    fi
-  fi
+  # if [ -n "$DOCKER_PROFILES" ]; then
+  #   # This is only used for launching one sidecar service, not one per node.
+  #   # I.e. metrics or central database.
+  #   if [ "$i" -eq 0 ]; then
+  #     # Iterate over docker profiles comma separated
+  #     for profile in $(echo $DOCKER_PROFILES | tr ',' '\n'); do
+  #       export PROFILE_GL0_ARG="$PROFILE_GL0_ARG --profile $profile"
+  #     done
+  #   fi
+  # fi
 
   docker compose -f docker-compose.test.yaml \
   -f docker-compose.yaml \
