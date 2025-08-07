@@ -14,6 +14,7 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.generators._
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed.forAsyncHasher
 import io.constellationnetwork.security.signature.SignedValidator.NotEnoughSeedlistSignatures
