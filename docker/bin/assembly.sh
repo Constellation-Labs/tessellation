@@ -98,7 +98,9 @@ if [ -n "$METAGRAPH" ]; then
   missing=false
 
   for module in $METAGRAPH_ML0_RELATIVE_PATH $METAGRAPH_CL1_RELATIVE_PATH $METAGRAPH_DL1_RELATIVE_PATH; do
+    set +e
     jar_path=$(ls -1t modules/"$module"/target/scala-2.13/*-assembly*.jar 2>/dev/null | head -n1)
+    set -e
     if [ -z "$jar_path" ]; then
       echo "⚠️  Missing JAR for module: $module"
       missing=true
