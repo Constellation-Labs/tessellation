@@ -337,7 +337,10 @@ object GlobalSnapshotAcceptanceManager {
         )
 
         acceptedGlobalAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
-        acceptedGlobalTokenLocks = tokenLockBlockAcceptanceResult.accepted.flatMap(_.value.tokenLocks.toList)
+        acceptedGlobalTokenLocks <- acceptTokenLockReplacements(
+          tokenLockBlockAcceptanceResult.accepted.flatMap(_.value.tokenLocks.toList),
+          lastSnapshotContext
+        )
 
         activeAllowSpendsFromCurrencySnapshots = currencySnapshots
           .mapFilter(_.toOption.flatMap { case (_, info) => info.activeAllowSpends })
@@ -412,6 +415,7 @@ object GlobalSnapshotAcceptanceManager {
 
         generatedTokenUnlocks = generateTokenUnlocks(
           expiredWithdrawalsDelegatedStaking,
+          acceptedGlobalTokenLocks,
           globalActiveTokenLocksByRef
         ) match {
           case Right(tokenUnlocks) => tokenUnlocks
@@ -637,6 +641,24 @@ object GlobalSnapshotAcceptanceManager {
         )
     }
 
+    private def acceptTokenLockReplacements(acceptedTokenLocks: List[Signed[TokenLock]], lastSnapshotContext: GlobalSnapshotInfo)(
+      implicit hasher: Hasher[F]
+    ): F[List[Signed[TokenLock]]] =
+      acceptedTokenLocks.filterA { tx =>
+        tx.replaceTokenLockRef match {
+          case Some(replaceTokenLockRef) =>
+            lastSnapshotContext.activeTokenLocks
+              .getOrElse(SortedMap.empty[Address, SortedSet[Signed[TokenLock]]])
+              .getOrElse(tx.source, SortedSet.empty[Signed[TokenLock]])
+              .toList
+              .traverse(existing => TokenLockReference.of(existing).map(ref => (ref, existing)))
+              .map(_.exists {
+                case (ref, existing) => ref.hash === replaceTokenLockRef && existing.source == tx.source && existing.amount < tx.amount
+              })
+          case None => true.pure[F]
+        }
+      }
+
     private def getUpdatedCreateNodeCollaterals(
       nodeCollateralAcceptanceResult: UpdateNodeCollateralAcceptanceResult,
       unexpiredCreateNodeCollaterals: SortedMap[Address, SortedSet[NodeCollateralRecord]]
@@ -690,9 +712,31 @@ object GlobalSnapshotAcceptanceManager {
 
     private def generateTokenUnlocks(
       expiredWithdrawalsDelegatedStaking: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
+      acceptedTokenLocks: List[Signed[TokenLock]],
       globalActiveTokenLocksByRef: Map[Hash, Signed[TokenLock]]
-    ): Either[DelegatedStakeError, Map[Address, List[TokenUnlock]]] =
-      expiredWithdrawalsDelegatedStaking.toList.traverse {
+    ): Either[DelegatedStakeError, Map[Address, List[TokenUnlock]]] = {
+      val increasedTokenLockUnlocks = acceptedTokenLocks
+        .filter(_.replaceTokenLockRef.nonEmpty)
+        .traverse { tokenLock =>
+          val replaceTokenLockRef = tokenLock.replaceTokenLockRef.get
+          for {
+            activeTokenLock <- globalActiveTokenLocksByRef
+              .get(replaceTokenLockRef)
+              .toRight(MissingTokenLock(s"Missing TokenLock for tokenLockRef: $replaceTokenLockRef"))
+          } yield
+            (
+              tokenLock.source,
+              TokenUnlock(
+                replaceTokenLockRef,
+                activeTokenLock.amount,
+                activeTokenLock.currencyId,
+                activeTokenLock.source
+              )
+            )
+        }
+        .map(_.groupBy { case (address, _) => address }.view.mapValues(_.map { case (_, tokenUnlock) => tokenUnlock }))
+
+      val expiredWithdrawalUnlocks = expiredWithdrawalsDelegatedStaking.toList.traverse {
         case (address, withdrawals) =>
           withdrawals.toList.traverse {
             case pw: PendingDelegatedStakeWithdrawal =>
@@ -709,6 +753,12 @@ object GlobalSnapshotAcceptanceManager {
                 )
           }.map(tokenUnlocks => address -> tokenUnlocks)
       }.map(_.toMap)
+
+      for {
+        withdrawalUnlocks <- expiredWithdrawalUnlocks
+        replacedUnlocks <- increasedTokenLockUnlocks
+      } yield withdrawalUnlocks ++ replacedUnlocks
+    }
 
     private def acceptDelegatedStakes(
       lastSnapshotContext: GlobalSnapshotInfo,

@@ -16,11 +16,12 @@ import io.constellationnetwork.node.shared.domain.tokenlock.ContextualTokenLockV
   NoConflict
 }
 import io.constellationnetwork.node.shared.domain.tokenlock.TokenLockStorage._
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.snapshot.SnapshotInfo
 import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockOrdinal, TokenLockReference}
+import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.Hashed
 import io.constellationnetwork.security.hash.Hash
 

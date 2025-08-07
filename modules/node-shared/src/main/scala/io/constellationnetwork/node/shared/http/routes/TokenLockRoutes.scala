@@ -1,6 +1,5 @@
 package io.constellationnetwork.node.shared.http.routes
 
-import cats.data.Validated
 import cats.data.Validated.{Invalid, Valid}
 import cats.effect.Async
 import cats.effect.std.{Queue, Supervisor}
@@ -9,17 +8,15 @@ import cats.syntax.all._
 import io.constellationnetwork.currency.schema.currency.CurrencySnapshotInfo
 import io.constellationnetwork.currency.tokenlock.ConsensusInput
 import io.constellationnetwork.ext.http4s.{AddressVar, HashVar}
-import io.constellationnetwork.node.shared.cli.CliMethod
-import io.constellationnetwork.node.shared.config.types.DelegatedStakingConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.tokenlock._
 import io.constellationnetwork.routes.internal._
+import io.constellationnetwork.schema.GlobalSnapshotInfo
 import io.constellationnetwork.schema.http.{ErrorCause, ErrorResponse}
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.tokenLock._
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
 
