@@ -67,7 +67,8 @@ object ContextualTokenLockValidator {
           .flatMap(validateConflictAtOrdinal(_, context.sourceTokenLocks))
           .flatMap {
             case (conflictResolveResult, conflictResolvedStoredTxs) =>
-              validateBalances(conflictResolveResult.tx, conflictResolvedStoredTxs, context.sourceBalance)
+              validateReplaceTokenLockRef(conflictResolveResult.tx, context.sourceTokenLocks)
+                .flatMap(_ => validateBalances(conflictResolveResult.tx, conflictResolvedStoredTxs, context.sourceBalance))
                 .map(_ => conflictResolveResult)
           }
           .flatMap { conflictResolveResult =>
@@ -87,7 +88,7 @@ object ContextualTokenLockValidator {
         txs: Option[SortedMap[TokenLockOrdinal, StoredTokenLock]],
         balance: Balance
       ): Either[ContextualTokenLockValidationError, Hashed[TokenLock]] = {
-        val availableBalance = getBalanceAffectedByTxs(txs, balance)
+        val availableBalance = getBalanceAffectedByTxs(txs, balance, tokenLock.replaceTokenLockRef)
         TokenLockAmount.toAmount(tokenLock.amount).plus(TokenLockFee.toAmount(tokenLock.fee)) match {
           case Left(_) =>
             TokenLockArithmeticError(tokenLock.amount, tokenLock.fee).asLeft
@@ -98,6 +99,52 @@ object ContextualTokenLockValidator {
               InsufficientBalance(tokenLock.amount, availableBalance).asLeft
         }
       }
+
+      private def validateReplaceTokenLockRef(
+        tokenLock: Hashed[TokenLock],
+        txs: Option[SortedMap[TokenLockOrdinal, StoredTokenLock]]
+      ): Either[ContextualTokenLockValidationError, Hashed[TokenLock]] =
+        tokenLock.replaceTokenLockRef match {
+          case None => tokenLock.asRight
+          case Some(replaceTokenLockRef) =>
+            if (tokenLock.currencyId.nonEmpty) {
+              // only DAG is supported
+              ReplacementIsNotSupported(tokenLock.currencyId).asLeft
+            } else {
+              txs.map { txs =>
+                // First check if the replacement token lock exists in majority transactions (only check reference)
+                val majorityReferenceExists = txs.exists {
+                  case (_, tx: MajorityTokenLock) => tx.ref.hash.some === tokenLock.replaceTokenLockRef
+                  case _                          => false
+                }
+
+                if (majorityReferenceExists) {
+                  // For majority transactions we can only check if the reference exists
+                  tokenLock.asRight
+                } else {
+                  // Check if the token lock exists in non-majority transactions with the same source
+                  val nonMajorityReferenceExists = getTransactionsAboveMajority(txs).exists {
+                    case (_, tx) => tx.ref.hash.some === tokenLock.replaceTokenLockRef && tx.transaction.source === tokenLock.source
+                  }
+
+                  if (nonMajorityReferenceExists) {
+                    // Then check if the amount is higher
+                    val existingTokenLock = getTransactionsAboveMajority(txs).find {
+                      case (_, tx) => tx.ref.hash.some === tokenLock.replaceTokenLockRef && tx.transaction.source === tokenLock.source
+                    }.map { case (_, tx) => tx.transaction }.get // Safe because we already checked replacementExists
+
+                    if (tokenLock.amount > existingTokenLock.amount) {
+                      tokenLock.asRight
+                    } else {
+                      ReplacementLowerThanCurrentTokenLock(tokenLock.amount, existingTokenLock.amount).asLeft
+                    }
+                  } else {
+                    NothingToReplace(replaceTokenLockRef).asLeft
+                  }
+                }
+              }.getOrElse(NothingToReplace(replaceTokenLockRef).asLeft)
+            }
+        }
 
       private def validateEpochProgress(
         tokenLock: Hashed[TokenLock],
@@ -161,14 +208,18 @@ object ContextualTokenLockValidator {
 
       private def getBalanceAffectedByTxs(
         txs: Option[SortedMap[TokenLockOrdinal, StoredTokenLock]],
-        latestBalance: Balance
+        latestBalance: Balance,
+        excludeTokenLockRef: Option[Hash]
       ): Balance =
         txs match {
           case Some(txs) =>
             getTransactionsAboveMajority(txs)
               .foldLeftM(latestBalance) {
                 case (acc, curr) =>
-                  toAmount(curr.transaction.amount).plus(curr.transaction.fee).flatMap(acc.minus)
+                  if (excludeTokenLockRef.contains(curr.ref.hash))
+                    acc.asRight
+                  else
+                    toAmount(curr.transaction.amount).plus(curr.transaction.fee).flatMap(acc.minus)
               }
               .getOrElse(Balance.empty)
           case None => latestBalance
@@ -215,6 +266,10 @@ object ContextualTokenLockValidator {
   case class LockedAddressError(address: Address) extends ContextualTokenLockValidationError
   case class TooShortUnlockEpochProgress(epochProgress: Option[EpochProgress]) extends ContextualTokenLockValidationError
   case class InvalidCurrencyId(currencyId: Option[CurrencyId]) extends ContextualTokenLockValidationError
+  case class NothingToReplace(replaceTokenLockRef: Hash) extends ContextualTokenLockValidationError
+  case class ReplacementLowerThanCurrentTokenLock(replacementAmount: TokenLockAmount, existingAmount: TokenLockAmount)
+      extends ContextualTokenLockValidationError
+  case class ReplacementIsNotSupported(currencyId: Option[CurrencyId]) extends ContextualTokenLockValidationError
   case class CustomValidationError(message: String) extends ContextualTokenLockValidationError
 
   type ContextualTokenLockValidationErrorOr[A] = ValidatedNec[ContextualTokenLockValidationError, A]
