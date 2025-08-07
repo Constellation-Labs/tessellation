@@ -12,7 +12,9 @@ else
   missing=false
 
   for module in dag-l0 dag-l1 keytool wallet; do
+    set +e
     jar_path=$(ls -1t modules/"$module"/target/scala-2.13/tessellation-"$module"-assembly*.jar 2>/dev/null | head -n1)
+    set -e
     if [ -z "$jar_path" ]; then
       echo "⚠️  Missing JAR for module: $module"
       missing=true
