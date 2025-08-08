@@ -1,122 +1,58 @@
 
-# Set default values if environment variables are not set
-if [ -z "$EXIT_CODE" ]; then
-    export EXIT_CODE=0
+
+export BASH_DEBUG_MODE=${BASH_DEBUG_MODE:-false}
+export DATA_ONLY_METAGRAPH=${DATA_ONLY_METAGRAPH:-false}
+
+if [ -n "$DATA_ONLY_METAGRAPH" ]; then
+    export NUM_GL0_NODES=1
+    export NUM_GL1_NODES=0
+    export NUM_ML0_NODES=1
+    export NUM_CL1_NODES=0
+    export NUM_DL1_NODES=3
+
 fi
 
-if [ -z "$CL_DOCKER_BIND_INTERFACE" ]; then
-    # Example
-    # 127.0.0.1:
-    export CL_DOCKER_BIND_INTERFACE=""
-fi
-
-if [ -z "$CLEAN_ASSEMBLY" ]; then
-    export CLEAN_ASSEMBLY=false
-fi
-
-if [ -z "$DO_EXIT" ]; then
-    export DO_EXIT=false
-fi
-
-if [ -z "$INCLUDE_L0" ]; then
-    export INCLUDE_L0=true
-fi
-
-if [ -z "$INCLUDE_L1" ]; then
-    export INCLUDE_L1=false
-fi
-
-if [ -z "$INCLUDE_ALL" ]; then
-    export INCLUDE_ALL=false
-fi
-
-if [ -z "$PURGE_CONFIG" ]; then
-    export PURGE_CONFIG=true
-fi
-
-if [ -z "$SKIP_ASSEMBLY" ]; then
-    export SKIP_ASSEMBLY=false
-fi
-
-if [ -z "$NET_PREFIX" ]; then
-    export NET_PREFIX="172.32.0"
-fi
-
-if [ -z "$TESSELLATION_DOCKER_VERSION" ]; then
-    export TESSELLATION_DOCKER_VERSION=test
-fi
-
-if [ -z "$CLEANUP_DOCKER_AT_END" ]; then
-    export CLEANUP_DOCKER_AT_END=false
-fi
-
-if [ -z "$DAG_L0_PORT_PREFIX" ]; then
-    export DAG_L0_PORT_PREFIX=90
-fi
-
-if [ -z "$DAG_L1_PORT_PREFIX" ]; then
-    export DAG_L1_PORT_PREFIX=91
-fi
-
-if [ -z "$ML0_PORT_PREFIX" ]; then
-    export ML0_PORT_PREFIX=92
-fi
-
-if [ -z "$CL1_PORT_PREFIX" ]; then
-    export CL1_PORT_PREFIX=93
-fi
-
-if [ -z "$DL1_PORT_PREFIX" ]; then
-    export DL1_PORT_PREFIX=94
-fi
-
-if [ -z "$REGENERATE_TEST_KEYS" ]; then
-    export REGENERATE_TEST_KEYS=false
-fi
-
-if [ -z "$BUILD_ONLY" ]; then
-    export BUILD_ONLY=false
-fi
+export EXTRA_ENV_PATH=${EXTRA_ENV_PATH:-""}
+export EXIT_CODE=${EXIT_CODE:-0}
+export CL_DOCKER_BIND_INTERFACE=${CL_DOCKER_BIND_INTERFACE:-""}
+export CLEAN_ASSEMBLY=${CLEAN_ASSEMBLY:-false}
+export DO_EXIT=${DO_EXIT:-false}
+export INCLUDE_L0=${INCLUDE_L0:-true}
+export INCLUDE_L1=${INCLUDE_L1:-false}
+export INCLUDE_ALL=${INCLUDE_ALL:-false}
+export PURGE_CONFIG=${PURGE_CONFIG:-true}
+export SKIP_ASSEMBLY=${SKIP_ASSEMBLY:-false}
+export NET_PREFIX=${NET_PREFIX:-"172.32.0"}
+export TESSELLATION_DOCKER_VERSION=${TESSELLATION_DOCKER_VERSION:-"test"}
+export CLEANUP_DOCKER_AT_END=${CLEANUP_DOCKER_AT_END:-false}
+export REGENERATE_TEST_KEYS=${REGENERATE_TEST_KEYS:-false}
+export BUILD_ONLY=${BUILD_ONLY:-false}
 
 
-# if [ -z "$METAGRAPH" ]; then
-#     export METAGRAPH=$PROJECT_ROOT/.github/templates/metagraphs/project_template
-# fi
+export DAG_L0_PORT_PREFIX=${DAG_L0_PORT_PREFIX:-90}
+export DAG_L1_PORT_PREFIX=${DAG_L1_PORT_PREFIX:-91}
+export ML0_PORT_PREFIX=${ML0_PORT_PREFIX:-92}
+export CL1_PORT_PREFIX=${CL1_PORT_PREFIX:-93}
+export DL1_PORT_PREFIX=${DL1_PORT_PREFIX:-94}
 
-if [ -z "$METAGRAPH_ML0" ]; then
-    export METAGRAPH_ML0=true
-fi
+# Metagraph specific settings
+export METAGRAPH_ML0=${METAGRAPH_ML0:-true}
+export METAGRAPH_CL1=${METAGRAPH_CL1:-false}
+export METAGRAPH_DL1=${METAGRAPH_DL1:-false}
+export METAGRAPH_ML0_RELATIVE_PATH=${METAGRAPH_ML0_RELATIVE_PATH:-"l0"}
+export METAGRAPH_CL1_RELATIVE_PATH=${METAGRAPH_CL1_RELATIVE_PATH:-"l1"}
+export METAGRAPH_DL1_RELATIVE_PATH=${METAGRAPH_DL1_RELATIVE_PATH:-"data_l1"}
+export USE_TESSELLATION_VERSION=${USE_TESSELLATION_VERSION:-true}
 
-if [ -z "$METAGRAPH_CL1" ]; then
-    export METAGRAPH_CL1=false
-fi
+# Common docker profile addons:
+export DOCKER_PROFILES=${DOCKER_PROFILES:-""}
 
-if [ -z "$METAGRAPH_DL1" ]; then
-    export METAGRAPH_DL1=false
-fi
+# Test specific settings
+export USE_TEST_METAGRAPH=${USE_TEST_METAGRAPH:-false}
 
-if [ -z $METAGRAPH_ML0_RELATIVE_PATH ]; then
-    export METAGRAPH_ML0_RELATIVE_PATH="l0"
-fi
-
-if [ -z $METAGRAPH_CL1_RELATIVE_PATH ]; then
-    export METAGRAPH_CL1_RELATIVE_PATH="l1"
-fi
-
-if [ -z $METAGRAPH_DL1_RELATIVE_PATH ]; then
-    export METAGRAPH_DL1_RELATIVE_PATH="data_l1"
-fi
-
-if [ -z $USE_TESSELLATION_VERSION ]; then
-    export USE_TESSELLATION_VERSION=true
-fi
-
-if [ -z $USE_TEST_METAGRAPH ]; then
-    export USE_TEST_METAGRAPH=false
-fi
 
 # Explicitly set TESSELLATION_VERSION based on the project's version
-if [ -z "$TESSELLATION_VERSION" ]; then
+if [ -z "${TESSELLATION_VERSION:-}" ]; then
     if [ -n "$RELEASE_TAG" ]; then
         export TESSELLATION_VERSION="${RELEASE_TAG#v}"
     else
@@ -131,6 +67,12 @@ echo "processing args: $@"
 # Process command-line arguments
 for arg in "$@"; do
   case "$arg" in
+    --data)
+      export DATA_ONLY_METAGRAPH=true
+      ;;
+    --env=*)
+      export EXTRA_ENV_PATH="${arg#*=}"
+      ;;
     --exit-code)
       export EXIT_CODE=1
       ;;
@@ -164,8 +106,8 @@ for arg in "$@"; do
     --gl1-port-prefix=*)
       export DAG_L1_PORT_PREFIX="${arg#*=}"
       ;;
-    --cleanup-docker-at-end=*)
-      export CLEANUP_DOCKER_AT_END="${arg#*=}"
+    --cleanup)
+      export CLEANUP_DOCKER_AT_END=true
       ;;
     --tessellation-docker-version=*)
       export TESSELLATION_DOCKER_VERSION="${arg#*=}"
@@ -194,13 +136,13 @@ for arg in "$@"; do
     --dl1-path=*)
       export METAGRAPH_DL1_RELATIVE_PATH="${arg#*=}"
       ;;
-    --ml0=*)
+    --ml0)
       export METAGRAPH_ML0=true
       ;;
-    --cl1=*)
+    --cl1)
       export METAGRAPH_CL1=true
       ;;
-    --dl1=*)
+    --dl1)
       export METAGRAPH_DL1=true
       ;;  
     --num-gl0=*)

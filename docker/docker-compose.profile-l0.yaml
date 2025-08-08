@@ -1,5 +1,0 @@
-services:
-  gl1:
-    depends_on:
-      gl0:
-        condition: service_healthy
