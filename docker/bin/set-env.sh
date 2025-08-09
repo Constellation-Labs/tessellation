@@ -3,14 +3,6 @@
 export BASH_DEBUG_MODE=${BASH_DEBUG_MODE:-false}
 export DATA_ONLY_METAGRAPH=${DATA_ONLY_METAGRAPH:-false}
 
-if [ -n "$DATA_ONLY_METAGRAPH" ]; then
-    export NUM_GL0_NODES=1
-    export NUM_GL1_NODES=0
-    export NUM_ML0_NODES=1
-    export NUM_CL1_NODES=0
-    export NUM_DL1_NODES=3
-
-fi
 
 export EXTRA_ENV_PATH=${EXTRA_ENV_PATH:-""}
 export EXIT_CODE=${EXIT_CODE:-0}
@@ -188,6 +180,15 @@ exit_func() {
 
 echo "BUILD_ONLY: $BUILD_ONLY"
 echo "RELEASE_TAG: $RELEASE_TAG"
+
+if [ "$DATA_ONLY_METAGRAPH" = "true" ]; then
+    export NUM_GL0_NODES=1
+    export NUM_GL1_NODES=0
+    export NUM_ML0_NODES=1
+    export NUM_CL1_NODES=0
+    export NUM_DL1_NODES=3
+
+fi
 
 
 # If a specific metagraph is provided, set sensible defaults
