@@ -1,6 +1,10 @@
 package io.constellationnetwork
 
 import cats._
+import cats.implicits.toShow
+
+import scala.collection.immutable.{SortedMap, SortedSet}
+import scala.concurrent.duration.{Duration, FiniteDuration}
 
 import io.constellationnetwork.ext.refined._
 
@@ -70,6 +74,12 @@ trait OrphanInstances {
   implicit val nonNegIntDecoder: Decoder[NonNegInt] =
     decoderOf[Int, NonNegative]
 
+  implicit val posDoubleEncoder: Encoder[PosDouble] =
+    encoderOf[Double, Positive]
+
+  implicit val posDoubleDecoder: Decoder[PosDouble] =
+    decoderOf[Double, Positive]
+
   implicit def tupleKeyEncoder[A, B](implicit A: KeyEncoder[A], B: KeyEncoder[B]): KeyEncoder[(A, B)] =
     KeyEncoder.instance[(A, B)] { case (a, b) => A(a) + ":" + B(b) }
 
@@ -77,6 +87,20 @@ trait OrphanInstances {
     KeyDecoder.instance[(A, B)] {
       case s"$as:$bs" => A(as).flatMap(a => B(bs).map(b => a -> b))
       case _          => None
+    }
+
+  implicit def tuple3KeyEncoder[A, B, C](implicit A: KeyEncoder[A], B: KeyEncoder[B], C: KeyEncoder[C]): KeyEncoder[(A, B, C)] =
+    KeyEncoder.instance[(A, B, C)] { case (a, b, c) => A(a) + ":" + B(b) + ":" + C(c) }
+
+  implicit def tuple3KeyDecoder[A, B, C](implicit A: KeyDecoder[A], B: KeyDecoder[B], C: KeyDecoder[C]): KeyDecoder[(A, B, C)] =
+    KeyDecoder.instance[(A, B, C)] {
+      case s"$as:$bs:$cs" =>
+        for {
+          a <- A(as)
+          b <- B(bs)
+          c <- C(cs)
+        } yield (a, b, c)
+      case _ => None
     }
 
   implicit val nonNegLongEq: Eq[NonNegLong] =
@@ -92,9 +116,29 @@ trait OrphanInstances {
 
   implicit def arrayShow[A: Show]: Show[Array[A]] = a => a.iterator.map(Show[A].show(_)).mkString("Array(", ", ", ")")
 
+  implicit def showSortedMapAsList[K: Show, V: Show]: Show[SortedMap[K, V]] =
+    Show.show(_.toList.show)
+
+  implicit def showSortedSetAsList[T: Show]: Show[SortedSet[T]] =
+    Show.show(_.toList.show)
+
   implicit def arrayEq[A: Eq]: Eq[Array[A]] = (xs: Array[A], ys: Array[A]) =>
     Eq[Int].eqv(xs.length, ys.length) && xs.zip(ys).forall { case (x, y) => Eq[A].eqv(x, y) }
 
   implicit def arrayOrder[A: Order]: Order[Array[A]] = Order.by(_.toSeq)
 
+  implicit val encodeFiniteDuration: Encoder[FiniteDuration] =
+    Encoder.encodeString.contramap(_.toString)
+
+  implicit val decodeFiniteDuration: Decoder[FiniteDuration] =
+    Decoder.decodeString.emap { str =>
+      try
+        Duration(str) match {
+          case fd: FiniteDuration => Right(fd)
+          case other              => Left(s"Expected FiniteDuration but got: $other")
+        }
+      catch {
+        case _: Exception => Left(s"Invalid FiniteDuration: $str")
+      }
+    }
 }

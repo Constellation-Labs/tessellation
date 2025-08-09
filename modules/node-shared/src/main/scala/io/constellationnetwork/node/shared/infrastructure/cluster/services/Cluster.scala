@@ -38,6 +38,7 @@ object Cluster {
     seedlist: Option[Set[SeedlistEntry]],
     restartService: RestartService[F, _],
     versionHash: Hash,
+    metagraphVersionHash: Hash,
     jarHash: Hash,
     environment: AppEnvironment,
     allowanceList: Option[Set[AllowanceListEntry]]
@@ -70,6 +71,7 @@ object Cluster {
             state,
             seedlistHash,
             versionHash,
+            metagraphVersionHash,
             jarHash,
             environment,
             allowanceListHash

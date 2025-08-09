@@ -65,6 +65,7 @@ class Joining[
   selfId: PeerId,
   stateAfterJoining: NodeState,
   versionHash: Hash,
+  metagraphVersionHash: Hash,
   peerDiscovery: PeerDiscovery[F],
   allowanceList: Option[Set[AllowanceListEntry]]
 ) {
@@ -223,6 +224,7 @@ class Joining[
     for {
 
       _ <- VersionMismatch.raiseError[F, Unit].whenA(registrationRequest.version =!= versionHash)
+      _ <- MetagraphVersionMismatch.raiseError[F, Unit].whenA(registrationRequest.metagraphVersion =!= metagraphVersionHash)
       _ <- EnvMismatch.raiseError[F, Unit].whenA(registrationRequest.environment =!= environment)
 
       ip = registrationRequest.ip
