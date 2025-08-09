@@ -28,6 +28,7 @@ object SharedPrograms {
     seedlist: Option[Set[SeedlistEntry]],
     nodeId: PeerId,
     versionHash: Hash,
+    metagraphVersionHash: Hash,
     allowanceList: Option[Set[AllowanceListEntry]]
   ): F[SharedPrograms[F, A]] =
     for {
@@ -46,6 +47,7 @@ object SharedPrograms {
           nodeId,
           cfg.stateAfterJoining,
           versionHash,
+          metagraphVersionHash,
           pd,
           allowanceList
         )

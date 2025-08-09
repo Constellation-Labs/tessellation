@@ -58,7 +58,8 @@ abstract class CurrencyL0App(
       name,
       header,
       clusterId,
-      version = tessellationVersion
+      version = tessellationVersion,
+      metagraphVersion = metagraphVersion
     )
     with OverridableL0 {
 

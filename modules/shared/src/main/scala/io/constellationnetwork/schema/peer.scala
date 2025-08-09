@@ -182,6 +182,7 @@ object peer {
     state: NodeState,
     seedlist: Hash,
     version: Hash,
+    metagraphVersion: Hash,
     jar: Hash,
     environment: AppEnvironment,
     allowanceList: Hash
