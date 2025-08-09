@@ -59,9 +59,11 @@ CL_DOCKER_DL1_JOIN_PORT=${DL1_PORT_PREFIX}01
 EOF
 
 
-EXTRA_ENV=$(cat $EXTRA_ENV_PATH)
-echo "Extra env: $EXTRA_ENV"
-echo "$EXTRA_ENV" >> ./nodes/.env
+if [ -n "$EXTRA_ENV_PATH" ]; then
+  EXTRA_ENV=$(cat $EXTRA_ENV_PATH)
+  echo "Extra env: $EXTRA_ENV"
+  echo "$EXTRA_ENV" >> ./nodes/.env
+fi
 
 # maybe re-enable later -- these are the current mainnet defaults
 # CL_DOCKER_JAVA_OPTS="-Xms512M -Xss256K -Xmx8192M"
