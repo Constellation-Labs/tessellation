@@ -35,7 +35,7 @@ import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.generation.Generation
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.semver.TessellationVersion
+import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 
@@ -58,7 +58,8 @@ abstract class TessellationIOApp[A <: CliMethod](
   header: String,
   clusterId: ClusterId,
   helpFlag: Boolean = true,
-  version: TessellationVersion = TessellationVersion.unsafeFrom("0.0.1")
+  version: TessellationVersion = TessellationVersion.unsafeFrom("0.0.1"),
+  metagraphVersion: MetagraphVersion = MetagraphVersion.unsafeFrom("0.0.1")
 ) extends CommandIOApp(
       name,
       header,
@@ -167,6 +168,10 @@ abstract class TessellationIOApp[A <: CliMethod](
                                         .withCurrent(_.hash(version))
                                         .asResource
                                         .map(x => sys.env.get("CL_VERSION_HASH").map(Hash(_)).getOrElse(x))
+                                      metagraphVersionHash <- _hasherSelector
+                                        .withCurrent(_.hash(metagraphVersion))
+                                        .asResource
+                                        .map(x => sys.env.get("CL_METAGRAPH_VERSION_HASH").map(Hash(_)).getOrElse(x))
                                       _seedlist <- loadSeedlist("Seedlist", method.seedlistPath).asResource
                                       _l0Seedlist <- loadSeedlist("l0Seedlist", method.l0SeedlistPath).asResource
                                       _prioritySeedlist <- loadSeedlist("prioritySeedlist", method.prioritySeedlistPath).asResource
@@ -206,6 +211,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                           _seedlist,
                                           _restartSignal,
                                           versionHash,
+                                          metagraphVersionHash,
                                           jarHash,
                                           cfg.collateral,
                                           method.stateChannelAllowanceLists,
@@ -226,6 +232,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                           _seedlist,
                                           selfId,
                                           versionHash,
+                                          metagraphVersionHash,
                                           maybeCustomAllowanceList
                                         )
                                         .asResource
