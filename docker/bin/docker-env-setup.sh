@@ -55,11 +55,10 @@ CL_DOCKER_ML0_JOIN_PORT=${ML0_PORT_PREFIX}01
 CL_DOCKER_CL1_JOIN_PORT=${CL1_PORT_PREFIX}01
 CL_DOCKER_DL1_JOIN_PORT=${DL1_PORT_PREFIX}01
 
-
 EOF
 
 
-if [ -n "$EXTRA_ENV_PATH" ]; then
+if [ -f "${EXTRA_ENV_PATH:-/dev/null}" ]; then
   EXTRA_ENV=$(cat $EXTRA_ENV_PATH)
   echo "Extra env: $EXTRA_ENV"
   echo "$EXTRA_ENV" >> ./nodes/.env
