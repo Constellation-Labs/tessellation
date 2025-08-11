@@ -96,8 +96,14 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
               }
                 .map(result => (nextSnapshots, aggResults :+ result).asLeft[List[SnapshotProcessingResult]])
                 .handleErrorWith { e =>
-                  logger.error(e)(s"Failed to process snapshot ${SnapshotReference.fromHashedSnapshot(snapshot).show}, skipping") >>
-                    (nextSnapshots, aggResults).asLeft[List[SnapshotProcessingResult]].pure[F]
+                  val message = s"Failed to process snapshot ${SnapshotReference.fromHashedSnapshot(snapshot).show}, skipping"
+                  for {
+                    _ <- storages.globalL0Alignment.updateShouldRedownload(
+                      value = true,
+                      reasons = List(message)
+                    )
+                    _ <- logger.error(e)(message)
+                  } yield (nextSnapshots, aggResults).asLeft[List[SnapshotProcessingResult]]
                 }
 
             case (Nil, aggResults) =>
