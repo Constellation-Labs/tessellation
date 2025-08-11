@@ -356,9 +356,8 @@ abstract class CurrencyL0App(
 
               case _ => IO.unit
             }
-            currentLastSyncGlobalSnapshot <- SignallingRef.of[IO, Option[Hashed[GlobalIncrementalSnapshot]]](None)
             _ <- StateChannel
-              .run[IO](services, storages, sharedStorages, programs, dataApplicationService, keyPair, mkCell, currentLastSyncGlobalSnapshot)
+              .run[IO](services, storages, sharedStorages, programs, dataApplicationService, keyPair, mkCell)
               .compile
               .drain
           } yield innerProgram

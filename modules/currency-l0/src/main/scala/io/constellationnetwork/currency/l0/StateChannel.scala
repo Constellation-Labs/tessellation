@@ -44,8 +44,7 @@ object StateChannel {
     programs: Programs[F],
     dataApplicationService: Option[BaseDataApplicationL0Service[F]],
     selfKeyPair: KeyPair,
-    enqueueConsensusEventFn: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
-    currentLastSyncGlobalSnapshotRef: SignallingRef[F, Option[Hashed[GlobalIncrementalSnapshot]]]
+    enqueueConsensusEventFn: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _]
   )(implicit S: Supervisor[F]): Stream[F, Unit] = {
     val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
@@ -100,21 +99,11 @@ object StateChannel {
 
       def maybeForceEventTrigger(
         currentSnapshot: Hashed[GlobalIncrementalSnapshot],
-        currentSnapshotState: GlobalSnapshotInfo,
-        lastGlobalSnapshotSyncOrdinal: Option[SnapshotOrdinal]
+        currentSnapshotState: GlobalSnapshotInfo
       ): F[Unit] =
         for {
-          lastGlobalSnapshotsInCache <- sharedStorages.lastNGlobalSnapshot.getLastN
           currencyId <- storages.identifier.get
-          lastSyncOrdinal = lastGlobalSnapshotSyncOrdinal
-            .getOrElse(currentSnapshot.ordinal)
-
-          ordinals = generateOrdinalRange(lastSyncOrdinal, currentSnapshot.ordinal)
-          snapshotsToCheck <- fetchSnapshotsForOrdinals(ordinals, lastGlobalSnapshotsInCache)
-
-          shouldForceEventTrigger = snapshotsToCheck.exists { snapshot =>
-            checkIfShouldForceEventTrigger(snapshot, currencyId, currentSnapshotState)
-          }
+          shouldForceEventTrigger = checkIfShouldForceEventTrigger(currentSnapshot, currencyId, currentSnapshotState)
 
           _ <-
             if (shouldForceEventTrigger) {
@@ -126,41 +115,13 @@ object StateChannel {
 
         } yield ()
 
-      def generateOrdinalRange(
-        startOrdinal: SnapshotOrdinal,
-        endOrdinal: SnapshotOrdinal
-      ): List[SnapshotOrdinal] = {
-        val range = startOrdinal.value.value to endOrdinal.value.value
-        val ordinals = range
-          .map(o => SnapshotOrdinal(NonNegLong.unsafeFrom(o)))
-          .toList
-
-        if (ordinals.length > maxOrdinalsToCheck) {
-          logger.warn(s"Large ordinal range detected: ${ordinals.length} ordinals. Consider chunking.")
-        }
-
-        ordinals
-      }
-
-      def fetchSnapshotsForOrdinals(
-        ordinals: List[SnapshotOrdinal],
-        lastGlobalSnapshotsInCache: List[Hashed[GlobalIncrementalSnapshot]]
-      ): F[List[Hashed[GlobalIncrementalSnapshot]]] =
-        ordinals.traverseFilter { ordinal =>
-          lastGlobalSnapshotsInCache
-            .find(_.ordinal === ordinal) match {
-            case Some(snapshot) =>
-              snapshot.some.pure[F]
-            case None =>
-              services.globalL0.pullGlobalSnapshot(ordinal).handleErrorWith { error =>
-                logger.warn(s"Failed to fetch snapshot for ordinal $ordinal: ${error.getMessage}")
-                none[Hashed[GlobalIncrementalSnapshot]].pure[F]
-              }
-          }
-        }
-
       def conditionallyTriggerEvent(shouldTrigger: Boolean) =
-        ().pure[F]
+        if (shouldTrigger) {
+          logger.info("Forcing event trigger due to conditions met") >>
+            enqueueConsensusEventFn(ForceEventTrigger()).run()
+        } else {
+          ().pure[F]
+        }
 
       def sendGlobalSnapshotSyncConsensusEvent(snapshot: Hashed[GlobalIncrementalSnapshot])(implicit hs: Hasher[F]) = {
         val selfPeerId = selfKeyPair.getPublic.toId.toPeerId
@@ -220,7 +181,7 @@ object StateChannel {
                   ().pure
                 }
               _ <- triggerOnGlobalSnapshotPullHook(snapshot, state)
-              _ <- maybeForceEventTrigger(snapshot, state, none)
+              _ <- maybeForceEventTrigger(snapshot, state)
             } yield ()
 
           case Right(snapshots) =>
@@ -231,30 +192,13 @@ object StateChannel {
                 nonEmptySnapshots.tailRecM {
                   case Nil =>
                     for {
-                      currentLastSyncGlobalSnapshot <- currentLastSyncGlobalSnapshotRef.get
-                      currentLastSyncGlobalSnapshotOrdinal = currentLastSyncGlobalSnapshot.map(_.ordinal)
-
-                      lastSyncGlobalSnapshot <- storages.lastSyncGlobalSnapshot.getLastSynchronizedCombined
-
-                      lastSyncGlobalSnapshotOrdinal = lastSyncGlobalSnapshot.map(_._1.ordinal)
                       lastGlobalSnapshotCombined <- sharedStorages.lastGlobalSnapshot.getCombined
 
-                      // The current and last global snapshot ordinal should be filled to not start a infinity loop of events
-                      _ <-
-                        if (
-                          currentLastSyncGlobalSnapshotOrdinal.isDefined && lastSyncGlobalSnapshotOrdinal.isDefined &&
-                          currentLastSyncGlobalSnapshotOrdinal.get < lastSyncGlobalSnapshotOrdinal.get
-                        ) {
-                          lastGlobalSnapshotCombined.traverse { combinedSnapshot =>
-                            val (latestSnapshot, latestState) = combinedSnapshot
-                            logger.info("Trying to force event trigger") >>
-                              maybeForceEventTrigger(latestSnapshot, latestState, lastSyncGlobalSnapshotOrdinal)
-                          }
-                        } else {
-                          Applicative[F].unit
-                        }
-
-                      _ <- currentLastSyncGlobalSnapshotRef.set(lastSyncGlobalSnapshot.map(_._1))
+                      _ <- lastGlobalSnapshotCombined.traverse { combinedSnapshot =>
+                        val (latestSnapshot, latestState) = combinedSnapshot
+                        logger.info("Trying to force event trigger") >>
+                          maybeForceEventTrigger(latestSnapshot, latestState)
+                      }
                     } yield ().asRight[List[Hashed[GlobalIncrementalSnapshot]]]
 
                   case snapshot :: nextSnapshots =>
