@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-set -e
+
+set -e 
+
+if [ "$BASH_DEBUG_MODE" = "true" ]; then
+  set -x             # Print each command before executing (verbose)
+  set -eo pipefail  # Exit on error, pipe failures
+fi
 
 
 export START_TIME=$(date +%s)
@@ -14,6 +20,13 @@ show_time() {
   echo "$stage took: $DELTA_SECONDS seconds - total time: $DELTA_SECONDS_TOTAL seconds"
 }
 
+cleanup_end() {
+  if [ "$CLEANUP_DOCKER_AT_END" == "true" ]; then
+    ./docker/bin/tessellation-docker-cleanup.sh
+  fi
+}
+
+trap cleanup_end EXIT
 
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -105,12 +118,16 @@ for i in 0 1 2; do
 
   docker_additional_args="$PROFILE_GL0_ARG $PROFILE_GL1_ARG"
   echo "docker_additional_args: $docker_additional_args"
-  
-  docker compose -f docker-compose.test.yaml \
-  -f docker-compose.yaml \
-  -f docker-compose.volumes.yaml \
-  $docker_additional_args \
-  up -d
+  docker_additional_args=$(echo $docker_additional_args | xargs)
+
+  if [ -n "$docker_additional_args" ]; then
+    docker compose -f docker-compose.test.yaml \
+    -f docker-compose.yaml \
+    -f docker-compose.volumes.yaml \
+    $docker_additional_args \
+    up -d
+  fi
+
   cd ../../
 done
 
@@ -159,10 +176,11 @@ for i in 0 1 2; do
 
     docker_additional_args="$metagraph_args $metagraph_profile_args"
     echo "docker_additional_args: $docker_additional_args"
-    
-    docker compose \
-    $docker_additional_args \
-    up -d
+    metagraph_profile_args=$(echo $metagraph_profile_args | xargs)
+
+    if [ -n "$metagraph_profile_args" ]; then
+      docker compose $docker_additional_args up -d
+    fi
   fi
 
   cd ../../
@@ -201,7 +219,6 @@ show_time "Cluster became healthy"
 cd $PROJECT_ROOT/.github/action_scripts/delegated_staking
 node delegated-staking.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX testDelegatedStaking
 
-# Long running debug test if needed
 # echo "------------------------------------------------"
 # echo "Running bulk submit test"
 # echo "------------------------------------------------"
@@ -216,11 +233,6 @@ echo "------------------------------------------------"
 
 cd $PROJECT_ROOT
 
-
-# TODO: Use a trap function
-if [ "$CLEANUP_DOCKER_AT_END" == "true" ]; then
-  ./docker/bin/tessellation-docker-cleanup.sh
-fi
 
 
 
