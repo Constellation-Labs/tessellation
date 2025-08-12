@@ -116,12 +116,7 @@ object StateChannel {
         } yield ()
 
       def conditionallyTriggerEvent(shouldTrigger: Boolean) =
-        if (shouldTrigger) {
-          logger.info("Forcing event trigger due to conditions met") >>
-            enqueueConsensusEventFn(ForceEventTrigger()).run()
-        } else {
           ().pure[F]
-        }
 
       def sendGlobalSnapshotSyncConsensusEvent(snapshot: Hashed[GlobalIncrementalSnapshot])(implicit hs: Hasher[F]) = {
         val selfPeerId = selfKeyPair.getPublic.toId.toPeerId
