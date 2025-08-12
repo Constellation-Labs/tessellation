@@ -3,6 +3,7 @@ package io.constellationnetwork.currency.l0.node
 import cats.data.OptionT
 import cats.effect.Async
 import cats.syntax.all._
+
 import io.constellationnetwork.currency.dataApplication.L0NodeContext
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
@@ -12,6 +13,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.Ident
 import io.constellationnetwork.schema.swap.CurrencyId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security._
+
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object L0NodeContext {
@@ -47,12 +49,8 @@ object L0NodeContext {
     def getLastSynchronizedGlobalSnapshot: F[Option[Hashed[GlobalIncrementalSnapshot]]] =
       getLastSynchronizedGlobalSnapshotCombined.map(_.map { case (snapshot, _) => snapshot })
 
-    def getLastSynchronizedGlobalSnapshotCombined: F[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = {
-      for {
-        test <- lastGlobalSnapshotStorage.getLastSynchronizedCombined
-        _<- logger.info(s"LAST COMBINED: ${test.map(_._1.ordinal)}")
-      } yield test
-    }
+    def getLastSynchronizedGlobalSnapshotCombined: F[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
+      lastGlobalSnapshotStorage.getLastSynchronizedCombined
 
     def getMetagraphL0Seedlist: Option[Set[SeedlistEntry]] = l0Seedlist
   }

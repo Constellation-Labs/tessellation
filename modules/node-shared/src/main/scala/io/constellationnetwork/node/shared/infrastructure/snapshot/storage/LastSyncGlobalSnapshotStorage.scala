@@ -5,6 +5,7 @@ import cats.syntax.all._
 import cats.{Applicative, MonadThrow}
 
 import scala.collection.immutable.SortedMap
+
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
 import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
@@ -13,10 +14,10 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSnapshot
 import io.constellationnetwork.schema._
 import io.constellationnetwork.security.Hashed
 import io.constellationnetwork.security.signature.Signed
+
 import eu.timepit.refined.auto._
 import fs2.Stream
 import fs2.concurrent.SignallingRef
-import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object LastSyncGlobalSnapshotStorage {
   def make[F[_]: Async](
@@ -33,7 +34,7 @@ object LastSyncGlobalSnapshotStorage {
     currencySnapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   ): LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LastSyncGlobalSnapshotStorage[F] =
     new LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LastSyncGlobalSnapshotStorage[F] {
-      val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
+
       private def deleteBelow(ordinal: SnapshotOrdinal): F[Unit] = snapshotsR.update {
         _.filterNot { case (key, _) => key < ordinal }
       }
@@ -92,22 +93,12 @@ object LastSyncGlobalSnapshotStorage {
                 case None => SortedMap.empty[peer.PeerId, Signed[GlobalSnapshotSync]]
               }
 
-              val test = peersToGetSnapshotOrdinalSync.values
+              peersToGetSnapshotOrdinalSync.values
                 .map(_.globalSnapshotOrdinal)
-
-              logger.info(s"TEST: ${test}") >>
-                logger.info(s"TEST2: ${peersToGetSnapshotOrdinalSync}") >>
-                {
-                  val maybeSelectedOrdinal = peersToGetSnapshotOrdinalSync.values
-                    .map(_.globalSnapshotOrdinal)
-                    .groupBy(identity)
-                    .maxByOption { case (ordinal, occurrences) => (occurrences.size, ordinal.value.value) }
-                    .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value - offset) }
-
-                  logger.info(s"Selected Ordinal: ${maybeSelectedOrdinal}") >>
-                    maybeSelectedOrdinal
-                      .fold(none[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F])(getCombined)
-                }
+                .groupBy(identity)
+                .maxByOption { case (ordinal, occurrences) => (occurrences.size, ordinal.value.value) }
+                .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value - offset) }
+                .fold(none[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F])(getCombined)
           }
         }
     }
