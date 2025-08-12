@@ -329,6 +329,9 @@ object CurrencySnapshotAcceptanceManager {
         }
         .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value - lastGlobalSnapshotsSyncConfig.syncOffset) }
 
+      _ <- logger.info(s"lastUnsyncGlobalSnapshot: ${lastUnsyncGlobalSnapshot.ordinal}") >>
+            logger.info(s"maybeSnapshotOrdinalSync: ${maybeSnapshotOrdinalSync}")
+
       lastGlobalSnapshots <- lastNGlobalSnapshotStorage.getLastN
       _ <- logger.debug(s"Metagraph $metagraphId snapshot $snapshotOrdinal - maybeSnapshotOrdinalSync: $maybeSnapshotOrdinalSync")
 
@@ -342,7 +345,7 @@ object CurrencySnapshotAcceptanceManager {
         } { ordinal =>
           ordinal.pure[F]
         }
-
+      _<- logger.info(s"ordinalToFetchGlobalSnapshot: ${ordinalToFetchGlobalSnapshot}")
       lastSyncGlobalSnapshot <-
         lastGlobalSnapshots.find(_.ordinal === ordinalToFetchGlobalSnapshot) match {
           case Some(value) =>
@@ -454,6 +457,10 @@ object CurrencySnapshotAcceptanceManager {
       )
       lastAllowSpendsRefs = lastSnapshotContext.snapshotInfo.lastAllowSpendRefs.getOrElse(SortedMap.empty[Address, AllowSpendReference])
 
+      _ <-  logger.info(s"lastActiveAllowSpends: ${lastActiveAllowSpends}")
+      _ <-  logger.info(s"metagraphIdSpendTransactions: ${metagraphIdSpendTransactions}")
+      _ <-  logger.info(s"incomingCurrencyAllowSpends: ${incomingCurrencyAllowSpends}")
+
       updatedAllowSpends <-
         acceptCurrencyAllowSpends(
           lastGlobalSnapshotEpochProgress,
@@ -461,6 +468,11 @@ object CurrencySnapshotAcceptanceManager {
           lastActiveAllowSpends,
           metagraphIdSpendTransactions
         )
+
+      _ <-  logger.info(s"MetagraphID: ${metagraphId}") >>
+            logger.info(s"Ordinal: ${snapshotOrdinal}") >>
+            logger.info(s"lastGlobalSnapshotEpochProgress: ${lastGlobalSnapshotEpochProgress}") >>
+            logger.info(s"updatedAllowSpends: ${updatedAllowSpends}")
 
       updatedAllowSpendRefs = acceptAllowSpendRefs(
         lastAllowSpendsRefs,
