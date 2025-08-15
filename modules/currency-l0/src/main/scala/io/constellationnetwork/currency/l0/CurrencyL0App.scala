@@ -4,6 +4,7 @@ import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
+import io.constellationnetwork.currency.l0.StateChannel.performGlobalL0SnapshotProcess
 import io.constellationnetwork.currency.l0.cell.{L0Cell, L0CellInput}
 import io.constellationnetwork.currency.l0.cli.method
 import io.constellationnetwork.currency.l0.cli.method._
@@ -37,6 +38,8 @@ import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.pureconfig._
 import fs2.concurrent.SignallingRef
+import org.typelevel.log4cats.SelfAwareStructuredLogger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 import pureconfig.generic.auto._
 import pureconfig.module.enumeratum._
 
@@ -95,12 +98,16 @@ abstract class CurrencyL0App(
         sharedConfig.priorityPeerIds,
         cfg.environment
       ).asResource
+
+      mkCell = (event: CurrencySnapshotEvent) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleCurrencySnapshotEvent(event))
+
       services <- Services
         .make[IO, Run](
           sharedConfig,
           p2pClient,
           sharedServices,
           sharedStorages,
+          sharedValidators,
           storages,
           sharedResources.client,
           sharedServices.session,
@@ -115,7 +122,8 @@ abstract class CurrencyL0App(
           maybeMajorityPeerIds,
           hasherSelectorAlwaysCurrent,
           maybeAllowanceList,
-          nodeShared.customAllowanceList
+          nodeShared.customAllowanceList,
+          mkCell
         )
         .asResource
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext
@@ -146,8 +154,6 @@ abstract class CurrencyL0App(
       _ <- Daemons
         .start(storages, services, programs, queues, services.dataApplication, cfg, hasherSelectorAlwaysCurrent)
         .asResource
-
-      mkCell = (event: CurrencySnapshotEvent) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleCurrencySnapshotEvent(event))
 
       api = HttpApi
         .make[IO](
@@ -196,7 +202,7 @@ abstract class CurrencyL0App(
         case other =>
           for {
             _ <- StateChannel.performGlobalL0PeerDiscovery[IO](storages, programs)
-
+            implicit0(logger: SelfAwareStructuredLogger[IO]) = Slf4jLogger.getLoggerFromName[IO](this.getClass.getName)
             innerProgram <- other match {
               case rv: RunValidator =>
                 storages.identifier.setInitial(rv.identifier) >>
@@ -317,6 +323,8 @@ abstract class CurrencyL0App(
                   services.cluster.createSession >>
                   services.session.createSession >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
+                  performGlobalL0SnapshotProcess(storages, sharedStorages, services, dataApplicationService, keyPair, mkCell) >>
+                  services.currencyMessages.setInitialCurrencyOwner(m.metagraphOwnerMessagePath) >>
                   storages.node.setNodeState(NodeState.Ready) >>
                   storages.identifier.get.flatMap { identifier =>
                     services.restart.setClusterLeaveRestartMethod(

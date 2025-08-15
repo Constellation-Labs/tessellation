@@ -43,6 +43,7 @@ object CurrencySnapshotProcessorSuite extends SimpleIOSuite with TransactionGene
           implicit0(jhs: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
           implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
           validators = SharedValidators.make[IO](
+            Dev,
             AddressesConfig(Set.empty),
             None,
             None,

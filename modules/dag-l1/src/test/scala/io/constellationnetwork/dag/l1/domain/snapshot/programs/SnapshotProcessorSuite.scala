@@ -112,6 +112,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 .asResource
               validators = SharedValidators
                 .make[IO](
+                  Dev,
                   AddressesConfig(Set()),
                   None,
                   None,

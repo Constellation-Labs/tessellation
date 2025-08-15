@@ -16,6 +16,7 @@ import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.config.types.{FieldsAddedOrdinals, LastGlobalSnapshotsSyncConfig}
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
+import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.getFeeAddresses
 import io.constellationnetwork.node.shared.domain.swap.block.{
   AllowSpendBlockAcceptanceContext,
   AllowSpendBlockAcceptanceManager,
@@ -342,7 +343,7 @@ object CurrencySnapshotAcceptanceManager {
         } { ordinal =>
           ordinal.pure[F]
         }
-      _ <- logger.info(s"ordinalToFetchGlobalSnapshot: ${ordinalToFetchGlobalSnapshot}")
+
       lastSyncGlobalSnapshot <-
         lastGlobalSnapshots.find(_.ordinal === ordinalToFetchGlobalSnapshot) match {
           case Some(value) =>
@@ -577,21 +578,30 @@ object CurrencySnapshotAcceptanceManager {
           )
         ) {
           case ((lastMsgs, toAdd, toReject), message) =>
-            messageValidator.validate(message, lastMsgs, metagraphId, Map.empty).map {
-              case Validated.Valid(_) =>
-                val updatedLastMsgs = lastMsgs.updated(message.messageType, message)
-                val updatedToAdd = message :: toAdd
+            for {
+              combinedLastGlobalSnapshot <- lastGlobalSnapshotStorage.getCombined
+              (allFeesAddresses, balance) = combinedLastGlobalSnapshot match {
+                case Some((_, info)) =>
+                  val feeAddresses = getFeeAddresses(info)
+                  val balance = info.balances.getOrElse(message.address, Balance.empty)
 
-                (updatedLastMsgs, updatedToAdd, toReject)
-              case Validated.Invalid(_) =>
-                val updatedToReject = message :: toReject
+                  (feeAddresses, balance)
+                case None => (SortedMap.empty[Address, Set[Address]], Balance.empty)
+              }
+              result <- messageValidator.validate(message, lastMsgs, metagraphId, allFeesAddresses, balance).map {
+                case Validated.Valid(_) =>
+                  val updatedLastMsgs = lastMsgs.updated(message.messageType, message)
+                  val updatedToAdd = message :: toAdd
 
-                (lastMsgs, toAdd, updatedToReject)
-            }
+                  (updatedLastMsgs, updatedToAdd, toReject)
+                case Validated.Invalid(_) =>
+                  val updatedToReject = message :: toReject
+
+                  (lastMsgs, toAdd, updatedToReject)
+              }
+            } yield result
         }
-        .map { case (contextUpdate, toAdd, toReject) => CurrencyMessagesAcceptanceResult(contextUpdate, toAdd, toReject) }
-
-    }
+    }.map { case (contextUpdate, toAdd, toReject) => CurrencyMessagesAcceptanceResult(contextUpdate, toAdd, toReject) }
 
     private def acceptGlobalSnapshotSyncs(
       lastGlobalSnapshotSyncView: Option[SortedMap[PeerId, Signed[GlobalSnapshotSync]]],

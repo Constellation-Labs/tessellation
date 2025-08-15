@@ -11,7 +11,6 @@ import io.constellationnetwork.node.shared.config.types.GossipDaemonConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.collateral.Collateral
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
-import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage.{AddSuccess, CounterTooHigh}
 import io.constellationnetwork.node.shared.infrastructure.gossip.p2p.GossipClient
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
