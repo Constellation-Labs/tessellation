@@ -87,7 +87,6 @@ trait StateChannelBinarySender[F[_]] {
 
   def process(
     binaryHashed: Hashed[StateChannelSnapshotBinary],
-    lastCurrencySnapshotSigners: List[PeerId],
     lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]]
   ): F[Unit]
 }
@@ -140,7 +139,6 @@ object StateChannelBinarySender {
 
       def process(
         binary: Hashed[StateChannelSnapshotBinary],
-        lastCurrencySnapshotSigners: List[PeerId],
         lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]]
       ): F[Unit] =
         lastGlobalSnapshotStorage.getOrdinal.map(_.getOrElse(SnapshotOrdinal.MinValue)).flatMap { currentOrdinal =>
@@ -150,7 +148,7 @@ object StateChannelBinarySender {
               val action =
                 if (retryMode) logger.warn(s"[RetryMode] Snapshot binary of hash ${binary.hash} enqueued.")
                 else
-                  post(binary, lastCurrencySnapshotSigners, lastGlobalSnapshotSigners)
+                  post(binary, lastGlobalSnapshotSigners)
                     .flatTap(peerId =>
                       for {
                         _ <- logger.info(s"Peer selected to send currency snapshot to GL0: $peerId")
@@ -200,7 +198,7 @@ object StateChannelBinarySender {
             lastGlobalSnapshotSigners = globalSnapshot.signed.proofs.map(_.id.toPeerId)
             toRetry = state.tracked.collect { case pendingBinary: PendingBinary => pendingBinary }.take(state.cap.toInt)
             _ <- logger.warn(s"[RetryMode] Retrying ${toRetry.size} pending binaries").whenA(toRetry.nonEmpty)
-            _ <- toRetry.traverse_(tracked => post(tracked.binary, lastAcceptedCurrencySnapshotsSigners, lastGlobalSnapshotSigners.some))
+            _ <- toRetry.traverse_(tracked => post(tracked.binary, lastGlobalSnapshotSigners.some))
           } yield ()
         } else Applicative[F].unit
       }
@@ -317,7 +315,6 @@ object StateChannelBinarySender {
 
       private def post(
         binary: Hashed[StateChannelSnapshotBinary],
-        lastCurrencySnapshotSigners: List[PeerId],
         lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]]
       ): F[Option[PeerId]] = {
         val customPeersAllowed: List[PeerId] =
@@ -332,7 +329,6 @@ object StateChannelBinarySender {
                   if (allowedPeers.contains(selfId)) {
                     pickPeerAndSendCurrencySnapshot(
                       binary,
-                      lastCurrencySnapshotSigners,
                       lastGlobalSnapshotSigners,
                       customPeersAllowed.filter(allowedPeers.contains)
                     )
@@ -343,7 +339,6 @@ object StateChannelBinarySender {
                   if (allowedEmptyAllowanceList.contains(environment)) {
                     pickPeerAndSendCurrencySnapshot(
                       binary,
-                      lastCurrencySnapshotSigners,
                       lastGlobalSnapshotSigners,
                       customPeersAllowed
                     )
@@ -360,7 +355,6 @@ object StateChannelBinarySender {
             if (allowedEmptyAllowanceList.contains(environment)) {
               pickPeerAndSendCurrencySnapshot(
                 binary,
-                lastCurrencySnapshotSigners,
                 lastGlobalSnapshotSigners,
                 customPeersAllowed
               )
@@ -372,12 +366,12 @@ object StateChannelBinarySender {
 
       private def pickPeerAndSendCurrencySnapshot(
         binary: Hashed[StateChannelSnapshotBinary],
-        lastCurrencySnapshotSigners: List[PeerId],
         lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]],
         allowedPeers: List[PeerId]
       ) = {
+        val binarySigners = binary.signed.proofs.map(_.id.toPeerId).toList
         val peerToSendSnapshot = pickDeterministicPeer(
-          lastCurrencySnapshotSigners,
+          binarySigners,
           allowedPeers,
           selfId,
           binary.lastSnapshotHash
@@ -453,22 +447,22 @@ object StateChannelBinarySender {
     }
 
   def pickDeterministicPeer(
-    lastSigners: List[PeerId],
+    binarySigners: List[PeerId],
     allowedPeers: List[PeerId],
     selfId: PeerId,
     lastSnapshotHash: Hash
   ): PeerId =
-    if (lastSigners.isEmpty) selfId
-    else if (lastSigners.size === 1) lastSigners.head
+    if (binarySigners.isEmpty) selfId
+    else if (binarySigners.size === 1) binarySigners.head
     else if (allowedPeers.isEmpty) {
-      val sortedSigners = lastSigners.sortBy(_.toString)
+      val sortedSigners = binarySigners.sortBy(_.toString)
       val seed = lastSnapshotHash.value + sortedSigners.map(_.toString).mkString("|")
       val digest = MessageDigest.getInstance("SHA-256").digest(seed.getBytes("UTF-8"))
       val hashValue = BigInt(digest.take(4)).abs
       val offset = (hashValue % sortedSigners.size).toInt
       sortedSigners(offset)
     } else {
-      val eligiblePeers = lastSigners.filter(allowedPeers.contains)
+      val eligiblePeers = binarySigners.filter(allowedPeers.contains)
       if (eligiblePeers.isEmpty) {
         selfId
       } else {

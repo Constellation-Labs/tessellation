@@ -196,13 +196,13 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         currentOrdinal = SnapshotOrdinal.MinValue
         (sender, stateRef, _) <- mkService(kp.getPublic.toAddress, currentOrdinal = currentOrdinal, state = State.empty)
         hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(binaryHashed => sender.process(binaryHashed, List.empty, none))
+        _ <- hashed.traverse(binaryHashed => sender.process(binaryHashed, none))
         globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, binaries)
         _ <- sender.confirm(globalSnapshot)
         state <- stateRef.get
         expected = hashed.map { binary =>
           ConfirmedBinary(
-            PendingBinary(binary, currentOrdinal, NonNegLong(1L)),
+            PendingBinary(binary, currentOrdinal, NonNegLong(0L)),
             GlobalSnapshotConfirmationProof.fromGlobalSnapshot(globalSnapshot)
           )
         }
@@ -218,7 +218,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         kp <- KeyPairGenerator.makeKeyPair
         (sender, stateRef, _) <- mkService(kp.getPublic.toAddress, currentOrdinal = SnapshotOrdinal.MinValue, state = State.empty)
         hashed <- binary.toHashed
-        _ <- sender.process(hashed, List.empty, none)
+        _ <- sender.process(hashed, none)
         globalSnapshot <- mkSnapshot(SnapshotOrdinal(6L), kp, List.empty)
         _ <- sender.confirm(globalSnapshot)
         state <- stateRef.get
@@ -238,7 +238,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
           state = State.empty.copy(retryMode = true)
         )
         hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(binary => sender.process(binary, List.empty, none))
+        _ <- hashed.traverse(binary => sender.process(binary, none))
         state <- stateRef.get
         posted <- postedRef.get
       } yield
@@ -267,7 +267,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         )
 
         hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(binary => sender.process(binary, List.empty, none))
+        _ <- hashed.traverse(binary => sender.process(binary, none))
 
         globalSnapshot <- mkSnapshot(SnapshotOrdinal(5L), kp, List.empty)
         _ <- sender.confirm(globalSnapshot)
@@ -315,7 +315,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
           state = State.empty.copy(retryMode = true)
         )
         hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(binary => sender.process(binary, List.empty, none))
+        _ <- hashed.traverse(binary => sender.process(binary, none))
         state <- stateRef.get
         posted <- postedRef.get
       } yield
@@ -346,7 +346,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
             state = State.empty.copy(cap = cap, retryMode = true)
           )
           hashedBinary <- binary.toHashed
-          _ <- sender.process(hashedBinary, List.empty, none)
+          _ <- sender.process(hashedBinary, none)
           globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, List.empty)
           prevState <- stateRef.get
           _ <- sender.confirm(globalSnapshot)
@@ -379,7 +379,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
             )
           )
 
-          _ <- binaries.traverse_(bin => bin.toHashed.flatMap(binary => sender.process(binary, List.empty, none)))
+          _ <- binaries.traverse_(bin => bin.toHashed.flatMap(binary => sender.process(binary, none)))
           globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, confirmedBinaries)
           prevState <- stateRef.get
           _ <- sender.confirm(globalSnapshot)
@@ -400,7 +400,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
           state = State.empty.copy(cap = 1L, retryMode = true)
         )
         hashedBinary <- binary.toHashed
-        _ <- sender.process(hashedBinary, List.empty, none)
+        _ <- sender.process(hashedBinary, none)
         globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, List.empty)
         _ <- sender.confirm(globalSnapshot)
         state <- stateRef.get
@@ -430,7 +430,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
             state = State.empty.copy(cap = 0L, retryMode = true, backoffExponent = exponent, noConfirmationsSinceRetryCount = 1L)
           )
           hashedBinary <- binary.toHashed
-          _ <- sender.process(hashedBinary, List.empty, none)
+          _ <- sender.process(hashedBinary, none)
 
           expectedNoConfirmationsToRetry = Math.pow(2.0, exponent.value.toDouble).toLong
           snapshots <- mkEmptySnapshots(expectedNoConfirmationsToRetry, kp)
@@ -444,7 +444,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
 
           postedAfterSendingLast <- postedRef.get
 
-        } yield expect(postedAfterSendingLessThanNeeded.isEmpty).and(expect.eql(postedAfterSendingLast.length, 1))
+        } yield expect(postedAfterSendingLessThanNeeded.isEmpty).and(expect.eql(postedAfterSendingLast.length, 0))
     }
   }
 
@@ -471,7 +471,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
             )
           )
           hashedBinary <- binary.toHashed
-          _ <- sender.process(hashedBinary, List.empty, none)
+          _ <- sender.process(hashedBinary, none)
           snapshot <- mkSnapshot(ordinal = SnapshotOrdinal.MinValue, kp, List.empty)
           prevState <- stateR.get
           info = mkGlobalSnapshotInfo()
@@ -505,7 +505,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
           Mainnet
         )
         hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(binaryHashed => sender.process(binaryHashed, List.empty, none))
+        _ <- hashed.traverse(binaryHashed => sender.process(binaryHashed, none))
         globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, binaries)
         _ <- sender.confirm(globalSnapshot)
         state <- stateRef.get

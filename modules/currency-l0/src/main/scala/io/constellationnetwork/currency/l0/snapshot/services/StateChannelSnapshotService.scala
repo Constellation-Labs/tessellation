@@ -135,7 +135,7 @@ object StateChannelSnapshotService {
           )
         lastGlobalSnapshot <- lastGlobalSnapshotStorage.get
         lastGlobalSnapshotSigners = lastGlobalSnapshot.map(_.signed.proofs.map(_.id.toPeerId))
-        _ <- stateChannelBinarySender.process(binaryHashed, lastOutcomeFacilitators, lastGlobalSnapshotSigners)
+        _ <- stateChannelBinarySender.process(binaryHashed, lastGlobalSnapshotSigners)
       } yield ()
 
     }
