@@ -5,6 +5,7 @@ import java.security.KeyPair
 import cats.effect.{Async, Temporal}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.traverse._
 import cats.{Applicative, MonadThrow}
 
 import scala.concurrent.duration._
@@ -18,6 +19,8 @@ import io.constellationnetwork.node.shared.domain.cluster.services.Cluster
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.cluster._
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer._
@@ -41,7 +44,8 @@ object Cluster {
     metagraphVersionHash: Hash,
     jarHash: Hash,
     environment: AppEnvironment,
-    allowanceList: Option[Set[AllowanceListEntry]]
+    allowanceList: Option[Set[AllowanceListEntry]],
+    metagraphId: Option[Address]
   ): Cluster[F] =
     new Cluster[F] {
 
@@ -74,7 +78,8 @@ object Cluster {
             metagraphVersionHash,
             jarHash,
             environment,
-            allowanceListHash
+            allowanceListHash,
+            metagraphId
           )
 
       def signRequest(signRequest: SignRequest)(implicit hasher: Hasher[F]): F[Signed[SignRequest]] =

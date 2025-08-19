@@ -32,6 +32,7 @@ import io.constellationnetwork.node.shared.infrastructure.trust.TrustRatingCsvLo
 import io.constellationnetwork.node.shared.modules._
 import io.constellationnetwork.node.shared.resources.SharedResources
 import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema.address.{Address, DAGAddressRefined}
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.generation.Generation
 import io.constellationnetwork.schema.peer.PeerId
@@ -45,6 +46,7 @@ import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
 import eu.timepit.refined.boolean.Or
 import eu.timepit.refined.pureconfig._
+import eu.timepit.refined.refineV
 import fs2.Stream
 import fs2.concurrent.SignallingRef
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -163,6 +165,10 @@ abstract class TessellationIOApp[A <: CliMethod](
 
                                     for {
                                       _ <- logger.info(s"Self peerId: $selfId").asResource
+                                      tokenIdentifierOpt: Option[Address] =
+                                        sys.env.get("CL_L0_TOKEN_IDENTIFIER").flatMap { s =>
+                                          refineV[DAGAddressRefined](s).toOption.map(Address(_))
+                                        }
                                       _generation <- Generation.make[IO].asResource
                                       versionHash <- _hasherSelector
                                         .withCurrent(_.hash(version))
@@ -218,7 +224,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                                           method.stateChannelAllowanceLists,
                                           cfg.environment,
                                           Hasher.forKryo[IO],
-                                          maybeCustomAllowanceList
+                                          maybeCustomAllowanceList,
+                                          tokenIdentifierOpt
                                         )
                                         .asResource
 
@@ -234,7 +241,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                                           selfId,
                                           versionHash,
                                           metagraphVersionHash,
-                                          maybeCustomAllowanceList
+                                          maybeCustomAllowanceList,
+                                          tokenIdentifierOpt
                                         )
                                         .asResource
 
