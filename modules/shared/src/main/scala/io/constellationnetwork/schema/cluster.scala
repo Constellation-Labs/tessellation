@@ -92,6 +92,7 @@ object cluster {
   case object CollateralNotSatisfied extends RegistrationRequestValidation
   case object VersionMismatch extends RegistrationRequestValidation
   case object MetagraphVersionMismatch extends RegistrationRequestValidation
+  case object MetagraphIdMismatch extends RegistrationRequestValidation
   case object EnvMismatch extends RegistrationRequestValidation
 
   trait ClusterVerificationResult extends NoStackTrace
