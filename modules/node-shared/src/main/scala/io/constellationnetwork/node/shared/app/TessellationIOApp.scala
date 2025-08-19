@@ -186,6 +186,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                       queues <- SharedQueues.make[IO].asResource
                                       validators = _hasherSelector.withCurrent { implicit hasher =>
                                         SharedValidators.make[IO](
+                                          cfg.environment,
                                           cfg.addresses,
                                           _l0Seedlist,
                                           _seedlist,
