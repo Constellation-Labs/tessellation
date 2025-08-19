@@ -12,6 +12,7 @@ import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.cluster.programs.{Joining, PeerDiscovery}
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.http.p2p.clients.{ClusterClient, SignClient}
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
@@ -29,7 +30,8 @@ object SharedPrograms {
     nodeId: PeerId,
     versionHash: Hash,
     metagraphVersionHash: Hash,
-    allowanceList: Option[Set[AllowanceListEntry]]
+    allowanceList: Option[Set[AllowanceListEntry]],
+    metagraphId: Option[Address]
   ): F[SharedPrograms[F, A]] =
     for {
       pd <- PeerDiscovery.make(clusterClient, storages.cluster, nodeId)
@@ -49,7 +51,8 @@ object SharedPrograms {
           versionHash,
           metagraphVersionHash,
           pd,
-          allowanceList
+          allowanceList,
+          metagraphId
         )
       }
     } yield new SharedPrograms[F, A](pd, joining) {}

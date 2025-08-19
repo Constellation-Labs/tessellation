@@ -185,7 +185,8 @@ object peer {
     metagraphVersion: Hash,
     jar: Hash,
     environment: AppEnvironment,
-    allowanceList: Hash
+    allowanceList: Hash,
+    metagraphId: Option[Address]
   )
 
   @derive(eqv, decoder, encoder, show)

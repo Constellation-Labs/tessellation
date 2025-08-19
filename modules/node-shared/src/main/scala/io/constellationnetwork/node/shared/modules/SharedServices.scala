@@ -65,7 +65,8 @@ object SharedServices {
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     environment: AppEnvironment,
     txHasher: Hasher[F],
-    allowanceList: Option[Set[AllowanceListEntry]]
+    allowanceList: Option[Set[AllowanceListEntry]],
+    metagraphId: Option[Address]
   ): F[SharedServices[F, A]] =
     for {
       restartService <- RestartService.make(restartSignal, storages.cluster)
@@ -85,7 +86,8 @@ object SharedServices {
           metagraphVersionHash,
           jarHash,
           environment,
-          allowanceList
+          allowanceList,
+          metagraphId
         )
 
       localHealthcheck <- LocalHealthcheck.make[F](nodeClient, storages.cluster)
