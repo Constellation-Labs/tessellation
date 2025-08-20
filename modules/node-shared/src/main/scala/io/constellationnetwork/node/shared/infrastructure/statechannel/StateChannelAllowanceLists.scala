@@ -67,6 +67,20 @@ object StateChannelAllowanceLists {
               "660473b202ef99387e4ac1316932a845d0369474d242889c9679f330aad517aa1193261f602629c64ae59dead7a5912fd7b019877a1432a568eec6884f6db80e",
               "e3302c117d571d3f4fe9884776fac09fbd25731dc6df83d3c1cdfbcbb9e0bbabf732b445826ff052f378df8ef29737dc1cf0bd66d5aec4ae1553fe323939a856",
               "5cc3dce875fad02cff7af28b64f79d8db8fe8b85d9369f124618f69f478b992538318aaf07327ea9384048fb2c6a222e887f8325ad02b255c97052d32c76daf3"
+            ),
+          // USDC
+          Address("DAG0S16WDgdAvh8VvroR6MWLdjmHYdzAF5S181xh") ->
+            NonEmptySet.of(
+              "4474bbae5936a48ef951ff3a72f655af556c4b07e94a1e64a4e05dd05e418cfefed4f7ca01a9664052b8618ed70078d8a57e209ea7c591002fb94f2acacd0e35",
+              "154090bdd08a05217acb8b7d4f5e56abef13120e688818edbffe4a55460a0c7445170033d81b45f0596f1a8330265c79567a89c69f52103b4eb4e89eb3017268",
+              "afbc97eeb40a5e89752924c885c39c5b00a8f9ff4929df59322b07e2613c3b8abcea49aac29783c0494f45e70697bf1ca75fb11d10f37d23d7fc1e4a7bfecd09"
+            ),
+          // CYBERLETE
+          Address("DAG8CJN1r9CLDeCwD15zjNGZKMNsg858bGd3b4vD") ->
+            NonEmptySet.of(
+              "bb16637e74281727fcee8a32f9b4df2af8c84005864ad7e44d34fcd3215e8bf95745e812005523d16b95c2d8f2dfad8e023dd13bd18b379af461d8ab04664ad7",
+              "5aea1023e4c236ca832943de7ae5f2e5a4b6cb40b750cec34207c8f9b8eb2671566c9b03de29d7f7330f94c7117b21efc505534232ea1b6c3e13b85ac6e53856",
+              "b29da8e4d9d286696903db4f2d0bf5a7ede47e4d4e80617faefbf94de8c198e3749f4fe600dfeae378d2d0b4ac73f2d4bc4bfdb2abd3fb7e4dc3859ae4a1ffd4"
             )
         ).some
     }
