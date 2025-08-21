@@ -15,6 +15,7 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.tokenLock.TokenLockAmount
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher}
@@ -41,6 +42,8 @@ object delegatedStake {
       override def empty: DelegatedStakeAmount = emptyAmount
       override def combine(x: DelegatedStakeAmount, y: DelegatedStakeAmount): DelegatedStakeAmount = x.plus(y)
     }
+
+    def fromTokenLockAmount(amount: TokenLockAmount): DelegatedStakeAmount = DelegatedStakeAmount(NonNegLong.unsafeFrom(amount.value.value))
   }
 
   @derive(decoder, encoder, order, show)
