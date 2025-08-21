@@ -82,7 +82,13 @@ abstract class CurrencyL0App(
       cfgR <- loadConfigAs[AppConfigReader].asResource
       cfg = method.appConfig(cfgR, sharedConfig)
 
-      dataApplicationService <- dataApplication.sequence
+      dataApplicationService <- dataApplication.sequence.adaptError {
+        case error =>
+          new RuntimeException(
+            s"Data application initialization failed: ${error.getMessage}. ",
+            error
+          )
+      }
 
       hasherSelectorAlwaysCurrent = HasherSelector.forSyncAlwaysCurrent[IO](hasherSelector.getCurrent)
 
