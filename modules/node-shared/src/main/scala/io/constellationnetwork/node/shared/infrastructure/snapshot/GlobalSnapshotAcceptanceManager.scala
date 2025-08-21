@@ -54,7 +54,6 @@ import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction._
 import io.constellationnetwork.security._
-import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedSetSyntax}
@@ -121,6 +120,7 @@ object GlobalSnapshotAcceptanceManager {
     spendActionValidator: SpendActionValidator[F],
     pricingUpdateValidator: PricingUpdateValidator[F],
     priceStateUpdater: PriceStateUpdater[F],
+    tokenLockAcceptanceManager: GlobalTokenLockAcceptanceManager[F],
     collateral: Amount,
     withdrawalTimeLimit: EpochProgress
   ) = new GlobalSnapshotAcceptanceManager[F] {
@@ -337,7 +337,7 @@ object GlobalSnapshotAcceptanceManager {
         )
 
         acceptedGlobalAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
-        acceptedGlobalTokenLocks <- acceptTokenLockReplacements(
+        acceptedGlobalTokenLocks <- tokenLockAcceptanceManager.acceptReplacementTokenLocks(
           tokenLockBlockAcceptanceResult.accepted.flatMap(_.value.tokenLocks.toList),
           lastSnapshotContext
         )
@@ -413,16 +413,17 @@ object GlobalSnapshotAcceptanceManager {
           lastSnapshotContext
         )
 
-        generatedTokenUnlocks = generateTokenUnlocks(
-          expiredWithdrawalsDelegatedStaking,
-          acceptedGlobalTokenLocks,
-          globalActiveTokenLocksByRef
-        ) match {
-          case Right(tokenUnlocks) => tokenUnlocks
-          case Left(error)         => throw new RuntimeException(s"Error when generating token unlocks: $error")
-        }
+        generatedTokenUnlocks <- Async[F].fromEither(
+          tokenLockAcceptanceManager
+            .emitTokenUnlocks(
+              expiredWithdrawalsDelegatedStaking,
+              acceptedGlobalTokenLocks,
+              globalActiveTokenLocksByRef
+            )
+            .leftMap(ex => new RuntimeException(s"Error when generating token unlocks: $ex"))
+        )
 
-        updatedGlobalTokenLocks <- acceptTokenLocks(
+        updatedGlobalTokenLocks <- tokenLockAcceptanceManager.acceptTokenLocks(
           epochProgress,
           globalTokenLocks,
           globalActiveTokenLocks,
@@ -439,7 +440,7 @@ object GlobalSnapshotAcceptanceManager {
           lastSnapshotContext.tokenLockBalances
         )
 
-        updatedBalancesByTokenLocks = updateGlobalBalancesByTokenLocks(
+        updatedBalancesByTokenLocks = tokenLockAcceptanceManager.updateGlobalBalancesByTokenLocks(
           epochProgress,
           updatedBalancesByAllowSpends,
           globalTokenLocks,
@@ -606,7 +607,7 @@ object GlobalSnapshotAcceptanceManager {
         )
 
         tokenUnlocksEvents <- emitTokenUnlocks(
-          filterExpiredTokenLocks(globalActiveTokenLocks, epochProgress)
+          tokenLockAcceptanceManager.filterExpiredTokenLocks(globalActiveTokenLocks, epochProgress)
         )
         generatedTokenUnlockArtifacts = SortedSet.from[SharedArtifact](
           generatedTokenUnlocks.view.values.flatten
@@ -640,24 +641,6 @@ object GlobalSnapshotAcceptanceManager {
           delegatorRewardsMap
         )
     }
-
-    private def acceptTokenLockReplacements(acceptedTokenLocks: List[Signed[TokenLock]], lastSnapshotContext: GlobalSnapshotInfo)(
-      implicit hasher: Hasher[F]
-    ): F[List[Signed[TokenLock]]] =
-      acceptedTokenLocks.filterA { tx =>
-        tx.replaceTokenLockRef match {
-          case Some(replaceTokenLockRef) =>
-            lastSnapshotContext.activeTokenLocks
-              .getOrElse(SortedMap.empty[Address, SortedSet[Signed[TokenLock]]])
-              .getOrElse(tx.source, SortedSet.empty[Signed[TokenLock]])
-              .toList
-              .traverse(existing => TokenLockReference.of(existing).map(ref => (ref, existing)))
-              .map(_.exists {
-                case (ref, existing) => ref.hash === replaceTokenLockRef && existing.source == tx.source && existing.amount < tx.amount
-              })
-          case None => true.pure[F]
-        }
-      }
 
     private def getUpdatedCreateNodeCollaterals(
       nodeCollateralAcceptanceResult: UpdateNodeCollateralAcceptanceResult,
@@ -709,56 +692,6 @@ object GlobalSnapshotAcceptanceManager {
       }.map(SortedMap.from(_))
         .map(unexpiredWithdrawNodeCollaterals |+| _)
         .map(_.filterNot(_._2.isEmpty))
-
-    private def generateTokenUnlocks(
-      expiredWithdrawalsDelegatedStaking: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
-      acceptedTokenLocks: List[Signed[TokenLock]],
-      globalActiveTokenLocksByRef: Map[Hash, Signed[TokenLock]]
-    ): Either[DelegatedStakeError, Map[Address, List[TokenUnlock]]] = {
-      val increasedTokenLockUnlocks = acceptedTokenLocks
-        .filter(_.replaceTokenLockRef.nonEmpty)
-        .traverse { tokenLock =>
-          val replaceTokenLockRef = tokenLock.replaceTokenLockRef.get
-          for {
-            activeTokenLock <- globalActiveTokenLocksByRef
-              .get(replaceTokenLockRef)
-              .toRight(MissingTokenLock(s"Missing TokenLock for tokenLockRef: $replaceTokenLockRef"))
-          } yield
-            (
-              tokenLock.source,
-              TokenUnlock(
-                replaceTokenLockRef,
-                activeTokenLock.amount,
-                activeTokenLock.currencyId,
-                activeTokenLock.source
-              )
-            )
-        }
-        .map(_.groupBy { case (address, _) => address }.view.mapValues(_.map { case (_, tokenUnlock) => tokenUnlock }))
-
-      val expiredWithdrawalUnlocks = expiredWithdrawalsDelegatedStaking.toList.traverse {
-        case (address, withdrawals) =>
-          withdrawals.toList.traverse {
-            case pw: PendingDelegatedStakeWithdrawal =>
-              for {
-                activeTokenLock <- globalActiveTokenLocksByRef
-                  .get(pw.tokenLockRef)
-                  .toRight(MissingTokenLock(s"Missing TokenLock for tokenLockRef: ${pw.tokenLockRef}"))
-              } yield
-                TokenUnlock(
-                  pw.tokenLockRef,
-                  activeTokenLock.amount,
-                  activeTokenLock.currencyId,
-                  activeTokenLock.source
-                )
-          }.map(tokenUnlocks => address -> tokenUnlocks)
-      }.map(_.toMap)
-
-      for {
-        withdrawalUnlocks <- expiredWithdrawalUnlocks
-        replacedUnlocks <- increasedTokenLockUnlocks
-      } yield withdrawalUnlocks ++ replacedUnlocks
-    }
 
     private def acceptDelegatedStakes(
       lastSnapshotContext: GlobalSnapshotInfo,
@@ -913,36 +846,6 @@ object GlobalSnapshotAcceptanceManager {
         }
     }
 
-    private def acceptTokenLocks(
-      epochProgress: EpochProgress,
-      acceptedGlobalTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
-      lastActiveGlobalTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
-      generatedTokenUnlocksByAddress: Map[Address, List[TokenUnlock]]
-    )(implicit hasher: Hasher[F]): F[SortedMap[Address, SortedSet[Signed[TokenLock]]]] = {
-      val expiredGlobalTokenLocks = filterExpiredTokenLocks(lastActiveGlobalTokenLocks, epochProgress)
-
-      (acceptedGlobalTokenLocks |+| expiredGlobalTokenLocks).toList
-        .foldM(lastActiveGlobalTokenLocks) {
-          case (acc, (address, tokenLocks)) =>
-            val lastAddressTokenLocks = acc.getOrElse(address, SortedSet.empty[Signed[TokenLock]])
-            val unexpired = (lastAddressTokenLocks ++ tokenLocks).filter(_.unlockEpoch.forall(_ >= epochProgress))
-            val addressTokenUnlocks = generatedTokenUnlocksByAddress.getOrElse(address, List.empty)
-            val unlocksRefs = addressTokenUnlocks.map(_.tokenLockRef)
-
-            unexpired
-              .foldM(SortedSet.empty[Signed[TokenLock]]) { (acc, tokenLock) =>
-                tokenLock.toHashed.map { tlh =>
-                  if (unlocksRefs.contains(tlh.hash)) acc
-                  else acc + tokenLock
-                }
-              }
-              .map { updatedLocks =>
-                acc.updated(address, updatedLocks)
-              }
-        }
-        .map(updateTokenLocks => updateTokenLocks.filterNot(_._2.isEmpty))
-    }
-
     private def updateTokenLockBalances(
       currencySnapshots: SortedMap[Address, CurrencySnapshotWithState],
       maybeLastTokenLockBalances: Option[SortedMap[Address, SortedMap[Address, Balance]]]
@@ -972,12 +875,6 @@ object GlobalSnapshotAcceptanceManager {
       epochProgress: EpochProgress
     ): SortedMap[Address, SortedSet[Signed[AllowSpend]]] =
       allowSpends.view.mapValues(_.filter(_.lastValidEpochProgress < epochProgress)).to(SortedMap)
-
-    private def filterExpiredTokenLocks(
-      tokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
-      epochProgress: EpochProgress
-    ): SortedMap[Address, SortedSet[Signed[TokenLock]]] =
-      tokenLocks.view.mapValues(_.filter(_.unlockEpoch.exists(_ < epochProgress))).to(SortedMap)
 
     private def updateGlobalBalancesByAllowSpends(
       epochProgress: EpochProgress,
@@ -1071,60 +968,6 @@ object GlobalSnapshotAcceptanceManager {
             }
           } yield updatedBalances
       }
-
-    private def updateGlobalBalancesByTokenLocks(
-      epochProgress: EpochProgress,
-      currentBalances: SortedMap[Address, Balance],
-      acceptedGlobalTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
-      lastActiveGlobalTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
-      generatedTokenUnlocksByAddress: Map[Address, List[TokenUnlock]]
-    ): Either[BalanceArithmeticError, SortedMap[Address, Balance]] = {
-      val expiredGlobalTokenLocks = filterExpiredTokenLocks(lastActiveGlobalTokenLocks, epochProgress)
-
-      (acceptedGlobalTokenLocks |+| expiredGlobalTokenLocks).foldLeft[Either[BalanceArithmeticError, SortedMap[Address, Balance]]](
-        Right(currentBalances)
-      ) {
-        case (accEither, (address, tokenLocks)) =>
-          for {
-            acc <- accEither
-            initialBalance = acc.getOrElse(address, Balance.empty)
-
-            unexpiredBalance <- {
-              val unexpired = tokenLocks.filter(_.unlockEpoch.forall(_ >= epochProgress))
-
-              unexpired.foldLeft[Either[BalanceArithmeticError, Balance]](Right(initialBalance)) { (currentBalanceEither, tokenLock) =>
-                for {
-                  currentBalance <- currentBalanceEither
-                  balanceAfterAmount <- currentBalance.minus(TokenLockAmount.toAmount(tokenLock.amount))
-                  balanceAfterFee <- balanceAfterAmount.minus(TokenLockFee.toAmount(tokenLock.fee))
-                } yield balanceAfterFee
-              }
-            }
-
-            expiredBalance <- {
-              val expired = tokenLocks.filter(_.unlockEpoch.exists(_ < epochProgress))
-
-              expired.foldLeft[Either[BalanceArithmeticError, Balance]](Right(unexpiredBalance)) { (currentBalanceEither, allowSpend) =>
-                for {
-                  currentBalance <- currentBalanceEither
-                  balanceAfterExpiredAmount <- currentBalance.plus(TokenLockAmount.toAmount(allowSpend.amount))
-                } yield balanceAfterExpiredAmount
-              }
-            }
-            addressTokenUnlocks = generatedTokenUnlocksByAddress.getOrElse(address, List.empty)
-            finalBalance <-
-              addressTokenUnlocks.foldLeft[Either[BalanceArithmeticError, Balance]](Right(expiredBalance)) {
-                case (currentBalanceEither, tokenUnlock) =>
-                  for {
-                    currentBalance <- currentBalanceEither
-                    balanceAfterUnlock <- currentBalance.plus(TokenLockAmount.toAmount(tokenUnlock.amount))
-                  } yield balanceAfterUnlock
-              }
-
-            updatedAcc = acc.updated(address, finalBalance)
-          } yield updatedAcc
-      }
-    }
 
     private def acceptTransactionRefs(
       lastTxRefs: SortedMap[Address, TransactionReference],

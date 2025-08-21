@@ -110,6 +110,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         LastNGlobalSnapshotStorage.make[IO](lastGlobalSnapshotsSyncConfig, lastNSnapR, incLastNSnapR)
       lastGlobalSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
 
+      currencyTokenLockAcceptanceManager = CurrencyTokenLockAcceptanceManager.make[IO]
       currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager.make(
         FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
         Dev,
@@ -117,6 +118,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
         TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
         AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
+        currencyTokenLockAcceptanceManager,
         Amount(0L),
         validators.currencyMessageValidator,
         validators.feeTransactionValidator,

@@ -88,6 +88,7 @@ object SharedServices {
 
       localHealthcheck <- LocalHealthcheck.make[F](nodeClient, storages.cluster)
       gossip <- HasherSelector[F].withCurrent(implicit hasher => Gossip.make[F](queues.rumor, nodeId, generation, keyPair))
+      currencyTokenLockAcceptanceManager = CurrencyTokenLockAcceptanceManager.make[F]
       currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager.make(
         cfg.fieldsAddedOrdinals,
         cfg.environment,
@@ -95,6 +96,7 @@ object SharedServices {
         BlockAcceptanceManager.make[F](validators.currencyBlockValidator, txHasher),
         TokenLockBlockAcceptanceManager.make[F](validators.tokenLockBlockValidator),
         AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlockValidator),
+        currencyTokenLockAcceptanceManager,
         collateral.amount,
         validators.currencyMessageValidator,
         validators.feeTransactionValidator,
@@ -133,6 +135,7 @@ object SharedServices {
         validators.updateNodeCollateralValidator
       )
       priceStateUpdater = PriceStateUpdater.make(cfg.environment, DefaultDelegatedRewardsConfigProvider)
+      globalTokenLockAcceptanceManager = GlobalTokenLockAcceptanceManager.make[F]
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         cfg.fieldsAddedOrdinals,
         cfg.metagraphsSync,
@@ -154,6 +157,7 @@ object SharedServices {
         validators.spendActionValidator,
         validators.pricingUpdateValidator,
         priceStateUpdater,
+        globalTokenLockAcceptanceManager,
         collateral.amount,
         cfg.delegatedStaking.withdrawalTimeLimit.getOrElse(cfg.environment, EpochProgress.MinValue)
       )
