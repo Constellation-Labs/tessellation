@@ -120,7 +120,13 @@ abstract class CurrencyL1App(
         cfg.priorityPeerIds,
         cfg.environment
       ).asResource
-      dataApplicationService <- dataApplication.sequence
+      dataApplicationService <- dataApplication.sequence.adaptError {
+        case error =>
+          new RuntimeException(
+            s"Data application initialization failed: ${error.getMessage}. ",
+            error
+          )
+      }
       services = Services
         .make[IO, Run](
           storages,
