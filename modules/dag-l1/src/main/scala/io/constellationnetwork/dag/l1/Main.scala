@@ -170,7 +170,8 @@ object Main
       alignment = GlobalSnapshotAlignment.make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo, Run](
         services,
         programs,
-        storages
+        storages,
+        sharedStorages
       )
 
       swapRuntime = hasherSelector.withCurrent { implicit hasher =>
@@ -328,7 +329,7 @@ object Main
         }
       }.asResource
       _ <- stateChannel.runtime
-        .merge(alignment.runtime)
+        .merge(alignment.runtime())
         .merge(swapRuntime)
         .merge(tokenLockRuntime)
         .compile
