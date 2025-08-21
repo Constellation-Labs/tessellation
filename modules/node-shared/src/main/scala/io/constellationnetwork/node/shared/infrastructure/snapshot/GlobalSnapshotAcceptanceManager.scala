@@ -174,21 +174,6 @@ object GlobalSnapshotAcceptanceManager {
 
       for {
         acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips, ordinal)
-        delegatedStakeAcceptanceResult <- updateDelegatedStakeAcceptanceManager.accept(
-          cdsEvents,
-          wdsEvents,
-          lastSnapshotContext,
-          epochProgress,
-          ordinal
-        )
-        nodeCollateralAcceptanceResult <- updateNodeCollateralAcceptanceManager.accept(
-          cncEvents,
-          wncEvents,
-          lastSnapshotContext,
-          epochProgress,
-          ordinal,
-          delegatedStakeAcceptanceResult
-        )
         acceptedUpdateNodeParameters <- updateNodeParametersAcceptanceManager
           .acceptUpdateNodeParameters(unpEvents, lastSnapshotContext)
           .map(acceptanceResult =>
@@ -269,7 +254,24 @@ object GlobalSnapshotAcceptanceManager {
           unexpiredCreateDelegatedStakes,
           unexpiredWithdrawalsDelegatedStaking,
           expiredWithdrawalsDelegatedStaking
-        ) <- acceptDelegatedStakes(lastSnapshotContext, epochProgress, acceptedGlobalTokenLocks)
+        ) <- processExistingDelegatedStakes(lastSnapshotContext, epochProgress, acceptedGlobalTokenLocks)
+
+        delegatedStakeAcceptanceResult <- updateDelegatedStakeAcceptanceManager.accept(
+          cdsEvents,
+          wdsEvents,
+          lastSnapshotContext,
+          epochProgress,
+          ordinal,
+          acceptedGlobalTokenLocks
+        )
+        nodeCollateralAcceptanceResult <- updateNodeCollateralAcceptanceManager.accept(
+          cncEvents,
+          wncEvents,
+          lastSnapshotContext,
+          epochProgress,
+          ordinal,
+          delegatedStakeAcceptanceResult
+        )
 
         DelegatedRewardsResult(
           delegatorRewardsMap,
@@ -341,10 +343,6 @@ object GlobalSnapshotAcceptanceManager {
         )
 
         acceptedGlobalAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
-        acceptedGlobalTokenLocks <- tokenLockAcceptanceManager.acceptReplacementTokenLocks(
-          tokenLockBlockAcceptanceResult.accepted.flatMap(_.value.tokenLocks.toList),
-          lastSnapshotContext
-        )
 
         activeAllowSpendsFromCurrencySnapshots = currencySnapshots
           .mapFilter(_.toOption.flatMap { case (_, info) => info.activeAllowSpends })
@@ -697,7 +695,7 @@ object GlobalSnapshotAcceptanceManager {
         .map(unexpiredWithdrawNodeCollaterals |+| _)
         .map(_.filterNot(_._2.isEmpty))
 
-    private def acceptDelegatedStakes(
+    private def processExistingDelegatedStakes(
       lastSnapshotContext: GlobalSnapshotInfo,
       epochProgress: EpochProgress,
       acceptedTokenLocks: List[Signed[TokenLock]]
@@ -722,6 +720,16 @@ object GlobalSnapshotAcceptanceManager {
       for {
         hashedReplacementTokenLocks <- acceptedTokenLocks.filter(_.replaceTokenLockRef.isDefined).traverse(_.toHashed)
         replacementTokenLocks = hashedReplacementTokenLocks.map(tokenLock => (tokenLock.replaceTokenLockRef.get, tokenLock)).toMap
+
+        // Build a map of active token locks by reference for checking if token locks are still active
+        activeTokenLocksByRef <- lastSnapshotContext.activeTokenLocks
+          .getOrElse(SortedMap.empty[Address, SortedSet[Signed[TokenLock]]])
+          .values
+          .toList
+          .flatten
+          .traverse(_.toHashed)
+          .map(_.map(hashed => hashed.hash -> hashed).toMap)
+
         updatedExistingDelegatedStakes = existingDelegatedStakes.view
           .mapValues(records =>
             records.map(record =>
@@ -736,7 +744,28 @@ object GlobalSnapshotAcceptanceManager {
             )
           )
           .toSortedMap
-        unexpiredWithdrawals = existingWithdrawals.map {
+        updatedExistingWithdrawals = existingWithdrawals.view
+          .mapValues(records =>
+            records.map { record =>
+              replacementTokenLocks.get(record.tokenLockRef) match {
+                case Some(hashedTokenLock) =>
+                  // Only update the withdrawal if the original token lock is still active
+                  if (activeTokenLocksByRef.contains(record.tokenLockRef)) {
+                    record.copy(
+                      currentTokenLockRef = hashedTokenLock.hash.some,
+                      currentAmount = DelegatedStakeAmount.fromTokenLockAmount(hashedTokenLock.amount).some
+                    )
+                  } else {
+                    // Keep the original token lock information if the original token lock is no longer active
+                    record
+                  }
+                case None => record
+              }
+            }
+          )
+          .toSortedMap
+
+        unexpiredWithdrawals = updatedExistingWithdrawals.map {
           case (address, withdrawals) =>
             address -> withdrawals.filterNot {
               case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch, _, _) =>
@@ -744,7 +773,7 @@ object GlobalSnapshotAcceptanceManager {
             }
         }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
 
-        expiredWithdrawals = existingWithdrawals.map {
+        expiredWithdrawals = updatedExistingWithdrawals.map {
           case (address, withdrawals) =>
             address -> withdrawals.filter {
               case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch, _, _) =>
@@ -752,11 +781,26 @@ object GlobalSnapshotAcceptanceManager {
             }
         }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
 
+        // Keep expired withdrawals in pending state if their token lock is no longer active
+        finalUnexpiredWithdrawals = unexpiredWithdrawals |+| expiredWithdrawals.map {
+          case (address, withdrawals) =>
+            address -> withdrawals.filter { withdrawal =>
+              !activeTokenLocksByRef.contains(withdrawal.tokenLockRef)
+            }
+        }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
+
+        finalExpiredWithdrawals = expiredWithdrawals.map {
+          case (address, withdrawals) =>
+            address -> withdrawals.filter { withdrawal =>
+              activeTokenLocksByRef.contains(withdrawal.tokenLockRef)
+            }
+        }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
+
       } yield
         (
           updatedExistingDelegatedStakes,
-          unexpiredWithdrawals,
-          expiredWithdrawals
+          finalUnexpiredWithdrawals,
+          finalExpiredWithdrawals
         )
     }
 

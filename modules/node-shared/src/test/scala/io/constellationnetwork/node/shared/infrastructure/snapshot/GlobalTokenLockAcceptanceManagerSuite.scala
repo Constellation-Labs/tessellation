@@ -670,7 +670,7 @@ object GlobalTokenLockAcceptanceManagerSuite extends MutableIOSuite with Checker
 
     for {
       kp <- KeyPairGenerator.makeKeyPair[IO]
-      testAddress <- kp.getPublic.toId.toAddress
+      testAddress = kp.getPublic.toAddress
       pendingWithdrawal = PendingDelegatedStakeWithdrawal(
         Signed(
           UpdateDelegatedStake.Create(

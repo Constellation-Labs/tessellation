@@ -592,8 +592,6 @@ const testIncreaseDelegatedStake = async (urls, account, stakeHash, nodeId) => {
 
   // new stake in activeDelegatedStakes with updated values, balance transfers
   // old stake removed (not in active or pendingWithdrawal)
-  /*
-  TODO uncomment when delegated stake increase is implemented
   await withRetry(
     async () => {
       const updatedStakeResponse = await getAccountDelegatedStakes(
@@ -626,7 +624,6 @@ const testIncreaseDelegatedStake = async (urls, account, stakeHash, nodeId) => {
       },
     },
   )
-  */
   logWorkflow.info('Stake increase verified with balance change')
 
   logWorkflow.info('---- End testIncreaseDelegatedStake ----')

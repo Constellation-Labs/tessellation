@@ -1,13 +1,11 @@
-package io.constellationnetwork.dag.l0.infrastructure.rewards
+package io.constellationnetwork.node.shared.infrastructure.rewards
 
 import java.math.MathContext
 
-import cats.Applicative
 import cats.effect.{Async, Sync}
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
-import scala.math.BigDecimal.RoundingMode
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
@@ -19,7 +17,6 @@ import io.constellationnetwork.schema.AmountOps._
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.balance.Balance._
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, UpdateDelegatedStake}
 import io.constellationnetwork.schema.epoch.EpochProgress
@@ -28,13 +25,12 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.priceOracle.{PriceRecord, TokenPair}
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
 import io.constellationnetwork.security._
-import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 import io.constellationnetwork.utils.DecimalUtils
 
 import eu.timepit.refined.auto.autoUnwrap
-import eu.timepit.refined.types.all.{NonNegLong, PosLong}
+import eu.timepit.refined.types.all.NonNegLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object GlobalDelegatedRewardsDistributor {

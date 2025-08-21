@@ -75,7 +75,8 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
         withdrawals = List.empty,
         lastSnapshotContext = context,
         currentGlobalEpochProgress = EpochProgress.MinValue,
-        currentSnapshotOrdinal = SnapshotOrdinal.unsafeApply(2)
+        currentSnapshotOrdinal = SnapshotOrdinal.unsafeApply(2),
+        acceptedTokenLocks = List.empty
       )
     } yield
       expect.all(
@@ -115,7 +116,8 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
         withdrawals = List(valid1, invalid),
         lastSnapshotContext = context,
         currentGlobalEpochProgress = EpochProgress.apply(NonNegLong(1)),
-        currentSnapshotOrdinal = SnapshotOrdinal.unsafeApply(2)
+        currentSnapshotOrdinal = SnapshotOrdinal.unsafeApply(2),
+        acceptedTokenLocks = List.empty
       )
     } yield
       expect.all(
@@ -158,7 +160,8 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
         withdrawals = List(valid1, valid2),
         lastSnapshotContext = context,
         currentGlobalEpochProgress = EpochProgress.apply(NonNegLong(1)),
-        currentSnapshotOrdinal = SnapshotOrdinal.unsafeApply(2)
+        currentSnapshotOrdinal = SnapshotOrdinal.unsafeApply(2),
+        acceptedTokenLocks = List.empty
       )
     } yield
       expect.all(

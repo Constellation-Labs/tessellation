@@ -139,7 +139,8 @@ object GlobalSnapshotContextFunctions {
           wdsEventsForAcceptance,
           context,
           signedArtifact.epochProgress,
-          signedArtifact.ordinal
+          signedArtifact.ordinal,
+          List.empty
         )
 
         (

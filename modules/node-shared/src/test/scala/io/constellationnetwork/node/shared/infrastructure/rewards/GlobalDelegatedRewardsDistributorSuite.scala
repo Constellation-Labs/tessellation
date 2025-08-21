@@ -1,13 +1,10 @@
-package io.constellationnetwork.dag.l0.infrastructure.rewards
+package io.constellationnetwork.node.shared.infrastructure.rewards
 
 import cats.data.NonEmptySet
 import cats.effect.IO
 import cats.syntax.all._
-import cats.syntax.applicative._
-import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
-import scala.math.BigDecimal.{RoundingMode, double2bigDecimal}
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.JsonSerializer
@@ -22,19 +19,17 @@ import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node._
-import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.priceOracle.{PriceFraction, PriceRecord, TokenPair}
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, NonNegFraction, SnapshotOrdinal}
+import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
-import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
-import org.scalacheck.Gen
 import weaver.SimpleIOSuite
 import weaver.scalacheck.Checkers
 
