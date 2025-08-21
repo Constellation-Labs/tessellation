@@ -44,12 +44,6 @@ object StateChannelAllowanceLists {
               "ddec0a0d2742355565fdf7e2c2b0439cecf25aee55fe6426174fb42e122062d01e61292f526f9852a09a9ac21edcdd252dac229cbac645d7899c435695956c26",
               "3cbf6e802f2e7cf580f1498a74b9eb4d6522353522bfe1a5cb33cef8bc64e7a8a536bb12257d7d77f1b1fd440f2de8952b02aa0ab6a389b0ef5c78a1e6149fe1"
             ),
-          Address("DAG1CRZj8HwjeMe9H18aLxW2iqQLaDjW9YxNqkg9") ->
-            NonEmptySet.of(
-              "bb16637e74281727fcee8a32f9b4df2af8c84005864ad7e44d34fcd3215e8bf95745e812005523d16b95c2d8f2dfad8e023dd13bd18b379af461d8ab04664ad7",
-              "5aea1023e4c236ca832943de7ae5f2e5a4b6cb40b750cec34207c8f9b8eb2671566c9b03de29d7f7330f94c7117b21efc505534232ea1b6c3e13b85ac6e53856",
-              "b29da8e4d9d286696903db4f2d0bf5a7ede47e4d4e80617faefbf94de8c198e3749f4fe600dfeae378d2d0b4ac73f2d4bc4bfdb2abd3fb7e4dc3859ae4a1ffd4"
-            ),
           Address("DAG6oJ5BgUbxjeSYKxgjT1YEUZ3QBS1MN5XkstfT") ->
             NonEmptySet.of(
               "65b0c6ac3d0df47d7e7c275ac2d439d11dd73d67bca59cc9771ab7868d4a3e9e8a10661541932af394ca741765bd4d5807f030a3217553db75f050f7e65193fd",
@@ -67,6 +61,20 @@ object StateChannelAllowanceLists {
               "660473b202ef99387e4ac1316932a845d0369474d242889c9679f330aad517aa1193261f602629c64ae59dead7a5912fd7b019877a1432a568eec6884f6db80e",
               "e3302c117d571d3f4fe9884776fac09fbd25731dc6df83d3c1cdfbcbb9e0bbabf732b445826ff052f378df8ef29737dc1cf0bd66d5aec4ae1553fe323939a856",
               "5cc3dce875fad02cff7af28b64f79d8db8fe8b85d9369f124618f69f478b992538318aaf07327ea9384048fb2c6a222e887f8325ad02b255c97052d32c76daf3"
+            ),
+          // USDC
+          Address("DAG0S16WDgdAvh8VvroR6MWLdjmHYdzAF5S181xh") ->
+            NonEmptySet.of(
+              "4474bbae5936a48ef951ff3a72f655af556c4b07e94a1e64a4e05dd05e418cfefed4f7ca01a9664052b8618ed70078d8a57e209ea7c591002fb94f2acacd0e35",
+              "154090bdd08a05217acb8b7d4f5e56abef13120e688818edbffe4a55460a0c7445170033d81b45f0596f1a8330265c79567a89c69f52103b4eb4e89eb3017268",
+              "afbc97eeb40a5e89752924c885c39c5b00a8f9ff4929df59322b07e2613c3b8abcea49aac29783c0494f45e70697bf1ca75fb11d10f37d23d7fc1e4a7bfecd09"
+            ),
+          // CYBERLETE
+          Address("DAG8CJN1r9CLDeCwD15zjNGZKMNsg858bGd3b4vD") ->
+            NonEmptySet.of(
+              "bb16637e74281727fcee8a32f9b4df2af8c84005864ad7e44d34fcd3215e8bf95745e812005523d16b95c2d8f2dfad8e023dd13bd18b379af461d8ab04664ad7",
+              "5aea1023e4c236ca832943de7ae5f2e5a4b6cb40b750cec34207c8f9b8eb2671566c9b03de29d7f7330f94c7117b21efc505534232ea1b6c3e13b85ac6e53856",
+              "b29da8e4d9d286696903db4f2d0bf5a7ede47e4d4e80617faefbf94de8c198e3749f4fe600dfeae378d2d0b4ac73f2d4bc4bfdb2abd3fb7e4dc3859ae4a1ffd4"
             )
         ).some
     }
