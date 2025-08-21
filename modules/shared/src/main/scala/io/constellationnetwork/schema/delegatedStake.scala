@@ -43,7 +43,9 @@ object delegatedStake {
       override def combine(x: DelegatedStakeAmount, y: DelegatedStakeAmount): DelegatedStakeAmount = x.plus(y)
     }
 
-    def fromTokenLockAmount(amount: TokenLockAmount): DelegatedStakeAmount = DelegatedStakeAmount(NonNegLong.unsafeFrom(amount.value.value))
+    def fromTokenLockAmount(tokenLockAmount: TokenLockAmount): DelegatedStakeAmount = DelegatedStakeAmount(
+      NonNegLong.unsafeFrom(tokenLockAmount.value.value)
+    )
   }
 
   @derive(decoder, encoder, order, show)

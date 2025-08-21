@@ -278,6 +278,8 @@ object UpdateDelegatedStakeValidator {
 
   case class DuplicatedTokenLock(tokenLockRef: Hash) extends UpdateDelegatedStakeValidationError
 
+  case class OutdatedTokenLock(tokenLockRef: Hash) extends UpdateDelegatedStakeValidationError
+
   case class InvalidSourceAddress(tokenLockRef: Hash) extends UpdateDelegatedStakeValidationError
 
   case class AlreadyWithdrawn(parent: Hash) extends UpdateDelegatedStakeValidationError

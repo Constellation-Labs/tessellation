@@ -5,14 +5,20 @@ import cats.data.Validated.{Invalid, Valid}
 import cats.effect.Async
 import cats.syntax.all._
 
+import scala.collection.immutable.{SortedMap, SortedSet}
+
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator._
-import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeReference, UpdateDelegatedStake}
+import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, DelegatedStakeReference, UpdateDelegatedStake}
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.tokenLock.TokenLock
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
-import io.constellationnetwork.security.SecurityProvider
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
 import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
+
+import eu.timepit.refined.internal.Adjacent.integralAdjacent
 
 trait UpdateDelegatedStakeAcceptanceManager[F[_]] {
 
@@ -21,8 +27,9 @@ trait UpdateDelegatedStakeAcceptanceManager[F[_]] {
     withdrawals: List[Signed[UpdateDelegatedStake.Withdraw]],
     lastSnapshotContext: GlobalSnapshotInfo,
     currentGlobalEpochProgress: EpochProgress,
-    currentSnapshotOrdinal: SnapshotOrdinal
-  ): F[UpdateDelegatedStakeAcceptanceResult]
+    currentSnapshotOrdinal: SnapshotOrdinal,
+    acceptedTokenLocks: List[Signed[TokenLock]]
+  )(implicit hasher: Hasher[F]): F[UpdateDelegatedStakeAcceptanceResult]
 
 }
 
@@ -54,9 +61,18 @@ object UpdateDelegatedStakeAcceptanceManager {
         withdrawals: List[Signed[UpdateDelegatedStake.Withdraw]],
         lastSnapshotContext: GlobalSnapshotInfo,
         currentGlobalEpochProgress: EpochProgress,
-        currentSnapshotOrdinal: SnapshotOrdinal
-      ): F[UpdateDelegatedStakeAcceptanceResult] =
+        currentSnapshotOrdinal: SnapshotOrdinal,
+        acceptedTokenLocks: List[Signed[TokenLock]]
+      )(implicit hasher: Hasher[F]): F[UpdateDelegatedStakeAcceptanceResult] =
         for {
+          hashedExistingDelegatedStakes <- lastSnapshotContext.activeDelegatedStakes
+            .getOrElse(SortedMap.empty[Address, SortedSet[DelegatedStakeRecord]])
+            .view
+            .values
+            .toList
+            .flatMap(_.toList)
+            .traverse(record => record.event.toHashed.map(hashed => (hashed.hash, record)))
+            .map(_.toMap)
           createDelegatedStakeAcceptanceResult <- creates.foldLeftM[F, CreateDelegatedStakeAcceptanceResult](
             CreateDelegatedStakeAcceptanceResult.empty
           ) { (acc, signed) =>
@@ -67,6 +83,8 @@ object UpdateDelegatedStakeAcceptanceManager {
                     (acc.accepted, (signed, NonEmptyChain.of(DuplicatedParent(signed.parent))) :: acc.rejected)
                   } else if (acc.tokenLockRefsSeen(signed.tokenLockRef)) {
                     (acc.accepted, (signed, NonEmptyChain.of(DuplicatedTokenLock(signed.tokenLockRef))) :: acc.rejected)
+                  } else if (acceptedTokenLocks.exists(_.value.replaceTokenLockRef == signed.tokenLockRef.some)) {
+                    (acc.accepted, (signed, NonEmptyChain.of(OutdatedTokenLock(signed.tokenLockRef))) :: acc.rejected)
                   } else {
                     (a :: acc.accepted, acc.rejected)
                   }
@@ -87,7 +105,23 @@ object UpdateDelegatedStakeAcceptanceManager {
                   if (acc.stakeRefsSeen(signed.stakeRef)) {
                     (acc.accepted, (signed, NonEmptyChain.of(DuplicatedStake(signed.stakeRef))) :: acc.rejected)
                   } else {
-                    (a :: acc.accepted, acc.rejected)
+                    val maybeExistingDelegatedStake = hashedExistingDelegatedStakes.get(signed.stakeRef)
+                    if (
+                      acceptedTokenLocks.exists(acceptedTokenLock =>
+                        acceptedTokenLock.value.replaceTokenLockRef.isDefined && acceptedTokenLock.value.replaceTokenLockRef == maybeExistingDelegatedStake
+                          .map(_.tokenLockRef)
+                      )
+                    ) {
+                      (
+                        acc.accepted,
+                        (
+                          signed,
+                          NonEmptyChain.of(OutdatedTokenLock(maybeExistingDelegatedStake.map(_.tokenLockRef).getOrElse(Hash.empty)))
+                        ) :: acc.rejected
+                      )
+                    } else {
+                      (a :: acc.accepted, acc.rejected)
+                    }
                   }
                 case Invalid(e) => (acc.accepted, (signed, e) :: acc.rejected)
               }

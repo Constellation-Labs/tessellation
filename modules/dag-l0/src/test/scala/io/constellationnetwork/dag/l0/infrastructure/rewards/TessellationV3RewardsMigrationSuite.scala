@@ -1,6 +1,5 @@
 package io.constellationnetwork.dag.l0.infrastructure.rewards
 
-import cats.data.NonEmptySet
 import cats.effect.IO
 import cats.syntax.all._
 
@@ -8,20 +7,15 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.config.types._
-import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
+import io.constellationnetwork.node.shared.infrastructure.rewards.GlobalDelegatedRewardsDistributorSuite
 import io.constellationnetwork.node.shared.infrastructure.snapshot.DelegatedRewardsResult
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.balance.{Amount, Balance}
-import io.constellationnetwork.schema.delegatedStake._
+import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
-import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
-import io.constellationnetwork.schema.{GlobalSnapshotInfo, NonNegFraction, SnapshotOrdinal}
-import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.schema.{NonNegFraction, SnapshotOrdinal}
 import io.constellationnetwork.security.hex.Hex
-import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
