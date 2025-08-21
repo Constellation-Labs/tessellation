@@ -275,7 +275,12 @@ abstract class CurrencyL1App(
         }
       }.asResource
       alignment = GlobalSnapshotAlignment
-        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](services, programs, storages)
+        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
+          services,
+          programs,
+          storages,
+          sharedStorages
+        )
       _ <- hasherSelector.withCurrent { implicit hasher =>
         services.dataApplication.map { da =>
           DataApplication
@@ -294,7 +299,7 @@ abstract class CurrencyL1App(
               keyPair,
               nodeId
             )
-            .merge(alignment.runtime)
+            .merge(alignment.runtime())
             .compile
             .drain
             .handleErrorWith { error =>
@@ -339,7 +344,7 @@ abstract class CurrencyL1App(
               )
             }
             .merge(stateChannel.runtime)
-            .merge(alignment.runtime)
+            .merge(alignment.runtime())
             .compile
             .drain
         }.asResource
