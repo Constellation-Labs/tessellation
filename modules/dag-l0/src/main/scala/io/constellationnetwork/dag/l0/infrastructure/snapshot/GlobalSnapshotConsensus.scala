@@ -87,6 +87,7 @@ object GlobalSnapshotConsensus {
         .make[F](stateChannelAllowanceLists, pullDelay = stateChannelPullDelay, purgeDelay = stateChannelPurgeDelay)
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       feeCalculator = FeeCalculator.make(feeConfigs)
+      globalTokenLockAcceptanceManager = GlobalTokenLockAcceptanceManager.make[F]
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         sharedCfg.fieldsAddedOrdinals,
         sharedCfg.metagraphsSync,
@@ -108,6 +109,7 @@ object GlobalSnapshotConsensus {
         validators.spendActionValidator,
         validators.pricingUpdateValidator,
         sharedServices.priceStateUpdater,
+        globalTokenLockAcceptanceManager,
         collateral,
         sharedCfg.delegatedStaking.withdrawalTimeLimit.getOrElse(sharedCfg.environment, EpochProgress.MinValue)
       )
