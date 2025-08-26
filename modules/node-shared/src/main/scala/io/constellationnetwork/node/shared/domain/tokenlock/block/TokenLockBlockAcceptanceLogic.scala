@@ -16,7 +16,8 @@ trait TokenLockBlockAcceptanceLogic[F[_]] {
     block: Signed[TokenLockBlock],
     txChains: Map[Address, TokenLockNel],
     context: TokenLockBlockAcceptanceContext[F],
-    contextUpdate: TokenLockBlockAcceptanceContextUpdate
+    contextUpdate: TokenLockBlockAcceptanceContextUpdate,
+    shouldValidateCollateral: Boolean
   )(implicit hasher: Hasher[F]): EitherT[F, TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate]
 
 }
@@ -30,10 +31,11 @@ object TokenLockBlockAcceptanceLogic {
         signedBlock: Signed[TokenLockBlock],
         txChains: Map[Address, TokenLockNel],
         context: TokenLockBlockAcceptanceContext[F],
-        contextUpdate: TokenLockBlockAcceptanceContextUpdate
+        contextUpdate: TokenLockBlockAcceptanceContextUpdate,
+        shouldValidateCollateral: Boolean
       )(implicit hasher: Hasher[F]): EitherT[F, TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate] =
         for {
-          _ <- processSignatures(signedBlock, context)
+          _ <- processSignatures(signedBlock, context, shouldValidateCollateral)
           contextUpdate1 <- processLastTxRefs(txChains, context, contextUpdate)
           contextUpdate2 <- processBalances(signedBlock, context, contextUpdate1)
         } yield contextUpdate2
@@ -148,25 +150,30 @@ object TokenLockBlockAcceptanceLogic {
 
   def processSignatures[F[_]: Async: SecurityProvider](
     signedBlock: Signed[TokenLockBlock],
-    context: TokenLockBlockAcceptanceContext[F]
+    context: TokenLockBlockAcceptanceContext[F],
+    shouldValidateCollateral: Boolean = true
   ): EitherT[F, TokenLockBlockNotAcceptedReason, Unit] =
     EitherT(
-      signedBlock.proofs
-        .map(_.id.toPeerId)
-        .toList
-        .traverse(_.toAddress)
-        .flatMap(
-          _.filterA(address =>
-            context.getBalance(address).map { balances =>
-              !balances.getOrElse(Balance.empty).satisfiesCollateral(context.getCollateral)
-            }
+      if (!shouldValidateCollateral) {
+        ().asRight[TokenLockBlockNotAcceptedReason].pure
+      } else {
+        signedBlock.proofs
+          .map(_.id.toPeerId)
+          .toList
+          .traverse(_.toAddress)
+          .flatMap(
+            _.filterA(address =>
+              context.getBalance(address).map { balances =>
+                !balances.getOrElse(Balance.empty).satisfiesCollateral(context.getCollateral)
+              }
+            )
           )
-        )
-        .map(list =>
-          NonEmptyList
-            .fromList(list)
-            .map(nel => SigningPeerBelowCollateral(nel).asLeft[Unit])
-            .getOrElse(().asRight[TokenLockBlockNotAcceptedReason])
-        )
+          .map(list =>
+            NonEmptyList
+              .fromList(list)
+              .map(nel => SigningPeerBelowCollateral(nel).asLeft[Unit])
+              .getOrElse(().asRight[TokenLockBlockNotAcceptedReason])
+          )
+      }
     )
 }
