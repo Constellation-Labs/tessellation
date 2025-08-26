@@ -19,13 +19,15 @@ trait TokenLockBlockAcceptanceManager[F[_]] {
   def acceptBlocksIteratively(
     blocks: List[Signed[TokenLockBlock]],
     context: TokenLockBlockAcceptanceContext[F],
-    snapshotOrdinal: SnapshotOrdinal
+    snapshotOrdinal: SnapshotOrdinal,
+    shouldValidateCollateral: Boolean = true
   )(implicit hasher: Hasher[F]): F[TokenLockBlockAcceptanceResult]
 
   def acceptBlock(
     block: Signed[TokenLockBlock],
     context: TokenLockBlockAcceptanceContext[F],
-    snapshotOrdinal: SnapshotOrdinal
+    snapshotOrdinal: SnapshotOrdinal,
+    shouldValidateCollateral: Boolean = true
   )(implicit hasher: Hasher[F]): F[Either[TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate]]
 
 }
@@ -46,7 +48,8 @@ object TokenLockBlockAcceptanceManager {
       def acceptBlocksIteratively(
         blocks: List[Signed[TokenLockBlock]],
         context: TokenLockBlockAcceptanceContext[F],
-        snapshotOrdinal: SnapshotOrdinal
+        snapshotOrdinal: SnapshotOrdinal,
+        shouldValidateCollateral: Boolean = true
       )(implicit hasher: Hasher[F]): F[TokenLockBlockAcceptanceResult] = {
 
         def go(
@@ -59,7 +62,7 @@ object TokenLockBlockAcceptanceManager {
                 blockAndTxChains match {
                   case (block, txChains) =>
                     logic
-                      .acceptBlock(block, txChains, context, acc.contextUpdate)
+                      .acceptBlock(block, txChains, context, acc.contextUpdate, shouldValidateCollateral)
                       .map {
                         case contextUpdate =>
                           acc
@@ -108,14 +111,16 @@ object TokenLockBlockAcceptanceManager {
       def acceptBlock(
         block: Signed[TokenLockBlock],
         context: TokenLockBlockAcceptanceContext[F],
-        snapshotOrdinal: SnapshotOrdinal
+        snapshotOrdinal: SnapshotOrdinal,
+        shouldValidateCollateral: Boolean = true
       )(implicit hasher: Hasher[F]): F[Either[TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate]] =
         blockValidator.validate(block, snapshotOrdinal).flatMap {
           _.toEither
             .leftMap(errors => ValidationFailed(errors.toNonEmptyList))
             .toEitherT[F]
             .flatMap {
-              case (block, txChains) => logic.acceptBlock(block, txChains, context, TokenLockBlockAcceptanceContextUpdate.empty)
+              case (block, txChains) =>
+                logic.acceptBlock(block, txChains, context, TokenLockBlockAcceptanceContextUpdate.empty, shouldValidateCollateral)
             }
             .value
         }
