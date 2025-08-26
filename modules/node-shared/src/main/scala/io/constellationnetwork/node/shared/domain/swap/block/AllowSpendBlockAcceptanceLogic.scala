@@ -2,16 +2,7 @@ package io.constellationnetwork.node.shared.domain.swap.block
 
 import cats.data.{EitherT, NonEmptyList}
 import cats.effect.Async
-import cats.syntax.bifunctor._
-import cats.syntax.either._
-import cats.syntax.flatMap._
-import cats.syntax.foldable._
-import cats.syntax.functor._
-import cats.syntax.option._
-import cats.syntax.order._
-import cats.syntax.semigroup._
-import cats.syntax.traverse._
-import cats.syntax.traverseFilter._
+import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.domain.swap.AllowSpendChainValidator.AllowSpendNel
 import io.constellationnetwork.schema.address.Address
@@ -27,7 +18,8 @@ trait AllowSpendBlockAcceptanceLogic[F[_]] {
     block: Signed[AllowSpendBlock],
     txChains: Map[Address, AllowSpendNel],
     context: AllowSpendBlockAcceptanceContext[F],
-    contextUpdate: AllowSpendBlockAcceptanceContextUpdate
+    contextUpdate: AllowSpendBlockAcceptanceContextUpdate,
+    shouldValidateCollateral: Boolean
   )(implicit hasher: Hasher[F]): EitherT[F, AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]
 
 }
@@ -41,10 +33,11 @@ object AllowSpendBlockAcceptanceLogic {
         signedBlock: Signed[AllowSpendBlock],
         txChains: Map[Address, AllowSpendNel],
         context: AllowSpendBlockAcceptanceContext[F],
-        contextUpdate: AllowSpendBlockAcceptanceContextUpdate
+        contextUpdate: AllowSpendBlockAcceptanceContextUpdate,
+        shouldValidateCollateral: Boolean
       )(implicit hasher: Hasher[F]): EitherT[F, AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate] =
         for {
-          _ <- processSignatures(signedBlock, context)
+          _ <- processSignatures(signedBlock, context, shouldValidateCollateral)
           contextUpdate1 <- processLastTxRefs(txChains, context, contextUpdate)
           contextUpdate2 <- processBalances(signedBlock, context, contextUpdate1)
         } yield contextUpdate2
@@ -160,25 +153,30 @@ object AllowSpendBlockAcceptanceLogic {
 
   def processSignatures[F[_]: Async: SecurityProvider](
     signedBlock: Signed[AllowSpendBlock],
-    context: AllowSpendBlockAcceptanceContext[F]
+    context: AllowSpendBlockAcceptanceContext[F],
+    shouldValidateCollateral: Boolean = true
   ): EitherT[F, AllowSpendBlockNotAcceptedReason, Unit] =
     EitherT(
-      signedBlock.proofs
-        .map(_.id.toPeerId)
-        .toList
-        .traverse(_.toAddress)
-        .flatMap(
-          _.filterA(address =>
-            context.getBalance(address).map { balances =>
-              !balances.getOrElse(Balance.empty).satisfiesCollateral(context.getCollateral)
-            }
+      if (!shouldValidateCollateral) {
+        ().asRight[AllowSpendBlockNotAcceptedReason].pure
+      } else {
+        signedBlock.proofs
+          .map(_.id.toPeerId)
+          .toList
+          .traverse(_.toAddress)
+          .flatMap(
+            _.filterA(address =>
+              context.getBalance(address).map { balances =>
+                !balances.getOrElse(Balance.empty).satisfiesCollateral(context.getCollateral)
+              }
+            )
           )
-        )
-        .map(list =>
-          NonEmptyList
-            .fromList(list)
-            .map(nel => SigningPeerBelowCollateral(nel).asLeft[Unit])
-            .getOrElse(().asRight[AllowSpendBlockNotAcceptedReason])
-        )
+          .map(list =>
+            NonEmptyList
+              .fromList(list)
+              .map(nel => SigningPeerBelowCollateral(nel).asLeft[Unit])
+              .getOrElse(().asRight[AllowSpendBlockNotAcceptedReason])
+          )
+      }
     )
 }

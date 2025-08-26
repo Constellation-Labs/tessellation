@@ -246,14 +246,16 @@ object CurrencySnapshotAcceptanceManager {
         tokenLockBlocksForAcceptance,
         lastSnapshotContext,
         snapshotOrdinal,
-        tokenLockInitialTxRef
+        tokenLockInitialTxRef,
+        shouldValidateCollateral
       )
 
       allowSpendBlockAcceptanceResult <- acceptAllowSpendBlocks(
         allowSpendBlocksForAcceptance,
         lastSnapshotContext,
         snapshotOrdinal,
-        initialAllowSpendRef
+        initialAllowSpendRef,
+        shouldValidateCollateral
       )
 
       transactionsRefs = acceptTransactionRefs(
@@ -771,7 +773,8 @@ object CurrencySnapshotAcceptanceManager {
       tokenLockBlocksForAcceptance: List[Signed[TokenLockBlock]],
       lastSnapshotContext: CurrencySnapshotContext,
       snapshotOrdinal: SnapshotOrdinal,
-      initialTxRef: TokenLockReference
+      initialTxRef: TokenLockReference,
+      shouldValidateCollateral: Boolean
     )(implicit hasher: Hasher[F]) = {
       val context = TokenLockBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.snapshotInfo.balances,
@@ -780,14 +783,20 @@ object CurrencySnapshotAcceptanceManager {
         initialTxRef
       )
 
-      tokenLockBlockAcceptanceManager.acceptBlocksIteratively(tokenLockBlocksForAcceptance, context, snapshotOrdinal)
+      tokenLockBlockAcceptanceManager.acceptBlocksIteratively(
+        tokenLockBlocksForAcceptance,
+        context,
+        snapshotOrdinal,
+        shouldValidateCollateral
+      )
     }
 
     private def acceptAllowSpendBlocks(
       blocksForAcceptance: List[Signed[AllowSpendBlock]],
       lastSnapshotContext: CurrencySnapshotContext,
       snapshotOrdinal: SnapshotOrdinal,
-      initialTxRef: AllowSpendReference
+      initialTxRef: AllowSpendReference,
+      shouldValidateCollateral: Boolean
     )(implicit hasher: Hasher[F]) = {
       val context = AllowSpendBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.snapshotInfo.balances,
@@ -796,7 +805,7 @@ object CurrencySnapshotAcceptanceManager {
         initialTxRef
       )
 
-      allowSpendBlockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, snapshotOrdinal)
+      allowSpendBlockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, snapshotOrdinal, shouldValidateCollateral)
     }
 
     def acceptRewardTxs(
