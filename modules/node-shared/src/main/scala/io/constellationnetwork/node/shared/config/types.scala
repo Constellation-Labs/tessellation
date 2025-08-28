@@ -32,7 +32,8 @@ object types {
     checkSyncGlobalSnapshotField: Map[AppEnvironment, SnapshotOrdinal],
     metagraphSyncData: Map[AppEnvironment, SnapshotOrdinal],
     updatedLastSyncGlobalOrder: Map[AppEnvironment, SnapshotOrdinal],
-    updatedLastSyncGlobalFromPeersInConsensus: Map[AppEnvironment, SnapshotOrdinal]
+    updatedLastSyncGlobalFromPeersInConsensus: Map[AppEnvironment, SnapshotOrdinal],
+    updatingCombineFunctionSpendActions: Map[AppEnvironment, SnapshotOrdinal]
   )
 
   case class MetagraphsSyncConfig(
