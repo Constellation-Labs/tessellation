@@ -229,6 +229,8 @@ object CurrencySnapshotAcceptanceManager {
         .getOrElse(environment, SnapshotOrdinal.MinValue)
       updatedLastSyncGlobalFromPeersInConsensus = fieldsAddedOrdinals.updatedLastSyncGlobalFromPeersInConsensus
         .getOrElse(environment, SnapshotOrdinal.MinValue)
+      updatingCombineFunctionSpendActions = fieldsAddedOrdinals.updatingCombineFunctionSpendActions
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
 
       acceptanceBlocksResult <- acceptBlocks(
         blocksForAcceptance,
@@ -385,7 +387,9 @@ object CurrencySnapshotAcceptanceManager {
         getGlobalSnapshotByOrdinal,
         metagraphId,
         lastUnsyncGlobalSnapshotInfo,
-        snapshotOrdinal
+        snapshotOrdinal,
+        lastUnsyncGlobalSnapshot.ordinal,
+        updatingCombineFunctionSpendActions
       )
 
       metagraphIdSpendTransactions = globalSnapshotsSpendActions.flatMap {
@@ -640,7 +644,9 @@ object CurrencySnapshotAcceptanceManager {
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       currencyId: Address,
       lastGlobalSnapshotInfo: GlobalSnapshotInfo,
-      currentCurrencySnapshotOrdinal: SnapshotOrdinal
+      currentCurrencySnapshotOrdinal: SnapshotOrdinal,
+      lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
+      updatedLastSyncGlobalFromPeersInConsensus: SnapshotOrdinal
     ): F[(SortedMap[Address, List[SpendAction]], SortedSet[SnapshotOrdinal])] = {
       val emptySpendActions = SortedMap.empty[Address, List[SpendAction]]
       val emptyProcessedGlobalSnapshots = SortedSet.empty[SnapshotOrdinal]
@@ -676,7 +682,9 @@ object CurrencySnapshotAcceptanceManager {
                       spendActions <- processUnappliedOrdinals(
                         globalOrdinalsToProcess,
                         lastGlobalSnapshots,
-                        getGlobalSnapshotByOrdinal
+                        getGlobalSnapshotByOrdinal,
+                        lastUnsyncGlobalSnapshotOrdinal,
+                        updatedLastSyncGlobalFromPeersInConsensus
                       )
                       _ <- globalSnapshotsAlreadyProcessed.update { current =>
                         val currentMetagraphProcessedOrdinals = current.getOrElse(currencyId, Map.empty)
@@ -707,7 +715,9 @@ object CurrencySnapshotAcceptanceManager {
     private def processUnappliedOrdinals(
       unappliedOrdinals: Set[SnapshotOrdinal],
       lastGlobalSnapshots: List[Hashed[GlobalIncrementalSnapshot]],
-      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+      lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
+      updatedLastSyncGlobalFromPeersInConsensus: SnapshotOrdinal
     ): F[SortedMap[Address, List[SpendAction]]] = {
       val snapshotCache = lastGlobalSnapshots.map(s => s.ordinal -> s).toMap
       val (cached, missing) = unappliedOrdinals.partition(snapshotCache.contains)
@@ -720,15 +730,25 @@ object CurrencySnapshotAcceptanceManager {
           .map(_.spendActions.getOrElse(SortedMap.empty[Address, List[SpendAction]]))
       }
 
-      fetchMissing.map(fromFetched => combineSpendActions(fromCache ++ fromFetched))
+      fetchMissing.map(fromFetched =>
+        combineSpendActions(fromCache ++ fromFetched, lastUnsyncGlobalSnapshotOrdinal, updatedLastSyncGlobalFromPeersInConsensus)
+      )
     }
 
     private def combineSpendActions(
-      spendActionsList: List[SortedMap[Address, List[SpendAction]]]
+      spendActionsList: List[SortedMap[Address, List[SpendAction]]],
+      lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
+      updatedLastSyncGlobalFromPeersInConsensus: SnapshotOrdinal
     ): SortedMap[Address, List[SpendAction]] =
-      spendActionsList
-        .reduceOption(_ ++ _)
-        .getOrElse(SortedMap.empty)
+      if (lastUnsyncGlobalSnapshotOrdinal > updatedLastSyncGlobalFromPeersInConsensus) {
+        spendActionsList
+          .reduceOption(_ |+| _)
+          .getOrElse(SortedMap.empty)
+      } else {
+        spendActionsList
+          .reduceOption(_ ++ _)
+          .getOrElse(SortedMap.empty)
+      }
 
     private def acceptTransactionRefs(
       lastTxRefs: SortedMap[Address, TransactionReference],
