@@ -70,7 +70,7 @@ object StateChannelAllowanceLists {
               "afbc97eeb40a5e89752924c885c39c5b00a8f9ff4929df59322b07e2613c3b8abcea49aac29783c0494f45e70697bf1ca75fb11d10f37d23d7fc1e4a7bfecd09"
             ),
           // CYBERLETE
-          Address("DAG8CJN1r9CLDeCwD15zjNGZKMNsg858bGd3b4vD") ->
+          Address("DAG0rgR8sdn8u2YBYb5Ftjy4zmuqUX3v9XsE2j94") ->
             NonEmptySet.of(
               "bb16637e74281727fcee8a32f9b4df2af8c84005864ad7e44d34fcd3215e8bf95745e812005523d16b95c2d8f2dfad8e023dd13bd18b379af461d8ab04664ad7",
               "5aea1023e4c236ca832943de7ae5f2e5a4b6cb40b750cec34207c8f9b8eb2671566c9b03de29d7f7330f94c7117b21efc505534232ea1b6c3e13b85ac6e53856",
