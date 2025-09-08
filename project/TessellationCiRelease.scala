@@ -12,7 +12,9 @@ import com.jsuereth.sbtpgp.SbtPgp
 import sbt.Def
 import sbt.Keys.*
 import sbt.*
+import sbt.Def.spaceDelimited
 import sbt.plugins.JvmPlugin
+
 import java.io.ByteArrayInputStream
 import scala.sys.process.{ProcessBuilder, ProcessLogger}
 import scala.util.{Failure, Success, Try}
@@ -20,6 +22,8 @@ import scala.sys.process.*
 import scala.util.control.NonFatal
 import xerial.sbt.Sonatype
 import xerial.sbt.Sonatype.autoImport.*
+
+import scala.collection.immutable.Seq
 
 object TessellationCiRelease extends AutoPlugin {
 
@@ -83,6 +87,17 @@ object TessellationCiRelease extends AutoPlugin {
 
   override lazy val globalSettings: Seq[Def.Setting[_]] = List(
     (Test / publishArtifact) := false,
+    commands += Command.args("writeVersion", "<filename>") { (currentState, args) =>
+      if (args.isEmpty) {
+        throw new IllegalArgumentException("writeVersion requires a filename argument")
+      }
+      val filename = args.head
+      val projectVersion = getVersion(currentState)
+      val file = new java.io.File(filename)
+      java.nio.file.Files.write(file.toPath, projectVersion.getBytes("UTF-8"))
+      println(s"Version $projectVersion written to $filename")
+      currentState
+    },
     commands += Command.command("tessellation-ci-release") { currentState =>
       val version = getVersion(currentState)
       val isSnapshot = isSnapshotVersion(version)
