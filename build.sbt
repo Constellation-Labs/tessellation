@@ -18,8 +18,9 @@ ThisBuild / developers := List(
 
 ThisBuild / evictionErrorLevel := Level.Warn
 ThisBuild / scalafixDependencies += Libraries.organizeImports
+ThisBuild / version := sys.env.get("RELEASE_TAG").map(_.stripPrefix("v")).getOrElse("99.99.99-SNAPSHOT")
 
-enablePlugins(GitVersioningPlugin, TessellationCiRelease)
+enablePlugins(TessellationCiRelease)
 
 val scalafixCommonSettings = inConfig(IntegrationTest)(scalafixConfigSettings(IntegrationTest))
 
@@ -48,7 +49,6 @@ ThisBuild / assemblyMergeStrategy := {
   case "logback.xml"                                       => MergeStrategy.first
   case x if x.contains("io.netty.versions.properties")     => MergeStrategy.discard
   case x if x.contains("scala.semanticdb")                 => MergeStrategy.discard
-  case x if x.contains("rally-version.properties")         => MergeStrategy.concat
   case PathList(xs @ _*) if xs.last == "module-info.class" => MergeStrategy.first
   case x =>
     val oldStrategy = (assembly / assemblyMergeStrategy).value
@@ -56,7 +56,6 @@ ThisBuild / assemblyMergeStrategy := {
 }
 
 sdk / assemblyMergeStrategy := {
-  case x if x.contains("rally-version.properties")         => MergeStrategy.concat
   case x =>
     val oldStrategy = (assembly / assemblyMergeStrategy).value
     oldStrategy(x)
