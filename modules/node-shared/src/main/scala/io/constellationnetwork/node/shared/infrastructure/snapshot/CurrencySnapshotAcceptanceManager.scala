@@ -28,6 +28,10 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.{
   TokenLockBlockAcceptanceResult
 }
 import io.constellationnetwork.node.shared.domain.transaction.FeeTransactionValidator
+import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencyBalanceAdjustments.{
+  BalanceAdjustmentAtOrdinal,
+  metagraphsBalancesAdjustments
+}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact._
@@ -513,11 +517,41 @@ object CurrencySnapshotAcceptanceManager {
           else lastGlobalSnapshotOrdinal
         }
 
+      balanceAdjustments = acceptedSharedArtifacts.collect {
+        case balanceAdjustment: BalanceAdjustment => balanceAdjustment
+      }
+
+      updatedBalancesByInvalidAddressChecks <-
+        if (balanceAdjustments.nonEmpty) {
+          val unauthorizedError = new RuntimeException(
+            s"Metagraph $metagraphId not authorized to perform balance updates on ordinal $snapshotOrdinal"
+          )
+
+          for {
+            info <- metagraphsBalancesAdjustments
+              .get(lastSnapshotContext.address)
+              .fold(Async[F].raiseError[BalanceAdjustmentAtOrdinal](unauthorizedError))(_.pure[F])
+
+            _ <-
+              if (info.snapshotOrdinal === snapshotOrdinal && info.environment === environment)
+                Async[F].unit
+              else
+                Async[F].raiseError[Unit](unauthorizedError)
+
+            adjustedBalances <- info
+              .balanceAdjustFunction(updatedBalancesBySpendTransactions, balanceAdjustments)
+              .leftMap(error => new RuntimeException(s"Balance adjustment failed: $error"))
+              .liftTo[F]
+          } yield adjustedBalances
+        } else {
+          updatedBalancesBySpendTransactions.pure[F]
+        }
+
       csi = CurrencySnapshotInfo(
         if (snapshotOrdinalToCheckFields < tessellation3MigrationStartingOrdinal)
           lastSnapshotContext.snapshotInfo.lastTxRefs ++ acceptanceBlocksResult.contextUpdate.lastTxRefs
         else transactionsRefs,
-        updatedBalancesBySpendTransactions,
+        updatedBalancesByInvalidAddressChecks,
         Option.when(messagesAcceptanceResult.contextUpdate.nonEmpty)(messagesAcceptanceResult.contextUpdate),
         None,
         if (snapshotOrdinalToCheckFields < tessellation3MigrationStartingOrdinal) none else updatedAllowSpendRefs.some,
