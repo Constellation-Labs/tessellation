@@ -6,6 +6,7 @@ import scala.collection.immutable.SortedSet
 
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.priceOracle._
 import io.constellationnetwork.schema.swap.{CurrencyId, SwapAmount}
 import io.constellationnetwork.schema.tokenLock.TokenLockAmount
@@ -53,6 +54,27 @@ object artifact {
     val zero = PricingUpdate(PriceFraction(TokenPair.DAG_USD, NonNegFraction.zero))
     val one = PricingUpdate(PriceFraction(TokenPair.DAG_USD, NonNegFraction.one))
   }
+
+  @derive(decoder, encoder, order, ordering, show)
+  sealed trait BalanceAdjustmentReason
+
+  case object SpendTransactionNotApplied extends BalanceAdjustmentReason
+  case object SpendTransactionSourceNotApplied extends BalanceAdjustmentReason
+  case object SpendTransactionDestinationNotApplied extends BalanceAdjustmentReason
+
+  @derive(decoder, encoder, order, ordering, show)
+  sealed trait BalanceAdjustmentReference
+
+  case class SpendTransactionsReferences(spendTransactionsReferences: SortedSet[SpendTransaction]) extends BalanceAdjustmentReference
+
+  @derive(decoder, encoder, order, ordering, show)
+  case class BalanceAdjustment(
+    address: Address,
+    reason: BalanceAdjustmentReason,
+    reference: BalanceAdjustmentReference,
+    increase: Option[Amount],
+    deduct: Option[Amount]
+  ) extends SharedArtifact
 
   /** Temporary artifact used to indicate which global snapshot ordinals have already been processed during the construction of a currency
     * snapshot.
