@@ -8,6 +8,8 @@ import cats.effect.std.{Random, Supervisor}
 import cats.effect.{Async, IO, Resource}
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedSet
+
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
 import io.constellationnetwork.currency.l0.config.types.AppConfig
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
@@ -38,10 +40,11 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastN
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages}
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security._
-import io.constellationnetwork.security.signature.SignedValidator
+import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 
 import org.http4s.client.Client
 
@@ -68,7 +71,8 @@ object Services {
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]],
     hasherSelector: HasherSelector[F],
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
-    customPeersAllowanceList: Option[Set[AllowanceListEntry]]
+    customPeersAllowanceList: Option[Set[AllowanceListEntry]],
+    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
   ): F[Services[F, R]] =
     for {
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[F]
@@ -151,7 +155,8 @@ object Services {
           hasherSelector,
           sharedServices.restart,
           cfg.shared.leavingDelay,
-          globalL0Service.pullGlobalSnapshot
+          globalL0Service.pullGlobalSnapshot,
+          maybeCustomArtifacts
         )
     } yield
       new Services[F, R](

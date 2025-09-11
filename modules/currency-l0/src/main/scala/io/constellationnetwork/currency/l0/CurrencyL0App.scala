@@ -3,6 +3,8 @@ package io.constellationnetwork.currency.l0
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedSet
+
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import io.constellationnetwork.currency.l0.cell.{L0Cell, L0CellInput}
 import io.constellationnetwork.currency.l0.cli.method
@@ -27,11 +29,13 @@ import io.constellationnetwork.node.shared.resources.MkHttpServer
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.node.shared.{NodeSharedOrSharedRegistrationIdRange, nodeSharedKryoRegistrar}
+import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security._
+import io.constellationnetwork.security.signature.Signed
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
@@ -46,6 +50,10 @@ trait OverridableL0 extends TessellationIOApp[Run] {
   def rewards(
     implicit sp: SecurityProvider[IO]
   ): Option[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]] = None
+
+  def customArtifacts(
+    lastCurrencySnapshot: Signed[CurrencyIncrementalSnapshot]
+  ): Option[SortedSet[SharedArtifact]] = None
 }
 
 abstract class CurrencyL0App(
@@ -115,7 +123,8 @@ abstract class CurrencyL0App(
           maybeMajorityPeerIds,
           hasherSelectorAlwaysCurrent,
           maybeAllowanceList,
-          nodeShared.customAllowanceList
+          nodeShared.customAllowanceList,
+          Some(customArtifacts)
         )
         .asResource
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext
