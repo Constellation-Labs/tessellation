@@ -17,7 +17,7 @@ import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.swap.AllowSpend
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.{Hashed, Hasher}
 
@@ -36,24 +36,25 @@ object AllowSpendService {
     def offer(
       allowSpend: Hashed[AllowSpend]
     )(implicit hasher: Hasher[F]): F[Either[NonEmptyList[ContextualAllowSpendValidationError], Hash]] =
-      allowSpendValidator
-        .validate(allowSpend.signed)
-        .map(_.errorMap(NonContextualValidationError))
-        .flatMap {
-          case Valid(_) =>
-            lastSnapshotStorage.get.map {
-              case Some(snapshot) =>
-                snapshot.signed.value match {
-                  case cis: CurrencyIncrementalSnapshot =>
-                    cis.globalSyncView.map(_.epochProgress).getOrElse(EpochProgress.MinValue)
-                  case gis: GlobalIncrementalSnapshot =>
-                    gis.epochProgress
-                  case _ =>
-                    EpochProgress.MinValue
-                }
-              case None =>
+      for {
+        lastGlobalEpochProgress <- lastSnapshotStorage.get.map {
+          case Some(snapshot) =>
+            snapshot.signed.value match {
+              case cis: CurrencyIncrementalSnapshot =>
+                cis.globalSyncView.map(_.epochProgress).getOrElse(EpochProgress.MinValue)
+              case gis: GlobalIncrementalSnapshot =>
+                gis.epochProgress
+              case _ =>
                 EpochProgress.MinValue
-            }.flatMap { lastGlobalEpochProgress =>
+            }
+          case None =>
+            EpochProgress.MinValue
+        }
+        result <- allowSpendValidator
+          .validate(allowSpend.signed, lastGlobalEpochProgress.some)
+          .map(_.errorMap(NonContextualValidationError))
+          .flatMap {
+            case Valid(_) =>
               lastSnapshotStorage.getCombinedStream.map {
                 case Some((s, si)) => (s.ordinal, si.balances.getOrElse(allowSpend.source, Balance.empty))
                 case None          => (SnapshotOrdinal.MinValue, Balance.empty)
@@ -66,9 +67,10 @@ object AllowSpendService {
                   new Exception(s"Unexpected state, stream should always emit the first snapshot")
                     .raiseError[F, Either[NonEmptyList[ContextualAllowSpendValidationError], Hash]]
               }
-            }
-          case Invalid(e) =>
-            e.toNonEmptyList.asLeft[Hash].leftWiden[NonEmptyList[ContextualAllowSpendValidationError]].pure[F]
-        }
+
+            case Invalid(e) =>
+              e.toNonEmptyList.asLeft[Hash].leftWiden[NonEmptyList[ContextualAllowSpendValidationError]].pure[F]
+          }
+      } yield result
   }
 }

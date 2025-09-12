@@ -19,6 +19,7 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.tokenlock.consensus.config.TokenLockConsensusConfig
 import io.constellationnetwork.node.shared.domain.tokenlock.{TokenLockStorage, TokenLockValidator}
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.schema.round.RoundId
@@ -328,9 +329,13 @@ object Engine {
             NonEmptyList.fromList(transactions).map(_.toNes).map(TokenLockBlock(roundId, _)).pure[F]
 
           for {
-            gsOrdinal <- OptionT(lastGlobalSnapshot.getOrdinal)
-              .getOrRaise(new IllegalStateException("Global SnapshotOrdinal unavailable"))
-            validate = (tokenLock: Signed[TokenLock]) => tokenLockValidator.validate(tokenLock)
+            lastGlobalEpochProgress <- lastGlobalSnapshot.get.map {
+              case Some(snapshot) =>
+                snapshot.epochProgress
+              case None =>
+                EpochProgress.MinValue
+            }
+            validate = (tokenLock: Signed[TokenLock]) => tokenLockValidator.validate(tokenLock, lastGlobalEpochProgress.some)
 
             maybeBlock <- roundData
               .formBlock(

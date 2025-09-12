@@ -24,7 +24,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlock
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
-import io.constellationnetwork.node.shared.modules.SharedServices
+import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
@@ -77,24 +77,26 @@ object Services {
         storages.lastSnapshot,
         validators.allowSpend
       )
-      val allowSpendBlock = AllowSpendBlockService.make[F](
+      val allowSpendBlock = AllowSpendBlockService.make[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
         AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlock),
         storages.address,
         storages.allowSpendBlock,
         storages.allowSpend,
-        cfg.collateral.amount
+        cfg.collateral.amount,
+        storages.lastSnapshot
       )
       val tokenLock = TokenLockService.make[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
         storages.tokenLock,
         storages.lastSnapshot,
         validators.tokenLock
       )
-      val tokenLockBlock = TokenLockBlockService.make[F](
+      val tokenLockBlock = TokenLockBlockService.make[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
         TokenLockBlockAcceptanceManager.make[F](validators.tokenLockBlock),
         storages.address,
         storages.tokenLockBlock,
         storages.tokenLock,
-        cfg.collateral.amount
+        cfg.collateral.amount,
+        storages.lastSnapshot
       )
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
       val dataApplication = maybeDataApplication

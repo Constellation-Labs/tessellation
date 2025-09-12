@@ -238,6 +238,8 @@ object CurrencySnapshotAcceptanceManager {
         .getOrElse(environment, SnapshotOrdinal.MinValue)
       fixingAllowSpendExpiration = fieldsAddedOrdinals.fixingAllowSpendExpiration
         .getOrElse(environment, SnapshotOrdinal.MinValue)
+      fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
 
       acceptanceBlocksResult <- acceptBlocks(
         blocksForAcceptance,
@@ -251,31 +253,10 @@ object CurrencySnapshotAcceptanceManager {
 
       acceptedTransactions = acceptanceBlocksResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
 
-      acceptanceTokenLockBlocksResult <- acceptTokenLockBlocks(
-        tokenLockBlocksForAcceptance,
-        lastSnapshotContext,
-        snapshotOrdinal,
-        tokenLockInitialTxRef,
-        shouldValidateCollateral
-      )
-
-      allowSpendBlockAcceptanceResult <- acceptAllowSpendBlocks(
-        allowSpendBlocksForAcceptance,
-        lastSnapshotContext,
-        snapshotOrdinal,
-        initialAllowSpendRef,
-        shouldValidateCollateral
-      )
-
       transactionsRefs = acceptTransactionRefs(
         lastSnapshotContext.snapshotInfo.lastTxRefs,
         acceptanceBlocksResult.contextUpdate.lastTxRefs,
         acceptedTransactions
-      )
-
-      tokenLockRefs = acceptTokenLockRefs(
-        lastSnapshotContext.snapshotInfo.lastTokenLockRefs.getOrElse(SortedMap.empty[Address, TokenLockReference]),
-        acceptanceTokenLockBlocksResult.contextUpdate.lastTokenLocksRefs
       )
 
       rewards <- calculateRewardsFn(acceptedTransactions)
@@ -388,6 +369,40 @@ object CurrencySnapshotAcceptanceManager {
           )
         )
 
+      allowSpendBlockAcceptanceResult <- acceptAllowSpendBlocks(
+        allowSpendBlocksForAcceptance,
+        lastSnapshotContext,
+        snapshotOrdinal,
+        initialAllowSpendRef,
+        shouldValidateCollateral,
+        lastUnsyncGlobalSnapshot.ordinal,
+        fixingAllowSpendAndTokenLockValidation,
+        lastGlobalSnapshotEpochProgress
+      )
+
+      lastAllowSpendsRefs = lastSnapshotContext.snapshotInfo.lastAllowSpendRefs.getOrElse(SortedMap.empty[Address, AllowSpendReference])
+
+      updatedAllowSpendRefs = acceptAllowSpendRefs(
+        lastAllowSpendsRefs,
+        allowSpendBlockAcceptanceResult.contextUpdate.lastTxRefs
+      )
+
+      acceptanceTokenLockBlocksResult <- acceptTokenLockBlocks(
+        tokenLockBlocksForAcceptance,
+        lastSnapshotContext,
+        snapshotOrdinal,
+        tokenLockInitialTxRef,
+        shouldValidateCollateral,
+        lastUnsyncGlobalSnapshot.ordinal,
+        fixingAllowSpendAndTokenLockValidation,
+        lastGlobalSnapshotEpochProgress
+      )
+
+      tokenLockRefs = acceptTokenLockRefs(
+        lastSnapshotContext.snapshotInfo.lastTokenLockRefs.getOrElse(SortedMap.empty[Address, TokenLockReference]),
+        acceptanceTokenLockBlocksResult.contextUpdate.lastTokenLocksRefs
+      )
+
       (globalSnapshotsSpendActions, globalSnapshotsProcessed) <- getLastGlobalSnapshotsSpendActions(
         globalSyncView.ordinal,
         lastGlobalSnapshots,
@@ -465,7 +480,6 @@ object CurrencySnapshotAcceptanceManager {
       lastActiveAllowSpends = lastSnapshotContext.snapshotInfo.activeAllowSpends.getOrElse(
         SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]]
       )
-      lastAllowSpendsRefs = lastSnapshotContext.snapshotInfo.lastAllowSpendRefs.getOrElse(SortedMap.empty[Address, AllowSpendReference])
 
       updatedAllowSpends <-
         acceptCurrencyAllowSpends(
@@ -476,11 +490,6 @@ object CurrencySnapshotAcceptanceManager {
           lastUnsyncGlobalSnapshot.ordinal,
           fixingAllowSpendExpiration
         )
-
-      updatedAllowSpendRefs = acceptAllowSpendRefs(
-        lastAllowSpendsRefs,
-        allowSpendBlockAcceptanceResult.contextUpdate.lastTxRefs
-      )
 
       updatedBalancesByAllowSpends <- updateCurrencyBalancesByAllowSpends(
         lastGlobalSnapshotEpochProgress,
@@ -853,7 +862,10 @@ object CurrencySnapshotAcceptanceManager {
       lastSnapshotContext: CurrencySnapshotContext,
       snapshotOrdinal: SnapshotOrdinal,
       initialTxRef: TokenLockReference,
-      shouldValidateCollateral: Boolean
+      shouldValidateCollateral: Boolean,
+      lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
+      fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
+      lastSyncGlobalSnapshotEpochProgress: EpochProgress
     )(implicit hasher: Hasher[F]) = {
       val context = TokenLockBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.snapshotInfo.balances,
@@ -862,12 +874,23 @@ object CurrencySnapshotAcceptanceManager {
         initialTxRef
       )
 
-      tokenLockBlockAcceptanceManager.acceptBlocksIteratively(
-        tokenLockBlocksForAcceptance,
-        context,
-        snapshotOrdinal,
-        shouldValidateCollateral
-      )
+      if (lastUnsyncGlobalSnapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {
+        tokenLockBlockAcceptanceManager.acceptBlocksIteratively(
+          tokenLockBlocksForAcceptance,
+          context,
+          snapshotOrdinal,
+          shouldValidateCollateral,
+          lastSyncGlobalSnapshotEpochProgress.some
+        )
+      } else {
+        tokenLockBlockAcceptanceManager.acceptBlocksIteratively(
+          tokenLockBlocksForAcceptance,
+          context,
+          snapshotOrdinal,
+          shouldValidateCollateral,
+          none
+        )
+      }
     }
 
     private def acceptAllowSpendBlocks(
@@ -875,7 +898,10 @@ object CurrencySnapshotAcceptanceManager {
       lastSnapshotContext: CurrencySnapshotContext,
       snapshotOrdinal: SnapshotOrdinal,
       initialTxRef: AllowSpendReference,
-      shouldValidateCollateral: Boolean
+      shouldValidateCollateral: Boolean,
+      lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
+      fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
+      lastSyncGlobalSnapshotEpochProgress: EpochProgress
     )(implicit hasher: Hasher[F]) = {
       val context = AllowSpendBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.snapshotInfo.balances,
@@ -883,8 +909,23 @@ object CurrencySnapshotAcceptanceManager {
         collateral,
         initialTxRef
       )
-
-      allowSpendBlockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, snapshotOrdinal, shouldValidateCollateral)
+      if (lastUnsyncGlobalSnapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {
+        allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
+          blocksForAcceptance,
+          context,
+          snapshotOrdinal,
+          shouldValidateCollateral,
+          lastSyncGlobalSnapshotEpochProgress.some
+        )
+      } else {
+        allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
+          blocksForAcceptance,
+          context,
+          snapshotOrdinal,
+          shouldValidateCollateral,
+          none
+        )
+      }
     }
 
     def acceptRewardTxs(

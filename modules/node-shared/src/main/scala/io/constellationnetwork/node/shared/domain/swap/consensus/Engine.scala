@@ -10,6 +10,7 @@ import cats.syntax.all._
 
 import scala.concurrent.duration.FiniteDuration
 
+import io.constellationnetwork.currency.schema.currency.CurrencyIncrementalSnapshot
 import io.constellationnetwork.currency.swap.ConsensusInput._
 import io.constellationnetwork.currency.swap.ConsensusOutput.Noop
 import io.constellationnetwork.currency.swap._
@@ -19,6 +20,7 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.config.SwapConsensusConfig
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.swap.{AllowSpendStorage, AllowSpendValidator}
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.schema.round.RoundId
@@ -327,9 +329,13 @@ object Engine {
             NonEmptyList.fromList(transactions).map(_.toNes).map(AllowSpendBlock(roundId, _)).pure[F]
 
           for {
-            gsOrdinal <- OptionT(lastGlobalSnapshot.getOrdinal)
-              .getOrRaise(new IllegalStateException("Global SnapshotOrdinal unavailable"))
-            validate = (allowSpend: Signed[AllowSpend]) => allowSpendValidator.validate(allowSpend)
+            lastGlobalEpochProgress <- lastGlobalSnapshot.get.map {
+              case Some(snapshot) =>
+                snapshot.epochProgress
+              case None =>
+                EpochProgress.MinValue
+            }
+            validate = (allowSpend: Signed[AllowSpend]) => allowSpendValidator.validate(allowSpend, lastGlobalEpochProgress.some)
 
             maybeBlock <- roundData
               .formBlock(
