@@ -69,21 +69,23 @@ object Services {
       val transaction = TransactionService.make[F, P, S, SI](storages.transaction, storages.lastSnapshot, validators.transaction)
       val allowSpend =
         AllowSpendService.make[F, P, S, SI](storages.allowSpend, storages.lastSnapshot, validators.allowSpend)
-      val allowSpendBlock = AllowSpendBlockService.make[F](
+      val allowSpendBlock = AllowSpendBlockService.make[F, P, S, SI](
         AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlock),
         storages.address,
         storages.allowSpendBlock,
         storages.allowSpend,
-        cfg.collateral.amount
+        cfg.collateral.amount,
+        storages.lastSnapshot
       )
       val tokenLock =
         TokenLockService.make[F, P, S, SI](storages.tokenLock, storages.lastSnapshot, validators.tokenLock)
-      val tokenLockBlock = TokenLockBlockService.make[F](
+      val tokenLockBlock = TokenLockBlockService.make[F, P, S, SI](
         TokenLockBlockAcceptanceManager.make[F](validators.tokenLockBlock),
         storages.address,
         storages.tokenLockBlock,
         storages.tokenLock,
-        cfg.collateral.amount
+        cfg.collateral.amount,
+        storages.lastSnapshot
       )
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
       val restart = sharedServices.restart
