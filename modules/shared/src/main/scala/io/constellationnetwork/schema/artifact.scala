@@ -63,15 +63,10 @@ object artifact {
   case object SpendTransactionDestinationNotApplied extends BalanceAdjustmentReason
 
   @derive(decoder, encoder, order, ordering, show)
-  sealed trait BalanceAdjustmentReference
-
-  case class SpendTransactionsReferences(spendTransactionsReferences: SortedSet[SpendTransaction]) extends BalanceAdjustmentReference
-
-  @derive(decoder, encoder, order, ordering, show)
   case class BalanceAdjustment(
     address: Address,
     reason: BalanceAdjustmentReason,
-    reference: BalanceAdjustmentReference,
+    reference: SortedSet[Hash],
     increase: Option[Amount],
     deduct: Option[Amount]
   ) extends SharedArtifact

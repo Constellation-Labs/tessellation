@@ -6,7 +6,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencyBalanceAdjustments
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.artifact.{BalanceAdjustment, SpendTransactionNotApplied, SpendTransactionsReferences}
+import io.constellationnetwork.schema.artifact.{BalanceAdjustment, SpendTransactionNotApplied}
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.generators.{addressGen, amountGen}
 
@@ -26,7 +26,7 @@ object CurrencyBalanceAdjustmentsSuite extends SimpleIOSuite with Checkers {
     BalanceAdjustment(
       address,
       SpendTransactionNotApplied,
-      SpendTransactionsReferences(SortedSet.empty),
+      SortedSet.empty,
       increase = None,
       deduct = Some(amount)
     )
@@ -39,7 +39,7 @@ object CurrencyBalanceAdjustmentsSuite extends SimpleIOSuite with Checkers {
     BalanceAdjustment(
       address,
       SpendTransactionNotApplied,
-      SpendTransactionsReferences(SortedSet.empty),
+      SortedSet.empty,
       increase = None,
       deduct = Some(amount)
     )
@@ -52,7 +52,7 @@ object CurrencyBalanceAdjustmentsSuite extends SimpleIOSuite with Checkers {
     BalanceAdjustment(
       address,
       SpendTransactionNotApplied,
-      SpendTransactionsReferences(SortedSet.empty),
+      SortedSet.empty,
       increase = Some(amount),
       deduct = None
     )
@@ -145,7 +145,7 @@ object CurrencyBalanceAdjustmentsSuite extends SimpleIOSuite with Checkers {
           BalanceAdjustment(
             requiredAdjustment.address,
             SpendTransactionNotApplied,
-            SpendTransactionsReferences(SortedSet.empty),
+            SortedSet.empty,
             Some(amount),
             None
           )
@@ -153,7 +153,7 @@ object CurrencyBalanceAdjustmentsSuite extends SimpleIOSuite with Checkers {
           BalanceAdjustment(
             requiredAdjustment.address,
             SpendTransactionNotApplied,
-            SpendTransactionsReferences(SortedSet.empty),
+            SortedSet.empty,
             None,
             Some(amount)
           )
@@ -208,9 +208,9 @@ object CurrencyBalanceAdjustmentsSuite extends SimpleIOSuite with Checkers {
     forall(gen) {
       case (address, amount) =>
         val increaseAdjustment =
-          BalanceAdjustment(address, SpendTransactionNotApplied, SpendTransactionsReferences(SortedSet.empty), Some(amount), None)
+          BalanceAdjustment(address, SpendTransactionNotApplied, SortedSet.empty, Some(amount), None)
         val decreaseAdjustment =
-          BalanceAdjustment(address, SpendTransactionNotApplied, SpendTransactionsReferences(SortedSet.empty), None, Some(amount))
+          BalanceAdjustment(address, SpendTransactionNotApplied, SortedSet.empty, None, Some(amount))
         val sortedAdjustments = Set(increaseAdjustment, decreaseAdjustment)
         val emptyBalances = SortedMap.empty[Address, Balance]
 
