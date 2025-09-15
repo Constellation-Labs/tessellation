@@ -138,16 +138,17 @@ object StateChannel {
       currentSnapshotState: GlobalSnapshotInfo
     ): F[Unit] =
       for {
-        currencyId <- storages.identifier.get
-        shouldForceEventTrigger = checkIfShouldForceEventTrigger(currentSnapshot, currencyId, currentSnapshotState)
+//        currencyId <- storages.identifier.get
+//        shouldForceEventTrigger = checkIfShouldForceEventTrigger(currentSnapshot, currencyId, currentSnapshotState)
 
-        _ <-
-          if (shouldForceEventTrigger) {
-            Logger[F].info("Should force event trigger detected!")
-          } else {
-            ().pure
-          }
-        _ <- conditionallyTriggerEvent(shouldForceEventTrigger)
+        // Temporarily disabling the force event trigger
+//        _ <-
+//          if (shouldForceEventTrigger) {
+//            Logger[F].info("Should force event trigger detected!")
+//          } else {
+//            ().pure
+//          }
+        _ <- conditionallyTriggerEvent(false)
 
       } yield ()
 
