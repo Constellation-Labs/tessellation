@@ -352,7 +352,7 @@ object CurrencySnapshotAcceptanceManager {
         } { ordinal =>
           ordinal.pure[F]
         }
-      _ <- logger.info(s"ordinalToFetchGlobalSnapshot: ${ordinalToFetchGlobalSnapshot}")
+
       lastSyncGlobalSnapshot <-
         lastGlobalSnapshots.find(_.ordinal === ordinalToFetchGlobalSnapshot) match {
           case Some(value) =>
