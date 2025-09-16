@@ -11,6 +11,7 @@ import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.snapshot.Validator.isNextSnapshot
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, SnapshotStorage}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastSnapshotStorage.make
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.height.Height
