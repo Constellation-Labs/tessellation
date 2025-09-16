@@ -98,14 +98,13 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           ),
           PriceOracleConfig(None, NonNegLong(0))
         )
-      lastNSnapR <- SignallingRef
-        .of[IO, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](SortedMap.empty)
+      lastNSnapR <- SignallingRef.of[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](None)
       incLastNSnapR <- SignallingRef
         .of[IO, SortedMap[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]](SortedMap.empty)
       lastSnapR <- SignallingRef.of[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](None)
 
       lastGlobalSnapshotsSyncConfig =
-        LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt.unsafeFrom(10), PosInt.unsafeFrom(5))
+        LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt.unsafeFrom(5))
       lastNSnapshotStorage =
         LastNGlobalSnapshotStorage.make[IO](lastGlobalSnapshotsSyncConfig, lastNSnapR, incLastNSnapR)
       lastGlobalSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
@@ -113,7 +112,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager.make(
         FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
         Dev,
-        LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(20), PosInt(10)),
+        LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
         BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
         TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
         AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
