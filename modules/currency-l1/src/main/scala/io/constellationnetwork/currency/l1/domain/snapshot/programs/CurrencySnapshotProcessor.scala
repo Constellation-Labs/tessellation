@@ -109,7 +109,7 @@ object CurrencySnapshotProcessor {
 
                       val setNGlobalSnapshots = lastNGlobalSnapshotStorage
                         .set(globalSnapshot, state)
-                        .as[SnapshotProcessingResult](DownloadPerformed(globalSnapshotReference, Set.empty, Set.empty))
+                        .as[SnapshotProcessingResult](Aligned(globalSnapshotReference, Set.empty))
 
                       processCurrencySnapshots(
                         globalSnapshot,

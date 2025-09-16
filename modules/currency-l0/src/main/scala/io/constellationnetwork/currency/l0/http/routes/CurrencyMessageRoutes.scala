@@ -15,6 +15,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.Ident
 import io.constellationnetwork.node.shared.snapshot.currency.{CurrencyMessageEvent, CurrencySnapshotEvent}
 import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.currencyMessage.{CurrencyMessage, MessageType}
 import io.constellationnetwork.schema.http.{ErrorCause, ErrorResponse}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
@@ -51,13 +52,17 @@ class CurrencyMessageRoutes[F[_]: Async: Hasher](
           _.map(_._2).map(_.lastMessages.getOrElse(SortedMap.empty[MessageType, Signed[CurrencyMessage]]))
         }
         metagraphId <- identifierStorage.get
-        allFeesAddresses <- lastGlobalSnapshotStorage.getCombined.map {
+        combinedLastGlobalSnapshot <- lastGlobalSnapshotStorage.getCombined
+        (allFeesAddresses, addressBalance) = combinedLastGlobalSnapshot match {
           case Some((_, info)) =>
-            getFeeAddresses(info)
-          case None => SortedMap.empty[Address, Set[Address]]
+            val feeAddresses = getFeeAddresses(info)
+            val ownerBalance = info.balances.getOrElse(msg.address, Balance.empty)
+
+            (feeAddresses, ownerBalance)
+          case None => (SortedMap.empty[Address, Set[Address]], Balance.empty)
         }
 
-        maybeResult <- maybeLastMsgs.traverse(validator.validate(msg, _, metagraphId, allFeesAddresses))
+        maybeResult <- maybeLastMsgs.traverse(validator.validate(msg, _, metagraphId, allFeesAddresses, addressBalance))
         response <- maybeResult match {
           case Some(Invalid(errors)) =>
             logger

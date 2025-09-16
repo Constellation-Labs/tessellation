@@ -19,13 +19,15 @@ trait AllowSpendBlockAcceptanceManager[F[_]] {
   def acceptBlocksIteratively(
     blocks: List[Signed[AllowSpendBlock]],
     context: AllowSpendBlockAcceptanceContext[F],
-    snapshotOrdinal: SnapshotOrdinal
+    snapshotOrdinal: SnapshotOrdinal,
+    shouldValidateCollateral: Boolean = true
   )(implicit hasher: Hasher[F]): F[AllowSpendBlockAcceptanceResult]
 
   def acceptBlock(
     block: Signed[AllowSpendBlock],
     context: AllowSpendBlockAcceptanceContext[F],
-    snapshotOrdinal: SnapshotOrdinal
+    snapshotOrdinal: SnapshotOrdinal,
+    shouldValidateCollateral: Boolean = true
   )(implicit hasher: Hasher[F]): F[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]]
 
 }
@@ -46,7 +48,8 @@ object AllowSpendBlockAcceptanceManager {
       def acceptBlocksIteratively(
         blocks: List[Signed[AllowSpendBlock]],
         context: AllowSpendBlockAcceptanceContext[F],
-        snapshotOrdinal: SnapshotOrdinal
+        snapshotOrdinal: SnapshotOrdinal,
+        shouldValidateCollateral: Boolean = true
       )(implicit hasher: Hasher[F]): F[AllowSpendBlockAcceptanceResult] = {
 
         def go(
@@ -59,7 +62,7 @@ object AllowSpendBlockAcceptanceManager {
                 blockAndTxChains match {
                   case (block, txChains) =>
                     logic
-                      .acceptBlock(block, txChains, context, acc.contextUpdate)
+                      .acceptBlock(block, txChains, context, acc.contextUpdate, shouldValidateCollateral)
                       .map {
                         case contextUpdate =>
                           acc
@@ -112,14 +115,16 @@ object AllowSpendBlockAcceptanceManager {
       def acceptBlock(
         block: Signed[AllowSpendBlock],
         context: AllowSpendBlockAcceptanceContext[F],
-        snapshotOrdinal: SnapshotOrdinal
+        snapshotOrdinal: SnapshotOrdinal,
+        shouldValidateCollateral: Boolean = true
       )(implicit hasher: Hasher[F]): F[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]] =
         blockValidator.validate(block, snapshotOrdinal).flatMap {
           _.toEither
             .leftMap(errors => ValidationFailed(errors.toNonEmptyList))
             .toEitherT[F]
             .flatMap {
-              case (block, txChains) => logic.acceptBlock(block, txChains, context, AllowSpendBlockAcceptanceContextUpdate.empty)
+              case (block, txChains) =>
+                logic.acceptBlock(block, txChains, context, AllowSpendBlockAcceptanceContextUpdate.empty, shouldValidateCollateral)
             }
             .leftSemiflatTap(reason => logNotAcceptedBlock((block, reason)))
             .semiflatTap(_ => logAcceptedBlock(block))

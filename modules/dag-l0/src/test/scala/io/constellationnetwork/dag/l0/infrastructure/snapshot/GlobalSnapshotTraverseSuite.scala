@@ -280,6 +280,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     val validators =
       SharedValidators
         .make[IO](
+          Dev,
           addressesConfig,
           None,
           None,
@@ -304,22 +305,21 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
     for {
       validationErrorStorage <- CurrencySnapshotEventValidationErrorStorage.make(TestValidationErrorStorageMaxSize)
-      lastNSnapR <- SignallingRef
-        .of[IO, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](SortedMap.empty)
+      lastNSnapR <- SignallingRef.of[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](None)
       incLastNSnapR <- SignallingRef
         .of[IO, SortedMap[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]](SortedMap.empty)
       lastSnapR <- SignallingRef.of[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](None)
 
       lastGlobalSnapshotsSyncConfig =
-        LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt.unsafeFrom(10), PosInt.unsafeFrom(5))
+        LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt.unsafeFrom(5))
       lastNSnapshotStorage =
         LastNGlobalSnapshotStorage.make[IO](lastGlobalSnapshotsSyncConfig, lastNSnapR, incLastNSnapR)
       lastGlobalSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
 
       currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager.make(
-        FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
+        FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
         Dev,
-        LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10), PosInt(10)),
+        LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
         BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, txHasher),
         TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
         AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
@@ -366,7 +366,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager
         .make[IO](
-          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
+          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
           MetagraphsSyncConfig(PosInt(100)),
           Dev,
           blockAcceptanceManager,

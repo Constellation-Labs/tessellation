@@ -8,9 +8,12 @@ import cats.effect.std.{Random, Supervisor}
 import cats.effect.{Async, IO, Resource}
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedSet
+
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
 import io.constellationnetwork.currency.l0.config.types.AppConfig
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
+import io.constellationnetwork.currency.l0.infrastructure.snapshot.services.CurrencyMessagesService
 import io.constellationnetwork.currency.l0.node.L0NodeContext
 import io.constellationnetwork.currency.l0.snapshot._
 import io.constellationnetwork.currency.l0.snapshot.services.{StateChannelBinarySender, StateChannelSnapshotService}
@@ -18,6 +21,7 @@ import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
+import io.constellationnetwork.kernel._
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.SharedConfig
@@ -35,13 +39,14 @@ import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastNGlobalSnapshotStorage
-import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages}
+import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages, SharedValidators}
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security._
-import io.constellationnetwork.security.signature.SignedValidator
+import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 
 import org.http4s.client.Client
 
@@ -54,6 +59,7 @@ object Services {
     p2PClient: P2PClient[F],
     sharedServices: SharedServices[F, R],
     sharedStorages: SharedStorages[F],
+    sharedValidators: SharedValidators[F],
     storages: Storages[F],
     client: Client[F],
     session: Session[F],
@@ -68,7 +74,9 @@ object Services {
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]],
     hasherSelector: HasherSelector[F],
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
-    customPeersAllowanceList: Option[Set[AllowanceListEntry]]
+    customPeersAllowanceList: Option[Set[AllowanceListEntry]],
+    mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
+    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
   ): F[Services[F, R]] =
     for {
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[F]
@@ -130,6 +138,13 @@ object Services {
       globalL0Service = GlobalL0Service
         .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastSyncGlobalSnapshot, None, maybeMajorityPeerIds)
 
+      currencyMessagesService = CurrencyMessagesService.make[F](
+        mkCell,
+        sharedValidators.currencyMessageValidator,
+        storages.identifier,
+        sharedStorages.lastGlobalSnapshot
+      )
+
       consensus <- CurrencySnapshotConsensus
         .make[F](
           sharedServices.gossip,
@@ -151,7 +166,8 @@ object Services {
           hasherSelector,
           sharedServices.restart,
           cfg.shared.leavingDelay,
-          globalL0Service.pullGlobalSnapshot
+          globalL0Service.pullGlobalSnapshot,
+          maybeCustomArtifacts
         )
     } yield
       new Services[F, R](
@@ -168,7 +184,8 @@ object Services {
         dataApplication = maybeDataApplication,
         globalSnapshotContextFunctions = globalSnapshotContextFns,
         stateChannelBinarySender = stateChannelBinarySender,
-        restart = sharedServices.restart
+        restart = sharedServices.restart,
+        currencyMessages = currencyMessagesService
       ) {}
 }
 
@@ -186,5 +203,6 @@ sealed abstract class Services[F[_], R <: CliMethod] private (
   val dataApplication: Option[BaseDataApplicationL0Service[F]],
   val globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F],
   val stateChannelBinarySender: StateChannelBinarySender[F],
-  val restart: RestartService[F, R]
+  val restart: RestartService[F, R],
+  val currencyMessages: CurrencyMessagesService[F]
 )

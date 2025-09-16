@@ -136,13 +136,15 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     override def acceptBlock(
       block: Signed[swap.AllowSpendBlock],
       context: AllowSpendBlockAcceptanceContext[IO],
-      snapshotOrdinal: SnapshotOrdinal
+      snapshotOrdinal: SnapshotOrdinal,
+      shouldValidateCollateral: Boolean = true
     )(implicit hasher: Hasher[IO]): IO[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]] = ???
 
     override def acceptBlocksIteratively(
       blocks: List[Signed[swap.AllowSpendBlock]],
       context: AllowSpendBlockAcceptanceContext[IO],
-      snapshotOrdinal: SnapshotOrdinal
+      snapshotOrdinal: SnapshotOrdinal,
+      shouldValidateCollateral: Boolean = true
     )(implicit hasher: Hasher[IO]): IO[AllowSpendBlockAcceptanceResult] =
       AllowSpendBlockAcceptanceResult(
         AllowSpendBlockAcceptanceContextUpdate.empty,
@@ -155,13 +157,15 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     override def acceptBlock(
       block: Signed[TokenLockBlock],
       context: TokenLockBlockAcceptanceContext[IO],
-      snapshotOrdinal: SnapshotOrdinal
+      snapshotOrdinal: SnapshotOrdinal,
+      shouldValidateCollateral: Boolean = true
     )(implicit hasher: Hasher[IO]): IO[Either[TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate]] = ???
 
     override def acceptBlocksIteratively(
       blocks: List[Signed[TokenLockBlock]],
       context: TokenLockBlockAcceptanceContext[IO],
-      snapshotOrdinal: SnapshotOrdinal
+      snapshotOrdinal: SnapshotOrdinal,
+      shouldValidateCollateral: Boolean = true
     )(implicit hasher: Hasher[IO]): IO[TokenLockBlockAcceptanceResult] =
       TokenLockBlockAcceptanceResult(
         TokenLockBlockAcceptanceContextUpdate.empty,
@@ -316,7 +320,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
       GlobalSnapshotAcceptanceManager
         .make[IO](
-          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
+          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
           MetagraphsSyncConfig(PosInt(100)),
           Dev,
           bam,
