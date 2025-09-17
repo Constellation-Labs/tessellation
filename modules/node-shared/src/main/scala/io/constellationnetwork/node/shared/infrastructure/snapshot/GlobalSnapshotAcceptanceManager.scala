@@ -172,6 +172,9 @@ object GlobalSnapshotAcceptanceManager {
       val metagraphSyncDataStartingOrdinal = fieldsAddedOrdinals.metagraphSyncData
         .getOrElse(environment, SnapshotOrdinal.MinValue)
 
+      val fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
+
       for {
         acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips, ordinal)
         delegatedStakeAcceptanceResult <- updateDelegatedStakeAcceptanceManager.accept(
@@ -327,13 +330,17 @@ object GlobalSnapshotAcceptanceManager {
         allowSpendBlockAcceptanceResult <- acceptAllowSpendBlocks(
           allowSpendBlocksForAcceptance,
           lastSnapshotContext,
-          ordinal
+          ordinal,
+          fixingAllowSpendAndTokenLockValidation,
+          epochProgress
         )
 
         tokenLockBlockAcceptanceResult <- acceptTokenLockBlocks(
           tokenLockBlocksForAcceptance,
           lastSnapshotContext,
-          ordinal
+          ordinal,
+          fixingAllowSpendAndTokenLockValidation,
+          epochProgress
         )
 
         acceptedGlobalAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
@@ -1120,7 +1127,9 @@ object GlobalSnapshotAcceptanceManager {
     private def acceptAllowSpendBlocks(
       blocksForAcceptance: List[Signed[AllowSpendBlock]],
       lastSnapshotContext: GlobalSnapshotInfo,
-      snapshotOrdinal: SnapshotOrdinal
+      snapshotOrdinal: SnapshotOrdinal,
+      fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
+      epochProgress: EpochProgress
     )(implicit hasher: Hasher[F]) = {
       val context = AllowSpendBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.balances,
@@ -1128,14 +1137,31 @@ object GlobalSnapshotAcceptanceManager {
         collateral,
         AllowSpendReference.empty
       )
-
-      allowSpendBlockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, snapshotOrdinal)
+      if (snapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {
+        allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
+          blocksForAcceptance,
+          context,
+          snapshotOrdinal,
+          shouldValidateCollateral = true,
+          epochProgress.some
+        )
+      } else {
+        allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
+          blocksForAcceptance,
+          context,
+          snapshotOrdinal,
+          shouldValidateCollateral = true,
+          none
+        )
+      }
     }
 
     private def acceptTokenLockBlocks(
       blocksForAcceptance: List[Signed[TokenLockBlock]],
       lastSnapshotContext: GlobalSnapshotInfo,
-      snapshotOrdinal: SnapshotOrdinal
+      snapshotOrdinal: SnapshotOrdinal,
+      fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
+      epochProgress: EpochProgress
     )(implicit hasher: Hasher[F]) = {
       val context = TokenLockBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.balances,
@@ -1143,8 +1169,23 @@ object GlobalSnapshotAcceptanceManager {
         collateral,
         TokenLockReference.empty
       )
-
-      tokenLockBlockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, snapshotOrdinal)
+      if (snapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {
+        tokenLockBlockAcceptanceManager.acceptBlocksIteratively(
+          blocksForAcceptance,
+          context,
+          snapshotOrdinal,
+          shouldValidateCollateral = true,
+          epochProgress.some
+        )
+      } else {
+        tokenLockBlockAcceptanceManager.acceptBlocksIteratively(
+          blocksForAcceptance,
+          context,
+          snapshotOrdinal,
+          shouldValidateCollateral = true,
+          none
+        )
+      }
     }
 
     private def acceptRewardTxs(

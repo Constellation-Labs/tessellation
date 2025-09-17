@@ -158,7 +158,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
               currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager
                 .make(
-                  FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
+                  FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
                   Dev,
                   LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
                   BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
@@ -199,7 +199,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               priceStateUpdater = PriceStateUpdater.make(Dev, DefaultDelegatedRewardsConfigProvider)
 
               globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
-                FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
+                FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
                 MetagraphsSyncConfig(PosInt(100)),
                 Dev,
                 BlockAcceptanceManager.make[IO](validators.blockValidator, Hasher.forKryo[IO]),

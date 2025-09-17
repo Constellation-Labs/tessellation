@@ -6,7 +6,7 @@ import cats.effect.Async
 import cats.effect.std.{Queue, Supervisor}
 import cats.syntax.all._
 
-import io.constellationnetwork.currency.schema.currency.CurrencySnapshotInfo
+import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.currency.tokenlock.ConsensusInput
 import io.constellationnetwork.ext.http4s.{AddressVar, HashVar}
 import io.constellationnetwork.node.shared.cli.CliMethod
@@ -16,6 +16,7 @@ import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.tokenlock._
 import io.constellationnetwork.routes.internal._
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.http.{ErrorCause, ErrorResponse}
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.tokenLock._
@@ -63,22 +64,38 @@ final case class TokenLockRoutes[
         hashedTransaction <- transaction.toHashed[F]
         result <- tokenLockLimitsConfig match {
           case Some(value) =>
-            lastSnapshotStorage.getCombined.map {
-              case Some((_, state)) =>
-                state match {
-                  case currencyState: CurrencySnapshotInfo => currencyState.activeTokenLocks
-                  case globalState: GlobalSnapshotInfo     => globalState.activeTokenLocks
-                  case _                                   => none
-                }
-              case None =>
-                throw new IllegalStateException("Expected a last snapshot, but none was found.")
-            }.flatMap { activeTokenLocks =>
-              validator.validateWithTokenLockLimits(
+            for {
+              lastGlobalEpochProgress <- lastSnapshotStorage.get.map {
+                case Some(snapshot) =>
+                  snapshot.signed.value match {
+                    case cis: CurrencyIncrementalSnapshot =>
+                      cis.globalSyncView.map(_.epochProgress).getOrElse(EpochProgress.MinValue)
+                    case gis: GlobalIncrementalSnapshot =>
+                      gis.epochProgress
+                    case _ =>
+                      EpochProgress.MinValue
+                  }
+                case None =>
+                  EpochProgress.MinValue
+              }
+              activeTokenLocks <- lastSnapshotStorage.getCombined.map {
+                case Some((_, state)) =>
+                  state match {
+                    case currencyState: CurrencySnapshotInfo => currencyState.activeTokenLocks
+                    case globalState: GlobalSnapshotInfo     => globalState.activeTokenLocks
+                    case _                                   => none
+                  }
+                case None =>
+                  throw new IllegalStateException("Expected a last snapshot, but none was found.")
+              }
+              result <- validator.validateWithTokenLockLimits(
                 transaction,
                 value,
-                activeTokenLocks
+                activeTokenLocks,
+                lastGlobalEpochProgress.some
               )
-            }
+            } yield result
+
           case None => transaction.validNec.pure
         }
         response <- result match {

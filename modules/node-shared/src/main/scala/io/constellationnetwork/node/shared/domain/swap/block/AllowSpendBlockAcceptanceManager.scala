@@ -7,6 +7,7 @@ import cats.syntax.all._
 import io.constellationnetwork.node.shared.domain.swap.AllowSpendChainValidator.AllowSpendNel
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.swap.AllowSpendBlock
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
@@ -20,14 +21,16 @@ trait AllowSpendBlockAcceptanceManager[F[_]] {
     blocks: List[Signed[AllowSpendBlock]],
     context: AllowSpendBlockAcceptanceContext[F],
     snapshotOrdinal: SnapshotOrdinal,
-    shouldValidateCollateral: Boolean = true
+    shouldValidateCollateral: Boolean = true,
+    lastGlobalSnapshotEpochProgress: Option[EpochProgress]
   )(implicit hasher: Hasher[F]): F[AllowSpendBlockAcceptanceResult]
 
   def acceptBlock(
     block: Signed[AllowSpendBlock],
     context: AllowSpendBlockAcceptanceContext[F],
     snapshotOrdinal: SnapshotOrdinal,
-    shouldValidateCollateral: Boolean = true
+    shouldValidateCollateral: Boolean = true,
+    lastGlobalSnapshotEpochProgress: Option[EpochProgress]
   )(implicit hasher: Hasher[F]): F[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]]
 
 }
@@ -49,7 +52,8 @@ object AllowSpendBlockAcceptanceManager {
         blocks: List[Signed[AllowSpendBlock]],
         context: AllowSpendBlockAcceptanceContext[F],
         snapshotOrdinal: SnapshotOrdinal,
-        shouldValidateCollateral: Boolean = true
+        shouldValidateCollateral: Boolean = true,
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[F]): F[AllowSpendBlockAcceptanceResult] = {
 
         def go(
@@ -95,10 +99,12 @@ object AllowSpendBlockAcceptanceManager {
           ) { (acc, block) =>
             acc match {
               case (validList, invalidList) =>
-                blockValidator.validate(block, snapshotOrdinal).map {
-                  case Valid(blockAndTxChains) => (blockAndTxChains :: validList, invalidList)
-                  case Invalid(errors)         => (validList, (block, ValidationFailed(errors.toNonEmptyList)) :: invalidList)
-                }
+                blockValidator
+                  .validate(block, snapshotOrdinal, AllowSpendBlockValidationParams.default, lastGlobalSnapshotEpochProgress)
+                  .map {
+                    case Valid(blockAndTxChains) => (blockAndTxChains :: validList, invalidList)
+                    case Invalid(errors)         => (validList, (block, ValidationFailed(errors.toNonEmptyList)) :: invalidList)
+                  }
             }
           }
           .flatMap {
@@ -116,9 +122,10 @@ object AllowSpendBlockAcceptanceManager {
         block: Signed[AllowSpendBlock],
         context: AllowSpendBlockAcceptanceContext[F],
         snapshotOrdinal: SnapshotOrdinal,
-        shouldValidateCollateral: Boolean = true
+        shouldValidateCollateral: Boolean = true,
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[F]): F[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]] =
-        blockValidator.validate(block, snapshotOrdinal).flatMap {
+        blockValidator.validate(block, snapshotOrdinal, AllowSpendBlockValidationParams.default, lastGlobalSnapshotEpochProgress).flatMap {
           _.toEither
             .leftMap(errors => ValidationFailed(errors.toNonEmptyList))
             .toEitherT[F]
