@@ -18,6 +18,7 @@ import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
   SnapshotBinaryFeeCalculator,
   UpdateNodeParametersCutter
 }
+import io.constellationnetwork.dag.l0.infrastructure.rewards.RewardsService
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome}
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
@@ -74,8 +75,7 @@ object GlobalSnapshotConsensus {
     feeConfigs: SortedMap[SnapshotOrdinal, FeeCalculatorConfig],
     client: Client[F],
     session: Session[F],
-    classicRewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
-    delegatorRewards: DelegatedRewardsDistributor[F],
+    rewardsService: RewardsService[F],
     txHasher: Hasher[F],
     restartService: RestartService[F, R],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
@@ -129,8 +129,7 @@ object GlobalSnapshotConsensus {
       consensusFunctions = GlobalSnapshotConsensusFunctions.make[F](
         snapshotAcceptanceManager,
         collateral,
-        classicRewards,
-        delegatorRewards,
+        rewardsService,
         GlobalSnapshotEventCutter.make[F](
           appConfig.snapshot.consensus.eventCutter.maxBinarySizeBytes,
           SnapshotBinaryFeeCalculator.make(appConfig.shared.feeConfigs)
