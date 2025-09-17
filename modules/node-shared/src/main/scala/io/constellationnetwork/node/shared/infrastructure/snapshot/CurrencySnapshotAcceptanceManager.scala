@@ -540,30 +540,27 @@ object CurrencySnapshotAcceptanceManager {
       }
 
       updatedBalancesByInvalidAddressChecks <-
-        if (balanceAdjustments.nonEmpty) {
-          val unauthorizedError = new RuntimeException(
-            s"Metagraph $metagraphId not authorized to perform balance updates on ordinal $snapshotOrdinal"
-          )
-
-          for {
-            info <- metagraphsBalancesAdjustments
-              .get(lastSnapshotContext.address)
-              .fold(Async[F].raiseError[BalanceAdjustmentAtOrdinal](unauthorizedError))(_.pure[F])
-
-            _ <-
-              if (info.snapshotOrdinal === snapshotOrdinal && info.environment === environment)
-                Async[F].unit
-              else
-                Async[F].raiseError[Unit](unauthorizedError)
-
-            adjustedBalances <- info
-              .balanceAdjustFunction(updatedBalancesBySpendTransactions, balanceAdjustments)
-              .leftMap(error => new RuntimeException(s"Balance adjustment failed: $error"))
-              .liftTo[F]
-          } yield adjustedBalances
-        } else {
-          updatedBalancesBySpendTransactions.pure[F]
-        }
+        metagraphsBalancesAdjustments
+          .get(lastSnapshotContext.address)
+          .fold[F[SortedMap[Address, Balance]]] {
+            if (balanceAdjustments.nonEmpty) {
+              val unauthorizedError = new RuntimeException(
+                s"Metagraph $metagraphId not authorized to perform balance updates on ordinal $snapshotOrdinal"
+              )
+              Async[F].raiseError(unauthorizedError)
+            } else {
+              updatedBalancesBySpendTransactions.pure[F]
+            }
+          } { info =>
+            if (info.snapshotOrdinal === snapshotOrdinal && info.environment === environment) {
+              info.balanceAdjustFunction(updatedBalancesBySpendTransactions, balanceAdjustments) match {
+                case Right(balances) => balances.pure[F]
+                case Left(error)     => Async[F].raiseError(new RuntimeException(s"Balance adjustment failed: $error"))
+              }
+            } else {
+              updatedBalancesBySpendTransactions.pure[F]
+            }
+          }
 
       csi = CurrencySnapshotInfo(
         if (snapshotOrdinalToCheckFields < tessellation3MigrationStartingOrdinal)
