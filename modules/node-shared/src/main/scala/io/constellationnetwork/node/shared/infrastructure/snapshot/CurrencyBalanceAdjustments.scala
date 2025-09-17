@@ -6,6 +6,7 @@ import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment.Mainnet
+import io.constellationnetwork.node.shared.infrastructure.BalanceAdjustmentLoader
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.BalanceAdjustment
@@ -33,22 +34,20 @@ object CurrencyBalanceAdjustments {
     adjustment: AdjustmentType
   )
 
-  /** Represents a balance adjustment to be applied at a specific snapshot ordinal */
   case class BalanceAdjustmentAtOrdinal(
     snapshotOrdinal: SnapshotOrdinal,
     environment: AppEnvironment,
     balanceAdjustFunction: (SortedMap[Address, Balance], Set[BalanceAdjustment]) => Either[String, SortedMap[Address, Balance]]
   )
 
-  val swapMetagraphMainnet: Address = Address("DAG7ChnhUF7uKgn8tXy45aj4zn9AFuhaZr8VXY43")
-
-  val metagraphsBalancesAdjustments: Map[Address, BalanceAdjustmentAtOrdinal] = Map(
-    swapMetagraphMainnet -> BalanceAdjustmentAtOrdinal(
-      SnapshotOrdinal(NonNegLong.unsafeFrom(9999999999L)),
-      Mainnet,
-      (currentBalances, balanceAdjustments) => applyAndValidateBalanceAdjustments(currentBalances, balanceAdjustments, Set.empty)
-    )
-  )
+  val metagraphsBalancesAdjustments: Map[Address, BalanceAdjustmentAtOrdinal] =
+    BalanceAdjustmentLoader.loadAndCreateAdjustmentEntries(
+      "/adjustments.json"
+    ) match {
+      case Right(adjustmentEntries) => adjustmentEntries
+      case Left(error) =>
+        throw new RuntimeException(s"Failed to load balance adjustments: $error")
+    }
 
   /** Validates that the provided balance adjustments contain all required adjustments, then applies them to the current balances.
     */
@@ -136,10 +135,15 @@ object CurrencyBalanceAdjustments {
     adjustments.toList.foldM(balances) { (acc, adjustment) =>
       adjustment.deduct.fold(Right(acc): Either[String, SortedMap[Address, Balance]]) { deduction =>
         val currentBalance = acc.getOrElse(adjustment.address, Balance.empty)
-        currentBalance.minus(deduction) match {
-          case Left(error)       => Left(s"Failed to deduct balance for ${adjustment.address}: $error")
-          case Right(newBalance) => Right(acc.updated(adjustment.address, newBalance))
+        val difference = currentBalance.value.value - deduction.value.value
+
+        val newBalance = if (difference < 0) {
+          Balance.empty
+        } else {
+          currentBalance.minus(deduction).getOrElse(Balance.empty)
         }
+
+        Right(acc.updated(adjustment.address, newBalance))
       }
     }
 }
