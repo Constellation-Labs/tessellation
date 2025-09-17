@@ -7,6 +7,7 @@ import cats.syntax.all._
 import io.constellationnetwork.ext.cats.syntax.validated._
 import io.constellationnetwork.node.shared.domain.swap.AllowSpendValidator.AllowSpendValidationErrorOr
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.swap.AllowSpend
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
@@ -18,7 +19,10 @@ import eu.timepit.refined.auto._
 
 trait AllowSpendValidator[F[_]] {
 
-  def validate(signedAllowSpend: Signed[AllowSpend])(implicit hasher: Hasher[F]): F[AllowSpendValidationErrorOr[Signed[AllowSpend]]]
+  def validate(
+    signedAllowSpend: Signed[AllowSpend],
+    lastGlobalSnapshotEpochProgress: Option[EpochProgress]
+  )(implicit hasher: Hasher[F]): F[AllowSpendValidationErrorOr[Signed[AllowSpend]]]
 
 }
 
@@ -27,7 +31,8 @@ object AllowSpendValidator {
   def make[F[_]: Async](signedValidator: SignedValidator[F]): AllowSpendValidator[F] =
     new AllowSpendValidator[F] {
       def validate(
-        signedAllowSpend: Signed[AllowSpend]
+        signedAllowSpend: Signed[AllowSpend],
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[F]): F[AllowSpendValidationErrorOr[Signed[AllowSpend]]] =
         for {
           signaturesV <- signedValidator
@@ -35,10 +40,12 @@ object AllowSpendValidator {
             .map(_.errorMap[AllowSpendValidationError](InvalidSigned))
           srcAddressSignatureV <- validateSourceAddressSignature(signedAllowSpend)
           approverV = validateApproverMatches(signedAllowSpend)
+          expirationV = validateAllowSpendExpiration(signedAllowSpend, lastGlobalSnapshotEpochProgress)
         } yield
           signaturesV
             .productR(srcAddressSignatureV)
             .productR(approverV)
+            .productR(expirationV)
 
       private def validateSourceAddressSignature(
         signedTx: Signed[AllowSpend]
@@ -63,10 +70,23 @@ object AllowSpendValidator {
       }
     }
 
+  private def validateAllowSpendExpiration(
+    signedTx: Signed[AllowSpend],
+    lastGlobalSnapshotEpochProgress: Option[EpochProgress]
+  ): AllowSpendValidationErrorOr[Signed[AllowSpend]] =
+    lastGlobalSnapshotEpochProgress.map { epochProgress =>
+      if (signedTx.lastValidEpochProgress > epochProgress) {
+        signedTx.validNec
+      } else {
+        AllowSpendAlreadyExpired.invalidNec
+      }
+    }.getOrElse(signedTx.validNec)
+
   @derive(eqv, show)
   sealed trait AllowSpendValidationError
   case class InvalidSigned(error: SignedValidationError) extends AllowSpendValidationError
   case object NotSignedBySourceAddressOwner extends AllowSpendValidationError
+  case object AllowSpendAlreadyExpired extends AllowSpendValidationError
   case class InvalidApprover(approvers: List[Address], destination: Address) extends AllowSpendValidationError
 
   type AllowSpendValidationErrorOr[A] = ValidatedNec[AllowSpendValidationError, A]
