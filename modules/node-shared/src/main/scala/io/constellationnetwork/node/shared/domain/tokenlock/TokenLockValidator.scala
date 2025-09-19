@@ -97,14 +97,14 @@ object TokenLockValidator {
       private def validateTokenLockExpiration(
         signedTx: Signed[TokenLock],
         lastGlobalSnapshotEpochProgress: Option[EpochProgress]
-      ): TokenLockValidationErrorOr[Signed[TokenLock]] =
-        lastGlobalSnapshotEpochProgress.map { epochProgress =>
-          if (signedTx.unlockEpoch.exists(_ > epochProgress)) {
-            signedTx.validNec
-          } else {
-            TokenLockExpired.invalidNec
-          }
-        }.getOrElse(signedTx.validNec)
+      ): TokenLockValidationErrorOr[Signed[TokenLock]] = {
+        val isExpired = for {
+          epochProgress <- lastGlobalSnapshotEpochProgress
+          unlockEpoch <- signedTx.unlockEpoch
+        } yield unlockEpoch <= epochProgress
+
+        if (isExpired.getOrElse(false)) TokenLockExpired.invalidNec else signedTx.validNec
+      }
     }
 
   @derive(eqv, show)
