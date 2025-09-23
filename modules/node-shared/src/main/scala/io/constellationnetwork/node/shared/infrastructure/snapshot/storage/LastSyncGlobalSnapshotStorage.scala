@@ -18,6 +18,8 @@ import io.constellationnetwork.security.signature.Signed
 import eu.timepit.refined.auto._
 import fs2.Stream
 import fs2.concurrent.SignallingRef
+import org.typelevel.log4cats.SelfAwareStructuredLogger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object LastSyncGlobalSnapshotStorage {
   def make[F[_]: Async](
@@ -34,6 +36,7 @@ object LastSyncGlobalSnapshotStorage {
     currencySnapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   ): LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LastSyncGlobalSnapshotStorage[F] =
     new LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LastSyncGlobalSnapshotStorage[F] {
+      val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
       private def deleteBelow(ordinal: SnapshotOrdinal): F[Unit] = snapshotsR.update {
         _.filterNot { case (key, _) => key < ordinal }
@@ -49,7 +52,13 @@ object LastSyncGlobalSnapshotStorage {
         snapshotsR.modify { snapshots =>
           snapshots.lastOption match {
             case Some((_, (latest, _))) if isNextSnapshot(latest, snapshot.signed.value) =>
-              (snapshots.updated(snapshot.ordinal, (snapshot, state)), Applicative[F].unit)
+              val updated = snapshots.updated(snapshot.ordinal, (snapshot, state))
+              val trimmed = if (updated.size > lastGlobalSnapshotsSyncConfig.maxLastGlobalSnapshotsInMemory) {
+                updated.takeRight(lastGlobalSnapshotsSyncConfig.maxLastGlobalSnapshotsInMemory)
+              } else {
+                updated
+              }
+              (trimmed, Applicative[F].unit)
             case _ => (snapshots, MonadThrow[F].raiseError[Unit](new Throwable("Failure during putting new global snapshot!")))
           }
         }.flatten
@@ -78,27 +87,53 @@ object LastSyncGlobalSnapshotStorage {
 
       def getHeight: F[Option[height.Height]] = get.map(_.map(_.height))
 
+      private def processOrdinals(
+        peersToGetSnapshotOrdinalSync: SortedMap[peer.PeerId, Signed[GlobalSnapshotSync]],
+        offset: Long
+      ): F[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = {
+        val ordinalGroups = peersToGetSnapshotOrdinalSync.values
+          .map(_.globalSnapshotOrdinal)
+          .groupBy(identity)
+
+        ordinalGroups.maxByOption { case (ordinal, occurrences) => (occurrences.size, ordinal.value.value) }.fold {
+          logger.warn("No valid ordinal found, returning None") >>
+            none[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F]
+        } {
+          case (ordinal, occurrences) =>
+            val targetOrdinal = ordinal.value - offset
+            for {
+              _ <- logger.info(s"Selected ordinal ${ordinal.value.value} with ${occurrences.size} occurrences")
+              _ <- logger.info(s"Target ordinal after offset: $targetOrdinal")
+              result <- SnapshotOrdinal(targetOrdinal) match {
+                case Some(validOrdinal) =>
+                  logger.info(s"Getting combined snapshot for ordinal: ${validOrdinal.value.value}") >>
+                    getCombined(validOrdinal)
+                case None =>
+                  logger.warn(s"Invalid ordinal after offset calculation: $targetOrdinal") >>
+                    none[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F]
+              }
+            } yield result
+        }
+      }
+
       def getLastSynchronizedCombined: F[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
-        currencySnapshotStorage.head.flatMap {
-          _.flatTraverse {
+        currencySnapshotStorage.head.flatMap { optionValue =>
+          optionValue.flatTraverse {
             case (snapshot, info) =>
               val offset = lastGlobalSnapshotsSyncConfig.syncOffset
               val lastPeersParticipatedOnConsensus = snapshot.proofs.map(_.id.toPeerId)
-              val peersToGetSnapshotOrdinalSync = info.globalSnapshotSyncView match {
+
+              info.globalSnapshotSyncView match {
                 case Some(value) =>
-                  value.filter {
+                  val filtered = value.filter {
                     case (peerId, _) =>
                       lastPeersParticipatedOnConsensus.contains(peerId)
                   }
-                case None => SortedMap.empty[peer.PeerId, Signed[GlobalSnapshotSync]]
+                  processOrdinals(filtered, offset)
+                case None =>
+                  logger.warn("No globalSnapshotSyncView available") >>
+                    none[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F]
               }
-
-              peersToGetSnapshotOrdinalSync.values
-                .map(_.globalSnapshotOrdinal)
-                .groupBy(identity)
-                .maxByOption { case (ordinal, occurrences) => (occurrences.size, ordinal.value.value) }
-                .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value - offset) }
-                .fold(none[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F])(getCombined)
           }
         }
     }
