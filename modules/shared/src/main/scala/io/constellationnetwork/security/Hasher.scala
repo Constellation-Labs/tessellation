@@ -98,12 +98,12 @@ object Hasher {
     }
 
   def forJsonCached[F[_]: Sync: JsonSerializer]: Hasher[F] = {
-    val cache: Cache[AnyRef, Hash] = Scaffeine()
+    val cache: Cache[Any, Hash] = Scaffeine()
       .recordStats()
       .expireAfterAccess(5.minutes)
       .maximumSize(10000)
-      .weakKeys()
-      .build[AnyRef, Hash]()
+      .softValues()
+      .build[Any, Hash]()
 
     new Hasher[F] {
       def getLogic(ordinal: SnapshotOrdinal): HashLogic = JsonHash
@@ -111,17 +111,14 @@ object Hasher {
       def compare[A: Encoder](data: A, expectedHash: Hash): F[Boolean] =
         hashJson(data).map(_ === expectedHash)
 
-      def hashJson[A: Encoder](data: A): F[Hash] = {
-        val key = data.asInstanceOf[AnyRef]
-
-        Sync[F].delay(cache.getIfPresent(key)).flatMap {
+      def hashJson[A: Encoder](data: A): F[Hash] =
+        Sync[F].delay(cache.getIfPresent(data)).flatMap {
           case Some(hash) => hash.pure[F]
           case None =>
             computeHash(data).flatTap { hash =>
-              Sync[F].delay(cache.put(key, hash))
+              Sync[F].delay(cache.put(data, hash))
             }
         }
-      }
 
       private def computeHash[A: Encoder](data: A): F[Hash] =
         (data match {
