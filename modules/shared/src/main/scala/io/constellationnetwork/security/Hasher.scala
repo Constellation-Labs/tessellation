@@ -91,7 +91,11 @@ object Hasher {
       hashKryo(data)
   }
 
-  def forJson[F[_]: Sync: JsonSerializer]: Hasher[F] = forJsonCached[F]
+  def forJson[F[_]: Sync: JsonSerializer]: Hasher[F] =
+    sys.env.get("CL_CACHE_JSON_HASH").exists(_.toLowerCase == "true") match {
+      case true  => forJsonCached[F]
+      case false => forJsonUncached[F]
+    }
 
   def forJsonCached[F[_]: Sync: JsonSerializer]: Hasher[F] = {
     val cache: Cache[AnyRef, Hash] = Scaffeine()
