@@ -142,14 +142,32 @@ object currency {
   }
 
   @derive(eqv, show, encoder, decoder)
-  case class DataApplicationPart(
+  case class DataApplicationPartV1(
     onChainState: Array[Byte],
     blocks: List[Array[Byte]],
     calculatedStateProof: Hash
+  ) {
+    def toDataApplicationPart: DataApplicationPart =
+      DataApplicationPart(onChainState, blocks, calculatedStateProof, None)
+  }
+
+  object DataApplicationPartV1 {
+    def empty: DataApplicationPartV1 = DataApplicationPartV1(Array.empty, List.empty, Hash.empty)
+  }
+
+  @derive(eqv, show, encoder, decoder)
+  case class DataApplicationPart(
+    onChainState: Array[Byte],
+    blocks: List[Array[Byte]],
+    calculatedStateProof: Hash,
+    updateHashes: Option[SortedSet[Hash]] = None
   )
 
   object DataApplicationPart {
-    def empty: DataApplicationPart = DataApplicationPart(Array.empty, List.empty, Hash.empty)
+    def empty: DataApplicationPart = DataApplicationPart(Array.empty, List.empty, Hash.empty, None)
+
+    def fromDataApplicationPartV1(part: DataApplicationPartV1): DataApplicationPart =
+      DataApplicationPart(part.onChainState, part.blocks, part.calculatedStateProof, None)
   }
 
   @derive(eqv, show, encoder, decoder)
@@ -163,7 +181,7 @@ object currency {
     tips: SnapshotTips,
     info: CurrencySnapshotInfoV1,
     epochProgress: EpochProgress,
-    dataApplication: Option[DataApplicationPart] = None,
+    dataApplication: Option[DataApplicationPartV1] = None,
     globalSyncView: Option[GlobalSyncView] = None,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends FullSnapshot[CurrencySnapshotStateProofV1, CurrencySnapshotInfoV1]
@@ -203,7 +221,7 @@ object currency {
           snapshot.tips,
           stateProof.toCurrencySnapshotStateProof,
           snapshot.epochProgress,
-          snapshot.dataApplication,
+          snapshot.dataApplication.map(_.toDataApplicationPart),
           None,
           None,
           None,
@@ -227,7 +245,7 @@ object currency {
     tips: SnapshotTips,
     stateProof: CurrencySnapshotStateProofV1,
     epochProgress: EpochProgress,
-    dataApplication: Option[DataApplicationPart] = None,
+    dataApplication: Option[DataApplicationPartV1] = None,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends IncrementalSnapshot[CurrencySnapshotStateProofV1] {
     def toCurrencyIncrementalSnapshot: CurrencyIncrementalSnapshot =
@@ -241,7 +259,7 @@ object currency {
         tips,
         stateProof.toCurrencySnapshotStateProof,
         epochProgress,
-        dataApplication,
+        dataApplication.map(_.toDataApplicationPart),
         None,
         None,
         None,
@@ -265,7 +283,7 @@ object currency {
         snapshot.tips,
         CurrencySnapshotStateProofV1.fromCurrencySnapshotStateProof(snapshot.stateProof),
         snapshot.epochProgress,
-        snapshot.dataApplication,
+        snapshot.dataApplication.flatMap(part => Some(DataApplicationPartV1(part.onChainState, part.blocks, part.calculatedStateProof))),
         snapshot.version
       )
   }
@@ -273,7 +291,7 @@ object currency {
   object CurrencySnapshot {
     def mkGenesis(
       balances: Map[Address, Balance],
-      dataApplicationPart: Option[DataApplicationPart],
+      dataApplicationPart: Option[DataApplicationPartV1],
       latestGlobalSnapshot: Option[Hashed[GlobalIncrementalSnapshot]]
     ): CurrencySnapshot =
       CurrencySnapshot(
@@ -307,7 +325,7 @@ object currency {
           genesis.tips,
           stateProof.toCurrencySnapshotStateProof,
           genesis.epochProgress,
-          genesis.dataApplication,
+          genesis.dataApplication.map(_.toDataApplicationPart),
           None,
           None,
           None,

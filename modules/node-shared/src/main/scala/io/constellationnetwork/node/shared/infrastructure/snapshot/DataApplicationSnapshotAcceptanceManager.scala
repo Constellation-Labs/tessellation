@@ -24,6 +24,7 @@ import io.constellationnetwork.schema.artifact.{SharedArtifact, TokenUnlock}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
+import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -248,9 +249,22 @@ object DataApplicationSnapshotAcceptanceManager {
         )
 
         sharedArtifacts = newDataState.sharedArtifacts ++ tokenUnlocks
+
+        updateHashes <- OptionT.liftF(
+          service.hashDataUpdate match {
+            case Some(hashFn) if validatedBlocks.nonEmpty =>
+              validatedBlocks.flatMap { block =>
+                getDataUpdates(block.value.dataTransactions.toList)
+              }.traverse { signedUpdate =>
+                hashFn(signedUpdate.value)
+              }.map(hashes => Some(hashes.toSortedSet))
+            case _ =>
+              Async[F].pure(None: Option[SortedSet[Hash]])
+          }
+        )
       } yield
         DataApplicationAcceptanceResult(
-          DataApplicationPart(serializedOnChainState, serializedBlocks, calculatedStateProof),
+          DataApplicationPart(serializedOnChainState, serializedBlocks, calculatedStateProof, updateHashes),
           newDataState.calculated,
           validatedFeeTransactions,
           sharedArtifacts,
@@ -260,9 +274,9 @@ object DataApplicationSnapshotAcceptanceManager {
       newDataState.value.handleErrorWith { err =>
         logger.error(err)("Unhandled exception during calculating new data application state, fallback to last data application") >>
           service.getCalculatedState.map { lastCalculatedState =>
-            maybeLastDataApplication.map(
+            maybeLastDataApplication.map(part =>
               DataApplicationAcceptanceResult(
-                _,
+                part,
                 lastCalculatedState._2,
                 notAccepted = dataBlocks.map(signedBlock => (signedBlock, DataBlockNotAccepted(err.getMessage)))
               )

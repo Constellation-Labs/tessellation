@@ -240,6 +240,8 @@ trait BaseDataApplicationL0ContextualOps[F[_]] extends BaseDataApplicationShared
 
   def hashCalculatedState(state: DataCalculatedState)(implicit context: L0NodeContext[F]): F[Hash]
 
+  def hashDataUpdate: Option[DataUpdate => F[Hash]] = None
+
   def extractFees(ds: Seq[Signed[DataUpdate]])(implicit context: L0NodeContext[F], A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
     A.pure(Seq.empty)
 }
@@ -332,6 +334,8 @@ trait DataApplicationL0ContextualOps[F[_], D <: DataUpdate, DON <: DataOnChainSt
   def setCalculatedState(ordinal: SnapshotOrdinal, state: DOF)(implicit context: L0NodeContext[F]): F[Boolean]
 
   def hashCalculatedState(state: DOF)(implicit context: L0NodeContext[F]): F[Hash]
+
+  def hashDataUpdate: Option[D => F[Hash]] = None
 
   def extractFees(ds: Seq[Signed[D]])(implicit context: L0NodeContext[F], A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
     A.pure(Seq.empty)
@@ -484,6 +488,14 @@ object BaseDataApplicationL0ContextualOps {
         state match {
           case s: DOF => service.hashCalculatedState(s)
           case _      => UnexpectedInput.raiseError[F, Hash]
+        }
+
+      override def hashDataUpdate: Option[DataUpdate => F[Hash]] =
+        service.hashDataUpdate.map { hashFn =>
+          {
+            case d: D => hashFn(d)
+            case _    => UnexpectedInput.raiseError[F, Hash]
+          }
         }
 
       override def validateFee(
@@ -679,6 +691,9 @@ object BaseDataApplicationL0Service {
       def hashCalculatedState(state: DataCalculatedState)(implicit context: L0NodeContext[F]): F[Hash] =
         ctx.hashCalculatedState(state)
 
+      override def hashDataUpdate: Option[DataUpdate => F[Hash]] =
+        ctx.hashDataUpdate
+
       def calculatedStateDecoder: Decoder[DataCalculatedState] = base.calculatedStateDecoder
 
       def calculatedStateEncoder: Encoder[DataCalculatedState] = base.calculatedStateEncoder
@@ -785,7 +800,8 @@ object dataApplication {
   case class DataApplicationBlock(
     roundId: RoundId,
     dataTransactions: NonEmptyList[DataTransactions],
-    dataTransactionsHashes: NonEmptyList[NonEmptyList[Hash]]
+    dataTransactionsHashes: NonEmptyList[NonEmptyList[Hash]],
+    updateHashes: Option[SortedSet[Hash]] = None
   ) extends Encodable[NonEmptyList[NonEmptyList[Hash]]] {
     override def toEncode: NonEmptyList[NonEmptyList[Hash]] = dataTransactionsHashes
     override def jsonEncoder: Encoder[NonEmptyList[NonEmptyList[Hash]]] = implicitly
@@ -800,8 +816,11 @@ object dataApplication {
 
     implicit def eqv: Eq[DataApplicationBlock] =
       Eq.and[DataApplicationBlock](
-        Eq[RoundId].contramap(_.roundId),
-        Eq[NonEmptyList[NonEmptyList[Hash]]].contramap(_.dataTransactionsHashes)
+        Eq.and[DataApplicationBlock](
+          Eq[RoundId].contramap(_.roundId),
+          Eq[NonEmptyList[NonEmptyList[Hash]]].contramap(_.dataTransactionsHashes)
+        ),
+        Eq[Option[SortedSet[Hash]]].contramap(_.updateHashes)
       )
   }
 
