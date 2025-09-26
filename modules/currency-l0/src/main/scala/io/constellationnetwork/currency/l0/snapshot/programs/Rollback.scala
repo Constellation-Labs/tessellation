@@ -7,8 +7,12 @@ import cats.syntax.all._
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
 
-import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
-import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataApplicationTraverse, L0NodeContext}
+import io.constellationnetwork.currency.dataApplication.storage.{
+  CalculatedStateLocalFileSystemStorage,
+  GlobalSnapshotsWithStateDeltasLocalFileSystemStorage,
+  GlobalSnapshotsWithStateLocalFileSystemStorage
+}
+import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnapshotCleanupStorage
 import io.constellationnetwork.currency.l0.modules.Storages
 import io.constellationnetwork.currency.l0.snapshot.CurrencyConsensusManager
@@ -21,6 +25,8 @@ import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Serv
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
+import io.constellationnetwork.node.shared.infrastructure.dataApplication.DataApplicationTraverse
+import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema.GlobalIncrementalSnapshot
@@ -53,7 +59,10 @@ object Rollback {
     collateral: Collateral[F],
     consensusManager: CurrencyConsensusManager[F],
     dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])],
-    currencySnapshotCleanupStorage: CurrencySnapshotCleanupStorage[F]
+    currencySnapshotCleanupStorage: CurrencySnapshotCleanupStorage[F],
+    globalSnapshotsWithStateLocalFileSystemStorage: GlobalSnapshotsWithStateLocalFileSystemStorage[F],
+    globalSnapshotsWithStateDeltasLocalFileSystemStorage: GlobalSnapshotsWithStateDeltasLocalFileSystemStorage[F],
+    globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F]
   )(implicit context: L0NodeContext[F]): Rollback[F] = new Rollback[F] {
     private val logger = Slf4jLogger.getLoggerFromName[F]("CurrencyRollback")
 
@@ -104,7 +113,7 @@ object Rollback {
         .flatMap(OwnCollateralNotSatisfied.raiseError[F, Unit].unlessA)
 
       _ <- dataApplication.map {
-        case ((da, cs)) =>
+        case (da, cs) =>
           val fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]] = (hash: Hash) =>
             globalL0Service
               .pullGlobalSnapshot(hash)
@@ -117,12 +126,24 @@ object Rollback {
                   logger.error(err)(s"Error when trying to fetch incremental global snapshot {attempt=${retryDetails.retriesSoFar}}")
               )
 
-          DataApplicationTraverse.make[F](globalSnapshotStartingPoint, fetchSnapshot, da, cs, identifier).flatMap { dat =>
-            dat.loadChain().flatMap {
-              case Some(_) => Applicative[F].unit
-              case _       => new Exception(s"Metagraph traversing failed").raiseError[F, Unit]
+          DataApplicationTraverse
+            .make[F](
+              globalSnapshotStartingPoint,
+              fetchSnapshot,
+              da,
+              cs,
+              globalSnapshotsWithStateLocalFileSystemStorage,
+              globalSnapshotsWithStateDeltasLocalFileSystemStorage,
+              identifier,
+              globalSnapshotContextFunctions,
+              globalL0Service
+            )
+            .flatMap { dat =>
+              dat.loadChain().flatMap {
+                case Some(_) => Applicative[F].unit
+                case _       => new Exception(s"Metagraph traversing failed").raiseError[F, Unit]
+              }
             }
-          }
 
       }.getOrElse(Applicative[F].unit)
 

@@ -150,7 +150,11 @@ object types {
     snapshotInfoPath: Path,
     incrementalTmpSnapshotPath: Path,
     incrementalPersistedSnapshotPath: Path,
-    calculatedStatePath: Path
+    calculatedStatePath: Path,
+    globalSnapshotsWithStatePath: Path,
+    globalSnapshotsWithStateDeltasPath: Path,
+    maxGlobalSnapshotsWithStateStored: PosLong,
+    maxGlobalSnapshotsWithStateDeltasStored: PosLong
   )
 
   case class HttpClientConfig(
