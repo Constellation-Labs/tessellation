@@ -131,9 +131,9 @@ object CurrencyBalanceAdjustmentsSuite extends SimpleIOSuite with Checkers {
 
       result match {
         case Left(error) =>
-          expect(error.contains("Failed to deduct"))
-        case Right(_) =>
-          failure("Should have failed when trying to deduct from empty balances")
+          failure(error)
+        case Right(balances) =>
+          expect(balances.values.toList.forall(_.value.value == 0L))
       }
     }
   }

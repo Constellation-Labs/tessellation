@@ -161,7 +161,10 @@ object TokenLockRoutesSuite extends HttpSuite {
   }
 
   def mockTokenLockValidator: IO[TokenLockValidator[IO]] = IO.pure(new TokenLockValidator[IO] {
-    override def validate(signedTokenLock: Signed[TokenLock])(
+    override def validate(
+      signedTokenLock: Signed[TokenLock],
+      lastGlobalSnapshotEpochProgress: Option[EpochProgress]
+    )(
       implicit hasher: Hasher[IO]
     ): IO[TokenLockValidationErrorOr[Signed[TokenLock]]] =
       IO.pure(signedTokenLock.validNec[TokenLockValidationError])
@@ -169,7 +172,8 @@ object TokenLockRoutesSuite extends HttpSuite {
     override def validateWithTokenLockLimits(
       signedTokenLock: Signed[TokenLock],
       tokenLockLimitsConfig: TokenLockLimitsConfig,
-      maybeCurrentTokenLocks: Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]
+      maybeCurrentTokenLocks: Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]],
+      lastGlobalSnapshotEpochProgress: Option[EpochProgress]
     )(implicit hasher: Hasher[IO]): IO[TokenLockValidationErrorOr[Signed[TokenLock]]] =
       IO.pure(signedTokenLock.validNec[TokenLockValidationError])
   })

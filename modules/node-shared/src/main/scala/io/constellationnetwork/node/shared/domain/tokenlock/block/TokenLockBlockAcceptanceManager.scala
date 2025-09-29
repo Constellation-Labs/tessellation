@@ -7,6 +7,7 @@ import cats.syntax.all._
 import io.constellationnetwork.node.shared.domain.tokenlock.TokenLockChainValidator.TokenLockNel
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.tokenLock.TokenLockBlock
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
@@ -20,14 +21,16 @@ trait TokenLockBlockAcceptanceManager[F[_]] {
     blocks: List[Signed[TokenLockBlock]],
     context: TokenLockBlockAcceptanceContext[F],
     snapshotOrdinal: SnapshotOrdinal,
-    shouldValidateCollateral: Boolean = true
+    shouldValidateCollateral: Boolean = true,
+    lastGlobalSnapshotEpochProgress: Option[EpochProgress]
   )(implicit hasher: Hasher[F]): F[TokenLockBlockAcceptanceResult]
 
   def acceptBlock(
     block: Signed[TokenLockBlock],
     context: TokenLockBlockAcceptanceContext[F],
     snapshotOrdinal: SnapshotOrdinal,
-    shouldValidateCollateral: Boolean = true
+    shouldValidateCollateral: Boolean = true,
+    lastGlobalSnapshotEpochProgress: Option[EpochProgress]
   )(implicit hasher: Hasher[F]): F[Either[TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate]]
 
 }
@@ -49,7 +52,8 @@ object TokenLockBlockAcceptanceManager {
         blocks: List[Signed[TokenLockBlock]],
         context: TokenLockBlockAcceptanceContext[F],
         snapshotOrdinal: SnapshotOrdinal,
-        shouldValidateCollateral: Boolean = true
+        shouldValidateCollateral: Boolean = true,
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[F]): F[TokenLockBlockAcceptanceResult] = {
 
         def go(
@@ -95,10 +99,12 @@ object TokenLockBlockAcceptanceManager {
           ) { (acc, block) =>
             acc match {
               case (validList, invalidList) =>
-                blockValidator.validate(block, snapshotOrdinal).map {
-                  case Valid(blockAndTxChains) => (blockAndTxChains :: validList, invalidList)
-                  case Invalid(errors)         => (validList, (block, ValidationFailed(errors.toNonEmptyList)) :: invalidList)
-                }
+                blockValidator
+                  .validate(block, snapshotOrdinal, TokenLockBlockValidationParams.default, lastGlobalSnapshotEpochProgress)
+                  .map {
+                    case Valid(blockAndTxChains) => (blockAndTxChains :: validList, invalidList)
+                    case Invalid(errors)         => (validList, (block, ValidationFailed(errors.toNonEmptyList)) :: invalidList)
+                  }
             }
           }
           .flatMap {
@@ -112,9 +118,10 @@ object TokenLockBlockAcceptanceManager {
         block: Signed[TokenLockBlock],
         context: TokenLockBlockAcceptanceContext[F],
         snapshotOrdinal: SnapshotOrdinal,
-        shouldValidateCollateral: Boolean = true
+        shouldValidateCollateral: Boolean = true,
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[F]): F[Either[TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate]] =
-        blockValidator.validate(block, snapshotOrdinal).flatMap {
+        blockValidator.validate(block, snapshotOrdinal, TokenLockBlockValidationParams.default, lastGlobalSnapshotEpochProgress).flatMap {
           _.toEither
             .leftMap(errors => ValidationFailed(errors.toNonEmptyList))
             .toEitherT[F]
