@@ -90,7 +90,10 @@ object Programs {
       services.collateral,
       services.consensus.manager,
       dataApplication,
-      storages.currencySnapshotCleanup
+      storages.currencySnapshotCleanup,
+      storages.globalSnapshotsWithStateFileStorage,
+      storages.globalSnapshotsWithStateDeltasFileStorage,
+      services.globalSnapshotContextFunctions
     )
 
     new Programs[F](sharedPrograms.peerDiscovery, globalL0PeerDiscovery, sharedPrograms.joining, download, genesis, rollback) {}

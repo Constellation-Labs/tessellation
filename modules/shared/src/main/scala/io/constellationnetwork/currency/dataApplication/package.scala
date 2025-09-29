@@ -6,7 +6,7 @@ import cats.effect.Async
 import cats.kernel.Eq
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedSet
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.reflect.ClassTag
 import scala.util.control.NoStackTrace
 
@@ -25,7 +25,8 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{SharedArtifact, TokenUnlock}
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.round.RoundId
-import io.constellationnetwork.schema.swap.CurrencyId
+import io.constellationnetwork.schema.swap.{AllowSpend, CurrencyId}
+import io.constellationnetwork.schema.tokenLock.TokenLock
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -824,8 +825,10 @@ trait L1NodeContext[F[_]] {
 }
 
 trait L0NodeContext[F[_]] {
-  def getLastSynchronizedGlobalSnapshot: F[Option[Hashed[GlobalIncrementalSnapshot]]]
-  def getLastSynchronizedGlobalSnapshotCombined: F[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
+  def getLastSynchronizedGlobalSnapshot: F[Option[GlobalIncrementalSnapshot]]
+  def getLastSynchronizedGlobalSnapshotCombined: F[Option[(GlobalIncrementalSnapshot, GlobalSnapshotInfo)]]
+  def getLastSynchronizedAllowSpends: F[Option[SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]]]
+  def getLastSynchronizedTokenLocks: F[Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]]
   def getLastCurrencySnapshot: F[Option[Hashed[CurrencyIncrementalSnapshot]]]
   def getCurrencySnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[CurrencyIncrementalSnapshot]]]
   def getLastCurrencySnapshotCombined: F[Option[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]
