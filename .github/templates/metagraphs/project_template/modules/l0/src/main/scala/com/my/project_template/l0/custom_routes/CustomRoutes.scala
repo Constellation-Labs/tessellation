@@ -32,7 +32,7 @@ case class CustomRoutes[F[_]: Async](
   private def getLastSyncGlobalSnapshot: F[Response[F]] = {
     import io.circe.generic.auto._
     context.getLastSynchronizedGlobalSnapshot.flatMap {
-      case Some(snapshot) => Ok(snapshot.signed)
+      case Some(snapshot) => Ok(snapshot)
       case None           => NotFound()
     }
   }

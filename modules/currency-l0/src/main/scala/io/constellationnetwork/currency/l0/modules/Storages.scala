@@ -6,7 +6,11 @@ import cats.effect.std.{Random, Supervisor}
 import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
-import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
+import io.constellationnetwork.currency.dataApplication.storage.{
+  CalculatedStateLocalFileSystemStorage,
+  GlobalSnapshotsWithStateDeltasLocalFileSystemStorage,
+  GlobalSnapshotsWithStateLocalFileSystemStorage
+}
 import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnapshotCleanupStorage
 import io.constellationnetwork.currency.l0.infrastructure.snapshot.CurrencySnapshotCleanupStorage
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
@@ -51,7 +55,18 @@ object Storages {
           SnapshotOrdinal.MinValue,
           hasherSelector
         )
-      lastGlobalSnapshotStorage <- LastSyncGlobalSnapshotStorage.make[F](sharedCfg.lastGlobalSnapshotsSync, snapshotStorage)
+      globalSnapshotsWithStateFileStorage <- GlobalSnapshotsWithStateLocalFileSystemStorage
+        .make[F](snapshotConfig.globalSnapshotsWithStatePath, snapshotConfig.maxGlobalSnapshotsWithStateStored)
+      globalSnapshotsWithStateDeltasFileStorage <- GlobalSnapshotsWithStateDeltasLocalFileSystemStorage
+        .make[F](snapshotConfig.globalSnapshotsWithStateDeltasPath, snapshotConfig.maxGlobalSnapshotsWithStateDeltasStored)
+
+      lastGlobalSnapshotStorage <- LastSyncGlobalSnapshotStorage
+        .make[F](
+          sharedCfg.lastGlobalSnapshotsSync,
+          snapshotStorage,
+          globalSnapshotsWithStateFileStorage,
+          globalSnapshotsWithStateDeltasFileStorage
+        )
       globalL0ClusterStorage <- L0ClusterStorage.make[F](globalL0Peer)
       identifierStorage <- IdentifierStorage.make[F]
       maybeCalculatedStateStorage <- dataApplication.traverse { _ =>
@@ -75,6 +90,8 @@ object Storages {
         incrementalSnapshotLocalFileSystemStorage = snapshotLocalFileSystemStorage,
         identifier = identifierStorage,
         calculatedStateStorage = maybeCalculatedStateStorage,
+        globalSnapshotsWithStateFileStorage = globalSnapshotsWithStateFileStorage,
+        globalSnapshotsWithStateDeltasFileStorage = globalSnapshotsWithStateDeltasFileStorage,
         lastGlobalSnapshotSync = lastGlobalSnapshotSyncStorage,
         currencySnapshotEventValidationError = sharedStorages.currencySnapshotEventValidationError,
         currencySnapshotCleanup = currencySnapshotCleanupStorage
@@ -94,5 +111,7 @@ sealed abstract class Storages[F[_]] private (
   val calculatedStateStorage: Option[CalculatedStateLocalFileSystemStorage[F]],
   val lastGlobalSnapshotSync: LastSentGlobalSnapshotSyncStorage[F],
   val currencySnapshotEventValidationError: ValidationErrorStorage[F, CurrencySnapshotEvent, BlockRejectionReason],
-  val currencySnapshotCleanup: CurrencySnapshotCleanupStorage[F]
+  val currencySnapshotCleanup: CurrencySnapshotCleanupStorage[F],
+  val globalSnapshotsWithStateFileStorage: GlobalSnapshotsWithStateLocalFileSystemStorage[F],
+  val globalSnapshotsWithStateDeltasFileStorage: GlobalSnapshotsWithStateDeltasLocalFileSystemStorage[F]
 )
