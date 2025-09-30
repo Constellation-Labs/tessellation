@@ -195,7 +195,7 @@ object GlobalSnapshotConsensusFunctions {
             nodeOperatorRewards = rewardTxs,
             reservedAddressRewards = SortedSet.empty,
             withdrawalRewardTxs = SortedSet.empty,
-            totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
+            totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.toList.map(_.amount.value.value).sum))
           )
         }
 
