@@ -8,6 +8,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.DataCalculatedState
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.UpdateNodeParametersCutter
+import io.constellationnetwork.dag.l0.infrastructure.rewards.RewardsService
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.cats.syntax.next._
@@ -21,6 +22,7 @@ import io.constellationnetwork.node.shared.domain.event.EventCutter
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
+import io.constellationnetwork.node.shared.infrastructure.delegatedStake.RewardsInfoStorage
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{RewardsInput, _}
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
@@ -56,8 +58,7 @@ object GlobalSnapshotConsensusFunctions {
   def make[F[_]: Async: SecurityProvider: JsonSerializer: KryoSerializer](
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
-    classicRewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
-    delegatedRewards: DelegatedRewardsDistributor[F],
+    rewardsService: RewardsService[F],
     eventCutter: EventCutter[F, StateChannelEvent, DAGEvent],
     updateNodeParametersCutter: UpdateNodeParametersCutter[F],
     environment: AppEnvironment,
@@ -177,7 +178,7 @@ object GlobalSnapshotConsensusFunctions {
         currentEpochProgress.value.value >= asOfEpoch.value.value
       }
 
-      val classicRewardsFn = classicRewards
+      val classicRewardsFn = rewardsService.classicRewards
         .distribute(
           _: Signed[GlobalIncrementalSnapshot],
           _: SortedMap[Address, Balance],
@@ -194,7 +195,7 @@ object GlobalSnapshotConsensusFunctions {
             nodeOperatorRewards = rewardTxs,
             reservedAddressRewards = SortedSet.empty,
             withdrawalRewardTxs = SortedSet.empty,
-            totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.map(_.amount.value.value).sum))
+            totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.toList.map(_.amount.value.value).sum))
           )
         }
 
@@ -206,7 +207,7 @@ object GlobalSnapshotConsensusFunctions {
 
             case DelegateRewardsInput(udsar, psu, ep) =>
               if (shouldUseDelegatedRewards(lastArtifact.ordinal.next, ep)) {
-                delegatedRewards.distribute(snapshotContext, trigger, ep, faciltators, udsar, psu)
+                rewardsService.delegatedRewards.distribute(snapshotContext, trigger, ep, faciltators, udsar, psu)
               } else {
                 classicRewardsFn(lastArtifact, snapshotContext.balances, SortedSet.empty, trigger, events, None)
               }
@@ -321,6 +322,7 @@ object GlobalSnapshotConsensusFunctions {
           acceptedNnodeCollateralWithdrawals.some
         )
         returnedEvents = returnedSCEvents.map(StateChannelEvent(_)) ++ returnedDAGEvents
+        _ <- rewardsService.calculateAndStoreRewardsInfo(globalSnapshot, snapshotInfo)
       } yield (globalSnapshot, snapshotInfo, returnedEvents)
     }
 

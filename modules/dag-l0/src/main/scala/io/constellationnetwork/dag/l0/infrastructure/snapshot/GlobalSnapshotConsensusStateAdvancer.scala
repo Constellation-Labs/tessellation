@@ -309,7 +309,7 @@ object GlobalSnapshotConsensusStateAdvancer {
       def globalSnapshot(signedGS: Signed[GlobalIncrementalSnapshot]): F[Unit] = {
         val activeTipsCount = signedGS.tips.remainedActive.size + signedGS.blocks.size
         val deprecatedTipsCount = signedGS.tips.deprecated.size
-        val transactionCount = signedGS.blocks.map(_.block.transactions.size).sum
+        val transactionCount = signedGS.blocks.toList.map(_.block.transactions.size).sum
         val scSnapshotCount = signedGS.stateChannelSnapshots.view.values.map(_.size).sum
 
         Metrics[F].updateGauge("dag_global_snapshot_ordinal", signedGS.ordinal.value) >>
