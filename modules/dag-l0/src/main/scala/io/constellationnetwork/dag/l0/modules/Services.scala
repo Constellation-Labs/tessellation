@@ -29,7 +29,6 @@ import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
-import io.constellationnetwork.node.shared.infrastructure.delegatedStake.{RewardsInfoCalculator, RewardsInfoStorage}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
@@ -80,15 +79,9 @@ object Services {
           .pure[F]
       }
 
-      rewardsInfoCalculator = RewardsInfoCalculator.make(delegatorRewards)
-
-      rewardsInfoStorage <- RewardsInfoStorage.make
-
       rewardsService = RewardsService(
         classicRewards,
-        delegatorRewards,
-        rewardsInfoCalculator,
-        rewardsInfoStorage
+        delegatorRewards
       )
 
       consensus <- HasherSelector[F].withCurrent { implicit hs =>
@@ -112,7 +105,8 @@ object Services {
             feeConfigs = cfg.shared.feeConfigs,
             client,
             session,
-            rewardsService,
+            classicRewards,
+            delegatorRewards,
             txHasher,
             sharedServices.restart,
             sharedStorages.lastNGlobalSnapshot,

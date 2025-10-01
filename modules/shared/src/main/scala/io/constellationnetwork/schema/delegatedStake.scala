@@ -160,9 +160,9 @@ object delegatedStake {
     currentDagPrice: Amount,
     nextDagPrice: NextDagPrice,
     totalDelegatedAmount: Amount,
-    latestAverageRewardPerDag: BigDecimal,
+    latestAverageRewardPerDag: Amount,
     totalDagAmount: Amount,
     totalRewardPerEpoch: Amount,
-    totalRewardsPerYearEstimate: BigDecimal
+    totalRewardsPerYearEstimate: Amount
   )
 }
