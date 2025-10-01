@@ -6,7 +6,7 @@ import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.config.DelegatedRewardsConfigProvider
-import io.constellationnetwork.node.shared.config.types.{ClassicRewardsConfig, OneTimeReward, ProgramsDistributionConfig, _}
+import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.schema.NonNegFraction
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount

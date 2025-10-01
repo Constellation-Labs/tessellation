@@ -46,8 +46,7 @@ object Dependencies {
     val kindProjector = "0.13.3"
     val logback = "1.3.5"
     val logstashLogbackEncoder = "7.2"
-    val organizeImports = "0.5.0"
-    val scalafixRules = "0.1.0"
+    val scalafixRules = "0.1.2"
     val semanticDB = "4.13.1.1"
     val weaver = "0.8.1"
     val jol = "0.17"
@@ -194,8 +193,7 @@ object Dependencies {
     val weaverDiscipline = "com.disneystreaming" %% "weaver-discipline" % V.weaver
     val weaverScalaCheck = "com.disneystreaming" %% "weaver-scalacheck" % V.weaver
 
-    // Scalafix rules
-    val organizeImports = "com.github.liancheng" %% "organize-imports" % V.organizeImports
+    // Scalafix
     val scalafixRules = "io.constellationnetwork" %% "constellation-scalafix-rules" % V.scalafixRules
   }
 
