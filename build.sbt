@@ -17,7 +17,10 @@ ThisBuild / developers := List(
 )
 
 ThisBuild / evictionErrorLevel := Level.Warn
-ThisBuild / scalafixDependencies += Libraries.organizeImports
+ThisBuild / scalafixDependencies ++= Seq(
+  Libraries.organizeImports,
+  Libraries.scalafixRules
+)
 ThisBuild / version := sys.env.get("RELEASE_TAG").map(_.stripPrefix("v")).getOrElse("99.99.99-SNAPSHOT")
 
 enablePlugins(TessellationCiRelease)

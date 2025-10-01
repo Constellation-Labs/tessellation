@@ -47,6 +47,7 @@ object Dependencies {
     val logback = "1.3.5"
     val logstashLogbackEncoder = "7.2"
     val organizeImports = "0.5.0"
+    val scalafixRules = "0.1.0"
     val semanticDB = "4.13.1.1"
     val weaver = "0.8.1"
     val jol = "0.17"
@@ -195,6 +196,7 @@ object Dependencies {
 
     // Scalafix rules
     val organizeImports = "com.github.liancheng" %% "organize-imports" % V.organizeImports
+    val scalafixRules = "io.constellationnetwork" %% "constellation-scalafix-rules" % V.scalafixRules
   }
 
   object CompilerPlugin {

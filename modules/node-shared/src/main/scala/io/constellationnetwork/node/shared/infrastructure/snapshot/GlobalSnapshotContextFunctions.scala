@@ -211,7 +211,7 @@ object GlobalSnapshotContextFunctions {
                       nodeOperatorRewards = txs,
                       reservedAddressRewards = SortedSet.empty,
                       withdrawalRewardTxs = SortedSet.empty,
-                      totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(txs.map(_.amount.value.value).sum))
+                      totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(txs.toList.map(_.amount.value.value).sum))
                     )
                   } else {
                     DelegatedRewardsResult(
@@ -222,7 +222,7 @@ object GlobalSnapshotContextFunctions {
                       nodeOperatorRewards = txs,
                       reservedAddressRewards = SortedSet.empty,
                       withdrawalRewardTxs = SortedSet.empty,
-                      totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(txs.map(_.amount.value.value).sum))
+                      totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(txs.toList.map(_.amount.value.value).sum))
                     )
                   }
                 },
