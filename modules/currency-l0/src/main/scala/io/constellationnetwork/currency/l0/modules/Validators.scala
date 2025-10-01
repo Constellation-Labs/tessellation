@@ -29,7 +29,7 @@ object Validators {
     val blockValidator =
       BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator, txHasher)
     val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)
-    val currencyMessageValidator = CurrencyMessageValidator.make[F](signedValidator, allowanceList, seedlist)
+    val currencyMessageValidator = CurrencyMessageValidator.make[F](cfg.environment, signedValidator, allowanceList, seedlist)
 
     new Validators[F](
       signedValidator,

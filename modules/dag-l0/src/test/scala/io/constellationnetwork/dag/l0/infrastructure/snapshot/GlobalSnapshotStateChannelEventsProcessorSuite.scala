@@ -81,6 +81,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
 
       validators = SharedValidators
         .make[IO](
+          Dev,
           AddressesConfig(Set()),
           None,
           None,

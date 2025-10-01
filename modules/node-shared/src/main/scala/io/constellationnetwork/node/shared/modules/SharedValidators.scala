@@ -6,6 +6,7 @@ import cats.effect.Async
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
+import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.{AddressesConfig, DelegatedStakingConfig, PriceOracleConfig}
 import io.constellationnetwork.node.shared.domain.block.processing.BlockValidator
@@ -33,6 +34,7 @@ import eu.timepit.refined.types.numeric.PosLong
 object SharedValidators {
 
   def make[F[_]: Async: JsonSerializer: SecurityProvider: Hasher](
+    environment: AppEnvironment,
     addressesCfg: AddressesConfig,
     l0Seedlist: Option[Set[SeedlistEntry]],
     seedlist: Option[Set[SeedlistEntry]],
@@ -56,7 +58,7 @@ object SharedValidators {
     val feeCalculator = FeeCalculator.make(feeConfigs)
     val stateChannelValidator =
       StateChannelValidator.make[F](signedValidator, l0Seedlist, stateChannelAllowanceLists, maxBinarySizeInBytes, feeCalculator)
-    val currencyMessageValidator = CurrencyMessageValidator.make[F](signedValidator, stateChannelAllowanceLists, seedlist)
+    val currencyMessageValidator = CurrencyMessageValidator.make[F](environment, signedValidator, stateChannelAllowanceLists, seedlist)
     val globalSnapshotSyncValidator = GlobalSnapshotSyncValidator.make[F](signedValidator, seedlist)
     val allowSpendChainValidator = AllowSpendChainValidator.make[F]
     val allowSpendValidator = AllowSpendValidator.make[F](signedValidator)
