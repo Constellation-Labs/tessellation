@@ -63,7 +63,8 @@ object GlobalSnapshotConsensusFunctions {
     updateNodeParametersCutter: UpdateNodeParametersCutter[F],
     environment: AppEnvironment,
     delegatedRewardsConfigProvider: DelegatedRewardsConfigProvider,
-    v3MigrationOrdinal: SnapshotOrdinal
+    v3MigrationOrdinal: SnapshotOrdinal,
+    setSumFixOrdinal: SnapshotOrdinal
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
     def getRequiredCollateral: Amount = collateral
@@ -178,26 +179,48 @@ object GlobalSnapshotConsensusFunctions {
         currentEpochProgress.value.value >= asOfEpoch.value.value
       }
 
-      val classicRewardsFn = rewardsService.classicRewards
-        .distribute(
-          _: Signed[GlobalIncrementalSnapshot],
-          _: SortedMap[Address, Balance],
-          _: SortedSet[Signed[Transaction]],
-          _: ConsensusTrigger,
-          _: Set[GlobalSnapshotEvent],
-          _: Option[DataCalculatedState]
-        )
-        .map { rewardTxs =>
-          DelegatedRewardsResult(
-            delegatorRewardsMap = SortedMap.empty,
-            updatedCreateDelegatedStakes = SortedMap.empty,
-            updatedWithdrawDelegatedStakes = SortedMap.empty,
-            nodeOperatorRewards = rewardTxs,
-            reservedAddressRewards = SortedSet.empty,
-            withdrawalRewardTxs = SortedSet.empty,
-            totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.toList.map(_.amount.value.value).sum))
+      val classicRewardsFn: (
+        Signed[GlobalSnapshotArtifact],
+        SortedMap[Address, Balance],
+        SortedSet[Signed[Transaction]],
+        ConsensusTrigger,
+        Set[GlobalSnapshotEvent],
+        Option[DataCalculatedState]
+      ) => F[DelegatedRewardsResult] = { (signedArtifact, balances, txs, trigger, events, calcState) =>
+        rewardsService.classicRewards
+          .distribute(
+            signedArtifact,
+            balances,
+            txs,
+            trigger,
+            events,
+            calcState
           )
-        }
+          .map { rewardTxs =>
+            if (signedArtifact.ordinal.value < setSumFixOrdinal.value) {
+              DelegatedRewardsResult(
+                delegatorRewardsMap = SortedMap.empty,
+                updatedCreateDelegatedStakes = SortedMap.empty,
+                updatedWithdrawDelegatedStakes = SortedMap.empty,
+                nodeOperatorRewards = rewardTxs,
+                reservedAddressRewards = SortedSet.empty,
+                withdrawalRewardTxs = SortedSet.empty,
+                totalEmittedRewardsAmount =
+                  Amount(NonNegLong.unsafeFrom(rewardTxs.toList.map(_.amount.value.value).distinct.sum)) // mimic incorrect behaviour
+              )
+            } else {
+              DelegatedRewardsResult(
+                delegatorRewardsMap = SortedMap.empty,
+                updatedCreateDelegatedStakes = SortedMap.empty,
+                updatedWithdrawDelegatedStakes = SortedMap.empty,
+                nodeOperatorRewards = rewardTxs,
+                reservedAddressRewards = SortedSet.empty,
+                withdrawalRewardTxs = SortedSet.empty,
+                totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.toList.map(_.amount.value.value).sum))
+              )
+            }
+          }
+      }
 
       val rewardsWithFacilitators: List[(Address, PeerId)] => RewardsInput => F[DelegatedRewardsResult] = {
         faciltators: List[(Address, PeerId)] =>
