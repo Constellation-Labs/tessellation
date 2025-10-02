@@ -57,7 +57,9 @@ jobs:
           {
             if [[ "${{ github.ref_name }}" == "release/mainnet" ]]; then
               echo 'VERSION<<EOF'
-              npx commit-and-tag-version --dry-run | grep -oP 'tagging release v\K[0-9]+\.[0-9]+\.[0-9]+'
+              # TODO: TEMPORARY FIX - Remove --release-as after 3.4.14 is published
+              # This is needed because branch was reset to 3.4.11 but 3.4.12 and 3.4.13 already exist
+              npx commit-and-tag-version --release-as 3.4.14 --dry-run | grep -oP 'tagging release v\K[0-9]+\.[0-9]+\.[0-9]+'
               echo EOF
             elif [[ "${{ github.ref_name }}" == "release/integrationnet" ]]; then
               echo 'VERSION<<EOF'
