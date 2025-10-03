@@ -67,6 +67,10 @@ object Main
       )(implicit context: L0NodeContext[IO]): IO[DataState[UsageUpdateState, UsageUpdateCalculatedState]] =
         LifecycleSharedFunctions.combine[IO](state, updates)
 
+      override def hashDataUpdate: Option[UsageUpdate => F[Hash]] = Some(
+        (update: UsageUpdate) => update.computeDigest
+      )
+
       override def dataEncoder: Encoder[UsageUpdate] =
         implicitly[Encoder[UsageUpdate]]
 
