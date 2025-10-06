@@ -4,8 +4,7 @@ import cats.effect.Async
 import cats.effect.std.Random
 import cats.syntax.all._
 
-import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
-import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataTransaction}
+import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataApplicationBlock, DataTransaction}
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.currencyMessage.CurrencyMessage

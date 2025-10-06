@@ -17,8 +17,7 @@ import cats.syntax.traverse._
 import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
 
-import io.constellationnetwork.currency.dataApplication.FeeTransaction
-import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
+import io.constellationnetwork.currency.dataApplication.{DataApplicationBlock, FeeTransaction}
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
 import io.constellationnetwork.ext.cats.syntax.next._

@@ -6,8 +6,7 @@ import cats.effect.Async
 import cats.effect.std.Supervisor
 import cats.syntax.all._
 
-import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
-import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL1Service, L1NodeContext}
+import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL1Service, DataApplicationCustomRoutes, L1NodeContext}
 import io.constellationnetwork.currency.l1.http.{DataApplicationRoutes, TransactionRoutes}
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.dag.l1.http.{Routes => DAGRoutes}

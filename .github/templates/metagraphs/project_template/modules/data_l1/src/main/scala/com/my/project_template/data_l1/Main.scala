@@ -8,7 +8,7 @@ import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.Errors.{MissingFeeTransaction, NotEnoughFee}
 import io.constellationnetwork.currency.dataApplication._
-import io.constellationnetwork.currency.dataApplication.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
+import io.constellationnetwork.currency.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
 import io.constellationnetwork.currency.l1.CurrencyL1App
 import io.constellationnetwork.currency.schema.EstimatedFee
 import io.constellationnetwork.ext.cats.effect.ResourceIO

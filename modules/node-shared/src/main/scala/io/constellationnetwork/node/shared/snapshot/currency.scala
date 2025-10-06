@@ -1,7 +1,6 @@
 package io.constellationnetwork.node.shared.snapshot
 
-import io.constellationnetwork.currency.dataApplication.DataTransaction
-import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
+import io.constellationnetwork.currency.dataApplication.{DataApplicationBlock, DataTransaction}
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
 import io.constellationnetwork.schema.Block

@@ -1,7 +1,6 @@
 package io.constellationnetwork.dag.l1.http.p2p
 
-import io.constellationnetwork.currency.dataApplication.DataTransaction
-import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
+import io.constellationnetwork.currency.dataApplication.{DataApplicationBlock, DataTransaction}
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse.PeerResponse
 import io.constellationnetwork.schema.Block

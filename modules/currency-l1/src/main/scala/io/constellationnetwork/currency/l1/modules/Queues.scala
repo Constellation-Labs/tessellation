@@ -6,8 +6,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import io.constellationnetwork.currency.dataApplication.DataTransaction.DataTransactions
-import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
-import io.constellationnetwork.currency.dataApplication.{ConsensusInput => DataConsensusInput}
+import io.constellationnetwork.currency.dataApplication.{ConsensusInput => DataConsensusInput, DataApplicationBlock}
 import io.constellationnetwork.currency.swap.{ConsensusInput => SwapConsensusInput}
 import io.constellationnetwork.currency.tokenlock.{ConsensusInput => TokenLockConsensusInput}
 import io.constellationnetwork.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput

@@ -14,8 +14,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.DataTransaction.DataTransactions
 import io.constellationnetwork.currency.dataApplication.Errors.Noop
-import io.constellationnetwork.currency.dataApplication._
-import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationValidationErrorOr
+import io.constellationnetwork.currency.dataApplication.{DataApplicationValidationErrorOr, _}
 import io.constellationnetwork.currency.l1.DummyDataApplicationState.{DummyUpdate, dummyUpdateGen}
 import io.constellationnetwork.currency.l1.node.L1NodeContext
 import io.constellationnetwork.currency.l1.{DummyDataApplicationL1Service, DummyDataApplicationState}
@@ -154,8 +153,8 @@ object DataApplicationRoutesSuite extends HttpSuite {
   def invalid = invalidNec[DataApplicationValidationError, Unit](Noop).pure[IO]
 
   def makeValidatingService(
-    validateUpdateFn: IO[dataApplication.DataApplicationValidationErrorOr[Unit]],
-    validateFeeFn: IO[dataApplication.DataApplicationValidationErrorOr[Unit]],
+    validateUpdateFn: IO[DataApplicationValidationErrorOr[Unit]],
+    validateFeeFn: IO[DataApplicationValidationErrorOr[Unit]],
     estimateFeeResult: Option[EstimatedFee] = None
   ): BaseDataApplicationL1Service[IO] =
     new DummyDataApplicationL1Service {

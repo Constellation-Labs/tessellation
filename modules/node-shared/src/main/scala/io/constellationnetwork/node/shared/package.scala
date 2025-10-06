@@ -1,6 +1,6 @@
 package io.constellationnetwork.node
 
-import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
+import io.constellationnetwork.currency.dataApplication.DataApplicationBlock
 import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSyncView
 import io.constellationnetwork.ext.kryo._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._

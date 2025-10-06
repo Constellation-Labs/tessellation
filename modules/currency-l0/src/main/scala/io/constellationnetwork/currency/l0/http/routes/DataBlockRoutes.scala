@@ -4,8 +4,7 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import io.constellationnetwork.currency.dataApplication._
-import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
+import io.constellationnetwork.currency.dataApplication.{DataApplicationBlock, _}
 import io.constellationnetwork.kernel._
 import io.constellationnetwork.node.shared.snapshot.currency.{CurrencySnapshotEvent, DataApplicationBlockEvent}
 import io.constellationnetwork.routes.internal._

@@ -3,7 +3,7 @@ package com.my.project_template.shared_data.serializers
 import java.nio.charset.StandardCharsets
 
 import io.constellationnetwork.currency.dataApplication.DataUpdate
-import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
+import io.constellationnetwork.currency.dataApplication.DataApplicationBlock
 import io.constellationnetwork.security.signature.Signed
 
 import com.my.project_template.shared_data.types.Types.{UsageUpdate, UsageUpdateCalculatedState, UsageUpdateState}

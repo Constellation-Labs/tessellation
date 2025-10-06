@@ -13,8 +13,7 @@ import scala.concurrent.duration._
 import io.constellationnetwork.currency.dataApplication.ConsensusInput._
 import io.constellationnetwork.currency.dataApplication.ConsensusOutput.Noop
 import io.constellationnetwork.currency.dataApplication.DataTransaction.{DataTransactions, getHashes}
-import io.constellationnetwork.currency.dataApplication._
-import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
+import io.constellationnetwork.currency.dataApplication.{DataApplicationBlock, _}
 import io.constellationnetwork.currency.validations.DataTransactionsValidator.validateDataTransactionsL1
 import io.constellationnetwork.dag.l1.domain.consensus.block.config.DataConsensusConfig
 import io.constellationnetwork.effects.GenUUID

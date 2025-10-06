@@ -5,8 +5,7 @@ import cats.effect.{Async, IO}
 import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.DataTransaction.DataTransactions
-import io.constellationnetwork.currency.dataApplication._
-import io.constellationnetwork.currency.dataApplication.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
+import io.constellationnetwork.currency.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr, _}
 import io.constellationnetwork.currency.http.Codecs.{dataTransactionsDecoder, feeTransactionResponseEncoder}
 import io.constellationnetwork.json.JsonBinarySerializer
 import io.constellationnetwork.routes.internal.ExternalUrlPrefix
@@ -35,10 +34,6 @@ class DummyDataApplicationL1Service extends BaseDataApplicationL1Service[IO] {
 
   override def deserializeBlock(bytes: Array[Byte]): IO[Either[Throwable, Signed[DataApplicationBlock]]] = ???
 
-  override def serializeCalculatedState(state: DataCalculatedState): IO[Array[Byte]] = ???
-
-  override def deserializeCalculatedState(bytes: Array[Byte]): IO[Either[Throwable, DataCalculatedState]] = ???
-
   override def dataEncoder: Encoder[DataUpdate] = DummyDataApplicationState.dataUpateEncoder
 
   override def dataDecoder: Decoder[DataUpdate] = DummyDataApplicationState.dataUpdateDecoder
@@ -51,17 +46,13 @@ class DummyDataApplicationL1Service extends BaseDataApplicationL1Service[IO] {
     circeEntityDecoder
   }
 
-  override def calculatedStateEncoder: Encoder[DataCalculatedState] = ???
-
-  override def calculatedStateDecoder: Decoder[DataCalculatedState] = ???
-
   override def validateUpdate(update: DataUpdate)(implicit context: L1NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] = ???
 
   override def routes(implicit context: L1NodeContext[IO]): HttpRoutes[IO] = ???
 
   override def routesPrefix: ExternalUrlPrefix = ???
 
-  override def postDataTransactionsRequestDecoder(req: Request[IO])(implicit f: Async[IO]): IO[DataRequest] = {
+  override def postDataTransactionsRequestDecoder(req: Request[IO]): IO[DataRequest] = {
     val logger = Slf4jLogger.getLoggerFromName[IO]("DataApplicationL1Service")
 
     for {
@@ -103,8 +94,6 @@ class DummyDataApplicationL1Service extends BaseDataApplicationL1Service[IO] {
   override def postDataTransactionsResponseEncoder(
     dataRequest: DataRequest,
     validationResult: Either[DataApplicationValidationError, NonEmptyList[Hashed[DataTransaction]]]
-  )(
-    implicit f: Async[IO]
   ): IO[Response[IO]] =
     feeTransactionResponseEncoder(dataRequest, validationResult)
 }

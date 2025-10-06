@@ -11,9 +11,8 @@ import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.currency.dataApplication.DataUpdate.getDataUpdates
 import io.constellationnetwork.currency.dataApplication.FeeTransaction.getFeeTransactions
-import io.constellationnetwork.currency.dataApplication._
-import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
 import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
+import io.constellationnetwork.currency.dataApplication.{DataApplicationBlock, _}
 import io.constellationnetwork.currency.schema.currency.DataApplicationPart
 import io.constellationnetwork.currency.validations.DataTransactionsValidator.validateDataTransactionsL0
 import io.constellationnetwork.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious

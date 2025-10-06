@@ -11,8 +11,7 @@ import cats.{Eq, Show}
 import scala.collection.immutable.SortedSet
 
 import io.constellationnetwork.block.generators.{signedBlockGen, signedTokenLockBlockGen}
-import io.constellationnetwork.currency.dataApplication._
-import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
+import io.constellationnetwork.currency.dataApplication.{DataApplicationBlock, _}
 import io.constellationnetwork.currency.schema.currency
 import io.constellationnetwork.ext.cats.effect._
 import io.constellationnetwork.json.JsonSerializer
@@ -326,7 +325,7 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
 
     override def validateData(state: DataState.Base, updates: NonEmptyList[Signed[DataUpdate]])(
       implicit context: L0NodeContext[IO]
-    ): IO[dataApplication.DataApplicationValidationErrorOr[Unit]] = ???
+    ): IO[DataApplicationValidationErrorOr[Unit]] = ???
 
     override def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
       implicit context: L0NodeContext[IO]
@@ -352,7 +351,7 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
 
     override def getTokenUnlocks(
       state: DataState[DataOnChainState, DataCalculatedState]
-    )(implicit context: L0NodeContext[IO], async: Async[IO], hasher: Hasher[IO]): IO[SortedSet[artifact.TokenUnlock]] = ???
+    )(implicit context: L0NodeContext[IO], hasher: Hasher[IO]): IO[SortedSet[artifact.TokenUnlock]] = ???
   }
 
 }

@@ -3,8 +3,6 @@ package io.constellationnetwork.currency.dataApplication
 import io.constellationnetwork.schema.round.RoundId
 import io.constellationnetwork.security.Hashed
 
-import dataApplication.DataApplicationBlock
-
 sealed trait ConsensusOutput
 
 object ConsensusOutput {
