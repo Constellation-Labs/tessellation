@@ -111,7 +111,7 @@ object BaseDataApplicationL0ContextualOps {
 
       def routes(implicit context: L0NodeContext[F]): HttpRoutes[F] = service.routes
 
-      def routesPrefix: ExternalUrlPrefix = service.routesPrefix
+      def routesPrefix: F[ExternalUrlPrefix] = service.routesPrefix
 
       def serializeCalculatedState(state: DataCalculatedState): F[Array[Byte]] = service.serializeCalculatedState(state.asInstanceOf[DOF])
 

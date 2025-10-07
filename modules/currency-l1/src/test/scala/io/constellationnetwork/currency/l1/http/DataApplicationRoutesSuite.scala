@@ -69,7 +69,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
   )
 
   object DataTransactionRequest {
-    implicit def dataUpdateEncoder: Encoder[DataUpdate] = DummyDataApplicationState.dataUpateEncoder
+    implicit def dataUpdateEncoder: Encoder[DataUpdate] = DummyDataApplicationState.dataUpdateEncoder
     implicit def dataUpdateDecoder: Decoder[DataUpdate] = DummyDataApplicationState.dataUpdateDecoder
 
     implicit val encoder: Encoder[DataTransactionRequest] = deriveEncoder[DataTransactionRequest]

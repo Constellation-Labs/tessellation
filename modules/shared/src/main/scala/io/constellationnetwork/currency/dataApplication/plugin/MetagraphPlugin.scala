@@ -17,29 +17,28 @@ object UpdateTypeDefinition {
 
 trait MetagraphPlugin[
   F[_],
-  POnChain <: DataOnChainState,
-  PCalculated <: DataCalculatedState
+  PUpdate <: DataUpdate,
+  POnChain,
+  PCalculated
 ] {
   def name: String
 
   def version: String
 
-  def updateTypes: List[UpdateTypeDefinition[_ <: DataUpdate]]
+  def updateTypes: List[UpdateTypeDefinition[_ <: PUpdate]]
 
   def configure(config: PluginConfig): F[Unit]
 
-  def register()(implicit F: Async[F]): F[Unit]
+  def register(): F[Unit]
 
-  def handles(update: DataUpdate): Boolean =
+  def handles(update: PUpdate): Boolean =
     updateTypes.exists(_.classTag.runtimeClass.isInstance(update))
 
-  def lifecycle: PluginLifecycle[F, POnChain, PCalculated]
+  def lifecycle: PluginLifecycle[F, PUpdate, POnChain, PCalculated]
 
   def routes: PluginRoutes[F]
 
   def rewards: PluginRewards[F, POnChain, PCalculated]
-
-  def genesisState: DataState[POnChain, PCalculated]
 }
 
 case class PluginConfig(

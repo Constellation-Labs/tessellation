@@ -1,56 +1,65 @@
 package io.constellationnetwork.currency.dataApplication.plugin
 
-import cats.Applicative
 import cats.data.NonEmptyList
 import cats.effect.{Async, Ref}
 import cats.syntax.all._
-
-import scala.collection.immutable.SortedSet
 
 import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.dataApplication.block.DataApplicationBlock
 import io.constellationnetwork.currency.dataApplication.context.{L0NodeContext, L1NodeContext}
 import io.constellationnetwork.currency.dataApplication.plugin.rewards.PluginReward
-import io.constellationnetwork.currency.schema.EstimatedFee
-import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
-import io.constellationnetwork.schema.artifact.TokenUnlock
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
-import io.constellationnetwork.security._
-import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.routes.internal.ExternalUrlPrefix
+import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.security.signature.Signed
 
-import io.circe._
 import org.http4s._
 
-// Type-erased wrapper (keep existing)
-trait PluginWrapper[F[_]] {
+// Type-erased wrapper
+trait PluginWrapper[
+  F[_],
+  PUpdate <: DataUpdate,
+  POnChain,
+  PCalculated
+] {
   def name: String
-  def handles(update: DataUpdate): Boolean
-  def validateUpdate(update: DataUpdate)(implicit context: L1NodeContext[F]): F[DataApplicationValidationErrorOr[Unit]]
-  def validateData(updates: NonEmptyList[Signed[DataUpdate]])(implicit context: L0NodeContext[F]): F[DataApplicationValidationErrorOr[Unit]]
-  def combine(updates: List[Signed[DataUpdate]])(implicit context: L0NodeContext[F]): F[Unit]
-  def extractFees(updates: Seq[Signed[DataUpdate]])(implicit context: L0NodeContext[F]): F[Seq[Signed[FeeTransaction]]]
+
+  def handles(update: PUpdate): Boolean
+
+  def validateUpdate(update: PUpdate)(implicit context: L1NodeContext[F]): F[DataApplicationValidationErrorOr[Unit]]
+
+  def validateData(onChainState: POnChain, calculatedState: PCalculated, updates: NonEmptyList[Signed[PUpdate]])(
+    implicit context: L0NodeContext[F]
+  ): F[DataApplicationValidationErrorOr[Unit]]
+
+  def combine(onChainState: POnChain, calculatedState: PCalculated, updates: List[Signed[PUpdate]])(
+    implicit context: L0NodeContext[F]
+  ): F[(POnChain, PCalculated, List[SharedArtifact])]
+
+  def extractFees(updates: Seq[Signed[PUpdate]])(implicit context: L0NodeContext[F]): F[Seq[Signed[FeeTransaction]]]
+
   def l0Routes(implicit context: L0NodeContext[F]): HttpRoutes[F]
+
   def dataL1Routes(implicit context: L1NodeContext[F]): HttpRoutes[F]
+
   def currencyL1Routes(implicit context: L1NodeContext[F]): HttpRoutes[F]
-  def calculateRewards: F[List[PluginReward]]
-  def getState: DataState.Base
+
+  def calculateRewards(onChainState: POnChain, calculatedState: PCalculated): F[List[PluginReward]]
 }
 
-// Keep existing PluginWrapperImpl
 class PluginWrapperImpl[
   F[_]: Async,
-  POnChain <: DataOnChainState,
-  PCalculated <: DataCalculatedState
+  PUpdate <: DataUpdate,
+  POnChain,
+  PCalculated
 ](
-  val plugin: MetagraphPlugin[F, POnChain, PCalculated],
-  private var state: DataState[POnChain, PCalculated]
-) extends PluginWrapper[F] {
+  val plugin: MetagraphPlugin[F, PUpdate, POnChain, PCalculated]
+) extends PluginWrapper[F, PUpdate, POnChain, PCalculated] {
 
   def name: String = plugin.name
-  def handles(update: DataUpdate): Boolean = plugin.handles(update)
 
-  def validateUpdate(update: DataUpdate)(implicit context: L1NodeContext[F]): F[DataApplicationValidationErrorOr[Unit]] =
+  def handles(update: PUpdate): Boolean = plugin.handles(update)
+
+  def validateUpdate(update: PUpdate)(implicit context: L1NodeContext[F]): F[DataApplicationValidationErrorOr[Unit]] =
     if (handles(update)) {
       plugin.lifecycle.validateUpdate(update)
     } else {
@@ -59,11 +68,14 @@ class PluginWrapperImpl[
     }
 
   def validateData(
-    updates: NonEmptyList[Signed[DataUpdate]]
+    onChainState: POnChain,
+    calculatedState: PCalculated,
+    updates: NonEmptyList[Signed[PUpdate]]
   )(implicit context: L0NodeContext[F]): F[DataApplicationValidationErrorOr[Unit]] = {
     val relevantUpdates = updates.filter(u => handles(u.value))
-    NonEmptyList.fromList(relevantUpdates.toList) match {
-      case Some(nel) => plugin.lifecycle.validateData(state, nel)
+    NonEmptyList.fromList(relevantUpdates) match {
+      case Some(nel) =>
+        plugin.lifecycle.validateData(onChainState, calculatedState, nel)
       case None =>
         import cats.data.Validated
         Validated.validNec[DataApplicationValidationError, Unit](()).pure[F]
@@ -71,62 +83,64 @@ class PluginWrapperImpl[
   }
 
   def combine(
-    updates: List[Signed[DataUpdate]]
-  )(implicit context: L0NodeContext[F]): F[Unit] = {
+    onChainState: POnChain,
+    calculatedState: PCalculated,
+    updates: List[Signed[PUpdate]]
+  )(implicit context: L0NodeContext[F]): F[(POnChain, PCalculated, List[SharedArtifact])] = {
     val relevantUpdates = updates.filter(u => handles(u.value))
     if (relevantUpdates.isEmpty) {
-      Async[F].unit
+      (onChainState, calculatedState, List.empty[SharedArtifact]).pure
     } else {
-      plugin.lifecycle.combine(state, relevantUpdates).flatMap { newState =>
-        Async[F].delay { state = newState }
-      }
+      plugin.lifecycle.combine(onChainState, calculatedState, relevantUpdates)
     }
   }
 
-  def extractFees(updates: Seq[Signed[DataUpdate]])(implicit context: L0NodeContext[F]): F[Seq[Signed[FeeTransaction]]] = {
+  def extractFees(updates: Seq[Signed[PUpdate]])(implicit context: L0NodeContext[F]): F[Seq[Signed[FeeTransaction]]] = {
     val relevantUpdates = updates.filter(u => handles(u.value))
     if (relevantUpdates.isEmpty) Seq.empty[Signed[FeeTransaction]].pure[F]
     else plugin.lifecycle.extractFees(relevantUpdates)
   }
 
   def l0Routes(implicit context: L0NodeContext[F]): HttpRoutes[F] = plugin.routes.l0Routes
+
   def dataL1Routes(implicit context: L1NodeContext[F]): HttpRoutes[F] = plugin.routes.dataL1Routes
+
   def currencyL1Routes(implicit context: L1NodeContext[F]): HttpRoutes[F] = plugin.routes.currencyL1Routes
 
-  def calculateRewards: F[List[PluginReward]] = plugin.rewards.calculateRewards(state)
-  def getState: DataState.Base = state.asBase
+  def calculateRewards(onChainState: POnChain, calculatedState: PCalculated): F[List[PluginReward]] =
+    plugin.rewards.calculateRewards(onChainState, calculatedState)
 }
 
 // Updated PluginRegistry with master plugin support
-class PluginRegistry[F[_]: Async] private (
-  masterPluginRef: Ref[F, Option[MasterPluginWrapper[F]]],
-  pluginsRef: Ref[F, List[PluginWrapper[F]]]
+class PluginRegistry[
+  F[_]: Async,
+  PUpdate <: DataUpdate,
+  POnChain <: DataOnChainState,
+  PCalculated <: DataCalculatedState
+] private (
+  masterPluginRef: Ref[F, Option[MasterPluginWrapper[F, PUpdate, POnChain, PCalculated]]],
+  pluginsRef: Ref[F, List[PluginWrapper[F, PUpdate, POnChain, PCalculated]]]
 ) {
 
-  // Register master plugin
-  def registerMaster[U <: DataUpdate, POnChain <: DataOnChainState, PCalculated <: DataCalculatedState](
-    masterPlugin: MasterPlugin[F, U, POnChain, PCalculated]
+  def registerMaster(
+    masterPlugin: MasterPlugin[F, PUpdate, POnChain, PCalculated]
   ): F[Unit] =
     for {
       _ <- masterPlugin.register()
-      wrapper = new MasterPluginWrapperImpl[F, U, POnChain, PCalculated](masterPlugin, masterPlugin.genesisState)
-      _ <- masterPluginRef.set(Some(wrapper))
+      wrapper = new MasterPluginWrapperImpl[F, PUpdate, POnChain, PCalculated](masterPlugin)
+      _ <- masterPluginRef.set(wrapper.some)
     } yield ()
 
-  // Register feature plugin
-  def register[POnChain <: DataOnChainState, PCalculated <: DataCalculatedState](
-    plugin: MetagraphPlugin[F, POnChain, PCalculated]
+  def register[U <: PUpdate, O <: POnChain, C <: PCalculated](
+    plugin: MetagraphPlugin[F, U, O, C]
   ): F[Unit] =
     for {
       _ <- plugin.register()
-      wrapper = new PluginWrapperImpl[F, POnChain, PCalculated](plugin, plugin.genesisState)
-      _ <- pluginsRef.update(_ :+ wrapper)
+      wrapper = new PluginWrapperImpl[F, U, O, C](plugin)
+      _ <- pluginsRef.update(_ :+ wrapper.asInstanceOf[PluginWrapper[F, PUpdate, POnChain, PCalculated]])
     } yield ()
 
-  // Get master plugin
-  def getMasterPlugin: F[Option[MasterPluginWrapper[F]]] = masterPluginRef.get
-
-  // ========== Serialization delegates to master plugin ==========
+  def getMasterPlugin: F[Option[MasterPluginWrapper[F, PUpdate, POnChain, PCalculated]]] = masterPluginRef.get
 
   def serializeState(state: DataOnChainState): F[Array[Byte]] =
     getMasterPlugin.flatMap {
@@ -176,20 +190,25 @@ class PluginRegistry[F[_]: Async] private (
       case None         => Async[F].raiseError(new RuntimeException("No master plugin registered"))
     }
 
-  // ========== Validation - master + all feature plugins ==========
+  def routesPrefix: F[ExternalUrlPrefix] =
+    getMasterPlugin.flatMap {
+      case Some(master) => master.routesPrefix.pure
+      case None         => Async[F].raiseError(new RuntimeException("No master plugin registered"))
+    }
 
   def validateUpdate(
-    update: DataUpdate
+    update: PUpdate
   )(implicit context: L1NodeContext[F]): F[DataApplicationValidationErrorOr[Unit]] =
     for {
+      plugins <- pluginsRef.get
+
+      pluginValidations <- plugins.filter(_.handles(update)).traverse(_.validateUpdate(update))
       masterValidation <- getMasterPlugin.flatMap {
         case Some(master) => master.validateUpdate(update)
         case None =>
           import cats.data.Validated
           Validated.validNec[DataApplicationValidationError, Unit](()).pure[F]
       }
-      plugins <- pluginsRef.get
-      pluginValidations <- plugins.filter(_.handles(update)).traverse(_.validateUpdate(update))
       allValidations = masterValidation :: pluginValidations
       result =
         if (allValidations.isEmpty) {
@@ -201,17 +220,19 @@ class PluginRegistry[F[_]: Async] private (
     } yield result
 
   def validateData(
-    updates: NonEmptyList[Signed[DataUpdate]]
+    onChainState: POnChain,
+    calculatedState: PCalculated,
+    updates: NonEmptyList[Signed[PUpdate]]
   )(implicit context: L0NodeContext[F]): F[DataApplicationValidationErrorOr[Unit]] =
     for {
+      plugins <- pluginsRef.get
+      pluginValidations <- plugins.traverse(_.validateData(onChainState, calculatedState, updates))
       masterValidation <- getMasterPlugin.flatMap {
-        case Some(master) => master.validateData(updates)
+        case Some(master) => master.validateData(onChainState, calculatedState, updates)
         case None =>
           import cats.data.Validated
           Validated.validNec[DataApplicationValidationError, Unit](()).pure[F]
       }
-      plugins <- pluginsRef.get
-      pluginValidations <- plugins.traverse(_.validateData(updates))
       allValidations = masterValidation :: pluginValidations
       result =
         if (allValidations.isEmpty) {
@@ -222,24 +243,37 @@ class PluginRegistry[F[_]: Async] private (
         }
     } yield result
 
-  // ========== Combine - master + all feature plugins ==========
-
   def combine(
-    updates: List[Signed[DataUpdate]]
-  )(implicit context: L0NodeContext[F]): F[Unit] =
+    onChainState: POnChain,
+    calculatedState: PCalculated,
+    updates: List[Signed[PUpdate]]
+  )(implicit context: L0NodeContext[F]): F[(POnChain, PCalculated, List[SharedArtifact])] =
     for {
-      _ <- getMasterPlugin.flatMap {
-        case Some(master) => master.combine(updates)
-        case None         => Async[F].unit
-      }
       plugins <- pluginsRef.get
-      _ <- plugins.traverse_(_.combine(updates))
-    } yield ()
+
+      stateAfterPlugins <- plugins.foldLeftM((onChainState, calculatedState, List.empty[SharedArtifact])) {
+        case ((currentOnChain, currentCalculated, artifacts), plugin) =>
+          plugin.combine(currentOnChain, currentCalculated, updates).map {
+            case (newOnChain, newCalculated, newArtifacts) =>
+              (newOnChain, newCalculated, artifacts ++ newArtifacts)
+          }
+      }
+
+      finalState <- getMasterPlugin.flatMap {
+        case Some(master) =>
+          val (onChain, calculated, artifacts) = stateAfterPlugins
+          master.combine(onChain, calculated, updates).map {
+            case (newOnChain, newCalculated, newArtifacts) =>
+              (newOnChain, newCalculated, artifacts ++ newArtifacts)
+          }
+        case None => stateAfterPlugins.pure[F]
+      }
+    } yield finalState
 
   // ========== Extract fees - master + feature plugins ==========
 
   def extractAllFees(
-    updates: Seq[Signed[DataUpdate]]
+    updates: Seq[Signed[PUpdate]]
   )(implicit context: L0NodeContext[F]): F[Seq[Signed[FeeTransaction]]] =
     for {
       masterFees <- getMasterPlugin.flatMap {
@@ -275,21 +309,29 @@ class PluginRegistry[F[_]: Async] private (
 
   // ========== Rewards - all plugins ==========
 
-  def calculateAllRewards: F[List[PluginReward]] =
+  def calculateAllRewards(
+    onChainState: POnChain,
+    calculatedState: PCalculated
+  ): F[List[PluginReward]] =
     for {
       masterRewards <- getMasterPlugin.flatMap {
-        case Some(master) => master.calculateRewards
+        case Some(master) => master.calculateRewards(onChainState, calculatedState)
         case None         => Async[F].pure(List.empty[PluginReward])
       }
       plugins <- pluginsRef.get
-      pluginRewards <- plugins.flatTraverse(_.calculateRewards)
+      pluginRewards <- plugins.flatTraverse(_.calculateRewards(onChainState, calculatedState))
     } yield masterRewards ++ pluginRewards
 }
 
 object PluginRegistry {
-  def make[F[_]: Async]: F[PluginRegistry[F]] =
+  def make[
+    F[_]: Async,
+    PUpdate <: DataUpdate,
+    POnChain <: DataOnChainState,
+    PCalculated <: DataCalculatedState
+  ]: F[PluginRegistry[F, PUpdate, POnChain, PCalculated]] =
     for {
-      masterRef <- Ref.of[F, Option[MasterPluginWrapper[F]]](None)
-      pluginsRef <- Ref.of[F, List[PluginWrapper[F]]](List.empty)
-    } yield new PluginRegistry[F](masterRef, pluginsRef)
+      masterRef <- Ref.of[F, Option[MasterPluginWrapper[F, PUpdate, POnChain, PCalculated]]](None)
+      pluginsRef <- Ref.of[F, List[PluginWrapper[F, PUpdate, POnChain, PCalculated]]](List.empty)
+    } yield new PluginRegistry[F, PUpdate, POnChain, PCalculated](masterRef, pluginsRef)
 }

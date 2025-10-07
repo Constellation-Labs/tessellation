@@ -341,7 +341,7 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
 
     override def routes(implicit context: L0NodeContext[IO]): HttpRoutes[IO] = ???
 
-    override def routesPrefix: internal.ExternalUrlPrefix = ???
+    override def routesPrefix: F[internal.ExternalUrlPrefix] = ???
 
     override def genesis: DataState.Base = ???
 

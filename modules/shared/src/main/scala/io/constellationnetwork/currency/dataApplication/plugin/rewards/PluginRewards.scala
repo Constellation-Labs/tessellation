@@ -11,9 +11,10 @@ case class PluginReward(
   amount: Amount
 )
 
-trait PluginRewards[F[_], POnChain <: DataOnChainState, PCalculated <: DataCalculatedState] {
+trait PluginRewards[F[_], POnChain, PCalculated] {
   def calculateRewards(
-    state: DataState[POnChain, PCalculated]
+    onChainState: POnChain,
+    calculatedState: PCalculated
   )(implicit F: Async[F]): F[List[PluginReward]] =
     F.pure(List.empty)
 }

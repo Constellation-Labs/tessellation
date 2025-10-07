@@ -11,9 +11,11 @@ import io.constellationnetwork.currency.dataApplication
 import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.dataApplication.block.DataApplicationBlock
 import io.constellationnetwork.currency.dataApplication.context.{L0NodeContext, L1NodeContext}
+import io.constellationnetwork.currency.dataApplication.plugin.rewards.PluginReward
 import io.constellationnetwork.currency.schema.EstimatedFee
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
-import io.constellationnetwork.schema.artifact.TokenUnlock
+import io.constellationnetwork.routes.internal.ExternalUrlPrefix
+import io.constellationnetwork.schema.artifact.{SharedArtifact, TokenUnlock}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -22,7 +24,12 @@ import io.constellationnetwork.security.{signature, _}
 import io.circe._
 import org.http4s._
 
-sealed trait MasterPluginWrapper[F[_]] extends PluginWrapper[F] {
+sealed trait MasterPluginWrapper[
+  F[_],
+  PUpdate <: DataUpdate,
+  POnChain <: DataOnChainState,
+  PCalculated <: DataCalculatedState
+] extends PluginWrapper[F, PUpdate, POnChain, PCalculated] {
   // Serialization
   def serializeState(state: DataOnChainState): F[Array[Byte]]
   def deserializeState(bytes: Array[Byte]): F[Either[Throwable, DataOnChainState]]
@@ -61,49 +68,57 @@ sealed trait MasterPluginWrapper[F[_]] extends PluginWrapper[F] {
     dataRequest: DataRequest,
     validationResult: Either[DataApplicationValidationError, NonEmptyList[Hashed[DataTransaction]]]
   ): F[Response[F]]
+
+  def routesPrefix: ExternalUrlPrefix
 }
 
 class MasterPluginWrapperImpl[
   F[_]: Async,
-  U <: DataUpdate,
+  PUpdate <: DataUpdate,
   POnChain <: DataOnChainState,
   PCalculated <: DataCalculatedState
 ](
-  val masterPlugin: MasterPlugin[F, U, POnChain, PCalculated],
-  private var state: DataState[POnChain, PCalculated]
-) extends MasterPluginWrapper[F] {
+  val masterPlugin: MasterPlugin[F, PUpdate, POnChain, PCalculated]
+) extends MasterPluginWrapper[F, PUpdate, POnChain, PCalculated] {
 
   def name: String = masterPlugin.name
-  def handles(update: DataUpdate): Boolean = masterPlugin.handles(update)
+  def handles(update: PUpdate): Boolean = masterPlugin.handles(update)
 
-  def validateUpdate(update: DataUpdate)(implicit context: L1NodeContext[F]) =
+  def validateUpdate(update: PUpdate)(implicit context: L1NodeContext[F]) =
     if (handles(update)) masterPlugin.lifecycle.validateUpdate(update)
     else {
       import cats.data.Validated
       Validated.validNec[DataApplicationValidationError, Unit](()).pure[F]
     }
 
-  def validateData(updates: NonEmptyList[Signed[DataUpdate]])(implicit context: L0NodeContext[F]) = {
+  def validateData(
+    onChainState: POnChain,
+    calculatedState: PCalculated,
+    updates: NonEmptyList[Signed[PUpdate]]
+  )(implicit context: L0NodeContext[F]) = {
     val relevantUpdates = updates.filter(u => handles(u.value))
     NonEmptyList.fromList(relevantUpdates) match {
-      case Some(nel) => masterPlugin.lifecycle.validateData(state, nel)
+      case Some(nel) => masterPlugin.lifecycle.validateData(onChainState, calculatedState, nel)
       case None =>
         import cats.data.Validated
         Validated.validNec[DataApplicationValidationError, Unit](()).pure[F]
     }
   }
 
-  def combine(updates: List[Signed[DataUpdate]])(implicit context: L0NodeContext[F]) = {
+  def combine(
+    onChainState: POnChain,
+    calculatedState: PCalculated,
+    updates: List[Signed[PUpdate]]
+  )(implicit context: L0NodeContext[F]): F[(POnChain, PCalculated, List[SharedArtifact])] = {
     val relevantUpdates = updates.filter(u => handles(u.value))
-    if (relevantUpdates.isEmpty) Async[F].unit
+    if (relevantUpdates.isEmpty) (onChainState, calculatedState, List.empty[SharedArtifact]).pure[F]
     else {
-      masterPlugin.lifecycle.combine(state, relevantUpdates).flatMap { newState =>
-        Async[F].delay { state = newState }
-      }
+      masterPlugin.lifecycle
+        .combine(onChainState, calculatedState, relevantUpdates)
     }
   }
 
-  def extractFees(updates: Seq[Signed[DataUpdate]])(implicit context: L0NodeContext[F]) = {
+  def extractFees(updates: Seq[Signed[PUpdate]])(implicit context: L0NodeContext[F]) = {
     val relevantUpdates = updates.filter(u => handles(u.value))
     if (relevantUpdates.isEmpty) Seq.empty[Signed[FeeTransaction]].pure[F]
     else masterPlugin.lifecycle.extractFees(relevantUpdates)
@@ -112,9 +127,13 @@ class MasterPluginWrapperImpl[
   def l0Routes(implicit context: L0NodeContext[F]) = masterPlugin.routes.l0Routes
   def dataL1Routes(implicit context: L1NodeContext[F]) = masterPlugin.routes.dataL1Routes
   def currencyL1Routes(implicit context: L1NodeContext[F]) = masterPlugin.routes.currencyL1Routes
+  def routesPrefix: ExternalUrlPrefix = masterPlugin.routes.routesPrefix
 
-  def calculateRewards = masterPlugin.rewards.calculateRewards(state)
-  def getState = state.asBase
+  def calculateRewards(
+    onChainState: POnChain,
+    calculatedState: PCalculated
+  ) =
+    masterPlugin.rewards.calculateRewards(onChainState, calculatedState)
 
   // Serialization implementations
   def serializeState(stateToSerialize: DataOnChainState): F[Array[Byte]] =
@@ -128,8 +147,8 @@ class MasterPluginWrapperImpl[
 
   def serializeUpdate(update: DataUpdate): F[Array[Byte]] =
     (update match {
-      case u: U @unchecked => masterPlugin.serializeUpdate(u)
-      case _               => Async[F].raiseError(new RuntimeException("Invalid update type for master plugin"))
+      case u: PUpdate @unchecked => masterPlugin.serializeUpdate(u)
+      case _                     => Async[F].raiseError(new RuntimeException("Invalid update type for master plugin"))
     }).asInstanceOf[F[Array[Byte]]]
 
   def deserializeUpdate(bytes: Array[Byte]) =
@@ -152,8 +171,8 @@ class MasterPluginWrapperImpl[
 
   // Encoders/Decoders
   def updateEncoder: Encoder[DataUpdate] = masterPlugin.updateEncoder.contramap[DataUpdate] {
-    case u: U @unchecked => u
-    case _               => throw new RuntimeException("Invalid update type")
+    case u: PUpdate @unchecked => u
+    case _                     => throw new RuntimeException("Invalid update type")
   }
 
   def updateDecoder: Decoder[DataUpdate] = masterPlugin.updateDecoder.widen[DataUpdate]
@@ -209,10 +228,10 @@ class MasterPluginWrapperImpl[
 
   // L1 specific
   def estimateFee(gsOrdinal: SnapshotOrdinal)(update: DataUpdate)(implicit context: L1NodeContext[F], A: Applicative[F]): F[EstimatedFee] =
-    (update match {
-      case u: U @unchecked => masterPlugin.estimateFee(gsOrdinal)(u)
-      case _               => EstimatedFee.empty.pure[F]
-    }).asInstanceOf[F[EstimatedFee]]
+    update match {
+      case u: PUpdate @unchecked => masterPlugin.estimateFee(gsOrdinal)(u)
+      case _                     => EstimatedFee.empty.pure[F]
+    }
 
   def postDataTransactionsRequestDecoder(req: Request[F]) =
     masterPlugin.postDataTransactionsRequestDecoder(req)

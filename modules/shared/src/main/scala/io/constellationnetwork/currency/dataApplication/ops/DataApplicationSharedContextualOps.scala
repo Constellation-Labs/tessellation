@@ -23,5 +23,5 @@ trait DataApplicationSharedContextualOps[F[
 
   def routes(implicit context: Context): HttpRoutes[F]
 
-  def routesPrefix: ExternalUrlPrefix = "/data-application"
+  def routesPrefix: F[ExternalUrlPrefix]
 }

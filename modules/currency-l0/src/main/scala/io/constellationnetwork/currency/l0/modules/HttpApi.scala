@@ -3,7 +3,7 @@ package io.constellationnetwork.currency.l0.modules
 import java.security.PrivateKey
 
 import cats.effect.Async
-import cats.syntax.semigroupk._
+import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.l0.cli.method.Run
@@ -138,29 +138,31 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
     ).publicRoutes
   )
 
-  private val openRoutes: HttpRoutes[F] =
-    CORS.policy.withAllowOriginAll.withAllowHeadersAll.withAllowCredentials(false).apply {
-      PeerAuthMiddleware
-        .responseSignerMiddleware(privateKey, storages.session, selfId) {
-          `X-Id-Middleware`.responseMiddleware(selfId) {
-            (if (Seq(Dev, Integrationnet, Testnet).contains(environment)) debugRoutes else HttpRoutes.empty) <+>
-              metricRoutes <+>
-              targetRoutes <+>
-              snapshotRoutes.publicRoutes <+>
-              clusterRoutes.publicRoutes <+>
-              currencyBlockRoutes.publicRoutes <+>
-              dataBlockRoutes.map(_.publicRoutes).getOrElse(HttpRoutes.empty) <+>
-              transactionValidationErrorRoutes.publicRoutes <+>
-              walletRoutes.publicRoutes <+>
-              nodeRoutes.publicRoutes <+>
-              consensusInfoRoutes.publicRoutes <+>
-              metagraphNodeRoutes.map(_.publicRoutes).getOrElse(HttpRoutes.empty) <+>
-              currencyMessageRoutes <+>
-              DataApplicationCustomRoutes.publicRoutes[F, L0NodeContext[F]](maybeDataApplication) <+>
-              allowSpendBlockRoutes.publicRoutes <+>
-              tokenLockBlockRoutes.publicRoutes
+  private def openRoutes: F[HttpRoutes[F]] =
+    DataApplicationCustomRoutes.publicRoutes[F, L0NodeContext[F]](maybeDataApplication).map { dataAppRoutes =>
+      CORS.policy.withAllowOriginAll.withAllowHeadersAll.withAllowCredentials(false).apply {
+        PeerAuthMiddleware
+          .responseSignerMiddleware(privateKey, storages.session, selfId) {
+            `X-Id-Middleware`.responseMiddleware(selfId) {
+              (if (Seq(Dev, Integrationnet, Testnet).contains(environment)) debugRoutes else HttpRoutes.empty) <+>
+                metricRoutes <+>
+                targetRoutes <+>
+                snapshotRoutes.publicRoutes <+>
+                clusterRoutes.publicRoutes <+>
+                currencyBlockRoutes.publicRoutes <+>
+                dataBlockRoutes.map(_.publicRoutes).getOrElse(HttpRoutes.empty) <+>
+                transactionValidationErrorRoutes.publicRoutes <+>
+                walletRoutes.publicRoutes <+>
+                nodeRoutes.publicRoutes <+>
+                consensusInfoRoutes.publicRoutes <+>
+                metagraphNodeRoutes.map(_.publicRoutes).getOrElse(HttpRoutes.empty) <+>
+                currencyMessageRoutes <+>
+                dataAppRoutes <+>
+                allowSpendBlockRoutes.publicRoutes <+>
+                tokenLockBlockRoutes.publicRoutes
+            }
           }
-        }
+      }
     }
 
   private val p2pRoutes: HttpRoutes[F] =
@@ -190,7 +192,9 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
     ResponseLogger.httpApp(logHeaders = true, logBody = false)(http)
   }
 
-  val publicApp: HttpApp[F] = loggers(openRoutes.orNotFound)
+  val publicApp: F[HttpApp[F]] = openRoutes.map { routes =>
+    loggers(routes.orNotFound)
+  }
   val p2pApp: HttpApp[F] = loggers(p2pRoutes.orNotFound)
   val cliApp: HttpApp[F] = loggers(cliRoutes.orNotFound)
 

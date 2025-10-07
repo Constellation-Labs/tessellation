@@ -21,13 +21,14 @@ import io.circe._
 import org.http4s._
 
 class PluginOnlyDataApplicationL1Service[F[_]: Async](
-  registry: PluginRegistry[F],
+  registry: PluginRegistry[F, DataUpdate, DataOnChainState, DataCalculatedState],
   updateEnc: Encoder[DataUpdate],
   updateDec: Decoder[DataUpdate],
   signedUpdateEntityDec: EntityDecoder[F, Signed[DataUpdate]]
 ) extends BaseDataApplicationL1Service[F] {
 
-  override val pluginRegistry: Option[PluginRegistry[F]] = Some(registry)
+  override val pluginRegistry: Option[PluginRegistry[F, DataUpdate, DataOnChainState, DataCalculatedState]] =
+    Some(registry)
 
   // ========== Serialization - delegates to master plugin ==========
 
@@ -72,7 +73,7 @@ class PluginOnlyDataApplicationL1Service[F[_]: Async](
     }
   }
 
-  override def routesPrefix: ExternalUrlPrefix = "/data-application"
+  override def routesPrefix: F[ExternalUrlPrefix] = registry.routesPrefix
 
   // ========== ValidateUpdate: all plugins (master + features) ==========
 
@@ -124,13 +125,14 @@ object PluginOnlyDataApplicationL1Service {
     masterPlugin: io.constellationnetwork.currency.dataApplication.plugin.MasterPlugin[F, U, POnChain, PCalculated]
   ): F[PluginOnlyDataApplicationL1Service[F]] =
     for {
-      registry <- PluginRegistry.make[F]
+      registry <- PluginRegistry.make[F, U, POnChain, PCalculated]
       _ <- registry.registerMaster(masterPlugin)
     } yield
       new PluginOnlyDataApplicationL1Service[F](
-        registry,
+        registry.asInstanceOf[PluginRegistry[F, DataUpdate, DataOnChainState, DataCalculatedState]],
         masterPlugin.updateEncoder.contramap[DataUpdate] {
-          case u: U @unchecked => u; case _ => throw new RuntimeException("Invalid update")
+          case u: U @unchecked => u
+          case _               => throw new RuntimeException("Invalid update type")
         },
         masterPlugin.updateDecoder.widen[DataUpdate],
         masterPlugin.signedUpdateEntityDecoder.map(_.widen[DataUpdate])

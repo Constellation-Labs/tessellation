@@ -1,7 +1,7 @@
 package io.constellationnetwork.currency.dataApplication.services
 
+import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.dataApplication.block.DataApplicationBlock
-import io.constellationnetwork.currency.dataApplication.{DataApplicationBlock, _}
 import io.constellationnetwork.security.signature.Signed
 
 import io.circe._

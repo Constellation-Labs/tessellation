@@ -30,7 +30,7 @@ trait BaseDataApplicationL1Service[F[_]] extends BaseDataApplicationService[F] w
   ): F[Response[F]]
 
   // Plugin support
-  def pluginRegistry: Option[PluginRegistry[F]] = None
+  def pluginRegistry: Option[PluginRegistry[F, DataUpdate, DataOnChainState, DataCalculatedState]] = None
 }
 
 object BaseDataApplicationL1Service {
@@ -114,9 +114,9 @@ object BaseDataApplicationL1Service {
       ): F[Response[F]] =
         service.postDataTransactionsResponseEncoder(dataRequest, validationResult)
 
-      def routesPrefix: ExternalUrlPrefix = ctx.routesPrefix
+      def routesPrefix: F[ExternalUrlPrefix] = ctx.routesPrefix
 
-      override def pluginRegistry: Option[PluginRegistry[F]] = service.pluginRegistry
+      override def pluginRegistry: Option[PluginRegistry[F, DataUpdate, DataOnChainState, DataCalculatedState]] = service.pluginRegistry
     }
 
   }

@@ -34,7 +34,7 @@ class DummyDataApplicationL1Service extends BaseDataApplicationL1Service[IO] {
 
   override def deserializeBlock(bytes: Array[Byte]): IO[Either[Throwable, Signed[DataApplicationBlock]]] = ???
 
-  override def dataEncoder: Encoder[DataUpdate] = DummyDataApplicationState.dataUpateEncoder
+  override def dataEncoder: Encoder[DataUpdate] = DummyDataApplicationState.dataUpdateEncoder
 
   override def dataDecoder: Decoder[DataUpdate] = DummyDataApplicationState.dataUpdateDecoder
 
@@ -50,7 +50,7 @@ class DummyDataApplicationL1Service extends BaseDataApplicationL1Service[IO] {
 
   override def routes(implicit context: L1NodeContext[IO]): HttpRoutes[IO] = ???
 
-  override def routesPrefix: ExternalUrlPrefix = ???
+  override def routesPrefix: IO[ExternalUrlPrefix] = ???
 
   override def postDataTransactionsRequestDecoder(req: Request[IO]): IO[DataRequest] = {
     val logger = Slf4jLogger.getLoggerFromName[IO]("DataApplicationL1Service")

@@ -34,7 +34,9 @@ trait BaseDataApplicationL0Service[F[_]] extends BaseDataApplicationService[F] w
 
   def onGlobalSnapshotPull(snapshot: Hashed[GlobalIncrementalSnapshot], context: GlobalSnapshotInfo): F[Unit]
 
-  def extractFees(ds: Seq[Signed[DataUpdate]])(implicit A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
+  override def extractFees(
+    ds: Seq[Signed[DataUpdate]]
+  )(implicit context: L0NodeContext[F], A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
     A.pure(Seq.empty[Signed[FeeTransaction]])
 
   def getTokenUnlocks(
@@ -48,7 +50,7 @@ trait BaseDataApplicationL0Service[F[_]] extends BaseDataApplicationService[F] w
   def calculatedStateDecoder: Decoder[DataCalculatedState]
 
   // Plugin support
-  def pluginRegistry: Option[PluginRegistry[F]] = None
+  def pluginRegistry: Option[PluginRegistry[F, DataUpdate, DataOnChainState, DataCalculatedState]] = None
 }
 
 object BaseDataApplicationL0Service {
@@ -108,9 +110,9 @@ object BaseDataApplicationL0Service {
         service.pluginRegistry match {
           case Some(registry) =>
             for {
+              pluginValidation <- registry.validateData(state.onChain, state.calculated, updates)
               baseValidation <- ctx.validateData(state, updates)
-              pluginValidation <- registry.validateData(updates)
-            } yield baseValidation.combine(pluginValidation)
+            } yield pluginValidation.combine(baseValidation)
           case None =>
             ctx.validateData(state, updates)
         }
@@ -127,10 +129,11 @@ object BaseDataApplicationL0Service {
         ds: Seq[Signed[DataUpdate]]
       )(implicit context: L0NodeContext[F], A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
         service.pluginRegistry match {
-          case Some(_) =>
+          case Some(registry) =>
             for {
               baseFees <- ctx.extractFees(ds)
-            } yield baseFees
+              pluginFees <- registry.extractAllFees(ds)
+            } yield baseFees ++ pluginFees
           case None =>
             ctx.extractFees(ds)
         }
@@ -141,9 +144,9 @@ object BaseDataApplicationL0Service {
         service.pluginRegistry match {
           case Some(registry) =>
             for {
-              baseState <- ctx.combine(state, updates)
-              _ <- registry.combine(updates)
-            } yield baseState
+              pluginState <- registry.combine(state.onChain, state.calculated, updates)
+              finalState <- ctx.combine(DataState(pluginState._1, pluginState._2), updates)
+            } yield finalState
           case None =>
             ctx.combine(state, updates)
         }
@@ -161,7 +164,7 @@ object BaseDataApplicationL0Service {
 
       def calculatedStateEncoder: Encoder[DataCalculatedState] = service.calculatedStateEncoder.asInstanceOf[Encoder[DataCalculatedState]]
 
-      def routesPrefix: ExternalUrlPrefix = ctx.routesPrefix
+      def routesPrefix: F[ExternalUrlPrefix] = ctx.routesPrefix
 
       def onSnapshotConsensusResult(snapshot: Hashed[CurrencyIncrementalSnapshot]): F[Unit] = service.onSnapshotConsensusResult(snapshot)
 
@@ -173,7 +176,7 @@ object BaseDataApplicationL0Service {
       )(implicit context: L0NodeContext[F], hasher: Hasher[F]): F[SortedSet[TokenUnlock]] =
         service.getTokenUnlocks(state)
 
-      override def pluginRegistry: Option[PluginRegistry[F]] = service.pluginRegistry
+      override def pluginRegistry: Option[PluginRegistry[F, DataUpdate, DataOnChainState, DataCalculatedState]] = service.pluginRegistry
     }
   }
 }

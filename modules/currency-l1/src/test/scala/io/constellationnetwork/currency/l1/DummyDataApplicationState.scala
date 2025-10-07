@@ -11,7 +11,7 @@ import org.scalacheck.Gen
 
 object DummyDataApplicationState {
 
-  implicit val dataUpateEncoder: Encoder[DataUpdate] = {
+  implicit val dataUpdateEncoder: Encoder[DataUpdate] = {
     case event: DummyUpdate => event.asJson
     case _                  => Json.Null
   }

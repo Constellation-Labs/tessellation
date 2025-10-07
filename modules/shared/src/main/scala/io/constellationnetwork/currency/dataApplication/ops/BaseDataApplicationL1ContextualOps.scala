@@ -58,6 +58,6 @@ object BaseDataApplicationL1ContextualOps {
 
       def routes(implicit context: L1NodeContext[F]): HttpRoutes[F] = service.routes
 
-      def routesPrefix: ExternalUrlPrefix = service.routesPrefix
+      def routesPrefix: F[ExternalUrlPrefix] = service.routesPrefix
     }
 }

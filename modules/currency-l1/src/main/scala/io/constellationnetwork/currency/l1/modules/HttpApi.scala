@@ -173,21 +173,23 @@ sealed abstract class HttpApi[
     MetagraphRoutes[F](storages.node, storages.session, storages.cluster, httpCfg, selfId, nodeVersion, metagraphVersion)
   }
 
-  private val openRoutes: HttpRoutes[F] =
-    CORS.policy.withAllowOriginAll.withAllowHeadersAll.withAllowCredentials(false).apply {
-      `X-Id-Middleware`.responseMiddleware(selfId) {
-        clusterRoutes.publicRoutes <+>
-          nodeRoutes.publicRoutes <+>
-          metricRoutes <+>
-          targetRoutes <+>
-          transactionRoutes.publicRoutes <+>
-          dataApplicationRoutes.map(_.publicRoutes).getOrElse {
-            currencyRoutes.publicRoutes <+>
-              allowSpendRoutes.publicRoutes <+>
-              tokenLockRoutes.publicRoutes
-          } <+>
-          metagraphNodeRoutes.map(_.publicRoutes).getOrElse(HttpRoutes.empty) <+>
-          DataApplicationCustomRoutes.publicRoutes[F, L1NodeContext[F]](maybeDataApplication)
+  private def openRoutes: F[HttpRoutes[F]] =
+    DataApplicationCustomRoutes.publicRoutes[F, L1NodeContext[F]](maybeDataApplication).map { dataAppRoutes =>
+      CORS.policy.withAllowOriginAll.withAllowHeadersAll.withAllowCredentials(false).apply {
+        `X-Id-Middleware`.responseMiddleware(selfId) {
+          clusterRoutes.publicRoutes <+>
+            nodeRoutes.publicRoutes <+>
+            metricRoutes <+>
+            targetRoutes <+>
+            transactionRoutes.publicRoutes <+>
+            dataApplicationRoutes.map(_.publicRoutes).getOrElse {
+              currencyRoutes.publicRoutes <+>
+                allowSpendRoutes.publicRoutes <+>
+                tokenLockRoutes.publicRoutes
+            } <+>
+            metagraphNodeRoutes.map(_.publicRoutes).getOrElse(HttpRoutes.empty) <+>
+            dataAppRoutes
+        }
       }
     }
 
@@ -219,7 +221,9 @@ sealed abstract class HttpApi[
     ResponseLogger.httpApp(logHeaders = true, logBody = false)(http)
   }
 
-  val publicApp: HttpApp[F] = loggers(openRoutes.orNotFound)
+  val publicApp: F[HttpApp[F]] = openRoutes.map { routes =>
+    loggers(routes.orNotFound)
+  }
   val p2pApp: HttpApp[F] = loggers(p2pRoutes.orNotFound)
   val cliApp: HttpApp[F] = loggers(cliRoutes.orNotFound)
 

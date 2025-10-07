@@ -24,7 +24,7 @@ import io.circe._
 import org.http4s._
 
 class PluginOnlyDataApplicationL0Service[F[_]: Async](
-  registry: PluginRegistry[F],
+  registry: PluginRegistry[F, DataUpdate, DataOnChainState, DataCalculatedState],
   genesisState: DataState.Base,
   updateEnc: Encoder[DataUpdate],
   updateDec: Decoder[DataUpdate],
@@ -33,7 +33,8 @@ class PluginOnlyDataApplicationL0Service[F[_]: Async](
   calcStateDec: Decoder[DataCalculatedState]
 ) extends BaseDataApplicationL0Service[F] {
 
-  override val pluginRegistry: Option[PluginRegistry[F]] = Some(registry)
+  override val pluginRegistry: Option[PluginRegistry[F, DataUpdate, DataOnChainState, DataCalculatedState]] =
+    Some(registry)
 
   // ========== Serialization - delegates to master plugin ==========
 
@@ -90,7 +91,7 @@ class PluginOnlyDataApplicationL0Service[F[_]: Async](
     }
   }
 
-  override def routesPrefix: ExternalUrlPrefix = "/data-application"
+  override def routesPrefix: F[ExternalUrlPrefix] = registry.routesPrefix
 
   // ========== ValidateData: all plugins (master + features) ==========
 
@@ -98,7 +99,7 @@ class PluginOnlyDataApplicationL0Service[F[_]: Async](
     state: DataState.Base,
     updates: NonEmptyList[Signed[DataUpdate]]
   )(implicit context: L0NodeContext[F]): F[DataApplicationValidationErrorOr[Unit]] =
-    registry.validateData(updates)
+    registry.validateData(state.onChain, state.calculated, updates)
 
   override def validateFee(
     gsOrdinal: SnapshotOrdinal
@@ -123,11 +124,10 @@ class PluginOnlyDataApplicationL0Service[F[_]: Async](
     state: DataState.Base,
     updates: List[Signed[DataUpdate]]
   )(implicit context: L0NodeContext[F]): F[DataState.Base] =
-    for {
-      _ <- registry.combine(updates)
-      // Return updated state from master plugin
-      masterState <- registry.getMasterPlugin.map(_.map(_.getState).getOrElse(state))
-    } yield masterState
+    registry.combine(state.onChain, state.calculated, updates).map {
+      case (newOnChain, newCalculated, artifacts) =>
+        DataState(newOnChain, newCalculated)
+    }
 
   // ========== Calculated State Management ==========
 
@@ -181,19 +181,21 @@ object PluginOnlyDataApplicationL0Service {
     masterPlugin: MasterPlugin[F, U, POnChain, PCalculated]
   ): F[PluginOnlyDataApplicationL0Service[F]] =
     for {
-      registry <- PluginRegistry.make[F]
+      registry <- PluginRegistry.make[F, U, POnChain, PCalculated]
       _ <- registry.registerMaster(masterPlugin)
     } yield
       new PluginOnlyDataApplicationL0Service[F](
-        registry,
+        registry.asInstanceOf[PluginRegistry[F, DataUpdate, DataOnChainState, DataCalculatedState]],
         masterPlugin.genesisState.asBase,
         masterPlugin.updateEncoder.contramap[DataUpdate] {
-          case u: U @unchecked => u; case _ => throw new RuntimeException("Invalid update")
+          case u: U @unchecked => u
+          case _               => throw new RuntimeException("Invalid update type")
         },
         masterPlugin.updateDecoder.widen[DataUpdate],
         masterPlugin.signedUpdateEntityDecoder.map(_.widen[DataUpdate]),
         masterPlugin.calculatedStateEncoder.contramap[DataCalculatedState] {
-          case s: PCalculated @unchecked => s; case _ => throw new RuntimeException("Invalid state")
+          case s: PCalculated @unchecked => s
+          case _                         => throw new RuntimeException("Invalid calculated state type")
         },
         masterPlugin.calculatedStateDecoder.widen[DataCalculatedState]
       )

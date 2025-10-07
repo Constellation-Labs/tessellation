@@ -20,5 +20,5 @@ trait BaseDataApplicationSharedContextualOps[F[_], Context] {
 
   def routes(implicit context: Context): HttpRoutes[F]
 
-  def routesPrefix: ExternalUrlPrefix
+  def routesPrefix: F[ExternalUrlPrefix]
 }

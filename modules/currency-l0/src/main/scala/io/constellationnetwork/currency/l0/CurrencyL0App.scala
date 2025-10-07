@@ -187,7 +187,8 @@ abstract class CurrencyL0App(
           queues,
           sharedConfig
         )
-      _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
+      publicApp <- api.publicApp.asResource
+      _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)
 

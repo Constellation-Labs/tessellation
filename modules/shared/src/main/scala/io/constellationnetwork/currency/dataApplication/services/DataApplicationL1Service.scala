@@ -72,5 +72,5 @@ trait DataApplicationL1Service[F[_], D <: DataUpdate, DON <: DataOnChainState, D
     feeTransactionResponseEncoder(dataRequest, validationResult)
 
   // Add plugin registry support
-  def pluginRegistry: Option[PluginRegistry[F]] = None
+  def pluginRegistry: Option[PluginRegistry[F, DataUpdate, DataOnChainState, DataCalculatedState]] = None
 }
