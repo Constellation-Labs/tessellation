@@ -40,7 +40,8 @@ object GlobalSnapshotContextFunctions {
     snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     updateDelegatedStakeAcceptanceManager: UpdateDelegatedStakeAcceptanceManager[F],
     withdrawalTimeLimit: EpochProgress,
-    tessellation3MigrationStartingOrdinal: SnapshotOrdinal
+    tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
+    setSumFixOrdinal: SnapshotOrdinal
   ) =
     new GlobalSnapshotContextFunctions[F] {
 
@@ -211,7 +212,20 @@ object GlobalSnapshotContextFunctions {
                       nodeOperatorRewards = txs,
                       reservedAddressRewards = SortedSet.empty,
                       withdrawalRewardTxs = SortedSet.empty,
-                      totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(txs.map(_.amount.value.value).sum))
+                      totalEmittedRewardsAmount =
+                        Amount(NonNegLong.unsafeFrom(txs.toList.map(_.amount.value.value).distinct.sum)) // mimic incorrect behaviour
+                    )
+                  } else if (signedArtifact.ordinal.value < setSumFixOrdinal.value) {
+                    DelegatedRewardsResult(
+                      delegatorRewardsMap = signedArtifact.delegateRewards
+                        .getOrElse(SortedMap.empty[PeerId, Map[Address, Amount]]),
+                      updatedCreateDelegatedStakes = updatedCreateDelegatedStakes,
+                      updatedWithdrawDelegatedStakes = updatedWithdrawDelegatedStakes,
+                      nodeOperatorRewards = txs,
+                      reservedAddressRewards = SortedSet.empty,
+                      withdrawalRewardTxs = SortedSet.empty,
+                      totalEmittedRewardsAmount =
+                        Amount(NonNegLong.unsafeFrom(txs.toList.map(_.amount.value.value).distinct.sum)) // mimic incorrect behaviour
                     )
                   } else {
                     DelegatedRewardsResult(
@@ -222,7 +236,7 @@ object GlobalSnapshotContextFunctions {
                       nodeOperatorRewards = txs,
                       reservedAddressRewards = SortedSet.empty,
                       withdrawalRewardTxs = SortedSet.empty,
-                      totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(txs.map(_.amount.value.value).sum))
+                      totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(txs.toList.map(_.amount.value.value).sum))
                     )
                   }
                 },

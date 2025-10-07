@@ -8,12 +8,7 @@ import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import io.constellationnetwork.node.shared.infrastructure.snapshot.WeightedSampling.{
-  ProbabilityRefinement,
-  Weight,
-  WeightRefinement,
-  sample => weightedSample
-}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.WeightedSampling.{sample => weightedSample, _}
 import io.constellationnetwork.schema.trust.TrustValueRefined
 
 import eu.timepit.refined.auto._

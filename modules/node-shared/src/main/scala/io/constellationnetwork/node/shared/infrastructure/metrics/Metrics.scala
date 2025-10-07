@@ -21,12 +21,7 @@ import eu.timepit.refined.string.MatchesRegex
 import io.chrisdavenport.mapref.MapRef
 import io.micrometer.core.instrument.binder.jvm._
 import io.micrometer.core.instrument.binder.logging.LogbackMetrics
-import io.micrometer.core.instrument.binder.system.{
-  DiskSpaceMetrics => SystemDiskSpaceMetrics,
-  FileDescriptorMetrics,
-  ProcessorMetrics,
-  UptimeMetrics
-}
+import io.micrometer.core.instrument.binder.system.{DiskSpaceMetrics => SystemDiskSpaceMetrics, _}
 import io.micrometer.core.instrument.{DistributionSummary, Tag}
 import io.micrometer.prometheus.{PrometheusConfig, PrometheusMeterRegistry}
 import io.prometheus.client.exporter.common.TextFormat
