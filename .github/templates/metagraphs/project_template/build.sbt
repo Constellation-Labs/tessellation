@@ -19,7 +19,15 @@ ThisBuild / assemblyMergeStrategy := {
 lazy val commonSettings = Seq(
   testFrameworks += new TestFramework("weaver.framework.CatsEffect"),
   scalafmtOnCompile := true,
-  scalafixOnCompile := true
+  scalafixOnCompile := true,
+  scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
+  buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
+  resolvers ++= Seq(Resolver.mavenLocal),
+  libraryDependencies ++= Seq(
+    CompilerPlugin.kindProjector,
+    CompilerPlugin.betterMonadicFor,
+    CompilerPlugin.semanticDB
+  )
 )
 
 lazy val root = (project in file(".")).
@@ -28,72 +36,37 @@ lazy val root = (project in file(".")).
   ).aggregate(sharedData, currencyL0, currencyL1, dataL1)
 
 lazy val sharedData = (project in file("modules/shared_data"))
-  .enablePlugins(AshScriptPlugin)
-  .enablePlugins(BuildInfoPlugin)
-  .enablePlugins(JavaAppPackaging)
+  .enablePlugins(AshScriptPlugin, BuildInfoPlugin, JavaAppPackaging)
   .settings(
     name := "project_template-shared_data",
-    scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
-    buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
     buildInfoPackage := "com.my.project_template.shared_data",
-    resolvers ++= Seq(
-      Resolver.mavenLocal,
-      Resolver.githubPackages("abankowski", "http-request-signer")
-    ),
     Defaults.itSettings,
     commonSettings,
     libraryDependencies ++= Seq(
-      CompilerPlugin.kindProjector,
-      CompilerPlugin.betterMonadicFor,
-      CompilerPlugin.semanticDB,
       Libraries.tessellationSdk,
-      Libraries.requests,
+      Libraries.requests
     )
   )
 
 lazy val currencyL1 = (project in file("modules/l1"))
-  .enablePlugins(AshScriptPlugin)
-  .enablePlugins(BuildInfoPlugin)
-  .enablePlugins(JavaAppPackaging)
+  .enablePlugins(AshScriptPlugin, BuildInfoPlugin, JavaAppPackaging)
   .dependsOn(sharedData)
   .settings(
     name := "project_template-currency-l1",
-    scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
-    buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
     buildInfoPackage := "com.my.project_template.l1",
-    resolvers ++= Seq(
-      Resolver.mavenLocal,
-      Resolver.githubPackages("abankowski", "http-request-signer")
-    ),
     Defaults.itSettings,
-    commonSettings,
-    libraryDependencies ++= Seq(
-      CompilerPlugin.kindProjector,
-      CompilerPlugin.betterMonadicFor,
-      CompilerPlugin.semanticDB
-    )
+    commonSettings
   )
 
 lazy val currencyL0 = (project in file("modules/l0"))
-  .enablePlugins(AshScriptPlugin)
-  .enablePlugins(BuildInfoPlugin)
-  .enablePlugins(JavaAppPackaging)
+  .enablePlugins(AshScriptPlugin, BuildInfoPlugin, JavaAppPackaging)
   .dependsOn(sharedData)
   .settings(
     name := "project_template-currency-l0",
-    scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
-    buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
     buildInfoPackage := "com.my.project_template.l0",
-    resolvers ++= Seq(
-      Resolver.mavenLocal,
-      Resolver.githubPackages("abankowski", "http-request-signer")
-    ),
     Defaults.itSettings,
     commonSettings,
     libraryDependencies ++= Seq(
-      CompilerPlugin.kindProjector,
-      CompilerPlugin.betterMonadicFor,
-      CompilerPlugin.semanticDB,
       Libraries.declineRefined,
       Libraries.declineCore,
       Libraries.declineEffect
@@ -101,24 +74,11 @@ lazy val currencyL0 = (project in file("modules/l0"))
   )
 
 lazy val dataL1 = (project in file("modules/data_l1"))
-  .enablePlugins(AshScriptPlugin)
-  .enablePlugins(BuildInfoPlugin)
-  .enablePlugins(JavaAppPackaging)
+  .enablePlugins(AshScriptPlugin, BuildInfoPlugin, JavaAppPackaging)
   .dependsOn(sharedData)
   .settings(
     name := "project_template-data_l1",
-    scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
-    buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
     buildInfoPackage := "com.my.project_template.data_l1",
-    resolvers ++= Seq(
-      Resolver.mavenLocal,
-      Resolver.githubPackages("abankowski", "http-request-signer")
-    ),
     Defaults.itSettings,
-    commonSettings,
-    libraryDependencies ++= Seq(
-      CompilerPlugin.kindProjector,
-      CompilerPlugin.betterMonadicFor,
-      CompilerPlugin.semanticDB
-    )
+    commonSettings
   )

@@ -98,7 +98,7 @@ package object shared {
     classOf[GlobalSnapshotStateProofV1] -> 628,
     classOf[CurrencySnapshotStateProofV1] -> 629,
     classOf[StateProof] -> 630,
-    classOf[DataApplicationPart] -> 631,
+    classOf[DataApplicationPartV1] -> 631,
     DataCancellationReason.getClass -> 632,
     DataCancellationReason.ReceivedProposalForNonExistentOwnRound.getClass -> 633,
     DataCancellationReason.MissingRoundPeers.getClass -> 634,
