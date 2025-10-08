@@ -6,9 +6,10 @@ import cats.syntax.all._
 import io.constellationnetwork.currency.dataApplication.L0NodeContext
 import io.constellationnetwork.ext.http4s.AddressVar
 import io.constellationnetwork.routes.internal.{InternalUrlPrefix, PublicRoutes}
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 
-import com.my.project_template.shared_data.calculated_state.CalculatedStateService
+import com.my.project_template.shared_data.types.Types.UsageUpdateCalculatedState
 import eu.timepit.refined.auto._
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
@@ -16,18 +17,21 @@ import org.http4s.dsl.Http4sDsl
 import org.http4s.server.middleware.CORS
 
 case class CustomRoutes[F[_]: Async](
-  calculatedStateService: CalculatedStateService[F],
+  getCalculatedState: F[(SnapshotOrdinal, UsageUpdateCalculatedState)],
   context: L0NodeContext[F]
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {
 
+  private def getState: F[UsageUpdateCalculatedState] =
+    getCalculatedState.map(_._2)
+
   private def getAllDevices: F[Response[F]] =
-    calculatedStateService.getCalculatedState
-      .flatMap(value => Ok(value.state.devices))
+    getState
+      .flatMap(state => Ok(state.devices))
 
   private def getDeviceByAddress(address: Address): F[Response[F]] =
-    calculatedStateService.getCalculatedState
-      .flatMap(_.state.devices.get(address).fold(NotFound())(Ok(_)))
+    getState
+      .flatMap(_.devices.get(address).fold(NotFound())(Ok(_)))
 
   private def getLastSyncGlobalSnapshot: F[Response[F]] = {
     import io.circe.generic.auto._

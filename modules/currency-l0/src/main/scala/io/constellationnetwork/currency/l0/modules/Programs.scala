@@ -3,12 +3,12 @@ package io.constellationnetwork.currency.l0.modules
 import java.security.KeyPair
 
 import cats.Parallel
-import cats.effect.Async
 import cats.effect.std.Random
+import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
-import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
+import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataCalculatedState, L0NodeContext}
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
 import io.constellationnetwork.currency.l0.snapshot.programs.{Download, Genesis, Rollback}
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot}
@@ -21,6 +21,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.infrastructure.genesis.{GenesisFS => GenesisLoader}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencySnapshotContextFunctions, PeerSelect}
 import io.constellationnetwork.node.shared.modules.{SharedPrograms, SharedStorages}
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.{L0Peer, PeerId}
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
@@ -36,7 +37,9 @@ object Programs {
     services: Services[F, R],
     p2pClient: P2PClient[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
-    dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])]
+    dataApplication: Option[
+      (BaseDataApplicationL0Service[F], (CalculatedStateLocalFileSystemStorage[F], Ref[F, (SnapshotOrdinal, DataCalculatedState)]))
+    ]
   )(implicit context: L0NodeContext[F]): Programs[F] = {
     val peerSelect: PeerSelect[F] =
       PeerSelect.make(
@@ -56,7 +59,8 @@ object Programs {
         dataApplication.map { case (da, _) => da },
         services.globalL0.pullGlobalSnapshot,
         storages.snapshot,
-        storages.currencySnapshotCleanup
+        storages.currencySnapshotCleanup,
+        storages.calculatedStateStorage.map { case (_, ref) => ref }
       )
 
     val globalL0PeerDiscovery = L0PeerDiscovery.make(
@@ -77,7 +81,8 @@ object Programs {
       services.consensus.manager,
       genesisLoader,
       storages.identifier,
-      services.globalL0
+      services.globalL0,
+      storages.calculatedStateStorage.map { case (_, ref) => ref }
     )
 
     val rollback = Rollback.make(

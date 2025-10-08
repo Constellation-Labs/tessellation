@@ -3,7 +3,7 @@ package io.constellationnetwork.node.shared.infrastructure.snapshot
 import cats.Applicative
 import cats.data.Validated.{Invalid, Valid}
 import cats.data.{NonEmptyList, OptionT}
-import cats.effect.Async
+import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
@@ -66,20 +66,10 @@ object DataApplicationSnapshotAcceptanceManager {
   def make[F[_]: Async: Hasher: SecurityProvider](
     service: BaseDataApplicationL0Service[F],
     nodeContext: L0NodeContext[F],
-    calculatedStateStorage: CalculatedStateLocalFileSystemStorage[F]
+    calculatedStateStorage: CalculatedStateLocalFileSystemStorage[F],
+    calculatedStateRef: Ref[F, (SnapshotOrdinal, DataCalculatedState)]
   ): DataApplicationSnapshotAcceptanceManager[F] = new DataApplicationSnapshotAcceptanceManager[F] {
     private val logger = Slf4jLogger.getLogger
-
-    def expectCalculatedStateOrdinal(
-      expectedOrdinal: SnapshotOrdinal
-    )(calculatedState: (SnapshotOrdinal, DataCalculatedState)): F[DataCalculatedState] =
-      calculatedState match {
-        case (ordinal, state) =>
-          CalculatedStateDoesNotMatchOrdinal(ordinal, expectedOrdinal)
-            .raiseError[F, Unit]
-            .whenA(ordinal =!= expectedOrdinal)
-            .as(state)
-      }
 
     def expectCalculatedStateHash(
       expectedHash: Hash
@@ -109,8 +99,10 @@ object DataApplicationSnapshotAcceptanceManager {
             }
             .map(_.calculatedState)
             .semiflatMap(expectCalculatedStateHash(da.calculatedStateProof))
-            .semiflatTap(service.setCalculatedState(artifact.ordinal, _))
-            .semiflatTap(calculatedStateStorage.write(artifact.ordinal, _)(service.serializeCalculatedState))
+            .semiflatTap { state =>
+              calculatedStateStorage.write(artifact.ordinal, state)(service.serializeCalculatedState) >>
+                calculatedStateRef.set((artifact.ordinal, state))
+            }
         }
         .value
         .void
@@ -147,8 +139,13 @@ object DataApplicationSnapshotAcceptanceManager {
         }
 
         lastCalculatedState <- OptionT.liftF(
-          service.getCalculatedState
-            .flatMap(expectCalculatedStateOrdinal(lastOrdinal))
+          calculatedStateRef.get.flatMap {
+            case (ordinal, state) =>
+              CalculatedStateDoesNotMatchOrdinal(ordinal, lastOrdinal)
+                .raiseError[F, Unit]
+                .whenA(ordinal =!= lastOrdinal)
+                .as(state)
+          }
         )
 
         dataState = DataState(lastOnChainState, lastCalculatedState)
@@ -273,14 +270,15 @@ object DataApplicationSnapshotAcceptanceManager {
 
       newDataState.value.handleErrorWith { err =>
         logger.error(err)("Unhandled exception during calculating new data application state, fallback to last data application") >>
-          service.getCalculatedState.map { lastCalculatedState =>
-            maybeLastDataApplication.map(part =>
-              DataApplicationAcceptanceResult(
-                part,
-                lastCalculatedState._2,
-                notAccepted = dataBlocks.map(signedBlock => (signedBlock, DataBlockNotAccepted(err.getMessage)))
+          calculatedStateRef.get.map {
+            case (_, lastCalculatedState) =>
+              maybeLastDataApplication.map(part =>
+                DataApplicationAcceptanceResult(
+                  part,
+                  lastCalculatedState,
+                  notAccepted = dataBlocks.map(signedBlock => (signedBlock, DataBlockNotAccepted(err.getMessage)))
+                )
               )
-            )
           }
       }
     }

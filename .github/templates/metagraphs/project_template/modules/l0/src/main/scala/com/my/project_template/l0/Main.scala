@@ -30,11 +30,11 @@ import io.constellationnetwork.security.signature.Signed
 
 import com.my.project_template.l0.custom_routes.CustomRoutes
 import com.my.project_template.shared_data.LifecycleSharedFunctions
-import com.my.project_template.shared_data.calculated_state.CalculatedStateService
 import com.my.project_template.shared_data.deserializers.Deserializers
 import com.my.project_template.shared_data.serializers.Serializers
 import com.my.project_template.shared_data.types.Types._
 import eu.timepit.refined.auto._
+import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder}
 import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 import org.http4s.{EntityDecoder, HttpRoutes}
@@ -48,9 +48,7 @@ object Main
       metagraphVersion = MetagraphVersion.unsafeFrom("1.0.0")
     ) {
 
-  private def makeBaseDataApplicationL0Service(
-    calculatedStateService: CalculatedStateService[IO]
-  ): BaseDataApplicationL0Service[IO] =
+  private def makeBaseDataApplicationL0Service(): BaseDataApplicationL0Service[IO] =
     BaseDataApplicationL0Service(new DataApplicationL0Service[IO, UsageUpdate, UsageUpdateState, UsageUpdateCalculatedState] {
       override def genesis: DataState[UsageUpdateState, UsageUpdateCalculatedState] =
         DataState(UsageUpdateState(List.empty), UsageUpdateCalculatedState(Map.empty))
@@ -115,22 +113,13 @@ object Main
       ): IO[Either[Throwable, UsageUpdate]] =
         IO(Deserializers.deserializeUpdate(bytes))
 
-      override def getCalculatedState(implicit context: L0NodeContext[IO]): IO[(SnapshotOrdinal, UsageUpdateCalculatedState)] =
-        calculatedStateService.getCalculatedState.map(calculatedState => (calculatedState.ordinal, calculatedState.state))
-
-      override def setCalculatedState(
-        ordinal: SnapshotOrdinal,
-        state: UsageUpdateCalculatedState
-      )(implicit context: L0NodeContext[IO]): IO[Boolean] =
-        calculatedStateService.setCalculatedState(ordinal, state)
-
       override def hashCalculatedState(
         state: UsageUpdateCalculatedState
       )(implicit context: L0NodeContext[IO]): IO[Hash] =
-        calculatedStateService.hashCalculatedState(state)
+        IO(Hash(state.asJson.noSpaces))
 
       override def routes(implicit context: L0NodeContext[IO]): HttpRoutes[IO] =
-        CustomRoutes[IO](calculatedStateService, context).public
+        CustomRoutes[IO](getCalculatedState, context).public
 
       override def serializeCalculatedState(
         state: UsageUpdateCalculatedState
@@ -165,10 +154,7 @@ object Main
     })
 
   private def makeL0Service: IO[BaseDataApplicationL0Service[IO]] =
-    for {
-      calculatedStateService <- CalculatedStateService.make[IO]
-      dataApplicationL0Service = makeBaseDataApplicationL0Service(calculatedStateService)
-    } yield dataApplicationL0Service
+    makeBaseDataApplicationL0Service().pure[IO]
 
   override def dataApplication: Option[Resource[IO, BaseDataApplicationL0Service[IO]]] =
     makeL0Service.asResource.some

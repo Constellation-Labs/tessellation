@@ -234,9 +234,8 @@ trait BaseDataApplicationL0ContextualOps[F[_]] extends BaseDataApplicationShared
 
   def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(implicit context: L0NodeContext[F]): F[DataState.Base]
 
-  def getCalculatedState(implicit context: L0NodeContext[F]): F[(SnapshotOrdinal, DataCalculatedState)]
-
-  def setCalculatedState(ordinal: SnapshotOrdinal, state: DataCalculatedState)(implicit context: L0NodeContext[F]): F[Boolean]
+  final def getCalculatedState(implicit context: L0NodeContext[F]): F[(SnapshotOrdinal, DataCalculatedState)] =
+    context.getCalculatedStateFromStorage
 
   def hashCalculatedState(state: DataCalculatedState)(implicit context: L0NodeContext[F]): F[Hash]
 
@@ -329,9 +328,8 @@ trait DataApplicationL0ContextualOps[F[_], D <: DataUpdate, DON <: DataOnChainSt
 
   def combine(state: DataState[DON, DOF], updates: List[Signed[D]])(implicit context: L0NodeContext[F]): F[DataState[DON, DOF]]
 
-  def getCalculatedState(implicit context: L0NodeContext[F]): F[(SnapshotOrdinal, DOF)]
-
-  def setCalculatedState(ordinal: SnapshotOrdinal, state: DOF)(implicit context: L0NodeContext[F]): F[Boolean]
+  final def getCalculatedState(implicit context: L0NodeContext[F], functor: Functor[F]): F[(SnapshotOrdinal, DOF)] =
+    context.getCalculatedStateFromStorage.map { case (ord, state) => (ord, state.asInstanceOf[DOF]) }
 
   def hashCalculatedState(state: DOF)(implicit context: L0NodeContext[F]): F[Hash]
 
@@ -473,15 +471,6 @@ object BaseDataApplicationL0ContextualOps {
           case (on: DON, off: DOF, sharedArtifacts: SortedSet[SharedArtifact]) if allKnown(updates) =>
             service.combine(DataState(on, off, sharedArtifacts), updates.asInstanceOf[List[Signed[D]]]).map(_.asBase)
           case (_, _, _) => UnexpectedInput.raiseError[F, DataState.Base]
-        }
-
-      def getCalculatedState(implicit context: L0NodeContext[F]): F[(SnapshotOrdinal, DataCalculatedState)] =
-        service.getCalculatedState.widen[(SnapshotOrdinal, DataCalculatedState)]
-
-      def setCalculatedState(ordinal: SnapshotOrdinal, state: DataCalculatedState)(implicit context: L0NodeContext[F]): F[Boolean] =
-        state match {
-          case s: DOF => service.setCalculatedState(ordinal, s)
-          case _      => UnexpectedInput.raiseError[F, Boolean]
         }
 
       def hashCalculatedState(state: DataCalculatedState)(implicit context: L0NodeContext[F]): F[Hash] =
@@ -682,12 +671,6 @@ object BaseDataApplicationL0Service {
       ): F[DataState.Base] =
         ctx.combine(state, updates)
 
-      def getCalculatedState(implicit context: L0NodeContext[F]): F[(SnapshotOrdinal, DataCalculatedState)] =
-        ctx.getCalculatedState
-
-      def setCalculatedState(ordinal: SnapshotOrdinal, state: DataCalculatedState)(implicit context: L0NodeContext[F]): F[Boolean] =
-        ctx.setCalculatedState(ordinal, state)
-
       def hashCalculatedState(state: DataCalculatedState)(implicit context: L0NodeContext[F]): F[Hash] =
         ctx.hashCalculatedState(state)
 
@@ -854,4 +837,5 @@ trait L0NodeContext[F[_]] {
   def securityProvider: SecurityProvider[F]
   def getCurrencyId: F[CurrencyId]
   def getMetagraphL0Seedlist: Option[Set[SeedlistEntry]]
+  def getCalculatedStateFromStorage: F[(SnapshotOrdinal, DataCalculatedState)]
 }

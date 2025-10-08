@@ -147,7 +147,8 @@ abstract class CurrencyL0App(
           hasherSelectorAlwaysCurrent,
           storages.lastSyncGlobalSnapshot,
           storages.identifier,
-          nodeShared.seedlist
+          nodeShared.seedlist,
+          storages.calculatedStateStorage
         )
 
       programs = Programs.make[IO, Run](

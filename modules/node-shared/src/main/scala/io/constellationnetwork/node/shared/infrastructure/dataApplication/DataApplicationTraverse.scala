@@ -37,6 +37,7 @@ object DataApplicationTraverse {
     fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     dataApplication: BaseDataApplicationL0Service[F],
     calculatedStateStorage: CalculatedStateLocalFileSystemStorage[F],
+    calculatedStateRef: Ref[F, (SnapshotOrdinal, DataCalculatedState)],
     globalSnapshotsWithStateLocalFileSystemStorage: GlobalSnapshotsWithStateLocalFileSystemStorage[F],
     globalSnapshotsWithStateDeltasLocalFileSystemStorage: GlobalSnapshotsWithStateDeltasLocalFileSystemStorage[F],
     identifier: Address,
@@ -49,6 +50,7 @@ object DataApplicationTraverse {
         fetchSnapshot,
         dataApplication,
         calculatedStateStorage,
+        calculatedStateRef,
         globalSnapshotsWithStateLocalFileSystemStorage,
         globalSnapshotsWithStateDeltasLocalFileSystemStorage,
         jsonSerializer,
@@ -63,6 +65,7 @@ object DataApplicationTraverse {
     fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     dataApplication: BaseDataApplicationL0Service[F],
     calculatedStateStorage: CalculatedStateLocalFileSystemStorage[F],
+    calculatedStateRef: Ref[F, (SnapshotOrdinal, DataCalculatedState)],
     globalSnapshotsWithStateLocalFileSystemStorage: GlobalSnapshotsWithStateLocalFileSystemStorage[F],
     globalSnapshotsWithStateDeltasLocalFileSystemStorage: GlobalSnapshotsWithStateDeltasLocalFileSystemStorage[F],
     jsonSerializer: JsonBrotliBinarySerializer[F],
@@ -320,7 +323,7 @@ object DataApplicationTraverse {
               }
               result <- applyCache(state, currencyIncrementalSnapshot.ordinal) >>= {
                 case (latestState, latestOrdinal) =>
-                  dataApplication.setCalculatedState(latestOrdinal, latestState.calculated) >>
+                  calculatedStateRef.set((latestOrdinal, latestState.calculated)) >>
                     globalSnapshotsWithStateLocalFileSystemStorage.deleteAbove(globalOrdinal) >>
                     globalSnapshotsWithStateDeltasLocalFileSystemStorage.deleteAbove(globalOrdinal) >>
                     calculatedStateStorage.deleteAbove(latestOrdinal).as {

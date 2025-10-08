@@ -1,12 +1,13 @@
 package io.constellationnetwork.currency.l0.node
 
 import cats.data.OptionT
-import cats.effect.Async
+import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.currency.dataApplication.L0NodeContext
+import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
+import io.constellationnetwork.currency.dataApplication.{DataCalculatedState, L0NodeContext}
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.app.NodeShared
@@ -27,7 +28,8 @@ object L0NodeContext {
     hasherSelector: HasherSelector[F],
     lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
     identifierStorage: IdentifierStorage[F],
-    l0Seedlist: Option[Set[SeedlistEntry]]
+    l0Seedlist: Option[Set[SeedlistEntry]],
+    calculatedStateStorage: Option[(CalculatedStateLocalFileSystemStorage[F], Ref[F, (SnapshotOrdinal, DataCalculatedState)])]
   ): L0NodeContext[F] = new L0NodeContext[F] {
     val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
@@ -64,5 +66,11 @@ object L0NodeContext {
 
     def getLastSynchronizedTokenLocks: F[Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]] =
       lastGlobalSnapshotStorage.getLastSynchronizedActiveTokenLocks
+
+    def getCalculatedStateFromStorage: F[(SnapshotOrdinal, DataCalculatedState)] =
+      calculatedStateStorage.map { case (_, ref) => ref.get }.getOrElse {
+        new IllegalStateException("Calculated state storage not available - no data application configured")
+          .raiseError[F, (SnapshotOrdinal, DataCalculatedState)]
+      }
   }
 }

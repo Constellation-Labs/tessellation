@@ -1,18 +1,9 @@
 package io.constellationnetwork.currency.l0.snapshot.programs
 
 import cats.Applicative
-import cats.effect.Async
 import cats.effect.std.Random
-import cats.syntax.all.none
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
-import cats.syntax.either._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.option._
-import cats.syntax.order._
-import cats.syntax.semigroup._
-import cats.syntax.show._
+import cats.effect.{Async, Ref}
+import cats.syntax.all._
 
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
@@ -56,7 +47,8 @@ object Download {
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] with LatestBalances[F],
-    currencySnapshotCleanupStorage: CurrencySnapshotCleanupStorage[F]
+    currencySnapshotCleanupStorage: CurrencySnapshotCleanupStorage[F],
+    maybeCalculatedStateRef: Option[Ref[F, (SnapshotOrdinal, DataCalculatedState)]]
   )(implicit l0NodeContext: L0NodeContext[F]): Download[F, CurrencyIncrementalSnapshot] = new Download[F, CurrencyIncrementalSnapshot] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -82,27 +74,29 @@ object Download {
         .flatMap { result =>
           val ((snapshot, context), observationLimit) = result
 
-          def setCalculatedState = maybeDataApplication.map { da =>
-            implicit val d = da.calculatedStateDecoder
+          def setCalculatedState = (maybeDataApplication, maybeCalculatedStateRef).tupled.traverse_ {
+            case (da, ref) =>
+              implicit val d = da.calculatedStateDecoder
 
-            clusterStorage.getResponsivePeers
-              .map(NodeState.ready)
-              .map(_.toList)
-              .flatMap(Random[F].shuffleList)
-              .flatMap {
-                case Nil => (new Exception(s"No peers to fetch off-chain state from")).raiseError[F, (SnapshotOrdinal, DataCalculatedState)]
-                case peer :: _ => p2pClient.dataApplication.getCalculatedState.run(peer)
-              }
-              .flatTap {
-                case (_, calculatedState) =>
-                  da.hashCalculatedState(calculatedState).flatMap { calculatedStateHash =>
-                    (new Exception(s"Downloaded calculated state does not match the proof stored in snapshot")
-                      .raiseError[F, Unit])
-                      .unlessA(snapshot.dataApplication.map(_.calculatedStateProof) === calculatedStateHash.some)
-                  }
-              }
-              .flatMap { case (ordinal, calculatedState) => da.setCalculatedState(ordinal, calculatedState) }
-          }.getOrElse(Applicative[F].unit)
+              clusterStorage.getResponsivePeers
+                .map(NodeState.ready)
+                .map(_.toList)
+                .flatMap(Random[F].shuffleList)
+                .flatMap {
+                  case Nil =>
+                    (new Exception(s"No peers to fetch off-chain state from")).raiseError[F, (SnapshotOrdinal, DataCalculatedState)]
+                  case peer :: _ => p2pClient.dataApplication.getCalculatedState.run(peer)
+                }
+                .flatTap {
+                  case (_, calculatedState) =>
+                    da.hashCalculatedState(calculatedState).flatMap { calculatedStateHash =>
+                      (new Exception(s"Downloaded calculated state does not match the proof stored in snapshot")
+                        .raiseError[F, Unit])
+                        .unlessA(snapshot.dataApplication.map(_.calculatedStateProof) === calculatedStateHash.some)
+                    }
+                }
+                .flatMap { case (ordinal, calculatedState) => ref.set((ordinal, calculatedState)) }
+          }
 
           snapshotStorage.prepend(snapshot, context) >>
             setCalculatedState >>

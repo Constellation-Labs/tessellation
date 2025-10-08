@@ -1,7 +1,7 @@
 package io.constellationnetwork.currency.l0.snapshot.programs
 
 import cats.Applicative
-import cats.effect.Async
+import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
 import scala.concurrent.duration._
@@ -12,7 +12,7 @@ import io.constellationnetwork.currency.dataApplication.storage.{
   GlobalSnapshotsWithStateDeltasLocalFileSystemStorage,
   GlobalSnapshotsWithStateLocalFileSystemStorage
 }
-import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
+import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataCalculatedState, L0NodeContext}
 import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnapshotCleanupStorage
 import io.constellationnetwork.currency.l0.modules.Storages
 import io.constellationnetwork.currency.l0.snapshot.CurrencyConsensusManager
@@ -29,8 +29,8 @@ import io.constellationnetwork.node.shared.infrastructure.dataApplication.DataAp
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
 import io.constellationnetwork.node.shared.modules.SharedStorages
-import io.constellationnetwork.schema.GlobalIncrementalSnapshot
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 
@@ -58,7 +58,9 @@ object Rollback {
     storages: Storages[F],
     collateral: Collateral[F],
     consensusManager: CurrencyConsensusManager[F],
-    dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])],
+    dataApplication: Option[
+      (BaseDataApplicationL0Service[F], (CalculatedStateLocalFileSystemStorage[F], Ref[F, (SnapshotOrdinal, DataCalculatedState)]))
+    ],
     currencySnapshotCleanupStorage: CurrencySnapshotCleanupStorage[F],
     globalSnapshotsWithStateLocalFileSystemStorage: GlobalSnapshotsWithStateLocalFileSystemStorage[F],
     globalSnapshotsWithStateDeltasLocalFileSystemStorage: GlobalSnapshotsWithStateDeltasLocalFileSystemStorage[F],
@@ -112,8 +114,8 @@ object Rollback {
         .hasCollateral(nodeId)
         .flatMap(OwnCollateralNotSatisfied.raiseError[F, Unit].unlessA)
 
-      _ <- dataApplication.map {
-        case (da, cs) =>
+      _ <- dataApplication.traverse_ {
+        case (da, (fs, ref)) =>
           val fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]] = (hash: Hash) =>
             globalL0Service
               .pullGlobalSnapshot(hash)
@@ -131,7 +133,8 @@ object Rollback {
               globalSnapshotStartingPoint,
               fetchSnapshot,
               da,
-              cs,
+              fs,
+              ref,
               globalSnapshotsWithStateLocalFileSystemStorage,
               globalSnapshotsWithStateDeltasLocalFileSystemStorage,
               identifier,
@@ -144,8 +147,7 @@ object Rollback {
                 case _       => new Exception(s"Metagraph traversing failed").raiseError[F, Unit]
               }
             }
-
-      }.getOrElse(Applicative[F].unit)
+      }
 
       (globalSnapshotUpdated, globalSnapshotInfoUpdated) <- globalL0Service.pullLatestSnapshot
       _ <- sharedStorages.lastGlobalSnapshot.setInitial(globalSnapshotUpdated, globalSnapshotInfoUpdated)

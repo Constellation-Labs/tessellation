@@ -3,10 +3,10 @@ package io.constellationnetwork.currency.l0.snapshot.programs
 import java.security.KeyPair
 
 import cats.Parallel
-import cats.effect.Async
+import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
-import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
+import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataCalculatedState, L0NodeContext}
 import io.constellationnetwork.currency.l0.snapshot.CurrencyConsensusManager
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
 import io.constellationnetwork.currency.l0.snapshot.services.StateChannelSnapshotService
@@ -20,6 +20,7 @@ import io.constellationnetwork.node.shared.http.p2p.clients.StateChannelSnapshot
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.{L0Peer, PeerId}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -57,7 +58,8 @@ object Genesis {
     consensusManager: CurrencyConsensusManager[F],
     genesisLoader: GenesisLoader[F, CurrencySnapshot],
     identifierStorage: IdentifierStorage[F],
-    l0Service: GlobalL0Service[F]
+    l0Service: GlobalL0Service[F],
+    maybeCalculatedStateRef: Option[Ref[F, (SnapshotOrdinal, DataCalculatedState)]]
   ): Genesis[F] = new Genesis[F] {
     private val logger = Slf4jLogger.getLogger
 
@@ -73,8 +75,9 @@ object Genesis {
         .hasCollateral(nodeId)
         .flatMap(OwnCollateralNotSatisfied.raiseError[F, Unit].unlessA)
 
-      _ <- dataApplication
-        .traverse(app => app.setCalculatedState(firstIncrementalSnapshot.ordinal, app.genesis.calculated))
+      _ <- (dataApplication, maybeCalculatedStateRef).tupled.traverse_ {
+        case (da, ref) => ref.set((firstIncrementalSnapshot.ordinal, da.genesis.calculated))
+      }
 
       signedBinary <- stateChannelSnapshotService.createGenesisBinary(hashedGenesis.signed)
       identifier = signedBinary.value.toAddress
@@ -118,8 +121,9 @@ object Genesis {
     ): F[Unit] = genesisLoader
       .loadSignedGenesis(genesisPath)
       .flatTap { genesis =>
-        dataApplication
-          .traverse(app => app.setCalculatedState(genesis.ordinal, app.genesis.calculated))
+        (dataApplication, maybeCalculatedStateRef).tupled.traverse_ {
+          case (da, ref) => ref.set((genesis.ordinal, da.genesis.calculated))
+        }
       }
       .flatMap(acceptSignedGenesis(dataApplication))
 

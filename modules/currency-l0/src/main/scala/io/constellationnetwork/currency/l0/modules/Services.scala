@@ -94,11 +94,18 @@ object Services {
       )
 
       l0NodeContext = L0NodeContext
-        .make[F](storages.snapshot, hasherSelector, storages.lastSyncGlobalSnapshot, storages.identifier, seedlist)
+        .make[F](
+          storages.snapshot,
+          hasherSelector,
+          storages.lastSyncGlobalSnapshot,
+          storages.identifier,
+          seedlist,
+          storages.calculatedStateStorage
+        )
 
       dataApplicationAcceptanceManager = (maybeDataApplication, storages.calculatedStateStorage).mapN {
-        case (service, storage) =>
-          DataApplicationSnapshotAcceptanceManager.make[F](service, l0NodeContext, storage)
+        case (service, (fileSystemStorage, stateRef)) =>
+          DataApplicationSnapshotAcceptanceManager.make[F](service, l0NodeContext, fileSystemStorage, stateRef)
       }
 
       feeCalculator = FeeCalculator.make(cfg.shared.feeConfigs)
