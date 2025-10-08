@@ -1141,7 +1141,9 @@
         "deduct": -67862606371.0
       },
       {
-        "reference": "0f7a773794e06a2a7e603d628d7c70c5c8dd6d208d46714190354950ad50b49b",
+        "reference": [
+          "0f7a773794e06a2a7e603d628d7c70c5c8dd6d208d46714190354950ad50b49b"
+        ],
         "increase": 55810912759,
         "address": "DAG6rj2o5Ac95qRq8Jrzy4zqcY2Xh6Dut4yQH6Qg",
         "reason": "SpendTransactionSourceNotApplied"
