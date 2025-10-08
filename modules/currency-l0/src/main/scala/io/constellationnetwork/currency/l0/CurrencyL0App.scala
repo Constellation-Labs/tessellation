@@ -132,7 +132,6 @@ abstract class CurrencyL0App(
           maybeAllowanceList,
           nodeShared.customAllowanceList,
           mkCell,
-          nodeShared.customAllowanceList,
           Some(customArtifacts)
         )
         .asResource
