@@ -332,12 +332,6 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
       implicit context: L0NodeContext[IO]
     ): IO[DataState.Base] = ???
 
-    override def getCalculatedState(implicit context: L0NodeContext[IO]): IO[(SnapshotOrdinal, DataCalculatedState)] = ???
-
-    override def setCalculatedState(ordinal: SnapshotOrdinal, state: DataCalculatedState)(
-      implicit context: L0NodeContext[IO]
-    ): IO[Boolean] = ???
-
     override def hashCalculatedState(state: DataCalculatedState)(implicit context: L0NodeContext[IO]): IO[Hash] = ???
 
     override def routes(implicit context: L0NodeContext[IO]): HttpRoutes[IO] = ???
