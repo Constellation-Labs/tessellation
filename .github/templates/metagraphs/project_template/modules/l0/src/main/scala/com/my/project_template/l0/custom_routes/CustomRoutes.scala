@@ -6,7 +6,6 @@ import cats.syntax.all._
 import io.constellationnetwork.currency.dataApplication.L0NodeContext
 import io.constellationnetwork.ext.http4s.AddressVar
 import io.constellationnetwork.routes.internal.{InternalUrlPrefix, PublicRoutes}
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 
 import com.my.project_template.shared_data.types.Types.UsageUpdateCalculatedState
@@ -16,14 +15,13 @@ import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
 import org.http4s.server.middleware.CORS
 
-case class CustomRoutes[F[_]: Async](
-  getCalculatedState: F[(SnapshotOrdinal, UsageUpdateCalculatedState)],
-  context: L0NodeContext[F]
+class CustomRoutes[F[_]: Async](
+  implicit context: L0NodeContext[F]
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {
 
   private def getState: F[UsageUpdateCalculatedState] =
-    getCalculatedState.map(_._2)
+    context.getCalculatedStateFromStorage[UsageUpdateCalculatedState].map(_._2)
 
   private def getAllDevices: F[Response[F]] =
     getState

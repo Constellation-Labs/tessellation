@@ -67,10 +67,12 @@ object L0NodeContext {
     def getLastSynchronizedTokenLocks: F[Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]] =
       lastGlobalSnapshotStorage.getLastSynchronizedActiveTokenLocks
 
-    def getCalculatedStateFromStorage: F[(SnapshotOrdinal, DataCalculatedState)] =
-      calculatedStateStorage.map { case (_, ref) => ref.get }.getOrElse {
-        new IllegalStateException("Calculated state storage not available - no data application configured")
-          .raiseError[F, (SnapshotOrdinal, DataCalculatedState)]
+    def getCalculatedStateFromStorage[DOF <: DataCalculatedState]: F[(SnapshotOrdinal, DOF)] =
+      calculatedStateStorage match {
+        case Some((_, ref)) => ref.get.map(_.asInstanceOf[(SnapshotOrdinal, DOF)])
+        case None =>
+          new IllegalStateException("Calculated state storage not available - no data application configured")
+            .raiseError[F, (SnapshotOrdinal, DOF)]
       }
   }
 }

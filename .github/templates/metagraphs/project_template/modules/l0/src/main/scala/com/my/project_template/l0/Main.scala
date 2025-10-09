@@ -119,7 +119,7 @@ object Main
         IO(Hash(state.asJson.noSpaces))
 
       override def routes(implicit context: L0NodeContext[IO]): HttpRoutes[IO] =
-        CustomRoutes[IO](getCalculatedState, context).public
+        new CustomRoutes[IO].public
 
       override def serializeCalculatedState(
         state: UsageUpdateCalculatedState
