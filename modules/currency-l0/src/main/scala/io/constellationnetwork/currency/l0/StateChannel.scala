@@ -31,6 +31,8 @@ import eu.timepit.refined.types.all.NonNegLong
 import fs2.Stream
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import retry.RetryPolicies
+import retry.implicits.retrySyntaxError
 
 object StateChannel {
 
@@ -85,6 +87,16 @@ object StateChannel {
     selfKeyPair: KeyPair,
     enqueueConsensusEventFn: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _]
   )(implicit S: Supervisor[F]): F[Unit] = {
+    def pullGlobalSnapshotWithRetry = {
+      val retryPolicy = RetryPolicies.exponentialBackoff[F](1.second).join(RetryPolicies.limitRetries(5))
+      services.globalL0.pullGlobalSnapshots
+        .retryingOnAllErrors(
+          policy = retryPolicy,
+          onError = (err, retryDetails) =>
+            Logger[F].error(err)(s"Error when trying to fetch incremental global snapshot {attempt=${retryDetails.retriesSoFar}}")
+        )
+    }
+
     def triggerOnGlobalSnapshotPullHook(snapshot: Hashed[GlobalIncrementalSnapshot], context: GlobalSnapshotInfo) =
       dataApplicationService match {
         case Some(service) =>
@@ -194,7 +206,7 @@ object StateChannel {
       }
     }
 
-    services.globalL0.pullGlobalSnapshots.flatMap {
+    pullGlobalSnapshotWithRetry.flatMap {
       case Left((snapshot, state)) =>
         for {
           lastNAlreadyInitialized <- sharedStorages.lastNGlobalSnapshot.alreadyInitialized
