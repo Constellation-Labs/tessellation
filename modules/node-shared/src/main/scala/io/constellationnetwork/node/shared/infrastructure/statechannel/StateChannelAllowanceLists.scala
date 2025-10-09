@@ -89,6 +89,13 @@ object StateChannelAllowanceLists {
               "dbb8bd3f03e132717472ff3bdc2f55cfb9886e7615e500751a5ece822f2842ad37ecaaafe391892413f5d9471134a01c56c31926def04615df3d40288c4cee0f",
               "e19449faa3f422a0a0e6954a1ccdf2ba023efadf0ef83f6c33c82f66d7fde81d7670e5aaf294cf1d9d61554095bb8b2d0508f2ecf157f8a5cfc73c830a397768",
               "79c986a5fa6277723783c88c4f829dbff1faa2359566a1454a533c42f4142ea4491fdf30d7cab26b5c4a148d07468e41f7430f768c5d788589a345b380e2bfe0"
+            ),
+          // Price Oracle
+          Address("DAG6xfTWbFMjp1AmatNCWzuunH1V4XTTJsRKCHLJ") ->
+            NonEmptySet.of(
+              "73a9257c176e1c5aee4d2d9d576059ac0d5305bcc26da3512e8242a0de6accd1aa8efd3505b1e0b46b12dfd780e9711ba77b21b7ac3fedb60b865dc21087a49f",
+              "75d8f472fb2bebfcefbb27a46cb60aeae1a32806c9f3f40a405d4eaf1c44e8041febf5e6eb9e6f525d6142c7df87304b9fe011863c6d8ed121fa6fcae7d5ca66",
+              "e47e0ac3ebc393b61e267aa4189f7fdc36c48440b1fc0a6bad375945cabfd41ab3e7800ae1d22d80d2d4a3b0902df6aeb293b803490bf8d777da3894833f42fb"
             )
         ).some
     }
