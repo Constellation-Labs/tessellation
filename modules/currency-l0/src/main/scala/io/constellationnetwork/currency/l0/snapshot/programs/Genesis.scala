@@ -133,7 +133,7 @@ object Genesis {
           .map(_.map(a => (a.address, a.balance)).toMap)
 
       def mkDataApplicationPart =
-        dataApplication.traverse(da => da.serializedOnChainGenesis.map(DataApplicationPart(_, List.empty, Hash.empty)))
+        dataApplication.traverse(da => da.serializedOnChainGenesis.map(DataApplicationPartV1(_, List.empty, Hash.empty)))
 
       for {
         balances <- mkBalances

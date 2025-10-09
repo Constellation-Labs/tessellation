@@ -36,8 +36,6 @@ class PluginOnlyDataApplicationL0Service[F[_]: Async](
   override val pluginRegistry: Option[PluginRegistry[F, DataUpdate, DataOnChainState, DataCalculatedState]] =
     Some(registry)
 
-  // ========== Serialization - delegates to master plugin ==========
-
   override def serializeState(state: DataOnChainState): F[Array[Byte]] =
     registry.serializeState(state)
 
@@ -62,8 +60,6 @@ class PluginOnlyDataApplicationL0Service[F[_]: Async](
   override def deserializeCalculatedState(bytes: Array[Byte]): F[Either[Throwable, DataCalculatedState]] =
     registry.deserializeCalculatedState(bytes)
 
-  // ========== Encoders/Decoders - passed in constructor ==========
-
   override def dataEncoder: Encoder[DataUpdate] = updateEnc
   override def dataDecoder: Decoder[DataUpdate] = updateDec
   override def signedDataEntityDecoder: EntityDecoder[F, Signed[DataUpdate]] = signedUpdateEntityDec
@@ -75,11 +71,7 @@ class PluginOnlyDataApplicationL0Service[F[_]: Async](
     jsonEncoderOf[F, Signed[DataUpdate]](Signed.encoder[DataUpdate](dataEncoder))
   }
 
-  // ========== Genesis ==========
-
   override def genesis: DataState.Base = genesisState
-
-  // ========== Routes: aggregate all plugins (master + features) ==========
 
   override def routes(implicit context: L0NodeContext[F]): HttpRoutes[F] = {
     import cats.data.OptionT
@@ -92,8 +84,6 @@ class PluginOnlyDataApplicationL0Service[F[_]: Async](
   }
 
   override def routesPrefix: F[ExternalUrlPrefix] = registry.routesPrefix
-
-  // ========== ValidateData: all plugins (master + features) ==========
 
   override def validateData(
     state: DataState.Base,
@@ -110,8 +100,6 @@ class PluginOnlyDataApplicationL0Service[F[_]: Async](
     import cats.data.Validated
     Validated.validNec[DataApplicationValidationError, Unit](()).pure[F]
   }
-
-  // ========== ExtractFees: all plugins (master + features) ==========
 
   override def extractFees(
     ds: Seq[Signed[DataUpdate]]
@@ -147,6 +135,18 @@ class PluginOnlyDataApplicationL0Service[F[_]: Async](
     registry.getMasterPlugin.flatMap {
       case Some(master) => master.hashCalculatedState(state)
       case None         => Async[F].raiseError(new RuntimeException("No master plugin registered"))
+    }
+
+  override def hashDataUpdate: Option[DataUpdate => F[Hash]] =
+    Some { dataUpdate =>
+      registry.getMasterPlugin.flatMap {
+        case Some(master) =>
+          master.hashDataUpdate
+            .map(_(dataUpdate))
+            .getOrElse(Async[F].raiseError(new RuntimeException("Hash function not available")))
+        case None =>
+          Async[F].raiseError(new RuntimeException("No master plugin registered"))
+      }
     }
 
   // ========== L0 Lifecycle Callbacks ==========

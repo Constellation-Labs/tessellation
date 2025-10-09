@@ -49,7 +49,6 @@ trait BaseDataApplicationL0Service[F[_]] extends BaseDataApplicationService[F] w
   def calculatedStateEncoder: Encoder[DataCalculatedState]
   def calculatedStateDecoder: Decoder[DataCalculatedState]
 
-  // Plugin support
   def pluginRegistry: Option[PluginRegistry[F, DataUpdate, DataOnChainState, DataCalculatedState]] = None
 }
 
@@ -159,6 +158,9 @@ object BaseDataApplicationL0Service {
 
       def hashCalculatedState(state: DataCalculatedState)(implicit context: L0NodeContext[F]): F[Hash] =
         ctx.hashCalculatedState(state)
+
+      override def hashDataUpdate: Option[DataUpdate => F[Hash]] =
+        ctx.hashDataUpdate
 
       def calculatedStateDecoder: Decoder[DataCalculatedState] = service.calculatedStateDecoder.asInstanceOf[Decoder[DataCalculatedState]]
 

@@ -74,6 +74,8 @@ trait MasterPlugin[
 
   def hashCalculatedState(state: PCalculated)(implicit context: L0NodeContext[F]): F[Hash]
 
+  def hashDataUpdate: Option[PUpdate => F[Hash]]
+
   def estimateFee(gsOrdinal: SnapshotOrdinal)(update: PUpdate)(
     implicit context: L1NodeContext[F],
     A: Applicative[F]

@@ -29,7 +29,6 @@ trait BaseDataApplicationL1Service[F[_]] extends BaseDataApplicationService[F] w
     validationResult: Either[DataApplicationValidationError, NonEmptyList[Hashed[DataTransaction]]]
   ): F[Response[F]]
 
-  // Plugin support
   def pluginRegistry: Option[PluginRegistry[F, DataUpdate, DataOnChainState, DataCalculatedState]] = None
 }
 

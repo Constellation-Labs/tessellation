@@ -14,7 +14,6 @@ import io.constellationnetwork.security.signature.Signed
 
 import org.http4s._
 
-// Type-erased wrapper
 trait PluginWrapper[
   F[_],
   PUpdate <: DataUpdate,

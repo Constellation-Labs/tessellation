@@ -37,7 +37,6 @@ trait PluginLifecycle[
   )(implicit context: L0NodeContext[F], F: Async[F]): F[Seq[Signed[FeeTransaction]]] =
     F.pure(Seq.empty)
 
-  // Estimate fees for an update (L1)
   def estimateFee(
     update: PUpdate
   )(implicit context: L1NodeContext[F], F: Async[F]): F[EstimatedFee] =

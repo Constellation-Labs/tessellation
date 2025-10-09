@@ -35,7 +35,8 @@ object types {
     updatedLastSyncGlobalFromPeersInConsensus: Map[AppEnvironment, SnapshotOrdinal],
     updatingCombineFunctionSpendActions: Map[AppEnvironment, SnapshotOrdinal],
     fixingAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal],
-    fixingAllowSpendAndTokenLockValidation: Map[AppEnvironment, SnapshotOrdinal]
+    fixingAllowSpendAndTokenLockValidation: Map[AppEnvironment, SnapshotOrdinal],
+    setSumFix: Map[AppEnvironment, SnapshotOrdinal]
   )
 
   case class MetagraphsSyncConfig(

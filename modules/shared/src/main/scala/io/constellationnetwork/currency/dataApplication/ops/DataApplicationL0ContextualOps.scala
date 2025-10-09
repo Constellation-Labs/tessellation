@@ -31,6 +31,8 @@ trait DataApplicationL0ContextualOps[F[_], D <: DataUpdate, DON <: DataOnChainSt
 
   def hashCalculatedState(state: DOF)(implicit context: L0NodeContext[F]): F[Hash]
 
+  def hashDataUpdate: Option[D => F[Hash]] = None
+
   def extractFees(ds: Seq[Signed[D]])(implicit context: L0NodeContext[F], A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
     A.pure(Seq.empty)
 

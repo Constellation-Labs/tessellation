@@ -137,7 +137,8 @@ object GlobalSnapshotConsensus {
         updateNodeParametersCutter,
         appConfig.environment,
         DefaultDelegatedRewardsConfigProvider,
-        sharedCfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue)
+        sharedCfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
+        sharedCfg.fieldsAddedOrdinals.setSumFix.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue)
       )
 
       consensusStateAdvancer = GlobalSnapshotConsensusStateAdvancer

@@ -32,6 +32,8 @@ trait BaseDataApplicationL0ContextualOps[F[_]] extends BaseDataApplicationShared
 
   def hashCalculatedState(state: DataCalculatedState)(implicit context: L0NodeContext[F]): F[Hash]
 
+  def hashDataUpdate: Option[DataUpdate => F[Hash]] = None
+
   def extractFees(ds: Seq[Signed[DataUpdate]])(implicit context: L0NodeContext[F], A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
     A.pure(Seq.empty)
 
@@ -94,6 +96,14 @@ object BaseDataApplicationL0ContextualOps {
         state match {
           case s: DOF => service.hashCalculatedState(s)
           case _      => UnexpectedInput.raiseError[F, Hash]
+        }
+
+      override def hashDataUpdate: Option[DataUpdate => F[Hash]] =
+        service.hashDataUpdate.map { hashFn =>
+          {
+            case d: D => hashFn(d)
+            case _    => UnexpectedInput.raiseError[F, Hash]
+          }
         }
 
       override def validateFee(

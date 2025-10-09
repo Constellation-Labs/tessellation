@@ -30,7 +30,6 @@ sealed trait MasterPluginWrapper[
   POnChain <: DataOnChainState,
   PCalculated <: DataCalculatedState
 ] extends PluginWrapper[F, PUpdate, POnChain, PCalculated] {
-  // Serialization
   def serializeState(state: DataOnChainState): F[Array[Byte]]
   def deserializeState(bytes: Array[Byte]): F[Either[Throwable, DataOnChainState]]
   def serializeUpdate(update: DataUpdate): F[Array[Byte]]
@@ -40,7 +39,6 @@ sealed trait MasterPluginWrapper[
   def serializeCalculatedState(state: DataCalculatedState): F[Array[Byte]]
   def deserializeCalculatedState(bytes: Array[Byte]): F[Either[Throwable, DataCalculatedState]]
 
-  // Encoders/Decoders
   def updateEncoder: Encoder[DataUpdate]
   def updateDecoder: Decoder[DataUpdate]
   def signedUpdateEntityDecoder: EntityDecoder[F, Signed[DataUpdate]]
@@ -49,19 +47,17 @@ sealed trait MasterPluginWrapper[
   def onChainStateEncoder: Encoder[DataOnChainState]
   def onChainStateDecoder: Decoder[DataOnChainState]
 
-  // L0 Lifecycle
   def onSnapshotConsensusResult(snapshot: Hashed[CurrencyIncrementalSnapshot])(implicit A: Applicative[F]): F[Unit]
   def onGlobalSnapshotPull(snapshot: Hashed[GlobalIncrementalSnapshot], context: GlobalSnapshotInfo)(implicit A: Applicative[F]): F[Unit]
   def getTokenUnlocks(
     state: DataState[DataOnChainState, DataCalculatedState]
   )(implicit context: L0NodeContext[F], hasher: Hasher[F]): F[SortedSet[TokenUnlock]]
 
-  // Calculated state management
   def getCalculatedState(implicit context: L0NodeContext[F]): F[(SnapshotOrdinal, DataCalculatedState)]
   def setCalculatedState(ordinal: SnapshotOrdinal, state: DataCalculatedState)(implicit context: L0NodeContext[F]): F[Boolean]
   def hashCalculatedState(state: DataCalculatedState)(implicit context: L0NodeContext[F]): F[Hash]
+  def hashDataUpdate: Option[DataUpdate => F[Hash]]
 
-  // L1 specific
   def estimateFee(gsOrdinal: SnapshotOrdinal)(update: DataUpdate)(implicit context: L1NodeContext[F], A: Applicative[F]): F[EstimatedFee]
   def postDataTransactionsRequestDecoder(req: Request[F]): F[DataRequest]
   def postDataTransactionsResponseEncoder(
@@ -135,7 +131,6 @@ class MasterPluginWrapperImpl[
   ) =
     masterPlugin.rewards.calculateRewards(onChainState, calculatedState)
 
-  // Serialization implementations
   def serializeState(stateToSerialize: DataOnChainState): F[Array[Byte]] =
     (stateToSerialize match {
       case s: POnChain @unchecked => masterPlugin.serializeState(s)
@@ -169,7 +164,6 @@ class MasterPluginWrapperImpl[
   def deserializeCalculatedState(bytes: Array[Byte]) =
     masterPlugin.deserializeCalculatedState(bytes).map(_.widen[DataCalculatedState])
 
-  // Encoders/Decoders
   def updateEncoder: Encoder[DataUpdate] = masterPlugin.updateEncoder.contramap[DataUpdate] {
     case u: PUpdate @unchecked => u
     case _                     => throw new RuntimeException("Invalid update type")
@@ -198,7 +192,6 @@ class MasterPluginWrapperImpl[
   def onChainStateDecoder: Decoder[DataOnChainState] =
     masterPlugin.onChainStateDecoder.widen[DataOnChainState]
 
-  // L0 Lifecycle callbacks
   def onSnapshotConsensusResult(snapshot: Hashed[CurrencyIncrementalSnapshot])(implicit A: Applicative[F]) =
     masterPlugin.onSnapshotConsensusResult(snapshot)
 
@@ -210,7 +203,6 @@ class MasterPluginWrapperImpl[
   )(implicit context: L0NodeContext[F], hasher: Hasher[F]): F[SortedSet[TokenUnlock]] =
     masterPlugin.getTokenUnlocks(stateToProcess)
 
-  // Calculated state management
   def getCalculatedState(implicit context: L0NodeContext[F]) =
     masterPlugin.getCalculatedState.map { case (ord, calc) => (ord, calc.asInstanceOf[DataCalculatedState]) }
 
@@ -226,7 +218,17 @@ class MasterPluginWrapperImpl[
       case _                         => Async[F].raiseError(new RuntimeException("Invalid calculated state type"))
     }).asInstanceOf[F[Hash]]
 
-  // L1 specific
+  def hashDataUpdate: Option[DataUpdate => F[Hash]] =
+    Some {
+      case s: PUpdate @unchecked =>
+        masterPlugin.hashDataUpdate
+          .map(_(s))
+          .getOrElse(
+            Async[F].raiseError(new RuntimeException("Hash function not available"))
+          )
+      case _ => Async[F].raiseError(new RuntimeException("Invalid data update type"))
+    }
+
   def estimateFee(gsOrdinal: SnapshotOrdinal)(update: DataUpdate)(implicit context: L1NodeContext[F], A: Applicative[F]): F[EstimatedFee] =
     update match {
       case u: PUpdate @unchecked => masterPlugin.estimateFee(gsOrdinal)(u)
