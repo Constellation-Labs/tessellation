@@ -280,6 +280,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     val validators =
       SharedValidators
         .make[IO](
+          Dev,
           addressesConfig,
           None,
           None,
