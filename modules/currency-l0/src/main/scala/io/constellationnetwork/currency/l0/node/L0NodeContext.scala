@@ -31,7 +31,7 @@ object L0NodeContext {
     l0Seedlist: Option[Set[SeedlistEntry]],
     calculatedStateStorage: Option[(CalculatedStateLocalFileSystemStorage[F], Ref[F, (SnapshotOrdinal, DataCalculatedState)])]
   ): L0NodeContext[F] = new L0NodeContext[F] {
-    val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
+    private val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
     def getCurrencyId: F[CurrencyId] =
       identifierStorage.get.map(_.toCurrencyId)
@@ -67,12 +67,22 @@ object L0NodeContext {
     def getLastSynchronizedTokenLocks: F[Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]] =
       lastGlobalSnapshotStorage.getLastSynchronizedActiveTokenLocks
 
-    def getCalculatedStateFromStorage[DOF <: DataCalculatedState]: F[(SnapshotOrdinal, DOF)] =
+    def getLatestCalculatedState[DOF <: DataCalculatedState]: F[(SnapshotOrdinal, DOF)] =
       calculatedStateStorage match {
         case Some((_, ref)) => ref.get.map(_.asInstanceOf[(SnapshotOrdinal, DOF)])
         case None =>
           new IllegalStateException("Calculated state storage not available - no data application configured")
             .raiseError[F, (SnapshotOrdinal, DOF)]
+      }
+
+    def getCalculatedStateAtOrdinal[DOF <: DataCalculatedState](
+      ordinal: SnapshotOrdinal
+    )(implicit decoder: Array[Byte] => F[DOF]): F[Option[(SnapshotOrdinal, DOF)]] =
+      calculatedStateStorage match {
+        case Some((fs, _)) => fs.read[DOF](ordinal).map(_.map(_.asInstanceOf[(SnapshotOrdinal, DOF)]))
+        case None =>
+          new IllegalStateException("Calculated state filesystem storage not available - no data application configured")
+            .raiseError[F, Option[(SnapshotOrdinal, DOF)]]
       }
   }
 }

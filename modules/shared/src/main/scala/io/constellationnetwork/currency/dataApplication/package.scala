@@ -235,7 +235,7 @@ trait BaseDataApplicationL0ContextualOps[F[_]] extends BaseDataApplicationShared
   def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(implicit context: L0NodeContext[F]): F[DataState.Base]
 
   final def getCalculatedState(implicit context: L0NodeContext[F]): F[(SnapshotOrdinal, DataCalculatedState)] =
-    context.getCalculatedStateFromStorage
+    context.getLatestCalculatedState
 
   def hashCalculatedState(state: DataCalculatedState)(implicit context: L0NodeContext[F]): F[Hash]
 
@@ -329,7 +329,7 @@ trait DataApplicationL0ContextualOps[F[_], D <: DataUpdate, DON <: DataOnChainSt
   def combine(state: DataState[DON, DOF], updates: List[Signed[D]])(implicit context: L0NodeContext[F]): F[DataState[DON, DOF]]
 
   final def getCalculatedState(implicit context: L0NodeContext[F], functor: Functor[F]): F[(SnapshotOrdinal, DOF)] =
-    context.getCalculatedStateFromStorage[DOF].map { case (ord, state) => (ord, state) }
+    context.getLatestCalculatedState[DOF].map { case (ord, state) => (ord, state) }
 
   def hashCalculatedState(state: DOF)(implicit context: L0NodeContext[F]): F[Hash]
 
@@ -837,5 +837,8 @@ trait L0NodeContext[F[_]] {
   def securityProvider: SecurityProvider[F]
   def getCurrencyId: F[CurrencyId]
   def getMetagraphL0Seedlist: Option[Set[SeedlistEntry]]
-  def getCalculatedStateFromStorage[DOF <: DataCalculatedState]: F[(SnapshotOrdinal, DOF)]
+  def getLatestCalculatedState[DOF <: DataCalculatedState]: F[(SnapshotOrdinal, DOF)]
+  def getCalculatedStateAtOrdinal[DOF <: DataCalculatedState](ordinal: SnapshotOrdinal)(
+    implicit decoder: Array[Byte] => F[DOF]
+  ): F[Option[(SnapshotOrdinal, DOF)]]
 }

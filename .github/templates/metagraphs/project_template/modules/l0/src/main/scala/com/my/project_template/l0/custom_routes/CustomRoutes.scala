@@ -21,7 +21,7 @@ class CustomRoutes[F[_]: Async](
     with PublicRoutes[F] {
 
   private def getState: F[UsageUpdateCalculatedState] =
-    context.getCalculatedStateFromStorage[UsageUpdateCalculatedState].map(_._2)
+    context.getLatestCalculatedState[UsageUpdateCalculatedState].map(_._2)
 
   private def getAllDevices: F[Response[F]] =
     getState
