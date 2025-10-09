@@ -1021,5 +1021,169 @@
         "deduct": -90000000000.0
       }
     ]
+  },
+  {
+    "currencyId": "DAG7X5idd4aLfp4XC6WQdG1eDfR3LGPVEwtUUB2W",
+    "snapshotOrdinal": 145000,
+    "adjustments": [
+      {
+        "address": "DAG09tkvpazCUBp9KZxcYCp8WaphkKFvpH1ZYtGx",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "80b6b92101f766f84e59873fa27a70a80931a320ea22617cc0a7f1421c7c2705",
+          "bb37bb080605782ec532b0b53f93e5390f1082ceb9b04f2f7f13d44439323e5e"
+        ],
+        "increase": 5234237.0
+      },
+      {
+        "address": "DAG0CQBBTeP7TUQ9JJnsLS4f8ePnWFfoyxMdudr8",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "91f02f5d34cba6998a75fd45f64c04c4cdfb2eba1f271b0a013975bd48ea826e"
+        ],
+        "deduct": -1205397679341.0
+      },
+      {
+        "address": "DAG1oGjBKE8PwiwnfmdCkQi6wCXcSbhia5abBFky",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "1c8edd71c3590c2658a1a505171d1ca582008edfc20b685b06c8732e6ded4c31"
+        ],
+        "deduct": -1035914878924.0
+      },
+      {
+        "address": "DAG3mnhR7SqUP8H2wEDe4LychWdxLbSZAeQmFASs",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "67b58a42a1b5e1770a47a7b7efeac86cec6daf1c5f8a1cafa0c109d82204ea68",
+          "22f6fab11c72343aa2cacd1d8ca6ef53710b4386732c9eeb939489a32810f705"
+        ],
+        "increase": 7159257.0
+      },
+      {
+        "address": "DAG3puQaFAiV3LUvrfDUWFpprBF5ZPS9tmWpR4qM",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "39cb6d192f4f2906be67de3039c7dc1e0b827c87006ba84ac8fdc07a62dfe955",
+          "c7860f7ca9e15123a25740b54dba7ce541e818f97a510f556857f656c63655fa",
+          "84e515f4b4eebd360636121edbc3333f2bbdc1f6412b6e9eb30d816ae17e38c9"
+        ],
+        "increase": 2181204.0
+      },
+      {
+        "address": "DAG6MsXGpenxYvx24aSnuXKRjCuSvo1qixHX7j1J",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "dfc433b964e25892c185284f7514a80e69bf6697f6ab49f045137ede0b871375",
+          "456bcaf91dfc81839edc9da16b18be7a2de925c762b86283e1b64dfd5f3cb3af"
+        ],
+        "increase": 3579309.0
+      },
+      {
+        "address": "DAG7QdoJUPjsSkrjZcjRbS4fMn6zifFXBY79p8EJ",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "49adfecd2d21f5be2be131be26db9ed6243f14a91e9af1106c2de84bc71eded8",
+          "582a021566a296f2bffe507c5bbde7edfea89cfcef335dab34ab2bee4dd42714",
+          "7a7b885ee3d1e4b1da4088d789225386d474cd65c8cf14bd5a605a7bc0f94091",
+          "6ec25af2076938105eb08141a7681c8e12277cb523016f11a86eb24665b8e3a8"
+        ],
+        "increase": 2399623.0
+      },
+      {
+        "address": "DAG7Xh3B7R3wngYG6R3GbaAotfKwcjGGcVithwE3",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "e09b7040f57cea8948a2115aa9a8155a7cdf0897097a0763d1471907246d1679",
+          "911a702fad5b1604b6063b6c3d7b85cd1e902a59ea48fae643b8cbc604aa62fe",
+          "5adc485a93814e16797f19ee01df18ade3ba869bae2caf33046d22ded6f329d2"
+        ],
+        "increase": 16417608.0
+      },
+      {
+        "address": "DAG7fnUei2keAZDbAuvqkqMZxS5jrj5v3vmQB1VA",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "69b11684213be36ef9d18abf6f41fe7c43f421dd230b1d64f6550ced6cb07d8b"
+        ],
+        "deduct": -463381407073.0
+      },
+      {
+        "address": "DAG7sHH5hm8MHDLVcz6Lo39kNVZave6u6vHLTwcu",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "45723020df6c2b60847737a0470d23447e877b9125a61155cfc49bd915b6fa0d"
+        ],
+        "deduct": -463381407073.0
+      },
+      {
+        "address": "DAG873pmYeXi4Bm9pEnjQyR23roXjqo5yMYcJ38B",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "3ac87046d061657b16f5be423ae3a2385caac150f6c2cae118256a8e5b7f983d"
+        ],
+        "increase": 377397485700.0
+      },
+      {
+        "address": "DAG87NWMMXNKXA3jGbN8ZeSL6XuwmzziKzzBYgC2",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "191051dcab3153de9047df4fc745aff400f4b9c40564f7e28df166db13687f81"
+        ],
+        "deduct": -49427350088.0
+      },
+      {
+        "address": "DAG8SUXU5j7Utdi9miubkcVgBrLy4S5h5PZuvHGu",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "9b24f28b706c4b1cd7ced802413d22903f7ee71fa3e476c5ae86481db234c3b1"
+        ],
+        "deduct": -67862606371.0
+      },
+      {
+        "reference": [
+          "0f7a773794e06a2a7e603d628d7c70c5c8dd6d208d46714190354950ad50b49b"
+        ],
+        "increase": 55810912759,
+        "address": "DAG6rj2o5Ac95qRq8Jrzy4zqcY2Xh6Dut4yQH6Qg",
+        "reason": "SpendTransactionSourceNotApplied"
+      }
+    ]
+  },
+  {
+    "currencyId": "DAG7Ghth1WhWK83SB3MtXnnHYZbCsmiRTwJrgaW1",
+    "snapshotOrdinal": 419000,
+    "adjustments": [
+      {
+        "address": "DAG0GydJBpZzLcC8rea3Tv7R8a28UbHwewDGsALH",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "73bc016400b31a436b3cc1b29b13dfaad541d1a0e2270def7115d307d8253cc6"
+        ],
+        "deduct": -668267519427.0
+      },
+      {
+        "address": "DAG4QhKtxd9iCENAqDqhU5vHUEb8EPWUgQFxyvTM",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "81a16e31bc1556df09f3681d596c0f07c12e0745026772b1f9d0b12edf2d4ad7"
+        ],
+        "deduct": -57951008856336.0
+      }
+    ]
+  },
+  {
+    "currencyId": "DAG0CyySf35ftDQDQBnd1bdQ9aPyUdacMghpnCuM",
+    "snapshotOrdinal": 17850158,
+    "adjustments": [
+      {
+        "address": "DAG1juwdY2QJdkmnVoAaQwJ2myUVB6Kohuxrazpn",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "edd9d1fa742654f5d9593c68279d9e164ba1876333d260b9022ac1de68278eeb"
+        ],
+        "deduct": -22837225000000.0
+      }
+    ]
   }
 ]
