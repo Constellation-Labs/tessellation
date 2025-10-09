@@ -57,11 +57,13 @@ jobs:
           {
             if [[ "${{ github.ref_name }}" == "release/mainnet" ]]; then
               echo 'VERSION<<EOF'
-              npx commit-and-tag-version --dry-run | grep -oP 'tagging release v\K[0-9]+\.[0-9]+\.[0-9]+'
+              # TODO: TEMPORARY FIX - Remove --release-as after 3.5.0 is published
+              npx commit-and-tag-version --release-as 3.5.0 --dry-run | grep -oP 'tagging release v\K[0-9]+\.[0-9]+\.[0-9]+'
               echo EOF
             elif [[ "${{ github.ref_name }}" == "release/integrationnet" ]]; then
               echo 'VERSION<<EOF'
-              npx commit-and-tag-version --dry-run --prerelease rc | grep -oP 'tagging release v\K(.*)'
+              # TODO: TEMPORARY FIX - Remove --release-as after 3.5.0-rc.0 is published
+              npx commit-and-tag-version --release-as 3.5.0-rc.0 --dry-run --prerelease rc | grep -oP 'tagging release v\K(.*)'
               echo EOF
             fi
           } >> "$GITHUB_OUTPUT"

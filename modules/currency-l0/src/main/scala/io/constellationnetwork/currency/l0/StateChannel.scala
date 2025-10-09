@@ -20,9 +20,9 @@ import io.constellationnetwork.node.shared.domain.snapshot.Validator
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.node.shared.snapshot.currency.{CurrencySnapshotEvent, ForceEventTrigger, GlobalSnapshotSyncEvent}
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed
@@ -212,17 +212,22 @@ object StateChannel {
           lastNAlreadyInitialized <- sharedStorages.lastNGlobalSnapshot.alreadyInitialized
           _ <-
             if (!lastNAlreadyInitialized) {
-              storages.lastSyncGlobalSnapshot.setInitial(snapshot, state) >>
-                sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
+              for {
+                _ <- storages.lastSyncGlobalSnapshot.setInitial(snapshot, state)
+                _ <- sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
                   snapshot,
                   state,
                   services.globalL0.asLeft.some,
                   none
-                ) >>
-                sharedStorages.lastGlobalSnapshot.setInitial(
+                )
+                _ <- storages.globalSnapshotsWithStateFileStorage.write(snapshot.ordinal, GlobalSnapshotWithState(snapshot.signed, state))
+                _ <- storages.globalSnapshotsWithStateDeltasFileStorage
+                  .write(snapshot.ordinal, GlobalSnapshotWithStateDeltas(snapshot.signed, state.activeAllowSpends, state.activeTokenLocks))
+                _ <- sharedStorages.lastGlobalSnapshot.setInitial(
                   snapshot,
                   state
                 )
+              } yield ()
             } else {
               ().pure
             }
@@ -271,6 +276,13 @@ object StateChannel {
                               _ <- storages.lastSyncGlobalSnapshot.set(snapshot, context)
                               _ <- sharedStorages.lastNGlobalSnapshot.set(snapshot, context)
                               _ <- sharedStorages.lastGlobalSnapshot.set(snapshot, context)
+                              _ <- storages.globalSnapshotsWithStateFileStorage
+                                .write(snapshot.ordinal, GlobalSnapshotWithState(snapshot.signed, context))
+                              _ <- storages.globalSnapshotsWithStateDeltasFileStorage
+                                .write(
+                                  snapshot.ordinal,
+                                  GlobalSnapshotWithStateDeltas(snapshot.signed, context.activeAllowSpends, context.activeTokenLocks)
+                                )
                               _ <- HasherSelector[F].withCurrent { implicit hasher =>
                                 sendGlobalSnapshotSyncConsensusEvent(snapshot)
                               }
