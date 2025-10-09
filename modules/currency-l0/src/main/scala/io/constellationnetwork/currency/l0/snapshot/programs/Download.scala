@@ -74,7 +74,7 @@ object Download {
         .flatMap { result =>
           val ((snapshot, context), observationLimit) = result
 
-          def setCalculatedState = (maybeDataApplication, maybeCalculatedStateRef).tupled.traverse_ {
+          def setCalculatedState = (maybeDataApplication, maybeCalculatedStateRef).tupled.map {
             case (da, ref) =>
               implicit val d = da.calculatedStateDecoder
 
@@ -96,7 +96,7 @@ object Download {
                     }
                 }
                 .flatMap { case (ordinal, calculatedState) => ref.set((ordinal, calculatedState)) }
-          }
+          }.getOrElse(Applicative[F].unit)
 
           snapshotStorage.prepend(snapshot, context) >>
             setCalculatedState >>
