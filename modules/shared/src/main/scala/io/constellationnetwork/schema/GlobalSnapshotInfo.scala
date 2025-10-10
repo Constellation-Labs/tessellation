@@ -260,6 +260,26 @@ case class GlobalSnapshotInfo(
     ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _, _, _))
   }
 
+  def stateProofMpt[F[_]: Sync: Parallel: Hasher](
+    ordinal: SnapshotOrdinal
+  ): F[Hash] = {
+    import io.circe.Json
+    import io.constellationnetwork.schema.mpt._
+    import io.constellationnetwork.security.mpt.MerklePatriciaTrie
+
+    for {
+      kvPairs <- GlobalStateConverter.toKeyValuePairs[F](this)
+
+      hexMap <- kvPairs.toList.traverse {
+        case (key, value) =>
+          GlobalStateKey.toHex[F](key).map(_ -> value)
+      }.map(_.toMap)
+
+      trie <- MerklePatriciaTrie.make[F, Json](hexMap)
+
+    } yield trie.rootNode.digest
+  }
+
   override def getActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = activeTokenLocks.getOrElse(SortedMap.empty)
 
   override def getActiveDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]] =
