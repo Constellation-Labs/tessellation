@@ -45,15 +45,7 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
       }.map(SortedMap.from(_))
 
     def processStale = {
-      val results = state.facilitators.value.flatMap { peerId =>
-        resources.peerDeclarationsMap
-          .get(peerId)
-          .flatMap(getter)
-          .map((peerId, _))
-      }
-
-      if (results.nonEmpty) Some(SortedMap.from(results))
-      else None
+      processNonStale
     }
 
     for {
