@@ -72,6 +72,9 @@ object Nibble {
       }
       .toArray
 
+  def toHex(nibbles: Seq[Nibble]): Hex =
+    Hex(nibbles.map(n => hexChars(n.value & 0x0f)).mkString(""))
+
   def validated(byte: Byte): Validated[InvalidNibble, Nibble] =
     if (byte >= 0 && byte <= 15) Validated.valid(new Nibble(byte))
     else Validated.invalid(ByteOutOfRange)
@@ -106,6 +109,20 @@ object Nibble {
   implicit val nibbleKeyEncoder: KeyEncoder[Nibble] = (key: Nibble) => "" + hexChars(key.value & 0x0f)
 
   implicit val nibbleKeyDecoder: KeyDecoder[Nibble] = (key: String) => if (key.length == 1) validated(key.charAt(0)).toOption else None
+
+  implicit val nibbleSeqOrdering: Ordering[Seq[Nibble]] = new Ordering[Seq[Nibble]] {
+    def compare(x: Seq[Nibble], y: Seq[Nibble]): Int = {
+      val xIter = x.iterator
+      val yIter = y.iterator
+
+      while (xIter.hasNext && yIter.hasNext) {
+        val cmp = java.lang.Byte.compare(xIter.next().value, yIter.next().value)
+        if (cmp != 0) return cmp
+      }
+
+      Integer.compare(x.length, y.length)
+    }
+  }
 }
 
 sealed trait InvalidNibble extends Throwable

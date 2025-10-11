@@ -25,8 +25,9 @@ object GlobalStateConverter {
       data: SortedMap[Address, A],
       fieldId: GlobalStateFieldId
     ): Map[GlobalStateKey, Json] =
-      data.toSeq.map { case (addr, value) =>
-        GlobalStateKey(None, fieldId, Some(addr), None) -> value.asJson
+      data.toSeq.map {
+        case (addr, value) =>
+          GlobalStateKey(None, fieldId, Some(addr), None) -> value.asJson
       }.toMap
 
     def flattenOptionalAddressMap[A: Encoder](
@@ -39,10 +40,12 @@ object GlobalStateConverter {
       dataOpt: Option[SortedMap[Address, SortedMap[Address, Balance]]]
     ): Map[GlobalStateKey, Json] =
       dataOpt.map { outerMap =>
-        outerMap.toSeq.flatMap { case (tokenAddr, innerMap) =>
-          innerMap.toSeq.map { case (holderAddr, balance) =>
-            GlobalStateKey(None, GlobalStateFieldId.TokenLockBalances, Some(tokenAddr), Some(holderAddr)) -> balance.asJson
-          }
+        outerMap.toSeq.flatMap {
+          case (tokenAddr, innerMap) =>
+            innerMap.toSeq.map {
+              case (holderAddr, balance) =>
+                GlobalStateKey(None, GlobalStateFieldId.TokenLockBalances, Some(tokenAddr), Some(holderAddr)) -> balance.asJson
+            }
         }.toMap
       }.getOrElse(Map.empty)
 
@@ -50,10 +53,12 @@ object GlobalStateConverter {
       dataOpt: Option[SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]]
     ): Map[GlobalStateKey, Json] =
       dataOpt.map { outerMap =>
-        outerMap.toSeq.flatMap { case (optAddr, innerMap) =>
-          innerMap.toSeq.map { case (addr, allowSpends) =>
-            GlobalStateKey(optAddr, GlobalStateFieldId.ActiveAllowSpends, Some(addr), None) -> allowSpends.asJson
-          }
+        outerMap.toSeq.flatMap {
+          case (optAddr, innerMap) =>
+            innerMap.toSeq.map {
+              case (addr, allowSpends) =>
+                GlobalStateKey(optAddr, GlobalStateFieldId.ActiveAllowSpends, Some(addr), None) -> allowSpends.asJson
+            }
         }.toMap
       }.getOrElse(Map.empty)
 
@@ -94,7 +99,6 @@ object GlobalStateConverter {
 
   def fromKeyValuePairs[F[_]: Sync](
     pairs: Map[GlobalStateKey, Json]
-  ): F[GlobalSnapshotInfo] = {
+  ): F[GlobalSnapshotInfo] =
     GlobalSnapshotInfo.empty.pure[F]
-  }
 }

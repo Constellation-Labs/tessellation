@@ -1,4 +1,4 @@
-package io.constellationnetwork.security.mpt.api
+package io.constellationnetwork.security.mpt.verifier
 
 import cats.effect.Sync
 import cats.syntax.applicativeError._
@@ -8,19 +8,20 @@ import cats.syntax.functor._
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.mpt._
+import io.constellationnetwork.security.mpt.prover.attestation.MerklePatriciaInclusionProof
 
 import io.circe.syntax.EncoderOps
 
-trait MerklePatriciaVerifier[F[_]] {
+trait MerklePatriciaInclusionVerifier[F[_]] {
 
   def confirm(proof: MerklePatriciaInclusionProof): F[Either[MerklePatriciaVerificationError, Unit]]
 }
 
-object MerklePatriciaVerifier {
-  def apply[F[_]](implicit verifier: MerklePatriciaVerifier[F]): MerklePatriciaVerifier[F] = verifier
+object MerklePatriciaInclusionVerifier {
+  def apply[F[_]](implicit verifier: MerklePatriciaInclusionVerifier[F]): MerklePatriciaInclusionVerifier[F] = verifier
 
-  def make[F[_]: Sync: Hasher](root: Hash): MerklePatriciaVerifier[F] =
-    new MerklePatriciaVerifier[F] {
+  def make[F[_]: Sync: Hasher](root: Hash): MerklePatriciaInclusionVerifier[F] =
+    new MerklePatriciaInclusionVerifier[F] {
 
       def confirm(proof: MerklePatriciaInclusionProof): F[Either[MerklePatriciaVerificationError, Unit]] = {
         type Continue = (List[MerklePatriciaCommitment], Hash, Seq[Nibble])
@@ -106,7 +107,7 @@ object MerklePatriciaVerifier {
 
     implicit class MerklePatriciaProofOps(private val proof: MerklePatriciaInclusionProof) extends AnyVal {
 
-      def confirm[F[_]](implicit V: MerklePatriciaVerifier[F]): F[Either[MerklePatriciaVerificationError, Unit]] =
+      def confirm[F[_]](implicit V: MerklePatriciaInclusionVerifier[F]): F[Either[MerklePatriciaVerificationError, Unit]] =
         V.confirm(proof)
     }
   }

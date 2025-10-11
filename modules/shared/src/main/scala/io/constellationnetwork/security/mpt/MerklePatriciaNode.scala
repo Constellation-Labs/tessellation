@@ -37,8 +37,8 @@ object MerklePatriciaNode {
       Encoder.instance { node =>
         Json.obj(
           "remaining" -> node.remaining.asJson(Nibble.nibbleSeqEncoder),
-          "data"      -> node.data.asJson,
-          "digest"    -> node.digest.asJson
+          "data" -> node.data.asJson,
+          "digest" -> node.digest.asJson
         )
       }
 
@@ -46,8 +46,8 @@ object MerklePatriciaNode {
       Decoder.instance { hCursor =>
         for {
           remaining <- hCursor.downField("remaining").as[Seq[Nibble]](Nibble.nibbleSeqDecoder)
-          data      <- hCursor.downField("data").as[Json]
-          digest    <- hCursor.downField("digest").as[Hash]
+          data <- hCursor.downField("data").as[Json]
+          digest <- hCursor.downField("digest").as[Hash]
         } yield new Leaf(remaining, data, digest)
       }
   }
@@ -56,14 +56,14 @@ object MerklePatriciaNode {
 
     def apply[F[_]: Sync: Hasher](paths: Map[Nibble, MerklePatriciaNode]): F[Branch] = for {
       pathDigests <- paths.toSeq.sortBy(_._1.value).map { case (k, v) => k -> v.digest }.toMap.pure[F]
-      commitment  <- MerklePatriciaCommitment.Branch(pathDigests).pure[F]
-      nodeDigest  <- Hasher[F].prefixedHash(commitment.asJson, BranchPrefix)
+      commitment <- MerklePatriciaCommitment.Branch(pathDigests).pure[F]
+      nodeDigest <- Hasher[F].prefixedHash(commitment.asJson, BranchPrefix)
     } yield Branch(paths, nodeDigest)
 
     implicit val encodeBranchNode: Encoder[Branch] =
       Encoder.instance { node =>
         Json.obj(
-          "paths"  -> node.paths.toSeq.sortBy(_._1.value).toMap.asJson,
+          "paths" -> node.paths.toSeq.sortBy(_._1.value).toMap.asJson,
           "digest" -> node.digest.asJson
         )
       }
@@ -72,7 +72,7 @@ object MerklePatriciaNode {
       Decoder.instance { hCursor =>
         for {
           children <- hCursor.downField("paths").as[Map[Nibble, MerklePatriciaNode]]
-          digest   <- hCursor.downField("digest").as[Hash]
+          digest <- hCursor.downField("digest").as[Hash]
         } yield new Branch(children, digest)
       }
   }
@@ -88,7 +88,7 @@ object MerklePatriciaNode {
       Encoder.instance { node =>
         Json.obj(
           "shared" -> node.shared.asJson(Nibble.nibbleSeqEncoder),
-          "child"  -> (node.child: MerklePatriciaNode).asJson,
+          "child" -> (node.child: MerklePatriciaNode).asJson,
           "digest" -> node.digest.asJson
         )
       }
@@ -97,7 +97,7 @@ object MerklePatriciaNode {
       Decoder.instance { hCursor =>
         for {
           shared <- hCursor.downField("shared").as[Seq[Nibble]](Nibble.nibbleSeqDecoder)
-          child  <- hCursor.downField("child").downField("contents").as[Branch]
+          child <- hCursor.downField("child").downField("contents").as[Branch]
           digest <- hCursor.downField("digest").as[Hash]
         } yield new Extension(shared, child, digest)
       }
@@ -106,17 +106,17 @@ object MerklePatriciaNode {
   implicit val encodeMptNode: Encoder[MerklePatriciaNode] = Encoder.instance {
     case node: Leaf =>
       Json.obj(
-        "type"     -> Json.fromString("Leaf"),
+        "type" -> Json.fromString("Leaf"),
         "contents" -> node.asJson
       )
     case node: Extension =>
       Json.obj(
-        "type"     -> Json.fromString("Extension"),
+        "type" -> Json.fromString("Extension"),
         "contents" -> node.asJson
       )
     case node: Branch =>
       Json.obj(
-        "type"     -> Json.fromString("Branch"),
+        "type" -> Json.fromString("Branch"),
         "contents" -> node.asJson
       )
   }

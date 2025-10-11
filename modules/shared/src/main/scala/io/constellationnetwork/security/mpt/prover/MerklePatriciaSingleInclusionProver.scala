@@ -1,4 +1,4 @@
-package io.constellationnetwork.security.mpt.api
+package io.constellationnetwork.security.mpt.prover
 
 import cats.effect.Sync
 import cats.syntax.applicativeError._
@@ -8,19 +8,20 @@ import cats.syntax.functor._
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt._
+import io.constellationnetwork.security.mpt.prover.attestation.MerklePatriciaInclusionProof
 
-trait MerklePatriciaProver[F[_]] {
+trait MerklePatriciaSingleInclusionProver[F[_]] {
 
   def attestPath(path: Hex): F[Either[MerklePatriciaProofError, MerklePatriciaInclusionProof]]
 }
 
-object MerklePatriciaProver {
-  def apply[F[_]](implicit prover: MerklePatriciaProver[F]): MerklePatriciaProver[F] = prover
+object MerklePatriciaSingleInclusionProver {
+  def apply[F[_]](implicit prover: MerklePatriciaSingleInclusionProver[F]): MerklePatriciaSingleInclusionProver[F] = prover
 
   def make[F[_]: Sync: Hasher](
     trie: MerklePatriciaTrie
-  ): MerklePatriciaProver[F] =
-    new MerklePatriciaProver[F] {
+  ): MerklePatriciaSingleInclusionProver[F] =
+    new MerklePatriciaSingleInclusionProver[F] {
 
       def attestPath(path: Hex): F[Either[MerklePatriciaProofError, MerklePatriciaInclusionProof]] = {
         type Continue = (MerklePatriciaNode, Seq[Nibble], List[MerklePatriciaCommitment])
@@ -85,7 +86,7 @@ object MerklePatriciaProver {
 
     implicit class MerklePatriciaPathOps(private val path: Hex) extends AnyVal {
 
-      def attestInclusion[F[_]](implicit P: MerklePatriciaProver[F]): F[Either[MerklePatriciaProofError, MerklePatriciaInclusionProof]] =
+      def attestInclusion[F[_]](implicit P: MerklePatriciaSingleInclusionProver[F]): F[Either[MerklePatriciaProofError, MerklePatriciaInclusionProof]] =
         P.attestPath(path)
     }
   }

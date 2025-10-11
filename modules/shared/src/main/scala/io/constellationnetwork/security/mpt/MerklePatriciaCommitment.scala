@@ -17,7 +17,7 @@ object MerklePatriciaCommitment {
     implicit val leafCommitEncoder: Encoder[Leaf] =
       Encoder.instance { node =>
         Json.obj(
-          "remaining"  -> node.remaining.asJson(Nibble.nibbleSeqEncoder),
+          "remaining" -> node.remaining.asJson(Nibble.nibbleSeqEncoder),
           "dataDigest" -> node.dataDigest.asJson
         )
       }
@@ -25,7 +25,7 @@ object MerklePatriciaCommitment {
     implicit val leafCommitDecoder: Decoder[Leaf] =
       Decoder.instance { hCursor =>
         for {
-          remaining  <- hCursor.downField("remaining").as[Seq[Nibble]](Nibble.nibbleSeqDecoder)
+          remaining <- hCursor.downField("remaining").as[Seq[Nibble]](Nibble.nibbleSeqDecoder)
           dataDigest <- hCursor.downField("dataDigest").as[Hash]
         } yield Leaf(remaining, dataDigest)
       }
@@ -53,7 +53,7 @@ object MerklePatriciaCommitment {
     implicit val extensionCommitEncoder: Encoder[Extension] =
       Encoder.instance { node =>
         Json.obj(
-          "shared"      -> node.shared.asJson(Nibble.nibbleSeqEncoder),
+          "shared" -> node.shared.asJson(Nibble.nibbleSeqEncoder),
           "childDigest" -> node.childDigest.asJson
         )
       }
@@ -61,7 +61,7 @@ object MerklePatriciaCommitment {
     implicit val extensionCommitDecoder: Decoder[Extension] =
       Decoder.instance { hCursor =>
         for {
-          shared      <- hCursor.downField("shared").as[Seq[Nibble]](Nibble.nibbleSeqDecoder)
+          shared <- hCursor.downField("shared").as[Seq[Nibble]](Nibble.nibbleSeqDecoder)
           childDigest <- hCursor.downField("childDigest").as[Hash]
         } yield Extension(shared, childDigest)
       }
@@ -70,17 +70,17 @@ object MerklePatriciaCommitment {
   implicit val mpCommitEncoder: Encoder[MerklePatriciaCommitment] = Encoder.instance {
     case commit: Leaf =>
       Json.obj(
-        "type"     -> Json.fromString("Leaf"),
+        "type" -> Json.fromString("Leaf"),
         "contents" -> commit.asJson
       )
     case commit: Extension =>
       Json.obj(
-        "type"     -> Json.fromString("Extension"),
+        "type" -> Json.fromString("Extension"),
         "contents" -> commit.asJson
       )
     case commit: Branch =>
       Json.obj(
-        "type"     -> Json.fromString("Branch"),
+        "type" -> Json.fromString("Branch"),
         "contents" -> commit.asJson
       )
   }

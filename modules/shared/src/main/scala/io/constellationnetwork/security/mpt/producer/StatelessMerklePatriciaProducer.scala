@@ -1,4 +1,4 @@
-package io.constellationnetwork.security.mpt.impl
+package io.constellationnetwork.security.mpt.producer
 
 import cats.data.NonEmptyList
 import cats.effect.Sync
@@ -9,15 +9,16 @@ import scala.collection.immutable.ArraySeq
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt._
-import io.constellationnetwork.security.mpt.api._
+import io.constellationnetwork.security.mpt.prover.MerklePatriciaSingleInclusionProver
+import io.constellationnetwork.security.mpt.verifier._
 
 import io.circe.syntax._
 import io.circe.{Encoder, Json}
 
 class StatelessMerklePatriciaProducer[F[_]: Hasher: Sync] extends MerklePatriciaProducer[F] {
 
-  def getProver(trie: MerklePatriciaTrie): F[MerklePatriciaProver[F]] =
-    MerklePatriciaProver.make[F](trie).pure[F]
+  def getProver(trie: MerklePatriciaTrie): F[MerklePatriciaSingleInclusionProver[F]] =
+    MerklePatriciaSingleInclusionProver.make[F](trie).pure[F]
 
   def create[A: Encoder](data: Map[Hex, A]): F[MerklePatriciaTrie] =
     NonEmptyList.fromList(data.toList) match {
@@ -105,7 +106,7 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Sync] extends MerklePatricia
       if (leafNode.remaining == _key) {
         for {
           newLeaf <- MerklePatriciaNode.Leaf[F](_key, data)
-          result  <- updateParent(newLeaf)
+          result <- updateParent(newLeaf)
         } yield result.asRight[InsertState]
       } else {
         val commonPrefix = Nibble.commonPrefix(leafNode.remaining, _key)
@@ -114,11 +115,11 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Sync] extends MerklePatricia
 
         (for {
           existingLeaf <- MerklePatriciaNode.Leaf[F](leafRemaining.tail, leafNode.data)
-          newLeaf      <- MerklePatriciaNode.Leaf[F](keyRemaining.tail, data)
+          newLeaf <- MerklePatriciaNode.Leaf[F](keyRemaining.tail, data)
           branchNode <- MerklePatriciaNode.Branch[F](
             Map[Nibble, MerklePatriciaNode](
               leafRemaining.head -> existingLeaf,
-              keyRemaining.head  -> newLeaf
+              keyRemaining.head -> newLeaf
             )
           )
           resultNode <-
@@ -164,11 +165,11 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Sync] extends MerklePatricia
       } else {
         (for {
           newExtension <- MerklePatriciaNode.Extension[F](sharedRemaining.tail, extensionNode.child)
-          newLeaf      <- MerklePatriciaNode.Leaf[F](keyRemaining.tail, data)
+          newLeaf <- MerklePatriciaNode.Leaf[F](keyRemaining.tail, data)
           branchNode <- MerklePatriciaNode.Branch[F](
             Map(
               sharedRemaining.head -> newExtension,
-              keyRemaining.head    -> newLeaf
+              keyRemaining.head -> newLeaf
             )
           )
           resultNode <-
@@ -209,9 +210,9 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Sync] extends MerklePatricia
 
           case None =>
             (for {
-              newLeaf       <- MerklePatriciaNode.Leaf[F](keyRemaining, data)
+              newLeaf <- MerklePatriciaNode.Leaf[F](keyRemaining, data)
               updatedBranch <- MerklePatriciaNode.Branch[F](branchNode.paths + (nibble -> newLeaf))
-              result        <- updateParent(updatedBranch)
+              result <- updateParent(updatedBranch)
             } yield result.asRight[InsertState]).handleError { e =>
               InsertDone(OperationError(e.getMessage).asLeft[MerklePatriciaNode]).asLeft
             }

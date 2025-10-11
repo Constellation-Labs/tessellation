@@ -1,4 +1,4 @@
-package io.constellationnetwork.security.mpt.impl
+package io.constellationnetwork.security.mpt.producer
 
 import cats.effect.{Ref, Sync}
 import cats.syntax.all._
@@ -6,8 +6,9 @@ import cats.syntax.all._
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt.MerklePatriciaTrie
-import io.constellationnetwork.security.mpt.api._
-import io.constellationnetwork.security.mpt.impl.InMemoryMerklePatriciaProducer.TrieCache
+import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer.TrieCache
+import io.constellationnetwork.security.mpt.prover.MerklePatriciaSingleInclusionProver
+import io.constellationnetwork.security.mpt.verifier._
 
 import io.circe.syntax._
 import io.circe.{Encoder, Json}
@@ -16,14 +17,14 @@ class InMemoryMerklePatriciaProducer[F[_]: Sync: Hasher](
   stateRef: Ref[F, InMemoryMerklePatriciaProducer.ProducerState]
 ) extends StatefulMerklePatriciaProducer[F] {
 
-  def getProver: F[MerklePatriciaProver[F]] =
+  def getProver: F[MerklePatriciaSingleInclusionProver[F]] =
     stateRef.get.flatMap { state =>
       state.currentTrie match {
         case Some(trie) =>
-          MerklePatriciaProver.make[F](trie).pure[F]
+          MerklePatriciaSingleInclusionProver.make[F](trie).pure[F]
         case None =>
           build.flatMap {
-            case Right(trie) => MerklePatriciaProver.make[F](trie).pure[F]
+            case Right(trie) => MerklePatriciaSingleInclusionProver.make[F](trie).pure[F]
             case Left(err)   => Sync[F].raiseError(err)
           }
       }
@@ -123,9 +124,6 @@ class InMemoryMerklePatriciaProducer[F[_]: Sync: Hasher](
         trieCache = None
       )
     )
-
-  def getProver(trie: MerklePatriciaTrie): F[MerklePatriciaProver[F]] =
-    MerklePatriciaProver.make[F](trie).pure[F]
 }
 
 object InMemoryMerklePatriciaProducer {

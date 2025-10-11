@@ -1,4 +1,4 @@
-package io.constellationnetwork.security.mpt.api
+package io.constellationnetwork.security.mpt.producer
 
 import cats.effect.Sync
 import cats.syntax.functor._
@@ -6,7 +6,7 @@ import cats.syntax.functor._
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt.MerklePatriciaTrie
-import io.constellationnetwork.security.mpt.impl.{InMemoryMerklePatriciaProducer, StatelessMerklePatriciaProducer}
+import io.constellationnetwork.security.mpt.prover.MerklePatriciaSingleInclusionProver
 
 import io.circe.{Encoder, Json}
 
@@ -23,7 +23,7 @@ trait MerklePatriciaProducer[F[_]] {
     keys: List[Hex]
   ): F[Either[MerklePatriciaError, MerklePatriciaTrie]]
 
-  def getProver(trie: MerklePatriciaTrie): F[MerklePatriciaProver[F]]
+  def getProver(trie: MerklePatriciaTrie): F[MerklePatriciaSingleInclusionProver[F]]
 }
 
 trait StatefulMerklePatriciaProducer[F[_]] {
@@ -33,7 +33,7 @@ trait StatefulMerklePatriciaProducer[F[_]] {
   def update[A: Encoder](key: Hex, value: A): F[Either[MerklePatriciaError, Unit]]
   def remove(keys: List[Hex]): F[Either[MerklePatriciaError, Unit]]
   def clear: F[Unit]
-  def getProver: F[MerklePatriciaProver[F]]
+  def getProver: F[MerklePatriciaSingleInclusionProver[F]]
 }
 
 object MerklePatriciaProducer {

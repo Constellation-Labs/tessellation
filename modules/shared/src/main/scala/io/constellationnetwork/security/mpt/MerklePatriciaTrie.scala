@@ -6,7 +6,7 @@ import scala.annotation.tailrec
 
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hex.Hex
-import io.constellationnetwork.security.mpt.api.MerklePatriciaProducer
+import io.constellationnetwork.security.mpt.producer.MerklePatriciaProducer
 
 import io.circe._
 import io.circe.syntax._
@@ -38,5 +38,28 @@ object MerklePatriciaTrie {
       }
 
     traverse(List(trie.rootNode), List()).reverse
+  }
+
+  def collectLeafNodesWithPaths(trie: MerklePatriciaTrie): List[(Hex, MerklePatriciaNode.Leaf)] = {
+    case class NodeWithPath(node: MerklePatriciaNode, pathSoFar: Seq[Nibble])
+
+    @tailrec
+    def traverse(nodes: List[NodeWithPath], acc: List[(Hex, MerklePatriciaNode.Leaf)]): List[(Hex, MerklePatriciaNode.Leaf)] =
+      nodes match {
+        case Nil => acc
+        case NodeWithPath(leaf: MerklePatriciaNode.Leaf, pathSoFar) :: tail =>
+          val fullPath = pathSoFar ++ leaf.remaining
+          traverse(tail, (Nibble.toHex(fullPath), leaf) :: acc)
+        case NodeWithPath(MerklePatriciaNode.Branch(paths, _), pathSoFar) :: tail =>
+          val childNodes = paths.toList.map {
+            case (nibble, child) =>
+              NodeWithPath(child, pathSoFar :+ nibble)
+          }
+          traverse(childNodes ++ tail, acc)
+        case NodeWithPath(MerklePatriciaNode.Extension(shared, child, _), pathSoFar) :: tail =>
+          traverse(NodeWithPath(child, pathSoFar ++ shared) :: tail, acc)
+      }
+
+    traverse(List(NodeWithPath(trie.rootNode, Seq.empty)), List()).reverse
   }
 }
