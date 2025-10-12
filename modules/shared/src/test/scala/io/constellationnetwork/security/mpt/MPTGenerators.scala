@@ -35,11 +35,12 @@ object MPTGenerators {
   )(implicit H: Hasher[IO]): Gen[IO[(Map[Hex, A], Map[Hex, A])]] = for {
     map1Gen <- leafMapGen(size1, valueGen)
     map2Gen <- leafMapGen(size2, valueGen)
-  } yield for {
-    map1 <- map1Gen
-    map2 <- map2Gen
-    disjoint = map2.filterNot { case (k, _) => map1.contains(k) }
-  } yield (map1, disjoint)
+  } yield
+    for {
+      map1 <- map1Gen
+      map2 <- map2Gen
+      disjoint = map2.filterNot { case (k, _) => map1.contains(k) }
+    } yield (map1, disjoint)
 
   def prefixHexGen(prefix: String): Gen[Hex] = for {
     suffix <- Gen.listOfN(64 - prefix.length, Gen.hexChar)
@@ -52,9 +53,13 @@ object MPTGenerators {
   )(implicit H: Hasher[IO]): Gen[IO[Map[Hex, A]]] = for {
     values <- Gen.listOfN(size, valueGen)
     prefixedHexes <- Gen.listOfN(size, prefixHexGen(prefix))
-  } yield values.zip(prefixedHexes).traverse {
-    case (value, hex) => IO.pure(hex -> value)
-  }.map(_.toMap)
+  } yield
+    values
+      .zip(prefixedHexes)
+      .traverse {
+        case (value, hex) => IO.pure(hex -> value)
+      }
+      .map(_.toMap)
 
   def rangeHexGen(start: String, end: String): Gen[Hex] = {
     require(start.length == end.length, "Start and end must have same length")
@@ -80,12 +85,13 @@ object MPTGenerators {
 
     for {
       values <- Gen.listOfN(size, valueGen)
-    } yield values.traverse { value =>
-      rangeHexGen(start, end).sample match {
-        case Some(hex) => IO.pure(hex -> value)
-        case None      => IO.pure(startHex -> value)
+    } yield
+      values.traverse { value =>
+        rangeHexGen(start, end).sample match {
+          case Some(hex) => IO.pure(hex -> value)
+          case None      => IO.pure(startHex -> value)
+        }
       }
-    }
   }
 
   def longGen: Gen[Long] = Gen.long
@@ -101,7 +107,7 @@ object MPTGenerators {
   }
 
   def testDataGen: Gen[TestData] = for {
-    id    <- longGen
+    id <- longGen
     value <- stringGen
   } yield TestData(id, value)
 

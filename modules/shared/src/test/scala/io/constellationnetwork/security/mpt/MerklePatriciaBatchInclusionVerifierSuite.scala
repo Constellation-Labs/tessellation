@@ -38,14 +38,14 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
         entries <- (1 to 20).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
-        trie        <- MerklePatriciaTrie.make(entries.toMap)
-        batchProver  = MerklePatriciaBatchInclusionProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        batchProver = MerklePatriciaBatchInclusionProver.make[IO](trie)
 
         paths = entries.take(5).map(_._1)
         proof <- batchProver.attestPaths(paths).flatMap(IO.fromEither)
 
         verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
-        result  <- verifier.confirm(proof)
+        result <- verifier.confirm(proof)
       } yield expect(result.isRight)
     }
   }
@@ -56,12 +56,12 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
-        trie        <- MerklePatriciaTrie.make(entries.toMap)
-        batchProver  = MerklePatriciaBatchInclusionProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        batchProver = MerklePatriciaBatchInclusionProver.make[IO](trie)
 
-        validPaths   = entries.take(3).map(_._1)
-        invalidPath  = Hex("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")
-        mixedPaths   = validPaths :+ invalidPath
+        validPaths = entries.take(3).map(_._1)
+        invalidPath = Hex("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")
+        mixedPaths = validPaths :+ invalidPath
 
         singleProver = MerklePatriciaSingleInclusionProver.make[IO](trie)
         validProofs <- validPaths.traverse(path => singleProver.attestPath(path).flatMap(IO.fromEither))
@@ -72,7 +72,7 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
         )
 
         verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
-        result  <- verifier.confirm(fakeProof)
+        result <- verifier.confirm(fakeProof)
       } yield expect(result.isLeft)
     }
   }
@@ -83,8 +83,8 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
-        trie        <- MerklePatriciaTrie.make(entries.toMap)
-        batchProver  = MerklePatriciaBatchInclusionProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        batchProver = MerklePatriciaBatchInclusionProver.make[IO](trie)
 
         paths = entries.take(5).map(_._1)
         proof <- batchProver.attestPaths(paths).flatMap(IO.fromEither)
@@ -92,7 +92,7 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
         incompleteProof = proof.copy(witness = proof.witness.take(proof.witness.size / 2))
 
         verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
-        result  <- verifier.confirm(incompleteProof)
+        result <- verifier.confirm(incompleteProof)
       } yield expect(result.isLeft)
     }
   }
@@ -108,7 +108,7 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
         emptyProof = MerklePatriciaBatchInclusionProof(List.empty, List.empty)
 
         verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
-        result  <- verifier.confirm(emptyProof)
+        result <- verifier.confirm(emptyProof)
       } yield expect(result.isLeft)
     }
   }
@@ -119,18 +119,19 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
         entries <- (1 to 20).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
-        trie        <- MerklePatriciaTrie.make(entries.toMap)
-        batchProver  = MerklePatriciaBatchInclusionProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        batchProver = MerklePatriciaBatchInclusionProver.make[IO](trie)
 
         paths = entries.map(_._1)
         proof <- batchProver.attestPaths(paths).flatMap(IO.fromEither)
 
         verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
-        result  <- verifier.confirm(proof)
-      } yield expect.all(
-        result.isRight,
-        proof.witness.distinct.size == proof.witness.size
-      )
+        result <- verifier.confirm(proof)
+      } yield
+        expect.all(
+          result.isRight,
+          proof.witness.distinct.size == proof.witness.size
+        )
     }
   }
 
@@ -142,20 +143,21 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
         entries <- (1 to numEntries).toList.traverse { i =>
           hasher.hash(s"entry_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
-        trie        <- MerklePatriciaTrie.make(entries.toMap)
-        batchProver  = MerklePatriciaBatchInclusionProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        batchProver = MerklePatriciaBatchInclusionProver.make[IO](trie)
 
         randomIndices = scala.util.Random.shuffle((0 until numEntries).toList).take(100)
-        paths         = randomIndices.map(idx => entries(idx)._1)
+        paths = randomIndices.map(idx => entries(idx)._1)
 
         proof <- batchProver.attestPaths(paths).flatMap(IO.fromEither)
 
         verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
-        result  <- verifier.confirm(proof)
-      } yield expect.all(
-        result.isRight,
-        proof.paths.size == 100
-      )
+        result <- verifier.confirm(proof)
+      } yield
+        expect.all(
+          result.isRight,
+          proof.paths.size == 100
+        )
     }
   }
 }

@@ -42,16 +42,17 @@ object MerklePatriciaBatchInclusionProverSuite extends MutableIOSuite with Check
         res.withCurrent { implicit hasher =>
           for {
             leafPairs <- fullList.traverse(el => hasher.hash(el).map(hash => Hex(hash.value) -> el))
-            trie      <- MerklePatriciaTrie.make(leafPairs.toMap)
-            prover     = MerklePatriciaBatchInclusionProver.make[IO](trie)
+            trie <- MerklePatriciaTrie.make(leafPairs.toMap)
+            prover = MerklePatriciaBatchInclusionProver.make[IO](trie)
 
             paths <- subset.traverse(el => hasher.hash(el).map(hash => Hex(hash.value)))
             proof <- prover.attestPaths(paths).flatMap(IO.fromEither)
-          } yield expect.all(
-            proof.paths.size == subset.size,
-            proof.witness.nonEmpty,
-            proof.paths.sorted == proof.paths
-          )
+          } yield
+            expect.all(
+              proof.paths.size == subset.size,
+              proof.witness.nonEmpty,
+              proof.paths.sorted == proof.paths
+            )
         }
     }
   }
@@ -62,18 +63,18 @@ object MerklePatriciaBatchInclusionProverSuite extends MutableIOSuite with Check
 
       for {
         leafPairs <- entries.traverse(el => hasher.hash(el).map(hash => Hex(hash.value) -> el))
-        trie      <- MerklePatriciaTrie.make(leafPairs.toMap)
+        trie <- MerklePatriciaTrie.make(leafPairs.toMap)
 
         paths = leafPairs.take(5).map(_._1)
 
-        batchProver  = MerklePatriciaBatchInclusionProver.make[IO](trie)
+        batchProver = MerklePatriciaBatchInclusionProver.make[IO](trie)
         singleProver = MerklePatriciaSingleInclusionProver.make[IO](trie)
 
-        batchProof       <- batchProver.attestPaths(paths).flatMap(IO.fromEither)
+        batchProof <- batchProver.attestPaths(paths).flatMap(IO.fromEither)
         individualProofs <- paths.traverse(p => singleProver.attestPath(p).flatMap(IO.fromEither))
 
         totalIndividualWitnessSize = individualProofs.flatMap(_.witness).size
-        batchWitnessSize           = batchProof.witness.size
+        batchWitnessSize = batchProof.witness.size
       } yield expect(batchWitnessSize < totalIndividualWitnessSize)
     }
   }
@@ -82,9 +83,9 @@ object MerklePatriciaBatchInclusionProverSuite extends MutableIOSuite with Check
     forall(Gen.listOfN(10, Gen.long)) { list =>
       res.withCurrent { implicit hasher =>
         for {
-          leafMap     <- list.traverse(el => hasher.hash(el).map(hash => Hex(hash.value) -> el)).map(_.toMap)
-          trie        <- MerklePatriciaTrie.make(leafMap)
-          prover       = MerklePatriciaBatchInclusionProver.make[IO](trie)
+          leafMap <- list.traverse(el => hasher.hash(el).map(hash => Hex(hash.value) -> el)).map(_.toMap)
+          trie <- MerklePatriciaTrie.make(leafMap)
+          prover = MerklePatriciaBatchInclusionProver.make[IO](trie)
 
           missingPaths = List(
             Hex("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
@@ -101,9 +102,9 @@ object MerklePatriciaBatchInclusionProverSuite extends MutableIOSuite with Check
     forall(Gen.listOfN(10, Gen.long)) { list =>
       res.withCurrent { implicit hasher =>
         for {
-          leafMap     <- list.traverse(el => hasher.hash(el).map(hash => Hex(hash.value) -> el)).map(_.toMap)
-          trie        <- MerklePatriciaTrie.make(leafMap)
-          prover       = MerklePatriciaBatchInclusionProver.make[IO](trie)
+          leafMap <- list.traverse(el => hasher.hash(el).map(hash => Hex(hash.value) -> el)).map(_.toMap)
+          trie <- MerklePatriciaTrie.make(leafMap)
+          prover = MerklePatriciaBatchInclusionProver.make[IO](trie)
           proofEither <- prover.attestPaths(List.empty)
         } yield expect(proofEither.isLeft)
       }
@@ -116,8 +117,8 @@ object MerklePatriciaBatchInclusionProverSuite extends MutableIOSuite with Check
 
       for {
         leafPairs <- values.traverse(el => hasher.hash(el).map(hash => Hex(hash.value) -> el))
-        trie      <- MerklePatriciaTrie.make(leafPairs.toMap)
-        prover     = MerklePatriciaBatchInclusionProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(leafPairs.toMap)
+        prover = MerklePatriciaBatchInclusionProver.make[IO](trie)
 
         paths = leafPairs.map(_._1)
         shuffledPaths = scala.util.Random.shuffle(paths)
@@ -133,8 +134,8 @@ object MerklePatriciaBatchInclusionProverSuite extends MutableIOSuite with Check
 
       for {
         leafPairs <- entries.traverse(el => hasher.hash(el).map(hash => Hex(hash.value) -> el))
-        trie      <- MerklePatriciaTrie.make(leafPairs.toMap)
-        prover     = MerklePatriciaBatchInclusionProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(leafPairs.toMap)
+        prover = MerklePatriciaBatchInclusionProver.make[IO](trie)
 
         paths = leafPairs.map(_._1)
         proof <- prover.attestPaths(paths).flatMap(IO.fromEither)
@@ -150,15 +151,16 @@ object MerklePatriciaBatchInclusionProverSuite extends MutableIOSuite with Check
 
       for {
         leafPairs <- adjacentValues.traverse(el => hasher.hash(el).map(hash => Hex(hash.value) -> el))
-        trie      <- MerklePatriciaTrie.make(leafPairs.toMap)
-        prover     = MerklePatriciaBatchInclusionProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(leafPairs.toMap)
+        prover = MerklePatriciaBatchInclusionProver.make[IO](trie)
 
         paths = leafPairs.take(10).map(_._1)
         proof <- prover.attestPaths(paths).flatMap(IO.fromEither)
-      } yield expect.all(
-        proof.paths.size == 10,
-        proof.witness.nonEmpty
-      )
+      } yield
+        expect.all(
+          proof.paths.size == 10,
+          proof.witness.nonEmpty
+        )
     }
   }
 }

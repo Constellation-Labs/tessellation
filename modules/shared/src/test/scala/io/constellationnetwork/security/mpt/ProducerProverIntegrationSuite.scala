@@ -10,8 +10,16 @@ import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt.producer.{InMemoryMerklePatriciaProducer, StatelessMerklePatriciaProducer}
-import io.constellationnetwork.security.mpt.prover.{MerklePatriciaBatchInclusionProver, MerklePatriciaPrefixProver, MerklePatriciaRangeProver}
-import io.constellationnetwork.security.mpt.verifier.{MerklePatriciaBatchInclusionVerifier, MerklePatriciaInclusionVerifier, MerklePatriciaRangeVerifier}
+import io.constellationnetwork.security.mpt.prover.{
+  MerklePatriciaBatchInclusionProver,
+  MerklePatriciaPrefixProver,
+  MerklePatriciaRangeProver
+}
+import io.constellationnetwork.security.mpt.verifier.{
+  MerklePatriciaBatchInclusionVerifier,
+  MerklePatriciaInclusionVerifier,
+  MerklePatriciaRangeVerifier
+}
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._
@@ -40,14 +48,14 @@ object ProducerProverIntegrationSuite extends MutableIOSuite {
         }
 
         producer = StatelessMerklePatriciaProducer[IO]
-        trie    <- producer.create(entries.toMap)
+        trie <- producer.create(entries.toMap)
 
-        prover     <- producer.getProver(trie)
-        targetPath  = entries.head._1
-        proof      <- prover.attestPath(targetPath).flatMap(IO.fromEither)
+        prover <- producer.getProver(trie)
+        targetPath = entries.head._1
+        proof <- prover.attestPath(targetPath).flatMap(IO.fromEither)
 
         verifier = MerklePatriciaInclusionVerifier.make[IO](trie.rootNode.digest)
-        result  <- verifier.confirm(proof)
+        result <- verifier.confirm(proof)
       } yield expect(result.isRight)
     }
   }
@@ -59,7 +67,7 @@ object ProducerProverIntegrationSuite extends MutableIOSuite {
           hasher.hash(s"initial_$i").map(hash => Hex(hash.value) -> s"initial_$i")
         }
 
-        producer    = StatelessMerklePatriciaProducer[IO]
+        producer = StatelessMerklePatriciaProducer[IO]
         initialTrie <- producer.create(initialEntries.toMap)
 
         newEntries <- (11 to 20).toList.traverse { i =>
@@ -69,11 +77,11 @@ object ProducerProverIntegrationSuite extends MutableIOSuite {
         updatedTrie <- producer.insert(initialTrie, newEntries.toMap).flatMap(IO.fromEither)
 
         batchProver = MerklePatriciaBatchInclusionProver.make[IO](updatedTrie)
-        paths       = (initialEntries ++ newEntries).take(10).map(_._1)
-        proof      <- batchProver.attestPaths(paths).flatMap(IO.fromEither)
+        paths = (initialEntries ++ newEntries).take(10).map(_._1)
+        proof <- batchProver.attestPaths(paths).flatMap(IO.fromEither)
 
         verifier = MerklePatriciaBatchInclusionVerifier.make[IO](updatedTrie.rootNode.digest)
-        result  <- verifier.confirm(proof)
+        result <- verifier.confirm(proof)
       } yield expect(result.isRight)
     }
   }
@@ -93,17 +101,18 @@ object ProducerProverIntegrationSuite extends MutableIOSuite {
         }
 
         producer = StatelessMerklePatriciaProducer[IO]
-        trie    <- producer.create((prefixedEntries ++ otherEntries).toMap)
+        trie <- producer.create((prefixedEntries ++ otherEntries).toMap)
 
         prefixProver = MerklePatriciaPrefixProver.make[IO](trie)
-        proof       <- prefixProver.attestPrefix(Hex(commonPrefix)).flatMap(IO.fromEither)
+        proof <- prefixProver.attestPrefix(Hex(commonPrefix)).flatMap(IO.fromEither)
 
         batchVerifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
-        result       <- batchVerifier.confirm(proof)
-      } yield expect.all(
-        result.isRight,
-        proof.paths.size == 10
-      )
+        result <- batchVerifier.confirm(proof)
+      } yield
+        expect.all(
+          result.isRight,
+          proof.paths.size == 10
+        )
     }
   }
 
@@ -119,17 +128,18 @@ object ProducerProverIntegrationSuite extends MutableIOSuite {
         }
 
         producer = StatelessMerklePatriciaProducer[IO]
-        trie    <- producer.create(entries.toMap)
+        trie <- producer.create(entries.toMap)
 
         rangeProver = MerklePatriciaRangeProver.make[IO](trie)
-        proof      <- rangeProver.attestRange(Hex(start.padTo(64, '0')), Hex(end.padTo(64, '0'))).flatMap(IO.fromEither)
+        proof <- rangeProver.attestRange(Hex(start.padTo(64, '0')), Hex(end.padTo(64, '0'))).flatMap(IO.fromEither)
 
         verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
-        result  <- verifier.confirmRange(proof)
-      } yield expect.all(
-        result.isRight,
-        proof.inclusionProofs.size == 3
-      )
+        result <- verifier.confirmRange(proof)
+      } yield
+        expect.all(
+          result.isRight,
+          proof.inclusionProofs.size == 3
+        )
     }
   }
 
@@ -146,22 +156,23 @@ object ProducerProverIntegrationSuite extends MutableIOSuite {
         trie <- producer.build.flatMap(IO.fromEither)
 
         inclusionProver <- producer.getProver
-        targetPath       = entries.head._1
-        inclusionProof  <- inclusionProver.attestPath(targetPath).flatMap(IO.fromEither)
+        targetPath = entries.head._1
+        inclusionProof <- inclusionProver.attestPath(targetPath).flatMap(IO.fromEither)
 
         batchProver = MerklePatriciaBatchInclusionProver.make[IO](trie)
-        batchPaths  = entries.take(10).map(_._1)
+        batchPaths = entries.take(10).map(_._1)
         batchProof <- batchProver.attestPaths(batchPaths).flatMap(IO.fromEither)
 
         inclusionVerifier = MerklePatriciaInclusionVerifier.make[IO](trie.rootNode.digest)
-        inclusionResult  <- inclusionVerifier.confirm(inclusionProof)
+        inclusionResult <- inclusionVerifier.confirm(inclusionProof)
 
         batchVerifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
-        batchResult  <- batchVerifier.confirm(batchProof)
-      } yield expect.all(
-        inclusionResult.isRight,
-        batchResult.isRight
-      )
+        batchResult <- batchVerifier.confirm(batchProof)
+      } yield
+        expect.all(
+          inclusionResult.isRight,
+          batchResult.isRight
+        )
     }
   }
 }

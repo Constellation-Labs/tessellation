@@ -1,9 +1,9 @@
 package io.constellationnetwork.schema.mpt
 
-import java.nio.charset.StandardCharsets
-
 import cats.Show
 import cats.effect.Sync
+import cats.syntax.applicative._
+import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import io.constellationnetwork.schema.address.Address
@@ -70,34 +70,33 @@ object GlobalStateFieldId {
 
 @derive(encoder, decoder, eqv, show, order)
 case class GlobalStateKey(
-  metagraphId: Option[Address],
   fieldId: GlobalStateFieldId,
+  metagraphId: Option[Address],
   primaryAddress: Option[Address],
   secondaryAddress: Option[Address]
 )
 
 object GlobalStateKey {
 
-  def toHex[F[_]: Sync: Hasher](key: GlobalStateKey): F[Hex] = {
-    val bytes = Array.newBuilder[Byte]
+  def toHex[F[_]: Sync: Hasher](key: GlobalStateKey): F[Hex] =
+    for {
+      fieldPart <- f"${key.fieldId.toByte}%02x".pure[F]
 
-    key.metagraphId match {
-      case Some(addr) => bytes ++= addr.value.value.getBytes(StandardCharsets.UTF_8)
-      case None       => bytes += (0: Byte)
-    }
+      metagraphPart <- key.metagraphId match {
+        case Some(addr) => Hasher[F].hash(addr.value.value).map(_.value)
+        case None       => Sync[F].pure("")
+      }
 
-    bytes += key.fieldId.toByte
+      primaryPart <- key.primaryAddress match {
+        case Some(addr) => Hasher[F].hash(addr.value.value).map(_.value)
+        case None       => Sync[F].pure("")
+      }
 
-    key.primaryAddress match {
-      case Some(addr) => bytes ++= addr.value.value.getBytes(StandardCharsets.UTF_8)
-      case None       => bytes += (0: Byte)
-    }
+      secondaryPart <- key.secondaryAddress match {
+        case Some(addr) => Hasher[F].hash(addr.value.value).map(_.value)
+        case None       => Sync[F].pure("")
+      }
 
-    key.secondaryAddress match {
-      case Some(addr) => bytes ++= addr.value.value.getBytes(StandardCharsets.UTF_8)
-      case None       => bytes += (0: Byte)
-    }
-
-    Hasher[F].hash(bytes.result()).map(hash => Hex(hash.value))
-  }
+      serialized = fieldPart + metagraphPart + primaryPart + secondaryPart
+    } yield Hex(serialized)
 }

@@ -16,6 +16,7 @@ import io.constellationnetwork.security.mpt.prover.MerklePatriciaRangeProver
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.syntax._
 import org.scalacheck.Gen
 import weaver.scalacheck.Checkers
@@ -51,14 +52,15 @@ object MerklePatriciaRangeProverSuite extends MutableIOSuite with Checkers {
           hasher.hash(s"value_$key").map(_ => paddedKey -> s"value_$key")
         }
 
-        trie   <- MerklePatriciaTrie.make((inRangeEntries ++ outsideEntries).toMap)
-        prover  = MerklePatriciaRangeProver.make[IO](trie)
-        proof  <- prover.attestRange(Hex(start.padTo(64, '0')), Hex(end.padTo(64, '0'))).flatMap(IO.fromEither)
-      } yield expect.all(
-        proof.inclusionProofs.size == 4,
-        proof.inclusionProofs.forall(p => p.path.value >= start && p.path.value <= end),
-        proof.exclusionBoundaries.isDefined
-      )
+        trie <- MerklePatriciaTrie.make((inRangeEntries ++ outsideEntries).toMap)
+        prover = MerklePatriciaRangeProver.make[IO](trie)
+        proof <- prover.attestRange(Hex(start.padTo(64, '0')), Hex(end.padTo(64, '0'))).flatMap(IO.fromEither)
+      } yield
+        expect.all(
+          proof.inclusionProofs.size == 4,
+          proof.inclusionProofs.forall(p => p.path.value >= start && p.path.value <= end),
+          proof.exclusionBoundaries.isDefined
+        )
     }
   }
 
@@ -73,15 +75,16 @@ object MerklePatriciaRangeProverSuite extends MutableIOSuite with Checkers {
           hasher.hash(s"value_$key").map(_ => paddedKey -> s"value_$key")
         }
 
-        trie   <- MerklePatriciaTrie.make(entries.toMap)
-        prover  = MerklePatriciaRangeProver.make[IO](trie)
-        proof  <- prover.attestRange(Hex(start.padTo(64, '0')), Hex(end.padTo(64, '0'))).flatMap(IO.fromEither)
-      } yield expect.all(
-        proof.inclusionProofs.isEmpty,
-        proof.exclusionBoundaries.isDefined,
-        proof.exclusionBoundaries.flatMap(_.leftBoundary).isDefined,
-        proof.exclusionBoundaries.flatMap(_.rightBoundary).isDefined
-      )
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaRangeProver.make[IO](trie)
+        proof <- prover.attestRange(Hex(start.padTo(64, '0')), Hex(end.padTo(64, '0'))).flatMap(IO.fromEither)
+      } yield
+        expect.all(
+          proof.inclusionProofs.isEmpty,
+          proof.exclusionBoundaries.isDefined,
+          proof.exclusionBoundaries.flatMap(_.leftBoundary).isDefined,
+          proof.exclusionBoundaries.flatMap(_.rightBoundary).isDefined
+        )
     }
   }
 
@@ -96,16 +99,17 @@ object MerklePatriciaRangeProverSuite extends MutableIOSuite with Checkers {
           hasher.hash(s"value_$key").map(_ => paddedKey -> s"value_$key")
         }
 
-        trie   <- MerklePatriciaTrie.make(entries.toMap)
-        prover  = MerklePatriciaRangeProver.make[IO](trie)
-        proof  <- prover.attestRange(Hex(start.padTo(64, '0')), Hex(end.padTo(64, '0'))).flatMap(IO.fromEither)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaRangeProver.make[IO](trie)
+        proof <- prover.attestRange(Hex(start.padTo(64, '0')), Hex(end.padTo(64, '0'))).flatMap(IO.fromEither)
 
         leftBoundaryPath = proof.exclusionBoundaries.flatMap(_.leftBoundary).map(_.path)
         rightBoundaryPath = proof.exclusionBoundaries.flatMap(_.rightBoundary).map(_.path)
-      } yield expect.all(
-        leftBoundaryPath.exists(_.value < start.padTo(64, '0')),
-        rightBoundaryPath.exists(_.value > end.padTo(64, '0'))
-      )
+      } yield
+        expect.all(
+          leftBoundaryPath.exists(_.value < start.padTo(64, '0')),
+          rightBoundaryPath.exists(_.value > end.padTo(64, '0'))
+        )
     }
   }
 
@@ -116,17 +120,18 @@ object MerklePatriciaRangeProverSuite extends MutableIOSuite with Checkers {
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
 
-        trie   <- MerklePatriciaTrie.make(entries.toMap)
-        prover  = MerklePatriciaRangeProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaRangeProver.make[IO](trie)
 
         minKey = entries.map(_._1).min(Ordering.by[Hex, String](_.value))
         maxKey = entries.map(_._1).max(Ordering.by[Hex, String](_.value))
 
         proof <- prover.attestRange(minKey, maxKey).flatMap(IO.fromEither)
-      } yield expect.all(
-        proof.inclusionProofs.size == 20,
-        proof.exclusionBoundaries.isEmpty
-      )
+      } yield
+        expect.all(
+          proof.inclusionProofs.size == 20,
+          proof.exclusionBoundaries.isEmpty
+        )
     }
   }
 
@@ -138,17 +143,18 @@ object MerklePatriciaRangeProverSuite extends MutableIOSuite with Checkers {
           hasher.hash(s"value_$key").map(_ => paddedKey -> s"value_$key")
         }
 
-        trie   <- MerklePatriciaTrie.make(entries.toMap)
-        prover  = MerklePatriciaRangeProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaRangeProver.make[IO](trie)
 
         start = Hex("4900".padTo(64, '0'))
         end = Hex("5100".padTo(64, '0'))
         proof <- prover.attestRange(start, end).flatMap(IO.fromEither)
-      } yield expect.all(
-        proof.inclusionProofs.size == 1,
-        proof.inclusionProofs.head.path.value.startsWith("5000"),
-        proof.exclusionBoundaries.isDefined
-      )
+      } yield
+        expect.all(
+          proof.inclusionProofs.size == 1,
+          proof.inclusionProofs.head.path.value.startsWith("5000"),
+          proof.exclusionBoundaries.isDefined
+        )
     }
   }
 
@@ -159,8 +165,8 @@ object MerklePatriciaRangeProverSuite extends MutableIOSuite with Checkers {
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
 
-        trie        <- MerklePatriciaTrie.make(entries.toMap)
-        prover       = MerklePatriciaRangeProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaRangeProver.make[IO](trie)
         proofEither <- prover.attestRange(Hex("9000".padTo(64, '0')), Hex("1000".padTo(64, '0')))
       } yield expect(proofEither.isLeft)
     }
@@ -192,11 +198,12 @@ object MerklePatriciaRangeProverSuite extends MutableIOSuite with Checkers {
 
         allPage1Paths = page1Proof.inclusionProofs.map(_.path).toSet
         allPage2Paths = page2Proof.inclusionProofs.map(_.path).toSet
-      } yield expect.all(
-        page1Proof.inclusionProofs.size == pageSize,
-        page2Proof.inclusionProofs.size == pageSize,
-        (allPage1Paths & allPage2Paths).isEmpty
-      )
+      } yield
+        expect.all(
+          page1Proof.inclusionProofs.size == pageSize,
+          page2Proof.inclusionProofs.size == pageSize,
+          (allPage1Paths & allPage2Paths).isEmpty
+        )
     }
   }
 
@@ -206,26 +213,27 @@ object MerklePatriciaRangeProverSuite extends MutableIOSuite with Checkers {
         for {
           keys <- addresses.traverse { addr =>
             GlobalStateKey.toHex[IO](
-              GlobalStateKey(None, GlobalStateFieldId.Balances, Some(addr), None)
+              GlobalStateKey(GlobalStateFieldId.Balances, None, Some(addr), None)
             )
           }
           keyValuePairs <- keys.zipWithIndex.traverse {
-            case (key, idx) => Balance((idx + 1) * 1000L).asJson.pure[IO].map(key -> _)
+            case (key, idx) => Balance(NonNegLong.unsafeFrom((idx + 1) * 1000L)).asJson.pure[IO].map(key -> _)
           }
 
-          trie   <- MerklePatriciaTrie.make(keyValuePairs.toMap)
-          prover  = MerklePatriciaRangeProver.make[IO](trie)
+          trie <- MerklePatriciaTrie.make(keyValuePairs.toMap)
+          prover = MerklePatriciaRangeProver.make[IO](trie)
 
           sortedKeys = keys.sorted(Ordering.by[Hex, String](_.value))
-          startKey   = sortedKeys(5)
-          endKey     = sortedKeys(14)
+          startKey = sortedKeys(5)
+          endKey = sortedKeys(14)
 
           proof <- prover.attestRange(startKey, endKey).flatMap(IO.fromEither)
-        } yield expect.all(
-          proof.inclusionProofs.size == 10,
-          proof.exclusionBoundaries.isDefined,
-          proof.inclusionProofs.map(_.path).forall(p => p.value >= startKey.value && p.value <= endKey.value)
-        )
+        } yield
+          expect.all(
+            proof.inclusionProofs.size == 10,
+            proof.exclusionBoundaries.isDefined,
+            proof.inclusionProofs.map(_.path).forall(p => p.value >= startKey.value && p.value <= endKey.value)
+          )
       }
     }
   }

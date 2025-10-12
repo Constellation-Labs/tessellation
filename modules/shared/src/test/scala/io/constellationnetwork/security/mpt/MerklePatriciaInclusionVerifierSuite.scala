@@ -37,14 +37,14 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
-        trie   <- MerklePatriciaTrie.make(entries.toMap)
-        prover  = MerklePatriciaSingleInclusionProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaSingleInclusionProver.make[IO](trie)
 
         targetPath = entries.head._1
         proof <- prover.attestPath(targetPath).flatMap(IO.fromEither)
 
         verifier = MerklePatriciaInclusionVerifier.make[IO](trie.rootNode.digest)
-        result  <- verifier.confirm(proof)
+        result <- verifier.confirm(proof)
       } yield expect(result.isRight)
     }
   }
@@ -55,15 +55,15 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
-        trie   <- MerklePatriciaTrie.make(entries.toMap)
-        prover  = MerklePatriciaSingleInclusionProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaSingleInclusionProver.make[IO](trie)
 
         targetPath = entries.head._1
         proof <- prover.attestPath(targetPath).flatMap(IO.fromEither)
 
-        wrongRoot  <- hasher.hash("wrong_root")
-        verifier    = MerklePatriciaInclusionVerifier.make[IO](wrongRoot)
-        result     <- verifier.confirm(proof)
+        wrongRoot <- hasher.hash("wrong_root")
+        verifier = MerklePatriciaInclusionVerifier.make[IO](wrongRoot)
+        result <- verifier.confirm(proof)
       } yield expect(result.isLeft)
     }
   }
@@ -74,8 +74,8 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
-        trie   <- MerklePatriciaTrie.make(entries.toMap)
-        prover  = MerklePatriciaSingleInclusionProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaSingleInclusionProver.make[IO](trie)
 
         targetPath = entries.head._1
         proof <- prover.attestPath(targetPath).flatMap(IO.fromEither)
@@ -83,7 +83,7 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
         tamperedProof = proof.copy(witness = proof.witness.drop(1))
 
         verifier = MerklePatriciaInclusionVerifier.make[IO](trie.rootNode.digest)
-        result  <- verifier.confirm(tamperedProof)
+        result <- verifier.confirm(tamperedProof)
       } yield expect(result.isLeft)
     }
   }
@@ -94,17 +94,17 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
-        trie   <- MerklePatriciaTrie.make(entries.toMap)
-        prover  = MerklePatriciaSingleInclusionProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaSingleInclusionProver.make[IO](trie)
 
         targetPath = entries.head._1
         proof <- prover.attestPath(targetPath).flatMap(IO.fromEither)
 
-        wrongPath     = entries(1)._1
+        wrongPath = entries(1)._1
         tamperedProof = proof.copy(path = wrongPath)
 
         verifier = MerklePatriciaInclusionVerifier.make[IO](trie.rootNode.digest)
-        result  <- verifier.confirm(tamperedProof)
+        result <- verifier.confirm(tamperedProof)
       } yield expect(result.isLeft)
     }
   }
@@ -117,8 +117,8 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
         entries <- (1 to numEntries).toList.traverse { i =>
           hasher.hash(s"entry_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
-        trie   <- MerklePatriciaTrie.make(entries.toMap)
-        prover  = MerklePatriciaSingleInclusionProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaSingleInclusionProver.make[IO](trie)
 
         randomIndices = scala.util.Random.shuffle((0 until numEntries).toList).take(50)
 
@@ -129,9 +129,10 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
 
         verifier = MerklePatriciaInclusionVerifier.make[IO](trie.rootNode.digest)
         results <- proofs.traverse(proof => verifier.confirm(proof))
-      } yield expect.all(
-        results.forall(_.isRight)
-      )
+      } yield
+        expect.all(
+          results.forall(_.isRight)
+        )
     }
   }
 
@@ -141,8 +142,8 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
         entries <- (1 to 50).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
-        trie   <- MerklePatriciaTrie.make(entries.toMap)
-        prover  = MerklePatriciaSingleInclusionProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaSingleInclusionProver.make[IO](trie)
 
         proofs <- entries.map(_._1).traverse { path =>
           prover.attestPath(path).flatMap(IO.fromEither)
@@ -150,11 +151,12 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
 
         verifier = MerklePatriciaInclusionVerifier.make[IO](trie.rootNode.digest)
         results <- proofs.traverse(proof => verifier.confirm(proof))
-      } yield expect.all(
-        results.forall(_.isRight),
-        proofs.exists(p => p.witness.exists(_.isInstanceOf[MerklePatriciaCommitment.Leaf])),
-        proofs.exists(p => p.witness.exists(_.isInstanceOf[MerklePatriciaCommitment.Branch]))
-      )
+      } yield
+        expect.all(
+          results.forall(_.isRight),
+          proofs.exists(p => p.witness.exists(_.isInstanceOf[MerklePatriciaCommitment.Leaf])),
+          proofs.exists(p => p.witness.exists(_.isInstanceOf[MerklePatriciaCommitment.Branch]))
+        )
     }
   }
 }

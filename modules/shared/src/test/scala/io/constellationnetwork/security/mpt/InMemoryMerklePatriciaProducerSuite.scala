@@ -35,17 +35,18 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
       for {
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 
-        key1    <- hasher.hash("key1").map(hash => Hex(hash.value))
-        _       <- producer.insert(Map(key1 -> "value1"))
+        key1 <- hasher.hash("key1").map(hash => Hex(hash.value))
+        _ <- producer.insert(Map(key1 -> "value1"))
         entries <- producer.entries
 
         key2 <- hasher.hash("key2").map(hash => Hex(hash.value))
-        _    <- producer.insert(Map(key2 -> "value2"))
+        _ <- producer.insert(Map(key2 -> "value2"))
         updatedEntries <- producer.entries
-      } yield expect.all(
-        entries.size == 1,
-        updatedEntries.size == 2
-      )
+      } yield
+        expect.all(
+          entries.size == 1,
+          updatedEntries.size == 2
+        )
     }
   }
 
@@ -61,7 +62,7 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
         _ <- entries.traverse { case (key, value) => producer.insert(Map(key -> value)) }
 
         trieEither <- producer.build
-        trie       <- IO.fromEither(trieEither)
+        trie <- IO.fromEither(trieEither)
       } yield expect(trie.rootNode.digest.value.nonEmpty)
     }
   }
@@ -71,11 +72,11 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
       for {
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 
-        key         <- hasher.hash("key").map(hash => Hex(hash.value))
-        _           <- producer.insert(Map(key -> "initial_value"))
+        key <- hasher.hash("key").map(hash => Hex(hash.value))
+        _ <- producer.insert(Map(key -> "initial_value"))
         initialTrie <- producer.build.flatMap(IO.fromEither)
 
-        _          <- producer.update(key, "updated_value")
+        _ <- producer.update(key, "updated_value")
         updatedTrie <- producer.build.flatMap(IO.fromEither)
       } yield expect(initialTrie.rootNode.digest != updatedTrie.rootNode.digest)
     }
@@ -90,15 +91,16 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
 
-        _              <- entries.traverse { case (key, value) => producer.insert(Map(key -> value)) }
+        _ <- entries.traverse { case (key, value) => producer.insert(Map(key -> value)) }
         entriesBeforeClear <- producer.entries
 
-        _              <- producer.clear
-        entriesAfterClear  <- producer.entries
-      } yield expect.all(
-        entriesBeforeClear.size == 5,
-        entriesAfterClear.isEmpty
-      )
+        _ <- producer.clear
+        entriesAfterClear <- producer.entries
+      } yield
+        expect.all(
+          entriesBeforeClear.size == 5,
+          entriesAfterClear.isEmpty
+        )
     }
   }
 
@@ -116,7 +118,7 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
         prover <- producer.getProver
 
         targetPath = entries.head._1
-        proof     <- prover.attestPath(targetPath)
+        proof <- prover.attestPath(targetPath)
       } yield expect(proof.isRight)
     }
   }
@@ -130,7 +132,7 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
 
-        _     <- entries.traverse { case (key, value) => producer.insert(Map(key -> value)) }
+        _ <- entries.traverse { case (key, value) => producer.insert(Map(key -> value)) }
         trie1 <- producer.build.flatMap(IO.fromEither)
         trie2 <- producer.build.flatMap(IO.fromEither)
       } yield expect(trie1.rootNode.digest == trie2.rootNode.digest)
@@ -146,16 +148,17 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
 
-        _              <- entries.traverse { case (key, value) => producer.insert(Map(key -> value)) }
+        _ <- entries.traverse { case (key, value) => producer.insert(Map(key -> value)) }
         entriesBeforeRemove <- producer.entries
 
         keysToRemove = entries.take(3).map(_._1)
-        _           <- producer.remove(keysToRemove)
-        entriesAfterRemove  <- producer.entries
-      } yield expect.all(
-        entriesBeforeRemove.size == 10,
-        entriesAfterRemove.size == 7
-      )
+        _ <- producer.remove(keysToRemove)
+        entriesAfterRemove <- producer.entries
+      } yield
+        expect.all(
+          entriesBeforeRemove.size == 10,
+          entriesAfterRemove.size == 7
+        )
     }
   }
 
@@ -168,25 +171,26 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
         key2 <- hasher.hash("key2").map(hash => Hex(hash.value))
         key3 <- hasher.hash("key3").map(hash => Hex(hash.value))
 
-        _     <- producer.insert(Map(key1 -> "value1"))
+        _ <- producer.insert(Map(key1 -> "value1"))
         trie1 <- producer.build.flatMap(IO.fromEither)
 
-        _     <- producer.insert(Map(key2 -> "value2"))
+        _ <- producer.insert(Map(key2 -> "value2"))
         trie2 <- producer.build.flatMap(IO.fromEither)
 
-        _     <- producer.update(key1, "updated_value1")
+        _ <- producer.update(key1, "updated_value1")
         trie3 <- producer.build.flatMap(IO.fromEither)
 
-        _     <- producer.remove(List(key2))
+        _ <- producer.remove(List(key2))
         trie4 <- producer.build.flatMap(IO.fromEither)
 
         finalEntries <- producer.entries
-      } yield expect.all(
-        trie1.rootNode.digest != trie2.rootNode.digest,
-        trie2.rootNode.digest != trie3.rootNode.digest,
-        trie3.rootNode.digest != trie4.rootNode.digest,
-        finalEntries.size == 1
-      )
+      } yield
+        expect.all(
+          trie1.rootNode.digest != trie2.rootNode.digest,
+          trie2.rootNode.digest != trie3.rootNode.digest,
+          trie3.rootNode.digest != trie4.rootNode.digest,
+          finalEntries.size == 1
+        )
     }
   }
 }

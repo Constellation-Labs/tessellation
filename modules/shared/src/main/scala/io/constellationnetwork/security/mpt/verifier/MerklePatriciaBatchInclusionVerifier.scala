@@ -112,18 +112,18 @@ object MerklePatriciaBatchInclusionVerifier {
             }
         }
 
-        proof.paths.isEmpty.pure[F].ifM(
-          ifTrue = (InvalidWitness("Batch proof cannot have empty paths list"): MerklePatriciaVerificationError)
-            .asLeft[Unit]
-            .pure[F],
-          ifFalse = {
-            proof.paths
+        proof.paths.isEmpty
+          .pure[F]
+          .ifM(
+            ifTrue = (InvalidWitness("Batch proof cannot have empty paths list"): MerklePatriciaVerificationError)
+              .asLeft[Unit]
+              .pure[F],
+            ifFalse = proof.paths
               .traverse(path => reconstructProof(path, proof.witness))
               .map { results =>
                 results.sequence.map(_ => ())
               }
-          }
-        )
+          )
       }.handleError(e => InvalidWitness(s"Batch verification failed: ${e.getMessage}").asLeft[Unit])
     }
 

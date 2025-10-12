@@ -34,47 +34,64 @@ object MerklePatriciaPrefixProver {
           node match {
             case leaf: MerklePatriciaNode.Leaf =>
               val fullPath = currentPath ++ leaf.remaining
-              fullPath.startsWith(targetPrefix).pure[F].ifM(
-                ifTrue = (CollectedLeaf(Nibble.toHex(fullPath), leaf) :: acc).pure[F],
-                ifFalse = acc.pure[F]
-              )
+              fullPath
+                .startsWith(targetPrefix)
+                .pure[F]
+                .ifM(
+                  ifTrue = (CollectedLeaf(Nibble.toHex(fullPath), leaf) :: acc).pure[F],
+                  ifFalse = acc.pure[F]
+                )
 
             case extension: MerklePatriciaNode.Extension =>
               val extendedPath = currentPath ++ extension.shared
 
-              targetPrefix.startsWith(extendedPath).pure[F].ifM(
-                ifTrue = collectLeavesUnderPrefix(extension.child, extendedPath, targetPrefix, acc),
-                ifFalse = extendedPath.startsWith(targetPrefix).pure[F].ifM(
-                  ifTrue = collectAllLeavesUnder(extension.child, extendedPath, acc),
-                  ifFalse = acc.pure[F]
+              targetPrefix
+                .startsWith(extendedPath)
+                .pure[F]
+                .ifM(
+                  ifTrue = collectLeavesUnderPrefix(extension.child, extendedPath, targetPrefix, acc),
+                  ifFalse = extendedPath
+                    .startsWith(targetPrefix)
+                    .pure[F]
+                    .ifM(
+                      ifTrue = collectAllLeavesUnder(extension.child, extendedPath, acc),
+                      ifFalse = acc.pure[F]
+                    )
                 )
-              )
 
             case branch: MerklePatriciaNode.Branch =>
-              targetPrefix.startsWith(currentPath).pure[F].ifM(
-                ifTrue = {
-                  val prefixRemaining = targetPrefix.drop(currentPath.length)
-                  (prefixRemaining.isEmpty).pure[F].ifM(
-                    ifTrue = branch.paths.toList.foldLeftM(acc) {
-                      case (currentAcc, (nibble, child)) =>
-                        collectAllLeavesUnder(child, currentPath :+ nibble, currentAcc)
-                    },
-                    ifFalse = branch.paths.get(prefixRemaining.head) match {
-                      case Some(child) =>
-                        collectLeavesUnderPrefix(child, currentPath :+ prefixRemaining.head, targetPrefix, acc)
-                      case None =>
-                        acc.pure[F]
-                    }
-                  )
-                },
-                ifFalse = currentPath.startsWith(targetPrefix).pure[F].ifM(
-                  ifTrue = branch.paths.toList.foldLeftM(acc) {
-                    case (currentAcc, (nibble, child)) =>
-                      collectAllLeavesUnder(child, currentPath :+ nibble, currentAcc)
+              targetPrefix
+                .startsWith(currentPath)
+                .pure[F]
+                .ifM(
+                  ifTrue = {
+                    val prefixRemaining = targetPrefix.drop(currentPath.length)
+                    prefixRemaining.isEmpty
+                      .pure[F]
+                      .ifM(
+                        ifTrue = branch.paths.toList.foldLeftM(acc) {
+                          case (currentAcc, (nibble, child)) =>
+                            collectAllLeavesUnder(child, currentPath :+ nibble, currentAcc)
+                        },
+                        ifFalse = branch.paths.get(prefixRemaining.head) match {
+                          case Some(child) =>
+                            collectLeavesUnderPrefix(child, currentPath :+ prefixRemaining.head, targetPrefix, acc)
+                          case None =>
+                            acc.pure[F]
+                        }
+                      )
                   },
-                  ifFalse = acc.pure[F]
+                  ifFalse = currentPath
+                    .startsWith(targetPrefix)
+                    .pure[F]
+                    .ifM(
+                      ifTrue = branch.paths.toList.foldLeftM(acc) {
+                        case (currentAcc, (nibble, child)) =>
+                          collectAllLeavesUnder(child, currentPath :+ nibble, currentAcc)
+                      },
+                      ifFalse = acc.pure[F]
+                    )
                 )
-              )
           }
 
         def collectAllLeavesUnder(
@@ -106,10 +123,14 @@ object MerklePatriciaPrefixProver {
         val prefixNibbles = Nibble(prefix)
         for {
           leaves <- collectLeavesUnderPrefix(trie.rootNode, Seq.empty, prefixNibbles, List.empty)
-          result <- leaves.isEmpty.pure[F].ifM(
-                      ifTrue = (PathNotFound(s"No paths found with prefix: ${prefix.value}"): MerklePatriciaProofError).asLeft[MerklePatriciaBatchInclusionProof].pure[F],
-                      ifFalse = buildBatchProof(leaves.reverse)
-                    )
+          result <- leaves.isEmpty
+            .pure[F]
+            .ifM(
+              ifTrue = (PathNotFound(s"No paths found with prefix: ${prefix.value}"): MerklePatriciaProofError)
+                .asLeft[MerklePatriciaBatchInclusionProof]
+                .pure[F],
+              ifFalse = buildBatchProof(leaves.reverse)
+            )
         } yield result
       }.handleError(e => ProofGenerationError(e.getMessage).asLeft[MerklePatriciaBatchInclusionProof])
     }
@@ -118,7 +139,9 @@ object MerklePatriciaPrefixProver {
 
     implicit class MerklePatriciaPrefixOps(private val prefix: Hex) extends AnyVal {
 
-      def attestPrefixInclusion[F[_]](implicit P: MerklePatriciaPrefixProver[F]): F[Either[MerklePatriciaProofError, MerklePatriciaBatchInclusionProof]] =
+      def attestPrefixInclusion[F[_]](
+        implicit P: MerklePatriciaPrefixProver[F]
+      ): F[Either[MerklePatriciaProofError, MerklePatriciaBatchInclusionProof]] =
         P.attestPrefix(prefix)
     }
   }

@@ -27,7 +27,7 @@ object GlobalStateConverter {
     ): Map[GlobalStateKey, Json] =
       data.toSeq.map {
         case (addr, value) =>
-          GlobalStateKey(None, fieldId, Some(addr), None) -> value.asJson
+          GlobalStateKey(fieldId, None, Some(addr), None) -> value.asJson
       }.toMap
 
     def flattenOptionalAddressMap[A: Encoder](
@@ -44,7 +44,7 @@ object GlobalStateConverter {
           case (tokenAddr, innerMap) =>
             innerMap.toSeq.map {
               case (holderAddr, balance) =>
-                GlobalStateKey(None, GlobalStateFieldId.TokenLockBalances, Some(tokenAddr), Some(holderAddr)) -> balance.asJson
+                GlobalStateKey(GlobalStateFieldId.TokenLockBalances, None, Some(tokenAddr), Some(holderAddr)) -> balance.asJson
             }
         }.toMap
       }.getOrElse(Map.empty)
@@ -57,7 +57,7 @@ object GlobalStateConverter {
           case (optAddr, innerMap) =>
             innerMap.toSeq.map {
               case (addr, allowSpends) =>
-                GlobalStateKey(optAddr, GlobalStateFieldId.ActiveAllowSpends, Some(addr), None) -> allowSpends.asJson
+                GlobalStateKey(GlobalStateFieldId.ActiveAllowSpends, optAddr, Some(addr), None) -> allowSpends.asJson
             }
         }.toMap
       }.getOrElse(Map.empty)
@@ -68,12 +68,12 @@ object GlobalStateConverter {
       data.toSeq.flatMap {
         case (metagraphAddr, Left(fullSnapshot)) =>
           List(
-            GlobalStateKey(Some(metagraphAddr), GlobalStateFieldId.LastCurrencySnapshots, None, None) -> fullSnapshot.asJson
+            GlobalStateKey(GlobalStateFieldId.LastCurrencySnapshots, Some(metagraphAddr), None, None) -> fullSnapshot.asJson
           )
         case (metagraphAddr, Right((incrementalSnapshot, snapshotInfo))) =>
           List(
-            GlobalStateKey(Some(metagraphAddr), GlobalStateFieldId.LastCurrencySnapshots, None, None) -> incrementalSnapshot.asJson,
-            GlobalStateKey(Some(metagraphAddr), GlobalStateFieldId.LastCurrencySnapshotsProofs, None, None) -> snapshotInfo.asJson
+            GlobalStateKey(GlobalStateFieldId.LastCurrencySnapshots, Some(metagraphAddr), None, None) -> incrementalSnapshot.asJson,
+            GlobalStateKey(GlobalStateFieldId.LastCurrencySnapshotsProofs, Some(metagraphAddr), None, None) -> snapshotInfo.asJson
           )
       }.toMap
 

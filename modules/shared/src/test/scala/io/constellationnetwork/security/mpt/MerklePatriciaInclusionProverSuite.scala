@@ -40,9 +40,9 @@ object MerklePatriciaInclusionProverSuite extends MutableIOSuite with Checkers {
         res.withCurrent { implicit hasher =>
           for {
             leafPairs <- list.traverse(el => hasher.hash(el).map(hash => Hex(hash.value) -> el))
-            trie      <- MerklePatriciaTrie.make(leafPairs.toMap)
-            prover     = MerklePatriciaSingleInclusionProver.make[IO](trie)
-            proof     <- prover.attestPath(leafPairs(randomIndex)._1).flatMap(IO.fromEither)
+            trie <- MerklePatriciaTrie.make(leafPairs.toMap)
+            prover = MerklePatriciaSingleInclusionProver.make[IO](trie)
+            proof <- prover.attestPath(leafPairs(randomIndex)._1).flatMap(IO.fromEither)
           } yield expect(proof.witness.nonEmpty)
         }
     }
@@ -52,9 +52,9 @@ object MerklePatriciaInclusionProverSuite extends MutableIOSuite with Checkers {
     forall(Gen.listOfN(32, Gen.long)) { list =>
       res.withCurrent { implicit hasher =>
         for {
-          leafMap     <- list.traverse(el => hasher.hash(el).map(hash => Hex(hash.value) -> el)).map(_.toMap)
-          trie        <- MerklePatriciaTrie.make(leafMap)
-          prover       = MerklePatriciaSingleInclusionProver.make[IO](trie)
+          leafMap <- list.traverse(el => hasher.hash(el).map(hash => Hex(hash.value) -> el)).map(_.toMap)
+          trie <- MerklePatriciaTrie.make(leafMap)
+          prover = MerklePatriciaSingleInclusionProver.make[IO](trie)
           proofEither <- prover.attestPath(Hex("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"))
         } yield expect(proofEither.isLeft)
       }
@@ -65,14 +65,15 @@ object MerklePatriciaInclusionProverSuite extends MutableIOSuite with Checkers {
     res.withCurrent { implicit hasher =>
       val value = "single-leaf"
       for {
-        hash  <- hasher.hash(value)
-        trie  <- MerklePatriciaTrie.make[IO, String](Map(Hex(hash.value) -> value))
+        hash <- hasher.hash(value)
+        trie <- MerklePatriciaTrie.make[IO, String](Map(Hex(hash.value) -> value))
         prover = MerklePatriciaSingleInclusionProver.make[IO](trie)
         proof <- prover.attestPath(Hex(hash.value)).flatMap(IO.fromEither)
-      } yield expect.all(
-        proof.path == Hex(hash.value),
-        proof.witness.size == 1
-      )
+      } yield
+        expect.all(
+          proof.path == Hex(hash.value),
+          proof.witness.size == 1
+        )
     }
   }
 
@@ -84,8 +85,8 @@ object MerklePatriciaInclusionProverSuite extends MutableIOSuite with Checkers {
         entries <- (1 to numEntries).toList.traverse { i =>
           hasher.hash(s"entry_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
-        trie   <- MerklePatriciaTrie.make(entries.toMap)
-        prover  = MerklePatriciaSingleInclusionProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaSingleInclusionProver.make[IO](trie)
 
         randomIndices = scala.util.Random.shuffle((0 until numEntries).toList).take(50)
 
@@ -93,10 +94,11 @@ object MerklePatriciaInclusionProverSuite extends MutableIOSuite with Checkers {
           val (hex, _) = entries(idx)
           prover.attestPath(hex)
         }
-      } yield expect.all(
-        proofs.forall(_.isRight),
-        proofs.collect { case Right(p) => p }.forall(_.witness.nonEmpty)
-      )
+      } yield
+        expect.all(
+          proofs.forall(_.isRight),
+          proofs.collect { case Right(p) => p }.forall(_.witness.nonEmpty)
+        )
     }
   }
 
@@ -108,14 +110,15 @@ object MerklePatriciaInclusionProverSuite extends MutableIOSuite with Checkers {
         res.withCurrent { implicit hasher =>
           for {
             leafPairs <- list.traverse(el => hasher.hash(el).map(hash => Hex(hash.value) -> el))
-            trie      <- MerklePatriciaTrie.make(leafPairs.toMap)
-            prover     = MerklePatriciaSingleInclusionProver.make[IO](trie)
-            proof1    <- prover.attestPath(leafPairs(idx)._1).flatMap(IO.fromEither)
-            proof2    <- prover.attestPath(leafPairs(idx)._1).flatMap(IO.fromEither)
-          } yield expect.all(
-            proof1 == proof2,
-            proof1.witness == proof2.witness
-          )
+            trie <- MerklePatriciaTrie.make(leafPairs.toMap)
+            prover = MerklePatriciaSingleInclusionProver.make[IO](trie)
+            proof1 <- prover.attestPath(leafPairs(idx)._1).flatMap(IO.fromEither)
+            proof2 <- prover.attestPath(leafPairs(idx)._1).flatMap(IO.fromEither)
+          } yield
+            expect.all(
+              proof1 == proof2,
+              proof1.witness == proof2.witness
+            )
         }
     }
   }

@@ -38,7 +38,7 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
         }
 
         producer = StatelessMerklePatriciaProducer[IO]
-        trie    <- producer.create(entries.toMap)
+        trie <- producer.create(entries.toMap)
       } yield expect(trie.rootNode.digest.value.nonEmpty)
     }
   }
@@ -50,15 +50,15 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
 
-        producer   = StatelessMerklePatriciaProducer[IO]
+        producer = StatelessMerklePatriciaProducer[IO]
         initialTrie <- producer.create(initialEntries.toMap)
         initialRoot = initialTrie.rootNode.digest
 
-        newKey   <- hasher.hash("new_value").map(hash => Hex(hash.value))
-        newEntry  = Map(newKey -> "new_value")
+        newKey <- hasher.hash("new_value").map(hash => Hex(hash.value))
+        newEntry = Map(newKey -> "new_value")
 
         updatedTrieEither <- producer.insert(initialTrie, newEntry)
-        updatedTrie       <- IO.fromEither(updatedTrieEither)
+        updatedTrie <- IO.fromEither(updatedTrieEither)
       } yield expect(updatedTrie.rootNode.digest != initialRoot)
     }
   }
@@ -70,7 +70,7 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
 
-        producer    = StatelessMerklePatriciaProducer[IO]
+        producer = StatelessMerklePatriciaProducer[IO]
         initialTrie <- producer.create(initialEntries.toMap)
 
         newEntries <- (6 to 10).toList.traverse { i =>
@@ -78,7 +78,7 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
         }
 
         updatedTrieEither <- producer.insert(initialTrie, newEntries.toMap)
-        updatedTrie       <- IO.fromEither(updatedTrieEither)
+        updatedTrie <- IO.fromEither(updatedTrieEither)
       } yield expect(updatedTrie.rootNode.digest.value.nonEmpty)
     }
   }
@@ -86,16 +86,16 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
   test("insert duplicate key updates value") { implicit res =>
     res.withCurrent { implicit hasher =>
       for {
-        key    <- hasher.hash("key").map(hash => Hex(hash.value))
+        key <- hasher.hash("key").map(hash => Hex(hash.value))
         entries = Map(key -> "initial_value")
 
-        producer    = StatelessMerklePatriciaProducer[IO]
+        producer = StatelessMerklePatriciaProducer[IO]
         initialTrie <- producer.create(entries)
-        initialRoot  = initialTrie.rootNode.digest
+        initialRoot = initialTrie.rootNode.digest
 
         updateEntry = Map(key -> "updated_value")
         updatedTrieEither <- producer.insert(initialTrie, updateEntry)
-        updatedTrie       <- IO.fromEither(updatedTrieEither)
+        updatedTrie <- IO.fromEither(updatedTrieEither)
       } yield expect(updatedTrie.rootNode.digest != initialRoot)
     }
   }
@@ -107,13 +107,13 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
 
-        producer    = StatelessMerklePatriciaProducer[IO]
+        producer = StatelessMerklePatriciaProducer[IO]
         initialTrie <- producer.create(entries.toMap)
-        initialRoot  = initialTrie.rootNode.digest
+        initialRoot = initialTrie.rootNode.digest
 
         keyToRemove = entries.head._1
         updatedTrieEither <- producer.remove(initialTrie, List(keyToRemove))
-        updatedTrie       <- IO.fromEither(updatedTrieEither)
+        updatedTrie <- IO.fromEither(updatedTrieEither)
       } yield expect(updatedTrie.rootNode.digest != initialRoot)
     }
   }
@@ -125,12 +125,12 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
 
-        producer    = StatelessMerklePatriciaProducer[IO]
+        producer = StatelessMerklePatriciaProducer[IO]
         initialTrie <- producer.create(entries.toMap)
 
         keysToRemove = entries.take(3).map(_._1)
         updatedTrieEither <- producer.remove(initialTrie, keysToRemove)
-        updatedTrie       <- IO.fromEither(updatedTrieEither)
+        updatedTrie <- IO.fromEither(updatedTrieEither)
       } yield expect(updatedTrie.rootNode.digest.value.nonEmpty)
     }
   }
@@ -142,13 +142,13 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
 
-        producer    = StatelessMerklePatriciaProducer[IO]
+        producer = StatelessMerklePatriciaProducer[IO]
         initialTrie <- producer.create(entries.toMap)
-        initialRoot  = initialTrie.rootNode.digest
+        initialRoot = initialTrie.rootNode.digest
 
         nonExistentKey = Hex("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")
         updatedTrieEither <- producer.remove(initialTrie, List(nonExistentKey))
-        updatedTrie       <- IO.fromEither(updatedTrieEither)
+        updatedTrie <- IO.fromEither(updatedTrieEither)
       } yield expect(updatedTrie.rootNode.digest == initialRoot)
     }
   }
@@ -161,11 +161,11 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
         }
 
         producer = StatelessMerklePatriciaProducer[IO]
-        trie    <- producer.create(entries.toMap)
-        prover  <- producer.getProver(trie)
+        trie <- producer.create(entries.toMap)
+        prover <- producer.getProver(trie)
 
         targetPath = entries.head._1
-        proof     <- prover.attestPath(targetPath)
+        proof <- prover.attestPath(targetPath)
       } yield expect(proof.isRight)
     }
   }
@@ -178,8 +178,8 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
         }
 
         producer = StatelessMerklePatriciaProducer[IO]
-        trie1   <- producer.create(entries.toMap)
-        trie2   <- producer.create(entries.toMap)
+        trie1 <- producer.create(entries.toMap)
+        trie2 <- producer.create(entries.toMap)
       } yield expect(trie1.rootNode.digest == trie2.rootNode.digest)
     }
   }

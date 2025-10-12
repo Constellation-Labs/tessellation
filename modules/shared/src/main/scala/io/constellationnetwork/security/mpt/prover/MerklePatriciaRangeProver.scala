@@ -7,7 +7,11 @@ import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt.Nibble.nibbleSeqOrdering
 import io.constellationnetwork.security.mpt._
-import io.constellationnetwork.security.mpt.prover.attestation.{MerklePatriciaInclusionProof, MerklePatriciaRangeProof, RangeExclusionBoundaries}
+import io.constellationnetwork.security.mpt.prover.attestation.{
+  MerklePatriciaInclusionProof,
+  MerklePatriciaRangeProof,
+  RangeExclusionBoundaries
+}
 
 trait MerklePatriciaRangeProver[F[_]] {
 
@@ -46,27 +50,33 @@ object MerklePatriciaRangeProver {
               val fullPath = currentPath ++ leaf.remaining
               val fullPathHex = Nibble.toHex(fullPath)
 
-              (nibbleSeqOrdering.gteq(fullPath, startNibbles) && nibbleSeqOrdering.lteq(fullPath, endNibbles)).pure[F].ifM(
-                ifTrue = (CollectedLeaf(fullPathHex, leaf) :: acc).pure[F],
-                ifFalse = acc.pure[F]
-              )
+              (nibbleSeqOrdering.gteq(fullPath, startNibbles) && nibbleSeqOrdering.lteq(fullPath, endNibbles))
+                .pure[F]
+                .ifM(
+                  ifTrue = (CollectedLeaf(fullPathHex, leaf) :: acc).pure[F],
+                  ifFalse = acc.pure[F]
+                )
 
             case extension: MerklePatriciaNode.Extension =>
               val extendedPath = currentPath ++ extension.shared
 
-              shouldExploreSubtree(extendedPath, startNibbles, endNibbles).pure[F].ifM(
-                ifTrue = collectLeavesInRange(extension.child, extendedPath, startNibbles, endNibbles, acc),
-                ifFalse = acc.pure[F]
-              )
+              shouldExploreSubtree(extendedPath, startNibbles, endNibbles)
+                .pure[F]
+                .ifM(
+                  ifTrue = collectLeavesInRange(extension.child, extendedPath, startNibbles, endNibbles, acc),
+                  ifFalse = acc.pure[F]
+                )
 
             case branch: MerklePatriciaNode.Branch =>
               branch.paths.toList.foldLeftM(acc) {
                 case (currentAcc, (nibble, child)) =>
                   val childPath = currentPath :+ nibble
-                  shouldExploreSubtree(childPath, startNibbles, endNibbles).pure[F].ifM(
-                    ifTrue = collectLeavesInRange(child, childPath, startNibbles, endNibbles, currentAcc),
-                    ifFalse = currentAcc.pure[F]
-                  )
+                  shouldExploreSubtree(childPath, startNibbles, endNibbles)
+                    .pure[F]
+                    .ifM(
+                      ifTrue = collectLeavesInRange(child, childPath, startNibbles, endNibbles, currentAcc),
+                      ifFalse = currentAcc.pure[F]
+                    )
               }
           }
 
@@ -108,9 +118,9 @@ object MerklePatriciaRangeProver {
 
           for {
             inclusionProofs <- paths.traverse(path => singleProver.attestPath(path))
-            leftBoundary    <- findBoundaryLeaf(startPath, findNext = false)
-            rightBoundary   <- findBoundaryLeaf(endPath, findNext = true)
-          } yield {
+            leftBoundary <- findBoundaryLeaf(startPath, findNext = false)
+            rightBoundary <- findBoundaryLeaf(endPath, findNext = true)
+          } yield
             inclusionProofs.sequence.map { proofs =>
               val exclusionBoundaries: Option[RangeExclusionBoundaries] = if (leftBoundary.nonEmpty || rightBoundary.nonEmpty) {
                 Some(RangeExclusionBoundaries(leftBoundary, rightBoundary))
@@ -120,38 +130,39 @@ object MerklePatriciaRangeProver {
 
               MerklePatriciaRangeProof(startPath, endPath, proofs, exclusionBoundaries)
             }
-          }
         }
 
         val startNibbles = Nibble(startPath)
         val endNibbles = Nibble(endPath)
 
-        (hexOrdering.compare(startPath, endPath) > 0).pure[F].ifM(
-          ifTrue = (ProofGenerationError(s"Invalid range: startPath ${startPath.value} > endPath ${endPath.value}"): MerklePatriciaProofError)
-            .asLeft[MerklePatriciaRangeProof]
-            .pure[F],
-          ifFalse = {
-            for {
-              leaves       <- collectLeavesInRange(trie.rootNode, Seq.empty, startNibbles, endNibbles, List.empty)
-              result       <- leaves.isEmpty.pure[F].ifM(
-                                ifTrue = {
-                                  for {
-                                    leftBoundary  <- findBoundaryLeaf(startPath, findNext = false)
-                                    rightBoundary <- findBoundaryLeaf(endPath, findNext = true)
-                                  } yield {
-                                    val boundaries: Option[RangeExclusionBoundaries] = if (leftBoundary.nonEmpty || rightBoundary.nonEmpty) {
-                                      Some(RangeExclusionBoundaries(leftBoundary, rightBoundary))
-                                    } else {
-                                      None
-                                    }
-                                    (MerklePatriciaRangeProof(startPath, endPath, List.empty, boundaries): MerklePatriciaRangeProof).asRight[MerklePatriciaProofError]
-                                  }
-                                },
-                                ifFalse = buildRangeProof(leaves.reverse)
-                              )
+        (hexOrdering.compare(startPath, endPath) > 0)
+          .pure[F]
+          .ifM(
+            ifTrue =
+              (ProofGenerationError(s"Invalid range: startPath ${startPath.value} > endPath ${endPath.value}"): MerklePatriciaProofError)
+                .asLeft[MerklePatriciaRangeProof]
+                .pure[F],
+            ifFalse = for {
+              leaves <- collectLeavesInRange(trie.rootNode, Seq.empty, startNibbles, endNibbles, List.empty)
+              result <- leaves.isEmpty
+                .pure[F]
+                .ifM(
+                  ifTrue = for {
+                    leftBoundary <- findBoundaryLeaf(startPath, findNext = false)
+                    rightBoundary <- findBoundaryLeaf(endPath, findNext = true)
+                  } yield {
+                    val boundaries: Option[RangeExclusionBoundaries] = if (leftBoundary.nonEmpty || rightBoundary.nonEmpty) {
+                      Some(RangeExclusionBoundaries(leftBoundary, rightBoundary))
+                    } else {
+                      None
+                    }
+                    (MerklePatriciaRangeProof(startPath, endPath, List.empty, boundaries): MerklePatriciaRangeProof)
+                      .asRight[MerklePatriciaProofError]
+                  },
+                  ifFalse = buildRangeProof(leaves.reverse)
+                )
             } yield result
-          }
-        )
+          )
       }.handleError(e => ProofGenerationError(e.getMessage).asLeft[MerklePatriciaRangeProof])
     }
 

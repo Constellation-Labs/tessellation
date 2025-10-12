@@ -42,13 +42,13 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
           val paddedKey = Hex(key.padTo(64, '0'))
           hasher.hash(s"value_$key").map(_ => paddedKey -> s"value_$key")
         }
-        trie   <- MerklePatriciaTrie.make(entries.toMap)
-        prover  = MerklePatriciaRangeProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaRangeProver.make[IO](trie)
 
         proof <- prover.attestRange(Hex(start.padTo(64, '0')), Hex(end.padTo(64, '0'))).flatMap(IO.fromEither)
 
         verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
-        result  <- verifier.confirmRange(proof)
+        result <- verifier.confirmRange(proof)
       } yield expect(result.isRight)
     }
   }
@@ -63,18 +63,19 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
           val paddedKey = Hex(key.padTo(64, '0'))
           hasher.hash(s"value_$key").map(_ => paddedKey -> s"value_$key")
         }
-        trie   <- MerklePatriciaTrie.make(entries.toMap)
-        prover  = MerklePatriciaRangeProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaRangeProver.make[IO](trie)
 
         proof <- prover.attestRange(Hex(start.padTo(64, '0')), Hex(end.padTo(64, '0'))).flatMap(IO.fromEither)
 
         verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
-        result  <- verifier.confirmRange(proof)
-      } yield expect.all(
-        result.isRight,
-        proof.inclusionProofs.isEmpty,
-        proof.exclusionBoundaries.isDefined
-      )
+        result <- verifier.confirmRange(proof)
+      } yield
+        expect.all(
+          result.isRight,
+          proof.inclusionProofs.isEmpty,
+          proof.exclusionBoundaries.isDefined
+        )
     }
   }
 
@@ -88,13 +89,13 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
           val paddedKey = Hex(key.padTo(64, '0'))
           hasher.hash(s"value_$key").map(_ => paddedKey -> s"value_$key")
         }
-        trie   <- MerklePatriciaTrie.make(entries.toMap)
-        prover  = MerklePatriciaRangeProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaRangeProver.make[IO](trie)
 
         proof <- prover.attestRange(Hex(start.padTo(64, '0')), Hex(end.padTo(64, '0'))).flatMap(IO.fromEither)
 
         verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
-        result  <- verifier.confirmRange(proof)
+        result <- verifier.confirmRange(proof)
       } yield expect(result.isRight)
     }
   }
@@ -106,18 +107,19 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
           val paddedKey = Hex(key.padTo(64, '0'))
           hasher.hash(s"value_$key").map(_ => paddedKey -> s"value_$key")
         }
-        trie   <- MerklePatriciaTrie.make(entries.toMap)
-        prover  = MerklePatriciaRangeProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaRangeProver.make[IO](trie)
 
         minKey = entries.map(_._1).min(Ordering.by[Hex, String](_.value))
         proof <- prover.attestRange(minKey, Hex("3500".padTo(64, '0'))).flatMap(IO.fromEither)
 
         verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
-        result  <- verifier.confirmRange(proof)
-      } yield expect.all(
-        result.isRight,
-        proof.exclusionBoundaries.flatMap(_.leftBoundary).isEmpty
-      )
+        result <- verifier.confirmRange(proof)
+      } yield
+        expect.all(
+          result.isRight,
+          proof.exclusionBoundaries.flatMap(_.leftBoundary).isEmpty
+        )
     }
   }
 
@@ -128,18 +130,19 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
           val paddedKey = Hex(key.padTo(64, '0'))
           hasher.hash(s"value_$key").map(_ => paddedKey -> s"value_$key")
         }
-        trie   <- MerklePatriciaTrie.make(entries.toMap)
-        prover  = MerklePatriciaRangeProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaRangeProver.make[IO](trie)
 
         maxKey = entries.map(_._1).max(Ordering.by[Hex, String](_.value))
         proof <- prover.attestRange(Hex("3500".padTo(64, '0')), maxKey).flatMap(IO.fromEither)
 
         verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
-        result  <- verifier.confirmRange(proof)
-      } yield expect.all(
-        result.isRight,
-        proof.exclusionBoundaries.flatMap(_.rightBoundary).isEmpty
-      )
+        result <- verifier.confirmRange(proof)
+      } yield
+        expect.all(
+          result.isRight,
+          proof.exclusionBoundaries.flatMap(_.rightBoundary).isEmpty
+        )
     }
   }
 
@@ -153,16 +156,16 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
           val paddedKey = Hex(key.padTo(64, '0'))
           hasher.hash(s"value_$key").map(_ => paddedKey -> s"value_$key")
         }
-        trie   <- MerklePatriciaTrie.make[IO, String](entries.toMap)
-        prover  = MerklePatriciaRangeProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make[IO, String](entries.toMap)
+        prover = MerklePatriciaRangeProver.make[IO](trie)
 
         proof <- prover.attestRange(Hex(start.padTo(64, '0')), Hex(end.padTo(64, '0'))).flatMap(IO.fromEither)
 
         shuffledProofs = scala.util.Random.shuffle(proof.inclusionProofs)
-        tamperedProof  = proof.copy(inclusionProofs = shuffledProofs)
+        tamperedProof = proof.copy(inclusionProofs = shuffledProofs)
 
         verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
-        result  <- verifier.confirmRange(tamperedProof)
+        result <- verifier.confirmRange(tamperedProof)
       } yield {
         val isSorted = shuffledProofs == proof.inclusionProofs
         if (isSorted) expect(result.isRight)
@@ -181,16 +184,16 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
           val paddedKey = Hex(key.padTo(64, '0'))
           hasher.hash(s"value_$key").map(_ => paddedKey -> s"value_$key")
         }
-        trie   <- MerklePatriciaTrie.make(entries.toMap)
-        prover  = MerklePatriciaRangeProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaRangeProver.make[IO](trie)
 
         validProof <- prover.attestRange(Hex(start.padTo(64, '0')), Hex(end.padTo(64, '0'))).flatMap(IO.fromEither)
-        wideProof  <- prover.attestRange(Hex("3000".padTo(64, '0')), Hex("8000".padTo(64, '0'))).flatMap(IO.fromEither)
+        wideProof <- prover.attestRange(Hex("3000".padTo(64, '0')), Hex("8000".padTo(64, '0'))).flatMap(IO.fromEither)
 
         tamperedProof = validProof.copy(inclusionProofs = wideProof.inclusionProofs)
 
         verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
-        result  <- verifier.confirmRange(tamperedProof)
+        result <- verifier.confirmRange(tamperedProof)
       } yield expect(result.isLeft)
     }
   }

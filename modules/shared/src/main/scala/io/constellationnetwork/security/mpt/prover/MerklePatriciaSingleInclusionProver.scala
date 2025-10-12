@@ -86,7 +86,9 @@ object MerklePatriciaSingleInclusionProver {
 
     implicit class MerklePatriciaPathOps(private val path: Hex) extends AnyVal {
 
-      def attestInclusion[F[_]](implicit P: MerklePatriciaSingleInclusionProver[F]): F[Either[MerklePatriciaProofError, MerklePatriciaInclusionProof]] =
+      def attestInclusion[F[_]](
+        implicit P: MerklePatriciaSingleInclusionProver[F]
+      ): F[Either[MerklePatriciaProofError, MerklePatriciaInclusionProof]] =
         P.attestPath(path)
     }
   }

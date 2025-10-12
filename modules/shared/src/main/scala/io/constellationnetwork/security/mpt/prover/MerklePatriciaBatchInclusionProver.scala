@@ -62,23 +62,25 @@ object MerklePatriciaBatchInclusionProver {
             s"extension:${shared.mkString}:${childDigest.value}"
         }
 
-        paths.isEmpty.pure[F].ifM(
-          ifTrue = (ProofGenerationError("Cannot create batch proof for empty path list"): MerklePatriciaProofError)
-            .asLeft[MerklePatriciaBatchInclusionProof]
-            .pure[F],
-          ifFalse = {
-            val sortedPaths = paths.sorted(Ordering.by[Hex, String](_.value))
+        paths.isEmpty
+          .pure[F]
+          .ifM(
+            ifTrue = (ProofGenerationError("Cannot create batch proof for empty path list"): MerklePatriciaProofError)
+              .asLeft[MerklePatriciaBatchInclusionProof]
+              .pure[F],
+            ifFalse = {
+              val sortedPaths = paths.sorted(Ordering.by[Hex, String](_.value))
 
-            sortedPaths
-              .traverse(attestSinglePath)
-              .map { results =>
-                results.sequence.map { pathWitnesses =>
-                  val deduplicated = deduplicateCommitments(pathWitnesses)
-                  MerklePatriciaBatchInclusionProof(sortedPaths, deduplicated)
+              sortedPaths
+                .traverse(attestSinglePath)
+                .map { results =>
+                  results.sequence.map { pathWitnesses =>
+                    val deduplicated = deduplicateCommitments(pathWitnesses)
+                    MerklePatriciaBatchInclusionProof(sortedPaths, deduplicated)
+                  }
                 }
-              }
-          }
-        )
+            }
+          )
       }.handleError(e => ProofGenerationError(e.getMessage).asLeft[MerklePatriciaBatchInclusionProof])
     }
 
@@ -86,7 +88,9 @@ object MerklePatriciaBatchInclusionProver {
 
     implicit class MerklePatriciaPathListOps(private val paths: List[Hex]) extends AnyVal {
 
-      def attestBatchInclusion[F[_]](implicit P: MerklePatriciaBatchInclusionProver[F]): F[Either[MerklePatriciaProofError, MerklePatriciaBatchInclusionProof]] =
+      def attestBatchInclusion[F[_]](
+        implicit P: MerklePatriciaBatchInclusionProver[F]
+      ): F[Either[MerklePatriciaProofError, MerklePatriciaBatchInclusionProof]] =
         P.attestPaths(paths)
     }
   }

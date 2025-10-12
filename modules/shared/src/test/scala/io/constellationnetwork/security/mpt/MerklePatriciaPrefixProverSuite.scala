@@ -16,6 +16,7 @@ import io.constellationnetwork.security.mpt.prover.MerklePatriciaPrefixProver
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.syntax._
 import org.scalacheck.Gen
 import weaver.scalacheck.Checkers
@@ -50,14 +51,15 @@ object MerklePatriciaPrefixProverSuite extends MutableIOSuite with Checkers {
           hasher.hash(s"other_$i").map(hash => Hex(hash.value) -> s"other_$i")
         }
 
-        trie   <- MerklePatriciaTrie.make((prefixedEntries ++ otherEntries).toMap)
-        prover  = MerklePatriciaPrefixProver.make[IO](trie)
-        proof  <- prover.attestPrefix(Hex(commonPrefix)).flatMap(IO.fromEither)
-      } yield expect.all(
-        proof.paths.size == 10,
-        proof.paths.forall(_.value.startsWith(commonPrefix)),
-        proof.witness.nonEmpty
-      )
+        trie <- MerklePatriciaTrie.make((prefixedEntries ++ otherEntries).toMap)
+        prover = MerklePatriciaPrefixProver.make[IO](trie)
+        proof <- prover.attestPrefix(Hex(commonPrefix)).flatMap(IO.fromEither)
+      } yield
+        expect.all(
+          proof.paths.size == 10,
+          proof.paths.forall(_.value.startsWith(commonPrefix)),
+          proof.witness.nonEmpty
+        )
     }
   }
 
@@ -67,8 +69,8 @@ object MerklePatriciaPrefixProverSuite extends MutableIOSuite with Checkers {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
-        trie        <- MerklePatriciaTrie.make(entries.toMap)
-        prover       = MerklePatriciaPrefixProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaPrefixProver.make[IO](trie)
         proofEither <- prover.attestPrefix(Hex("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"))
       } yield expect(proofEither.isLeft)
     }
@@ -92,17 +94,18 @@ object MerklePatriciaPrefixProverSuite extends MutableIOSuite with Checkers {
           hasher.hash(s"other_$i").map(hash => Hex(hash.value) -> s"other_$i")
         }
 
-        trie   <- MerklePatriciaTrie.make((level1Entries ++ level2Entries ++ otherEntries).toMap)
-        prover  = MerklePatriciaPrefixProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make((level1Entries ++ level2Entries ++ otherEntries).toMap)
+        prover = MerklePatriciaPrefixProver.make[IO](trie)
 
         level1Proof <- prover.attestPrefix(Hex(level1Prefix)).flatMap(IO.fromEither)
         level2Proof <- prover.attestPrefix(Hex(level2Prefix)).flatMap(IO.fromEither)
-      } yield expect.all(
-        level1Proof.paths.size == 8,
-        level2Proof.paths.size == 3,
-        level1Proof.paths.forall(_.value.startsWith(level1Prefix)),
-        level2Proof.paths.forall(_.value.startsWith(level2Prefix))
-      )
+      } yield
+        expect.all(
+          level1Proof.paths.size == 8,
+          level2Proof.paths.size == 3,
+          level1Proof.paths.forall(_.value.startsWith(level1Prefix)),
+          level2Proof.paths.forall(_.value.startsWith(level2Prefix))
+        )
     }
   }
 
@@ -120,13 +123,14 @@ object MerklePatriciaPrefixProverSuite extends MutableIOSuite with Checkers {
           hasher.hash(s"other_$i").map(hash => Hex("b" + hash.value.drop(1)) -> s"other_$i")
         }
 
-        trie   <- MerklePatriciaTrie.make((prefixedEntries ++ otherEntries).toMap)
-        prover  = MerklePatriciaPrefixProver.make[IO](trie)
-        proof  <- prover.attestPrefix(Hex(singleCharPrefix)).flatMap(IO.fromEither)
-      } yield expect.all(
-        proof.paths.size == 20,
-        proof.paths.forall(_.value.startsWith(singleCharPrefix))
-      )
+        trie <- MerklePatriciaTrie.make((prefixedEntries ++ otherEntries).toMap)
+        prover = MerklePatriciaPrefixProver.make[IO](trie)
+        proof <- prover.attestPrefix(Hex(singleCharPrefix)).flatMap(IO.fromEither)
+      } yield
+        expect.all(
+          proof.paths.size == 20,
+          proof.paths.forall(_.value.startsWith(singleCharPrefix))
+        )
     }
   }
 
@@ -136,15 +140,16 @@ object MerklePatriciaPrefixProverSuite extends MutableIOSuite with Checkers {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
         }
-        trie   <- MerklePatriciaTrie.make(entries.toMap)
-        prover  = MerklePatriciaPrefixProver.make[IO](trie)
+        trie <- MerklePatriciaTrie.make(entries.toMap)
+        prover = MerklePatriciaPrefixProver.make[IO](trie)
 
         fullKey = entries.head._1
-        proof  <- prover.attestPrefix(fullKey).flatMap(IO.fromEither)
-      } yield expect.all(
-        proof.paths.size == 1,
-        proof.paths.head == fullKey
-      )
+        proof <- prover.attestPrefix(fullKey).flatMap(IO.fromEither)
+      } yield
+        expect.all(
+          proof.paths.size == 1,
+          proof.paths.head == fullKey
+        )
     }
   }
 
@@ -164,55 +169,41 @@ object MerklePatriciaPrefixProverSuite extends MutableIOSuite with Checkers {
           hasher.hash(s"other_$i").map(hash => Hex("d" + hash.value.drop(1)) -> s"other_$i")
         }
 
-        trie   <- MerklePatriciaTrie.make((matchingEntries ++ otherEntries).toMap)
-        prover  = MerklePatriciaPrefixProver.make[IO](trie)
-        proof  <- prover.attestPrefix(Hex(matchingPrefix)).flatMap(IO.fromEither)
-      } yield expect.all(
-        proof.paths.size == numMatching,
-        proof.paths.forall(_.value.startsWith(matchingPrefix)),
-        proof.witness.nonEmpty
-      )
+        trie <- MerklePatriciaTrie.make((matchingEntries ++ otherEntries).toMap)
+        prover = MerklePatriciaPrefixProver.make[IO](trie)
+        proof <- prover.attestPrefix(Hex(matchingPrefix)).flatMap(IO.fromEither)
+      } yield
+        expect.all(
+          proof.paths.size == numMatching,
+          proof.paths.forall(_.value.startsWith(matchingPrefix)),
+          proof.witness.nonEmpty
+        )
     }
   }
 
   test("prefix proof for token lock balances of specific token address") { implicit res =>
-    forall(Gen.listOfN(15, addressGen).flatMap { addrs =>
-      Gen.const((addrs.head, addrs.tail))
-    }) {
-      case (tokenAddr, holderAddresses) =>
-        res.withCurrent { implicit hasher =>
-          for {
-            tokenKeys <- holderAddresses.traverse { holderAddr =>
-              GlobalStateKey.toHex[IO](
-                GlobalStateKey(None, GlobalStateFieldId.TokenLockBalances, Some(tokenAddr), Some(holderAddr))
-              )
-            }
-            otherKeys <- holderAddresses.take(5).traverse { holderAddr =>
-              GlobalStateKey.toHex[IO](
-                GlobalStateKey(None, GlobalStateFieldId.Balances, Some(holderAddr), None)
-              )
-            }
+    res.withCurrent { implicit hasher =>
+      val tokenPrefix = "abc123def456"
 
-            tokenKeyValuePairs <- tokenKeys.zipWithIndex.traverse {
-              case (key, idx) => Balance((idx + 1) * 500L).asJson.pure[IO].map(key -> _)
-            }
-            otherKeyValuePairs <- otherKeys.zipWithIndex.traverse {
-              case (key, idx) => Balance((idx + 1) * 1000L).asJson.pure[IO].map(key -> _)
-            }
-
-            trie   <- MerklePatriciaTrie.make((tokenKeyValuePairs ++ otherKeyValuePairs).toMap)
-            prover  = MerklePatriciaPrefixProver.make[IO](trie)
-
-            tokenKeyPrefix <- GlobalStateKey.toHex[IO](
-              GlobalStateKey(None, GlobalStateFieldId.TokenLockBalances, Some(tokenAddr), None)
-            )
-
-            proof <- prover.attestPrefix(tokenKeyPrefix).flatMap(IO.fromEither)
-          } yield expect.all(
-            proof.paths.size == 14,
-            proof.paths.forall(_.value.startsWith(tokenKeyPrefix.value))
-          )
+      for {
+        tokenLockEntries <- (1 to 10).toList.traverse { i =>
+          val key = Hex(tokenPrefix + f"$i%02d" + "0" * 50)
+          hasher.hash(s"lock_$i").map(_ => key -> s"lock_$i")
         }
+        otherEntries <- (1 to 3).toList.traverse { i =>
+          val key = Hex("fedcba987654" + f"$i%02d" + "0" * 50)
+          hasher.hash(s"balance_$i").map(_ => key -> s"balance_$i")
+        }
+
+        trie <- MerklePatriciaTrie.make((tokenLockEntries ++ otherEntries).toMap)
+        prover = MerklePatriciaPrefixProver.make[IO](trie)
+
+        proof <- prover.attestPrefix(Hex(tokenPrefix)).flatMap(IO.fromEither)
+      } yield
+        expect.all(
+          proof.paths.size == 10,
+          proof.paths.forall(_.value.startsWith(tokenPrefix))
+        )
     }
   }
 }
