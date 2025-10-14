@@ -4,6 +4,7 @@ import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL1Service, L1NodeContext}
+import io.constellationnetwork.currency.l1.StoragesInitializer.initializeStorages
 import io.constellationnetwork.currency.l1.cli.method
 import io.constellationnetwork.currency.l1.cli.method._
 import io.constellationnetwork.currency.l1.domain.snapshot.programs.CurrencySnapshotProcessor
@@ -36,12 +37,14 @@ import io.constellationnetwork.schema.node.NodeState.SessionStarted
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
 import io.constellationnetwork.schema.swap.CurrencyId
 import io.constellationnetwork.schema.tokenLock.TokenLockLimitsConfig
-import io.constellationnetwork.security.Hasher
+import io.constellationnetwork.security.{Hasher, HasherSelector}
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.boolean.Or
 import eu.timepit.refined.pureconfig._
+import org.typelevel.log4cats.SelfAwareStructuredLogger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 import pureconfig.generic.auto._
 import pureconfig.module.enumeratum._
 
@@ -82,6 +85,7 @@ abstract class CurrencyL1App(
     for {
       cfgR <- loadConfigAs[AppConfigReader].asResource
       cfg = method.appConfig(cfgR, sharedConfig)
+      implicit0(logger: SelfAwareStructuredLogger[IO]) = Slf4jLogger.getLoggerFromName[IO](this.getClass.getName)
 
       dagL1Queues <- DAGL1Queues.make[IO](sharedQueues).asResource
       queues <- Queues.make[IO](dagL1Queues).asResource
@@ -160,8 +164,8 @@ abstract class CurrencyL1App(
         storages.allowSpend,
         storages.tokenLock,
         services.globalL0.pullGlobalSnapshot,
-        services.globalL0,
-        storages.globalL0Alignment
+        storages.globalL0Alignment,
+        cfg.consensus.tipsCount
       )
       programs = Programs
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
@@ -245,6 +249,9 @@ abstract class CurrencyL1App(
               storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
               services.cluster.createSession >>
               services.session.createSession >>
+              HasherSelector[IO].withCurrent { implicit hasher =>
+                initializeStorages[IO, Run](storages, sharedStorages, services)
+              } >>
               storages.node.tryModifyState(SessionStarted, NodeState.Ready) >>
               services.restart.setClusterLeaveRestartMethod(
                 RunValidator(
@@ -269,6 +276,9 @@ abstract class CurrencyL1App(
               gossipDaemon.startAsRegularValidator >>
               programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
               programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
+              HasherSelector[IO].withCurrent { implicit hasher =>
+                initializeStorages[IO, Run](storages, sharedStorages, services)
+              } >>
               storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
 
           case cfg: RunValidatorWithJoinAttempt =>

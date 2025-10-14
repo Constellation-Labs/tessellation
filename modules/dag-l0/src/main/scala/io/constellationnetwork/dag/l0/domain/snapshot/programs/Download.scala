@@ -95,9 +95,9 @@ object Download {
     )(implicit hasherSelector: HasherSelector[F]): F[Unit] =
       for {
         hashedSnapshot <- hasherSelector.withCurrent(implicit hs => snapshot.toHashed)
-        alreadyInitializedStorage <- lastNGlobalSnapshotStorage.alreadyInitialized
+        alreadyInitializedStorage <- lastNGlobalSnapshotStorage.get
         _ <-
-          if (!alreadyInitializedStorage) setInitialSnapshots(hashedSnapshot, context)
+          if (alreadyInitializedStorage.isEmpty) setInitialSnapshots(hashedSnapshot, context)
           else updateSnapshots(hashedSnapshot, context)
       } yield ()
 
