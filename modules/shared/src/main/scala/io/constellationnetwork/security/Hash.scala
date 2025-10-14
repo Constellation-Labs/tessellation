@@ -3,6 +3,8 @@ package io.constellationnetwork.security
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 
+import cats.effect.Sync
+import cats.syntax.functor._
 import cats.{Eq, Show}
 
 import io.constellationnetwork.ext.derevo.ordering
@@ -55,8 +57,13 @@ object hash {
       Sha256Digest(md.digest())
     }
 
+    def sha256DigestFromBytesForSync[F[_]: Sync](bytes: Array[Byte]): F[Sha256Digest] = Sync[F].blocking(sha256DigestFromBytes(bytes))
+
     def fromBytes(bytes: Array[Byte]): Hash =
       Hash(sha256DigestFromBytes(bytes).toHexString)
+
+    def fromBytesForSync[F[_]: Sync](bytes: Array[Byte]): F[Hash] =
+      sha256DigestFromBytesForSync[F](bytes).map(digest => Hash(digest.toHexString))
 
     def empty: Hash = Hash(s"%064d".format(0))
 

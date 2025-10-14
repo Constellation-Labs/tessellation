@@ -82,7 +82,7 @@ object Signed {
     data: A,
     keyPair: KeyPair
   )(implicit toBytes: A => F[Array[Byte]]): F[Signed[A]] =
-    toBytes(data).map(Hash.fromBytes).flatMap { hash =>
+    toBytes(data).flatMap(Hash.fromBytesForSync[F]).flatMap { hash =>
       SignatureProof.fromHash(keyPair, hash).map { sp =>
         Signed[A](data, NonEmptySet.fromSetUnsafe(SortedSet(sp)))
       }
@@ -161,7 +161,7 @@ object Signed {
       }
 
     def toHashed[F[_]: Async: Hasher](toBytes: A => F[Array[Byte]]): F[Hashed[A]] =
-      toBytes(signed.value).map(Hash.fromBytes).flatMap { hash =>
+      toBytes(signed.value).flatMap(Hash.fromBytesForSync[F]).flatMap { hash =>
         proofsHash.map(Hashed(signed, hash, _))
       }
 

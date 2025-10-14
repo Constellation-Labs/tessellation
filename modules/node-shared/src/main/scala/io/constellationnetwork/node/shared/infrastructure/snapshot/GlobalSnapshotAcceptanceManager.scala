@@ -484,7 +484,7 @@ object GlobalSnapshotAcceptanceManager {
                 updatedLastCurrencySnapshots.toList.traverse {
                   case (address, state) =>
                     (address, state).hash
-                      .map(merkleTree.findPath(_))
+                      .flatMap(merkleTree.findPath[F](_))
                       .flatMap(MonadThrow[F].fromOption(_, InvalidMerkleTree))
                       .map((address, _))
                 }
@@ -516,7 +516,7 @@ object GlobalSnapshotAcceptanceManager {
                   case (address, state) =>
                     hasher
                       .hash((address, state))
-                      .map(merkleTree.findPath(_))
+                      .flatMap(merkleTree.findPath[F](_))
                       .flatMap(MonadThrow[F].fromOption(_, InvalidMerkleTree))
                       .map((address, _))
                 }

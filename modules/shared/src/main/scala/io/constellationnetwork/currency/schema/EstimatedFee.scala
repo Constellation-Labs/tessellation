@@ -1,7 +1,7 @@
 package io.constellationnetwork.currency.schema
 
 import cats.effect.Async
-import cats.syntax.functor._
+import cats.syntax.flatMap._
 
 import io.constellationnetwork.currency.dataApplication.DataUpdate
 import io.constellationnetwork.schema.address.Address
@@ -24,5 +24,5 @@ object EstimatedFee {
     Estimated(fee, address)
 
   def getUpdateHash[F[_]: Async](dataUpdate: DataUpdate, toBytes: DataUpdate => F[Array[Byte]]): F[Hash] =
-    toBytes(dataUpdate).map(Hash.fromBytes)
+    toBytes(dataUpdate).flatMap(Hash.fromBytesForSync[F])
 }
