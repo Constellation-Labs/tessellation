@@ -40,7 +40,7 @@ class CurrencyMessageRoutes[F[_]: Async: Hasher](
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {
 
-  private val logger = Slf4jLogger.getLoggerFromName("CurrencyMessageRoutes")
+  private val logger = Slf4jLogger.getLoggerFromName(this.getClass.getName)
 
   protected val prefixPath: InternalUrlPrefix = "/currency"
 

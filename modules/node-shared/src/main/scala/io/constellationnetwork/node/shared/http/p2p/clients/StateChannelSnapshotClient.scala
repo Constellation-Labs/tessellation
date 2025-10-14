@@ -7,9 +7,13 @@ import cats.syntax.bifunctor._
 import cats.syntax.either._
 import cats.syntax.functor._
 
+import scala.concurrent.duration._
+
+import io.constellationnetwork.node.shared.config.types.SnapshotBinarySenderTimeoutsConfig
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.StateChannelValidationError
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse.PeerResponse
+import io.constellationnetwork.node.shared.http.p2p.middlewares.TimeoutMiddleware.withTimeout
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
@@ -29,15 +33,17 @@ trait StateChannelSnapshotClient[F[_]] {
 object StateChannelSnapshotClient {
 
   def make[F[_]: Async](
-    client: Client[F]
-  ): StateChannelSnapshotClient[F] =
-    new StateChannelSnapshotClient[F] {
+    client: Client[F],
+    snapshotBinarySenderTimeoutsConfig: SnapshotBinarySenderTimeoutsConfig
+  ): StateChannelSnapshotClient[F] = {
+    val timeoutClient: Client[F] = withTimeout(client, snapshotBinarySenderTimeoutsConfig.client)
 
+    new StateChannelSnapshotClient[F] {
       def send(
         identifier: Address,
         data: Signed[StateChannelSnapshotBinary]
       ): PeerResponse[F, Either[NonEmptyList[StateChannelValidationError], Unit]] =
-        PeerResponse(s"state-channels/${identifier.value.value}/snapshot", POST)(client) { (req, c) =>
+        PeerResponse(s"state-channels/${identifier.value.value}/snapshot", POST)(timeoutClient) { (req, c) =>
           c.run(req.withEntity(data)).use { resp =>
             resp.status match {
               case Status.Ok => ().asRight[NonEmptyList[StateChannelValidationError]].pure[F]
@@ -52,4 +58,5 @@ object StateChannelSnapshotClient {
           }
         }
     }
+  }
 }

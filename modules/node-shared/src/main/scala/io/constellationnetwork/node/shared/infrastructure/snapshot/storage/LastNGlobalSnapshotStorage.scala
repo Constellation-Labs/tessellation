@@ -39,7 +39,7 @@ object LastNGlobalSnapshotStorage {
     incrementalSnapshotsR: SignallingRef[F, SortedMap[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]]
   ): LastNGlobalSnapshotStorage[F] with LatestBalances[F] =
     new LastNGlobalSnapshotStorage[F] with LatestBalances[F] {
-      private val logger = Slf4jLogger.getLoggerFromName("LastNGlobalSnapshotStorage")
+      private val logger = Slf4jLogger.getLoggerFromName(this.getClass.getName)
 
       private def setInitialInternal(
         snapshot: Hashed[GlobalIncrementalSnapshot],
