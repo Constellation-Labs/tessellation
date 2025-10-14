@@ -4,6 +4,7 @@ import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
 import io.constellationnetwork.BuildInfo
+import io.constellationnetwork.dag.l1.StoragesInitializer.initializeStorages
 import io.constellationnetwork.dag.l1.cli.method._
 import io.constellationnetwork.dag.l1.config.types._
 import io.constellationnetwork.dag.l1.domain.snapshot.programs.DAGSnapshotProcessor
@@ -119,7 +120,8 @@ object Main
         Hasher.forKryo[IO],
         services.globalL0.pullGlobalSnapshot,
         services.globalL0,
-        storages.globalL0Alignment
+        storages.globalL0Alignment,
+        cfg.consensus.tipsCount
       )
       programs = Programs.make(sharedPrograms, p2pClient, storages, snapshotProcessor)
 
@@ -232,6 +234,7 @@ object Main
         cfg.gossip.daemon,
         services.collateral
       )
+      _ <- initializeStorages[IO, Run](storages, sharedStorages, services).asResource
 
       _ <- alignment.performGlobalSnapshotProcessingUntilCaughtUp().asResource
 
