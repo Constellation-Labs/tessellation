@@ -115,29 +115,6 @@ object GlobalSnapshotTraverse {
             .raiseError[F, Unit]
             .whenA(stateProofInvalid)
 
-          lastNAlreadyInitialized <- lastNGlobalSnapshotStorage.alreadyInitialized
-          _ <-
-            if (!lastNAlreadyInitialized) {
-              for {
-                _ <-
-                  HasherSelector[F].forOrdinal(firstInc.ordinal)(implicit hasher =>
-                    lastNGlobalSnapshotStorage.setInitialFetchingGL0(
-                      hashedFirstInc,
-                      firstInfo,
-                      none,
-                      Some((hash, ordinal) => download.fetchSnapshot(hash, ordinal)(hasher))
-                    )
-                  )
-                _ <- lastGlobalSnapshotStorage.setInitial(
-                  hashedFirstInc,
-                  firstInfo
-                )
-              } yield ()
-
-            } else {
-              ().pure
-            }
-
           (info, lastInc) <- incHashesNec.tail.foldLeftM((firstInfo, firstInc)) {
             case ((lastCtx, lastInc), hash) =>
               loadIncOrErr(hash).flatMap { inc =>

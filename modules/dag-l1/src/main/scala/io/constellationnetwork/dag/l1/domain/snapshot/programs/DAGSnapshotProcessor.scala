@@ -3,6 +3,7 @@ package io.constellationnetwork.dag.l1.domain.snapshot.programs
 import cats.effect.Async
 import cats.syntax.all._
 
+import io.constellationnetwork.dag.l1.config.types.AppConfig
 import io.constellationnetwork.dag.l1.domain.address.storage.AddressStorage
 import io.constellationnetwork.dag.l1.domain.block.BlockStorage
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionStorage
@@ -18,6 +19,8 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
 
+import eu.timepit.refined.types.numeric.PosInt
+
 object DAGSnapshotProcessor {
 
   def make[F[_]: Async: SecurityProvider](
@@ -32,7 +35,8 @@ object DAGSnapshotProcessor {
     txHasher: Hasher[F],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     l0Service: GlobalL0Service[F],
-    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F]
+    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F],
+    tipsCount: PosInt
   ): SnapshotProcessor[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] =
     new SnapshotProcessor[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
 
@@ -46,14 +50,6 @@ object DAGSnapshotProcessor {
         allowSpendStorage.replaceByRefs(state.lastAllowSpendRefs.map(_.toMap).getOrElse(Map.empty), snapshot.ordinal) >>
           tokenLockStorage.replaceByRefs(state.lastTokenLockRefs.map(_.toMap).getOrElse(Map.empty), snapshot.ordinal)
 
-      override def setInitialLastNSnapshots(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] =
-        lastNGlobalSnapshotStorage.setInitialFetchingGL0(
-          snapshot,
-          state,
-          l0Service.asLeft.some,
-          none
-        )
-
       override def setLastNSnapshots(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] =
         lastNGlobalSnapshotStorage.set(snapshot, state)
 
@@ -66,7 +62,8 @@ object DAGSnapshotProcessor {
           lastGlobalSnapshotStorage,
           txHasher,
           getGlobalSnapshotByOrdinal,
-          globalL0AlignmentStorage
+          globalL0AlignmentStorage,
+          tipsCount
         )
           .flatMap(
             processAlignment(

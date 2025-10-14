@@ -16,6 +16,7 @@ import io.constellationnetwork.security.Hashed
 
 import fs2.Stream
 import fs2.concurrent.SignallingRef
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object LastSnapshotStorage {
 
@@ -31,13 +32,18 @@ object LastSnapshotStorage {
     snapshotR: SignallingRef[F, Option[(Hashed[S], SI)]]
   ): LastSnapshotStorage[F, S, SI] with LatestBalances[F] =
     new LastSnapshotStorage[F, S, SI] with LatestBalances[F] {
-
+      def logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
       def set(snapshot: Hashed[S], state: SI): F[Unit] =
         snapshotR.modify {
-          case Some((current, _)) if isNextSnapshot(current, snapshot.signed.value) => ((snapshot, state).some, Applicative[F].unit)
-          case s @ Some((current, _)) if current.hash === snapshot.hash             => (s, Applicative[F].unit)
-          case other =>
-            (other, MonadThrow[F].raiseError[Unit](new Throwable("Failure during setting new global snapshot!")))
+          case Some((current, _)) if isNextSnapshot(current, snapshot.signed.value) =>
+            ((snapshot, state).some, Applicative[F].unit)
+          case s @ Some((current, _)) if current.hash === snapshot.hash =>
+            (s, Applicative[F].unit)
+          case None =>
+            // This is mainly for tests
+            (none, logger.warn("Empty snapshotR setting as initial") >> setInitial(snapshot, state))
+          case _ =>
+            (none, MonadThrow[F].raiseError[Unit](new Throwable("Failure during setting new global snapshot!")))
         }.flatten
 
       def setInitial(snapshot: Hashed[S], state: SI): F[Unit] =
