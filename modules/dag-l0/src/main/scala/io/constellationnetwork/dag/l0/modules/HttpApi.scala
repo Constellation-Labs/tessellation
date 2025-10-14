@@ -136,7 +136,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   private val trustRoutes = TrustRoutes[F](storages.trust, programs.trustPush)
   private val stateChannelRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>
-      StateChannelRoutes[F](services.stateChannel, storages.globalSnapshot)
+      StateChannelRoutes[F](services.stateChannel, storages.globalSnapshot, sharedConfig.snapshotBinarySenderTimeouts)
     }
   private val snapshotRoutes =
     SnapshotRoutes[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
