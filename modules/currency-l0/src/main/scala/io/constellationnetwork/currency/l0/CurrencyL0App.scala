@@ -7,6 +7,7 @@ import scala.collection.immutable.SortedSet
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import io.constellationnetwork.currency.l0.StateChannel.performGlobalL0SnapshotProcess
+import io.constellationnetwork.currency.l0.StoragesInitializer.initializeStorages
 import io.constellationnetwork.currency.l0.cell.{L0Cell, L0CellInput}
 import io.constellationnetwork.currency.l0.cli.method
 import io.constellationnetwork.currency.l0.cli.method._
@@ -88,6 +89,7 @@ abstract class CurrencyL0App(
 
     for {
       cfgR <- loadConfigAs[AppConfigReader].asResource
+      implicit0(logger: SelfAwareStructuredLogger[IO]) = Slf4jLogger.getLoggerFromName[IO](this.getClass.getName)
       cfg = method.appConfig(cfgR, sharedConfig)
 
       dataApplicationService <- dataApplication.sequence.adaptError {
@@ -217,13 +219,15 @@ abstract class CurrencyL0App(
         case other =>
           for {
             _ <- StateChannel.performGlobalL0PeerDiscovery[IO](storages, programs)
-            implicit0(logger: SelfAwareStructuredLogger[IO]) = Slf4jLogger.getLoggerFromName[IO](this.getClass.getName)
             innerProgram <- other match {
               case rv: RunValidator =>
                 storages.identifier.setInitial(rv.identifier) >>
                   gossipDaemon.startAsRegularValidator >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
                   storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
+                  HasherSelector[IO].withCurrent { implicit hasher =>
+                    initializeStorages[IO, Run](storages, sharedStorages, services)
+                  } >>
                   services.restart.setNodeForkedRestartMethod(
                     RunValidatorWithJoinAttempt(
                       rv.keyStore,
@@ -288,7 +292,20 @@ abstract class CurrencyL0App(
                     NodeState.Initial,
                     NodeState.RollbackInProgress,
                     NodeState.RollbackDone
-                  )(hasherSelector.withCurrent(implicit hasher => programs.rollback.rollback)) >>
+                  )(hasherSelector.withCurrent { implicit hasher =>
+                    for {
+                      (currencySnapshot, currencySnapshotInfo) <- programs.rollback.rollback
+                      _ <- HasherSelector[IO].withCurrent { implicit hasher =>
+                        initializeStorages[IO, Run](
+                          storages,
+                          sharedStorages,
+                          services,
+                          currencySnapshot.some,
+                          currencySnapshotInfo.some
+                        )
+                      }
+                    } yield ()
+                  }) >>
                   gossipDaemon.startAsInitialValidator >>
                   services.cluster.createSession >>
                   services.session.createSession >>
@@ -333,13 +350,27 @@ abstract class CurrencyL0App(
                   NodeState.Initial,
                   NodeState.LoadingGenesis,
                   NodeState.GenesisReady
-                )(hasherSelector.withCurrent(implicit hasher => programs.genesis.accept(dataApplicationService)(m.genesisPath))) >>
+                )(hasherSelector.withCurrent { implicit hasher =>
+                  for {
+                    (currencySnapshot, currencySnapshotInfo) <- programs.genesis.accept(dataApplicationService)(m.genesisPath)
+                    _ <- HasherSelector[IO].withCurrent { implicit hasher =>
+                      initializeStorages[IO, Run](
+                        storages,
+                        sharedStorages,
+                        services,
+                        currencySnapshot.some,
+                        currencySnapshotInfo.some
+                      )
+                    }
+                  } yield ()
+                }) >>
                   gossipDaemon.startAsInitialValidator >>
                   services.cluster.createSession >>
                   services.session.createSession >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
-                  performGlobalL0SnapshotProcess(storages, sharedStorages, services, dataApplicationService, keyPair, mkCell) >>
+                  logger.info(s"Setting owner address filled on path: ${m.metagraphOwnerMessagePath}") >>
                   services.currencyMessages.setInitialCurrencyOwner(m.metagraphOwnerMessagePath) >>
+                  logger.info(s"Owner address set") >>
                   storages.node.setNodeState(NodeState.Ready) >>
                   storages.identifier.get.flatMap { identifier =>
                     services.restart.setClusterLeaveRestartMethod(

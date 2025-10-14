@@ -4,6 +4,7 @@ import cats.effect._
 import cats.syntax.all._
 
 import io.constellationnetwork.BuildInfo
+import io.constellationnetwork.dag.l0.StoragesInitializer.initializeStorages
 import io.constellationnetwork.dag.l0.cli.method._
 import io.constellationnetwork.dag.l0.config.types._
 import io.constellationnetwork.dag.l0.http.p2p.P2PClient
@@ -36,6 +37,8 @@ import io.constellationnetwork.security.signature.Signed
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.pureconfig._
+import org.typelevel.log4cats.SelfAwareStructuredLogger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 import pureconfig.generic.auto._
 import pureconfig.module.enumeratum._
 
@@ -61,6 +64,7 @@ object Main
 
     for {
       cfgR <- loadConfigAs[AppConfigReader].asResource
+      implicit0(logger: SelfAwareStructuredLogger[IO]) = Slf4jLogger.getLoggerFromName[IO](this.getClass.getName)
       cfg = method.appConfig(cfgR, sharedConfig)
       queues <- Queues.make[IO](sharedQueues).asResource
 
@@ -217,23 +221,8 @@ object Main
               case (snapshotInfo, snapshot) =>
                 hasherSelector.forOrdinal(snapshot.ordinal) { implicit hasher =>
                   for {
-                    _ <- storages.globalSnapshot.prepend(snapshot, snapshotInfo)
-                    lastNAlreadyInitialized <- sharedStorages.lastNGlobalSnapshot.alreadyInitialized
-                    _ <-
-                      if (!lastNAlreadyInitialized) {
-                        for {
-                          hashedSnapshot <- snapshot.toHashed[IO]
-                          _ <- sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
-                            hashedSnapshot,
-                            snapshotInfo,
-                            none,
-                            Some((hash, ordinal) => programs.download.fetchSnapshot(hash, ordinal)(hasher))
-                          )
-                          _ <- sharedStorages.lastGlobalSnapshot.setInitial(hashedSnapshot, snapshotInfo)
-                        } yield ()
-                      } else {
-                        ().pure[IO]
-                      }
+                    hashedSnapshot <- snapshot.toHashed[IO]
+                    _ <- initializeStorages[IO](storages, sharedStorages, programs, hashedSnapshot, snapshotInfo)
                   } yield ()
                 } >>
                   services.consensus.manager.startFacilitatingAfterRollback(
@@ -317,18 +306,8 @@ object Main
                                     _ <- services.collateral
                                       .hasCollateral(nodeShared.nodeId)
                                       .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA)
-                                    _ <- storages.globalSnapshot.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info)
                                     hashedSnapshot <- signedFirstIncrementalSnapshot.toHashed[IO]
-                                    _ <- sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
-                                      hashedSnapshot,
-                                      hashedGenesis.info,
-                                      none,
-                                      Some((hash, ordinal) => programs.download.fetchSnapshot(hash, ordinal)(hasher))
-                                    )
-                                    _ <- sharedStorages.lastGlobalSnapshot.setInitial(
-                                      hashedSnapshot,
-                                      hashedGenesis.info
-                                    )
+                                    _ <- initializeStorages[IO](storages, sharedStorages, programs, hashedSnapshot, hashedGenesis.info)
                                     _ <- services.consensus.manager
                                       .startFacilitatingAfterRollback(
                                         signedFirstIncrementalSnapshot.ordinal,
