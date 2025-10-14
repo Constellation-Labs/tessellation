@@ -8,12 +8,14 @@ import scala.concurrent.duration.DurationInt
 import io.constellationnetwork.dag.l1.domain.snapshot.programs.SnapshotProcessor.SnapshotProcessingResult
 import io.constellationnetwork.dag.l1.modules._
 import io.constellationnetwork.node.shared.cli.CliMethod
+import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.security._
 
 import fs2.Stream
+import fs2.concurrent.SignallingRef
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -22,9 +24,11 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
 ], R <: CliMethod](
   services: Services[F, P, S, SI, R],
   programs: Programs[F, P, S, SI],
-  storages: Storages[F, P, S, SI]
+  storages: Storages[F, P, S, SI],
+  sharedStorages: SharedStorages[F]
 ) {
 
+  private val maxEpochProgressesBehind = 5L
   private implicit val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
   private def withRetry[A](
@@ -43,6 +47,51 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
         Async[F].raiseError(e)
     }
   }
+
+  private def checkSynchronization(
+    lastGlobalSnapshotFromStorage: Hashed[GlobalIncrementalSnapshot],
+    lastGlobalSnapshotFromNetwork: Hashed[GlobalIncrementalSnapshot]
+  ) =
+    if (
+      lastGlobalSnapshotFromStorage.epochProgress.value.value + maxEpochProgressesBehind < lastGlobalSnapshotFromNetwork.epochProgress.value.value
+    ) {
+      val message = "Detected synchronization issue: TooFarEpochProgress. Forcing re-download"
+      logger.info(message) >>
+        storages.globalL0Alignment.updateShouldRedownload(
+          value = true,
+          reasons = List(message)
+        )
+    } else {
+      ().pure
+    }
+
+  private val checkAlignment: Stream[F, Unit] = Stream
+    .awakeEvery(1.minute)
+    .evalMap { _ =>
+      withRetry(
+        operation = for {
+          _ <- logger.info("Checking global snapshot alignment")
+          maybeLastSnapshotOnStorage <- sharedStorages.lastGlobalSnapshot.get
+          lastCombinedGlobalSnapshotFromNetwork <- services.globalL0.pullLatestSnapshot
+          _ <- maybeLastSnapshotOnStorage match {
+            case Some(lastSnapshotOnStorage) =>
+              val (lastGlobalSnapshotFromNetwork, _) = lastCombinedGlobalSnapshotFromNetwork
+              checkSynchronization(lastSnapshotOnStorage, lastGlobalSnapshotFromNetwork)
+            case None =>
+              val message = "Last snapshot not found on storage, forcing re-download!"
+              logger.info(message) >>
+                storages.globalL0Alignment.updateShouldRedownload(
+                  value = true,
+                  reasons = List(message)
+                )
+          }
+        } yield (),
+        operationName = "Check alignment"
+      )
+    }
+    .handleErrorWith { e =>
+      Stream.eval(logger.error(e)("Check alignment stream failed, restarting")) ++ checkAlignment
+    }
 
   private val l0PeerDiscovery: Stream[F, Unit] = Stream
     .awakeEvery(10.seconds)
@@ -121,20 +170,17 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
       Stream.eval(logger.error(e)("Global snapshot processing stream failed, restarting")) ++ globalSnapshotProcessing
     }
 
-  val runtime: Stream[F, Unit] = Stream(
-    l0PeerDiscovery.handleErrorWith { e =>
-      Stream.eval(logger.error(e)("L0 peer discovery stream terminated unexpectedly, restarting")) ++ l0PeerDiscovery
-    },
-    globalSnapshotProcessing.handleErrorWith { e =>
-      Stream.eval(logger.error(e)("Global snapshot processing stream terminated unexpectedly, restarting")) ++ globalSnapshotProcessing
-    }
-  ).parJoinUnbounded
+  def runtime(): Stream[F, Unit] =
+    Stream(l0PeerDiscovery, globalSnapshotProcessing, checkAlignment)
+      .covary[F]
+      .parJoinUnbounded
 }
 
 object GlobalSnapshotAlignment {
   def make[F[_]: Async: HasherSelector: SecurityProvider, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P], R <: CliMethod](
     services: Services[F, P, S, SI, R],
     programs: Programs[F, P, S, SI],
-    storages: Storages[F, P, S, SI]
-  ) = new GlobalSnapshotAlignment[F, P, S, SI, R](services, programs, storages)
+    storages: Storages[F, P, S, SI],
+    sharedStorages: SharedStorages[F]
+  ) = new GlobalSnapshotAlignment[F, P, S, SI, R](services, programs, storages, sharedStorages)
 }
