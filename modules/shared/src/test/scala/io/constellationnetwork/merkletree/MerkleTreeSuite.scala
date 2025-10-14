@@ -1,7 +1,11 @@
 package io.constellationnetwork.merkletree
 
 import cats.data.NonEmptyList
+import cats.effect.IO
 import cats.syntax.eq._
+import cats.syntax.flatMap._
+import cats.syntax.functor._
+import cats.syntax.traverse._
 
 import io.constellationnetwork.security.hash.Hash
 
@@ -16,103 +20,106 @@ object MerkleTreeSuite extends SimpleIOSuite with Checkers {
 
   implicit val fixedHashesGen: Gen[NonEmptyList[Hash]] = Gen.listOfN(10, Hash.arbitrary.arbitrary).map(NonEmptyList.fromListUnsafe)
 
-  pureTest("tree created from one hash is possible") {
+  test("tree created from one hash is possible") {
     val hash = Hash("a")
-    val mt = MerkleTree.from(NonEmptyList.one(hash))
-
-    val expected = MerkleRoot(mt.leafCount, MerkleTree.hashLeaf(hash))
-
-    expect(mt.getRoot === expected)
+    for {
+      mt <- MerkleTree.from[IO](NonEmptyList.one(hash))
+      expectedHash <- MerkleTree.hashLeaf[IO](hash)
+      expected = MerkleRoot(mt.leafCount, expectedHash)
+    } yield expect(mt.getRoot === expected)
   }
 
-  pureTest("path for one leaf is the leaf itself") {
-    val mt = MerkleTree.from(NonEmptyList.one(Hash("a")))
-    val leaf = MerkleTree.hashLeaf(Hash("a"))
-
-    expect.eql(Some(Proof(NonEmptyList.one(ProofEntry(leaf, Right(leaf))))), mt.findPath(0))
+  test("path for one leaf is the leaf itself") {
+    for {
+      mt <- MerkleTree.from[IO](NonEmptyList.one(Hash("a")))
+      leaf <- MerkleTree.hashLeaf[IO](Hash("a"))
+      path <- mt.findPath[IO](Hash("a"))
+    } yield expect.eql(Some(Proof(NonEmptyList.one(ProofEntry(leaf, Right(leaf))))), path)
   }
 
   test("can find path when tree has many leaves") {
     forall(fixedHashesGen) {
       case hashes =>
-        val mt = MerkleTree.from(hashes)
-
-        expect.eql(true, mt.findPath(0).isDefined)
+        for {
+          mt <- MerkleTree.from[IO](hashes)
+          path <- mt.findPath(0)
+        } yield expect.eql(true, path.isDefined)
     }
   }
 
   test("cannot find path for index out of range") {
     forall(fixedHashesGen) {
       case hashes =>
-        val mt = MerkleTree.from(hashes)
-
-        expect.eql(true, mt.findPath(11).isEmpty)
-        expect.eql(true, mt.findPath(-1).isEmpty)
+        for {
+          mt <- MerkleTree.from[IO](hashes)
+          path11 <- mt.findPath(11)
+          path_1 <- mt.findPath(-1)
+        } yield expect.eql(true, path11.isEmpty).and(expect.eql(true, path_1.isEmpty))
     }
   }
 
-  pureTest("can verify path for one leaf") {
-    val mt = MerkleTree.from(NonEmptyList.one(Hash("a")))
-    val path = mt.findPath(0)
-
-    expect.eql(true, path.get.verify(Hash("a")))
+  test("can verify path for one leaf") {
+    for {
+      mt <- MerkleTree.from[IO](NonEmptyList.one(Hash("a")))
+      path <- mt.findPath[IO](Hash("a"))
+      verified <- path.get.verify[IO](Hash("a"))
+    } yield expect.eql(true, verified)
   }
 
   test("can verify good path") {
     forall(fixedHashesGen) {
       case hashes =>
-        val mt = MerkleTree.from(hashes)
-
-        expect.eql(Some(true), mt.findPath(0).map(_.verify(hashes.head)))
+        for {
+          mt <- MerkleTree.from[IO](hashes)
+          path <- mt.findPath[IO](hashes.head)
+          verified <- path.traverse(_.verify[IO](hashes.head))
+        } yield expect.eql(Some(true), verified)
     }
   }
 
   test("veryfing bad path fails") {
     forall(fixedHashesGen) {
       case hashes =>
-        val mt = MerkleTree.from(hashes)
-
-        expect.eql(Some(false), mt.findPath(0).map(_.verify(Hash("dummy"))))
+        for {
+          mt <- MerkleTree.from[IO](hashes)
+          path <- mt.findPath[IO](hashes.head)
+          verified <- path.traverse(_.verify[IO](Hash("dummy")))
+        } yield expect.eql(Some(false), verified)
     }
   }
 
-  pureTest("forgery attack with duplicated hashes") {
+  test("forgery attack with duplicated hashes") {
     val hashes = NonEmptyList.fromListUnsafe(('a' to 'd').map(_.toString).map(Hash(_)).toList)
     val doubled = hashes ++ List(Hash("c"), Hash("d"))
 
-    val mt1 = MerkleTree.from(hashes)
-    val mt2 = MerkleTree.from(doubled)
-
-    expect(mt1 =!= mt2)
-    expect(mt1.getRoot =!= mt2.getRoot)
+    for {
+      mt1 <- MerkleTree.from[IO](hashes)
+      mt2 <- MerkleTree.from[IO](doubled)
+    } yield expect(mt1 =!= mt2).and(expect(mt1.getRoot =!= mt2.getRoot))
   }
 
-  pureTest("forgery attack with duplicated last hash to make balanced tree") {
+  test("forgery attack with duplicated last hash to make balanced tree") {
     val hashes = NonEmptyList.fromListUnsafe(('a' to 'c').map(_.toString).map(Hash(_)).toList)
     val doubled = hashes ++ List(Hash("c"))
 
-    val mt1 = MerkleTree.from(hashes)
-    val mt2 = MerkleTree.from(doubled)
-
-    expect(mt1 =!= mt2)
-    expect(mt1.getRoot =!= mt2.getRoot)
+    for {
+      mt1 <- MerkleTree.from[IO](hashes)
+      mt2 <- MerkleTree.from[IO](doubled)
+    } yield expect(mt1 =!= mt2).and(expect(mt1.getRoot =!= mt2.getRoot))
   }
 
-  pureTest("second preimage attack") {
+  test("second preimage attack") {
     val hashes = NonEmptyList.of(Hash("a"), Hash("b"), Hash("c"), Hash("d"))
 
-    val mt1 = MerkleTree.from(hashes)
-
-    val n1 = mt1.nodes.toList(4)
-    val n2 = mt1.nodes.toList(5)
-
-    val mt2 = MerkleTree.from(NonEmptyList.of(n1, n2))
-
-    expect(mt1 =!= mt2)
-    expect(mt1.getRoot =!= mt2.getRoot)
+    for {
+      mt1 <- MerkleTree.from[IO](hashes)
+      n1 = mt1.nodes.toList(4)
+      n2 = mt1.nodes.toList(5)
+      mt2 <- MerkleTree.from[IO](NonEmptyList.of(n1, n2))
+    } yield expect(mt1 =!= mt2).and(expect(mt1.getRoot =!= mt2.getRoot))
   }
 
-  pureTest("ensure that calculation is stable") {
+  test("ensure that calculation is stable") {
     val hashes = NonEmptyList.of(Hash("a"), Hash("b"), Hash("c"), Hash("d"))
     val expected = MerkleTree(
       4,
@@ -127,8 +134,82 @@ object MerkleTreeSuite extends SimpleIOSuite with Checkers {
       )
     )
 
-    val result = MerkleTree.from(hashes)
-
-    expect(result === expected)
+    MerkleTree.from[IO](hashes).map { result =>
+      expect(result === expected)
+    }
   }
+
+  test("stack safety with large input (10,000 leaves)") {
+    val largeHashes = NonEmptyList.fromListUnsafe(
+      (1 to 10000).map(i => Hash(s"hash_$i")).toList
+    )
+
+    for {
+      startTime <- IO(System.currentTimeMillis())
+      mt <- MerkleTree.from[IO](largeHashes)
+      endTime <- IO(System.currentTimeMillis())
+      duration = endTime - startTime
+    } yield
+      expect(mt.leafCount.value === 10000)
+        .and(expect(mt.nodes.length > 10000)) // Should have more nodes than leaves
+        .and(expect(duration < 30000)) // Should complete within 30 seconds
+  }
+
+  /*
+  test("stack safety with very large input (100,000 leaves)") {
+    val veryLargeHashes = NonEmptyList.fromListUnsafe(
+      (1 to 100000).map(i => Hash(s"hash_$i")).toList
+    )
+
+    for {
+      startTime <- IO(System.currentTimeMillis())
+      mt <- MerkleTree.from[IO](veryLargeHashes)
+      endTime <- IO(System.currentTimeMillis())
+      duration = endTime - startTime
+    } yield
+      expect(mt.leafCount.value === 100000)
+        .and(expect(mt.nodes.length > 100000)) // Should have more nodes than leaves
+        .and(expect(duration < 300000)) // Should complete within 5 minutes
+  }
+
+  test("stack safety with extremely large input (1,000,000 leaves)") {
+    val extremelyLargeHashes = NonEmptyList.fromListUnsafe(
+      (1 to 1000000).map(i => Hash(s"hash_$i")).toList
+    )
+
+    for {
+      startTime <- IO(System.currentTimeMillis())
+      mt <- MerkleTree.from[IO](extremelyLargeHashes)
+      endTime <- IO(System.currentTimeMillis())
+      duration = endTime - startTime
+    } yield
+      expect(mt.leafCount.value === 1000000)
+        .and(expect(mt.nodes.length > 1000000)) // Should have more nodes than leaves
+        .and(expect(duration < 1800000)) // Should complete within 30 minutes
+  }
+
+  test("performance comparison with different tree sizes") {
+    val sizes = List(100, 1000, 10000, 100000)
+
+    def testSize(size: Int): IO[(Int, Long)] = {
+      val hashes = NonEmptyList.fromListUnsafe(
+        (1 to size).map(i => Hash(s"hash_$i")).toList
+      )
+
+      for {
+        startTime <- IO(System.currentTimeMillis())
+        _ <- MerkleTree.from[IO](hashes)
+        endTime <- IO(System.currentTimeMillis())
+      } yield (size, endTime - startTime)
+    }
+
+    for {
+      results <- sizes.traverse(testSize)
+    } yield
+      // Verify all sizes completed successfully
+      expect(results.length === 4)
+        .and(expect(results.forall(_._2 > 0))) // All took some time
+        .and(expect(results.forall(_._2 < 300000))) // None took more than 5 minutes
+  }
+   */
 }

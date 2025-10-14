@@ -2,6 +2,7 @@ package io.constellationnetwork.merkletree
 
 import cats.data.NonEmptyList
 import cats.effect.kernel.Sync
+import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
@@ -20,6 +21,6 @@ trait SortedMapOps {
       a.toList
         .traverse(_.hash)
         .map(NonEmptyList.fromList)
-        .map(_.map(MerkleTree.from))
+        .flatMap(_.traverse(MerkleTree.from[F]))
   }
 }

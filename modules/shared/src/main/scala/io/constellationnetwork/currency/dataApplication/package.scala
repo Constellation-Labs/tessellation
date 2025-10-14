@@ -127,9 +127,11 @@ object FeeTransaction {
       case Signed(feeTransaction: FeeTransaction, proofs) => Signed(feeTransaction, proofs)
     }
 
-    serializeDataUpdate(dataUpdate).map { serializedDataUpdate =>
-      feeTransactions.find { feeTransaction =>
-        Hash.fromBytes(serializedDataUpdate) === feeTransaction.value.dataUpdateRef
+    serializeDataUpdate(dataUpdate).flatMap { serializedDataUpdate =>
+      Hash.fromBytesForSync(serializedDataUpdate).map { hash =>
+        feeTransactions.find { feeTransaction =>
+          hash === feeTransaction.value.dataUpdateRef
+        }
       }
     }
   }

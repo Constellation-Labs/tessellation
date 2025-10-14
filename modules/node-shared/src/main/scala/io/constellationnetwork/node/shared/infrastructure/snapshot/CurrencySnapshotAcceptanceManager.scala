@@ -683,12 +683,14 @@ object CurrencySnapshotAcceptanceManager {
         }
         .flatTap {
           case (_, toAdd, toReject) =>
-            logger.info(
-              s"Message acceptance complete - " +
-                s"Total processed: ${messagesForAcceptance.size}, " +
-                s"Accepted: ${toAdd.size}, " +
-                s"Rejected: ${toReject.size}"
-            ).whenA(messagesForAcceptance.nonEmpty)
+            logger
+              .info(
+                s"Message acceptance complete - " +
+                  s"Total processed: ${messagesForAcceptance.size}, " +
+                  s"Accepted: ${toAdd.size}, " +
+                  s"Rejected: ${toReject.size}"
+              )
+              .whenA(messagesForAcceptance.nonEmpty)
         }
         .map {
           case (contextUpdate, toAdd, toReject) =>
