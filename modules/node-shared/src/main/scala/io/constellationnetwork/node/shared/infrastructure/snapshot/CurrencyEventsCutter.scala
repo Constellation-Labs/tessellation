@@ -30,7 +30,7 @@ trait CurrencyEventsCutter[F[_]] {
 object CurrencyEventsCutter {
   def make[F[_]: Async: JsonSerializer](maybeDataApplication: Option[BaseDataApplicationL0Service[F]]): CurrencyEventsCutter[F] =
     new CurrencyEventsCutter[F] {
-      val logger = Slf4jLogger.getLoggerFromName("CurrencyEventsCutter")
+      val logger = Slf4jLogger.getLoggerFromName(this.getClass.getName)
 
       override def cut(
         ordinal: SnapshotOrdinal,

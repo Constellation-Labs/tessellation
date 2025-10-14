@@ -100,7 +100,7 @@ abstract class CurrencyL0App(
       storages <- Storages
         .make[IO](sharedConfig, sharedStorages, cfg.snapshot, method.globalL0Peer, dataApplicationService, hasherSelectorAlwaysCurrent)
         .asResource
-      p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session)
+      p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session, sharedConfig)
       maybeAllowanceList = StateChannelAllowanceLists.get(cfg.environment)
       validators = Validators.make[IO](cfg.shared, seedlist, maybeAllowanceList, Hasher.forKryo[IO])
       maybeMajorityPeerIds <- getMajorityPeerIds[IO](
