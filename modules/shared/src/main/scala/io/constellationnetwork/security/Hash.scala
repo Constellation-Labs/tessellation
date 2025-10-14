@@ -7,7 +7,6 @@ import cats.{Eq, Show}
 
 import io.constellationnetwork.ext.derevo.ordering
 
-import com.google.common.hash.{HashCode, Hashing}
 import derevo.cats.{order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
@@ -44,10 +43,6 @@ object hash {
       implicit val show: Show[Sha256Digest] = Show.show(s => s"Sha256Digest(${s.toHexString})")
       implicit val eq: Eq[Sha256Digest] = Eq.instance((a, b) => a.bytes.sameElements(b.bytes))
     }
-
-    @deprecated("Use sha256DigestFromBytes() instead", since = "3.0")
-    def hashCodeFromBytes(bytes: Array[Byte]): HashCode =
-      Hashing.sha256().hashBytes(bytes)
 
     def sha256DigestFromBytes(bytes: Array[Byte]): Sha256Digest = {
       val md = sha256.clone().asInstanceOf[MessageDigest]

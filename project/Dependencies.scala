@@ -23,7 +23,6 @@ object Dependencies {
     val flyway = "9.10.2"
     val fs2 = "3.4.0"
     val fs2Data = "1.6.0"
-    val guava = "31.1-jre"
     val http4s = "0.23.16"
     val http4sJwtAuth = "1.0.0"
     val httpSigner = "0.1.0"
@@ -139,8 +138,6 @@ object Dependencies {
 
     val httpSignerCore = "io.constellationnetwork" %% "http-request-signer-core" % V.httpSigner
     val httpSignerHttp4s = "io.constellationnetwork" %% "http4s-request-signer" % V.httpSigner
-
-    val guava = "com.google.guava" % "guava" % V.guava
 
     val http4sJwtAuth = "dev.profunktor" %% "http4s-jwt-auth" % V.http4sJwtAuth
 
