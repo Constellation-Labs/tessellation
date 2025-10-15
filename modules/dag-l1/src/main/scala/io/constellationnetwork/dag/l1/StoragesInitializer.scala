@@ -21,7 +21,7 @@ object StoragesInitializer {
     globalL0Service: GlobalL0Service[F]
   ) = {
     val retryPolicy = RetryPolicies.exponentialBackoff[F](1.second).join(RetryPolicies.limitRetries(5))
-    globalL0Service.pullGlobalSnapshots
+    globalL0Service.pullLatestSnapshotFromRandomPeer
       .retryingOnAllErrors(
         policy = retryPolicy,
         onError = (err, retryDetails) =>
@@ -37,34 +37,29 @@ object StoragesInitializer {
     sharedStorages: SharedStorages[F],
     services: Services[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo, R]
   ): F[Unit] =
-    pullGlobalSnapshotWithRetry(services.globalL0).flatMap {
-      case Left((snapshot, state)) =>
-        val ordinal = snapshot.ordinal
-        for {
-          _ <- Logger[F].info(s"Starting storage initialization with ordinal=$ordinal")
+    pullGlobalSnapshotWithRetry(services.globalL0).flatMap { globalSnapshotCombined =>
+      val (snapshot, state) = globalSnapshotCombined
+      val ordinal = snapshot.ordinal
+      for {
+        _ <- Logger[F].info(s"Starting storage initialization with ordinal=$ordinal")
 
-          _ <- Logger[F].info(s"Initializing lastNGlobalSnapshot shared storage with ordinal=$ordinal")
-          _ <- sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
-            snapshot,
-            state,
-            services.globalL0.asLeft.some,
-            none
-          )
-          _ <- Logger[F].info(s"Successfully initialized lastNGlobalSnapshot shared storage")
+        _ <- Logger[F].info(s"Initializing lastNGlobalSnapshot shared storage with ordinal=$ordinal")
+        _ <- sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
+          snapshot,
+          state,
+          services.globalL0.asLeft.some,
+          none
+        )
+        _ <- Logger[F].info(s"Successfully initialized lastNGlobalSnapshot shared storage")
 
-          _ <- Logger[F].info(s"Initializing lastGlobalSnapshot shared storage with ordinal=$ordinal")
-          _ <- sharedStorages.lastGlobalSnapshot.setInitial(
-            snapshot,
-            state
-          )
-          _ <- Logger[F].info(s"Successfully initialized lastGlobalSnapshot shared storage")
+        _ <- Logger[F].info(s"Initializing lastGlobalSnapshot shared storage with ordinal=$ordinal")
+        _ <- sharedStorages.lastGlobalSnapshot.setInitial(
+          snapshot,
+          state
+        )
+        _ <- Logger[F].info(s"Successfully initialized lastGlobalSnapshot shared storage")
 
-          _ <- Logger[F].info(s"Storage initialization completed successfully with ordinal=$ordinal")
-        } yield ()
-
-      case Right(_) =>
-        val errorMsg = "Received unexpected Right value when initializing storage"
-        Logger[F].error(errorMsg) >>
-          (new Throwable(errorMsg)).raiseError[F, Unit]
+        _ <- Logger[F].info(s"Storage initialization completed successfully with ordinal=$ordinal")
+      } yield ()
     }
 }

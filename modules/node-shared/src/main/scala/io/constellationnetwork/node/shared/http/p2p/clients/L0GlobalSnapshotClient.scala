@@ -2,9 +2,11 @@ package io.constellationnetwork.node.shared.http.p2p.clients
 
 import cats.effect.Async
 
+import io.constellationnetwork.node.shared.config.types.SnapshotTimeoutsConfig
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse.PeerResponse
+import io.constellationnetwork.node.shared.http.p2p.middlewares.TimeoutMiddleware.withTimeout
 import io.constellationnetwork.schema._
 import io.constellationnetwork.security.SecurityProvider
 import io.constellationnetwork.security.signature.Signed
@@ -19,10 +21,11 @@ trait L0GlobalSnapshotClient[F[_]] extends SnapshotClient[F, GlobalIncrementalSn
 object L0GlobalSnapshotClient {
   def make[F[_]: Async: SecurityProvider](
     _client: Client[F],
-    maybeSession: Option[Session[F]] = None
+    maybeSession: Option[Session[F]] = None,
+    snapshotTimeouts: SnapshotTimeoutsConfig
   ): L0GlobalSnapshotClient[F] =
     new L0GlobalSnapshotClient[F] {
-      val client = _client
+      val client = withTimeout(_client, snapshotTimeouts.client)
       val optionalSession = maybeSession
       val urlPrefix = "global-snapshots"
 

@@ -88,7 +88,8 @@ object types {
     fieldsAddedOrdinals: FieldsAddedOrdinals,
     metagraphsSync: MetagraphsSyncConfig,
     priceOracle: PriceOracleConfig,
-    snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig
+    snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig,
+    snapshotTimeoutsConfig: SnapshotTimeoutsConfig
   )
 
   case class SharedTrustConfig(
@@ -96,7 +97,8 @@ object types {
   )
 
   case class SharedSnapshotConfig(
-    size: SnapshotSizeConfig
+    size: SnapshotSizeConfig,
+    timeouts: SnapshotTimeoutsConfig
   )
 
   case class SnapshotSizeConfig(
@@ -147,6 +149,11 @@ object types {
   )
 
   case class SnapshotBinarySenderTimeoutsConfig(
+    routes: FiniteDuration,
+    client: FiniteDuration
+  )
+
+  case class SnapshotTimeoutsConfig(
     routes: FiniteDuration,
     client: FiniteDuration
   )

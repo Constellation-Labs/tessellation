@@ -88,7 +88,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
     None,
     "/snapshots",
     storages.node,
-    HasherSelector.alwaysCurrent[F]
+    HasherSelector.alwaysCurrent[F],
+    sharedConfig.snapshotTimeoutsConfig
   )
   private val clusterRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>
