@@ -86,6 +86,7 @@ object Main
         )
         .asResource
       p2pClient = P2PClient.make[IO](
+        sharedConfig,
         sharedP2PClient,
         sharedResources.client,
         currencyPathPrefix = "dag"

@@ -46,7 +46,7 @@ case object LastSnapshotHashNotFound extends RollbackError
 case object LastSnapshotInfoNotFound extends RollbackError
 
 trait Rollback[F[_]] {
-  def rollback(implicit hasher: Hasher[F]): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]
+  def rollback(implicit hasher: Hasher[F]): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hash)]
 }
 
 object Rollback {
@@ -55,7 +55,6 @@ object Rollback {
     globalL0Service: GlobalL0Service[F],
     identifierStorage: IdentifierStorage[F],
     collateral: Collateral[F],
-    consensusManager: CurrencyConsensusManager[F],
     dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])],
     currencySnapshotCleanupStorage: CurrencySnapshotCleanupStorage[F],
     globalSnapshotsWithStateLocalFileSystemStorage: GlobalSnapshotsWithStateLocalFileSystemStorage[F],
@@ -66,7 +65,7 @@ object Rollback {
 
     val fetchGlobalSnapshotsRetryPolicy = limitRetries[F](10).join(constantDelay(3.seconds))
 
-    def rollback(implicit hasher: Hasher[F]): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)] = for {
+    def rollback(implicit hasher: Hasher[F]): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hash)] = for {
       (globalSnapshot, globalSnapshotInfo) <- globalL0Service.pullLatestSnapshot
 
       identifier <- identifierStorage.get
@@ -146,28 +145,10 @@ object Rollback {
       _ <- logger.info(s"[Rollback] Cleanup for snapshots greater than ${lastIncremental.ordinal}")
       _ <- currencySnapshotCleanupStorage.cleanupAbove(lastIncremental.ordinal)
 
-      _ <- consensusManager.startFacilitatingAfterRollback(
-        lastIncremental.ordinal,
-        CurrencyConsensusOutcome(
-          lastIncremental.ordinal,
-          Facilitators(List(nodeId)),
-          RemovedFacilitators.empty,
-          WithdrawnFacilitators.empty,
-          Finished(
-            lastIncremental,
-            lastBinaryHash,
-            CurrencySnapshotContext(identifier, lastInfo),
-            EventTrigger,
-            Candidates.empty,
-            Hash.empty
-          )
-        )
-      )
-
       _ <- logger.info(
         s"Finished rollback to currency snapshot of ${lastIncremental.ordinal.show} pulled from global snapshot of ${globalSnapshot.ordinal.show}"
       )
-    } yield (lastIncremental, lastInfo)
+    } yield (lastIncremental, lastInfo, lastBinaryHash)
   }
 
 }

@@ -15,6 +15,7 @@ import io.constellationnetwork.currency.l0.config.types._
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
 import io.constellationnetwork.currency.l0.modules._
 import io.constellationnetwork.currency.l0.node.L0NodeContext
+import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
 import io.constellationnetwork.env.env.AllowanceListPath
@@ -24,6 +25,8 @@ import io.constellationnetwork.node.shared.app.{NodeShared, TessellationIOApp, g
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.allowance_list.{Loader => AllowanceListLoader}
+import io.constellationnetwork.node.shared.infrastructure.consensus._
+import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.statechannel.StateChannelAllowanceLists
@@ -37,6 +40,7 @@ import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security._
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
 import com.monovore.decline.Opts
@@ -288,7 +292,7 @@ abstract class CurrencyL0App(
                     NodeState.RollbackDone
                   )(hasherSelector.withCurrent { implicit hasher =>
                     for {
-                      (currencySnapshot, currencySnapshotInfo) <- programs.rollback.rollback
+                      (currencySnapshot, currencySnapshotInfo, lastBinaryHash) <- programs.rollback.rollback
                       _ <- HasherSelector[IO].withCurrent { implicit hasher =>
                         initializeStorages[IO, Run](
                           storages,
@@ -298,6 +302,23 @@ abstract class CurrencyL0App(
                           currencySnapshotInfo.some
                         )
                       }
+                      _ <- services.consensus.manager.startFacilitatingAfterRollback(
+                        currencySnapshot.ordinal,
+                        CurrencyConsensusOutcome(
+                          currencySnapshot.ordinal,
+                          Facilitators(List(nodeId)),
+                          RemovedFacilitators.empty,
+                          WithdrawnFacilitators.empty,
+                          Finished(
+                            currencySnapshot,
+                            lastBinaryHash,
+                            CurrencySnapshotContext(rr.identifier, currencySnapshotInfo),
+                            EventTrigger,
+                            Candidates.empty,
+                            Hash.empty
+                          )
+                        )
+                      )
                     } yield ()
                   }) >>
                   gossipDaemon.startAsInitialValidator >>
@@ -346,7 +367,9 @@ abstract class CurrencyL0App(
                   NodeState.GenesisReady
                 )(hasherSelector.withCurrent { implicit hasher =>
                   for {
-                    (currencySnapshot, currencySnapshotInfo) <- programs.genesis.accept(dataApplicationService)(m.genesisPath)
+                    (currencySnapshot, currencySnapshotInfo, hash, identifier) <- programs.genesis.accept(dataApplicationService)(
+                      m.genesisPath
+                    )
                     _ <- HasherSelector[IO].withCurrent { implicit hasher =>
                       initializeStorages[IO, Run](
                         storages,
@@ -356,6 +379,23 @@ abstract class CurrencyL0App(
                         currencySnapshotInfo.some
                       )
                     }
+                    _ <- services.consensus.manager.startFacilitatingAfterRollback(
+                      currencySnapshot.ordinal,
+                      CurrencyConsensusOutcome(
+                        currencySnapshot.ordinal,
+                        Facilitators(List(nodeId)),
+                        RemovedFacilitators.empty,
+                        WithdrawnFacilitators.empty,
+                        Finished(
+                          currencySnapshot,
+                          hash,
+                          CurrencySnapshotContext(identifier, currencySnapshotInfo),
+                          EventTrigger,
+                          Candidates.empty,
+                          Hash.empty
+                        )
+                      )
+                    )
                   } yield ()
                 }) >>
                   gossipDaemon.startAsInitialValidator >>

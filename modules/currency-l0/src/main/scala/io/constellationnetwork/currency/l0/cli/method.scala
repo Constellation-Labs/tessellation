@@ -66,7 +66,8 @@ object method {
       c.fieldsAddedOrdinals,
       c.metagraphsSync,
       c.priceOracle.getOrElse(environment, PriceOracleConfig.default),
-      c.snapshotBinarySenderTimeouts
+      c.snapshotBinarySenderTimeouts,
+      c.snapshot.timeouts
     )
   }
 
