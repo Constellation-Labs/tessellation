@@ -124,7 +124,13 @@ abstract class CurrencyL1App(
         cfg.priorityPeerIds,
         cfg.environment
       ).asResource
-      dataApplicationService <- dataApplication.sequence
+      dataApplicationService <- dataApplication.sequence.adaptError {
+        case error =>
+          new RuntimeException(
+            s"Data application initialization failed: ${error.getMessage}. ",
+            error
+          )
+      }
       services = Services
         .make[IO, Run](
           storages,
@@ -158,8 +164,7 @@ abstract class CurrencyL1App(
         storages.allowSpend,
         storages.tokenLock,
         services.globalL0.pullGlobalSnapshot,
-        storages.globalL0Alignment,
-        cfg.consensus.tipsCount
+        storages.globalL0Alignment
       )
       programs = Programs
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
@@ -284,8 +289,14 @@ abstract class CurrencyL1App(
               programs.joining.joinOneOf(cfg.majorityForkPeerIds)
         }
       }.asResource
-      alignment = GlobalSnapshotAlignment
-        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](services, programs, storages)
+      alignment <- GlobalSnapshotAlignment
+        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
+          services,
+          programs,
+          storages,
+          sharedStorages
+        )
+        .asResource
       _ <- hasherSelector.withCurrent { implicit hasher =>
         services.dataApplication.map { da =>
           DataApplication
@@ -304,7 +315,7 @@ abstract class CurrencyL1App(
               keyPair,
               nodeId
             )
-            .merge(alignment.runtime)
+            .merge(alignment.runtime())
             .compile
             .drain
             .handleErrorWith { error =>
@@ -349,7 +360,7 @@ abstract class CurrencyL1App(
               )
             }
             .merge(stateChannel.runtime)
-            .merge(alignment.runtime)
+            .merge(alignment.runtime())
             .compile
             .drain
         }.asResource

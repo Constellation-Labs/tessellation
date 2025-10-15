@@ -250,8 +250,7 @@ abstract class SnapshotProcessor[
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI],
     txHasher: Hasher[F],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F],
-    tipsCount: PosInt
+    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F]
   )(implicit hasher: Hasher[F]): F[Alignment] = {
     val snapshot = snapshotWithState.fold({ case (snapshot, _) => snapshot }, identity)
     val (blocks, allowSpendBlocks, tokenLockBlocks) = snapshot.signed.value match {
@@ -321,9 +320,6 @@ abstract class SnapshotProcessor[
             }
 
           case Right(snapshot) =>
-            def enoughTipsForConsensus: F[Boolean] =
-              blockStorage.getTips(tipsCount).map(_.isDefined)
-
             val SnapshotTips(snapshotDeprecatedTips, snapshotRemainedActive) = snapshot.tips
             lastSnapshotStorage.getCombined.flatMap {
               case Some((lastSnapshot, lastState)) =>
@@ -375,11 +371,8 @@ abstract class SnapshotProcessor[
                               Applicative[F].unit
 
                           def determineAlignment(shouldRedownload: ShouldRedownload): F[Alignment] = for {
-                            haveEnoughTips <- enoughTipsForConsensus
                             result <-
-                              if (!haveEnoughTips) {
-                                createDownloadNeeded().pure[F]
-                              } else if (shouldRedownload.value) {
+                              if (shouldRedownload.value) {
                                 handleRedownloadRequired(shouldRedownload)
                               } else if (onlyInMajority.isEmpty) {
                                 createAlignedAtNewOrdinal().pure[F]
@@ -394,17 +387,6 @@ abstract class SnapshotProcessor[
                               _ <- globalL0AlignmentStorage.clean()
                               alignment = createRedownloadNeeded()
                             } yield alignment
-
-                          def createDownloadNeeded(): Alignment =
-                            DownloadNeeded(
-                              snapshot,
-                              state,
-                              acceptedInMajority.values.toSet,
-                              obsoleteToRemove,
-                              snapshotRemainedActive,
-                              snapshotDeprecatedTips.map(_.block),
-                              postponedToWaiting
-                            )
 
                           def createRedownloadNeeded(): Alignment =
                             RedownloadNeeded(
