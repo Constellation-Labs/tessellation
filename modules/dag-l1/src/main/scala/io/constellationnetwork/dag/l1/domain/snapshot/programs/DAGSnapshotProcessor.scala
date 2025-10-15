@@ -35,8 +35,7 @@ object DAGSnapshotProcessor {
     txHasher: Hasher[F],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     l0Service: GlobalL0Service[F],
-    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F],
-    tipsCount: PosInt
+    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F]
   ): SnapshotProcessor[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] =
     new SnapshotProcessor[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
 
@@ -62,8 +61,7 @@ object DAGSnapshotProcessor {
           lastGlobalSnapshotStorage,
           txHasher,
           getGlobalSnapshotByOrdinal,
-          globalL0AlignmentStorage,
-          tipsCount
+          globalL0AlignmentStorage
         )
           .flatMap(
             processAlignment(

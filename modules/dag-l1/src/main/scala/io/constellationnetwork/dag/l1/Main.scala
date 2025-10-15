@@ -120,8 +120,7 @@ object Main
         Hasher.forKryo[IO],
         services.globalL0.pullGlobalSnapshot,
         services.globalL0,
-        storages.globalL0Alignment,
-        cfg.consensus.tipsCount
+        storages.globalL0Alignment
       )
       programs = Programs.make(sharedPrograms, p2pClient, storages, snapshotProcessor)
 
@@ -173,12 +172,14 @@ object Main
         )
         .asResource
 
-      alignment = GlobalSnapshotAlignment.make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo, Run](
-        services,
-        programs,
-        storages,
-        sharedStorages
-      )
+      alignment <- GlobalSnapshotAlignment
+        .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo, Run](
+          services,
+          programs,
+          storages,
+          sharedStorages
+        )
+        .asResource
 
       swapRuntime = hasherSelector.withCurrent { implicit hasher =>
         Swap.run(
