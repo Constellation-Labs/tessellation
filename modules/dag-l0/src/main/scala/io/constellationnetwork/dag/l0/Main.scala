@@ -68,7 +68,7 @@ object Main
       cfg = method.appConfig(cfgR, sharedConfig)
       queues <- Queues.make[IO](sharedQueues).asResource
 
-      p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session)
+      p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session, sharedConfig.snapshotTimeoutsConfig)
       storages <- Storages
         .make[IO](
           sharedStorages,

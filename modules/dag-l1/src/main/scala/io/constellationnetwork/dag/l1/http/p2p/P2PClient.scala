@@ -1,8 +1,10 @@
 package io.constellationnetwork.dag.l1.http.p2p
 
 import cats.effect.Async
+import cats.syntax.all._
 
 import io.constellationnetwork.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
+import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.swap.consensus.{ConsensusClient => SwapConsensusClient}
 import io.constellationnetwork.node.shared.domain.tokenlock.consensus.{ConsensusClient => TokenLockConsensusClient}
 import io.constellationnetwork.node.shared.http.p2p.SharedP2PClient
@@ -15,6 +17,7 @@ import org.http4s.client._
 object P2PClient {
 
   def make[F[_]: Async: SecurityProvider](
+    sharedConfig: SharedConfig,
     sharedP2PClient: SharedP2PClient[F],
     client: Client[F],
     currencyPathPrefix: String
@@ -27,7 +30,7 @@ object P2PClient {
       L0BlockOutputClient.make(currencyPathPrefix, client),
       sharedP2PClient.gossip,
       BlockConsensusClient.make(client),
-      L0GlobalSnapshotClient.make(client),
+      L0GlobalSnapshotClient.make(client, none, sharedConfig.snapshotTimeoutsConfig),
       SwapConsensusClient.make(client),
       TokenLockConsensusClient.make(client),
       L0TrustClient.make(client)
