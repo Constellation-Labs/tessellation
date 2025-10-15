@@ -32,12 +32,12 @@ trait Genesis[F[_]] {
   def acceptSignedGenesis(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesis: Signed[CurrencySnapshot])(
     implicit context: L0NodeContext[F],
     hasher: Hasher[F]
-  ): F[Unit]
+  ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]
 
   def accept(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesisPath: Path)(
     implicit context: L0NodeContext[F],
     hasher: Hasher[F]
-  ): F[Unit]
+  ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]
 
   def create(dataApplication: Option[BaseDataApplicationL0Service[F]])(
     balancesPath: Path,
@@ -63,11 +63,12 @@ object Genesis {
 
     override def acceptSignedGenesis(
       dataApplication: Option[BaseDataApplicationL0Service[F]]
-    )(genesis: Signed[CurrencySnapshot])(implicit context: L0NodeContext[F], hasher: Hasher[F]): F[Unit] = for {
+    )(
+      genesis: Signed[CurrencySnapshot]
+    )(implicit context: L0NodeContext[F], hasher: Hasher[F]): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)] = for {
       hashedGenesis <- genesis.toHashed[F]
       firstIncrementalSnapshot <- CurrencySnapshot.mkFirstIncrementalSnapshot[F](hashedGenesis)
       signedFirstIncrementalSnapshot <- firstIncrementalSnapshot.sign(keyPair)
-      _ <- snapshotStorage.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info.toCurrencySnapshotInfo)
 
       _ <- collateral
         .hasCollateral(nodeId)
@@ -110,12 +111,12 @@ object Genesis {
         )
       )
       _ <- logger.info(s"Genesis binary ${binaryHash.show} and ${incrementalBinaryHash.show} accepted and sent to Global L0")
-    } yield ()
+    } yield (signedFirstIncrementalSnapshot, hashedGenesis.info.toCurrencySnapshotInfo)
 
     override def accept(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesisPath: Path)(
       implicit context: L0NodeContext[F],
       hasher: Hasher[F]
-    ): F[Unit] = genesisLoader
+    ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)] = genesisLoader
       .loadSignedGenesis(genesisPath)
       .flatTap { genesis =>
         dataApplication

@@ -196,28 +196,6 @@ object StateChannel {
     services.globalL0.pullGlobalSnapshots.flatMap {
       case Left((snapshot, state)) =>
         for {
-          lastNAlreadyInitialized <- sharedStorages.lastNGlobalSnapshot.alreadyInitialized
-          _ <-
-            if (!lastNAlreadyInitialized) {
-              for {
-                _ <- storages.lastSyncGlobalSnapshot.setInitial(snapshot, state)
-                _ <- sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
-                  snapshot,
-                  state,
-                  services.globalL0.asLeft.some,
-                  none
-                )
-                _ <- storages.globalSnapshotsWithStateFileStorage.write(snapshot.ordinal, GlobalSnapshotWithState(snapshot.signed, state))
-                _ <- storages.globalSnapshotsWithStateDeltasFileStorage
-                  .write(snapshot.ordinal, GlobalSnapshotWithStateDeltas(snapshot.signed, state.activeAllowSpends, state.activeTokenLocks))
-                _ <- sharedStorages.lastGlobalSnapshot.setInitial(
-                  snapshot,
-                  state
-                )
-              } yield ()
-            } else {
-              ().pure
-            }
           _ <- triggerOnGlobalSnapshotPullHook(snapshot, state)
           _ <- maybeForceEventTrigger(snapshot, state)
         } yield ()
