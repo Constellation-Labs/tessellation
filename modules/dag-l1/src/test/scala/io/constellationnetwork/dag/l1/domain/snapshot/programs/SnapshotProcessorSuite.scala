@@ -277,8 +277,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                     Hasher.forKryo[IO],
                     globalL0Service.pullGlobalSnapshot,
                     globalL0Service,
-                    globalL0AlignmentStorage,
-                    PosInt.unsafeFrom(2)
+                    globalL0AlignmentStorage
                   )
               }
               keys <- (
@@ -939,7 +938,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           expect.same(
             (processingResult, balancesAfter, blocksAfter, lastGlobalSnapshotAfter, lastAcceptedTxRAfter),
             (
-              DownloadPerformed(
+              Aligned(
                 SnapshotReference(
                   snapshotHeight6,
                   snapshotSubHeight1,
@@ -948,7 +947,6 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   hashedNextSnapshot.hash,
                   hashedNextSnapshot.proofsHash
                 ),
-                Set.empty,
                 Set.empty
               ),
               Map.empty,
