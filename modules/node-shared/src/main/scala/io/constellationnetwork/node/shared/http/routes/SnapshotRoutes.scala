@@ -5,6 +5,7 @@ import cats.syntax.all._
 
 import io.constellationnetwork.ext.http4s.HashVar
 import io.constellationnetwork.ext.http4s.headers.negotiation.resolveEncoder
+import io.constellationnetwork.node.shared.config.types.SnapshotTimeoutsConfig
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.ext.http4s.SnapshotOrdinalVar
@@ -21,6 +22,7 @@ import io.circe.shapes._
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.circe.CirceEntityEncoder
 import org.http4s.dsl.Http4sDsl
+import org.http4s.server.middleware.Timeout
 import org.http4s.{EntityEncoder, HttpRoutes, Response}
 import shapeless.HNil
 import shapeless.syntax.singleton._
@@ -30,7 +32,8 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, C: Encoder]
   fullGlobalSnapshotStorage: Option[SnapshotLocalFileSystemStorage[F, GlobalSnapshot]],
   prefixPath: InternalUrlPrefix,
   nodeStorage: NodeStorage[F],
-  hasherSelector: HasherSelector[F]
+  hasherSelector: HasherSelector[F],
+  snapshotTimeoutsConfig: SnapshotTimeoutsConfig
 ) extends Http4sDsl[F]
     with PublicRoutes[F]
     with P2PRoutes[F] {
@@ -45,7 +48,7 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, C: Encoder]
 
   private def validStateForSnapshotReturn(state: NodeState): Boolean = state === NodeState.Ready
 
-  protected val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val httpRoutes: HttpRoutes[F] = Timeout(snapshotTimeoutsConfig.routes)(HttpRoutes.of[F] {
     case GET -> Root / "latest" / "ordinal" =>
       nodeStorage.getNodeState
         .map(validStateForSnapshotReturn)
@@ -148,7 +151,7 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, C: Encoder]
           },
           serviceUnavailableNodeNotReady
         )
-  }
+  })
 
   protected val public: HttpRoutes[F] = httpRoutes
   protected val p2p: HttpRoutes[F] = httpRoutes

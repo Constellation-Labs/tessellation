@@ -144,7 +144,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
       storages.fullGlobalSnapshot.some,
       "/global-snapshots",
       storages.node,
-      HasherSelector[F]
+      HasherSelector[F],
+      sharedConfig.snapshotTimeoutsConfig
     )
   private val dagRoutes = DAGBlockRoutes[F](mkDagCell)
   private val allowSpendRoutes = AllowSpendBlockRoutes[F](queues.l1AllowSpendOutput)

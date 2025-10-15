@@ -1,6 +1,7 @@
 package io.constellationnetwork.currency.l0.http.p2p
 
 import cats.effect.Async
+import cats.syntax.all._
 
 import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotClient
 import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotClient.CurrencySnapshotClient
@@ -28,8 +29,8 @@ object P2PClient {
       sharedP2PClient.gossip,
       sharedP2PClient.node,
       StateChannelSnapshotClient.make(client, sharedConfig.snapshotBinarySenderTimeouts),
-      L0GlobalSnapshotClient.make(client),
-      CurrencySnapshotClient.make[F](client, session),
+      L0GlobalSnapshotClient.make(client, none, sharedConfig.snapshotTimeoutsConfig),
+      CurrencySnapshotClient.make[F](client, session, sharedConfig.snapshotTimeoutsConfig),
       L0TrustClient.make(client),
       DataApplicationClient.make(client, session)
     ) {}

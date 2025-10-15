@@ -114,7 +114,7 @@ abstract class CurrencyL1App(
           )
       }.asResource
       dagP2PClient = DAGP2PClient
-        .make[IO](sharedP2PClient, sharedResources.client, currencyPathPrefix = "currency")
+        .make[IO](sharedConfig, sharedP2PClient, sharedResources.client, currencyPathPrefix = "currency")
       p2pClient = P2PClient.make[IO](
         dagP2PClient,
         sharedResources.client
