@@ -34,6 +34,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 object StateChannel {
 
   private val awakePeriod = 10.seconds
+  private val retryPeriod = 5.seconds
 
   def run[F[_]: Async: HasherSelector: SecurityProvider: Metrics: Logger](
     services: Services[F, Run],
@@ -70,10 +71,31 @@ object StateChannel {
           performGlobalL0PeerDiscovery(storages, programs)
         }
         .handleErrorWith { error =>
-          Stream.eval(logger.error(error)("Error during global L0 peer discovery"))
+          Stream.eval(logger.error(error)("Error during global L0 peer discovery")) >>
+            Stream.empty
         }
 
-    globalL0SnapshotProcessing.merge(globalL0PeerDiscovery)
+    def stateChannelBinaryRetryProcess: Stream[F, Unit] =
+      Stream
+        .awakeEvery[F](retryPeriod)
+        .evalMap(_ =>
+          storages.lastSyncGlobalSnapshot.getCombined.flatMap {
+            case Some((snapshot, context)) =>
+              services.stateChannelBinarySender.processPending(snapshot, context)
+            case None =>
+              Applicative[F].unit
+          }
+        )
+        .handleErrorWith { error =>
+          Stream.eval(logger.error(error)("Error during binary retry processing")) >>
+            Stream.empty
+        }
+
+    Stream(
+      globalL0SnapshotProcessing,
+      globalL0PeerDiscovery,
+      stateChannelBinaryRetryProcess
+    ).parJoin(3)
   }
 
   def performGlobalL0SnapshotProcess[F[_]: Async: HasherSelector: Metrics: SecurityProvider: Logger](
@@ -252,17 +274,12 @@ object StateChannel {
                                 sendGlobalSnapshotSyncConsensusEvent(snapshot)
                               }
                               _ <- triggerOnGlobalSnapshotPullHook(snapshot, context)
+
                               _ <- services.stateChannelBinarySender.confirm(snapshot).handleErrorWith { error =>
                                 Logger[F].error(error)("Error when confirming state channel binary") >>
                                   updateFailedConfirmingStateChannelBinaryMetrics() >>
                                   Async[F].unit
                               }
-                              _ <- S
-                                .supervise(services.stateChannelBinarySender.processPending(snapshot, context))
-                                .void
-                                .handleErrorWith { error =>
-                                  Logger[F].error(error)("Error when process pending state channel binary") >> Async[F].unit
-                                }
                             } yield ()
                           }
                     }

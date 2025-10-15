@@ -62,7 +62,8 @@ object types {
     delegatedStaking: DelegatedStakingConfig,
     fieldsAddedOrdinals: FieldsAddedOrdinals,
     metagraphsSync: MetagraphsSyncConfig,
-    priceOracle: Map[AppEnvironment, PriceOracleConfig]
+    priceOracle: Map[AppEnvironment, PriceOracleConfig],
+    snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig
   )
 
   case class SharedConfig(
@@ -86,7 +87,8 @@ object types {
     delegatedStaking: DelegatedStakingConfig,
     fieldsAddedOrdinals: FieldsAddedOrdinals,
     metagraphsSync: MetagraphsSyncConfig,
-    priceOracle: PriceOracleConfig
+    priceOracle: PriceOracleConfig,
+    snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig
   )
 
   case class SharedTrustConfig(
@@ -142,6 +144,11 @@ object types {
   case class EventCutterConfig(
     maxBinarySizeBytes: PosInt,
     maxUpdateNodeParametersSize: PosInt
+  )
+
+  case class SnapshotBinarySenderTimeoutsConfig(
+    routes: FiniteDuration,
+    client: FiniteDuration
   )
 
   case class SnapshotConfig(
