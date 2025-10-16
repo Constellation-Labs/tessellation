@@ -25,8 +25,7 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
   services: Services[F, P, S, SI, R],
   programs: Programs[F, P, S, SI],
   storages: Storages[F, P, S, SI],
-  sharedStorages: SharedStorages[F],
-  firstExecution: SignallingRef[F, Boolean]
+  sharedStorages: SharedStorages[F]
 ) {
 
   private val maxEpochProgressesBehind = 5L
@@ -114,25 +113,10 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
   private val globalSnapshotProcessing: Stream[F, Unit] = Stream
     .awakeEvery(10.seconds)
     .evalMap { _ =>
-      for {
-        isFirstExecution <- firstExecution.get
-        result <-
-          if (isFirstExecution) {
-            logger.info("First time processing global snapshots, forcing download") >>
-              withRetry(
-                operation = services.globalL0.pullLatestSnapshot.map(snapshot =>
-                  Left(snapshot): Either[services.globalL0.LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]
-                ),
-                operationName = "Pull latest global snapshot"
-              )
-          } else {
-            withRetry(
-              operation = services.globalL0.pullGlobalSnapshots,
-              operationName = "Pull global snapshots"
-            )
-          }
-        _ <- firstExecution.set(false)
-      } yield result
+      withRetry(
+        operation = services.globalL0.pullGlobalSnapshots,
+        operationName = "Pull global snapshots"
+      )
     }
     .evalTap { snapshots =>
       def log(snapshot: Hashed[GlobalIncrementalSnapshot]) =
@@ -198,7 +182,5 @@ object GlobalSnapshotAlignment {
     programs: Programs[F, P, S, SI],
     storages: Storages[F, P, S, SI],
     sharedStorages: SharedStorages[F]
-  ) = for {
-    firstExecution <- SignallingRef.of[F, Boolean](true)
-  } yield new GlobalSnapshotAlignment[F, P, S, SI, R](services, programs, storages, sharedStorages, firstExecution)
+  ) = new GlobalSnapshotAlignment[F, P, S, SI, R](services, programs, storages, sharedStorages)
 }
