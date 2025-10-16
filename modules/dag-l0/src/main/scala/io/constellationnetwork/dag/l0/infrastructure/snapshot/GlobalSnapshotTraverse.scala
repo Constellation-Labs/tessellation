@@ -2,21 +2,27 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
 import cats.Parallel
 import cats.data.NonEmptyChain
+import cats.effect.IO
 import cats.effect.kernel.Async
 import cats.syntax.all._
 
 import scala.util.control.NoStackTrace
 
+import io.constellationnetwork.dag.l0.StoragesInitializer.initializeStorages
+import io.constellationnetwork.dag.l0.modules.Storages
 import io.constellationnetwork.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
 import io.constellationnetwork.merkletree.StateProofValidator
+import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
-import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
+import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
+import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait GlobalSnapshotTraverse[F[_]] {
@@ -32,12 +38,13 @@ object GlobalSnapshotTraverse {
     contextFns: SnapshotContextFunctions[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
     rollbackHash: Hash,
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    globalSnapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     download: Download[F, GlobalIncrementalSnapshot]
   ): GlobalSnapshotTraverse[F] =
     new GlobalSnapshotTraverse[F] {
-      val logger = Slf4jLogger.getLogger[F]
+      implicit val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
       def loadChain(): F[(GlobalSnapshotInfo, Signed[GlobalIncrementalSnapshot])] = {
         def loadIncOrErr(h: Hash) =
@@ -114,6 +121,17 @@ object GlobalSnapshotTraverse {
           _ <- (new Exception(s"Snapshot info does not match the snapshot at ordinal=${firstInc.ordinal.show}"))
             .raiseError[F, Unit]
             .whenA(stateProofInvalid)
+
+          _ <- HasherSelector[F].forOrdinal(firstInc.ordinal)(implicit hasher =>
+            initializeStorages[F](
+              globalSnapshotStorage,
+              lastNGlobalSnapshotStorage,
+              lastGlobalSnapshotStorage,
+              download,
+              hashedFirstInc,
+              firstInfo
+            )
+          )
 
           (info, lastInc) <- incHashesNec.tail.foldLeftM((firstInfo, firstInc)) {
             case ((lastCtx, lastInc), hash) =>
