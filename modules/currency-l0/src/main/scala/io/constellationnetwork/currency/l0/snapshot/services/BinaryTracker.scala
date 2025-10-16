@@ -23,6 +23,7 @@ sealed trait TrackedBinary
 
 case class PendingBinary(
   binary: Hashed[StateChannelSnapshotBinary],
+  currencySnapshotOrdinal: SnapshotOrdinal,
   enqueuedAtOrdinal: SnapshotOrdinal,
   sendsSoFar: NonNegLong
 ) extends TrackedBinary
@@ -62,29 +63,35 @@ object TrackerState {
 }
 
 trait BinaryTracker[F[_]] {
-  def enqueue(binary: Hashed[StateChannelSnapshotBinary], enqueuedAt: SnapshotOrdinal): F[Unit]
+  def enqueue(
+    binary: Hashed[StateChannelSnapshotBinary],
+    currencySnapshotOrdinal: SnapshotOrdinal,
+    enqueuedAtGlobal: SnapshotOrdinal
+  ): F[Unit]
   def markAsSent(binaryHash: Hash): F[Unit]
   def markAsConfirmed(confirmedHashes: Set[Hash], proof: GlobalSnapshotConfirmationProof): F[Unit]
   def getPendingToRetry(cap: Int): F[List[PendingBinary]]
   def getState: F[TrackerState]
   def updateState(f: TrackerState => TrackerState): F[Unit]
   def clear: F[Unit]
+  def pruneConfirmed: F[Unit]
 }
 
 object BinaryTracker {
   def make[F[_]: Async]: F[BinaryTracker[F]] =
     Ref.of[F, TrackerState](TrackerState.empty).map { stateRef =>
       new BinaryTracker[F] {
-        def enqueue(binary: Hashed[StateChannelSnapshotBinary], enqueuedAt: SnapshotOrdinal): F[Unit] =
+        def enqueue(binary: Hashed[StateChannelSnapshotBinary], currencySnapshotOrdinal: SnapshotOrdinal, enqueuedAt: SnapshotOrdinal)
+          : F[Unit] =
           stateRef.update { state =>
-            state.copy(tracked = state.tracked :+ PendingBinary(binary, enqueuedAt, NonNegLong.MinValue))
+            state.copy(tracked = state.tracked :+ PendingBinary(binary, currencySnapshotOrdinal, enqueuedAt, NonNegLong.MinValue))
           }
 
         def markAsSent(binaryHash: Hash): F[Unit] =
           stateRef.update { state =>
             val updatedTracked = state.tracked.map {
-              case PendingBinary(binary, enqueuedAt, sendsSoFar) if binary.hash === binaryHash =>
-                PendingBinary(binary, enqueuedAt, NonNegLong.unsafeFrom(sendsSoFar.value + 1))
+              case PendingBinary(binary, currencySnapshotOrdinal, enqueuedAt, sendsSoFar) if binary.hash === binaryHash =>
+                PendingBinary(binary, currencySnapshotOrdinal, enqueuedAt, NonNegLong.unsafeFrom(sendsSoFar.value + 1))
               case other => other
             }
             state.copy(tracked = updatedTracked)
@@ -95,11 +102,11 @@ object BinaryTracker {
             val indexedTracked = state.tracked.zipWithIndex
 
             val maybeHighestConfirmationIndex = indexedTracked.collect {
-              case (PendingBinary(binaryData, _, _), index) if confirmedHashes.contains(binaryData.hash) => index
+              case (PendingBinary(binaryData, _, _, _), index) if confirmedHashes.contains(binaryData.hash) => index
             }.maxOption
 
             val updatedTracked = indexedTracked.map {
-              case (pendingBinary @ PendingBinary(_, _, _), index) if index <= maybeHighestConfirmationIndex.getOrElse(-1) =>
+              case (pendingBinary @ PendingBinary(_, _, _, _), index) if index <= maybeHighestConfirmationIndex.getOrElse(-1) =>
                 ConfirmedBinary(pendingBinary, proof)
               case (other, _) => other
             }
@@ -117,6 +124,12 @@ object BinaryTracker {
         def updateState(f: TrackerState => TrackerState): F[Unit] = stateRef.update(f)
 
         def clear: F[Unit] = stateRef.set(TrackerState.empty)
+
+        def pruneConfirmed: F[Unit] =
+          stateRef.update { state =>
+            val updatedTracked = state.tracked.filterNot(_.isInstanceOf[ConfirmedBinary])
+            state.copy(tracked = updatedTracked)
+          }
       }
     }
 }

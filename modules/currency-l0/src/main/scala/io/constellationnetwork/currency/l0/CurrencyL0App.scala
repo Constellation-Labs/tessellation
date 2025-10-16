@@ -7,7 +7,7 @@ import scala.collection.immutable.SortedSet
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import io.constellationnetwork.currency.l0.StateChannel.performGlobalL0SnapshotProcess
-import io.constellationnetwork.currency.l0.StoragesInitializer.initializeStorages
+import io.constellationnetwork.currency.l0.StoragesInitializer.{initializeCurrencySnapshotStorages, initializeGlobalSnapshotStorages}
 import io.constellationnetwork.currency.l0.cell.{L0Cell, L0CellInput}
 import io.constellationnetwork.currency.l0.cli.method
 import io.constellationnetwork.currency.l0.cli.method._
@@ -205,6 +205,8 @@ abstract class CurrencyL0App(
         services.collateral
       )
 
+      _ <- initializeGlobalSnapshotStorages[IO, Run](services, storages, sharedStorages).asResource
+
       program <- (method match {
         case m: CreateGenesis =>
           hasherSelectorAlwaysCurrent.withCurrent { implicit hasher =>
@@ -223,9 +225,6 @@ abstract class CurrencyL0App(
                   gossipDaemon.startAsRegularValidator >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
                   storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
-                  HasherSelector[IO].withCurrent { implicit hasher =>
-                    initializeStorages[IO, Run](storages, sharedStorages, services)
-                  } >>
                   services.restart.setNodeForkedRestartMethod(
                     RunValidatorWithJoinAttempt(
                       rv.keyStore,
@@ -294,10 +293,8 @@ abstract class CurrencyL0App(
                     for {
                       (currencySnapshot, currencySnapshotInfo, lastBinaryHash) <- programs.rollback.rollback
                       _ <- HasherSelector[IO].withCurrent { implicit hasher =>
-                        initializeStorages[IO, Run](
+                        initializeCurrencySnapshotStorages[IO, Run](
                           storages,
-                          sharedStorages,
-                          services,
                           currencySnapshot.some,
                           currencySnapshotInfo.some
                         )
@@ -371,10 +368,8 @@ abstract class CurrencyL0App(
                       m.genesisPath
                     )
                     _ <- HasherSelector[IO].withCurrent { implicit hasher =>
-                      initializeStorages[IO, Run](
+                      initializeCurrencySnapshotStorages[IO, Run](
                         storages,
-                        sharedStorages,
-                        services,
                         currencySnapshot.some,
                         currencySnapshotInfo.some
                       )

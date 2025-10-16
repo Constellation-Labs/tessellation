@@ -19,7 +19,7 @@ import io.constellationnetwork.node.shared.domain.cluster.programs.{Joining, Pee
 import io.constellationnetwork.node.shared.domain.snapshot.PeerSelect
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
-import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{GlobalSnapshotContextFunctions, PeerSelect}
 import io.constellationnetwork.node.shared.modules.{SharedPrograms, SharedStorages}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
@@ -36,7 +36,7 @@ object Programs {
     lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
     p2pClient: P2PClient[F],
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
-    hashSelect: HashSelect,
+    globalSnapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
   ): Programs[F] =
@@ -67,8 +67,8 @@ object Programs {
         storages.globalSnapshotInfoLocalFileSystemStorage,
         storages.snapshotDownload,
         globalSnapshotContextFns,
-        hashSelect,
         storages.globalSnapshot.getHashed,
+        globalSnapshotStorage,
         lastNGlobalSnapshotStorage,
         lastGlobalSnapshotStorage
       )

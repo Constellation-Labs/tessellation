@@ -57,7 +57,8 @@ class BinaryPoster[F[_]: Async](
               if (allowedPeers.contains(selfId)) {
                 pickPeerAndSend(binary, lastGlobalSnapshotSigners, customPeersAllowed.filter(allowedPeers.contains))
               } else {
-                none[PeerId].pure
+                logger.debug(s"[Queue] Self not in allowance list, skipping send") >>
+                  none[PeerId].pure
               }
             case None =>
               handleEmptyAllowanceList(binary, lastGlobalSnapshotSigners, customPeersAllowed)
@@ -75,9 +76,8 @@ class BinaryPoster[F[_]: Async](
     if (allowedEmptyAllowanceList.contains(environment)) {
       pickPeerAndSend(binary, lastGlobalSnapshotSigners, customPeersAllowed)
     } else {
-      logger
-        .info(s"Empty allowance list and [$environment] is not allowed. Skipping currency snapshot.")
-        .as(none[PeerId])
+      logger.info(s"[Queue] Empty allowance list not allowed in [$environment], skipping") >>
+        none[PeerId].pure
     }
 
   private def pickPeerAndSend(
@@ -94,9 +94,11 @@ class BinaryPoster[F[_]: Async](
     )
 
     if (peerToSendSnapshot === selfId) {
-      performPost(binary, lastGlobalSnapshotSigners).as(peerToSendSnapshot.some)
+      logger.debug(s"[Queue] Self selected to send binary ${binary.hash}") >>
+        performPost(binary, lastGlobalSnapshotSigners).as(peerToSendSnapshot.some)
     } else {
-      peerToSendSnapshot.some.pure
+      logger.debug(s"[Queue] Peer $peerToSendSnapshot selected to send binary ${binary.hash}") >>
+        peerToSendSnapshot.some.pure
     }
   }
 
@@ -110,10 +112,10 @@ class BinaryPoster[F[_]: Async](
       _.isRight.pure[F]
 
     def onFailure = (_: Either[NonEmptyList[StateChannelValidationError], Unit], details: RetryDetails) =>
-      logger.warn(s"Retrying sending ${binary.hash.show} to Global L0 after rejection. Retries so far ${details.retriesSoFar}")
+      logger.warn(s"[Queue] Retrying ${binary.hash.show} after rejection (attempt ${details.retriesSoFar})")
 
     def onError = (_: Throwable, details: RetryDetails) =>
-      logger.warn(s"Retrying sending ${binary.hash.show} to Global L0 after error. Retries so far ${details.retriesSoFar}")
+      logger.warn(s"[Queue] Retrying ${binary.hash.show} after error (attempt ${details.retriesSoFar})")
 
     retryingOnFailuresAndAllErrors[Either[NonEmptyList[StateChannelValidationError], Unit]](
       retryPolicy,
@@ -131,36 +133,32 @@ class BinaryPoster[F[_]: Async](
       identifierStorage.get.flatMap { identifier =>
         stateChannelSnapshotClient
           .send(identifier, binary.signed)(l0Peer)
-          .onError(e => logger.warn(e)(s"Sending ${binary.hash.show} snapshot to Global L0 peer ${l0Peer.show} failed!"))
+          .onError(e => logger.warn(e)(s"[Queue] Send to ${l0Peer.show} failed for ${binary.hash.show}"))
           .flatTap {
             case Right(_) =>
-              logger.info(s"Sent ${binary.hash.show} to Global L0 peer ${l0Peer.show}") >>
+              logger.info(s"[Queue] ✓ Sent ${binary.hash.show} to ${l0Peer.show}") >>
                 binaryTracker.markAsSent(binary.hash)
             case Left(errors) =>
-              logger.error(s"Snapshot ${binary.hash.show} rejected by Global L0 peer ${l0Peer.show}. Reasons: ${errors.show}")
+              logger.error(s"[Queue] ✗ Binary ${binary.hash.show} rejected by ${l0Peer.show}: ${errors.show}")
           }
       }
     }
 
   private def selectPeer(lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]]) =
     lastGlobalSnapshotSigners.fold {
-      logger.info("No last global snapshot signers provided, selecting random GL0 peer") >>
+      logger.debug("[Queue] No signers provided, selecting random peer") >>
         globalL0ClusterStorage.getRandomPeer
     } { lastSigners =>
       for {
-        _ <- logger.info(s"Attempting to select GL0 peer from ${lastSigners.size} last snapshot signers")
+        _ <- logger.debug(s"[Queue] Selecting from ${lastSigners.size} signers")
         maybeL0Peer <- globalL0ClusterStorage.getRandomPeerExistentOnList(lastSigners.toList)
         l0Peer <- maybeL0Peer match {
           case Some(peer) =>
-            logger.info(s"Selected GL0 peer ${peer.show} from last snapshot signers to send binary") >>
-              peer.pure
+            logger.debug(s"[Queue] Selected ${peer.show} from signers") >> peer.pure
           case None =>
             for {
               randomPeer <- globalL0ClusterStorage.getRandomPeer
-              _ <- logger.warn(
-                s"None of the ${lastSigners.size} last snapshot signers found in current GL0 cluster. " +
-                  s"Falling back to random peer: ${randomPeer.show}"
-              )
+              _ <- logger.warn(s"[Queue] No signers in cluster, using random peer ${randomPeer.show}")
             } yield randomPeer
         }
       } yield l0Peer

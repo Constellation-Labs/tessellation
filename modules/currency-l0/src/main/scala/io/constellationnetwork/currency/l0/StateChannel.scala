@@ -78,27 +78,10 @@ object StateChannel {
             Stream.empty
         }
 
-    def stateChannelBinaryRetryProcess: Stream[F, Unit] =
-      Stream
-        .awakeEvery[F](retryPeriod)
-        .evalMap(_ =>
-          storages.lastSyncGlobalSnapshot.getCombined.flatMap {
-            case Some((snapshot, context)) =>
-              services.stateChannelBinarySender.processPending(snapshot, context)
-            case None =>
-              Applicative[F].unit
-          }
-        )
-        .handleErrorWith { error =>
-          Stream.eval(logger.error(error)("Error during binary retry processing")) >>
-            Stream.empty
-        }
-
     Stream(
       globalL0SnapshotProcessing,
-      globalL0PeerDiscovery,
-      stateChannelBinaryRetryProcess
-    ).parJoin(3)
+      globalL0PeerDiscovery
+    ).parJoin(2)
   }
 
   def performGlobalL0SnapshotProcess[F[_]: Async: HasherSelector: Metrics: SecurityProvider: Logger](

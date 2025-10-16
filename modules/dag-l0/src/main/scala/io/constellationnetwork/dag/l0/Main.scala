@@ -108,7 +108,7 @@ object Main
         cfg.incremental.lastFullGlobalSnapshotOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
         p2pClient,
         sharedServices.globalSnapshotContextFns,
-        hashSelect,
+        storages.globalSnapshot,
         sharedStorages.lastNGlobalSnapshot,
         sharedStorages.lastGlobalSnapshot
       )
@@ -218,22 +218,16 @@ object Main
           ) {
             programs.rollbackLoader.load(m.rollbackHash, programs.download).flatMap {
               case (snapshotInfo, snapshot) =>
-                hasherSelector.forOrdinal(snapshot.ordinal) { implicit hasher =>
-                  for {
-                    hashedSnapshot <- snapshot.toHashed[IO]
-                    _ <- initializeStorages[IO](storages, sharedStorages, programs, hashedSnapshot, snapshotInfo)
-                  } yield ()
-                } >>
-                  services.consensus.manager.startFacilitatingAfterRollback(
+                services.consensus.manager.startFacilitatingAfterRollback(
+                  snapshot.ordinal,
+                  GlobalConsensusOutcome(
                     snapshot.ordinal,
-                    GlobalConsensusOutcome(
-                      snapshot.ordinal,
-                      Facilitators(List(nodeId)),
-                      RemovedFacilitators.empty,
-                      WithdrawnFacilitators.empty,
-                      Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty)
-                    )
+                    Facilitators(List(nodeId)),
+                    RemovedFacilitators.empty,
+                    WithdrawnFacilitators.empty,
+                    Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty)
                   )
+                )
             }
           } >>
             services.collateral
@@ -306,7 +300,14 @@ object Main
                                       .hasCollateral(nodeShared.nodeId)
                                       .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA)
                                     hashedSnapshot <- signedFirstIncrementalSnapshot.toHashed[IO]
-                                    _ <- initializeStorages[IO](storages, sharedStorages, programs, hashedSnapshot, hashedGenesis.info)
+                                    _ <- initializeStorages[IO](
+                                      storages.globalSnapshot,
+                                      sharedStorages.lastNGlobalSnapshot,
+                                      sharedStorages.lastGlobalSnapshot,
+                                      programs.download,
+                                      hashedSnapshot,
+                                      hashedGenesis.info
+                                    )
                                     _ <- services.consensus.manager
                                       .startFacilitatingAfterRollback(
                                         signedFirstIncrementalSnapshot.ordinal,

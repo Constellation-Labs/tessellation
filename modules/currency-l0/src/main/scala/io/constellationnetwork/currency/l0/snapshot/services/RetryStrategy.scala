@@ -14,7 +14,7 @@ object RetryStrategy {
 
   def shouldEnterRetryMode(state: TrackerState, currentOrdinal: SnapshotOrdinal): Boolean = {
     val hasStalled = state.tracked.exists {
-      case PendingBinary(_, enqueuedAtOrdinal, _) =>
+      case PendingBinary(_, _, enqueuedAtOrdinal, _) =>
         currentOrdinal.value - enqueuedAtOrdinal.value >= noConfirmationsToTriggerRetryMode
       case _ => false
     }
@@ -24,8 +24,8 @@ object RetryStrategy {
     } else {
       val pendingCount = state.tracked.collect { case _: PendingBinary => 1 }.sum
       val allPendingAlreadySent = state.tracked.forall {
-        case PendingBinary(_, _, sendsSoFar) => sendsSoFar.value >= 1
-        case _                               => true
+        case PendingBinary(_, _, _, sendsSoFar) => sendsSoFar.value >= 1
+        case _                                  => true
       }
 
       if (pendingCount <= state.cap.value && allPendingAlreadySent && !hasStalled)
