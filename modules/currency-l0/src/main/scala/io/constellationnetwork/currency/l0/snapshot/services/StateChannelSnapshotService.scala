@@ -5,9 +5,8 @@ import java.security.KeyPair
 import cats.Applicative
 import cats.data.NonEmptySet
 import cats.effect.Async
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.traverse._
+import cats.effect.std.Supervisor
+import cats.syntax.all._
 
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.crypto._
@@ -135,7 +134,7 @@ object StateChannelSnapshotService {
           )
         lastGlobalSnapshot <- lastGlobalSnapshotStorage.get
         lastGlobalSnapshotSigners = lastGlobalSnapshot.map(_.signed.proofs.map(_.id.toPeerId))
-        _ <- stateChannelBinarySender.process(binaryHashed, lastGlobalSnapshotSigners)
+        _ <- stateChannelBinarySender.enqueue(binaryHashed, signedArtifact.ordinal, lastGlobalSnapshotSigners)
       } yield ()
 
     }

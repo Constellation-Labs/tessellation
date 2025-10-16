@@ -22,7 +22,7 @@ import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAccep
 import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralAcceptanceManager
 import io.constellationnetwork.node.shared.domain.priceOracle.PriceStateUpdater
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
-import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.domain.swap.block.{
   AllowSpendBlockAcceptanceLogic,
@@ -406,6 +406,29 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
         def getHeight: IO[Option[height.Height]] = ???
       }
+      globalSnapshotStorage = new SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
+
+        override def prepend(snapshot: Signed[GlobalSnapshotArtifact], state: GlobalSnapshotContext)(
+          implicit hasher: Hasher[GlobalSnapshotTraverseSuite.F]
+        ): GlobalSnapshotTraverseSuite.F[Boolean] = true.pure
+
+        override def head: GlobalSnapshotTraverseSuite.F[Option[(Signed[GlobalSnapshotArtifact], GlobalSnapshotContext)]] = ???
+
+        override def headSnapshot: GlobalSnapshotTraverseSuite.F[Option[Signed[GlobalSnapshotArtifact]]] = ???
+
+        override def get(ordinal: GlobalSnapshotKey): GlobalSnapshotTraverseSuite.F[Option[Signed[GlobalSnapshotArtifact]]] = ???
+
+        override def getHashed(ordinal: GlobalSnapshotKey)(
+          implicit hasher: Hasher[GlobalSnapshotTraverseSuite.F]
+        ): GlobalSnapshotTraverseSuite.F[Option[Hashed[GlobalSnapshotArtifact]]] = ???
+
+        override def get(hash: Hash): GlobalSnapshotTraverseSuite.F[Option[Signed[GlobalSnapshotArtifact]]] = ???
+
+        override def getHash(ordinal: GlobalSnapshotKey)(
+          implicit hasher: Hasher[GlobalSnapshotTraverseSuite.F]
+        ): GlobalSnapshotTraverseSuite.F[Option[Hash]] = ???
+      }
+
       download = new Download[IO, GlobalIncrementalSnapshot] {
 
         override def download(implicit hasherSelector: HasherSelector[IO]): IO[Unit] = ???
@@ -423,6 +446,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           snapshotContextFunctions,
           rollbackHash,
           _ => None.pure[IO],
+          globalSnapshotStorage,
           lastNSnapshotStorage,
           lastSnapshotStorage,
           download
