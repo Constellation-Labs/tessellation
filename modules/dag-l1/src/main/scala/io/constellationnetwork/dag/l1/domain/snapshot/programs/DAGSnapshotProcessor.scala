@@ -46,6 +46,14 @@ object DAGSnapshotProcessor {
         allowSpendStorage.replaceByRefs(state.lastAllowSpendRefs.map(_.toMap).getOrElse(Map.empty), snapshot.ordinal) >>
           tokenLockStorage.replaceByRefs(state.lastTokenLockRefs.map(_.toMap).getOrElse(Map.empty), snapshot.ordinal)
 
+      override def setInitialLastNSnapshots(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] =
+        lastNGlobalSnapshotStorage.setInitialFetchingGL0(
+          snapshot,
+          state,
+          l0Service.asLeft.some,
+          none
+        )
+
       override def setLastNSnapshots(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] =
         lastNGlobalSnapshotStorage.set(snapshot, state)
 
