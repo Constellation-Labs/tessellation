@@ -57,7 +57,7 @@ class BinaryPoster[F[_]: Async](
               if (allowedPeers.contains(selfId)) {
                 pickPeerAndSend(binary, lastGlobalSnapshotSigners, customPeersAllowed.filter(allowedPeers.contains))
               } else {
-                logger.info(s"[Queue] Self not in allowance list, skipping send") >>
+                logger.debug(s"[Queue] Self not in allowance list, skipping send") >>
                   none[PeerId].pure
               }
             case None =>
@@ -94,10 +94,10 @@ class BinaryPoster[F[_]: Async](
     )
 
     if (peerToSendSnapshot === selfId) {
-      logger.info(s"[Queue] Self selected to send binary ${binary.hash}") >>
+      logger.debug(s"[Queue] Self selected to send binary ${binary.hash}") >>
         performPost(binary, lastGlobalSnapshotSigners).as(peerToSendSnapshot.some)
     } else {
-      logger.info(s"[Queue] Peer $peerToSendSnapshot selected to send binary ${binary.hash}") >>
+      logger.debug(s"[Queue] Peer $peerToSendSnapshot selected to send binary ${binary.hash}") >>
         peerToSendSnapshot.some.pure
     }
   }
@@ -146,15 +146,15 @@ class BinaryPoster[F[_]: Async](
 
   private def selectPeer(lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]]) =
     lastGlobalSnapshotSigners.fold {
-      logger.info("[Queue] No signers provided, selecting random peer") >>
+      logger.debug("[Queue] No signers provided, selecting random peer") >>
         globalL0ClusterStorage.getRandomPeer
     } { lastSigners =>
       for {
-        _ <- logger.info(s"[Queue] Selecting from ${lastSigners.size} signers")
+        _ <- logger.debug(s"[Queue] Selecting from ${lastSigners.size} signers")
         maybeL0Peer <- globalL0ClusterStorage.getRandomPeerExistentOnList(lastSigners.toList)
         l0Peer <- maybeL0Peer match {
           case Some(peer) =>
-            logger.info(s"[Queue] Selected ${peer.show} from signers") >> peer.pure
+            logger.debug(s"[Queue] Selected ${peer.show} from signers") >> peer.pure
           case None =>
             for {
               randomPeer <- globalL0ClusterStorage.getRandomPeer
