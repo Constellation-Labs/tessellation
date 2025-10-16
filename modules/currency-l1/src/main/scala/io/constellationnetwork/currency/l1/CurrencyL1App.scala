@@ -4,7 +4,7 @@ import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL1Service, L1NodeContext}
-import io.constellationnetwork.currency.l1.StoragesInitializer.initializeStorages
+import io.constellationnetwork.currency.l1.StoragesInitializer.{initializeCurrencySnapshotStorages, initializeGlobalSnapshotStorages}
 import io.constellationnetwork.currency.l1.cli.method
 import io.constellationnetwork.currency.l1.cli.method._
 import io.constellationnetwork.currency.l1.domain.snapshot.programs.CurrencySnapshotProcessor
@@ -238,6 +238,8 @@ abstract class CurrencyL1App(
         cfg.gossip.daemon,
         services.collateral
       )
+      globalSnapshotInfo <- initializeGlobalSnapshotStorages[IO, Run](services, sharedStorages).asResource
+
       _ <- {
         method match {
           case cfg: RunInitialValidator =>
@@ -249,7 +251,7 @@ abstract class CurrencyL1App(
               services.cluster.createSession >>
               services.session.createSession >>
               HasherSelector[IO].withCurrent { implicit hasher =>
-                initializeStorages[IO, Run](storages, sharedStorages, services)
+                initializeCurrencySnapshotStorages[IO, Run](storages, globalSnapshotInfo, cfg.identifier)
               } >>
               storages.node.tryModifyState(SessionStarted, NodeState.Ready) >>
               services.restart.setClusterLeaveRestartMethod(
@@ -276,7 +278,7 @@ abstract class CurrencyL1App(
               programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
               programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
               HasherSelector[IO].withCurrent { implicit hasher =>
-                initializeStorages[IO, Run](storages, sharedStorages, services)
+                initializeCurrencySnapshotStorages[IO, Run](storages, globalSnapshotInfo, cfg.identifier)
               } >>
               storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
 

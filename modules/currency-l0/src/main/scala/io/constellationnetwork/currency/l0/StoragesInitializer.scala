@@ -33,7 +33,7 @@ object StoragesInitializer {
       )
   }
 
-  private def initializeGlobalSnapshotStorages[
+  def initializeGlobalSnapshotStorages[
     F[_]: Async: Logger,
     R <: CliMethod
   ](
@@ -80,7 +80,7 @@ object StoragesInitializer {
       } yield ()
     }
 
-  private def initializeCurrencySnapshotStorages[
+  def initializeCurrencySnapshotStorages[
     F[_]: Async: Logger: Hasher,
     R <: CliMethod
   ](
@@ -99,34 +99,5 @@ object StoragesInitializer {
         MonadThrow[F].raiseError[Unit](new IllegalArgumentException("Currency snapshot and info must both be provided or both be absent"))
       )(identity)
       _ <- Logger[F].info(s"Successfully initialized currency snapshot storages")
-    } yield ()
-
-  def initializeStorages[
-    F[_]: Async: Logger: Hasher,
-    R <: CliMethod
-  ](
-    storages: Storages[F],
-    sharedStorages: SharedStorages[F],
-    services: Services[F, R],
-    maybeCurrencySnapshot: Option[Signed[CurrencyIncrementalSnapshot]] = None,
-    maybeCurrencySnapshotInfo: Option[CurrencySnapshotInfo] = None
-  ): F[Unit] =
-    for {
-      _ <- Logger[F].info(s"Starting storage initialization")
-
-      _ <-
-        if (maybeCurrencySnapshot.isDefined || maybeCurrencySnapshotInfo.isDefined) {
-          Logger[F].info(s"Initializing currency storages (currency snapshot provided)") >>
-            initializeCurrencySnapshotStorages(storages, maybeCurrencySnapshot, maybeCurrencySnapshotInfo) >>
-            Logger[F].info(s"Successfully initialized currency storages")
-        } else {
-          Logger[F].info(s"Skipping currency storage initialization (no currency snapshot provided)").void
-        }
-
-      _ <- Logger[F].info(s"Initializing global storages")
-      _ <- initializeGlobalSnapshotStorages(services, storages, sharedStorages)
-      _ <- Logger[F].info(s"Successfully initialized global storages")
-
-      _ <- Logger[F].info(s"Storage initialization completed successfully")
     } yield ()
 }
