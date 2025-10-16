@@ -140,32 +140,33 @@ object StateChannelBinarySender {
     def clearPending: F[Unit] =
       logger.info("[Queue] Clearing all pending binaries") >> tracker.clear
 
-    def processQueue(globalSnapshot: Hashed[GlobalIncrementalSnapshot]): F[Unit] =
+    def processQueue(globalSnapshot: Hashed[GlobalIncrementalSnapshot]): F[Unit] = {
+      val lastGlobalSnapshotSigners = globalSnapshot.signed.proofs.map(_.id.toPeerId).some
       tracker.getState.flatMap { state =>
         if (state.retryMode) {
-          val lastGlobalSnapshotSigners = globalSnapshot.signed.proofs.map(_.id.toPeerId).some
           processRetryMode(state.cap.value.toInt, lastGlobalSnapshotSigners)
         } else {
-          processNormalMode
+          processNormalMode(lastGlobalSnapshotSigners)
         }
       }
+    }
 
     def processQueueWithoutSnapshot: F[Unit] =
       tracker.getState.flatMap { state =>
         if (!state.retryMode) {
-          processNormalMode
+          processNormalMode(none)
         } else {
-          logger.debug("[Queue] Retry mode active but no global snapshot available") >>
+          logger.info("[Queue] Retry mode active but no global snapshot available") >>
             Applicative[F].unit
         }
       }
 
-    private def processNormalMode: F[Unit] =
+    private def processNormalMode(signers: Option[NonEmptySet[PeerId]]): F[Unit] =
       tracker.getPendingToRetry(10).flatMap { pending =>
         val unsent = pending.filter(_.sendsSoFar.value === 0L)
         if (unsent.nonEmpty) {
-          logger.debug(s"[Queue] Processing ${unsent.size} unsent binaries") >>
-            unsent.traverse_(p => sendBinaryInBackground(p, none))
+          logger.info(s"[Queue] Processing ${unsent.size} unsent binaries") >>
+            unsent.traverse_(p => sendBinaryInBackground(p, signers))
         } else {
           Applicative[F].unit
         }
@@ -189,7 +190,7 @@ object StateChannelBinarySender {
       S.supervise(
         poster
           .post(pending.binary, signers)
-          .flatMap(peerId => logger.debug(s"[Queue] Sent ${pending.binary.hash} via $peerId"))
+          .flatMap(peerId => logger.info(s"[Queue] Sent ${pending.binary.hash} via $peerId"))
           .handleErrorWith(err => logger.warn(s"[Queue] Failed to send ${pending.binary.hash}: ${err.getMessage}"))
       ).void
 
