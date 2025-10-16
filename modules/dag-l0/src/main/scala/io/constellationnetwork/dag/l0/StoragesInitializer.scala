@@ -5,6 +5,9 @@ import cats.syntax.all._
 
 import io.constellationnetwork.dag.l0.modules.{Programs, Storages}
 import io.constellationnetwork.node.shared.cli.CliMethod
+import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
+import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security.{Hashed, Hasher}
@@ -15,9 +18,10 @@ object StoragesInitializer {
   def initializeStorages[
     F[_]: Async: Logger: Hasher
   ](
-    storages: Storages[F],
-    sharedStorages: SharedStorages[F],
-    programs: Programs[F],
+    globalSnapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    download: Download[F, GlobalIncrementalSnapshot],
     hashedGlobalIncrementalSnapshot: Hashed[GlobalIncrementalSnapshot],
     globalSnapshotInfo: GlobalSnapshotInfo
   ): F[Unit] = {
@@ -27,20 +31,20 @@ object StoragesInitializer {
       _ <- Logger[F].info(s"Starting storage initialization with ordinal=$ordinal")
 
       _ <- Logger[F].info(s"Initializing globalSnapshot storage with ordinal=$ordinal")
-      _ <- storages.globalSnapshot.prepend(hashedGlobalIncrementalSnapshot.signed, globalSnapshotInfo)
+      _ <- globalSnapshotStorage.prepend(hashedGlobalIncrementalSnapshot.signed, globalSnapshotInfo)
       _ <- Logger[F].info(s"Successfully initialized globalSnapshot storage")
 
       _ <- Logger[F].info(s"Initializing lastNGlobalSnapshot shared storage with ordinal=$ordinal")
-      _ <- sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
+      _ <- lastNGlobalSnapshotStorage.setInitialFetchingGL0(
         hashedGlobalIncrementalSnapshot,
         globalSnapshotInfo,
         none,
-        Some((hash, ordinal) => programs.download.fetchSnapshot(hash, ordinal))
+        Some((hash, ordinal) => download.fetchSnapshot(hash, ordinal))
       )
       _ <- Logger[F].info(s"Successfully initialized lastNGlobalSnapshot shared storage")
 
       _ <- Logger[F].info(s"Initializing lastGlobalSnapshot storage with ordinal=$ordinal")
-      _ <- sharedStorages.lastGlobalSnapshot.setInitial(
+      _ <- lastGlobalSnapshotStorage.setInitial(
         hashedGlobalIncrementalSnapshot,
         globalSnapshotInfo
       )

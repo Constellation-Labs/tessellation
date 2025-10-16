@@ -51,7 +51,7 @@ object StoragesInitializer {
           (new Throwable(errorMsg)).raiseError[F, (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]
     }
 
-  private def initializeGlobalSnapshotStorages[
+  def initializeGlobalSnapshotStorages[
     F[_]: Async: Logger,
     R <: CliMethod
   ](
@@ -85,7 +85,7 @@ object StoragesInitializer {
 
     }
 
-  private def initializeCurrencySnapshotStorages[
+  def initializeCurrencySnapshotStorages[
     F[_]: Async: Logger: Hasher: SecurityProvider,
     R <: CliMethod
   ](
@@ -101,33 +101,5 @@ object StoragesInitializer {
       _ <- Logger[F].info(s"Initializing lastSnapshot storage with ordinal=${currencySnapshot.ordinal} ")
       _ <- storages.lastSnapshot.setInitial(hashedCurrencySnapshot, latestCurrencyState)
       _ <- Logger[F].info(s"Successfully initialized lastSnapshot storage with ordinal=${currencySnapshot.ordinal}")
-    } yield ()
-
-  def initializeStorages[
-    F[_]: Async: Logger: Hasher: SecurityProvider,
-    R <: CliMethod
-  ](
-    storages: Storages[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-    sharedStorages: SharedStorages[F],
-    services: Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, R]
-  ): F[Unit] =
-    for {
-      _ <- Logger[F].info(s"Starting storage initialization")
-      identifier <- storages.identifier.get
-      _ <- Logger[F].info(s"Retrieved metagraphId=$identifier")
-
-      _ <- Logger[F].info(s"Initializing global storages")
-      globalSnapshotInfo <- initializeGlobalSnapshotStorages(services, sharedStorages)
-      _ <- Logger[F].info(s"Successfully initialized global storages")
-
-      _ <- Logger[F].info(s"Initializing currency storages for metagraphId=$identifier")
-      _ <- initializeCurrencySnapshotStorages(
-        storages,
-        globalSnapshotInfo,
-        identifier
-      )
-      _ <- Logger[F].info(s"Successfully initialized currency storages for metagraphId=$identifier")
-
-      _ <- Logger[F].info(s"Storage initialization completed successfully")
     } yield ()
 }
