@@ -27,7 +27,7 @@ class DummyDataApplicationL1Service extends BaseDataApplicationL1Service[IO] {
 
   override def deserializeState(bytes: Array[Byte]): IO[Either[Throwable, DataOnChainState]] = ???
 
-  override def serializeUpdate(update: DataUpdate): IO[Array[Byte]] = IO.delay(JsonBinarySerializer.serialize(update)(dataEncoder))
+  override def serializeUpdate(update: DataUpdate): IO[Array[Byte]] = IO.blocking(JsonBinarySerializer.serialize(update)(dataEncoder))
 
   override def deserializeUpdate(bytes: Array[Byte]): IO[Either[Throwable, DataUpdate]] = ???
 
