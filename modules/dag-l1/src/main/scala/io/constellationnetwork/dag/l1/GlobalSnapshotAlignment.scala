@@ -15,7 +15,6 @@ import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StatePro
 import io.constellationnetwork.security._
 
 import fs2.Stream
-import fs2.concurrent.SignallingRef
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -64,7 +63,6 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
     } else {
       ().pure
     }
-
   private val checkAlignment: Stream[F, Unit] = Stream
     .awakeEvery(1.minute)
     .evalMap { _ =>

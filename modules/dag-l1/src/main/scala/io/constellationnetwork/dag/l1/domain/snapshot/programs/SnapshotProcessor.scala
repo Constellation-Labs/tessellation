@@ -31,7 +31,7 @@ import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
 
 import derevo.cats.show
 import derevo.derive
-import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
+import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -69,6 +69,8 @@ abstract class SnapshotProcessor[
   def onRedownload(snapshot: Hashed[S], state: SI): F[Unit] = Applicative[F].unit
 
   def setLastNSnapshots(snapshot: Hashed[S], state: SI): F[Unit] = Applicative[F].unit
+
+  def setInitialLastNSnapshots(snapshot: Hashed[S], state: SI): F[Unit] = Applicative[F].unit
 
   def processAlignment(
     alignment: Alignment,
@@ -184,7 +186,8 @@ abstract class SnapshotProcessor[
         adjustToMajority >>
           setBalances >>
           setTransactionRefs >>
-          setInitialSnapshot.as[SnapshotProcessingResult] {
+          setInitialSnapshot >>
+          setInitialLastNSnapshots(snapshot, state).as[SnapshotProcessingResult] {
             DownloadPerformed(
               SnapshotReference.fromHashedSnapshot(snapshot),
               toAdd.map(_._1.proofsHash),
