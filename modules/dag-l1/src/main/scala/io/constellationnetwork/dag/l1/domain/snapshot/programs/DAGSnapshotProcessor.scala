@@ -3,7 +3,6 @@ package io.constellationnetwork.dag.l1.domain.snapshot.programs
 import cats.effect.Async
 import cats.syntax.all._
 
-import io.constellationnetwork.dag.l1.config.types.AppConfig
 import io.constellationnetwork.dag.l1.domain.address.storage.AddressStorage
 import io.constellationnetwork.dag.l1.domain.block.BlockStorage
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionStorage
@@ -18,8 +17,6 @@ import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema._
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
-
-import eu.timepit.refined.types.numeric.PosInt
 
 object DAGSnapshotProcessor {
 

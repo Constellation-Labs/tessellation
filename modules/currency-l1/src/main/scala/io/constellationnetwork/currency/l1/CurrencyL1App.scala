@@ -4,7 +4,6 @@ import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL1Service, L1NodeContext}
-import io.constellationnetwork.currency.l1.StoragesInitializer.initializeStorages
 import io.constellationnetwork.currency.l1.cli.method
 import io.constellationnetwork.currency.l1.cli.method._
 import io.constellationnetwork.currency.l1.domain.snapshot.programs.CurrencySnapshotProcessor
@@ -85,7 +84,6 @@ abstract class CurrencyL1App(
     for {
       cfgR <- loadConfigAs[AppConfigReader].asResource
       cfg = method.appConfig(cfgR, sharedConfig)
-      implicit0(logger: SelfAwareStructuredLogger[IO]) = Slf4jLogger.getLoggerFromName[IO](this.getClass.getName)
 
       dagL1Queues <- DAGL1Queues.make[IO](sharedQueues).asResource
       queues <- Queues.make[IO](dagL1Queues).asResource
@@ -164,6 +162,7 @@ abstract class CurrencyL1App(
         storages.allowSpend,
         storages.tokenLock,
         services.globalL0.pullGlobalSnapshot,
+        services.globalL0,
         storages.globalL0Alignment
       )
       programs = Programs
@@ -238,6 +237,7 @@ abstract class CurrencyL1App(
         cfg.gossip.daemon,
         services.collateral
       )
+
       _ <- {
         method match {
           case cfg: RunInitialValidator =>
@@ -248,9 +248,6 @@ abstract class CurrencyL1App(
               storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
               services.cluster.createSession >>
               services.session.createSession >>
-              HasherSelector[IO].withCurrent { implicit hasher =>
-                initializeStorages[IO, Run](storages, sharedStorages, services)
-              } >>
               storages.node.tryModifyState(SessionStarted, NodeState.Ready) >>
               services.restart.setClusterLeaveRestartMethod(
                 RunValidator(
@@ -275,9 +272,6 @@ abstract class CurrencyL1App(
               gossipDaemon.startAsRegularValidator >>
               programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
               programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
-              HasherSelector[IO].withCurrent { implicit hasher =>
-                initializeStorages[IO, Run](storages, sharedStorages, services)
-              } >>
               storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
 
           case cfg: RunValidatorWithJoinAttempt =>
@@ -289,14 +283,13 @@ abstract class CurrencyL1App(
               programs.joining.joinOneOf(cfg.majorityForkPeerIds)
         }
       }.asResource
-      alignment <- GlobalSnapshotAlignment
+      alignment = GlobalSnapshotAlignment
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
           services,
           programs,
           storages,
           sharedStorages
         )
-        .asResource
       _ <- hasherSelector.withCurrent { implicit hasher =>
         services.dataApplication.map { da =>
           DataApplication
