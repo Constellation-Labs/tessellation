@@ -1,6 +1,7 @@
 package io.constellationnetwork.json
 
 import cats.effect.kernel.Sync
+import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import com.aayushatharva.brotli4j.Brotli4jLoader
@@ -33,13 +34,13 @@ object JsonBrotliBinarySerializer {
 
         def serialize[A: Encoder](content: A): F[Array[Byte]] = {
           val params = new Parameters().setQuality(compressionLevel)
-          Sync[F].delay(BrotliEncoder.compress(content.asJson.printWith(printer).getBytes("UTF-8"), params))
+          Sync[F].blocking(BrotliEncoder.compress(content.asJson.printWith(printer).getBytes("UTF-8"), params))
         }
 
         def deserialize[A: Decoder](content: Array[Byte]): F[Either[Throwable, A]] =
           Sync[F]
-            .delay(BrotliDecoder.decompress(content).getDecompressedData)
-            .map(JawnParser(false).decodeByteArray[A](_))
+            .blocking(BrotliDecoder.decompress(content).getDecompressedData)
+            .flatMap(bytes => Sync[F].blocking(JawnParser(false).decodeByteArray[A](bytes)))
       }
     }
 }

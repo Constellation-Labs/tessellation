@@ -24,11 +24,11 @@ case class GlobalSnapshotWithState(
 
 object GlobalSnapshotWithState {
   implicit def binaryEncoder[F[_]: Async]: GlobalSnapshotWithState => F[Array[Byte]] = { snapshot =>
-    Async[F].pure(JsonBinarySerializer.serialize(snapshot))
+    Async[F].blocking(JsonBinarySerializer.serialize(snapshot))
   }
 
   implicit def binaryDecoder[F[_]: Async]: Array[Byte] => F[GlobalSnapshotWithState] = { bytes =>
-    JsonBinarySerializer.deserialize[GlobalSnapshotWithState](bytes) match {
+    Async[F].blocking(JsonBinarySerializer.deserialize[GlobalSnapshotWithState](bytes)).flatMap {
       case Right(snapshot) => Async[F].pure(snapshot)
       case Left(error)     => Async[F].raiseError(new RuntimeException(s"Failed to deserialize: $error"))
     }
@@ -53,11 +53,11 @@ object GlobalSnapshotWithStateDeltas {
     if (key === "") Some(None) else KeyDecoder[Address].apply(key).map(_.some)
 
   implicit def binaryEncoder[F[_]: Async]: GlobalSnapshotWithStateDeltas => F[Array[Byte]] = { snapshot =>
-    Async[F].pure(JsonBinarySerializer.serialize(snapshot))
+    Async[F].blocking(JsonBinarySerializer.serialize(snapshot))
   }
 
   implicit def binaryDecoder[F[_]: Async]: Array[Byte] => F[GlobalSnapshotWithStateDeltas] = { bytes =>
-    JsonBinarySerializer.deserialize[GlobalSnapshotWithStateDeltas](bytes) match {
+    Async[F].blocking(JsonBinarySerializer.deserialize[GlobalSnapshotWithStateDeltas](bytes)).flatMap {
       case Right(snapshot) => Async[F].pure(snapshot)
       case Left(error)     => Async[F].raiseError(new RuntimeException(s"Failed to deserialize: $error"))
     }
