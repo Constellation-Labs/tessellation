@@ -50,12 +50,12 @@ object Validators {
 
     val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)
 
-    val allowSpendValidator = AllowSpendValidator.make[F](signedValidator)
+    val allowSpendValidator = AllowSpendValidator.make[F](cfg.addresses, signedValidator)
     val allowSpendChainValidator = AllowSpendChainValidator.make[F]
     val contextualAllowSpendValidator = ContextualAllowSpendValidator.make(currencyId, None, cfg.allowSpends)
     val allowSpendBlockValidator = AllowSpendBlockValidator.make[F](signedValidator, allowSpendChainValidator, allowSpendValidator)
 
-    val tokenLockValidator = TokenLockValidator.make[F](signedValidator)
+    val tokenLockValidator = TokenLockValidator.make[F](cfg.addresses, signedValidator)
     val tokenLockChainValidator = TokenLockChainValidator.make[F]
     val contextualTokenLockValidator = ContextualTokenLockValidator.make(None, cfg.tokenLocks, currencyId)
     val tokenLockBlockValidator = TokenLockBlockValidator.make[F](signedValidator, tokenLockChainValidator, tokenLockValidator)

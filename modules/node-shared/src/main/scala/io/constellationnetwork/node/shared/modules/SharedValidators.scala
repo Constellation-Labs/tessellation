@@ -61,10 +61,10 @@ object SharedValidators {
     val currencyMessageValidator = CurrencyMessageValidator.make[F](environment, signedValidator, stateChannelAllowanceLists, seedlist)
     val globalSnapshotSyncValidator = GlobalSnapshotSyncValidator.make[F](signedValidator, seedlist)
     val allowSpendChainValidator = AllowSpendChainValidator.make[F]
-    val allowSpendValidator = AllowSpendValidator.make[F](signedValidator)
+    val allowSpendValidator = AllowSpendValidator.make[F](addressesCfg, signedValidator)
     val allowSpendBlockValidator = AllowSpendBlockValidator.make[F](signedValidator, allowSpendChainValidator, allowSpendValidator)
 
-    val tokenLockValidator = TokenLockValidator.make[F](signedValidator)
+    val tokenLockValidator = TokenLockValidator.make[F](addressesCfg, signedValidator)
     val tokenLockChainValidator = TokenLockChainValidator.make[F]
     val tokenLockBlockValidator = TokenLockBlockValidator.make[F](signedValidator, tokenLockChainValidator, tokenLockValidator)
 
