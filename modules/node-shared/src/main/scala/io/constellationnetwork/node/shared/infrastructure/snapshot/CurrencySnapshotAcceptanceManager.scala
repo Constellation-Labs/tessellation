@@ -276,12 +276,6 @@ object CurrencySnapshotAcceptanceManager {
 
       acceptedSharedArtifacts = acceptSharedArtifacts(sharedArtifactsForAcceptance)
 
-      messagesAcceptanceResult <- acceptMessages(
-        lastSnapshotContext.snapshotInfo.lastMessages,
-        messagesForAcceptance,
-        lastSnapshotContext.address
-      )
-
       globalSnapshotSyncAcceptanceResult <- acceptGlobalSnapshotSyncs(
         lastSnapshotContext.snapshotInfo.globalSnapshotSyncView,
         globalSnapshotSyncsForAcceptance,
@@ -294,6 +288,13 @@ object CurrencySnapshotAcceptanceManager {
       (lastUnsyncGlobalSnapshot, lastUnsyncGlobalSnapshotInfo) <- OptionT
         .fromOption(maybeUnsyncLastGlobalSnapshot)
         .getOrRaise(new IllegalStateException("Could not get the last global snapshot info"))
+
+      messagesAcceptanceResult <- acceptMessages(
+        lastSnapshotContext.snapshotInfo.lastMessages,
+        messagesForAcceptance,
+        lastSnapshotContext.address,
+        lastUnsyncGlobalSnapshotInfo
+      )
 
       fallbackOrdinal = lastUnsyncGlobalSnapshot.ordinal
 
@@ -620,7 +621,8 @@ object CurrencySnapshotAcceptanceManager {
     private def acceptMessages(
       lastContextMessages: Option[SortedMap[MessageType, Signed[CurrencyMessage]]],
       messagesForAcceptance: List[Signed[CurrencyMessage]],
-      metagraphId: Address
+      metagraphId: Address,
+      lastUnsyncGlobalSnapshotInfo: GlobalSnapshotInfo
     )(implicit hs: Hasher[F]) = {
       val msgOrdering = Order
         .whenEqual[Signed[CurrencyMessage]](
@@ -639,30 +641,53 @@ object CurrencySnapshotAcceptanceManager {
           )
         ) {
           case ((lastMsgs, toAdd, toReject), message) =>
-            for {
-              combinedLastGlobalSnapshot <- lastGlobalSnapshotStorage.getCombined
-              (allFeesAddresses, balance) = combinedLastGlobalSnapshot match {
-                case Some((_, info)) =>
-                  val feeAddresses = getFeeAddresses(info)
-                  val balance = info.balances.getOrElse(message.address, Balance.empty)
+            val allFeesAddresses = getFeeAddresses(lastUnsyncGlobalSnapshotInfo)
+            val balance = lastUnsyncGlobalSnapshotInfo.balances.getOrElse(message.address, Balance.empty)
 
-                  (feeAddresses, balance)
-                case None => (SortedMap.empty[Address, Set[Address]], Balance.empty)
-              }
-              result <- messageValidator.validate(message, lastMsgs, metagraphId, allFeesAddresses, balance).map {
+            for {
+              result <- messageValidator.validate(message, lastMsgs, metagraphId, allFeesAddresses).map {
                 case Validated.Valid(_) =>
                   val updatedLastMsgs = lastMsgs.updated(message.messageType, message)
                   val updatedToAdd = message :: toAdd
 
+                  logger.info(
+                    s"Message accepted - " +
+                      s"Address: ${message.address}, " +
+                      s"MessageType: ${message.messageType}, " +
+                      s"ParentOrdinal: ${message.parentOrdinal}, " +
+                      s"ProofCount: ${message.proofs.size}, " +
+                      s"Balance: ${balance.value}"
+                  )
+
                   (updatedLastMsgs, updatedToAdd, toReject)
-                case Validated.Invalid(_) =>
+                case Validated.Invalid(errors) =>
                   val updatedToReject = message :: toReject
+
+                  logger.warn(
+                    s"Message rejected - " +
+                      s"Address: ${message.address}, " +
+                      s"MessageType: ${message.messageType}, " +
+                      s"ParentOrdinal: ${message.parentOrdinal}, " +
+                      s"ProofCount: ${message.proofs.size}, " +
+                      s"Balance: ${balance.value}, " +
+                      s"Errors: ${errors.toList.mkString(", ")}"
+                  )
 
                   (lastMsgs, toAdd, updatedToReject)
               }
             } yield result
         }
-    }.map { case (contextUpdate, toAdd, toReject) => CurrencyMessagesAcceptanceResult(contextUpdate, toAdd, toReject) }
+    }.map {
+      case (contextUpdate, toAdd, toReject) =>
+        logger.info(
+          s"Message acceptance complete - " +
+            s"Total processed: ${messagesForAcceptance.size}, " +
+            s"Accepted: ${toAdd.size}, " +
+            s"Rejected: ${toReject.size}"
+        )
+
+        CurrencyMessagesAcceptanceResult(contextUpdate, toAdd, toReject)
+    }
 
     private def acceptGlobalSnapshotSyncs(
       lastGlobalSnapshotSyncView: Option[SortedMap[PeerId, Signed[GlobalSnapshotSync]]],
