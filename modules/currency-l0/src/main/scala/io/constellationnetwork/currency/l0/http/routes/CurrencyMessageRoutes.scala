@@ -53,16 +53,13 @@ class CurrencyMessageRoutes[F[_]: Async: Hasher](
         }
         metagraphId <- identifierStorage.get
         combinedLastGlobalSnapshot <- lastGlobalSnapshotStorage.getCombined
-        (allFeesAddresses, addressBalance) = combinedLastGlobalSnapshot match {
+        allFeesAddresses = combinedLastGlobalSnapshot match {
           case Some((_, info)) =>
-            val feeAddresses = getFeeAddresses(info)
-            val ownerBalance = info.balances.getOrElse(msg.address, Balance.empty)
-
-            (feeAddresses, ownerBalance)
-          case None => (SortedMap.empty[Address, Set[Address]], Balance.empty)
+            getFeeAddresses(info)
+          case None => SortedMap.empty[Address, Set[Address]]
         }
 
-        maybeResult <- maybeLastMsgs.traverse(validator.validate(msg, _, metagraphId, allFeesAddresses, addressBalance))
+        maybeResult <- maybeLastMsgs.traverse(validator.validate(msg, _, metagraphId, allFeesAddresses))
         response <- maybeResult match {
           case Some(Invalid(errors)) =>
             logger
