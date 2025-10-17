@@ -49,15 +49,11 @@ object CurrencyMessagesService {
               ownerMessage <- currencyMessageLoader(ownerMessagePath)
               metagraphId <- identifierStorage.get
               combinedLastGlobalSnapshot <- lastGlobalSnapshotStorage.getCombined
-              (allFeesAddresses, ownerBalance) = combinedLastGlobalSnapshot match {
-                case Some((_, info)) =>
-                  val feeAddresses = getFeeAddresses(info)
-                  val ownerBalance = info.balances.getOrElse(ownerMessage.address, Balance.empty)
-
-                  (feeAddresses, ownerBalance)
-                case None => (SortedMap.empty[Address, Set[Address]], Balance.empty)
+              allFeesAddresses = combinedLastGlobalSnapshot match {
+                case Some((_, info)) => getFeeAddresses(info)
+                case None            => SortedMap.empty[Address, Set[Address]]
               }
-              validation <- validator.validateInitialOwner(ownerMessage, metagraphId, allFeesAddresses, ownerBalance)
+              validation <- validator.validateInitialOwner(ownerMessage, metagraphId, allFeesAddresses)
 
               _ <- validation match {
                 case Invalid(errors) =>

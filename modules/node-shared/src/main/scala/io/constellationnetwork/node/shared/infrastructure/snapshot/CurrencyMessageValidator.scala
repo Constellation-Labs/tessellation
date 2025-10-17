@@ -28,16 +28,14 @@ trait CurrencyMessageValidator[F[_]] {
   def validateInitialOwner(
     message: Signed[CurrencyMessage],
     metagraphId: Address,
-    existingFeesAddresses: Map[Address, Set[Address]],
-    messageAddressBalance: Balance
+    existingFeesAddresses: Map[Address, Set[Address]]
   )(implicit hasher: Hasher[F]): F[CurrencyMessageOrError]
 
   def validate(
     message: Signed[CurrencyMessage],
     lastMessages: SortedMap[MessageType, Signed[CurrencyMessage]],
     metagraphId: Address,
-    existingFeesAddresses: Map[Address, Set[Address]],
-    messageAddressBalance: Balance
+    existingFeesAddresses: Map[Address, Set[Address]]
   )(implicit hasher: Hasher[F]): F[CurrencyMessageOrError]
 }
 
@@ -64,15 +62,13 @@ object CurrencyMessageValidator {
     def validateInitialOwner(
       message: Signed[CurrencyMessage],
       metagraphId: Address,
-      existingFeesAddresses: Map[Address, Set[Address]],
-      messageAddressBalance: Balance
+      existingFeesAddresses: Map[Address, Set[Address]]
     )(implicit hasher: Hasher[F]): F[CurrencyMessageOrError] =
       validateCore(
         message = message,
         metagraphId = metagraphId,
         existingFeesAddresses = existingFeesAddresses,
         lastMessage = None,
-        messageAddressBalance = messageAddressBalance,
         isInitialOwner = true
       )
 
@@ -80,8 +76,7 @@ object CurrencyMessageValidator {
       message: Signed[CurrencyMessage],
       lastMessages: SortedMap[MessageType, Signed[CurrencyMessage]],
       metagraphId: Address,
-      existingFeesAddresses: Map[Address, Set[Address]],
-      messageAddressBalance: Balance
+      existingFeesAddresses: Map[Address, Set[Address]]
     )(implicit hasher: Hasher[F]): F[CurrencyMessageOrError] = {
       val lastMessage = lastMessages.get(message.messageType)
       validateCore(
@@ -89,7 +84,6 @@ object CurrencyMessageValidator {
         metagraphId = metagraphId,
         existingFeesAddresses = existingFeesAddresses,
         lastMessage = lastMessage,
-        messageAddressBalance = messageAddressBalance,
         isInitialOwner = false
       )
     }
@@ -99,7 +93,6 @@ object CurrencyMessageValidator {
       metagraphId: Address,
       existingFeesAddresses: Map[Address, Set[Address]],
       lastMessage: Option[Signed[CurrencyMessage]],
-      messageAddressBalance: Balance,
       isInitialOwner: Boolean
     )(implicit hasher: Hasher[F]): F[CurrencyMessageOrError] =
       validateBasicRequirements(message, metagraphId, lastMessage) match {
@@ -107,9 +100,8 @@ object CurrencyMessageValidator {
         case None =>
           for {
             signatureValidation <- validateSignatures(message, isInitialOwner)
-            balanceValidation = validateMessageAddressBalance(message, messageAddressBalance)
             addressValidation = validateAddress(message, metagraphId, existingFeesAddresses)
-          } yield signatureValidation.productR(balanceValidation).productR(addressValidation)
+          } yield signatureValidation.productR(addressValidation)
       }
 
     private def validateBasicRequirements(
@@ -127,16 +119,6 @@ object CurrencyMessageValidator {
             Some(FirstMessageWithWrongOrdinal)
           case _ => None
         }
-      }
-
-    private def validateMessageAddressBalance(
-      message: Signed[CurrencyMessage],
-      messageAddressBalance: Balance
-    ): ValidatedNec[CurrencyMessageValidationError, Signed[CurrencyMessage]] =
-      if (message.messageType === Staking || environment === Dev || messageAddressBalance.value > Balance.empty.value) {
-        message.validNec
-      } else {
-        AddressBalanceNotEnough.invalidNec
       }
 
     private def validateAddress(
