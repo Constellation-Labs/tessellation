@@ -28,10 +28,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.{
   TokenLockBlockAcceptanceResult
 }
 import io.constellationnetwork.node.shared.domain.transaction.FeeTransactionValidator
-import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencyBalanceAdjustments.{
-  BalanceAdjustmentAtOrdinal,
-  metagraphsBalancesAdjustments
-}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencyBalanceAdjustments.metagraphsBalancesAdjustments
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact._
@@ -293,6 +290,7 @@ object CurrencySnapshotAcceptanceManager {
         lastSnapshotContext.snapshotInfo.lastMessages,
         messagesForAcceptance,
         lastSnapshotContext.address,
+        snapshotOrdinal,
         lastUnsyncGlobalSnapshotInfo
       )
 
@@ -622,6 +620,7 @@ object CurrencySnapshotAcceptanceManager {
       lastContextMessages: Option[SortedMap[MessageType, Signed[CurrencyMessage]]],
       messagesForAcceptance: List[Signed[CurrencyMessage]],
       metagraphId: Address,
+      snapshotOrdinal: SnapshotOrdinal,
       lastUnsyncGlobalSnapshotInfo: GlobalSnapshotInfo
     )(implicit hs: Hasher[F]) = {
       val msgOrdering = Order
@@ -644,49 +643,55 @@ object CurrencySnapshotAcceptanceManager {
             val allFeesAddresses = getFeeAddresses(lastUnsyncGlobalSnapshotInfo)
             val balance = lastUnsyncGlobalSnapshotInfo.balances.getOrElse(message.address, Balance.empty)
 
-            for {
-              result <- messageValidator.validate(message, lastMsgs, metagraphId, allFeesAddresses).map {
-                case Validated.Valid(_) =>
-                  val updatedLastMsgs = lastMsgs.updated(message.messageType, message)
-                  val updatedToAdd = message :: toAdd
-
-                  logger.info(
-                    s"Message accepted - " +
-                      s"Address: ${message.address}, " +
-                      s"MessageType: ${message.messageType}, " +
-                      s"ParentOrdinal: ${message.parentOrdinal}, " +
-                      s"ProofCount: ${message.proofs.size}, " +
-                      s"Balance: ${balance.value}"
-                  )
-
-                  (updatedLastMsgs, updatedToAdd, toReject)
-                case Validated.Invalid(errors) =>
-                  val updatedToReject = message :: toReject
-
-                  logger.warn(
-                    s"Message rejected - " +
-                      s"Address: ${message.address}, " +
-                      s"MessageType: ${message.messageType}, " +
-                      s"ParentOrdinal: ${message.parentOrdinal}, " +
-                      s"ProofCount: ${message.proofs.size}, " +
-                      s"Balance: ${balance.value}, " +
-                      s"Errors: ${errors.toList.mkString(", ")}"
-                  )
-
-                  (lastMsgs, toAdd, updatedToReject)
+            // We should call the validateInitialOwner if the ordinal is 2 and it's the first message
+            val validationResult =
+              if (snapshotOrdinal === SnapshotOrdinal.unsafeApply(2L) && message.parentOrdinal === MessageOrdinal.MinValue) {
+                messageValidator.validateInitialOwner(message, metagraphId, allFeesAddresses)
+              } else {
+                messageValidator.validate(message, lastMsgs, metagraphId, allFeesAddresses)
               }
-            } yield result
-        }
-    }.map {
-      case (contextUpdate, toAdd, toReject) =>
-        logger.info(
-          s"Message acceptance complete - " +
-            s"Total processed: ${messagesForAcceptance.size}, " +
-            s"Accepted: ${toAdd.size}, " +
-            s"Rejected: ${toReject.size}"
-        )
 
-        CurrencyMessagesAcceptanceResult(contextUpdate, toAdd, toReject)
+            validationResult.flatMap {
+              case Validated.Valid(_) =>
+                val updatedLastMsgs = lastMsgs.updated(message.messageType, message)
+                val updatedToAdd = message :: toAdd
+
+                logger.info(
+                  s"Message accepted - " +
+                    s"Address: ${message.address}, " +
+                    s"MessageType: ${message.messageType}, " +
+                    s"ParentOrdinal: ${message.parentOrdinal}, " +
+                    s"ProofCount: ${message.proofs.size}, " +
+                    s"Balance: ${balance.value}"
+                ) >> (updatedLastMsgs, updatedToAdd, toReject).pure[F]
+
+              case Validated.Invalid(errors) =>
+                val updatedToReject = message :: toReject
+
+                logger.warn(
+                  s"Message rejected - " +
+                    s"Address: ${message.address}, " +
+                    s"MessageType: ${message.messageType}, " +
+                    s"ParentOrdinal: ${message.parentOrdinal}, " +
+                    s"ProofCount: ${message.proofs.size}, " +
+                    s"Balance: ${balance.value}, " +
+                    s"Errors: ${errors.toList.mkString(", ")}"
+                ) >> (lastMsgs, toAdd, updatedToReject).pure[F]
+            }
+        }
+        .flatTap {
+          case (_, toAdd, toReject) =>
+            logger.info(
+              s"Message acceptance complete - " +
+                s"Total processed: ${messagesForAcceptance.size}, " +
+                s"Accepted: ${toAdd.size}, " +
+                s"Rejected: ${toReject.size}"
+            )
+        }
+        .map {
+          case (contextUpdate, toAdd, toReject) =>
+            CurrencyMessagesAcceptanceResult(contextUpdate, toAdd, toReject)
+        }
     }
 
     private def acceptGlobalSnapshotSyncs(
