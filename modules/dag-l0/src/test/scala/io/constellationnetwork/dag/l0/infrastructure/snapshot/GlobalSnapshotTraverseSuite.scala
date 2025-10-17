@@ -267,12 +267,14 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     val blockAcceptanceManager = BlockAcceptanceManager.make(BlockAcceptanceLogic.make[IO](txHasher), blockValidator, txHasher)
 
     val allowSpendBlockValidator =
-      AllowSpendBlockValidator.make[IO](signedValidator, AllowSpendChainValidator.make[IO], AllowSpendValidator.make[IO](signedValidator))
+      AllowSpendBlockValidator
+        .make[IO](signedValidator, AllowSpendChainValidator.make[IO], AllowSpendValidator.make[IO](addressesConfig, signedValidator))
     val allowSpendBlockAcceptanceManager =
       AllowSpendBlockAcceptanceManager.make(AllowSpendBlockAcceptanceLogic.make[IO], allowSpendBlockValidator)
 
     val tokenLockBlockValidator =
-      TokenLockBlockValidator.make[IO](signedValidator, TokenLockChainValidator.make[IO], TokenLockValidator.make[IO](signedValidator))
+      TokenLockBlockValidator
+        .make[IO](signedValidator, TokenLockChainValidator.make[IO], TokenLockValidator.make[IO](addressesConfig, signedValidator))
     val tokenLockBlockAcceptanceManager =
       TokenLockBlockAcceptanceManager.make(TokenLockBlockAcceptanceLogic.make[IO], tokenLockBlockValidator)
 
