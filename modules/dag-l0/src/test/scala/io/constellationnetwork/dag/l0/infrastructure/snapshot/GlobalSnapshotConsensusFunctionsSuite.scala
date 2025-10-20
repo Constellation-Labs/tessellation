@@ -117,7 +117,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       blocks: List[Signed[Block]],
       context: BlockAcceptanceContext[IO],
       ordinal: SnapshotOrdinal,
-      shouldValidateCollateral: Boolean = true
+      shouldPerformMetagraphSpecificValidations: Boolean = true
     )(implicit hasher: Hasher[F]): IO[BlockAcceptanceResult] =
       BlockAcceptanceResult(
         BlockAcceptanceContextUpdate.empty,
@@ -129,7 +129,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       block: Signed[Block],
       context: BlockAcceptanceContext[IO],
       ordinal: SnapshotOrdinal,
-      shouldValidateCollateral: Boolean = true
+      shouldPerformMetagraphSpecificValidations: Boolean = true
     )(implicit hasher: Hasher[F]): IO[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]] = ???
 
   }
@@ -139,7 +139,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       block: Signed[swap.AllowSpendBlock],
       context: AllowSpendBlockAcceptanceContext[IO],
       snapshotOrdinal: SnapshotOrdinal,
-      shouldValidateCollateral: Boolean = true,
+      shouldPerformMetagraphSpecificValidations: Boolean = true,
       lastGlobalSnapshotEpochProgress: Option[EpochProgress]
     )(implicit hasher: Hasher[IO]): IO[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]] = ???
 
@@ -147,7 +147,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       blocks: List[Signed[swap.AllowSpendBlock]],
       context: AllowSpendBlockAcceptanceContext[IO],
       snapshotOrdinal: SnapshotOrdinal,
-      shouldValidateCollateral: Boolean = true,
+      shouldPerformMetagraphSpecificValidations: Boolean = true,
       lastGlobalSnapshotEpochProgress: Option[EpochProgress]
     )(implicit hasher: Hasher[IO]): IO[AllowSpendBlockAcceptanceResult] =
       AllowSpendBlockAcceptanceResult(
@@ -162,7 +162,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       block: Signed[TokenLockBlock],
       context: TokenLockBlockAcceptanceContext[IO],
       snapshotOrdinal: SnapshotOrdinal,
-      shouldValidateCollateral: Boolean = true,
+      shouldPerformMetagraphSpecificValidations: Boolean = true,
       lastGlobalSnapshotEpochProgress: Option[EpochProgress]
     )(implicit hasher: Hasher[IO]): IO[Either[TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate]] = ???
 
@@ -170,7 +170,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       blocks: List[Signed[TokenLockBlock]],
       context: TokenLockBlockAcceptanceContext[IO],
       snapshotOrdinal: SnapshotOrdinal,
-      shouldValidateCollateral: Boolean = true,
+      shouldPerformMetagraphSpecificValidations: Boolean = true,
       lastGlobalSnapshotEpochProgress: Option[EpochProgress]
     )(implicit hasher: Hasher[IO]): IO[TokenLockBlockAcceptanceResult] =
       TokenLockBlockAcceptanceResult(

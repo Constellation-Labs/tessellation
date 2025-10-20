@@ -10,14 +10,14 @@ trait BlockAcceptanceManager[F[_]] {
     blocks: List[Signed[Block]],
     context: BlockAcceptanceContext[F],
     snapshotOrdinal: SnapshotOrdinal,
-    shouldValidateCollateral: Boolean = true
+    shouldPerformMetagraphSpecificValidations: Boolean = true
   )(implicit hasher: Hasher[F]): F[BlockAcceptanceResult]
 
   def acceptBlock(
     block: Signed[Block],
     context: BlockAcceptanceContext[F],
     snapshotOrdinal: SnapshotOrdinal,
-    shouldValidateCollateral: Boolean = true
+    shouldPerformMetagraphSpecificValidations: Boolean = true
   )(implicit hasher: Hasher[F]): F[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]]
 
 }

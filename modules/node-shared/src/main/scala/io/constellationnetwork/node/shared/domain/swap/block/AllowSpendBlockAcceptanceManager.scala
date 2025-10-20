@@ -21,7 +21,7 @@ trait AllowSpendBlockAcceptanceManager[F[_]] {
     blocks: List[Signed[AllowSpendBlock]],
     context: AllowSpendBlockAcceptanceContext[F],
     snapshotOrdinal: SnapshotOrdinal,
-    shouldValidateCollateral: Boolean = true,
+    shouldPerformMetagraphSpecificValidations: Boolean = true,
     lastGlobalSnapshotEpochProgress: Option[EpochProgress]
   )(implicit hasher: Hasher[F]): F[AllowSpendBlockAcceptanceResult]
 
@@ -29,7 +29,7 @@ trait AllowSpendBlockAcceptanceManager[F[_]] {
     block: Signed[AllowSpendBlock],
     context: AllowSpendBlockAcceptanceContext[F],
     snapshotOrdinal: SnapshotOrdinal,
-    shouldValidateCollateral: Boolean = true,
+    shouldPerformMetagraphSpecificValidations: Boolean = true,
     lastGlobalSnapshotEpochProgress: Option[EpochProgress]
   )(implicit hasher: Hasher[F]): F[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]]
 
@@ -52,7 +52,7 @@ object AllowSpendBlockAcceptanceManager {
         blocks: List[Signed[AllowSpendBlock]],
         context: AllowSpendBlockAcceptanceContext[F],
         snapshotOrdinal: SnapshotOrdinal,
-        shouldValidateCollateral: Boolean = true,
+        shouldPerformMetagraphSpecificValidations: Boolean = true,
         lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[F]): F[AllowSpendBlockAcceptanceResult] = {
 
@@ -66,7 +66,7 @@ object AllowSpendBlockAcceptanceManager {
                 blockAndTxChains match {
                   case (block, txChains) =>
                     logic
-                      .acceptBlock(block, txChains, context, acc.contextUpdate, shouldValidateCollateral)
+                      .acceptBlock(block, txChains, context, acc.contextUpdate, shouldPerformMetagraphSpecificValidations)
                       .map {
                         case contextUpdate =>
                           acc
@@ -122,7 +122,7 @@ object AllowSpendBlockAcceptanceManager {
         block: Signed[AllowSpendBlock],
         context: AllowSpendBlockAcceptanceContext[F],
         snapshotOrdinal: SnapshotOrdinal,
-        shouldValidateCollateral: Boolean = true,
+        shouldPerformMetagraphSpecificValidations: Boolean = true,
         lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[F]): F[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]] =
         blockValidator.validate(block, snapshotOrdinal, AllowSpendBlockValidationParams.default, lastGlobalSnapshotEpochProgress).flatMap {
@@ -131,7 +131,13 @@ object AllowSpendBlockAcceptanceManager {
             .toEitherT[F]
             .flatMap {
               case (block, txChains) =>
-                logic.acceptBlock(block, txChains, context, AllowSpendBlockAcceptanceContextUpdate.empty, shouldValidateCollateral)
+                logic.acceptBlock(
+                  block,
+                  txChains,
+                  context,
+                  AllowSpendBlockAcceptanceContextUpdate.empty,
+                  shouldPerformMetagraphSpecificValidations
+                )
             }
             .leftSemiflatTap(reason => logNotAcceptedBlock((block, reason)))
             .semiflatTap(_ => logAcceptedBlock(block))
