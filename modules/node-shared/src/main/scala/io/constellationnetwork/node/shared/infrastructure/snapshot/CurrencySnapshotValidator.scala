@@ -171,7 +171,7 @@ object CurrencySnapshotValidator {
                 expected.feeTransactions.map(() => _),
                 expected.artifacts.map(() => _),
                 getGlobalSnapshotByOrdinal,
-                shouldValidateCollateral = false,
+                shouldPerformMetagraphSpecificValidations = false,
                 Some((_: Signed[CurrencyIncrementalSnapshot]) => expected.artifacts)
               )
 

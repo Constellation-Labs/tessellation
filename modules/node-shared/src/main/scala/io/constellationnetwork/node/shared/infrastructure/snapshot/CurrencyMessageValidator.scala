@@ -28,14 +28,16 @@ trait CurrencyMessageValidator[F[_]] {
   def validateInitialOwner(
     message: Signed[CurrencyMessage],
     metagraphId: Address,
-    existingFeesAddresses: Map[Address, Set[Address]]
+    existingFeesAddresses: Map[Address, Set[Address]],
+    shouldPerformMetagraphSpecificValidations: Boolean
   )(implicit hasher: Hasher[F]): F[CurrencyMessageOrError]
 
   def validate(
     message: Signed[CurrencyMessage],
     lastMessages: SortedMap[MessageType, Signed[CurrencyMessage]],
     metagraphId: Address,
-    existingFeesAddresses: Map[Address, Set[Address]]
+    existingFeesAddresses: Map[Address, Set[Address]],
+    shouldPerformMetagraphSpecificValidations: Boolean
   )(implicit hasher: Hasher[F]): F[CurrencyMessageOrError]
 }
 
@@ -62,21 +64,24 @@ object CurrencyMessageValidator {
     def validateInitialOwner(
       message: Signed[CurrencyMessage],
       metagraphId: Address,
-      existingFeesAddresses: Map[Address, Set[Address]]
+      existingFeesAddresses: Map[Address, Set[Address]],
+      shouldPerformMetagraphSpecificValidations: Boolean
     )(implicit hasher: Hasher[F]): F[CurrencyMessageOrError] =
       validateCore(
         message = message,
         metagraphId = metagraphId,
         existingFeesAddresses = existingFeesAddresses,
         lastMessage = None,
-        isInitialOwner = true
+        isInitialOwner = true,
+        shouldPerformMetagraphSpecificValidations = shouldPerformMetagraphSpecificValidations
       )
 
     def validate(
       message: Signed[CurrencyMessage],
       lastMessages: SortedMap[MessageType, Signed[CurrencyMessage]],
       metagraphId: Address,
-      existingFeesAddresses: Map[Address, Set[Address]]
+      existingFeesAddresses: Map[Address, Set[Address]],
+      shouldPerformMetagraphSpecificValidations: Boolean
     )(implicit hasher: Hasher[F]): F[CurrencyMessageOrError] = {
       val lastMessage = lastMessages.get(message.messageType)
       validateCore(
@@ -84,7 +89,8 @@ object CurrencyMessageValidator {
         metagraphId = metagraphId,
         existingFeesAddresses = existingFeesAddresses,
         lastMessage = lastMessage,
-        isInitialOwner = false
+        isInitialOwner = false,
+        shouldPerformMetagraphSpecificValidations = shouldPerformMetagraphSpecificValidations
       )
     }
 
@@ -93,13 +99,14 @@ object CurrencyMessageValidator {
       metagraphId: Address,
       existingFeesAddresses: Map[Address, Set[Address]],
       lastMessage: Option[Signed[CurrencyMessage]],
-      isInitialOwner: Boolean
+      isInitialOwner: Boolean,
+      shouldPerformMetagraphSpecificValidations: Boolean
     )(implicit hasher: Hasher[F]): F[CurrencyMessageOrError] =
       validateBasicRequirements(message, metagraphId, lastMessage) match {
         case Some(error) => F.pure(error.invalidNec)
         case None =>
           for {
-            signatureValidation <- validateSignatures(message, isInitialOwner)
+            signatureValidation <- validateSignatures(message, isInitialOwner, shouldPerformMetagraphSpecificValidations)
             addressValidation = validateAddress(message, metagraphId, existingFeesAddresses)
           } yield signatureValidation.productR(addressValidation)
       }
@@ -134,7 +141,8 @@ object CurrencyMessageValidator {
 
     private def validateSignatures(
       message: Signed[CurrencyMessage],
-      isInitialOwner: Boolean
+      isInitialOwner: Boolean,
+      shouldPerformMetagraphSpecificValidations: Boolean
     )(implicit hasher: Hasher[F]): F[ValidatedNec[CurrencyMessageValidationError, Signed[CurrencyMessage]]] = {
       val uniqueSigners = validator.validateUniqueSigners(message)
       val majoritySignature = if (isInitialOwner) {
@@ -146,7 +154,7 @@ object CurrencyMessageValidator {
       for {
         ownerSignature <- validator.isSignedBy(message, message.address)
         correctSignatures <- validator.validateSignatures(message)
-        seedlistSignature = validateSeedlistSignature(message)
+        seedlistSignature = validateSeedlistSignature(message, shouldPerformMetagraphSpecificValidations)
       } yield
         combineSignatureValidations(
           ownerSignature,
@@ -162,12 +170,31 @@ object CurrencyMessageValidator {
         .flatMap(_.get(metagraphId))
         .map(_.toSortedSet)
 
+    /** Validates the signature of a currency message against the seedlist.
+      *
+      * When metagraph-specific validations are disabled, this method skips seedlist validation to allow for differences between metagraph
+      * and hypergraph seedlists. This is useful when the metagraph operates with a different set of trusted peers than the hypergraph.
+      *
+      * @param message
+      *   the signed currency message to validate
+      * @param shouldPerformMetagraphSpecificValidations
+      *   if false, skips seedlist validation to allow seedlist differences between metagraph and hypergraph; if true, validates signatures
+      *   against the seedlist
+      * @return
+      *   a ValidatedNec containing either the original message if validation passes/is skipped, or accumulated SignedValidationErrors if
+      *   validation fails
+      */
     private def validateSeedlistSignature(
-      message: Signed[CurrencyMessage]
+      message: Signed[CurrencyMessage],
+      shouldPerformMetagraphSpecificValidations: Boolean
     ): ValidatedNec[SignedValidationError, Signed[CurrencyMessage]] =
-      validator
-        .validateSignaturesWithSeedlist(seedlistPeers, message)
-        .map(_.as(message))
+      if (!shouldPerformMetagraphSpecificValidations) {
+        Validated.validNec(message)
+      } else {
+        validator
+          .validateSignaturesWithSeedlist(seedlistPeers, message)
+          .map(_.as(message))
+      }
 
     private def combineSignatureValidations(
       ownerSignature: ValidatedNec[SignedValidationError, Signed[CurrencyMessage]],

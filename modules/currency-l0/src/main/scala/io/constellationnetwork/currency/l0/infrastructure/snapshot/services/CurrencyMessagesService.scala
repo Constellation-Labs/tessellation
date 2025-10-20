@@ -53,7 +53,12 @@ object CurrencyMessagesService {
                 case Some((_, info)) => getFeeAddresses(info)
                 case None            => SortedMap.empty[Address, Set[Address]]
               }
-              validation <- validator.validateInitialOwner(ownerMessage, metagraphId, allFeesAddresses)
+              validation <- validator.validateInitialOwner(
+                ownerMessage,
+                metagraphId,
+                allFeesAddresses,
+                shouldPerformMetagraphSpecificValidations = false
+              )
 
               _ <- validation match {
                 case Invalid(errors) =>

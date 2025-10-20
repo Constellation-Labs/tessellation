@@ -59,7 +59,9 @@ class CurrencyMessageRoutes[F[_]: Async: Hasher](
           case None => SortedMap.empty[Address, Set[Address]]
         }
 
-        maybeResult <- maybeLastMsgs.traverse(validator.validate(msg, _, metagraphId, allFeesAddresses))
+        maybeResult <- maybeLastMsgs.traverse(
+          validator.validate(msg, _, metagraphId, allFeesAddresses, shouldPerformMetagraphSpecificValidations = false)
+        )
         response <- maybeResult match {
           case Some(Invalid(errors)) =>
             logger

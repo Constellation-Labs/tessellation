@@ -63,7 +63,13 @@ object TokenLockBlockService {
           result <- signedBlock.toHashed.flatMap { hashedBlock =>
             EitherT(
               tokenLockBlockAcceptanceManager
-                .acceptBlock(signedBlock, context, snapshotOrdinal, shouldValidateCollateral = true, lastGlobalEpochProgress.some)
+                .acceptBlock(
+                  signedBlock,
+                  context,
+                  snapshotOrdinal,
+                  shouldPerformMetagraphSpecificValidations = true,
+                  lastGlobalEpochProgress.some
+                )
             )
               .leftSemiflatMap(processAcceptanceError(hashedBlock))
               .semiflatMap(processAcceptanceSuccess(hashedBlock))

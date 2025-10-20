@@ -64,7 +64,7 @@ trait CurrencySnapshotCreator[F[_]] {
     feeTransactionFn: Option[() => SortedSet[Signed[FeeTransaction]]],
     artifactsFn: Option[() => SortedSet[SharedArtifact]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    shouldValidateCollateral: Boolean,
+    shouldPerformMetagraphSpecificValidations: Boolean,
     maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
@@ -99,7 +99,7 @@ object CurrencySnapshotCreator {
       feeTransactionFn: Option[() => SortedSet[Signed[FeeTransaction]]],
       artifactsFn: Option[() => SortedSet[SharedArtifact]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-      shouldValidateCollateral: Boolean,
+      shouldPerformMetagraphSpecificValidations: Boolean,
       maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
@@ -212,7 +212,7 @@ object CurrencySnapshotCreator {
                 facilitators,
                 getGlobalSnapshotByOrdinal,
                 lastArtifact.globalSyncView,
-                shouldValidateCollateral,
+                shouldPerformMetagraphSpecificValidations,
                 lastArtifact.proofs
               )
 

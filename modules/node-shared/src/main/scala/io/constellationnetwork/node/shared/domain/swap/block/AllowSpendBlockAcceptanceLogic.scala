@@ -19,7 +19,7 @@ trait AllowSpendBlockAcceptanceLogic[F[_]] {
     txChains: Map[Address, AllowSpendNel],
     context: AllowSpendBlockAcceptanceContext[F],
     contextUpdate: AllowSpendBlockAcceptanceContextUpdate,
-    shouldValidateCollateral: Boolean
+    shouldPerformMetagraphSpecificValidations: Boolean
   )(implicit hasher: Hasher[F]): EitherT[F, AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]
 
 }
@@ -34,10 +34,10 @@ object AllowSpendBlockAcceptanceLogic {
         txChains: Map[Address, AllowSpendNel],
         context: AllowSpendBlockAcceptanceContext[F],
         contextUpdate: AllowSpendBlockAcceptanceContextUpdate,
-        shouldValidateCollateral: Boolean
+        shouldPerformMetagraphSpecificValidations: Boolean
       )(implicit hasher: Hasher[F]): EitherT[F, AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate] =
         for {
-          _ <- processSignatures(signedBlock, context, shouldValidateCollateral)
+          _ <- processSignatures(signedBlock, context, shouldPerformMetagraphSpecificValidations)
           contextUpdate1 <- processLastTxRefs(txChains, context, contextUpdate)
           contextUpdate2 <- processBalances(signedBlock, context, contextUpdate1)
         } yield contextUpdate2
@@ -154,10 +154,10 @@ object AllowSpendBlockAcceptanceLogic {
   def processSignatures[F[_]: Async: SecurityProvider](
     signedBlock: Signed[AllowSpendBlock],
     context: AllowSpendBlockAcceptanceContext[F],
-    shouldValidateCollateral: Boolean = true
+    shouldPerformMetagraphSpecificValidations: Boolean = true
   ): EitherT[F, AllowSpendBlockNotAcceptedReason, Unit] =
     EitherT(
-      if (!shouldValidateCollateral) {
+      if (!shouldPerformMetagraphSpecificValidations) {
         ().asRight[AllowSpendBlockNotAcceptedReason].pure
       } else {
         signedBlock.proofs
