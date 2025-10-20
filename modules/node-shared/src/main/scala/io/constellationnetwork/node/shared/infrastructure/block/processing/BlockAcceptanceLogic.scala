@@ -25,10 +25,10 @@ object BlockAcceptanceLogic {
         txChains: TxChains,
         context: BlockAcceptanceContext[F],
         contextUpdate: BlockAcceptanceContextUpdate,
-        shouldValidateCollateral: Boolean
+        shouldPerformMetagraphSpecificValidations: Boolean
       ): EitherT[F, BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)] =
         for {
-          _ <- processSignatures(signedBlock, context, shouldValidateCollateral)
+          _ <- processSignatures(signedBlock, context, shouldPerformMetagraphSpecificValidations)
           (contextUpdate1, blockUsages) <- processParents(signedBlock, context, contextUpdate)
           contextUpdate2 <- processLastTxRefs(txChains, context, contextUpdate1)
           contextUpdate3 <- processBalances(signedBlock, context, contextUpdate2)
@@ -180,10 +180,10 @@ object BlockAcceptanceLogic {
   def processSignatures[F[_]: Async: SecurityProvider](
     signedBlock: Signed[Block],
     context: BlockAcceptanceContext[F],
-    shouldValidateCollateral: Boolean = true
+    shouldPerformMetagraphSpecificValidations: Boolean = true
   ): EitherT[F, BlockNotAcceptedReason, Unit] =
     EitherT(
-      if (!shouldValidateCollateral) {
+      if (!shouldPerformMetagraphSpecificValidations) {
         ().asRight[BlockNotAcceptedReason].pure
       } else {
         signedBlock.proofs

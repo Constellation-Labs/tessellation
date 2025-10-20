@@ -99,7 +99,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     facilitators: Set[PeerId],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     lastGlobalSyncView: Option[GlobalSyncView],
-    shouldValidateCollateral: Boolean,
+    shouldPerformMetagraphSpecificValidations: Boolean,
     lastArtifactProofs: NonEmptySet[SignatureProof]
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult]
 
@@ -213,7 +213,7 @@ object CurrencySnapshotAcceptanceManager {
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       maybeLastGlobalSyncView: Option[GlobalSyncView],
-      shouldValidateCollateral: Boolean,
+      shouldPerformMetagraphSpecificValidations: Boolean,
       lastArtifactProofs: NonEmptySet[SignatureProof]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
       initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
@@ -245,7 +245,7 @@ object CurrencySnapshotAcceptanceManager {
         lastActiveTips,
         lastDeprecatedTips,
         initialTxRef,
-        shouldValidateCollateral
+        shouldPerformMetagraphSpecificValidations
       )
 
       acceptedTransactions = acceptanceBlocksResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
@@ -291,7 +291,8 @@ object CurrencySnapshotAcceptanceManager {
         messagesForAcceptance,
         lastSnapshotContext.address,
         snapshotOrdinal,
-        lastUnsyncGlobalSnapshotInfo
+        lastUnsyncGlobalSnapshotInfo,
+        shouldPerformMetagraphSpecificValidations
       )
 
       fallbackOrdinal = lastUnsyncGlobalSnapshot.ordinal
@@ -373,7 +374,7 @@ object CurrencySnapshotAcceptanceManager {
         lastSnapshotContext,
         snapshotOrdinal,
         initialAllowSpendRef,
-        shouldValidateCollateral,
+        shouldPerformMetagraphSpecificValidations,
         lastUnsyncGlobalSnapshot.ordinal,
         fixingAllowSpendAndTokenLockValidation,
         lastGlobalSnapshotEpochProgress
@@ -391,7 +392,7 @@ object CurrencySnapshotAcceptanceManager {
         lastSnapshotContext,
         snapshotOrdinal,
         tokenLockInitialTxRef,
-        shouldValidateCollateral,
+        shouldPerformMetagraphSpecificValidations,
         lastUnsyncGlobalSnapshot.ordinal,
         fixingAllowSpendAndTokenLockValidation,
         lastGlobalSnapshotEpochProgress
@@ -621,7 +622,8 @@ object CurrencySnapshotAcceptanceManager {
       messagesForAcceptance: List[Signed[CurrencyMessage]],
       metagraphId: Address,
       snapshotOrdinal: SnapshotOrdinal,
-      lastUnsyncGlobalSnapshotInfo: GlobalSnapshotInfo
+      lastUnsyncGlobalSnapshotInfo: GlobalSnapshotInfo,
+      shouldPerformMetagraphSpecificValidations: Boolean
     )(implicit hs: Hasher[F]) = {
       val msgOrdering = Order
         .whenEqual[Signed[CurrencyMessage]](
@@ -646,9 +648,9 @@ object CurrencySnapshotAcceptanceManager {
             // We should call the validateInitialOwner if the ordinal is 2 and it's the first message
             val validationResult =
               if (snapshotOrdinal === SnapshotOrdinal.unsafeApply(2L) && message.parentOrdinal === MessageOrdinal.MinValue) {
-                messageValidator.validateInitialOwner(message, metagraphId, allFeesAddresses)
+                messageValidator.validateInitialOwner(message, metagraphId, allFeesAddresses, shouldPerformMetagraphSpecificValidations)
               } else {
-                messageValidator.validate(message, lastMsgs, metagraphId, allFeesAddresses)
+                messageValidator.validate(message, lastMsgs, metagraphId, allFeesAddresses, shouldPerformMetagraphSpecificValidations)
               }
 
             validationResult.flatMap {
@@ -686,7 +688,7 @@ object CurrencySnapshotAcceptanceManager {
                 s"Total processed: ${messagesForAcceptance.size}, " +
                 s"Accepted: ${toAdd.size}, " +
                 s"Rejected: ${toReject.size}"
-            )
+            ).whenA(messagesForAcceptance.nonEmpty)
         }
         .map {
           case (contextUpdate, toAdd, toReject) =>
@@ -870,7 +872,7 @@ object CurrencySnapshotAcceptanceManager {
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
       initialTxRef: TransactionReference,
-      shouldValidateCollateral: Boolean
+      shouldPerformMetagraphSpecificValidations: Boolean
     )(implicit hasher: Hasher[F]) = {
       val tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
       val context = BlockAcceptanceContext.fromStaticData(
@@ -881,7 +883,12 @@ object CurrencySnapshotAcceptanceManager {
         initialTxRef
       )
 
-      blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, snapshotOrdinal, shouldValidateCollateral)
+      blockAcceptanceManager.acceptBlocksIteratively(
+        blocksForAcceptance,
+        context,
+        snapshotOrdinal,
+        shouldPerformMetagraphSpecificValidations
+      )
     }
 
     private def acceptTokenLockBlocks(
@@ -889,7 +896,7 @@ object CurrencySnapshotAcceptanceManager {
       lastSnapshotContext: CurrencySnapshotContext,
       snapshotOrdinal: SnapshotOrdinal,
       initialTxRef: TokenLockReference,
-      shouldValidateCollateral: Boolean,
+      shouldPerformMetagraphSpecificValidations: Boolean,
       lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
       fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
       lastSyncGlobalSnapshotEpochProgress: EpochProgress
@@ -906,7 +913,7 @@ object CurrencySnapshotAcceptanceManager {
           tokenLockBlocksForAcceptance,
           context,
           snapshotOrdinal,
-          shouldValidateCollateral,
+          shouldPerformMetagraphSpecificValidations,
           lastSyncGlobalSnapshotEpochProgress.some
         )
       } else {
@@ -914,7 +921,7 @@ object CurrencySnapshotAcceptanceManager {
           tokenLockBlocksForAcceptance,
           context,
           snapshotOrdinal,
-          shouldValidateCollateral,
+          shouldPerformMetagraphSpecificValidations,
           none
         )
       }
@@ -925,7 +932,7 @@ object CurrencySnapshotAcceptanceManager {
       lastSnapshotContext: CurrencySnapshotContext,
       snapshotOrdinal: SnapshotOrdinal,
       initialTxRef: AllowSpendReference,
-      shouldValidateCollateral: Boolean,
+      shouldPerformMetagraphSpecificValidations: Boolean,
       lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
       fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
       lastSyncGlobalSnapshotEpochProgress: EpochProgress
@@ -941,7 +948,7 @@ object CurrencySnapshotAcceptanceManager {
           blocksForAcceptance,
           context,
           snapshotOrdinal,
-          shouldValidateCollateral,
+          shouldPerformMetagraphSpecificValidations,
           lastSyncGlobalSnapshotEpochProgress.some
         )
       } else {
@@ -949,7 +956,7 @@ object CurrencySnapshotAcceptanceManager {
           blocksForAcceptance,
           context,
           snapshotOrdinal,
-          shouldValidateCollateral,
+          shouldPerformMetagraphSpecificValidations,
           none
         )
       }

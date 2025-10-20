@@ -21,7 +21,7 @@ trait TokenLockBlockAcceptanceManager[F[_]] {
     blocks: List[Signed[TokenLockBlock]],
     context: TokenLockBlockAcceptanceContext[F],
     snapshotOrdinal: SnapshotOrdinal,
-    shouldValidateCollateral: Boolean = true,
+    shouldPerformMetagraphSpecificValidations: Boolean = true,
     lastGlobalSnapshotEpochProgress: Option[EpochProgress]
   )(implicit hasher: Hasher[F]): F[TokenLockBlockAcceptanceResult]
 
@@ -29,7 +29,7 @@ trait TokenLockBlockAcceptanceManager[F[_]] {
     block: Signed[TokenLockBlock],
     context: TokenLockBlockAcceptanceContext[F],
     snapshotOrdinal: SnapshotOrdinal,
-    shouldValidateCollateral: Boolean = true,
+    shouldPerformMetagraphSpecificValidations: Boolean = true,
     lastGlobalSnapshotEpochProgress: Option[EpochProgress]
   )(implicit hasher: Hasher[F]): F[Either[TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate]]
 
@@ -52,7 +52,7 @@ object TokenLockBlockAcceptanceManager {
         blocks: List[Signed[TokenLockBlock]],
         context: TokenLockBlockAcceptanceContext[F],
         snapshotOrdinal: SnapshotOrdinal,
-        shouldValidateCollateral: Boolean = true,
+        shouldPerformMetagraphSpecificValidations: Boolean = true,
         lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[F]): F[TokenLockBlockAcceptanceResult] = {
 
@@ -66,7 +66,7 @@ object TokenLockBlockAcceptanceManager {
                 blockAndTxChains match {
                   case (block, txChains) =>
                     logic
-                      .acceptBlock(block, txChains, context, acc.contextUpdate, shouldValidateCollateral)
+                      .acceptBlock(block, txChains, context, acc.contextUpdate, shouldPerformMetagraphSpecificValidations)
                       .map {
                         case contextUpdate =>
                           acc
@@ -118,7 +118,7 @@ object TokenLockBlockAcceptanceManager {
         block: Signed[TokenLockBlock],
         context: TokenLockBlockAcceptanceContext[F],
         snapshotOrdinal: SnapshotOrdinal,
-        shouldValidateCollateral: Boolean = true,
+        shouldPerformMetagraphSpecificValidations: Boolean = true,
         lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[F]): F[Either[TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate]] =
         blockValidator.validate(block, snapshotOrdinal, TokenLockBlockValidationParams.default, lastGlobalSnapshotEpochProgress).flatMap {
@@ -127,7 +127,13 @@ object TokenLockBlockAcceptanceManager {
             .toEitherT[F]
             .flatMap {
               case (block, txChains) =>
-                logic.acceptBlock(block, txChains, context, TokenLockBlockAcceptanceContextUpdate.empty, shouldValidateCollateral)
+                logic.acceptBlock(
+                  block,
+                  txChains,
+                  context,
+                  TokenLockBlockAcceptanceContextUpdate.empty,
+                  shouldPerformMetagraphSpecificValidations
+                )
             }
             .value
         }

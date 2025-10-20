@@ -1142,7 +1142,7 @@ object GlobalSnapshotAcceptanceManager {
           blocksForAcceptance,
           context,
           snapshotOrdinal,
-          shouldValidateCollateral = true,
+          shouldPerformMetagraphSpecificValidations = true,
           epochProgress.some
         )
       } else {
@@ -1150,7 +1150,7 @@ object GlobalSnapshotAcceptanceManager {
           blocksForAcceptance,
           context,
           snapshotOrdinal,
-          shouldValidateCollateral = true,
+          shouldPerformMetagraphSpecificValidations = true,
           none
         )
       }
@@ -1174,7 +1174,7 @@ object GlobalSnapshotAcceptanceManager {
           blocksForAcceptance,
           context,
           snapshotOrdinal,
-          shouldValidateCollateral = true,
+          shouldPerformMetagraphSpecificValidations = true,
           epochProgress.some
         )
       } else {
@@ -1182,7 +1182,7 @@ object GlobalSnapshotAcceptanceManager {
           blocksForAcceptance,
           context,
           snapshotOrdinal,
-          shouldValidateCollateral = true,
+          shouldPerformMetagraphSpecificValidations = true,
           none
         )
       }

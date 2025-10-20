@@ -17,7 +17,7 @@ trait TokenLockBlockAcceptanceLogic[F[_]] {
     txChains: Map[Address, TokenLockNel],
     context: TokenLockBlockAcceptanceContext[F],
     contextUpdate: TokenLockBlockAcceptanceContextUpdate,
-    shouldValidateCollateral: Boolean
+    shouldPerformMetagraphSpecificValidations: Boolean
   )(implicit hasher: Hasher[F]): EitherT[F, TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate]
 
 }
@@ -32,10 +32,10 @@ object TokenLockBlockAcceptanceLogic {
         txChains: Map[Address, TokenLockNel],
         context: TokenLockBlockAcceptanceContext[F],
         contextUpdate: TokenLockBlockAcceptanceContextUpdate,
-        shouldValidateCollateral: Boolean
+        shouldPerformMetagraphSpecificValidations: Boolean
       )(implicit hasher: Hasher[F]): EitherT[F, TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate] =
         for {
-          _ <- processSignatures(signedBlock, context, shouldValidateCollateral)
+          _ <- processSignatures(signedBlock, context, shouldPerformMetagraphSpecificValidations)
           contextUpdate1 <- processLastTxRefs(txChains, context, contextUpdate)
           contextUpdate2 <- processBalances(signedBlock, context, contextUpdate1)
         } yield contextUpdate2
@@ -151,10 +151,10 @@ object TokenLockBlockAcceptanceLogic {
   def processSignatures[F[_]: Async: SecurityProvider](
     signedBlock: Signed[TokenLockBlock],
     context: TokenLockBlockAcceptanceContext[F],
-    shouldValidateCollateral: Boolean = true
+    shouldPerformMetagraphSpecificValidations: Boolean = true
   ): EitherT[F, TokenLockBlockNotAcceptedReason, Unit] =
     EitherT(
-      if (!shouldValidateCollateral) {
+      if (!shouldPerformMetagraphSpecificValidations) {
         ().asRight[TokenLockBlockNotAcceptedReason].pure
       } else {
         signedBlock.proofs
