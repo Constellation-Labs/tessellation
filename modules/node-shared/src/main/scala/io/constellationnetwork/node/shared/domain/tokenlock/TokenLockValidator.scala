@@ -7,7 +7,7 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.ext.cats.syntax.validated._
-import io.constellationnetwork.node.shared.config.types.DelegatedStakingConfig
+import io.constellationnetwork.node.shared.config.types.{AddressesConfig, DelegatedStakingConfig}
 import io.constellationnetwork.node.shared.domain.tokenlock.TokenLockValidator.TokenLockValidationErrorOr
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.epoch.EpochProgress
@@ -38,6 +38,7 @@ trait TokenLockValidator[F[_]] {
 
 object TokenLockValidator {
   def make[F[_]: Async](
+    cfg: AddressesConfig,
     signedValidator: SignedValidator[F]
   ): TokenLockValidator[F] =
     new TokenLockValidator[F] {
@@ -51,10 +52,12 @@ object TokenLockValidator {
             .map(_.errorMap[TokenLockValidationError](InvalidSigned))
           srcAddressSignatureV <- validateSourceAddressSignature(signedTokenLock)
           expirationV = validateTokenLockExpiration(signedTokenLock, lastGlobalSnapshotEpochProgress)
+          addressNotLockedV = validateAddressIsNotLocked(signedTokenLock)
         } yield
           signaturesV
             .productR(srcAddressSignatureV)
             .productR(expirationV)
+            .productR(addressNotLockedV)
 
       def validateWithTokenLockLimits(
         signedTokenLock: Signed[TokenLock],
@@ -105,6 +108,14 @@ object TokenLockValidator {
 
         if (isExpired.getOrElse(false)) TokenLockExpired.invalidNec else signedTx.validNec
       }
+
+      private def validateAddressIsNotLocked(signedTx: Signed[TokenLock]): TokenLockValidationErrorOr[Signed[TokenLock]] =
+        if (lockedAddresses.contains(signedTx.value.source))
+          AddressLocked(signedTx.value.source).invalidNec[Signed[TokenLock]]
+        else
+          signedTx.validNec[TokenLockValidationError]
+
+      private val lockedAddresses = cfg.locked
     }
 
   @derive(eqv, show)
@@ -114,6 +125,7 @@ object TokenLockValidator {
   case object TooManyTokenLocksForAddress extends TokenLockValidationError
   case object TokenLockAmountBelowMinimum extends TokenLockValidationError
   case object TokenLockExpired extends TokenLockValidationError
+  case class AddressLocked(address: Address) extends TokenLockValidationError
   type TokenLockValidationErrorOr[A] = ValidatedNec[TokenLockValidationError, A]
 
 }
