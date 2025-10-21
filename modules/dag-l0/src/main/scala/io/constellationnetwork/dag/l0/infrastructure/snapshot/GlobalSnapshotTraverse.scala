@@ -118,43 +118,28 @@ object GlobalSnapshotTraverse {
             .raiseError[F, Unit]
             .whenA(stateProofInvalid)
 
-          _ <- HasherSelector[F].forOrdinal(firstInc.ordinal)(implicit hasher =>
+          (info, lastInc) <- incHashesNec.tail.foldLeftM((firstInfo, firstInc)) {
+            case ((lastCtx, lastInc), hash) =>
+              loadIncOrErr(hash).flatMap { inc =>
+                HasherSelector[F].forOrdinal(inc.ordinal) { implicit hasher =>
+                  contextFns
+                    .createContext(lastCtx, lastInc, inc, getGlobalSnapshotByOrdinal)
+                    .map(_ -> inc)
+                }
+              }
+          }
+
+          hashedLastInc <- HasherSelector[F].forOrdinal(lastInc.ordinal)(implicit hasher => lastInc.toHashed)
+          _ <- HasherSelector[F].forOrdinal(lastInc.ordinal)(implicit hasher =>
             initializeStorages[F](
               globalSnapshotStorage,
               lastNGlobalSnapshotStorage,
               lastGlobalSnapshotStorage,
               download,
-              hashedFirstInc,
-              firstInfo
+              hashedLastInc,
+              info
             )
           )
-          (info, lastInc) <- incHashesNec.tail.foldLeftM((firstInfo, firstInc)) {
-            case ((lastCtx, lastInc), hash) =>
-              for {
-                inc <- loadIncOrErr(hash)
-
-                (hashedInc, (updatedState, _)) <- HasherSelector[F].forOrdinal(inc.ordinal) { implicit hasher =>
-                  for {
-                    hashed <- inc.toHashed
-                    context <- contextFns
-                      .createContext(lastCtx, lastInc, inc, getGlobalSnapshotByOrdinal)
-                      .map(_ -> inc)
-                  } yield (hashed, context)
-                }
-                _ <-
-                  if (hashedInc.ordinal > hashedFirstInc.ordinal) {
-                    lastNGlobalSnapshotStorage.set(hashedInc, updatedState)
-                  } else ().pure
-                _ <-
-                  if (hashedInc.ordinal > hashedFirstInc.ordinal) {
-                    lastGlobalSnapshotStorage.set(hashedInc, updatedState)
-                  } else ().pure
-                _ <-
-                  if (hashedInc.ordinal > hashedFirstInc.ordinal) {
-                    HasherSelector[F].forOrdinal(inc.ordinal)(implicit hasher => globalSnapshotStorage.prepend(inc, updatedState))
-                  } else ().pure
-              } yield (updatedState, inc)
-          }
         } yield (info, lastInc)
       }
     }
