@@ -122,17 +122,6 @@ object GlobalSnapshotTraverse {
             .raiseError[F, Unit]
             .whenA(stateProofInvalid)
 
-          _ <- HasherSelector[F].forOrdinal(firstInc.ordinal)(implicit hasher =>
-            initializeStorages[F](
-              globalSnapshotStorage,
-              lastNGlobalSnapshotStorage,
-              lastGlobalSnapshotStorage,
-              download,
-              hashedFirstInc,
-              firstInfo
-            )
-          )
-
           (info, lastInc) <- incHashesNec.tail.foldLeftM((firstInfo, firstInc)) {
             case ((lastCtx, lastInc), hash) =>
               loadIncOrErr(hash).flatMap { inc =>
@@ -143,6 +132,18 @@ object GlobalSnapshotTraverse {
                 }
               }
           }
+
+          hashedLastInc <- HasherSelector[F].forOrdinal(lastInc.ordinal)(implicit hasher => lastInc.toHashed)
+          _ <- HasherSelector[F].forOrdinal(lastInc.ordinal)(implicit hasher =>
+            initializeStorages[F](
+              globalSnapshotStorage,
+              lastNGlobalSnapshotStorage,
+              lastGlobalSnapshotStorage,
+              download,
+              hashedLastInc,
+              info
+            )
+          )
         } yield (info, lastInc)
       }
     }
