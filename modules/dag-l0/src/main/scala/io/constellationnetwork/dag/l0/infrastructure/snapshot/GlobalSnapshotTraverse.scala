@@ -118,28 +118,35 @@ object GlobalSnapshotTraverse {
             .raiseError[F, Unit]
             .whenA(stateProofInvalid)
 
-          (info, lastInc) <- incHashesNec.tail.foldLeftM((firstInfo, firstInc)) {
-            case ((lastCtx, lastInc), hash) =>
-              loadIncOrErr(hash).flatMap { inc =>
-                HasherSelector[F].forOrdinal(inc.ordinal) { implicit hasher =>
-                  contextFns
-                    .createContext(lastCtx, lastInc, inc, getGlobalSnapshotByOrdinal)
-                    .map(_ -> inc)
-                }
-              }
-          }
-
-          hashedLastInc <- HasherSelector[F].forOrdinal(lastInc.ordinal)(implicit hasher => lastInc.toHashed)
-          _ <- HasherSelector[F].forOrdinal(lastInc.ordinal)(implicit hasher =>
+          _ <- HasherSelector[F].forOrdinal(firstInc.ordinal)(implicit hasher =>
             initializeStorages[F](
               globalSnapshotStorage,
               lastNGlobalSnapshotStorage,
               lastGlobalSnapshotStorage,
               download,
-              hashedLastInc,
-              info
+              hashedFirstInc,
+              firstInfo
             )
           )
+          (info, lastInc) <- incHashesNec.tail.foldLeftM((firstInfo, firstInc)) {
+            case ((lastCtx, lastInc), hash) =>
+              for {
+                inc <- loadIncOrErr(hash)
+
+                (hashedInc, (updatedState, _)) <- HasherSelector[F].forOrdinal(inc.ordinal) { implicit hasher =>
+                  for {
+                    hashed <- inc.toHashed
+                    context <- contextFns
+                      .createContext(lastCtx, lastInc, inc, getGlobalSnapshotByOrdinal)
+                      .map(_ -> inc)
+                  } yield (hashed, context)
+                }
+
+                _ <- lastNGlobalSnapshotStorage.set(hashedInc, updatedState)
+                _ <- lastGlobalSnapshotStorage.set(hashedInc, updatedState)
+                _ <- HasherSelector[F].forOrdinal(inc.ordinal)(implicit hasher => globalSnapshotStorage.prepend(inc, updatedState))
+              } yield (updatedState, inc)
+          }
         } yield (info, lastInc)
       }
     }
