@@ -2,21 +2,17 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
 import cats.Parallel
 import cats.data.NonEmptyChain
-import cats.effect.IO
 import cats.effect.kernel.Async
 import cats.syntax.all._
 
 import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.dag.l0.StoragesInitializer.initializeStorages
-import io.constellationnetwork.dag.l0.modules.Storages
 import io.constellationnetwork.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
 import io.constellationnetwork.merkletree.StateProofValidator
-import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
-import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -132,16 +128,32 @@ object GlobalSnapshotTraverse {
               firstInfo
             )
           )
-
           (info, lastInc) <- incHashesNec.tail.foldLeftM((firstInfo, firstInc)) {
             case ((lastCtx, lastInc), hash) =>
-              loadIncOrErr(hash).flatMap { inc =>
-                HasherSelector[F].forOrdinal(inc.ordinal) { implicit hasher =>
-                  contextFns
-                    .createContext(lastCtx, lastInc, inc, getGlobalSnapshotByOrdinal)
-                    .map(_ -> inc)
+              for {
+                inc <- loadIncOrErr(hash)
+
+                (hashedInc, (updatedState, _)) <- HasherSelector[F].forOrdinal(inc.ordinal) { implicit hasher =>
+                  for {
+                    hashed <- inc.toHashed
+                    context <- contextFns
+                      .createContext(lastCtx, lastInc, inc, getGlobalSnapshotByOrdinal)
+                      .map(_ -> inc)
+                  } yield (hashed, context)
                 }
-              }
+                _ <-
+                  if (hashedInc.ordinal > hashedFirstInc.ordinal) {
+                    lastNGlobalSnapshotStorage.set(hashedInc, updatedState)
+                  } else ().pure
+                _ <-
+                  if (hashedInc.ordinal > hashedFirstInc.ordinal) {
+                    lastGlobalSnapshotStorage.set(hashedInc, updatedState)
+                  } else ().pure
+                _ <-
+                  if (hashedInc.ordinal > hashedFirstInc.ordinal) {
+                    HasherSelector[F].forOrdinal(inc.ordinal)(implicit hasher => globalSnapshotStorage.prepend(inc, updatedState))
+                  } else ().pure
+              } yield (updatedState, inc)
           }
         } yield (info, lastInc)
       }
