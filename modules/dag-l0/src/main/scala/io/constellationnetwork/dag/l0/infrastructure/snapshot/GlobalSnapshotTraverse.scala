@@ -141,10 +141,18 @@ object GlobalSnapshotTraverse {
                       .map(_ -> inc)
                   } yield (hashed, context)
                 }
-
-                _ <- lastNGlobalSnapshotStorage.set(hashedInc, updatedState)
-                _ <- lastGlobalSnapshotStorage.set(hashedInc, updatedState)
-                _ <- HasherSelector[F].forOrdinal(inc.ordinal)(implicit hasher => globalSnapshotStorage.prepend(inc, updatedState))
+                _ <-
+                  if (hashedInc.ordinal > hashedFirstInc.ordinal) {
+                    lastNGlobalSnapshotStorage.set(hashedInc, updatedState)
+                  } else ().pure
+                _ <-
+                  if (hashedInc.ordinal > hashedFirstInc.ordinal) {
+                    lastGlobalSnapshotStorage.set(hashedInc, updatedState)
+                  } else ().pure
+                _ <-
+                  if (hashedInc.ordinal > hashedFirstInc.ordinal) {
+                    HasherSelector[F].forOrdinal(inc.ordinal)(implicit hasher => globalSnapshotStorage.prepend(inc, updatedState))
+                  } else ().pure
               } yield (updatedState, inc)
           }
         } yield (info, lastInc)
