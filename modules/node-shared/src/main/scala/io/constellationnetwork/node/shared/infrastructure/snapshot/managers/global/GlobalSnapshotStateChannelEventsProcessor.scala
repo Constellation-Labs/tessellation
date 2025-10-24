@@ -1,4 +1,4 @@
-package io.constellationnetwork.node.shared.infrastructure.snapshot
+package io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global
 
 import cats.Parallel
 import cats.data._
@@ -10,10 +10,10 @@ import scala.collection.immutable.SortedMap
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.cats.syntax.validated.validatedSyntax
 import io.constellationnetwork.json.JsonBrotliBinarySerializer
-import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.{StateChannelValidationError, getFeeAddresses}
 import io.constellationnetwork.node.shared.domain.statechannel._
+import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotContextFunctions
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance

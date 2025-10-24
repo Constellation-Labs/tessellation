@@ -1,20 +1,17 @@
 package io.constellationnetwork.currency.l0.snapshot.services
 
 import java.security.KeyPair
-
 import cats.Applicative
 import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.effect.std.Supervisor
 import cats.syntax.all._
-
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer, SizeCalculator}
 import io.constellationnetwork.node.shared.config.types.SnapshotSizeConfig
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSyncGlobalSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
-import io.constellationnetwork.node.shared.infrastructure.snapshot.DataApplicationSnapshotAcceptanceManager
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotArtifact
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.SnapshotOrdinal
@@ -27,9 +24,9 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
 import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
-
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.DataApplicationSnapshotAcceptanceManager
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait StateChannelSnapshotService[F[_]] {

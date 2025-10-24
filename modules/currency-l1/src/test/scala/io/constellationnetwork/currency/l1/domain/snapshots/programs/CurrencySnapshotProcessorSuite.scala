@@ -4,7 +4,6 @@ import cats.effect._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.Random
-
 import io.constellationnetwork.dag.l1.Main
 import io.constellationnetwork.env.AppEnvironment.Dev
 import io.constellationnetwork.ext.cats.effect.ResourceIO
@@ -26,10 +25,10 @@ import io.constellationnetwork.schema.transaction.{RewardTransaction, Transactio
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.transaction.TransactionGenerator
-
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
 import fs2.concurrent.SignallingRef
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.CurrencySnapshotAcceptanceManager
 import weaver.SimpleIOSuite
 
 object CurrencySnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {

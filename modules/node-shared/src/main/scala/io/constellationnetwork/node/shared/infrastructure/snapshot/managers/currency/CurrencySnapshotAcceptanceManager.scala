@@ -1,4 +1,4 @@
-package io.constellationnetwork.node.shared.infrastructure.snapshot
+package io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency
 
 import cats.data._
 import cats.effect.Async
@@ -29,6 +29,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.{
 }
 import io.constellationnetwork.node.shared.domain.transaction.FeeTransactionValidator
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencyBalanceAdjustments.metagraphsBalancesAdjustments
+import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencyMessageValidator, GlobalSnapshotSyncValidator}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact._
