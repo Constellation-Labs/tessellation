@@ -1,6 +1,5 @@
 package io.constellationnetwork.currency.l0.infrastructure.snapshot
 
-import cats.Parallel
 import cats.effect.Async
 import cats.syntax.all._
 

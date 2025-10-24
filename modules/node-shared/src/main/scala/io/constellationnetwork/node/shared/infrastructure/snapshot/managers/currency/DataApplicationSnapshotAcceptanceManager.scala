@@ -1,4 +1,4 @@
-package io.constellationnetwork.node.shared.infrastructure.snapshot
+package io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency
 
 import cats.Applicative
 import cats.data.Validated.{Invalid, Valid}
