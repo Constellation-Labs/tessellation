@@ -1,6 +1,7 @@
 package io.constellationnetwork.dag.l1.domain.snapshot.programs
 
 import java.security.KeyPair
+
 import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect._
 import cats.effect.std.Random
@@ -8,6 +9,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.DurationInt
+
 import io.constellationnetwork.dag.l1.Main
 import io.constellationnetwork.dag.l1.domain.address.storage.AddressStorage
 import io.constellationnetwork.dag.l1.domain.block.BlockStorage
@@ -37,6 +39,12 @@ import io.constellationnetwork.node.shared.infrastructure.block.processing.Block
 import io.constellationnetwork.node.shared.infrastructure.consensus.CurrencySnapshotEventValidationErrorStorage
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.CurrencySnapshotAcceptanceManager
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.{
+  GlobalSnapshotAcceptanceManager,
+  GlobalSnapshotStateChannelAcceptanceManager,
+  GlobalSnapshotStateChannelEventsProcessor
+}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
@@ -56,16 +64,11 @@ import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.Signed.forAsyncHasher
 import io.constellationnetwork.transaction.TransactionGenerator
+
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
 import fs2.concurrent.SignallingRef
 import io.chrisdavenport.mapref.MapRef
-import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.CurrencySnapshotAcceptanceManager
-import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.{
-  GlobalSnapshotAcceptanceManager,
-  GlobalSnapshotStateChannelAcceptanceManager,
-  GlobalSnapshotStateChannelEventsProcessor
-}
 import org.scalacheck.Gen.Parameters
 import org.scalacheck.rng.Seed
 import weaver.SimpleIOSuite

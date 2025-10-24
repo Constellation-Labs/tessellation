@@ -10,6 +10,7 @@ import cats.syntax.list._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.reflect.runtime.universe.TypeTag
+
 import io.constellationnetwork.currency.schema.currency.SnapshotFee
 import io.constellationnetwork.dag.l0.dagL0KryoRegistrar
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
@@ -50,6 +51,10 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{Con
 import io.constellationnetwork.node.shared.infrastructure.delegatedStake.{RewardsInfoCalculator, RewardsInfoStorage}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.{
+  GlobalSnapshotAcceptanceManager,
+  GlobalSnapshotStateChannelEventsProcessor
+}
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -66,13 +71,10 @@ import io.constellationnetwork.security.signature.SignedValidator.SignedValidati
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import io.constellationnetwork.syntax.sortedCollection._
+
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import io.circe.Encoder
-import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.{
-  GlobalSnapshotAcceptanceManager,
-  GlobalSnapshotStateChannelEventsProcessor
-}
 import org.scalacheck.Gen
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers

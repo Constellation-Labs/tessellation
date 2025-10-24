@@ -1,6 +1,7 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
 import java.security.KeyPair
+
 import cats.Parallel
 import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.std.Random
@@ -8,6 +9,7 @@ import cats.effect.{Async, IO, Resource}
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
+
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.env.AppEnvironment.Dev
 import io.constellationnetwork.ext.cats.effect.ResourceIO
@@ -20,6 +22,11 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlock
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.consensus.CurrencySnapshotEventValidationErrorStorage
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.CurrencySnapshotAcceptanceManager
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.{
+  GlobalSnapshotStateChannelAcceptanceManager,
+  GlobalSnapshotStateChannelEventsProcessor
+}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.schema._
@@ -38,14 +45,10 @@ import io.constellationnetwork.security.signature.Signed.forAsyncHasher
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 import io.constellationnetwork.shared.sharedKryoRegistrar
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
+
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
 import fs2.concurrent.SignallingRef
-import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.CurrencySnapshotAcceptanceManager
-import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.{
-  GlobalSnapshotStateChannelAcceptanceManager,
-  GlobalSnapshotStateChannelEventsProcessor
-}
 import weaver.MutableIOSuite
 object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
   val TestValidationErrorStorageMaxSize: PosInt = PosInt(16)

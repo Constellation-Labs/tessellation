@@ -316,8 +316,6 @@ object GlobalSnapshotAcceptanceManager {
         ], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]
       )(implicit hasher: Hasher[F]): F[(Option[io.constellationnetwork.merkletree.MerkleTree], SortedMap[Address, Proof])] =
         for {
-          merkleStartTime <- Async[F].delay(System.currentTimeMillis())
-
           result <- hasher.getLogic(ordinal) match {
             case JsonHash =>
               val maybeMerkleTree = updatedLastCurrencySnapshots.merkleTree[F]
@@ -367,12 +365,6 @@ object GlobalSnapshotAcceptanceManager {
 
               (maybeMerkleTree, updatedLastCurrencySnapshotProofs).tupled
           }
-
-          merkleEndTime <- Async[F].delay(System.currentTimeMillis())
-          _ <- logger.info(
-            s"--- [ORDINAL=$ordinal] Merkle tree operations completed in ${merkleEndTime - merkleStartTime}ms (parallelized)"
-          )
-
         } yield result
 
       private def cleanStateMaps(
@@ -522,15 +514,6 @@ object GlobalSnapshotAcceptanceManager {
 
         for {
           _ <- logger.debug(s"--- [ORDINAL=$ordinal] accept started")
-          _ <- logger.debug(
-            s"--- [ORDINAL=$ordinal] Active threads: ${Thread.activeCount()}, Current thread: ${Thread.currentThread().getName}"
-          )
-          _ <- Async[F].delay {
-            val runtime = Runtime.getRuntime
-            val usedMemory = runtime.totalMemory() - runtime.freeMemory()
-            val maxMemory = runtime.maxMemory()
-            logger.info(s"--- [ORDINAL=$ordinal] Memory usage: ${usedMemory / 1024 / 1024}MB / ${maxMemory / 1024 / 1024}MB")
-          }
 
           (acceptanceResult, delegatedStakeAcceptanceResult, acceptedUpdateNodeParametersTemp) <-
             acceptInitialData(
@@ -560,23 +543,6 @@ object GlobalSnapshotAcceptanceManager {
 
           acceptedTransactions = acceptanceResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
           updatedGlobalBalances = lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances
-
-          _ <- {
-            val runtime = Runtime.getRuntime
-            val usedMemory = runtime.totalMemory() - runtime.freeMemory()
-            val maxMemory = runtime.maxMemory()
-            val memoryUsagePercent = (usedMemory.toDouble / maxMemory.toDouble) * 100
-
-            logger.info(
-              s"--- [ORDINAL=$ordinal] Memory usage: ${usedMemory / 1024 / 1024}MB / ${maxMemory / 1024 / 1024}MB (${memoryUsagePercent.toInt}%)"
-            ) >>
-              logger.info(s"--- [ORDINAL=$ordinal] Balance entries: ${updatedGlobalBalances.size}") >>
-              logger.info(s"--- [ORDINAL=$ordinal] Currency snapshots: ${lastSnapshotContext.lastCurrencySnapshots.size}") >>
-              logger.info(s"--- [ORDINAL=$ordinal] Allow spends: ${lastSnapshotContext.activeAllowSpends.map(_.size).getOrElse(0)}") >>
-              logger.info(s"--- [ORDINAL=$ordinal] Token locks: ${lastSnapshotContext.activeTokenLocks.map(_.size).getOrElse(0)}") >>
-              logger.info(s"--- [ORDINAL=$ordinal] State channel snapshots: ${lastSnapshotContext.lastStateChannelSnapshotHashes.size}") >>
-              logger.info(s"--- [ORDINAL=$ordinal] Transaction refs: ${lastSnapshotContext.lastTxRefs.size}")
-          }
 
           StateChannelAcceptanceResult(
             scSnapshots,
@@ -865,14 +831,10 @@ object GlobalSnapshotAcceptanceManager {
 
           lastActiveGlobalAllowSpends = globalActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
 
-          hashStartTime <- Async[F].delay(System.nanoTime())
           allGlobalAllowSpends <- (globalAllowSpends |+| lastActiveGlobalAllowSpends).toList.parTraverse {
             case (address, allowSpends) =>
               allowSpends.toList.parTraverse(_.toHashed).map(address -> _)
           }.map(_.toSortedMap)
-          hashEndTime <- Async[F].delay(System.nanoTime())
-          hashDuration = (hashEndTime - hashStartTime) / 1_000_000
-          _ <- logger.info(s"--- [ORDINAL=$ordinal] allGlobalAllowSpends hashed in ${hashDuration}ms (parallelized)")
 
           globalSpendTransactions = acceptedSpendActions.flatMap {
             case (_, spendActions) =>
@@ -884,7 +846,6 @@ object GlobalSnapshotAcceptanceManager {
           _ <- logger.debug(s"--- [ORDINAL=$ordinal] Processing ${globalSpendTransactions.size} spend transactions")
           _ <- logger.debug(s"--- [ORDINAL=$ordinal] Processing ${allGlobalAllowSpends.size} allow spends")
 
-          spendTxStartTime <- Async[F].delay(System.currentTimeMillis())
           updatedBalancesBySpendTransactions = spendTransactionBalanceManager.updateGlobalBalancesBySpendTransactions(
             updatedBalancesByTokenLocks,
             allGlobalAllowSpends,
@@ -893,7 +854,6 @@ object GlobalSnapshotAcceptanceManager {
             case Right(balances) => balances
             case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by spend transactions: $error")
           }
-          spendTxEndTime <- Async[F].delay(System.currentTimeMillis())
 
           (maybeMerkleTree, updatedLastCurrencySnapshotProofs) <- buildMerkleTreeAndProofs(
             ordinal,
@@ -960,11 +920,7 @@ object GlobalSnapshotAcceptanceManager {
             updatedAcceptedMetagraphSyncData
           )
 
-          start <- Sync[F].monotonic
           stateProof <- gsi.stateProof(maybeMerkleTree)
-          end <- Sync[F].monotonic
-          duration = end - start
-          _ <- logger.debug(s"--- [ORDINAL=$ordinal] stateProof took ${duration.toMillis}ms")
 
           (expiredAllowSpends, expiredTokenLocks) <- (
             Async[F].pure(

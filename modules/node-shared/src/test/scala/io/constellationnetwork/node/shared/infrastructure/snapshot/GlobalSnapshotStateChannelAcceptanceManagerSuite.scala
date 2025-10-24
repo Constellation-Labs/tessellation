@@ -11,10 +11,12 @@ import cats.syntax.option._
 import cats.syntax.traverse._
 
 import scala.collection.immutable.SortedMap
+
 import io.constellationnetwork.currency.schema.currency.SnapshotFee
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.GlobalSnapshotStateChannelAcceptanceManager
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security._
@@ -23,9 +25,9 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.Signed.forAsyncHasher
 import io.constellationnetwork.shared.sharedKryoRegistrar
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
+
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
-import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.GlobalSnapshotStateChannelAcceptanceManager
 import org.scalacheck.Gen
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers

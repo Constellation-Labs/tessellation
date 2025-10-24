@@ -1,6 +1,7 @@
 package io.constellationnetwork.currency.l0.modules
 
 import java.security.KeyPair
+
 import cats.Parallel
 import cats.data.NonEmptySet
 import cats.effect.std.{Random, Supervisor}
@@ -8,6 +9,7 @@ import cats.effect.{Async, IO, Resource}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
+
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
 import io.constellationnetwork.currency.l0.config.types.AppConfig
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
@@ -46,6 +48,7 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
+
 import org.http4s.client.Client
 
 object Services {
