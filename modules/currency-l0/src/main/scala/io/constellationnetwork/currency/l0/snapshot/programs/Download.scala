@@ -34,6 +34,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.Ident
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.Peer
+import io.constellationnetwork.schema.snapshot.SnapshotMetadata
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher, HasherSelector}
@@ -113,10 +114,18 @@ object Download {
         }
     }
 
-    def start: F[DownloadResult] =
-      peerSelect.select.flatMap {
-        p2pClient.currencySnapshot.getLatest.run(_)
+    def start: F[DownloadResult] = {
+      val retryPolicy = RetryPolicies.exponentialBackoff[F](1.second).join(RetryPolicies.limitRetries(5))
+      retryingOnAllErrors[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)](
+        policy = retryPolicy,
+        onError = (err: Throwable, retryDetails: RetryDetails) =>
+          logger.error(err)(s"Error when trying to fetch latest metadata (attempt=${retryDetails.retriesSoFar}), selecting new peer")
+      ) {
+        peerSelect.select.flatMap {
+          p2pClient.currencySnapshot.getLatest.run(_)
+        }
       }
+    }
 
     def observe(result: DownloadResult)(implicit hasher: Hasher[F]): F[(DownloadResult, ObservationLimit)] = {
       val (lastSnapshot, _) = result

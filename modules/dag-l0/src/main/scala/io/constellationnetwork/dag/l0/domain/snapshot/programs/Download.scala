@@ -3,7 +3,7 @@ package io.constellationnetwork.dag.l0.domain.snapshot.programs
 import cats.effect.Async
 import cats.effect.std.Random
 import cats.syntax.all._
-import cats.{Applicative, Parallel}
+import cats.{Applicative, MonadError, Parallel}
 
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
@@ -35,6 +35,7 @@ import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry.RetryPolicies._
 import retry._
+import retry.implicits.retrySyntaxError
 
 object Download {
   def make[F[_]: Async: Parallel: Random: KryoSerializer](
@@ -115,8 +116,17 @@ object Download {
 
     def start(implicit hasherSelector: HasherSelector[F]): F[DownloadResult] = {
 
-      def getLatestMetadata: F[SnapshotMetadata] =
-        peerSelect.select.flatMap(p2pClient.globalSnapshot.getLatestMetadata.run(_))
+      def getLatestMetadata: F[SnapshotMetadata] = {
+        val retryPolicy = RetryPolicies.exponentialBackoff[F](1.second).join(RetryPolicies.limitRetries(5))
+
+        retryingOnAllErrors[SnapshotMetadata](
+          policy = retryPolicy,
+          onError = (err: Throwable, retryDetails: RetryDetails) =>
+            logger.error(err)(s"Error when trying to fetch latest metadata (attempt=${retryDetails.retriesSoFar}), selecting new peer")
+        ) {
+          peerSelect.select.flatMap(p2pClient.globalSnapshot.getLatestMetadata.run(_))
+        }
+      }
 
       def performInitialCleanup(metadata: SnapshotMetadata, result: Option[DownloadResult]): F[Unit] =
         Async[F].whenA(result.isEmpty)(
