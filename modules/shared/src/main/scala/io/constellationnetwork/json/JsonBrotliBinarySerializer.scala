@@ -1,15 +1,16 @@
 package io.constellationnetwork.json
 
+import java.io.{ByteArrayOutputStream, OutputStream}
+import java.nio.charset.StandardCharsets
+
 import cats.effect.kernel.Sync
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.syntax.all._
 
 import com.aayushatharva.brotli4j.Brotli4jLoader
-import com.aayushatharva.brotli4j.decoder.{Decoder => BrotliDecoder}
+import com.aayushatharva.brotli4j.decoder.Decoder.{decompress => brotliDecompress}
+import com.aayushatharva.brotli4j.encoder.BrotliOutputStream
 import com.aayushatharva.brotli4j.encoder.Encoder.Parameters
-import com.aayushatharva.brotli4j.encoder.{Encoder => BrotliEncoder}
 import io.circe.jawn.JawnParser
-import io.circe.syntax._
 import io.circe.{Decoder, Encoder, Printer}
 
 trait JsonBrotliBinarySerializer[F[_]] {
@@ -19,28 +20,64 @@ trait JsonBrotliBinarySerializer[F[_]] {
 
 object JsonBrotliBinarySerializer {
   private val compressionLevel = 2
+  private val parser = JawnParser(allowDuplicateKeys = false)
+  private val UTF8 = StandardCharsets.UTF_8
+  private val deterministicPrinter: Printer = Printer.noSpaces.copy(
+    dropNullValues = true,
+    sortKeys = true
+  )
+
+  private class OutputStreamAppendable(os: OutputStream) extends Appendable {
+    def append(csq: CharSequence): Appendable = { os.write(csq.toString.getBytes(UTF8)); this }
+    def append(csq: CharSequence, start: Int, end: Int): Appendable = {
+      os.write(csq.subSequence(start, end).toString.getBytes(UTF8)); this
+    }
+    def append(c: Char): Appendable = {
+      if (c < 128) os.write(c.toInt) else os.write(c.toString.getBytes(UTF8))
+      this
+    }
+  }
+
+  private def streamPrintAndCompress[A](content: A, printer: Printer, params: Parameters)(implicit enc: Encoder[A]): Array[Byte] = {
+    val baos = new ByteArrayOutputStream()
+    val brotli = new BrotliOutputStream(baos, params)
+    val appendable = new OutputStreamAppendable(brotli)
+
+    try
+      enc match {
+        case sce: StreamingCollectionEncoder[A] @unchecked =>
+          sce.streamEncode(content, printer, appendable)
+        case _ =>
+          printer.unsafePrintToAppendable(enc(content), appendable)
+      }
+    finally
+      brotli.close()
+
+    baos.toByteArray
+  }
 
   def apply[F[_]: JsonBrotliBinarySerializer]: JsonBrotliBinarySerializer[F] = implicitly
 
-  def forSync[F[_]: Sync]: F[JsonBrotliBinarySerializer[F]] = {
-    def printer = Printer(dropNullValues = false, indent = "")
-
-    forSync[F](printer)
-  }
+  def forSync[F[_]: Sync]: F[JsonBrotliBinarySerializer[F]] =
+    forSync[F](deterministicPrinter)
 
   def forSync[F[_]: Sync](printer: Printer): F[JsonBrotliBinarySerializer[F]] =
     Sync[F].delay(Brotli4jLoader.ensureAvailability()).map { _ =>
       new JsonBrotliBinarySerializer[F] {
+        private val params = new Parameters().setQuality(compressionLevel)
 
-        def serialize[A: Encoder](content: A): F[Array[Byte]] = {
-          val params = new Parameters().setQuality(compressionLevel)
-          Sync[F].blocking(BrotliEncoder.compress(content.asJson.printWith(printer).getBytes("UTF-8"), params))
-        }
+        def serialize[A: Encoder](content: A): F[Array[Byte]] =
+          Sync[F].blocking {
+            streamPrintAndCompress(content, printer, params)
+          }
 
         def deserialize[A: Decoder](content: Array[Byte]): F[Either[Throwable, A]] =
-          Sync[F]
-            .blocking(BrotliDecoder.decompress(content).getDecompressedData)
-            .flatMap(bytes => Sync[F].blocking(JawnParser(false).decodeByteArray[A](bytes)))
+          Sync[F].blocking {
+            val decompressed = brotliDecompress(content).getDecompressedData
+            parser
+              .parseByteBuffer(java.nio.ByteBuffer.wrap(decompressed))
+              .flatMap(_.as[A])
+          }
       }
     }
 }

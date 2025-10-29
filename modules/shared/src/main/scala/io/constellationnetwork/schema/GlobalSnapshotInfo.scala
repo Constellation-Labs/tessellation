@@ -8,6 +8,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.crypto._
+import io.constellationnetwork.json.StreamingJsonCodecs._
 import io.constellationnetwork.merkletree.syntax._
 import io.constellationnetwork.merkletree.{MerkleRoot, MerkleTree, Proof}
 import io.constellationnetwork.schema.ID.Id
@@ -28,8 +29,10 @@ import io.constellationnetwork.security.signature.Signed
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import io.circe._
 import io.circe.disjunctionCodecs._
-import io.circe.{KeyDecoder, KeyEncoder}
+import io.circe.generic.semiauto.deriveEncoder
+import io.circe.syntax.EncoderOps
 
 @derive(encoder, decoder, eqv, show)
 case class GlobalSnapshotInfoV1(
@@ -212,7 +215,7 @@ object GlobalSnapshotInfoV2 {
     )
 }
 
-@derive(encoder, decoder, eqv, show)
+@derive(decoder, eqv, show)
 case class GlobalSnapshotInfo(
   lastStateChannelSnapshotHashes: SortedMap[Address, Hash],
   lastTxRefs: SortedMap[Address, TransactionReference],
@@ -238,32 +241,23 @@ case class GlobalSnapshotInfo(
   def stateProof[F[_]: Parallel: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] = {
     import GlobalSnapshotInfo._
 
-    for {
-      // Hash large collections sequentially
-      balancesHash <- balances.hash
-      lastTxRefsHash <- lastTxRefs.hash
-      stateChannelHash <- lastStateChannelSnapshotHashes.hash
-
-      // Parallel operations
-      proof <- (
-        Sync[F].pure(stateChannelHash),
-        Sync[F].pure(lastTxRefsHash),
-        Sync[F].pure(balancesHash),
-        activeAllowSpends.parTraverse(_.hash),
-        activeTokenLocks.parTraverse(_.hash),
-        tokenLockBalances.parTraverse(_.hash),
-        lastAllowSpendRefs.parTraverse(_.hash),
-        lastTokenLockRefs.parTraverse(_.hash),
-        updateNodeParameters.parTraverse(_.hash),
-        activeDelegatedStakes.parTraverse(_.hash),
-        delegatedStakesWithdrawals.parTraverse(_.hash),
-        activeNodeCollaterals.parTraverse(_.hash),
-        nodeCollateralWithdrawals.parTraverse(_.hash),
-        priceState.parTraverse(_.hash),
-        metagraphSyncData.parTraverse(_.hash)
-      ).parMapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _, _, _))
-
-    } yield proof
+    (
+      lastStateChannelSnapshotHashes.hash,
+      lastTxRefs.hash,
+      balances.hash,
+      activeAllowSpends.traverse(_.hash),
+      activeTokenLocks.traverse(_.hash),
+      tokenLockBalances.traverse(_.hash),
+      lastAllowSpendRefs.traverse(_.hash),
+      lastTokenLockRefs.traverse(_.hash),
+      updateNodeParameters.traverse(_.hash),
+      activeDelegatedStakes.traverse(_.hash),
+      delegatedStakesWithdrawals.traverse(_.hash),
+      activeNodeCollaterals.traverse(_.hash),
+      nodeCollateralWithdrawals.traverse(_.hash),
+      priceState.traverse(_.hash),
+      metagraphSyncData.traverse(_.hash)
+    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _, _, _))
   }
 
   override def getActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = activeTokenLocks.getOrElse(SortedMap.empty)
@@ -273,6 +267,8 @@ case class GlobalSnapshotInfo(
 }
 
 object GlobalSnapshotInfo {
+  implicit val encoder: Encoder[GlobalSnapshotInfo] = deriveEncoder
+
   def empty = GlobalSnapshotInfo(
     SortedMap.empty,
     SortedMap.empty,
