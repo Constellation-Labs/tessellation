@@ -3,14 +3,7 @@ package io.constellationnetwork.merkletree
 import cats.data.NonEmptyList
 import cats.effect.Sync
 import cats.kernel.Eq
-import cats.syntax.applicative._
-import cats.syntax.either._
-import cats.syntax.eq._
-import cats.syntax.flatMap._
-import cats.syntax.foldable._
-import cats.syntax.functor._
-import cats.syntax.option._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import io.constellationnetwork.schema.{nonNegIntDecoder, nonNegIntEncoder}
 import io.constellationnetwork.security.hash.Hash
@@ -61,9 +54,9 @@ case class MerkleTree(leafCount: NonNegInt, nodes: NonEmptyList[Hash]) {
     MerkleRoot(leafCount, nodes.last)
 
   def findPath[F[_]: Sync](leaf: Hash): F[Option[Proof]] =
-    MerkleTree.hashLeaf(leaf).flatMap(hash => findPath[F](nodes.toList.indexOf(hash)))
+    MerkleTree.hashLeaf(leaf).map(hash => findPath(nodes.toList.indexOf(hash)))
 
-  def findPath[F[_]: Sync](index: Int): F[Option[Proof]] = Sync[F].delay(
+  def findPath(index: Int): Option[Proof] =
     if (index < 0 || index >= leafCount.value)
       None
     else {
@@ -106,7 +99,6 @@ case class MerkleTree(leafCount: NonNegInt, nodes: NonEmptyList[Hash]) {
         case _        => NonEmptyList.fromList(go()).map(Proof(_))
       }
     }
-  )
 }
 
 object MerkleTree {
@@ -128,25 +120,23 @@ object MerkleTree {
   def from[F[_]: Sync](items: NonEmptyList[Hash]): F[MerkleTree] = {
     val leafCount = NonNegInt.unsafeFrom(items.size) // Note: size cannot be less than 0
     items.traverse(hashLeaf[F]).flatMap { nodes =>
-      case class State(
-        mt: MerkleTree,
-        levelLen: Int,
-        levelStart: Int,
-        prevLevelLen: Int,
-        prevLevelStart: Int
-      )
-
-      def go(state: State): F[State] =
-        if (state.levelLen <= 0) {
-          state.pure[F]
-        } else {
-          val newMt = (0 to state.levelLen - 1).toList.foldLeftM(state.mt) {
+      def go(
+        mt: MerkleTree = MerkleTree(leafCount, nodes),
+        levelLen: Int = nextLevelLen(leafCount.value),
+        levelStart: Int = leafCount.value,
+        prevLevelLen: Int = leafCount.value,
+        prevLevelStart: Int = 0
+      ): F[MerkleTree] =
+        if (levelLen <= 0)
+          mt.pure[F]
+        else {
+          val newMt = (0 to levelLen - 1).toList.foldLeftM(mt) {
             case (prevMt, i) =>
               val prevLevelIdx = 2 * i;
-              val pointer = state.prevLevelStart + prevLevelIdx;
+              val pointer = prevLevelStart + prevLevelIdx;
               val leftSibling = prevMt.nodes.toList(pointer)
               val rightSibling =
-                if (prevLevelIdx + 1 < state.prevLevelLen)
+                if (prevLevelIdx + 1 < prevLevelLen)
                   prevMt.nodes.toList(pointer + 1)
                 else
                   prevMt.nodes.toList(pointer)
@@ -154,33 +144,10 @@ object MerkleTree {
               hashIntermediate[F](leftSibling, rightSibling).map(hash => MerkleTree(prevMt.leafCount, prevMt.nodes.append(hash)))
           }
 
-          newMt.map { updatedMt =>
-            State(
-              mt = updatedMt,
-              levelLen = nextLevelLen(state.levelLen),
-              levelStart = state.levelStart + state.levelLen,
-              prevLevelLen = state.levelLen,
-              prevLevelStart = state.levelStart
-            )
-          }
+          newMt.flatMap(go(_, nextLevelLen(levelLen), levelStart + levelLen, levelLen, levelStart))
         }
 
-      // Use tailRecM for stack-safe recursion
-      Sync[F].tailRecM(
-        State(
-          mt = MerkleTree(leafCount, nodes),
-          levelLen = nextLevelLen(leafCount.value),
-          levelStart = leafCount.value,
-          prevLevelLen = leafCount.value,
-          prevLevelStart = 0
-        )
-      ) { state =>
-        if (state.levelLen <= 0) {
-          state.mt.asRight[State].pure[F]
-        } else {
-          go(state).map(_.asLeft[MerkleTree])
-        }
-      }
+      go()
     }
   }
 }

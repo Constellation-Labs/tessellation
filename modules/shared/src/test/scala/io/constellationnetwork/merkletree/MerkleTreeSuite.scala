@@ -40,21 +40,19 @@ object MerkleTreeSuite extends SimpleIOSuite with Checkers {
   test("can find path when tree has many leaves") {
     forall(fixedHashesGen) {
       case hashes =>
-        for {
-          mt <- MerkleTree.from[IO](hashes)
-          path <- mt.findPath(0)
-        } yield expect.eql(true, path.isDefined)
+        MerkleTree.from[IO](hashes).map { mt =>
+          val path = mt.findPath(0)
+          expect.eql(true, path.isDefined)
+        }
     }
   }
 
   test("cannot find path for index out of range") {
     forall(fixedHashesGen) {
       case hashes =>
-        for {
-          mt <- MerkleTree.from[IO](hashes)
-          path11 <- mt.findPath(11)
-          path_1 <- mt.findPath(-1)
-        } yield expect.eql(true, path11.isEmpty).and(expect.eql(true, path_1.isEmpty))
+        MerkleTree.from[IO](hashes).map { mt =>
+          expect.eql(true, mt.findPath(11).isEmpty).and(expect.eql(true, mt.findPath(-1).isEmpty))
+        }
     }
   }
 
@@ -138,78 +136,4 @@ object MerkleTreeSuite extends SimpleIOSuite with Checkers {
       expect(result === expected)
     }
   }
-
-  test("stack safety with large input (10,000 leaves)") {
-    val largeHashes = NonEmptyList.fromListUnsafe(
-      (1 to 10000).map(i => Hash(s"hash_$i")).toList
-    )
-
-    for {
-      startTime <- IO(System.currentTimeMillis())
-      mt <- MerkleTree.from[IO](largeHashes)
-      endTime <- IO(System.currentTimeMillis())
-      duration = endTime - startTime
-    } yield
-      expect(mt.leafCount.value === 10000)
-        .and(expect(mt.nodes.length > 10000)) // Should have more nodes than leaves
-        .and(expect(duration < 30000)) // Should complete within 30 seconds
-  }
-
-  /*
-  test("stack safety with very large input (100,000 leaves)") {
-    val veryLargeHashes = NonEmptyList.fromListUnsafe(
-      (1 to 100000).map(i => Hash(s"hash_$i")).toList
-    )
-
-    for {
-      startTime <- IO(System.currentTimeMillis())
-      mt <- MerkleTree.from[IO](veryLargeHashes)
-      endTime <- IO(System.currentTimeMillis())
-      duration = endTime - startTime
-    } yield
-      expect(mt.leafCount.value === 100000)
-        .and(expect(mt.nodes.length > 100000)) // Should have more nodes than leaves
-        .and(expect(duration < 300000)) // Should complete within 5 minutes
-  }
-
-  test("stack safety with extremely large input (1,000,000 leaves)") {
-    val extremelyLargeHashes = NonEmptyList.fromListUnsafe(
-      (1 to 1000000).map(i => Hash(s"hash_$i")).toList
-    )
-
-    for {
-      startTime <- IO(System.currentTimeMillis())
-      mt <- MerkleTree.from[IO](extremelyLargeHashes)
-      endTime <- IO(System.currentTimeMillis())
-      duration = endTime - startTime
-    } yield
-      expect(mt.leafCount.value === 1000000)
-        .and(expect(mt.nodes.length > 1000000)) // Should have more nodes than leaves
-        .and(expect(duration < 1800000)) // Should complete within 30 minutes
-  }
-
-  test("performance comparison with different tree sizes") {
-    val sizes = List(100, 1000, 10000, 100000)
-
-    def testSize(size: Int): IO[(Int, Long)] = {
-      val hashes = NonEmptyList.fromListUnsafe(
-        (1 to size).map(i => Hash(s"hash_$i")).toList
-      )
-
-      for {
-        startTime <- IO(System.currentTimeMillis())
-        _ <- MerkleTree.from[IO](hashes)
-        endTime <- IO(System.currentTimeMillis())
-      } yield (size, endTime - startTime)
-    }
-
-    for {
-      results <- sizes.traverse(testSize)
-    } yield
-      // Verify all sizes completed successfully
-      expect(results.length === 4)
-        .and(expect(results.forall(_._2 > 0))) // All took some time
-        .and(expect(results.forall(_._2 < 300000))) // None took more than 5 minutes
-  }
-   */
 }

@@ -47,6 +47,7 @@ object Storages {
         snapshotConfig.incrementalPersistedSnapshotPath
       )
       snapshotInfoLocalFileSystemStorage <- CurrencySnapshotInfoLocalFileSystemStorage.make[F](snapshotConfig.snapshotInfoPath)
+
       snapshotStorage <- SnapshotStorage
         .make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           snapshotLocalFileSystemStorage,

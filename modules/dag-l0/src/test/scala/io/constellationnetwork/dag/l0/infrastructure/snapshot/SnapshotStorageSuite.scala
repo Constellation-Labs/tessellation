@@ -8,11 +8,7 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
-  GlobalIncrementalSnapshotLocalFileSystemStorage,
-  GlobalSnapshotInfoLocalFileSystemStorage,
-  SnapshotStorage
-}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage._
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.epoch.EpochProgress
@@ -41,6 +37,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
     GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](Path(tmpDir.pathAsString)).flatMap { snapshotFileStorage =>
       GlobalSnapshotInfoLocalFileSystemStorage.make[IO](Path(tmpDir.pathAsString)).flatMap { snapshotInfoFileStorage =>
         implicit val hs = HasherSelector.forSyncAlwaysCurrent(H)
+
         SnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
           snapshotFileStorage,
           snapshotInfoFileStorage,
@@ -49,6 +46,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
           hs
         )
       }
+
     }
 
   def mkSnapshots(

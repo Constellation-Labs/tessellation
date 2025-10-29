@@ -3,7 +3,7 @@ package io.constellationnetwork.dag.l0.domain.snapshot.programs
 import cats.effect.Async
 import cats.effect.std.Random
 import cats.syntax.all._
-import cats.{Applicative, MonadError, Parallel}
+import cats.{Applicative, Parallel}
 
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
@@ -35,7 +35,6 @@ import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry.RetryPolicies._
 import retry._
-import retry.implicits.retrySyntaxError
 
 object Download {
   def make[F[_]: Async: Parallel: Random: KryoSerializer](

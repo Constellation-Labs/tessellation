@@ -55,7 +55,6 @@ object Storages {
       incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage <- GlobalSnapshotInfoKryoLocalFileSystemStorage.make[F](
         snapshotConfig.snapshotInfoPath
       )
-
       globalSnapshotStorage <- SnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
         incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
         incrementalGlobalSnapshotInfoLocalFileSystemStorage,
