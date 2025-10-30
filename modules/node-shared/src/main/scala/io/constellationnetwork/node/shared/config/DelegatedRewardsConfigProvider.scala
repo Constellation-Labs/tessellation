@@ -28,6 +28,8 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
 
   val wallet1: Address = Address("DAG6bg5PHo9etT9wbnbxyDbnRdv7ge12RujwfeKR")
   val wallet23: Address = Address("DAG4ARHfARnth2EW94GNVhWwwtZV6hqMkYYAEf46")
+  val wallet4: Address = Address("DAG471pakWWz3ZAFvX5uhA7uyufSkv7E41Lh77Ge")
+  val mintEpoch1: EpochProgress = EpochProgress(NonNegLong.unsafeFrom(2_507_521L + 11_000L)) // approximately 11/6/2025
   val initialDagPrice: NonNegFraction = NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
 
   def getConfig(): DelegatedRewardsConfig = DelegatedRewardsConfig(
@@ -126,12 +128,10 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
       ),
       AppEnvironment.Integrationnet -> List(),
       AppEnvironment.Mainnet -> List(
-        OneTimeReward(EpochProgress(2957280L), wallet1, TransactionAmount(22_088_904_680_692_84L)),
-        OneTimeReward(
-          EpochProgress(2957280L),
-          wallet23,
-          TransactionAmount(3_525_684_639_889_21L)
-        ) // 3_168_965_177_964_44L + 356_719_461_924_77L = 3_525_684_639_889_21L
+        OneTimeReward(mintEpoch1, wallet1, TransactionAmount(22_088_904_680_692_84L)),
+        // 3_168_965_177_964_44L + 356_719_461_924_77L = 3_525_684_639_889_21L
+        OneTimeReward(mintEpoch1, wallet23, TransactionAmount(3_525_684_639_889_21L)),
+        OneTimeReward(mintEpoch1, wallet4, TransactionAmount(12_190_277_806_927_26L))
       )
     ),
     priceOracleEpoch = Map(
