@@ -321,6 +321,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         LastNGlobalSnapshotStorage.make[IO](lastGlobalSnapshotsSyncConfig, lastNSnapR, incLastNSnapR)
       lastGlobalSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
 
+      currencyTokenLockAcceptanceManager = CurrencyTokenLockAcceptanceManager.make[IO]
       currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager.make(
         FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
         Dev,
@@ -328,6 +329,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, txHasher),
         TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
         AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
+        currencyTokenLockAcceptanceManager,
         Amount(0L),
         validators.currencyMessageValidator,
         validators.feeTransactionValidator,
@@ -368,6 +370,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         validators.updateNodeCollateralValidator
       )
       priceStateUpdater = PriceStateUpdater.make(Dev, DefaultDelegatedRewardsConfigProvider)
+      globalTokenLockAcceptanceManager = GlobalTokenLockAcceptanceManager.make[IO]
 
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager
         .make[IO](
@@ -384,6 +387,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           validators.spendActionValidator,
           validators.pricingUpdateValidator,
           priceStateUpdater,
+          globalTokenLockAcceptanceManager,
           Amount.empty,
           EpochProgress(NonNegLong(136080L))
         )

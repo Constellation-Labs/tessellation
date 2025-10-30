@@ -323,6 +323,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     val pricingUpdateValidator = PricingUpdateValidator.make[IO](None, NonNegLong(0))
     val priceStateUpdater = PriceStateUpdater.make(Dev, delegatedRewardsConfigProvider)
 
+    val globalTokenLockAcceptanceManager = GlobalTokenLockAcceptanceManager.make[IO]
     val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
       GlobalSnapshotAcceptanceManager
         .make[IO](
@@ -339,6 +340,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
           spendActionValidator,
           pricingUpdateValidator,
           priceStateUpdater,
+          globalTokenLockAcceptanceManager,
           collateral,
           EpochProgress(NonNegLong(136080L))
         )

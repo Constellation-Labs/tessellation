@@ -73,6 +73,7 @@ object CurrencySnapshotProcessorSuite extends SimpleIOSuite with TransactionGene
             LastNGlobalSnapshotStorage.make[IO](lastGlobalSnapshotsSyncConfig, lastNSnapR, incLastNSnapR)
           lastGlobalSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
 
+          currencyTokenLockAcceptanceManager = CurrencyTokenLockAcceptanceManager.make[IO]
           currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager
             .make(
               FieldsAddedOrdinals(
@@ -92,6 +93,7 @@ object CurrencySnapshotProcessorSuite extends SimpleIOSuite with TransactionGene
               BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
               TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
               AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
+              currencyTokenLockAcceptanceManager,
               Amount(0L),
               validators.currencyMessageValidator,
               validators.feeTransactionValidator,

@@ -32,6 +32,7 @@ import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
 import io.constellationnetwork.node.shared.infrastructure.delegatedStake.{RewardsInfoCalculator, RewardsInfoStorage}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
+import io.constellationnetwork.node.shared.infrastructure.rewards.GlobalDelegatedRewardsDistributor
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages, SharedValidators}
 import io.constellationnetwork.schema.address.Address

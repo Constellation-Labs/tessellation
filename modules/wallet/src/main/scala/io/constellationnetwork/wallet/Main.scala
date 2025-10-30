@@ -183,7 +183,7 @@ object Main
                         _ <- writeJson[IO, Signed[UpdateNodeParameters]](Some(Path.apply("event")))(sign)
                       } yield ()
                     }
-                  case CreateTokenLock(fee, amount, parent, cur, unlock) =>
+                  case CreateTokenLock(fee, amount, parent, cur, unlock, replaceTokenLockRef) =>
                     implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
                     toExitCode("Error while creating or signing event") {
                       val lastRef = parent match {
@@ -202,7 +202,8 @@ object Main
                               TokenLockFee(fee.value),
                               p,
                               cur.map(x => x.toCurrencyId),
-                              unlock.map(x => EpochProgress.apply(NonNegLong.unsafeFrom(x)))
+                              unlock.map(x => EpochProgress.apply(NonNegLong.unsafeFrom(x))),
+                              replaceTokenLockRef
                             ),
                             keyPair
                           )

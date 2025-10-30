@@ -157,6 +157,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 LastNGlobalSnapshotStorage.make[IO](lastGlobalSnapshotsSyncConfig, lastNSnapR, incLastNSnapR)
               lastGlobalSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
 
+              currencyTokenLockAcceptanceManager = CurrencyTokenLockAcceptanceManager.make[IO]
               currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager
                 .make(
                   FieldsAddedOrdinals(
@@ -176,6 +177,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
                   TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
                   AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
+                  currencyTokenLockAcceptanceManager,
                   Amount(0L),
                   validators.currencyMessageValidator,
                   validators.feeTransactionValidator,
@@ -209,6 +211,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               updateNodeCollateralAcceptanceManager = UpdateNodeCollateralAcceptanceManager
                 .make(validators.updateNodeCollateralValidator)
               priceStateUpdater = PriceStateUpdater.make(Dev, DefaultDelegatedRewardsConfigProvider)
+              globalTokenLockAcceptanceManager = GlobalTokenLockAcceptanceManager.make[IO]
 
               globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
                 FieldsAddedOrdinals(
@@ -242,6 +245,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 validators.spendActionValidator,
                 validators.pricingUpdateValidator,
                 priceStateUpdater,
+                globalTokenLockAcceptanceManager,
                 Amount(0L),
                 EpochProgress(NonNegLong(136080L))
               )

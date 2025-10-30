@@ -459,7 +459,7 @@ lazy val tools = (project in file("modules/tools"))
 lazy val dagL0 = (project in file("modules/dag-l0"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, nodeShared)
+  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, nodeShared % "compile->compile;test->test")
   .settings(
     name := "tessellation-dag-l0",
     Defaults.itSettings,
