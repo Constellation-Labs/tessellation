@@ -92,10 +92,8 @@ object Hasher {
   }
 
   def forJson[F[_]: Sync: JsonSerializer]: Hasher[F] =
-    sys.env.get("CL_CACHE_JSON_HASH").exists(_.toLowerCase == "true") match {
-      case true  => forJsonCached[F]
-      case false => forJsonUncached[F]
-    }
+    if (sys.env.get("CL_DISABLE_HASH_CACHE").exists(_.toLowerCase == "true")) forJsonUncached[F]
+    else forJsonCached[F]
 
   def forJsonCached[F[_]: Sync: JsonSerializer]: Hasher[F] = {
     val cache: Cache[Any, Hash] = Scaffeine()
