@@ -3,12 +3,15 @@ package io.constellationnetwork.security
 import cats.effect.kernel.Sync
 import cats.syntax.all._
 
+import scala.concurrent.duration._
+
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencyIncrementalSnapshotV1}
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, GlobalSnapshotInfoV2, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 
+import com.github.blemale.scaffeine.{Cache, Scaffeine}
 import eu.timepit.refined.auto._
 import io.circe.Encoder
 
@@ -88,7 +91,47 @@ object Hasher {
       hashKryo(data)
   }
 
-  def forJson[F[_]: Sync: JsonSerializer]: Hasher[F] = new Hasher[F] {
+  def forJson[F[_]: Sync: JsonSerializer]: Hasher[F] =
+    if (sys.env.get("CL_DISABLE_HASH_CACHE").exists(_.toLowerCase == "true")) forJsonUncached[F]
+    else forJsonCached[F]
+
+  def forJsonCached[F[_]: Sync: JsonSerializer]: Hasher[F] = {
+    val cache: Cache[Any, Hash] = Scaffeine()
+      .recordStats()
+      .expireAfterAccess(5.minutes)
+      .maximumSize(10000)
+      .softValues()
+      .build[Any, Hash]()
+
+    new Hasher[F] {
+      def getLogic(ordinal: SnapshotOrdinal): HashLogic = JsonHash
+
+      def compare[A: Encoder](data: A, expectedHash: Hash): F[Boolean] =
+        hashJson(data).map(_ === expectedHash)
+
+      def hashJson[A: Encoder](data: A): F[Hash] =
+        Sync[F].delay(cache.getIfPresent(data)).flatMap {
+          case Some(hash) => hash.pure[F]
+          case None =>
+            computeHash(data).flatTap { hash =>
+              Sync[F].delay(cache.put(data, hash))
+            }
+        }
+
+      private def computeHash[A: Encoder](data: A): F[Hash] =
+        (data match {
+          case d: Encodable[_] =>
+            JsonSerializer[F].serialize(d.toEncode)(d.jsonEncoder)
+          case _ =>
+            JsonSerializer[F].serialize[A](data)
+        }).map(Hash.fromBytes)
+
+      def hash[A: Encoder](data: A): F[Hash] =
+        hashJson(data)
+    }
+  }
+
+  def forJsonUncached[F[_]: Sync: JsonSerializer]: Hasher[F] = new Hasher[F] {
     def getLogic(ordinal: SnapshotOrdinal): HashLogic = JsonHash
 
     def compare[A: Encoder](data: A, expectedHash: Hash): F[Boolean] =

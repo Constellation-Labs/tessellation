@@ -50,6 +50,7 @@ object Dependencies {
     val semanticDB = "4.13.1.1"
     val weaver = "0.8.1"
     val jol = "0.17"
+    val scaffeine = "5.2.1"
   }
 
   object Libraries {
@@ -172,6 +173,8 @@ object Dependencies {
     val shapeless = "com.chuusai" %% "shapeless" % V.shapeless
 
     val mapref = "io.chrisdavenport" %% "mapref" % V.mapref
+
+    val scaffeine = "com.github.blemale" %% "scaffeine" % V.scaffeine
 
     val pureconfigCore = "com.github.pureconfig" %% "pureconfig" % V.pureconfig
     val pureconfigCats = pureconfig("cats")
