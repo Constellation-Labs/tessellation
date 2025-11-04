@@ -17,10 +17,12 @@ import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 
+import com.google.common.html.HtmlEscapers
 import derevo.cats.{eqv, show}
 import derevo.derive
 import eu.timepit.refined.cats.refTypeOrder
 import eu.timepit.refined.types.numeric.PosInt
+import io.micrometer.core.instrument.util.StringEscapeUtils
 
 trait UpdateNodeParametersValidator[F[_]] {
 
@@ -90,10 +92,16 @@ object UpdateNodeParametersValidator {
           TooLargeName(name, maxChars).invalidNec[Signed[UpdateNodeParameters]]
         } else if (description.length > maxChars) {
           TooLargeDescription(description, maxChars).invalidNec[Signed[UpdateNodeParameters]]
+        } else if (name.isEmpty || !validUserInput(name)) {
+          InvalidName(name).invalidNec[Signed[UpdateNodeParameters]]
+        } else if (description.isEmpty || !validUserInput(description)) {
+          InvalidDescription(description).invalidNec[Signed[UpdateNodeParameters]]
         } else {
           signed.validNec[UpdateNodeParametersValidationError]
         }
       }
+
+      private def validUserInput(userInput: String): Boolean = userInput.forall(ch => ch > 31 && ch < 127)
 
       private def validateRewardFraction(
         signed: Signed[UpdateNodeParameters]
@@ -153,6 +161,8 @@ object UpdateNodeParametersValidator {
   case class NodeNotInSeedList(nodeId: PeerId) extends UpdateNodeParametersValidationError
   case class TooLargeName(name: String, maxChars: Int) extends UpdateNodeParametersValidationError
   case class TooLargeDescription(description: String, maxChars: Int) extends UpdateNodeParametersValidationError
+  case class InvalidName(name: String) extends UpdateNodeParametersValidationError
+  case class InvalidDescription(description: String) extends UpdateNodeParametersValidationError
 
   type UpdateNodeParametersValidationErrorOr[A] = ValidatedNec[UpdateNodeParametersValidationError, A]
 }

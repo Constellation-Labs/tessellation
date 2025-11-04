@@ -39,17 +39,18 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
     h = Hasher.forJson[IO]
   } yield (j, h, sp)
 
-  def testUpdateNodeParameters(source: Address): UpdateNodeParameters = UpdateNodeParameters(
-    source = source,
-    delegatedStakeRewardParameters = DelegatedStakeRewardParameters(
-      rewardFraction = RewardFraction(5_000_000)
-    ),
-    nodeMetadataParameters = NodeMetadataParameters(
-      name = "name",
-      description = "description"
-    ),
-    parent = UpdateNodeParametersReference.empty
-  )
+  def testUpdateNodeParameters(source: Address, name: String = "name", description: String = "description"): UpdateNodeParameters =
+    UpdateNodeParameters(
+      source = source,
+      delegatedStakeRewardParameters = DelegatedStakeRewardParameters(
+        rewardFraction = RewardFraction(5_000_000)
+      ),
+      nodeMetadataParameters = NodeMetadataParameters(
+        name = name,
+        description = description
+      ),
+      parent = UpdateNodeParametersReference.empty
+    )
 
   test("should succeed when the node parameters are signed correctly and the reward value is at the lower bound") { res =>
     implicit val (json, h, sp) = res
@@ -288,6 +289,174 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
       validator = mkValidator(Set(peerId))
       result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
     } yield expect.same(UpdateNodeParametersValidator.TooLargeDescription(invalidDescription, 140).invalidNec, result)
+  }
+
+  test("should succeed when name and description contains printable ASCII characters") { res =>
+    implicit val (json, h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
+      validTestUpdateNodeParameters = testUpdateNodeParameters(source, name = "Simple Node Name", description = "Valid description")
+      signedUpdateNodeParameters <- forAsyncHasher(validTestUpdateNodeParameters, keyPair)
+      validator = mkValidator(Set(peerId))
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
+    } yield expect.same(Valid(signedUpdateNodeParameters), result)
+  }
+
+  test("should succeed when name contains alphanumeric and punctuation") { res =>
+    implicit val (json, h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
+      validTestUpdateNodeParameters = testUpdateNodeParameters(source, name = "Node-123_Test!@#$%", description = "Valid description")
+      signedUpdateNodeParameters <- forAsyncHasher(validTestUpdateNodeParameters, keyPair)
+      validator = mkValidator(Set(peerId))
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
+    } yield expect.same(Valid(signedUpdateNodeParameters), result)
+  }
+
+  test("should succeed when name contains HTML special characters") { res =>
+    implicit val (json, h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
+      validTestUpdateNodeParameters = testUpdateNodeParameters(source, name = "Node <Name> & More", description = "Valid description")
+      signedUpdateNodeParameters <- forAsyncHasher(validTestUpdateNodeParameters, keyPair)
+      validator = mkValidator(Set(peerId))
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
+    } yield expect.same(Valid(signedUpdateNodeParameters), result)
+  }
+
+  test("should fail when name contains ASCII characters mixed with non-ASCII") { res =>
+    implicit val (json, h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
+      validTestUpdateNodeParameters = testUpdateNodeParameters(source, name = "Name όνομα", description = "Valid description")
+      signedUpdateNodeParameters <- forAsyncHasher(validTestUpdateNodeParameters, keyPair)
+      validator = mkValidator(Set(peerId))
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
+    } yield expect.same(UpdateNodeParametersValidator.InvalidName("Name όνομα").invalidNec, result)
+  }
+
+  test("should fail when name is empty") { res =>
+    implicit val (json, h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
+      invalidTestUpdateNodeParameters = testUpdateNodeParameters(source, name = "", description = "Valid description")
+      signedUpdateNodeParameters <- forAsyncHasher(invalidTestUpdateNodeParameters, keyPair)
+      validator = mkValidator(Set(peerId))
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
+    } yield expect.same(UpdateNodeParametersValidator.InvalidName("").invalidNec, result)
+  }
+
+  test("should fail when description is empty") { res =>
+    implicit val (json, h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
+      invalidTestUpdateNodeParameters = testUpdateNodeParameters(source, name = "Valid name", description = "")
+      signedUpdateNodeParameters <- forAsyncHasher(invalidTestUpdateNodeParameters, keyPair)
+      validator = mkValidator(Set(peerId))
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
+    } yield expect.same(UpdateNodeParametersValidator.InvalidDescription("").invalidNec, result)
+  }
+
+  test("should fail when name contains only control characters") { res =>
+    implicit val (json, h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
+      invalidTestUpdateNodeParameters = testUpdateNodeParameters(source, name = "\t\n\r", description = "Valid description")
+      signedUpdateNodeParameters <- forAsyncHasher(invalidTestUpdateNodeParameters, keyPair)
+      validator = mkValidator(Set(peerId))
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
+    } yield expect.same(UpdateNodeParametersValidator.InvalidName("\t\n\r").invalidNec, result)
+  }
+
+  test("should fail when name contains only DEL character") { res =>
+    implicit val (json, h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
+      invalidTestUpdateNodeParameters = testUpdateNodeParameters(source, name = "\u007F", description = "Valid description")
+      signedUpdateNodeParameters <- forAsyncHasher(invalidTestUpdateNodeParameters, keyPair)
+      validator = mkValidator(Set(peerId))
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
+    } yield expect.same(UpdateNodeParametersValidator.InvalidName("\u007F").invalidNec, result)
+  }
+
+  test("should fail when name contains only non-ASCII characters") { res =>
+    implicit val (json, h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
+      invalidTestUpdateNodeParameters = testUpdateNodeParameters(source, name = "όνομα", description = "Valid description")
+      signedUpdateNodeParameters <- forAsyncHasher(invalidTestUpdateNodeParameters, keyPair)
+      validator = mkValidator(Set(peerId))
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
+    } yield expect.same(UpdateNodeParametersValidator.InvalidName("όνομα").invalidNec, result)
+  }
+
+  test("should fail when description contains only non-ASCII characters") { res =>
+    implicit val (json, h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
+      invalidTestUpdateNodeParameters = testUpdateNodeParameters(source, name = "Valid name", description = "περιγραφή")
+      signedUpdateNodeParameters <- forAsyncHasher(invalidTestUpdateNodeParameters, keyPair)
+      validator = mkValidator(Set(peerId))
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
+    } yield expect.same(UpdateNodeParametersValidator.InvalidDescription("περιγραφή").invalidNec, result)
+  }
+
+  test("should fail when name contains only null character") { res =>
+    implicit val (json, h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
+      invalidTestUpdateNodeParameters = testUpdateNodeParameters(source, name = "\u0000", description = "Valid description")
+      signedUpdateNodeParameters <- forAsyncHasher(invalidTestUpdateNodeParameters, keyPair)
+      validator = mkValidator(Set(peerId))
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
+    } yield expect.same(UpdateNodeParametersValidator.InvalidName("\u0000").invalidNec, result)
+  }
+
+  test("should succeed when name starts with control character but contains printable ASCII") { res =>
+    implicit val (json, h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      source = keyPair.getPublic.toAddress
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
+      validTestUpdateNodeParameters = testUpdateNodeParameters(source, name = "\tNode Name", description = "Valid description")
+      signedUpdateNodeParameters <- forAsyncHasher(validTestUpdateNodeParameters, keyPair)
+      validator = mkValidator(Set(peerId))
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext())
+    } yield expect.same(UpdateNodeParametersValidator.InvalidName("\tNode Name").invalidNec, result)
   }
 
   private def mkValidator(peersList: Set[PeerId])(
