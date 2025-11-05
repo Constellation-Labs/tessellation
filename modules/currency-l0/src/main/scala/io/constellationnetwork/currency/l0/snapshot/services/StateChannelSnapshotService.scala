@@ -14,7 +14,7 @@ import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer,
 import io.constellationnetwork.node.shared.config.types.SnapshotSizeConfig
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSyncGlobalSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
-import io.constellationnetwork.node.shared.infrastructure.snapshot.DataApplicationSnapshotAcceptanceManager
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.DataApplicationSnapshotAcceptanceManager
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotArtifact
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.SnapshotOrdinal

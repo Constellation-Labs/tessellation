@@ -41,6 +41,12 @@ import io.constellationnetwork.node.shared.infrastructure.block.processing.{Bloc
 import io.constellationnetwork.node.shared.infrastructure.consensus.CurrencySnapshotEventValidationErrorStorage
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.CurrencySnapshotAcceptanceManager
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.{
+  GlobalSnapshotAcceptanceManager,
+  GlobalSnapshotStateChannelAcceptanceManager,
+  GlobalSnapshotStateChannelEventsProcessor
+}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.schema._

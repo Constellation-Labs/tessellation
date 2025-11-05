@@ -8,7 +8,9 @@ import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.validated._
 
-import io.constellationnetwork.currency.schema.currency.SnapshotFee
+import scala.collection.immutable.SortedMap
+
+import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.syntax.validated._
 import io.constellationnetwork.json.{JsonSerializer, SizeCalculator}
@@ -49,6 +51,13 @@ trait StateChannelValidator[F[_]] {
 object StateChannelValidator {
   def getFeeAddresses(info: GlobalSnapshotInfo): Map[Address, Set[Address]] =
     info.lastCurrencySnapshots.collect {
+      case (address, Right((_, info))) => address -> info.lastMessages.toList.flatMap(_.values.map(_.address).toList).toSet
+    }
+
+  def getFeeAddresses(
+    lastCurrencySnapshots: SortedMap[Address, Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]
+  ): Map[Address, Set[Address]] =
+    lastCurrencySnapshots.collect {
       case (address, Right((_, info))) => address -> info.lastMessages.toList.flatMap(_.values.map(_.address).toList).toSet
     }
 

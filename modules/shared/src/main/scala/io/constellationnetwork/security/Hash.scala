@@ -4,7 +4,6 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 
 import cats.effect.Sync
-import cats.syntax.functor._
 import cats.{Eq, Show}
 
 import io.constellationnetwork.ext.derevo.ordering
@@ -27,7 +26,6 @@ object hash {
 
   object Hash {
     private val hexDigits = "0123456789abcdef".toCharArray
-    private val sha256 = MessageDigest.getInstance("SHA-256")
 
     case class Sha256Digest(private val bytes: Array[Byte]) {
       def toByteArray: Array[Byte] = Array.copyOf(bytes, bytes.length)
@@ -52,18 +50,17 @@ object hash {
       Hashing.sha256().hashBytes(bytes)
 
     def sha256DigestFromBytes(bytes: Array[Byte]): Sha256Digest = {
-      val md = sha256.clone().asInstanceOf[MessageDigest]
+      // SIMPLE: Create new instance each time (thread-safe, no ThreadLocal issues)
+      val md = MessageDigest.getInstance("SHA-256")
       md.update(bytes)
       Sha256Digest(md.digest())
     }
-
-    def sha256DigestFromBytesForSync[F[_]: Sync](bytes: Array[Byte]): F[Sha256Digest] = Sync[F].blocking(sha256DigestFromBytes(bytes))
 
     def fromBytes(bytes: Array[Byte]): Hash =
       Hash(sha256DigestFromBytes(bytes).toHexString)
 
     def fromBytesForSync[F[_]: Sync](bytes: Array[Byte]): F[Hash] =
-      sha256DigestFromBytesForSync[F](bytes).map(digest => Hash(digest.toHexString))
+      Sync[F].blocking(fromBytes(bytes))
 
     def empty: Hash = Hash(s"%064d".format(0))
 

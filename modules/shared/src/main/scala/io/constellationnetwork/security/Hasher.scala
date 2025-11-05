@@ -1,6 +1,6 @@
 package io.constellationnetwork.security
 
-import cats.effect.kernel.Sync
+import cats.effect.kernel.{Ref, Sync}
 import cats.syntax.all._
 
 import scala.concurrent.duration._

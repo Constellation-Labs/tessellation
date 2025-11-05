@@ -34,6 +34,12 @@ import io.constellationnetwork.node.shared.infrastructure.healthcheck.LocalHealt
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.CurrencySnapshotAcceptanceManager
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.{
+  GlobalSnapshotAcceptanceManager,
+  GlobalSnapshotStateChannelAcceptanceManager,
+  GlobalSnapshotStateChannelEventsProcessor
+}
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.epoch.EpochProgress

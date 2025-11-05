@@ -13,6 +13,7 @@ import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceManager
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.TimeTrigger
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.GlobalSnapshotAcceptanceManager
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address

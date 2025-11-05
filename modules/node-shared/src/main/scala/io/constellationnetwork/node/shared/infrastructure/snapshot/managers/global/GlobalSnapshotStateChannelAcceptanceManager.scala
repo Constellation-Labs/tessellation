@@ -1,4 +1,4 @@
-package io.constellationnetwork.node.shared.infrastructure.snapshot
+package io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global
 
 import cats.Eval
 import cats.data.{NonEmptyChain, NonEmptyList, NonEmptySet}
