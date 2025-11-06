@@ -1,7 +1,9 @@
 package io.constellationnetwork.node.shared.http.routes
 
-import cats.effect.Async
+import cats.effect._
 import cats.syntax.all._
+
+import scala.concurrent.duration._
 
 import io.constellationnetwork.ext.http4s.HashVar
 import io.constellationnetwork.ext.http4s.headers.negotiation.resolveEncoder
@@ -17,8 +19,10 @@ import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotMetadata}
 import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.signature.Signed
 
+import fs2.Stream
 import io.circe.Encoder
 import io.circe.shapes._
+import io.circe.syntax._
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.circe.CirceEntityEncoder
 import org.http4s.dsl.Http4sDsl
@@ -33,7 +37,9 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, C: Encoder]
   prefixPath: InternalUrlPrefix,
   nodeStorage: NodeStorage[F],
   hasherSelector: HasherSelector[F],
-  snapshotTimeoutsConfig: SnapshotTimeoutsConfig
+  snapshotTimeoutsConfig: SnapshotTimeoutsConfig,
+  limiterLatestCombined: RateLimiter[F],
+  limiterLatestCombinedStream: RateLimiter[F]
 ) extends Http4sDsl[F]
     with PublicRoutes[F]
     with P2PRoutes[F] {
@@ -88,17 +94,48 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, C: Encoder]
         )
 
     case req @ GET -> Root / "latest" / "combined" =>
-      nodeStorage.getNodeState
-        .map(validStateForSnapshotReturn)
-        .ifM(
-          resolveEncoder[F, (Signed[S], C)](req) { implicit enc =>
-            snapshotStorage.head.flatMap {
-              case Some(snapshot) => Ok(snapshot)
-              case _              => NotFound()
-            }
-          },
-          serviceUnavailableNodeNotReady
-        )
+      limiterLatestCombined.check.flatMap {
+        case false =>
+          TooManyRequests(("message" ->> s"Rate limit: one request every ${limiterLatestCombined.getInterval} seconds") :: HNil)
+        case true =>
+          nodeStorage.getNodeState
+            .map(validStateForSnapshotReturn)
+            .ifM(
+              resolveEncoder[F, (Signed[S], C)](req) { implicit enc =>
+                snapshotStorage.head.flatMap {
+                  case Some(snapshot) => Ok(snapshot)
+                  case _              => NotFound()
+                }
+              },
+              serviceUnavailableNodeNotReady
+            )
+      }
+
+    case GET -> Root / "latest" / "combined" / "stream" =>
+      limiterLatestCombinedStream.check.flatMap {
+        case false =>
+          TooManyRequests(
+            ("message" ->> s"Rate limit: one request every ${limiterLatestCombinedStream.getInterval} seconds") :: HNil
+          )
+
+        case true =>
+          nodeStorage.getNodeState
+            .map(validStateForSnapshotReturn)
+            .ifM(
+              snapshotStorage.head.flatMap {
+                case Some(snapshot) =>
+                  val json = snapshot.asJson.noSpaces
+                  val stream: Stream[F, Byte] =
+                    Stream.emit(json).through(fs2.text.utf8.encode)
+
+                  Ok(stream, org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
+
+                case None =>
+                  NotFound()
+              },
+              serviceUnavailableNodeNotReady
+            )
+      }
 
     case req @ GET -> Root / SnapshotOrdinalVar(ordinal) :? FullSnapshotQueryParam(fullSnapshot) =>
       nodeStorage.getNodeState
@@ -155,4 +192,52 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, C: Encoder]
 
   protected val public: HttpRoutes[F] = httpRoutes
   protected val p2p: HttpRoutes[F] = httpRoutes
+}
+
+object SnapshotRoutes {
+  def make[F[_]: Async, S <: Snapshot: Encoder, C: Encoder](
+    snapshotStorage: SnapshotStorage[F, S, C],
+    fullGlobalSnapshotStorage: Option[SnapshotLocalFileSystemStorage[F, GlobalSnapshot]],
+    prefixPath: InternalUrlPrefix,
+    nodeStorage: NodeStorage[F],
+    hasherSelector: HasherSelector[F],
+    snapshotTimeoutsConfig: SnapshotTimeoutsConfig
+  ): F[SnapshotRoutes[F, S, C]] =
+    for {
+      limiterLatestCombined <- RateLimiter.make[F](10.seconds)
+      limiterLatestCombinedStream <- RateLimiter.make[F](1.seconds)
+    } yield
+      new SnapshotRoutes[F, S, C](
+        snapshotStorage,
+        fullGlobalSnapshotStorage,
+        prefixPath,
+        nodeStorage,
+        hasherSelector,
+        snapshotTimeoutsConfig,
+        limiterLatestCombined,
+        limiterLatestCombinedStream
+      )
+}
+
+trait RateLimiter[F[_]] {
+  def check: F[Boolean]
+  def getInterval: String
+}
+
+object RateLimiter {
+  def make[F[_]: Async](interval: FiniteDuration): F[RateLimiter[F]] =
+    Ref[F].of(Option.empty[Long]).map { ref =>
+      new RateLimiter[F] {
+        def check: F[Boolean] =
+          for {
+            now <- Async[F].realTime.map(_.toMillis)
+            allowed <- ref.modify {
+              case Some(last) if now - last < interval.toMillis => (Some(last), false)
+              case _                                            => (Some(now), true)
+            }
+          } yield allowed
+
+        def getInterval: String = interval.toSeconds.toString
+      }
+    }
 }

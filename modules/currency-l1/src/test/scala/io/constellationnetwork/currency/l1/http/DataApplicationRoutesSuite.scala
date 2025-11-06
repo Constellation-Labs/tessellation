@@ -43,6 +43,7 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.SignatureProof
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
+import _root_.fs2.Stream
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe._
@@ -127,7 +128,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
 
       override def getCombined: IO[Option[(Hashed[A], B)]] = getCombinedFn
 
-      override def getCombinedStream: fs2.Stream[IO, Option[(Hashed[A], B)]] = ???
+      override def getCombinedStream: Stream[IO, Option[(Hashed[A], B)]] = ???
 
       override def getOrdinal: IO[Option[SnapshotOrdinal]] = getOrdinalFn
 

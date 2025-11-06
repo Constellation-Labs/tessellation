@@ -245,7 +245,8 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.http4sDsl,
       Libraries.http4sServer,
       Libraries.http4sClient,
-      Libraries.http4sCirce
+      Libraries.http4sCirce,
+      Libraries.circeFs2
     )
   )
 
