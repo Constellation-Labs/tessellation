@@ -15,7 +15,7 @@ import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment.{Dev, Integrationnet, Testnet}
 import io.constellationnetwork.kernel._
-import io.constellationnetwork.node.shared.config.types.{HttpConfig, SharedConfig}
+import io.constellationnetwork.node.shared.config.types.{HttpConfig, RouteRateLimiterConfig, SharedConfig}
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
@@ -56,7 +56,8 @@ object HttpApi {
           "/snapshots",
           storages.node,
           HasherSelector.alwaysCurrent[F],
-          sharedConfig.snapshotTimeoutsConfig
+          sharedConfig.snapshotTimeoutsConfig,
+          sharedConfig.combinedRouteRateLimiter.getOrElse(environment, RouteRateLimiterConfig.empty())
         )
     } yield
       new HttpApi[F](

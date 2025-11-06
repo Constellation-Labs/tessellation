@@ -53,7 +53,7 @@ abstract class SnapshotClient[
         .last
         .flatMap {
           case Some(snapshot) => Async[F].pure(snapshot)
-          case None => Async[F].raiseError(new RuntimeException("No snapshot available"))
+          case None           => Async[F].raiseError(new RuntimeException("No snapshot available"))
         }
     }
   def get(ordinal: SnapshotOrdinal): PeerResponse[F, Signed[S]] = {

@@ -6,7 +6,7 @@ import cats.data.NonEmptySet
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.http4s.AddressVar
-import io.constellationnetwork.node.shared.config.types.PriceOracleConfig
+import io.constellationnetwork.node.shared.config.types.{PriceOracleConfig, RouteRateLimiterConfig}
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculatorConfig
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
@@ -44,6 +44,8 @@ package object pureconfig {
   implicit val ordinalToFeeCalculatorConfigReader: ConfigReader[Map[SnapshotOrdinal, FeeCalculatorConfig]] =
     genericMapReader(catchReadError(strOrdinal => SnapshotOrdinal.unsafeApply(strOrdinal.toLong)))
   implicit val envToOrdinalToFeeCalculatorConfigReader: ConfigReader[Map[AppEnvironment, Map[SnapshotOrdinal, FeeCalculatorConfig]]] =
+    genericMapReader(catchReadError(AppEnvironment.withName))
+  implicit val envToRouteRateLimiterConfigReader: ConfigReader[Map[AppEnvironment, RouteRateLimiterConfig]] =
     genericMapReader(catchReadError(AppEnvironment.withName))
 
   implicit val addressReader: ConfigReader[Address] = ConfigReader[String].map(AddressVar.unapply).map(_.get)

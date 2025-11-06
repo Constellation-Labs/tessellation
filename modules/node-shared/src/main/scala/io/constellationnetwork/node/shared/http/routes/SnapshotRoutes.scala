@@ -7,7 +7,7 @@ import scala.concurrent.duration._
 
 import io.constellationnetwork.ext.http4s.HashVar
 import io.constellationnetwork.ext.http4s.headers.negotiation.resolveEncoder
-import io.constellationnetwork.node.shared.config.types.SnapshotTimeoutsConfig
+import io.constellationnetwork.node.shared.config.types.{RouteRateLimiterConfig, SnapshotTimeoutsConfig}
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.ext.http4s.SnapshotOrdinalVar
@@ -201,11 +201,12 @@ object SnapshotRoutes {
     prefixPath: InternalUrlPrefix,
     nodeStorage: NodeStorage[F],
     hasherSelector: HasherSelector[F],
-    snapshotTimeoutsConfig: SnapshotTimeoutsConfig
+    snapshotTimeoutsConfig: SnapshotTimeoutsConfig,
+    combinedRouteLimiter: RouteRateLimiterConfig
   ): F[SnapshotRoutes[F, S, C]] =
     for {
-      limiterLatestCombined <- RateLimiter.make[F](10.seconds)
-      limiterLatestCombinedStream <- RateLimiter.make[F](1.seconds)
+      limiterLatestCombined <- RateLimiter.make[F](combinedRouteLimiter.public)
+      limiterLatestCombinedStream <- RateLimiter.make[F](combinedRouteLimiter.peerToPeer)
     } yield
       new SnapshotRoutes[F, S, C](
         snapshotStorage,
@@ -233,7 +234,7 @@ object RateLimiter {
             now <- Async[F].realTime.map(_.toMillis)
             allowed <- ref.modify {
               case Some(last) if now - last < interval.toMillis => (Some(last), false)
-              case Some(_)                                   => (Some(now), true)
+              case Some(_)                                      => (Some(now), true)
               case None                                         => (Some(now), true)
             }
           } yield allowed
