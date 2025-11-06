@@ -8,6 +8,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.crypto._
+import io.constellationnetwork.json.StreamingJsonCodecs._
 import io.constellationnetwork.merkletree.syntax._
 import io.constellationnetwork.merkletree.{MerkleRoot, MerkleTree, Proof}
 import io.constellationnetwork.schema.ID.Id
@@ -28,8 +29,10 @@ import io.constellationnetwork.security.signature.Signed
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import io.circe._
 import io.circe.disjunctionCodecs._
-import io.circe.{KeyDecoder, KeyEncoder}
+import io.circe.generic.semiauto.deriveEncoder
+import io.circe.syntax.EncoderOps
 
 @derive(encoder, decoder, eqv, show)
 case class GlobalSnapshotInfoV1(
@@ -212,7 +215,7 @@ object GlobalSnapshotInfoV2 {
     )
 }
 
-@derive(encoder, decoder, eqv, show)
+@derive(decoder, eqv, show)
 case class GlobalSnapshotInfo(
   lastStateChannelSnapshotHashes: SortedMap[Address, Hash],
   lastTxRefs: SortedMap[Address, TransactionReference],
@@ -264,6 +267,8 @@ case class GlobalSnapshotInfo(
 }
 
 object GlobalSnapshotInfo {
+  implicit val encoder: Encoder[GlobalSnapshotInfo] = deriveEncoder
+
   def empty = GlobalSnapshotInfo(
     SortedMap.empty,
     SortedMap.empty,
