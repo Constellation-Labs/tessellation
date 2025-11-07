@@ -192,7 +192,8 @@ abstract class CurrencyL0App(
             services.dataApplication,
             metagraphVersion.some,
             queues,
-            sharedConfig
+            sharedConfig,
+            storages.combinedCurrencySnapshotCheckpointStorage
           )
       )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)

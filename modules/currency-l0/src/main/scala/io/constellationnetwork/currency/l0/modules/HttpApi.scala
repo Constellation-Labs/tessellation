@@ -19,6 +19,7 @@ import io.constellationnetwork.node.shared.config.types.{HttpConfig, RouteRateLi
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.CombinedSnapshotCheckpointFileSystemStorage
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
@@ -46,7 +47,12 @@ object HttpApi {
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
     maybeMetagraphVersion: Option[MetagraphVersion],
     queues: Queues[F],
-    sharedConfig: SharedConfig
+    sharedConfig: SharedConfig,
+    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[
+      F,
+      CurrencyIncrementalSnapshot,
+      CurrencySnapshotInfo
+    ]
   ): F[HttpApi[F]] =
     for {
       snapshotRoutes <-
@@ -57,7 +63,8 @@ object HttpApi {
           storages.node,
           HasherSelector.alwaysCurrent[F],
           sharedConfig.snapshotTimeoutsConfig,
-          sharedConfig.combinedRouteRateLimiter.getOrElse(environment, RouteRateLimiterConfig.empty())
+          sharedConfig.combinedRouteRateLimiter.getOrElse(environment, RouteRateLimiterConfig.empty()),
+          combinedSnapshotCheckpointFileSystemStorage
         )
     } yield
       new HttpApi[F](

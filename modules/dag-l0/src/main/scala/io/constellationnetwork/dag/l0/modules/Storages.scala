@@ -26,9 +26,11 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.trust.PeerObservationAdjustmentUpdateBatch
 import io.constellationnetwork.security.{HashSelect, HasherSelector}
 
+import fs2.io.file.Files
+
 object Storages {
 
-  def make[F[+_]: Async: Parallel: KryoSerializer: JsonSerializer: HasherSelector: Supervisor](
+  def make[F[+_]: Async: Parallel: KryoSerializer: JsonSerializer: HasherSelector: Supervisor: Files](
     sharedStorages: SharedStorages[F],
     sharedConfig: SharedConfig,
     seedlist: Option[Set[SeedlistEntry]],
@@ -56,12 +58,17 @@ object Storages {
         snapshotConfig.snapshotInfoPath
       )
 
+      combinedGlobalSnapshotCheckpointStorage <- CombinedSnapshotCheckpointFileSystemStorage
+        .make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+          snapshotConfig.combinedSnapshotCheckpointPath
+        )
       globalSnapshotStorage <- SnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
         incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
         incrementalGlobalSnapshotInfoLocalFileSystemStorage,
         snapshotConfig.inMemoryCapacity,
         incrementalConfig.lastFullGlobalSnapshotOrdinal.getOrElse(environment, SnapshotOrdinal.MinValue),
-        HasherSelector[F]
+        HasherSelector[F],
+        combinedGlobalSnapshotCheckpointStorage
       )
       snapshotDownloadStorage = SnapshotDownloadStorage
         .make[F](
@@ -70,6 +77,7 @@ object Storages {
           fullGlobalSnapshotLocalFileSystemStorage,
           incrementalGlobalSnapshotInfoLocalFileSystemStorage,
           incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage,
+          combinedGlobalSnapshotCheckpointStorage,
           hashSelect
         )
     } yield
@@ -84,7 +92,8 @@ object Storages {
         incrementalGlobalSnapshotLocalFileSystemStorage = incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
         snapshotDownload = snapshotDownloadStorage,
         globalSnapshotInfoLocalFileSystemStorage = incrementalGlobalSnapshotInfoLocalFileSystemStorage,
-        globalSnapshotInfoLocalFileSystemKryoStorage = incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage
+        globalSnapshotInfoLocalFileSystemKryoStorage = incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage,
+        combinedGlobalSnapshotCheckpointStorage = combinedGlobalSnapshotCheckpointStorage
       ) {}
 }
 
@@ -99,5 +108,6 @@ sealed abstract class Storages[F[_]] private (
   val incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
   val snapshotDownload: SnapshotDownloadStorage[F],
   val globalSnapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
-  val globalSnapshotInfoLocalFileSystemKryoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2]
+  val globalSnapshotInfoLocalFileSystemKryoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2],
+  val combinedGlobalSnapshotCheckpointStorage: CombinedSnapshotCheckpointFileSystemStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 )

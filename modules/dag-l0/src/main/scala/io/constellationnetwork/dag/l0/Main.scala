@@ -137,7 +137,8 @@ object Main
           sharedValidators,
           cfg.shared.delegatedStaking.withdrawalTimeLimit
             .getOrElse(sharedConfig.environment, EpochProgress.MinValue),
-          cfg.shared
+          cfg.shared,
+          storages.combinedGlobalSnapshotCheckpointStorage
         )
       )
 

@@ -58,7 +58,8 @@ object Programs {
           services.consensus,
           peerSelect,
           lastNGlobalSnapshotStorage,
-          lastGlobalSnapshotStorage
+          lastGlobalSnapshotStorage,
+          storages.combinedGlobalSnapshotCheckpointStorage
         )
       val rollbackLoader = RollbackLoader.make(
         keyPair,
@@ -70,7 +71,8 @@ object Programs {
         storages.globalSnapshot.getHashed,
         globalSnapshotStorage,
         lastNGlobalSnapshotStorage,
-        lastGlobalSnapshotStorage
+        lastGlobalSnapshotStorage,
+        storages.combinedGlobalSnapshotCheckpointStorage
       )
 
       new Programs[F](sharedPrograms.peerDiscovery, sharedPrograms.joining, trustPush, download, rollbackLoader) {}

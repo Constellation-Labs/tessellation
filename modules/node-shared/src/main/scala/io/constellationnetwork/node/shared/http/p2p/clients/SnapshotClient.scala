@@ -13,10 +13,10 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
 import fs2.text
-import io.circe.Decoder
 import io.circe.fs2._
 import io.circe.magnolia.derivation.decoder.semiauto._
 import io.circe.refined._
+import io.circe.{Decoder, Json, parser}
 import org.http4s.Method.GET
 import org.http4s.client.Client
 
@@ -44,18 +44,29 @@ abstract class SnapshotClient[
   }
 
   def getLatest: PeerResponse[F, (Signed[S], SI)] =
-    PeerResponse.stream[F, (Signed[S], SI)](uri => uri.addPath(s"$urlPrefix/latest/combined/stream"))(client, optionalSession) { body =>
+    PeerResponse.stream[F, (Signed[S], SI)](uri => uri.addPath(s"$urlPrefix/latest/combined"))(client, optionalSession) { body =>
       body
         .through(text.utf8.decode)
-        .through(stringStreamParser)
-        .through(decoder[F, (Signed[S], SI)])
         .compile
-        .last
-        .flatMap {
-          case Some(snapshot) => Async[F].pure(snapshot)
-          case None           => Async[F].raiseError(new RuntimeException("No snapshot available"))
+        .string
+        .flatMap { json =>
+          for {
+            arr <- Async[F].fromEither(parser.decode[List[Json]](json))
+            tuple <- arr match {
+              case List(snapshotJson, stateJson) =>
+                for {
+                  snapshot <- Async[F].fromEither(snapshotJson.as[Signed[S]])
+                  state <- Async[F].fromEither(stateJson.as[SI])
+                } yield (snapshot, state)
+              case other =>
+                Async[F].raiseError[(Signed[S], SI)](
+                  new RuntimeException(s"Unexpected combined snapshot JSON structure: $other")
+                )
+            }
+          } yield tuple
         }
     }
+
   def get(ordinal: SnapshotOrdinal): PeerResponse[F, Signed[S]] = {
     import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 

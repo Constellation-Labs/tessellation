@@ -27,7 +27,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.dataApplication.DataApplicationTraverse
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{CombinedSnapshotCheckpointFileSystemStorage, IdentifierStorage}
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema.GlobalIncrementalSnapshot
 import io.constellationnetwork.schema.peer.PeerId
@@ -59,7 +59,12 @@ object Rollback {
     currencySnapshotCleanupStorage: CurrencySnapshotCleanupStorage[F],
     globalSnapshotsWithStateLocalFileSystemStorage: GlobalSnapshotsWithStateLocalFileSystemStorage[F],
     globalSnapshotsWithStateDeltasLocalFileSystemStorage: GlobalSnapshotsWithStateDeltasLocalFileSystemStorage[F],
-    globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F]
+    globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F],
+    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[
+      F,
+      CurrencyIncrementalSnapshot,
+      CurrencySnapshotInfo
+    ]
   )(implicit context: L0NodeContext[F]): Rollback[F] = new Rollback[F] {
     private val logger = Slf4jLogger.getLoggerFromName[F]("CurrencyRollback")
 
@@ -144,6 +149,7 @@ object Rollback {
 
       _ <- logger.info(s"[Rollback] Cleanup for snapshots greater than ${lastIncremental.ordinal}")
       _ <- currencySnapshotCleanupStorage.cleanupAbove(lastIncremental.ordinal)
+      _ <- combinedSnapshotCheckpointFileSystemStorage.deleteAbove(lastIncremental.ordinal)
 
       _ <- logger.info(
         s"Finished rollback to currency snapshot of ${lastIncremental.ordinal.show} pulled from global snapshot of ${globalSnapshot.ordinal.show}"

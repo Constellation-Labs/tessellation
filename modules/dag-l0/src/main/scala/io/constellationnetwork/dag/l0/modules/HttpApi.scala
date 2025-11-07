@@ -18,6 +18,7 @@ import io.constellationnetwork.node.shared.config.types.{HttpConfig, RouteRateLi
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{MetricsMiddleware, PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.CombinedSnapshotCheckpointFileSystemStorage
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.epoch.EpochProgress
@@ -28,7 +29,6 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.NonNegLong
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
 import org.http4s.{HttpApp, HttpRoutes}
@@ -47,7 +47,12 @@ object HttpApi {
     httpCfg: HttpConfig,
     sharedValidators: SharedValidators[F],
     delegatedStakingWithdrawalTimeLimit: EpochProgress,
-    sharedConfig: SharedConfig
+    sharedConfig: SharedConfig,
+    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[
+      F,
+      GlobalIncrementalSnapshot,
+      GlobalSnapshotInfo
+    ]
   ): F[HttpApi[F, R]] =
     SnapshotRoutes
       .make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
@@ -57,7 +62,8 @@ object HttpApi {
         storages.node,
         HasherSelector[F],
         sharedConfig.snapshotTimeoutsConfig,
-        sharedConfig.combinedRouteRateLimiter.getOrElse(environment, RouteRateLimiterConfig.empty())
+        sharedConfig.combinedRouteRateLimiter.getOrElse(environment, RouteRateLimiterConfig.empty()),
+        combinedSnapshotCheckpointFileSystemStorage
       )
       .map { snapshotRoutes =>
         new HttpApi[F, R](

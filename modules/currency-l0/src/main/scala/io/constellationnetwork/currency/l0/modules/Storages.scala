@@ -32,9 +32,11 @@ import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.L0Peer
 import io.constellationnetwork.security.HasherSelector
 
+import fs2.io.file.Files
+
 object Storages {
 
-  def make[F[+_]: Async: Parallel: KryoSerializer: JsonSerializer: Supervisor: Random](
+  def make[F[+_]: Async: Parallel: KryoSerializer: JsonSerializer: Supervisor: Random: Files](
     sharedCfg: SharedConfig,
     sharedStorages: SharedStorages[F],
     snapshotConfig: SnapshotConfig,
@@ -47,14 +49,18 @@ object Storages {
         snapshotConfig.incrementalPersistedSnapshotPath
       )
       snapshotInfoLocalFileSystemStorage <- CurrencySnapshotInfoLocalFileSystemStorage.make[F](snapshotConfig.snapshotInfoPath)
-
+      combinedCurrencySnapshotCheckpointStorage <- CombinedSnapshotCheckpointFileSystemStorage
+        .make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+          snapshotConfig.combinedSnapshotCheckpointPath
+        )
       snapshotStorage <- SnapshotStorage
         .make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           snapshotLocalFileSystemStorage,
           snapshotInfoLocalFileSystemStorage,
           snapshotConfig.inMemoryCapacity,
           SnapshotOrdinal.MinValue,
-          hasherSelector
+          hasherSelector,
+          combinedCurrencySnapshotCheckpointStorage
         )
       globalSnapshotsWithStateFileStorage <- GlobalSnapshotsWithStateLocalFileSystemStorage
         .make[F](snapshotConfig.globalSnapshotsWithStatePath, snapshotConfig.maxGlobalSnapshotsWithStateStored)
@@ -95,7 +101,8 @@ object Storages {
         globalSnapshotsWithStateDeltasFileStorage = globalSnapshotsWithStateDeltasFileStorage,
         lastGlobalSnapshotSync = lastGlobalSnapshotSyncStorage,
         currencySnapshotEventValidationError = sharedStorages.currencySnapshotEventValidationError,
-        currencySnapshotCleanup = currencySnapshotCleanupStorage
+        currencySnapshotCleanup = currencySnapshotCleanupStorage,
+        combinedCurrencySnapshotCheckpointStorage = combinedCurrencySnapshotCheckpointStorage
       ) {}
 }
 
@@ -114,5 +121,10 @@ sealed abstract class Storages[F[_]] private (
   val currencySnapshotEventValidationError: ValidationErrorStorage[F, CurrencySnapshotEvent, BlockRejectionReason],
   val currencySnapshotCleanup: CurrencySnapshotCleanupStorage[F],
   val globalSnapshotsWithStateFileStorage: GlobalSnapshotsWithStateLocalFileSystemStorage[F],
-  val globalSnapshotsWithStateDeltasFileStorage: GlobalSnapshotsWithStateDeltasLocalFileSystemStorage[F]
+  val globalSnapshotsWithStateDeltasFileStorage: GlobalSnapshotsWithStateDeltasLocalFileSystemStorage[F],
+  val combinedCurrencySnapshotCheckpointStorage: CombinedSnapshotCheckpointFileSystemStorage[
+    F,
+    CurrencyIncrementalSnapshot,
+    CurrencySnapshotInfo
+  ]
 )
