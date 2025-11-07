@@ -30,7 +30,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotContextFunctions
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{CombinedSnapshotCheckpointFileSystemStorage, IdentifierStorage}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.Peer
@@ -57,7 +57,12 @@ object Download {
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] with LatestBalances[F],
-    currencySnapshotCleanupStorage: CurrencySnapshotCleanupStorage[F]
+    currencySnapshotCleanupStorage: CurrencySnapshotCleanupStorage[F],
+    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[
+      F,
+      CurrencyIncrementalSnapshot,
+      CurrencySnapshotInfo
+    ]
   )(implicit l0NodeContext: L0NodeContext[F]): Download[F, CurrencyIncrementalSnapshot] = new Download[F, CurrencyIncrementalSnapshot] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -77,7 +82,8 @@ object Download {
           val (incrementalSnapshot, _) = downloadResult
           logger
             .info(s"[Download] Cleanup for snapshots greater than ${incrementalSnapshot.ordinal}") >>
-            currencySnapshotCleanupStorage.cleanupAbove(incrementalSnapshot.ordinal)
+            currencySnapshotCleanupStorage.cleanupAbove(incrementalSnapshot.ordinal) >>
+            combinedSnapshotCheckpointFileSystemStorage.deleteAbove(incrementalSnapshot.ordinal)
         }
         .flatMap(observe)
         .flatMap { result =>

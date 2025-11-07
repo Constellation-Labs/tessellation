@@ -17,11 +17,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
-  GlobalSnapshotLocalFileSystemStorage,
-  SnapshotInfoLocalFileSystemStorage,
-  SnapshotLocalFileSystemStorage
-}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage._
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema._
 import io.constellationnetwork.security._
@@ -42,7 +38,12 @@ object RollbackLoader {
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     globalSnapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
-    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[
+      F,
+      GlobalIncrementalSnapshot,
+      GlobalSnapshotInfo
+    ]
   ): RollbackLoader[F] =
     new RollbackLoader[F](
       keyPair,
@@ -54,7 +55,8 @@ object RollbackLoader {
       getGlobalSnapshotByOrdinal,
       globalSnapshotStorage,
       lastNGlobalSnapshotStorage,
-      lastGlobalSnapshotStorage
+      lastGlobalSnapshotStorage,
+      combinedSnapshotCheckpointFileSystemStorage
     ) {}
 }
 
@@ -68,7 +70,8 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
   getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
   globalSnapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
-  lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
+  lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+  combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 ) {
 
   private val logger = Slf4jLogger.getLogger[F]
@@ -116,7 +119,8 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
         .flatTap {
           case (_, lastInc) =>
             logger.info(s"[Rollback] Cleanup for snapshots greater than ${lastInc.ordinal}") >>
-              snapshotStorage.cleanupAbove(lastInc.ordinal)
+              snapshotStorage.cleanupAbove(lastInc.ordinal) >>
+              combinedSnapshotCheckpointFileSystemStorage.deleteAbove(lastInc.ordinal)
         }
     }
 }

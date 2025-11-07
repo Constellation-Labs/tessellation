@@ -184,7 +184,8 @@ object types {
     globalSnapshotsWithStatePath: Path,
     globalSnapshotsWithStateDeltasPath: Path,
     maxGlobalSnapshotsWithStateStored: PosLong,
-    maxGlobalSnapshotsWithStateDeltasStored: PosLong
+    maxGlobalSnapshotsWithStateDeltasStored: PosLong,
+    combinedSnapshotCheckpointPath: Path
   )
 
   case class HttpClientConfig(

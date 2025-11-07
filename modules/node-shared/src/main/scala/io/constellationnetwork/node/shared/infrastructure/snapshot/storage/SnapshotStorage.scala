@@ -49,7 +49,8 @@ object SnapshotStorage {
     snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, _, C],
     inMemoryCapacity: NonNegLong,
     snapshotInfoCutoffOrdinal: SnapshotOrdinal,
-    hasherSelector: HasherSelector[F]
+    hasherSelector: HasherSelector[F],
+    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, C]
   )(implicit supervisor: Supervisor[F]): F[SnapshotStorage[F, S, C] with LatestBalances[F]] =
     makeResources[F, S, C]().flatMap {
       case (headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, cutoffQueue, _) =>
@@ -64,7 +65,8 @@ object SnapshotStorage {
           snapshotInfoLocalFileSystemStorage,
           inMemoryCapacity,
           snapshotInfoCutoffOrdinal,
-          hasherSelector
+          hasherSelector,
+          combinedSnapshotCheckpointFileSystemStorage
         )
     }
 
@@ -79,7 +81,8 @@ object SnapshotStorage {
     snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, _, C],
     inMemoryCapacity: NonNegLong,
     snapshotInfoCutoffOrdinal: SnapshotOrdinal,
-    hasherSelector: HasherSelector[F]
+    hasherSelector: HasherSelector[F],
+    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, C]
   )(implicit supervisor: Supervisor[F]): F[SnapshotStorage[F, S, C] with LatestBalances[F]] = {
 
     def logger = Slf4jLogger.getLogger[F]
@@ -165,7 +168,8 @@ object SnapshotStorage {
           snapshotInfoCutoffQueue.offer(snapshot.ordinal) >>
           snapshot.ordinal
             .partialPreviousN(inMemoryCapacity)
-            .fold(Applicative[F].unit)(offloadQueue.offer)
+            .fold(Applicative[F].unit)(offloadQueue.offer) >>
+          combinedSnapshotCheckpointFileSystemStorage.tryWrite(snapshot.ordinal, snapshot, snapshotInfo, hash)
       }
 
     def snapshotExists(snapshot: Signed[S])(implicit hasher: Hasher[F]): F[Boolean] =

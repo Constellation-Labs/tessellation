@@ -9,6 +9,7 @@ import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadS
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
+  CombinedSnapshotCheckpointFileSystemStorage,
   SnapshotInfoLocalFileSystemStorage,
   SnapshotLocalFileSystemStorage
 }
@@ -26,6 +27,11 @@ object SnapshotDownloadStorage {
     fullGlobalSnapshotStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
     snapshotInfoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
     snapshotInfoKryoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2],
+    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[
+      F,
+      GlobalIncrementalSnapshot,
+      GlobalSnapshotInfo
+    ],
     hashSelect: HashSelect
   ): SnapshotDownloadStorage[F] =
     new SnapshotDownloadStorage[F] {
@@ -145,7 +151,8 @@ object SnapshotDownloadStorage {
 
         deleteSnapshotInfo >>
           cleanupAboveOrdinal >>
-          verify
+          verify >>
+          combinedSnapshotCheckpointFileSystemStorage.deleteAbove(ordinal)
       }
     }
 }

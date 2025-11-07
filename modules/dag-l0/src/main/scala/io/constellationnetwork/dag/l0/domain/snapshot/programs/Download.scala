@@ -22,6 +22,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalS
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
 import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.CombinedSnapshotCheckpointFileSystemStorage
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.Peer
@@ -48,7 +49,12 @@ object Download {
     consensus: GlobalSnapshotConsensus[F],
     peerSelect: PeerSelect[F],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
-    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[
+      F,
+      GlobalIncrementalSnapshot,
+      GlobalSnapshotInfo
+    ]
   ): Download[F, GlobalIncrementalSnapshot] = new Download[F, GlobalIncrementalSnapshot] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -131,7 +137,8 @@ object Download {
       def performInitialCleanup(metadata: SnapshotMetadata, result: Option[DownloadResult]): F[Unit] =
         Async[F].whenA(result.isEmpty)(
           logger.info(s"[Download] Cleanup for snapshots greater than ${metadata.ordinal}") >>
-            snapshotStorage.cleanupAbove(metadata.ordinal)
+            snapshotStorage.cleanupAbove(metadata.ordinal) >>
+            combinedSnapshotCheckpointFileSystemStorage.deleteAbove(metadata.ordinal)
         )
 
       def logDownloadInfo(startingPoint: SnapshotOrdinal, metadata: SnapshotMetadata): F[Unit] =
