@@ -16,23 +16,19 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
   SnapshotLocalFileSystemStorage
 }
 import io.constellationnetwork.routes.internal._
+import io.constellationnetwork.schema.GlobalSnapshot
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, SnapshotMetadata}
-import io.constellationnetwork.schema.{GlobalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.signature.Signed
 
-import fs2.Stream
-import fs2.io.file.{Files, Path}
 import io.circe.Encoder
 import io.circe.shapes._
-import io.circe.syntax._
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.circe.CirceEntityEncoder
 import org.http4s.dsl.Http4sDsl
 import org.http4s.server.middleware.Timeout
-import org.typelevel.ci.{CIString, CIStringSyntax}
 import shapeless.HNil
 import shapeless.syntax.singleton._
 
@@ -102,7 +98,19 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
             }
           }
 
-        case GET -> Root / "latest" / "combined" =>
+        case req @ GET -> Root / "latest" / "combined" =>
+          withRateLimit(limiterLatestCombined) {
+            whenNodeReady {
+              resolveEncoder[F, (Signed[S], SI)](req) { implicit enc =>
+                snapshotStorage.head.flatMap {
+                  case Some(snapshot) => Ok(snapshot)
+                  case _              => NotFound()
+                }
+              }
+            }
+          }
+
+        case GET -> Root / "latest" / "combined" / "stream" =>
           withRateLimit(limiterLatestCombinedStream) {
             whenNodeReady {
               combinedSnapshotCheckpointFileSystemStorage.getLatestAsHttpResponse.flatMap {

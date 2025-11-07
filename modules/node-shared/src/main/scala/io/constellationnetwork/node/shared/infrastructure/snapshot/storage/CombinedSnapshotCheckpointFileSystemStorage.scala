@@ -124,9 +124,11 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
     Files[F].exists(file).flatMap {
       case false => Concurrent[F].pure(None)
       case true =>
-        concurrentStreams.permit.use { _ =>
-          Files[F].readAll(file, 64 * 1024, Flags.Read).pure[F]
-        }.map(stream => Some(stream))
+        val fileStream: Stream[F, Byte] =
+          Stream.resource(concurrentStreams.permit).flatMap { _ =>
+            Files[F].readAll(file, 64 * 1024, Flags.Read)
+          }
+        fileStream.some.pure[F]
     }
   }
 
@@ -146,7 +148,7 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
 
   def tryWrite(ordinal: SnapshotOrdinal, snapshot: Signed[S], state: SI, snapshotHash: Hash): F[Unit] =
     lastSnapshotInfo.get.flatMap { last =>
-      val shouldUpdate = last.epochProgress.value.value % checkpointIntervalEpochs === 0
+      val shouldUpdate = snapshot.epochProgress.value.value % checkpointIntervalEpochs === 0 || last === LastCheckpointInfo.empty()
       if (shouldUpdate) {
         writeJsonTupleStream(ordinal, snapshot, state) >>
           cleanupOldCombinedSnapshots() >>
@@ -178,7 +180,8 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
   def getLatestOrdinal: F[Option[SnapshotOrdinal]] =
     listStoredOrdinals.flatMap { ordinalsStream =>
       ordinalsStream.compile.toList.map { ordinals =>
-        ordinals.headOption
+        if (ordinals.isEmpty) None
+        else Some(ordinals.max)
       }
     }
 

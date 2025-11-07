@@ -13,7 +13,6 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
 import fs2.text
-import io.circe.fs2._
 import io.circe.magnolia.derivation.decoder.semiauto._
 import io.circe.refined._
 import io.circe.{Decoder, Json, parser}
@@ -44,7 +43,7 @@ abstract class SnapshotClient[
   }
 
   def getLatest: PeerResponse[F, (Signed[S], SI)] =
-    PeerResponse.stream[F, (Signed[S], SI)](uri => uri.addPath(s"$urlPrefix/latest/combined"))(client, optionalSession) { body =>
+    PeerResponse.stream[F, (Signed[S], SI)](uri => uri.addPath(s"$urlPrefix/latest/combined/stream"))(client, optionalSession) { body =>
       body
         .through(text.utf8.decode)
         .compile
