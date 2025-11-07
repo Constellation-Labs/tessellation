@@ -4,7 +4,7 @@ import cats.data.NonEmptySet
 import cats.syntax.option._
 
 import scala.collection.immutable.SortedMap
-import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.config.types.DelegatedRewardsConfig
@@ -63,7 +63,8 @@ object types {
     fieldsAddedOrdinals: FieldsAddedOrdinals,
     metagraphsSync: MetagraphsSyncConfig,
     priceOracle: Map[AppEnvironment, PriceOracleConfig],
-    snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig
+    snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig,
+    combinedRouteRateLimiter: Map[AppEnvironment, RouteRateLimiterConfig]
   )
 
   case class SharedConfig(
@@ -89,7 +90,8 @@ object types {
     metagraphsSync: MetagraphsSyncConfig,
     priceOracle: PriceOracleConfig,
     snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig,
-    snapshotTimeoutsConfig: SnapshotTimeoutsConfig
+    snapshotTimeoutsConfig: SnapshotTimeoutsConfig,
+    combinedRouteRateLimiter: Map[AppEnvironment, RouteRateLimiterConfig]
   )
 
   case class SharedTrustConfig(
@@ -157,6 +159,19 @@ object types {
     routes: FiniteDuration,
     client: FiniteDuration
   )
+
+  case class RouteRateLimiterConfig(
+    public: FiniteDuration,
+    peerToPeer: FiniteDuration
+  )
+
+  object RouteRateLimiterConfig {
+    def empty(): RouteRateLimiterConfig =
+      RouteRateLimiterConfig(
+        0.second,
+        0.second
+      )
+  }
 
   case class SnapshotConfig(
     consensus: ConsensusConfig,

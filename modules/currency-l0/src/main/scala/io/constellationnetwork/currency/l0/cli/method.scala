@@ -67,7 +67,8 @@ object method {
       c.metagraphsSync,
       c.priceOracle.getOrElse(environment, PriceOracleConfig.default),
       c.snapshotBinarySenderTimeouts,
-      c.snapshot.timeouts
+      c.snapshot.timeouts,
+      c.combinedRouteRateLimiter
     )
   }
 

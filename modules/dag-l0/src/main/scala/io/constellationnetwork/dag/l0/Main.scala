@@ -123,8 +123,8 @@ object Main
         .start(storages, services, programs, queues, nodeId, cfg, hasherSelector)
         .asResource
 
-      api = HttpApi
-        .make[IO, Run](
+      api <- Resource.eval(
+        HttpApi.make[IO, Run](
           storages,
           queues,
           services,
@@ -135,9 +135,12 @@ object Main
           TessellationVersion.unsafeFrom(BuildInfo.version),
           cfg.http,
           sharedValidators,
-          cfg.shared.delegatedStaking.withdrawalTimeLimit.getOrElse(sharedConfig.environment, EpochProgress.MinValue),
+          cfg.shared.delegatedStaking.withdrawalTimeLimit
+            .getOrElse(sharedConfig.environment, EpochProgress.MinValue),
           cfg.shared
         )
+      )
+
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)

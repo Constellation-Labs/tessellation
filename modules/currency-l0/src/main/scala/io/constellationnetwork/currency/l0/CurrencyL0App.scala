@@ -176,23 +176,25 @@ abstract class CurrencyL0App(
         .start(storages, services, programs, queues, services.dataApplication, cfg, hasherSelectorAlwaysCurrent)
         .asResource
 
-      api = HttpApi
-        .make[IO](
-          validators,
-          storages,
-          services,
-          programs,
-          keyPair.getPrivate,
-          cfg.environment,
-          nodeShared.nodeId,
-          tessellationVersion,
-          cfg.http,
-          mkCell,
-          services.dataApplication,
-          metagraphVersion.some,
-          queues,
-          sharedConfig
-        )
+      api <- Resource.eval(
+        HttpApi
+          .make[IO](
+            validators,
+            storages,
+            services,
+            programs,
+            keyPair.getPrivate,
+            cfg.environment,
+            nodeShared.nodeId,
+            tessellationVersion,
+            cfg.http,
+            mkCell,
+            services.dataApplication,
+            metagraphVersion.some,
+            queues,
+            sharedConfig
+          )
+      )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)

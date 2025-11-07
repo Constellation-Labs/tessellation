@@ -3,8 +3,7 @@ package io.constellationnetwork.dag.l0.modules
 import java.security.PrivateKey
 
 import cats.effect.Async
-import cats.syntax.option._
-import cats.syntax.semigroupk._
+import cats.syntax.all._
 
 import io.constellationnetwork.dag.l0.domain.cell.{L0Cell, L0CellInput}
 import io.constellationnetwork.dag.l0.domain.delegatedStake.DelegatedStakeOutput
@@ -15,7 +14,7 @@ import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.GlobalConse
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment._
 import io.constellationnetwork.node.shared.cli.CliMethod
-import io.constellationnetwork.node.shared.config.types.{HttpConfig, SharedConfig}
+import io.constellationnetwork.node.shared.config.types.{HttpConfig, RouteRateLimiterConfig, SharedConfig}
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{MetricsMiddleware, PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
@@ -49,21 +48,34 @@ object HttpApi {
     sharedValidators: SharedValidators[F],
     delegatedStakingWithdrawalTimeLimit: EpochProgress,
     sharedConfig: SharedConfig
-  ): HttpApi[F, R] =
-    new HttpApi[F, R](
-      storages,
-      queues,
-      services,
-      programs,
-      privateKey,
-      environment,
-      selfId,
-      nodeVersion,
-      httpCfg,
-      sharedValidators,
-      delegatedStakingWithdrawalTimeLimit,
-      sharedConfig
-    ) {}
+  ): F[HttpApi[F, R]] =
+    SnapshotRoutes
+      .make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+        storages.globalSnapshot,
+        storages.fullGlobalSnapshot.some,
+        "/global-snapshots",
+        storages.node,
+        HasherSelector[F],
+        sharedConfig.snapshotTimeoutsConfig,
+        sharedConfig.combinedRouteRateLimiter.getOrElse(environment, RouteRateLimiterConfig.empty())
+      )
+      .map { snapshotRoutes =>
+        new HttpApi[F, R](
+          storages,
+          queues,
+          services,
+          programs,
+          privateKey,
+          environment,
+          selfId,
+          nodeVersion,
+          httpCfg,
+          sharedValidators,
+          delegatedStakingWithdrawalTimeLimit,
+          sharedConfig,
+          snapshotRoutes
+        ) {}
+      }
 }
 
 sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Metrics, R <: CliMethod] private (
@@ -78,7 +90,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   httpCfg: HttpConfig,
   sharedValidators: SharedValidators[F],
   delegatedStakingWithdrawalTimeLimit: EpochProgress,
-  sharedConfig: SharedConfig
+  sharedConfig: SharedConfig,
+  snapshotRoutes: SnapshotRoutes[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 ) {
 
   private val mkDagCell = (block: Signed[Block]) =>
@@ -138,15 +151,6 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
     HasherSelector[F].withCurrent { implicit hasher =>
       StateChannelRoutes[F](services.stateChannel, storages.globalSnapshot, sharedConfig.snapshotBinarySenderTimeouts)
     }
-  private val snapshotRoutes =
-    SnapshotRoutes[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
-      storages.globalSnapshot,
-      storages.fullGlobalSnapshot.some,
-      "/global-snapshots",
-      storages.node,
-      HasherSelector[F],
-      sharedConfig.snapshotTimeoutsConfig
-    )
   private val dagRoutes = DAGBlockRoutes[F](mkDagCell)
   private val allowSpendRoutes = AllowSpendBlockRoutes[F](queues.l1AllowSpendOutput)
   private val tokenLockRoutes = TokenLockBlockRoutes[F](queues.l1TokenLockOutput)

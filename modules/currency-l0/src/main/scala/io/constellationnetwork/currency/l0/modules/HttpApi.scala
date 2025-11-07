@@ -3,7 +3,7 @@ package io.constellationnetwork.currency.l0.modules
 import java.security.PrivateKey
 
 import cats.effect.Async
-import cats.syntax.semigroupk._
+import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
@@ -15,7 +15,7 @@ import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment.{Dev, Integrationnet, Testnet}
 import io.constellationnetwork.kernel._
-import io.constellationnetwork.node.shared.config.types.{HttpConfig, SharedConfig}
+import io.constellationnetwork.node.shared.config.types.{HttpConfig, RouteRateLimiterConfig, SharedConfig}
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
@@ -47,23 +47,36 @@ object HttpApi {
     maybeMetagraphVersion: Option[MetagraphVersion],
     queues: Queues[F],
     sharedConfig: SharedConfig
-  ): HttpApi[F] =
-    new HttpApi[F](
-      validators,
-      storages,
-      services,
-      programs,
-      privateKey,
-      environment,
-      selfId,
-      nodeVersion,
-      httpCfg,
-      mkCell,
-      maybeDataApplication,
-      maybeMetagraphVersion,
-      queues,
-      sharedConfig
-    ) {}
+  ): F[HttpApi[F]] =
+    for {
+      snapshotRoutes <-
+        SnapshotRoutes.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+          storages.snapshot,
+          None,
+          "/snapshots",
+          storages.node,
+          HasherSelector.alwaysCurrent[F],
+          sharedConfig.snapshotTimeoutsConfig,
+          sharedConfig.combinedRouteRateLimiter.getOrElse(environment, RouteRateLimiterConfig.empty())
+        )
+    } yield
+      new HttpApi[F](
+        validators,
+        storages,
+        services,
+        programs,
+        privateKey,
+        environment,
+        selfId,
+        nodeVersion,
+        httpCfg,
+        mkCell,
+        maybeDataApplication,
+        maybeMetagraphVersion,
+        queues,
+        sharedConfig,
+        snapshotRoutes
+      ) {}
 }
 
 sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Metrics: L0NodeContext] private (
@@ -80,44 +93,59 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
   maybeMetagraphVersion: Option[MetagraphVersion],
   queues: Queues[F],
-  sharedConfig: SharedConfig
+  sharedConfig: SharedConfig,
+  snapshotRoutes: SnapshotRoutes[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
 ) {
 
-  private val snapshotRoutes = SnapshotRoutes[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
-    storages.snapshot,
-    None,
-    "/snapshots",
-    storages.node,
-    HasherSelector.alwaysCurrent[F],
-    sharedConfig.snapshotTimeoutsConfig
-  )
   private val clusterRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>
       ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
     }
-  private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
+
+  private val nodeRoutes =
+    NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
 
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
-  private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip, sharedConfig.gossip.timeouts)
+  private val gossipRoutes =
+    GossipRoutes[F](storages.rumor, services.gossip, sharedConfig.gossip.timeouts)
+
   private val currencyBlockRoutes = CurrencyBlockRoutes[F](mkCell)
   private val allowSpendBlockRoutes = AllowSpendBlockRoutes[F](queues.l1Output)
   private val tokenLockBlockRoutes = TokenLockBlockRoutes[F](queues.l1Output)
+
   private val dataBlockRoutes = maybeDataApplication.map { da =>
     implicit val dataUpdateDecoder: Decoder[DataUpdate] = da.dataDecoder
     implicit val (d, e) = (DataTransaction.decoder, da.calculatedStateEncoder)
     DataBlockRoutes[F](mkCell, da)
   }
-  private val transactionValidationErrorRoutes = TransactionValidationErrorRoutes(storages.currencySnapshotEventValidationError)
+
+  private val transactionValidationErrorRoutes =
+    TransactionValidationErrorRoutes(storages.currencySnapshotEventValidationError)
+
   private val metagraphNodeRoutes = maybeMetagraphVersion.map { metagraphVersion =>
-    MetagraphRoutes[F](storages.node, storages.session, storages.cluster, httpCfg, selfId, nodeVersion, metagraphVersion)
+    MetagraphRoutes[F](
+      storages.node,
+      storages.session,
+      storages.cluster,
+      httpCfg,
+      selfId,
+      nodeVersion,
+      metagraphVersion
+    )
   }
 
-  private val walletRoutes = WalletRoutes[F, CurrencyIncrementalSnapshot]("/currency", services.address)
+  private val walletRoutes =
+    WalletRoutes[F, CurrencyIncrementalSnapshot]("/currency", services.address)
 
   private val consensusInfoRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>
-      new ConsensusInfoRoutes[F, CurrencySnapshotKey, CurrencyConsensusOutcome](services.cluster, services.consensus.storage, selfId)
+      new ConsensusInfoRoutes[F, CurrencySnapshotKey, CurrencyConsensusOutcome](
+        services.cluster,
+        services.consensus.storage,
+        selfId
+      )
     }
+
   private val consensusRoutes = services.consensus.routes.p2pRoutes
 
   private val debugRoutes = DebugRoutes[F](
@@ -128,17 +156,22 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   ).publicRoutes
 
   private val metricRoutes = MetricRoutes[F]().publicRoutes
-  private val targetRoutes = HasherSelector[F].withCurrent(implicit hasher => TargetRoutes[F](services.cluster).publicRoutes)
 
-  private val currencyMessageRoutes = HasherSelector[F].withCurrent(implicit hasher =>
-    new CurrencyMessageRoutes[F](
-      mkCell,
-      validators.currencyMessageValidator,
-      storages.snapshot,
-      storages.identifier,
-      storages.lastSyncGlobalSnapshot
-    ).publicRoutes
-  )
+  private val targetRoutes =
+    HasherSelector[F].withCurrent { implicit hasher =>
+      TargetRoutes[F](services.cluster).publicRoutes
+    }
+
+  private val currencyMessageRoutes =
+    HasherSelector[F].withCurrent { implicit hasher =>
+      new CurrencyMessageRoutes[F](
+        mkCell,
+        validators.currencyMessageValidator,
+        storages.snapshot,
+        storages.identifier,
+        storages.lastSyncGlobalSnapshot
+      ).publicRoutes
+    }
 
   private val openRoutes: HttpRoutes[F] =
     CORS.policy.withAllowOriginAll.withAllowHeadersAll.withAllowCredentials(false).apply {
@@ -195,5 +228,4 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   val publicApp: HttpApp[F] = loggers(openRoutes.orNotFound)
   val p2pApp: HttpApp[F] = loggers(p2pRoutes.orNotFound)
   val cliApp: HttpApp[F] = loggers(cliRoutes.orNotFound)
-
 }
