@@ -34,7 +34,6 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 object StateChannel {
 
   private val awakePeriod = 10.seconds
-  private val retryPeriod = 5.seconds
 
   def run[F[_]: Async: HasherSelector: SecurityProvider: Metrics: Logger](
     services: Services[F, Run],
@@ -57,7 +56,8 @@ object StateChannel {
             services,
             dataApplicationService,
             selfKeyPair,
-            enqueueConsensusEventFn
+            enqueueConsensusEventFn,
+            isStartupCall = false
           )
         )
         .handleErrorWith { error =>
@@ -87,7 +87,8 @@ object StateChannel {
     services: Services[F, Run],
     dataApplicationService: Option[BaseDataApplicationL0Service[F]],
     selfKeyPair: KeyPair,
-    enqueueConsensusEventFn: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _]
+    enqueueConsensusEventFn: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
+    isStartupCall: Boolean
   )(implicit S: Supervisor[F]): F[Unit] = {
     def triggerOnGlobalSnapshotPullHook(snapshot: Hashed[GlobalIncrementalSnapshot], context: GlobalSnapshotInfo) =
       dataApplicationService match {
@@ -96,72 +97,6 @@ object StateChannel {
             .onGlobalSnapshotPull(snapshot, context)
             .handleErrorWith(error => Logger[F].error(error)("An unexpected error occurred in onGlobalSnapshotPull"))
         case None => Applicative[F].unit
-      }
-
-    def checkIfShouldForceEventTrigger(
-      snapshot: GlobalIncrementalSnapshot,
-      currencyId: Address,
-      globalSnapshotInfo: GlobalSnapshotInfo
-    ): Boolean = {
-      val spendTransactionIssuedFromThisMetagraph: Boolean =
-        snapshot.spendActions.exists(_.contains(currencyId))
-      val activeAllowSpendsFromThisMetagraphs: Boolean =
-        globalSnapshotInfo.activeAllowSpends.exists(_.contains(currencyId.some))
-
-      val spendActions =
-        snapshot.spendActions
-          .map(_.values.flatten)
-          .getOrElse(List.empty)
-
-      val activeAllowSpends =
-        globalSnapshotInfo.activeAllowSpends
-          .map(_.values.flatten.toList)
-          .getOrElse(Nil)
-          .flatMap(_._2)
-
-      val spendTransactionsReferencesCurrentMetagraph: Boolean =
-        spendActions.exists { spendAction =>
-          spendAction.spendTransactions.exists { tx =>
-            tx.source === currencyId ||
-            tx.destination === currencyId ||
-            tx.currencyId.exists(_.value === currencyId)
-          }
-        }
-
-      val allowSpendsReferencesCurrentMetagraph: Boolean =
-        activeAllowSpends.exists { allowSpend =>
-          allowSpend.source === currencyId ||
-          allowSpend.destination === currencyId
-        }
-
-      spendTransactionIssuedFromThisMetagraph || spendTransactionsReferencesCurrentMetagraph || activeAllowSpendsFromThisMetagraphs || allowSpendsReferencesCurrentMetagraph
-    }
-
-    def maybeForceEventTrigger(
-      currentSnapshot: Hashed[GlobalIncrementalSnapshot],
-      currentSnapshotState: GlobalSnapshotInfo
-    ): F[Unit] =
-      for {
-        //        currencyId <- storages.identifier.get
-        //        shouldForceEventTrigger = checkIfShouldForceEventTrigger(currentSnapshot, currencyId, currentSnapshotState)
-
-        // Temporarily disabling the force event trigger
-        //        _ <-
-        //          if (shouldForceEventTrigger) {
-        //            Logger[F].info("Should force event trigger detected!")
-        //          } else {
-        //            ().pure
-        //          }
-        _ <- conditionallyTriggerEvent(false)
-
-      } yield ()
-
-    def conditionallyTriggerEvent(shouldTrigger: Boolean) =
-      if (shouldTrigger) {
-        Logger[F].info("Forcing event trigger due to conditions met") >>
-          enqueueConsensusEventFn(ForceEventTrigger()).run()
-      } else {
-        ().pure[F]
       }
 
     def sendGlobalSnapshotSyncConsensusEvent(snapshot: Hashed[GlobalIncrementalSnapshot])(implicit hs: Hasher[F]) = {
@@ -188,7 +123,11 @@ object StateChannel {
             _ <- storages.lastGlobalSnapshotSync.set(globalSyncEvent.value)
           } yield ()
         case (Some(_), None) =>
-          Logger[F].warn("Couldn't send GlobalSnapshotSyncEvent. Session is missing.")
+          if (!isStartupCall) {
+            Logger[F].warn("Couldn't send GlobalSnapshotSyncEvent. Session is missing.")
+          } else {
+            ().pure
+          }
         case (None, Some(_)) =>
           Logger[F].warn("Couldn't send GlobalSnapshotSyncEvent. Last sent reference is missing")
         case _ =>
@@ -202,7 +141,6 @@ object StateChannel {
       case Left((snapshot, state)) =>
         for {
           _ <- triggerOnGlobalSnapshotPullHook(snapshot, state)
-          _ <- maybeForceEventTrigger(snapshot, state)
         } yield ()
 
       case Right(snapshots) =>
@@ -211,17 +149,7 @@ object StateChannel {
             Applicative[F].unit
           case nonEmptySnapshots =>
             nonEmptySnapshots.tailRecM {
-              case Nil =>
-                for {
-                  lastGlobalSnapshotCombined <- sharedStorages.lastGlobalSnapshot.getCombined
-
-                  _ <- lastGlobalSnapshotCombined.traverse { combinedSnapshot =>
-                    val (latestSnapshot, latestState) = combinedSnapshot
-                    Logger[F].info("Trying to force event trigger") >>
-                      maybeForceEventTrigger(latestSnapshot, latestState)
-                  }
-                } yield ().asRight[List[Hashed[GlobalIncrementalSnapshot]]]
-
+              case Nil => ().asRight[List[Hashed[GlobalIncrementalSnapshot]]].pure
               case snapshot :: nextSnapshots =>
                 storages.lastSyncGlobalSnapshot.get.map {
                   case Some(lastSnapshot) => Validator.isNextSnapshot(lastSnapshot, snapshot.signed.value)
