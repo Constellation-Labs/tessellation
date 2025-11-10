@@ -54,7 +54,7 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
 ) extends LocalFileSystemStorage[F, Array[Byte]](path) {
   // These aren't necessary on pureconfig, because in theory they should never change, so I'll hardcode
   private val maxCheckpointsStored = 2
-  private val checkpointIntervalEpochs = 60
+  private val checkpointIntervalEpochs = 5
 
   private def writeJsonTupleStream(
     ordinal: SnapshotOrdinal,
