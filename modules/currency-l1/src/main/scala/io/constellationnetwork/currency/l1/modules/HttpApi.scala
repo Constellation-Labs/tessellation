@@ -153,7 +153,7 @@ sealed abstract class HttpApi[
       )
     }
 
-  private val currencyRoutes =
+  private val currencyRoutes = HasherSelector[F].withCurrent { implicit hasher =>
     DAGRoutes[F](
       services.transaction,
       storages.transaction,
@@ -161,10 +161,14 @@ sealed abstract class HttpApi[
       queues.peerBlockConsensusInput,
       queues.swapPeerConsensusInput,
       queues.tokenLockPeerConsensusInput,
-      txHasher
+      txHasher,
+      hasher
     )
+  }
 
-  private val transactionRoutes = TransactionRoutes[F](services.transactionFeeEstimator, txHasher)
+  private val transactionRoutes = HasherSelector[F].withCurrent { implicit hasher =>
+    TransactionRoutes[F](services.transactionFeeEstimator, txHasher, hasher)
+  }
 
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
 

@@ -7,7 +7,8 @@ import scala.concurrent.duration._
 
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencyIncrementalSnapshotV1}
 import io.constellationnetwork.json.JsonSerializer
-import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.kryo.{CustomKryoSerializer, KryoSerializer}
+import io.constellationnetwork.schema.transaction.Transaction
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, GlobalSnapshotInfoV2, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 
@@ -78,13 +79,18 @@ object Hasher {
           case a                              => a
         }
 
-      KryoSerializer[F]
-        .serialize(data match {
-          case d: Encodable[_] => map(d.toEncode)
-          case _               => map(data)
-        })
-        .liftTo[F]
-        .flatMap(Hash.fromBytesForSync[F])
+      data match {
+        case transaction: Transaction =>
+          CustomKryoSerializer.hash(transaction.toEncode)
+        case _ =>
+          KryoSerializer[F]
+            .serialize(data match {
+              case d: Encodable[_] => map(d.toEncode)
+              case _               => map(data)
+            })
+            .map(Hash.fromBytes)
+            .liftTo[F]
+      }
     }
 
     def hash[A: Encoder](data: A): F[Hash] =

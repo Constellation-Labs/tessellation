@@ -231,40 +231,38 @@ object StateChannel {
                     _ <- storages.lastSyncGlobalSnapshot.getCombined.flatMap {
                       case None => Applicative[F].unit
                       case Some((lastSnapshot, lastState)) =>
-                        HasherSelector[F]
-                          .forOrdinal(snapshot.ordinal) { implicit hasher =>
-                            services.globalSnapshotContextFunctions
-                              .createContext(
-                                lastState,
-                                lastSnapshot.signed,
-                                snapshot.signed,
-                                services.globalL0.pullGlobalSnapshot
+                        HasherSelector[F].withCurrent { implicit hasher =>
+                          services.globalSnapshotContextFunctions
+                            .createContext(
+                              lastState,
+                              lastSnapshot.signed,
+                              snapshot.signed,
+                              services.globalL0.pullGlobalSnapshot
+                            )
+                        }.flatMap { context =>
+                          for {
+                            _ <- storages.lastSyncGlobalSnapshot.set(snapshot, context)
+                            _ <- sharedStorages.lastNGlobalSnapshot.set(snapshot, context)
+                            _ <- sharedStorages.lastGlobalSnapshot.set(snapshot, context)
+                            _ <- storages.globalSnapshotsWithStateFileStorage
+                              .write(snapshot.ordinal, GlobalSnapshotWithState(snapshot.signed, context))
+                            _ <- storages.globalSnapshotsWithStateDeltasFileStorage
+                              .write(
+                                snapshot.ordinal,
+                                GlobalSnapshotWithStateDeltas(snapshot.signed, context.activeAllowSpends, context.activeTokenLocks)
                               )
-                          }
-                          .flatMap { context =>
-                            for {
-                              _ <- storages.lastSyncGlobalSnapshot.set(snapshot, context)
-                              _ <- sharedStorages.lastNGlobalSnapshot.set(snapshot, context)
-                              _ <- sharedStorages.lastGlobalSnapshot.set(snapshot, context)
-                              _ <- storages.globalSnapshotsWithStateFileStorage
-                                .write(snapshot.ordinal, GlobalSnapshotWithState(snapshot.signed, context))
-                              _ <- storages.globalSnapshotsWithStateDeltasFileStorage
-                                .write(
-                                  snapshot.ordinal,
-                                  GlobalSnapshotWithStateDeltas(snapshot.signed, context.activeAllowSpends, context.activeTokenLocks)
-                                )
-                              _ <- HasherSelector[F].withCurrent { implicit hasher =>
-                                sendGlobalSnapshotSyncConsensusEvent(snapshot)
-                              }
-                              _ <- triggerOnGlobalSnapshotPullHook(snapshot, context)
+                            _ <- HasherSelector[F].withCurrent { implicit hasher =>
+                              sendGlobalSnapshotSyncConsensusEvent(snapshot)
+                            }
+                            _ <- triggerOnGlobalSnapshotPullHook(snapshot, context)
 
-                              _ <- services.stateChannelBinarySender.confirm(snapshot).handleErrorWith { error =>
-                                Logger[F].error(error)("Error when confirming state channel binary") >>
-                                  updateFailedConfirmingStateChannelBinaryMetrics() >>
-                                  Async[F].unit
-                              }
-                            } yield ()
-                          }
+                            _ <- services.stateChannelBinarySender.confirm(snapshot).handleErrorWith { error =>
+                              Logger[F].error(error)("Error when confirming state channel binary") >>
+                                updateFailedConfirmingStateChannelBinaryMetrics() >>
+                                Async[F].unit
+                            }
+                          } yield ()
+                        }
                     }
                   } yield (),
                   Applicative[F].unit

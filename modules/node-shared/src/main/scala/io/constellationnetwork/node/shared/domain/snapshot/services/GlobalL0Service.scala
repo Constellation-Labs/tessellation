@@ -158,7 +158,7 @@ object GlobalL0Service {
       ): F[Boolean] = {
         val (snapshot, info) = snapshotTuple
         List(
-          HasherSelector[F].forOrdinal(snapshot.ordinal)(implicit hasher => stateProofValidation(snapshot, info)),
+          HasherSelector[F].withCurrent(implicit hasher => stateProofValidation(snapshot, info)),
           majorityOrdinalValidation(snapshot, majorityPeers),
           majorityHashValidation(snapshot, majorityPeers)
         ).forallM(identity)
@@ -195,10 +195,9 @@ object GlobalL0Service {
       private def pullLatestSnapshotFromPeer(l0Peer: L0Peer): F[LatestSnapshotTuple] =
         l0GlobalSnapshotClient.getLatest(l0Peer).flatMap {
           case (snapshot, state) =>
-            HasherSelector[F]
-              .forOrdinal(snapshot.ordinal) { implicit hasher =>
-                snapshot.toHashedWithSignatureCheck
-              }
+            HasherSelector[F].withCurrent { implicit hasher =>
+              snapshot.toHashedWithSignatureCheck
+            }
               .flatMap(_.liftTo[F])
               .map((_, state))
         }
@@ -208,9 +207,7 @@ object GlobalL0Service {
       ): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
         globalL0ClusterStorage.getRandomPeer.flatMap { l0Peer =>
           peerResponse(l0Peer)
-            .flatMap(snapshot =>
-              HasherSelector[F].forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashedWithSignatureCheck).flatMap(_.liftTo[F])
-            )
+            .flatMap(snapshot => HasherSelector[F].withCurrent(implicit hasher => snapshot.toHashedWithSignatureCheck).flatMap(_.liftTo[F]))
             .map(_.some)
         }
 
@@ -262,9 +259,7 @@ object GlobalL0Service {
           case (ordinal #:: nextOrdinals, snapshots) =>
             l0GlobalSnapshotClient
               .get(ordinal)(l0Peer)
-              .flatMap(snapshot =>
-                hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashedWithSignatureCheck).flatMap(_.liftTo[F])
-              )
+              .flatMap(snapshot => hasherSelector.withCurrent(implicit hasher => snapshot.toHashedWithSignatureCheck).flatMap(_.liftTo[F]))
               .map(s => (nextOrdinals, snapshots :+ s).asLeft[Result])
               .handleErrorWith { e =>
                 logger

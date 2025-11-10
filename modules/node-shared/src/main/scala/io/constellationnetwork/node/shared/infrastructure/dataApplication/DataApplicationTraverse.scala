@@ -342,7 +342,7 @@ object DataApplicationTraverse {
         globalSnapshot.stateChannelSnapshots
           .get(identifier) match {
           case Some(snapshots) =>
-            HasherSelector[F].forOrdinal(globalSnapshot.ordinal) { implicit hasher =>
+            HasherSelector[F].withCurrent { implicit hasher =>
               snapshots.toList.traverse { binary =>
                 jsonBrotliBinarySerializer.deserialize[Signed[CurrencyIncrementalSnapshot]](binary.content)
               }

@@ -3,14 +3,14 @@ package io.constellationnetwork.transaction
 import java.security.KeyPair
 
 import cats.data.NonEmptyList
-import cats.effect.Async
+import cats.effect.{Async, IO}
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.functor._
 
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.transaction._
-import io.constellationnetwork.security.signature.Signed.forAsyncHasher
+import io.constellationnetwork.security.signature.Signed.{ProofsHasher, SignedHasher, forAsyncHasher}
 import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
@@ -25,15 +25,24 @@ trait TransactionGenerator {
     count: PosInt,
     fee: TransactionFee = TransactionFee.zero,
     lastTxRef: Option[TransactionReference] = None,
-    txHasher: Hasher[F]
+    kHasher: Hasher[F],
+    jHasher: Hasher[F]
   ): F[NonEmptyList[Hashed[Transaction]]] = {
-    implicit val h = txHasher
+
+    implicit val kryoHasher: SignedHasher[F] = SignedHasher(kHasher)
+    implicit val proofsHasher: ProofsHasher[F] = ProofsHasher(jHasher)
 
     def generate(src: Address, srcKey: KeyPair, dst: Address, lastTxRef: TransactionReference): F[Hashed[Transaction]] =
-      forAsyncHasher[F, Transaction](
-        Transaction(src, dst, TransactionAmount(1L), fee, lastTxRef, TransactionSalt(0L)),
-        srcKey
-      ).flatMap(_.toHashed[F])
+      for {
+        signedTxn <- {
+          implicit val h = kHasher
+          forAsyncHasher[F, Transaction](
+            Transaction(src, dst, TransactionAmount(1L), fee, lastTxRef, TransactionSalt(0L)),
+            srcKey
+          )
+        }
+        hashedTxn <- signedTxn.toHashedHybrid[F]
+      } yield hashedTxn
 
     generate(src, srcKey, dst, lastTxRef.getOrElse(TransactionReference.empty)).flatMap { first =>
       (1 until count).toList.foldLeftM(NonEmptyList.one(first)) {

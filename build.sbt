@@ -19,6 +19,23 @@ ThisBuild / developers := List(
 ThisBuild / evictionErrorLevel := Level.Warn
 ThisBuild / scalafixDependencies += Libraries.scalafixRules
 ThisBuild / version := sys.env.get("RELEASE_TAG").map(_.stripPrefix("v")).getOrElse("99.99.99-SNAPSHOT")
+// ===== Java 21 Migration Configuration =====
+
+// Enforce Java 21 requirement at build time
+// Java 21 is an LTS release with better performance, Virtual Threads, and improved GC
+// This prevents "unsupported class version" errors if developers use wrong Java version
+initialize := {
+  val _ = initialize.value
+  val required = "21"
+  val current = sys.props("java.specification.version")
+  assert(current == required, s"Java $required required. Current: $current")
+}
+
+// Set Java compiler to use version 21 for source and bytecode target
+ThisBuild / javacOptions ++= Seq("-source", "21", "-target", "21")
+
+// Configure Scala compiler to generate Java 21 compatible bytecode
+ThisBuild / scalacOptions ++= Seq("-release", "21")
 
 enablePlugins(TessellationCiRelease)
 

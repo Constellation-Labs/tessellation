@@ -56,7 +56,7 @@ abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
 
 object GlobalSnapshotConsensusFunctions {
 
-  def make[F[_]: Async: SecurityProvider: JsonSerializer: KryoSerializer](
+  def make[F[_]: Async: SecurityProvider: JsonSerializer](
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
     rewardsService: RewardsService[F],
@@ -108,17 +108,6 @@ object GlobalSnapshotConsensusFunctions {
       val events: Set[GlobalSnapshotEvent] =
         dagEvents ++ scEvents ++ allowSpendEvents ++ unpEvents ++ tokenLockEvents ++ cdsEvents ++ wdsEvents ++ cncEvents ++ wncEvents
 
-      def usingKryo = createProposalArtifact(
-        lastSignedArtifact.ordinal,
-        lastSignedArtifact,
-        lastContext,
-        Hasher.forKryo[F],
-        trigger,
-        events,
-        facilitators,
-        getGlobalSnapshotByOrdinal
-      )
-
       def usingJson = createProposalArtifact(
         lastSignedArtifact.ordinal,
         lastSignedArtifact,
@@ -139,10 +128,7 @@ object GlobalSnapshotConsensusFunctions {
               GlobalArtifactMismatch(artifact, recreatedArtifact).asLeft[(GlobalSnapshotArtifact, GlobalSnapshotContext)]
         }
 
-      check(usingJson).flatMap {
-        case Left(_)  => check(usingKryo)
-        case Right(a) => Async[F].pure(Right(a))
-      }
+      check(usingJson)
     }
 
     def createProposalArtifact(

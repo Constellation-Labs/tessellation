@@ -95,7 +95,7 @@ object GlobalSnapshotContextFunctions {
         signedArtifact: Signed[GlobalIncrementalSnapshot],
         getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = for {
-        lastActiveTips <- HasherSelector[F].forOrdinal(lastArtifact.ordinal)(implicit hasher => lastArtifact.activeTips)
+        lastActiveTips <- HasherSelector[F].withCurrent(implicit hasher => lastArtifact.activeTips)
 
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
@@ -251,9 +251,9 @@ object GlobalSnapshotContextFunctions {
         _ <- CannotApplyStateChannelsError(returnedSCEvents).raiseError[F, Unit].whenA(returnedSCEvents.nonEmpty)
         diffRewards = acceptedRewardTxs -- signedArtifact.rewards
         _ <- CannotApplyRewardsError(diffRewards).raiseError[F, Unit].whenA(diffRewards.nonEmpty)
-        hashedArtifact <- HasherSelector[F].forOrdinal(signedArtifact.ordinal)(implicit hasher => signedArtifact.toHashed)
+        hashedArtifact <- HasherSelector[F].withCurrent(implicit hasher => signedArtifact.toHashed)
 
-        calculatedStateProof <- HasherSelector[F].forOrdinal(signedArtifact.ordinal) { implicit hasher =>
+        calculatedStateProof <- HasherSelector[F].withCurrent { implicit hasher =>
           hasher.getLogic(signedArtifact.ordinal) match {
             case JsonHash => snapshotInfo.stateProof(signedArtifact.ordinal)
             case KryoHash => GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(snapshotInfo).stateProof(signedArtifact.ordinal)

@@ -37,13 +37,19 @@ object Signed {
     def map[A, B](fa: Signed[A])(f: A => B): Signed[B] = Signed(f(fa.value), fa.proofs)
   }
 
+  case class SignedHasher[F[_]](hasher: Hasher[F])
+
+  case class ProofsHasher[F[_]](hasher: Hasher[F])
+
   case class InvalidSignatureForHash[A](signed: Signed[A]) extends NoStackTrace
+
   object InvalidSignatureForHash {
     implicit val functor: Functor[InvalidSignatureForHash] = new Functor[InvalidSignatureForHash] {
       def map[A, B](fa: InvalidSignatureForHash[A])(f: A => B): InvalidSignatureForHash[B] =
         InvalidSignatureForHash(fa.signed.map(f))
     }
   }
+
   implicit def show[A: Show]: Show[Signed[A]] =
     s => s"Signed(value=${s.value.show}, proofs=${s.proofs.show})"
 
@@ -152,6 +158,22 @@ object Signed {
         toHashed(toBytes).map(_.asRight[InvalidSignatureForHash[A]]),
         InvalidSignatureForHash(signed).asLeft[Hashed[A]].pure[F]
       )
+
+    def toHashedHybrid[F[_]: Async](
+      implicit encoder: Encoder[A],
+      signedHasher: SignedHasher[F],
+      proofsHasher: ProofsHasher[F]
+    ): F[Hashed[A]] =
+      for {
+        hash <- {
+          implicit val h: Hasher[F] = signedHasher.hasher
+          signed.value.hash
+        }
+        proofsHash <- {
+          implicit val h: Hasher[F] = proofsHasher.hasher
+          proofsHash[F]
+        }
+      } yield Hashed(signed, hash, proofsHash)
 
     def toHashed[F[_]: Async: Hasher](implicit encoder: Encoder[A]): F[Hashed[A]] =
       signed.value.hash.flatMap { hash =>

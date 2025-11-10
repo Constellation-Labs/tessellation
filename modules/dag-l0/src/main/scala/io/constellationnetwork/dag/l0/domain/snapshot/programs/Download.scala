@@ -209,25 +209,22 @@ object Download {
       retryingOnSomeErrors(retryPolicy, isWorthRetrying, retry.noop[F, Throwable]) {
         val (lastSnapshot, lastContext) = result
         hasherSelector.withCurrent(implicit hs => fetchSnapshot(none, lastSnapshot.ordinal.next)).flatMap { snapshot =>
-          hasherSelector
-            .forOrdinal(lastSnapshot.ordinal) { implicit hasher =>
-              lastSnapshot.toHashed[F]
+          hasherSelector.withCurrent { implicit hasher =>
+            lastSnapshot.toHashed[F]
+          }.flatMap { hashed =>
+            Applicative[F].unlessA {
+              Validator.isNextSnapshot(hashed, snapshot.value)
+            }(InvalidChain.raiseError[F, Unit])
+          } >>
+            HasherSelector[F].withCurrent { implicit hasher =>
+              globalSnapshotContextFns
+                .createContext(
+                  lastContext,
+                  lastSnapshot,
+                  snapshot,
+                  fetchSnapshotByOrdinal
+                )
             }
-            .flatMap { hashed =>
-              Applicative[F].unlessA {
-                Validator.isNextSnapshot(hashed, snapshot.value)
-              }(InvalidChain.raiseError[F, Unit])
-            } >>
-            HasherSelector[F]
-              .forOrdinal(snapshot.ordinal) { implicit hasher =>
-                globalSnapshotContextFns
-                  .createContext(
-                    lastContext,
-                    lastSnapshot,
-                    snapshot,
-                    fetchSnapshotByOrdinal
-                  )
-              }
               .handleErrorWith(_ => InvalidChain.raiseError[F, GlobalSnapshotContext])
               .flatTap { _ =>
                 snapshotStorage.writePersisted(snapshot)
@@ -255,7 +252,7 @@ object Download {
             .readTmp(stepOrdinal)
             .flatMap {
               case Some(snapshot) =>
-                hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[F]).map { hashed =>
+                hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[F]).map { hashed =>
                   if (hashed.hash === stepHash) hashed.some else none[Hashed[GlobalIncrementalSnapshot]]
                 }
               case None => none[Hashed[GlobalIncrementalSnapshot]].pure[F]
@@ -263,7 +260,7 @@ object Download {
             .flatMap {
               _.map(_.pure[F])
                 .getOrElse(hasherSelector.withCurrent(implicit hs => fetchSnapshot(stepHash.some, stepOrdinal)).flatMap { snapshot =>
-                  hasherSelector.forOrdinal(snapshot.ordinal) { implicit hasher =>
+                  hasherSelector.withCurrent { implicit hasher =>
                     snapshotStorage.writeTmp(snapshot).flatMap(_ => snapshot.toHashed[F])
                   }
                 })
@@ -315,15 +312,9 @@ object Download {
             snapshotStorage.readPersisted(lastSnapshot.ordinal).flatMap {
               _.map(snapshot =>
                 hasherSelector
-                  .forOrdinal(lastSnapshot.ordinal)(implicit hasher => snapshot.toHashed[F])
+                  .withCurrent(implicit hasher => snapshot.toHashed[F])
                   .map(_.hash)
                   .flatMap(snapshotStorage.movePersistedToTmp(_, lastSnapshot.ordinal))
-                  .handleErrorWith { error =>
-                    implicit val kryoHasher = Hasher.forKryo[F]
-                    logger.warn(error)(s"movePersistedToTmp failed for ordinal=${lastSnapshot.ordinal}, retrying with Kryo hasher") >>
-                      snapshot.toHashed[F].map(_.hash).flatMap(snapshotStorage.movePersistedToTmp(_, lastSnapshot.ordinal))
-
-                  }
               ).getOrElse(Applicative[F].unit)
             } >>
               snapshotStorage
@@ -336,36 +327,34 @@ object Download {
           } else
             readSnapshot.flatMap {
               case Some(snapshot) =>
-                HasherSelector[F]
-                  .forOrdinal(snapshot.ordinal) { implicit hasher =>
-                    globalSnapshotContextFns
-                      .createContext(
-                        context,
-                        lastSnapshot,
-                        snapshot,
-                        fetchSnapshotByOrdinal
-                      )
-                  }
+                HasherSelector[F].withCurrent { implicit hasher =>
+                  globalSnapshotContextFns
+                    .createContext(
+                      context,
+                      lastSnapshot,
+                      snapshot,
+                      fetchSnapshotByOrdinal
+                    )
+                }
                   .flatTap(newContext =>
-                    hasherSelector
-                      .forOrdinal(snapshot.ordinal) { implicit hasher =>
-                        snapshotStorage
-                          .hasCorrectSnapshotInfo(snapshot.ordinal, snapshot.stateProof)
-                          .ifM(
-                            ().pure[F],
-                            (Hasher[F].getLogic(snapshot.ordinal) match {
-                              case JsonHash => StateProofValidator.validate(snapshot, newContext).map(_.isValid)
-                              case KryoHash =>
-                                StateProofValidator
-                                  .validate(snapshot, GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(newContext))
-                                  .map(_.isValid)
-                            })
-                              .ifM(
-                                snapshotStorage.persistSnapshotInfoWithCutoff(snapshot.ordinal, newContext),
-                                InvalidStateProof(snapshot.ordinal).raiseError[F, Unit]
-                              )
-                          )
-                      }
+                    hasherSelector.withCurrent { implicit hasher =>
+                      snapshotStorage
+                        .hasCorrectSnapshotInfo(snapshot.ordinal, snapshot.stateProof)
+                        .ifM(
+                          ().pure[F],
+                          (Hasher[F].getLogic(snapshot.ordinal) match {
+                            case JsonHash => StateProofValidator.validate(snapshot, newContext).map(_.isValid)
+                            case KryoHash =>
+                              StateProofValidator
+                                .validate(snapshot, GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(newContext))
+                                .map(_.isValid)
+                          })
+                            .ifM(
+                              snapshotStorage.persistSnapshotInfoWithCutoff(snapshot.ordinal, newContext),
+                              InvalidStateProof(snapshot.ordinal).raiseError[F, Unit]
+                            )
+                        )
+                    }
                   )
                   .flatMap { state =>
                     updateStoragesWithDownloadedSnapshot(snapshot, state) >>
@@ -382,7 +371,7 @@ object Download {
         .map(_.pure[F])
         .getOrElse {
           startingOrdinal
-            .flatTraverse(ordinal => hasherSelector.forOrdinal(ordinal)(implicit hasher => snapshotStorage.readCombined(ordinal)))
+            .flatTraverse(ordinal => hasherSelector.withCurrent(implicit hasher => snapshotStorage.readCombined(ordinal)))
             .flatMap {
               _.map(_.pure[F]).getOrElse(
                 getGenesisSnapshot(tmpMap)
@@ -403,7 +392,7 @@ object Download {
         .readGenesis(lastFullGlobalSnapshotOrdinal)
         .flatMap {
           _.map(_.pure[F]).getOrElse {
-            hasherSelector.forOrdinal(lastFullGlobalSnapshotOrdinal) { implicit hasher =>
+            hasherSelector.withCurrent { implicit hasher =>
               fetchGenesis(lastFullGlobalSnapshotOrdinal)
                 .flatTap(snapshotStorage.writeGenesis)
             }

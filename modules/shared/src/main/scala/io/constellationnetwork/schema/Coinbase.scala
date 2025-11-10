@@ -10,5 +10,5 @@ object Coinbase {
     "touched the alchemical gold, this is what they understood. This is the shamanic dance in the waterfall. This is " +
     "how magick is done. By hurling yourself into the abyss and discovering it's a feather bed."
 
-  val hash: Hash = Hash("9f3ed34c012794ef8dbc5ee6efa82228424259146c0b389f55982fc21197b421")
+  val hash: Hash = Hash("4a5aa18ac7204ffd521101868ee864c2875246330dcede278da99c710c4834e4")
 }

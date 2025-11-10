@@ -111,7 +111,7 @@ object SnapshotStorage {
                         hashCache(hash).get.flatMap {
                           case Some(snapshot) =>
                             Applicative[F].whenA(shouldPersist) {
-                              hasherSelector.forOrdinal(snapshot.ordinal) { implicit hasher =>
+                              hasherSelector.withCurrent { implicit hasher =>
                                 snapshotLocalFileSystemStorage.write(snapshot)
                               } >>
                                 notPersistedCache.update(current => current - ordinal)

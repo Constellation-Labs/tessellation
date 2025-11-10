@@ -104,21 +104,21 @@ object GlobalSnapshotTraverse {
             case Right(globalSnapshot)           => GlobalSnapshotInfoV1.toGlobalSnapshotInfo(globalSnapshot.info).pure[F]
           }
 
-          firstInfoCalculatedProof <- HasherSelector[F].forOrdinal(firstInc.ordinal) { implicit hasher =>
+          firstInfoCalculatedProof <- HasherSelector[F].withCurrent { implicit hasher =>
             hasher.getLogic(firstInc.ordinal) match {
               case KryoHash => GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(firstInfo).stateProof(firstInc.ordinal)
               case JsonHash => firstInfo.stateProof(firstInc.ordinal)
             }
           }
 
-          hashedFirstInc <- HasherSelector[F].forOrdinal(firstInc.ordinal)(implicit hasher => firstInc.toHashed)
+          hashedFirstInc <- HasherSelector[F].withCurrent(implicit hasher => firstInc.toHashed)
           stateProofInvalid <- StateProofValidator.validate(hashedFirstInc, firstInfoCalculatedProof).map(_.isInvalid)
 
           _ <- (new Exception(s"Snapshot info does not match the snapshot at ordinal=${firstInc.ordinal.show}"))
             .raiseError[F, Unit]
             .whenA(stateProofInvalid)
 
-          _ <- HasherSelector[F].forOrdinal(firstInc.ordinal)(implicit hasher =>
+          _ <- HasherSelector[F].withCurrent(implicit hasher =>
             initializeStorages[F](
               globalSnapshotStorage,
               lastNGlobalSnapshotStorage,
@@ -133,7 +133,7 @@ object GlobalSnapshotTraverse {
               for {
                 inc <- loadIncOrErr(hash)
 
-                (hashedInc, (updatedState, _)) <- HasherSelector[F].forOrdinal(inc.ordinal) { implicit hasher =>
+                (hashedInc, (updatedState, _)) <- HasherSelector[F].withCurrent { implicit hasher =>
                   for {
                     hashed <- inc.toHashed
                     context <- contextFns
@@ -151,7 +151,7 @@ object GlobalSnapshotTraverse {
                   } else ().pure
                 _ <-
                   if (hashedInc.ordinal > hashedFirstInc.ordinal) {
-                    HasherSelector[F].forOrdinal(inc.ordinal)(implicit hasher => globalSnapshotStorage.prepend(inc, updatedState))
+                    HasherSelector[F].withCurrent(implicit hasher => globalSnapshotStorage.prepend(inc, updatedState))
                   } else ().pure
               } yield (updatedState, inc)
           }

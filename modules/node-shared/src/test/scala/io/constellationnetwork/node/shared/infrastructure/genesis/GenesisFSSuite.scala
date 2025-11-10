@@ -20,14 +20,14 @@ import weaver._
 import weaver.scalacheck._
 
 object GenesisFSSuite extends MutableIOSuite with Checkers {
-  type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO])
+  type Res = (KryoSerializer[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO])
 
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
-    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    implicit0(js: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
     h = Hasher.forJson[IO]
-  } yield (ks, h, sp)
+  } yield (ks, js, h, sp)
 
   val gen: Gen[(Map[Address, Balance], Address)] = for {
     balancesMap <- Gen.mapOf(balanceGen.flatMap(balance => addressGen.map((_, balance))))
@@ -35,7 +35,7 @@ object GenesisFSSuite extends MutableIOSuite with Checkers {
   } yield (balancesMap, identifier)
 
   test("writes and loads genesis") { res =>
-    implicit val (ks, h, sp) = res
+    implicit val (ks, js, h, sp) = res
     val genesisFS = GenesisFS.make[IO, CurrencySnapshot]
 
     forall(gen) {
@@ -54,7 +54,7 @@ object GenesisFSSuite extends MutableIOSuite with Checkers {
   }
 
   test("writes and loads metadata") { res =>
-    implicit val (ks, h, sp) = res
+    implicit val (ks, js, h, sp) = res
     val genesisFS = GenesisFS.make[IO, CurrencySnapshot]
 
     forall(gen) {

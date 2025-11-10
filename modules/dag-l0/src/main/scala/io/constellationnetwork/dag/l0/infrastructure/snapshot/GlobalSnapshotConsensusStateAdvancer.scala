@@ -111,7 +111,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                           for {
                             peerEvents <- consensusStorage.pullEvents(bound)
                             events = peerEvents.toList.flatMap(_._2).map(_._2).toSet
-                            (artifact, context, returnedEvents) <- HasherSelector[F].forOrdinal(state.key) { implicit hasher =>
+                            (artifact, context, returnedEvents) <- HasherSelector[F].withCurrent { implicit hasher =>
                               val lastArtifact = state.lastOutcome.finished.signedMajorityArtifact
                               lastArtifact.toHashed.flatMap { hashedLastArtifact =>
                                 consensusFns
@@ -132,7 +132,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                                 (peerId, events.filter { case (_, event) => returnedEvents.contains(event) })
                             }.filter { case (_, events) => events.nonEmpty }
                             _ <- consensusStorage.addEvents(returnedPeerEvents)
-                            hash <- HasherSelector[F].forOrdinal(artifact.ordinal)(implicit hasher => artifact.hash)
+                            hash <- HasherSelector[F].withCurrent(implicit hasher => artifact.hash)
                             effect = gossip.spread(ConsensusPeerDeclaration(state.key, Proposal(hash, facilitatorsHash))) *>
                               gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
                             facilitators = state.facilitators.value
@@ -253,15 +253,14 @@ object GlobalSnapshotConsensusStateAdvancer {
                             )
 
                             val effect =
-                              HasherSelector[F]
-                                .forOrdinal(signedArtifact.ordinal) { implicit hasher =>
-                                  for {
-                                    hashedSnapshot <- signedArtifact.toHashed
-                                    _ <- lastNGlobalSnapshotStorage.set(hashedSnapshot, majorityArtifactInfo.context)
-                                    _ <- lastGlobalSnapshotStorage.set(hashedSnapshot, majorityArtifactInfo.context)
-                                    result <- globalSnapshotStorage.prepend(signedArtifact, majorityArtifactInfo.context)
-                                  } yield result
-                                }
+                              HasherSelector[F].withCurrent { implicit hasher =>
+                                for {
+                                  hashedSnapshot <- signedArtifact.toHashed
+                                  _ <- lastNGlobalSnapshotStorage.set(hashedSnapshot, majorityArtifactInfo.context)
+                                  _ <- lastGlobalSnapshotStorage.set(hashedSnapshot, majorityArtifactInfo.context)
+                                  result <- globalSnapshotStorage.prepend(signedArtifact, majorityArtifactInfo.context)
+                                } yield result
+                              }
                                 .ifM(
                                   metrics.globalSnapshot(signedArtifact),
                                   logger.error("Cannot save GlobalSnapshot into the storage") *>

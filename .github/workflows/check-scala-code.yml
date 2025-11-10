@@ -19,10 +19,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          JAVA_VERSION: 11
+          JAVA_VERSION: 21
         uses: "./.github/templates/actions/setup_java_and_scala"
 
-      - name: Run with 11 🚀
+      - name: Run with 21 🚀
         run: sbt --error 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

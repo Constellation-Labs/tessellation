@@ -8,6 +8,7 @@ import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema.transaction.{Transaction, TransactionFee}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.Signed.{ProofsHasher, SignedHasher}
 
 import eu.timepit.refined.auto._
 import io.circe.shapes._
@@ -19,7 +20,8 @@ import shapeless.syntax.singleton._
 
 final case class TransactionRoutes[F[_]: Async](
   transactionFeeEstimator: Option[TransactionFeeEstimator[F]],
-  txHasher: Hasher[F]
+  signatureHasher: Hasher[F],
+  bodyHasher: Hasher[F]
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {
 
@@ -27,11 +29,13 @@ final case class TransactionRoutes[F[_]: Async](
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "estimate-fee" =>
-      implicit val hasher: Hasher[F] = txHasher
-
       for {
         transaction <- req.as[Signed[Transaction]]
-        hashedTransaction <- transaction.toHashed[F]
+        hashedTransaction <- {
+          implicit val kryoHasher: SignedHasher[F] = SignedHasher(signatureHasher)
+          implicit val proofsHasher: ProofsHasher[F] = ProofsHasher(bodyHasher)
+          transaction.toHashedHybrid[F]
+        }
         fee <- transactionFeeEstimator match {
           case Some(estimator) => estimator.estimate(hashedTransaction)
           case None            => TransactionFee.zero.pure[F]

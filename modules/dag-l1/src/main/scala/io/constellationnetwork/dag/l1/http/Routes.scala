@@ -15,8 +15,9 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStora
 import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema.http.{ErrorCause, ErrorResponse}
 import io.constellationnetwork.schema.transaction.{Transaction, TransactionStatus, TransactionView}
-import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.Signed.{ProofsHasher, SignedHasher}
+import io.constellationnetwork.security.{Hasher, HasherSelector}
 
 import eu.timepit.refined.auto._
 import io.circe.shapes._
@@ -27,14 +28,15 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 import shapeless._
 import shapeless.syntax.singleton._
 
-final case class Routes[F[_]: Async](
+final case class Routes[F[_]: Async: HasherSelector](
   transactionService: TransactionService[F],
   transactionStorage: TransactionStorage[F],
   l0ClusterStorage: L0ClusterStorage[F],
   peerBlockConsensusInputQueue: Queue[F, Signed[PeerBlockConsensusInput]],
   swapPeerConsensusInputQueue: Queue[F, Signed[SwapConsensusInput.PeerConsensusInput]],
   tokenLockPeerConsensusInputQueue: Queue[F, Signed[TokenLockConsensusInput.PeerConsensusInput]],
-  txHasher: Hasher[F]
+  signatureHasher: Hasher[F],
+  bodyHasher: Hasher[F]
 )(implicit S: Supervisor[F])
     extends Http4sDsl[F]
     with PublicRoutes[F]
@@ -46,24 +48,28 @@ final case class Routes[F[_]: Async](
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "transactions" =>
-      implicit val hasher = txHasher
-
       for {
         transaction <- req.as[Signed[Transaction]]
-        hashedTransaction <- transaction.toHashed[F]
-        response <- transactionService
-          .offer(hashedTransaction)
-          .flatTap {
-            case Left(errors) =>
-              transactionLogger.warn(
-                s"Received transaction hash=${hashedTransaction.hash} is invalid: ${transaction.show}, reason: ${errors.show}"
-              )
-            case Right(hash) => transactionLogger.info(s"Received valid transaction: ${hash.show}")
-          }
-          .flatMap {
-            case Left(errors) => BadRequest(ErrorResponse(errors.map(e => ErrorCause(e.show))))
-            case Right(hash)  => Ok(("hash" ->> hash.value) :: HNil)
-          }
+        hashedTransaction <- {
+          implicit val kryoHasher: SignedHasher[F] = SignedHasher(signatureHasher)
+          implicit val proofsHasher: ProofsHasher[F] = ProofsHasher(bodyHasher)
+          transaction.toHashedHybrid[F]
+        }
+        response <- HasherSelector[F].withCurrent { implicit hashser =>
+          transactionService
+            .offer(hashedTransaction)
+            .flatTap {
+              case Left(errors) =>
+                transactionLogger.warn(
+                  s"Received transaction hash=${hashedTransaction.hash} is invalid: ${transaction.show}, reason: ${errors.show}"
+                )
+              case Right(hash) => transactionLogger.info(s"Received valid transaction: ${hash.show}")
+            }
+            .flatMap {
+              case Left(errors) => BadRequest(ErrorResponse(errors.map(e => ErrorCause(e.show))))
+              case Right(hash)  => Ok(("hash" ->> hash.value) :: HNil)
+            }
+        }
       } yield response
 
     case GET -> Root / "transactions" / HashVar(hash) =>

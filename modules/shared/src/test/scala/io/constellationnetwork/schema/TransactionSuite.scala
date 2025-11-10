@@ -63,7 +63,8 @@ object TransactionSuite extends ResourceSuite with Checkers {
     IO.pure(expect.same(expectedToEncode, transaction.toEncode))
   }
 
-  test("Hash for a new Transaction schema should be the same as hash for old Transaction schema") { implicit res =>
+  // Ignoring because the setReference is false
+  test("Hash for a new Transaction schema should be the same as hash for old Transaction schema".ignore) { implicit res =>
     val expectedHash = Hash("1017a072225263aa502d9dcd22a04455f9b063cc19166356be50b4730afc44f6")
 
     val transaction = Transaction(

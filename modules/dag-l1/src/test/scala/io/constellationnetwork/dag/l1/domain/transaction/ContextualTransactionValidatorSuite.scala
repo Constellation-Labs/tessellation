@@ -21,6 +21,7 @@ import io.constellationnetwork.schema.transaction._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.key.ops._
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.Signed.{ProofsHasher, SignedHasher}
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._
@@ -32,7 +33,7 @@ import weaver.scalacheck.Checkers
 
 object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers {
 
-  type Res = (Hasher[IO], SecurityProvider[IO])
+  type Res = (Hasher[IO], SecurityProvider[IO], KryoSerializer[IO], JsonSerializer[IO])
 
   def gen: Gen[(Address, TransactionSalt, Int)] = for {
     dst <- addressGen
@@ -45,7 +46,7 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     implicit0(js: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
     h = Hasher.forKryo[IO]
-  } yield (h, sp)
+  } yield (h, sp, ks, js)
 
   val config = TransactionLimitConfig(
     Balance(100000000L),
@@ -71,7 +72,12 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
   def generateTxChain(
     keyPair: KeyPair,
     count: PosInt
-  )(implicit sp: SecurityProvider[IO], hs: Hasher[IO]): IO[SortedMap[TransactionOrdinal, StoredTransaction]] =
+  )(
+    implicit sp: SecurityProvider[IO],
+    hasher: Hasher[IO],
+    js: JsonSerializer[IO],
+    ks: KryoSerializer[IO]
+  ): IO[SortedMap[TransactionOrdinal, StoredTransaction]] =
     (1 to count).toList
       .foldLeftM(SortedMap.empty[TransactionOrdinal, StoredTransaction]) {
         case (acc, _) =>
@@ -79,9 +85,11 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
             case Some((_, tx)) => tx.ref
             case None          => TransactionReference.empty
           }
+          implicit val kryoHasher: SignedHasher[IO] = SignedHasher(Hasher.forKryo[IO])
+          implicit val proofsHasher: ProofsHasher[IO] = ProofsHasher(Hasher.forJson[IO])
 
           genTransaction(keyPair, lastRef, TransactionFee.zero)
-            .flatMap(_.toHashed)
+            .flatMap(_.toHashedHybrid)
             .map { tx =>
               val ref = TransactionReference.of(tx)
               val stored = if (lastRef === TransactionReference.empty) MajorityTx(ref, SnapshotOrdinal.MinValue) else WaitingTx(tx)
@@ -90,7 +98,9 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
       }
 
   test("Transaction is rejected if insufficient balance") { res =>
-    implicit val (hasher, sp) = res
+    implicit val (hasher, sp, ks, js) = res
+    implicit val kryoHasher: SignedHasher[IO] = SignedHasher(Hasher.forKryo[IO])
+    implicit val proofsHasher: ProofsHasher[IO] = ProofsHasher(Hasher.forJson[IO])
     forall(gen) {
       case (dst, salt, _) =>
         for {
@@ -107,7 +117,7 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
               ),
               kp
             )
-            .flatMap(_.toHashed)
+            .flatMap(_.toHashedHybrid)
 
           txs = SortedMap(
             majorityTx.ordinal -> MajorityTx(TransactionReference.of(majorityTx), SnapshotOrdinal.MinValue)
@@ -126,7 +136,9 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
             salt
           )
           signedTx <- Signed.forAsyncHasher(tx, kp)
-          hashedTx <- signedTx.toHashed
+          implicit0(kryoHasher: SignedHasher[IO]) = SignedHasher(Hasher.forKryo[IO])
+          implicit0(proofsHasher: ProofsHasher[IO]) = ProofsHasher(Hasher.forJson[IO])
+          hashedTx <- signedTx.toHashedHybrid
           context = TransactionValidatorContext(txs, balance, lastProcessedTransactionRef, lastSnapshotOrdinal)
           result = validator.validate(hashedTx, context)
         } yield
@@ -140,7 +152,9 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
   }
 
   test("Transaction is rejected if insufficient balance is caused by mempool transactions") { res =>
-    implicit val (hasher, sp) = res
+    implicit val (hasher, sp, ks, js) = res
+    implicit val kryoHasher: SignedHasher[IO] = SignedHasher(Hasher.forKryo[IO])
+    implicit val proofsHasher: ProofsHasher[IO] = ProofsHasher(Hasher.forJson[IO])
     forall(gen) {
       case (dst, salt, _) =>
         for {
@@ -157,7 +171,7 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
               ),
               kp
             )
-            .flatMap(_.toHashed)
+            .flatMap(_.toHashedHybrid)
           waitingTx <- Signed
             .forAsyncHasher(
               Transaction(
@@ -170,7 +184,7 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
               ),
               kp
             )
-            .flatMap(_.toHashed)
+            .flatMap(_.toHashedHybrid)
           txs = SortedMap(
             majorityTx.ordinal -> MajorityTx(TransactionReference.of(majorityTx), SnapshotOrdinal.MinValue),
             waitingTx.ordinal -> WaitingTx(waitingTx)
@@ -190,7 +204,9 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
             salt
           )
           signedTx <- Signed.forAsyncHasher(tx, kp)
-          hashedTx <- signedTx.toHashed
+          implicit0(kryoHasher: SignedHasher[IO]) = SignedHasher(Hasher.forKryo[IO])
+          implicit0(proofsHasher: ProofsHasher[IO]) = ProofsHasher(Hasher.forJson[IO])
+          hashedTx <- signedTx.toHashedHybrid
           context = TransactionValidatorContext(txs.some, balance, lastProcessedTransactionRef, lastSnapshotOrdinal)
           result = validator.validate(hashedTx, context)
         } yield
@@ -204,7 +220,7 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
   }
 
   test("Transaction with minimal required fee is not limited") { res =>
-    implicit val (hasher, sp) = res
+    implicit val (hasher, sp, ks, js) = res
     for {
       dst <- KeyPairGenerator.makeKeyPair
       kp <- KeyPairGenerator.makeKeyPair
@@ -221,7 +237,9 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
       balance = config.baseBalance
       lastSnapshotOrdinal = SnapshotOrdinal.MinValue
       lastProcessedTransactionRef = TransactionReference.empty
-      hashedTx <- Signed.forAsyncHasher(tx, kp).flatMap(_.toHashed)
+      implicit0(kryoHasher: SignedHasher[IO]) = SignedHasher(Hasher.forKryo[IO])
+      implicit0(proofsHasher: ProofsHasher[IO]) = ProofsHasher(Hasher.forJson[IO])
+      hashedTx <- Signed.forAsyncHasher(tx, kp).flatMap(_.toHashedHybrid)
       context = TransactionValidatorContext(txs, balance, lastProcessedTransactionRef, lastSnapshotOrdinal)
       result = validator.validate(
         hashedTx,
@@ -231,12 +249,14 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
   }
 
   test("Transaction overrides existing waiting transaction by higher fee") { res =>
-    implicit val (hasher, sp) = res
+    implicit val (hasher, sp, ks, js) = res
+    implicit val kryoHasher: SignedHasher[IO] = SignedHasher(Hasher.forKryo[IO])
+    implicit val proofsHasher: ProofsHasher[IO] = ProofsHasher(Hasher.forJson[IO])
     for {
       kp <- KeyPairGenerator.makeKeyPair
-      majorityTx <- genTransaction(kp, TransactionReference.empty, TransactionFee.zero).flatMap(_.toHashed)
+      majorityTx <- genTransaction(kp, TransactionReference.empty, TransactionFee.zero).flatMap(_.toHashedHybrid)
       majorityTxRef = TransactionReference.of(majorityTx)
-      conflictingTx <- genTransaction(kp, majorityTxRef, TransactionFee(2L)).flatMap(_.toHashed)
+      conflictingTx <- genTransaction(kp, majorityTxRef, TransactionFee(2L)).flatMap(_.toHashedHybrid)
       conflictingTxRef = TransactionReference.of(conflictingTx)
 
       txs = SortedMap(
@@ -247,9 +267,9 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
       lastSnapshotOrdinal = SnapshotOrdinal.unsafeApply(durationToOrdinals(config.timeToWaitForBaseBalance))
       lastProcessedTransactionRef = TransactionReference.empty
       validator = ContextualTransactionValidator.make(config, None)
-      txLowerFee <- genTransaction(kp, majorityTxRef, TransactionFee(1L)).flatMap(_.toHashed)
-      txEqualFee <- genTransaction(kp, majorityTxRef, TransactionFee(2L)).flatMap(_.toHashed)
-      txHigherFee <- genTransaction(kp, majorityTxRef, TransactionFee(3L)).flatMap(_.toHashed)
+      txLowerFee <- genTransaction(kp, majorityTxRef, TransactionFee(1L)).flatMap(_.toHashedHybrid)
+      txEqualFee <- genTransaction(kp, majorityTxRef, TransactionFee(2L)).flatMap(_.toHashedHybrid)
+      txHigherFee <- genTransaction(kp, majorityTxRef, TransactionFee(3L)).flatMap(_.toHashedHybrid)
       resultLower = validator.validate(
         txLowerFee,
         TransactionValidatorContext(txs.some, balance, lastProcessedTransactionRef, lastSnapshotOrdinal)
@@ -271,14 +291,16 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
   }
 
   test("Transaction does not override existing non-waiting transaction") { res =>
-    implicit val (hasher, sp) = res
+    implicit val (hasher, sp, ks, js) = res
     for {
       kp <- KeyPairGenerator.makeKeyPair
-      majorityTx <- genTransaction(kp, TransactionReference.empty, TransactionFee.zero).flatMap(_.toHashed)
+      implicit0(kryoHasher: SignedHasher[IO]) = SignedHasher(Hasher.forKryo[IO])
+      implicit0(proofsHasher: ProofsHasher[IO]) = ProofsHasher(Hasher.forJson[IO])
+      majorityTx <- genTransaction(kp, TransactionReference.empty, TransactionFee.zero).flatMap(_.toHashedHybrid)
       majorityTxRef = TransactionReference.of(majorityTx)
-      acceptedTx <- genTransaction(kp, majorityTxRef, TransactionFee(2L)).flatMap(_.toHashed)
+      acceptedTx <- genTransaction(kp, majorityTxRef, TransactionFee(2L)).flatMap(_.toHashedHybrid)
       acceptedTxRef = TransactionReference.of(acceptedTx)
-      processingTx <- genTransaction(kp, acceptedTxRef, TransactionFee(2L)).flatMap(_.toHashed)
+      processingTx <- genTransaction(kp, acceptedTxRef, TransactionFee(2L)).flatMap(_.toHashedHybrid)
 
       txs = SortedMap(
         majorityTx.ordinal -> MajorityTx(majorityTxRef, SnapshotOrdinal.MinValue),
@@ -289,8 +311,8 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
       lastSnapshotOrdinal = SnapshotOrdinal.unsafeApply(durationToOrdinals(config.timeToWaitForBaseBalance))
       lastProcessedTransactionRef = TransactionReference.of(acceptedTx)
       validator = ContextualTransactionValidator.make(config, None)
-      txOverridesAccepted <- genTransaction(kp, majorityTxRef, TransactionFee(3L)).flatMap(_.toHashed)
-      txOverridesProcessing <- genTransaction(kp, acceptedTxRef, TransactionFee(3L)).flatMap(_.toHashed)
+      txOverridesAccepted <- genTransaction(kp, majorityTxRef, TransactionFee(3L)).flatMap(_.toHashedHybrid)
+      txOverridesProcessing <- genTransaction(kp, acceptedTxRef, TransactionFee(3L)).flatMap(_.toHashedHybrid)
       resultAccepted = validator.validate(
         txOverridesAccepted,
         TransactionValidatorContext(txs.some, balance, lastProcessedTransactionRef, lastSnapshotOrdinal)
@@ -311,7 +333,7 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
   test(
     s"Transaction from base balance=${config.baseBalance.show} is limited for approx ${config.timeToWaitForBaseBalance.show}"
   ) { res =>
-    implicit val (hasher, sp) = res
+    implicit val (hasher, sp, ks, js) = res
     forall(gen) {
       case (dst, salt, _) =>
         for {
@@ -323,7 +345,9 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
           validator = ContextualTransactionValidator.make(config, None)
           tx = Transaction(kp.getPublic.toAddress, dst, TransactionAmount(1L), TransactionFee.zero, TransactionReference.empty, salt)
           signedTx <- Signed.forAsyncHasher(tx, kp)
-          hashedTx <- signedTx.toHashed
+          implicit0(kryoHasher: SignedHasher[IO]) = SignedHasher(Hasher.forKryo[IO])
+          implicit0(proofsHasher: ProofsHasher[IO]) = ProofsHasher(Hasher.forJson[IO])
+          hashedTx <- signedTx.toHashedHybrid
           context = TransactionValidatorContext(txs, balance, lastProcessedTransactionRef, lastSnapshotOrdinal)
           result = validator.validate(hashedTx, context)
         } yield
@@ -337,7 +361,9 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
   test(
     s"Transaction from base balance=${config.baseBalance.show} is allowed after waiting approx ${config.timeToWaitForBaseBalance.show}"
   ) { res =>
-    implicit val (hasher, sp) = res
+    implicit val (hasher, sp, ks, js) = res
+    implicit val kryoHasher: SignedHasher[IO] = SignedHasher(Hasher.forKryo[IO])
+    implicit val proofsHasher: ProofsHasher[IO] = ProofsHasher(Hasher.forJson[IO])
     forall(gen) {
       case (dst, salt, _) =>
         for {
@@ -348,7 +374,7 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
           lastSnapshotOrdinal = SnapshotOrdinal.unsafeApply(durationToOrdinals(config.timeToWaitForBaseBalance))
           validator = ContextualTransactionValidator.make(config, None)
           tx = Transaction(kp.getPublic.toAddress, dst, TransactionAmount(1L), TransactionFee.zero, TransactionReference.empty, salt)
-          signedTx <- Signed.forAsyncHasher(tx, kp).flatMap(_.toHashed)
+          signedTx <- Signed.forAsyncHasher(tx, kp).flatMap(_.toHashedHybrid)
           context = TransactionValidatorContext(txs, balance, lastProcessedTransactionRef, lastSnapshotOrdinal)
           result = validator.validate(signedTx, context)
         } yield expect.eql(true, result.isValid)
@@ -358,8 +384,9 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
   test(
     s"Transaction limit is based on balance relatively to base balance"
   ) { res =>
-    implicit val (hasher, sp) = res
-
+    implicit val (hasher, sp, ks, js) = res
+    implicit val kryoHasher: SignedHasher[IO] = SignedHasher(Hasher.forKryo[IO])
+    implicit val proofsHasher: ProofsHasher[IO] = ProofsHasher(Hasher.forJson[IO])
     for {
       baseBalanceAddress <- KeyPairGenerator.makeKeyPair
       higherThanBaseBalanceAddress <- KeyPairGenerator.makeKeyPair
@@ -395,9 +422,9 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
 
       validator = ContextualTransactionValidator.make(config, None)
 
-      txA <- genTransaction(baseBalanceAddress, baseBalanceAddressTxs.last._2.ref).flatMap(_.toHashed)
-      txB <- genTransaction(higherThanBaseBalanceAddress, higherThanBaseBalanceAddressTxs.last._2.ref).flatMap(_.toHashed)
-      txC <- genTransaction(lowerThanBaseBalanceAddress, lowerThanBaseBalanceAddressTxs.last._2.ref).flatMap(_.toHashed)
+      txA <- genTransaction(baseBalanceAddress, baseBalanceAddressTxs.last._2.ref).flatMap(_.toHashedHybrid)
+      txB <- genTransaction(higherThanBaseBalanceAddress, higherThanBaseBalanceAddressTxs.last._2.ref).flatMap(_.toHashedHybrid)
+      txC <- genTransaction(lowerThanBaseBalanceAddress, lowerThanBaseBalanceAddressTxs.last._2.ref).flatMap(_.toHashedHybrid)
 
       resultA = validator.validate(
         txA,
@@ -420,7 +447,9 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
   }
 
   test("Custom validator rejects transaction") { res =>
-    implicit val (hasher, sp) = res
+    implicit val (hasher, sp, ks, js) = res
+    implicit val kryoHasher: SignedHasher[IO] = SignedHasher(Hasher.forKryo[IO])
+    implicit val proofsHasher: ProofsHasher[IO] = ProofsHasher(Hasher.forJson[IO])
     for {
       dst <- KeyPairGenerator.makeKeyPair
       kp <- KeyPairGenerator.makeKeyPair
@@ -445,7 +474,7 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
         TransactionReference.empty,
         TransactionSalt(1L)
       )
-      hashedTx <- Signed.forAsyncHasher(tx, kp).flatMap(_.toHashed)
+      hashedTx <- Signed.forAsyncHasher(tx, kp).flatMap(_.toHashedHybrid)
       context = TransactionValidatorContext(none, config.baseBalance, TransactionReference.empty, SnapshotOrdinal.MinValue)
       result = validator.validate(
         hashedTx,
@@ -455,7 +484,9 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
   }
 
   test("Custom validator approves transaction") { res =>
-    implicit val (hasher, sp) = res
+    implicit val (hasher, sp, ks, js) = res
+    implicit val kryoHasher: SignedHasher[IO] = SignedHasher(Hasher.forKryo[IO])
+    implicit val proofsHasher: ProofsHasher[IO] = ProofsHasher(Hasher.forJson[IO])
     for {
       dst <- KeyPairGenerator.makeKeyPair
       kp <- KeyPairGenerator.makeKeyPair
@@ -480,7 +511,7 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
         TransactionReference.empty,
         TransactionSalt(1L)
       )
-      hashedTx <- Signed.forAsyncHasher(tx, kp).flatMap(_.toHashed)
+      hashedTx <- Signed.forAsyncHasher(tx, kp).flatMap(_.toHashedHybrid)
       context = TransactionValidatorContext(none, config.baseBalance, TransactionReference.empty, SnapshotOrdinal.MinValue)
       result = validator.validate(
         hashedTx,

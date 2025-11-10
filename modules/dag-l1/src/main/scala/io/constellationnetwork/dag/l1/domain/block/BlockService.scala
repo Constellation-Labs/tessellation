@@ -1,7 +1,7 @@
 package io.constellationnetwork.dag.l1.domain.block
 
 import cats.data.EitherT
-import cats.effect.Async
+import cats.effect.{Async, IO}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
@@ -19,6 +19,7 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.Signed.{ProofsHasher, SignedHasher}
 import io.constellationnetwork.security.{Hashed, Hasher}
 
 import eu.timepit.refined.auto._
@@ -37,7 +38,7 @@ object BlockService {
     transactionStorage: TransactionStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     collateral: Amount,
-    txHasher: Hasher[F]
+    txHasherKryo: Hasher[F]
   ): BlockService[F] =
     new BlockService[F] {
 
@@ -69,18 +70,19 @@ object BlockService {
 
       private def processAcceptanceSuccess(
         hashedBlock: Hashed[Block]
-      )(contextUpdate: BlockAcceptanceContextUpdate): F[Unit] = {
-        implicit val hasher = txHasher
+      )(contextUpdate: BlockAcceptanceContextUpdate)(implicit hasher: Hasher[F]): F[Unit] = {
+        implicit val kryoHasher: SignedHasher[F] = SignedHasher(txHasherKryo)
+        implicit val proofsHasher: ProofsHasher[F] = ProofsHasher(hasher)
 
         for {
           hashedTransactions <- hashedBlock.signed.transactions.toNonEmptyList
             .sortBy(_.ordinal)
-            .traverse(_.toHashed)
+            .traverse(_.toHashedHybrid)
 
           _ <- hashedTransactions.traverse(transactionStorage.accept)
           _ <- blockStorage.accept(hashedBlock)
           _ <- addressStorage.updateBalances(contextUpdate.balances)
-          isDependent = (block: Signed[Block]) => BlockRelations.dependsOn[F](hashedBlock, txHasher = txHasher)(block)
+          isDependent = (block: Signed[Block]) => BlockRelations.dependsOn[F](hashedBlock, txHasher = txHasherKryo)(block)
           _ <- blockStorage.restoreDependent(isDependent)
         } yield ()
       }
