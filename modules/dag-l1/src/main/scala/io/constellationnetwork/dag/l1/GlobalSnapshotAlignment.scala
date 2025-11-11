@@ -39,7 +39,7 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
 
     retryingOnSomeErrors(
       policy = RetryPolicies.limitRetries[F](maxRetries),
-      isWorthRetrying = (_: Throwable) => true.pure[F], // Retry all errors
+      isWorthRetrying = (_: Throwable) => true.pure[F],
       onError = (err: Throwable, details: RetryDetails) => logger.warn(err)(s"$operationName failed on attempt ${details.retriesSoFar + 1}")
     )(operation).handleErrorWith { e =>
       logger.error(e)(s"$operationName failed after $maxRetries retries") >>
@@ -47,76 +47,67 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
     }
   }
 
-  private def checkSynchronization(
-    lastGlobalSnapshotFromStorage: Hashed[GlobalIncrementalSnapshot],
-    lastGlobalSnapshotFromNetwork: Hashed[GlobalIncrementalSnapshot]
-  ) =
-    if (
-      lastGlobalSnapshotFromStorage.epochProgress.value.value + maxEpochProgressesBehind < lastGlobalSnapshotFromNetwork.epochProgress.value.value
-    ) {
-      val message = "Detected synchronization issue: TooFarEpochProgress. Forcing re-download"
-      logger.info(message) >>
-        storages.globalL0Alignment.updateShouldRedownload(
-          value = true,
-          reasons = List(message)
-        )
-    } else {
-      ().pure
-    }
-  private val checkAlignment: Stream[F, Unit] = Stream
-    .awakeEvery(1.minute)
-    .evalMap { _ =>
-      withRetry(
-        operation = for {
-          _ <- logger.info("Checking global snapshot alignment")
-          maybeLastSnapshotOnStorage <- sharedStorages.lastGlobalSnapshot.get
-          lastCombinedGlobalSnapshotFromNetwork <- services.globalL0.pullLatestSnapshot
-          _ <- maybeLastSnapshotOnStorage match {
-            case Some(lastSnapshotOnStorage) =>
-              val (lastGlobalSnapshotFromNetwork, _) = lastCombinedGlobalSnapshotFromNetwork
-              checkSynchronization(lastSnapshotOnStorage, lastGlobalSnapshotFromNetwork)
-            case None =>
-              val message = "Last snapshot not found on storage, forcing re-download!"
-              logger.info(message) >>
-                storages.globalL0Alignment.updateShouldRedownload(
-                  value = true,
-                  reasons = List(message)
-                )
-          }
-        } yield (),
-        operationName = "Check alignment"
-      )
-    }
-    .handleErrorWith { e =>
-      Stream.eval(logger.error(e)("Check alignment stream failed, restarting")) ++ checkAlignment
+  def performCheckAlignment(): F[Unit] = {
+    def checkSynchronization(
+      lastGlobalSnapshotFromStorage: Hashed[GlobalIncrementalSnapshot],
+      lastGlobalSnapshotFromNetwork: Hashed[GlobalIncrementalSnapshot]
+    ) =
+      if (
+        lastGlobalSnapshotFromStorage.epochProgress.value.value + maxEpochProgressesBehind < lastGlobalSnapshotFromNetwork.epochProgress.value.value
+      ) {
+        val message = "Detected synchronization issue: TooFarEpochProgress. Forcing re-download"
+        logger.info(message) >>
+          storages.globalL0Alignment.updateShouldRedownload(
+            value = true,
+            reasons = List(message)
+          )
+      } else {
+        ().pure
+      }
+
+    for {
+      _ <- logger.info("Checking global snapshot alignment")
+      maybeLastSnapshotOnStorage <- sharedStorages.lastGlobalSnapshot.get
+      lastCombinedGlobalSnapshotFromNetwork <- services.globalL0.pullLatestSnapshot
+      _ <- maybeLastSnapshotOnStorage match {
+        case Some(lastSnapshotOnStorage) =>
+          val (lastGlobalSnapshotFromNetwork, _) = lastCombinedGlobalSnapshotFromNetwork
+          checkSynchronization(lastSnapshotOnStorage, lastGlobalSnapshotFromNetwork)
+        case None =>
+          val message = "Last snapshot not found on storage, forcing re-download!"
+          logger.info(message) >>
+            storages.globalL0Alignment.updateShouldRedownload(
+              value = true,
+              reasons = List(message)
+            )
+      }
+    } yield ()
+  }
+
+  def performL0PeerDiscovery(): F[Unit] =
+    storages.lastSnapshot.get.flatMap {
+      case None =>
+        storages.l0Cluster.getRandomPeer.flatMap(p => programs.l0PeerDiscovery.discoverFrom(p))
+      case Some(latestSnapshot) =>
+        programs.l0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
     }
 
-  private val l0PeerDiscovery: Stream[F, Unit] = Stream
-    .awakeEvery(10.seconds)
-    .evalMap { _ =>
-      withRetry(
-        operation = storages.lastSnapshot.get.flatMap {
-          case None =>
-            storages.l0Cluster.getRandomPeer.flatMap(p => programs.l0PeerDiscovery.discoverFrom(p))
-          case Some(latestSnapshot) =>
-            programs.l0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
-        },
-        operationName = "L0 peer discovery"
-      )
-    }
-    .handleErrorWith { e =>
-      Stream.eval(logger.error(e)("L0 peer discovery stream failed, restarting")) ++ l0PeerDiscovery
-    }
+  def performGlobalSnapshotProcessingUntilCaughtUp(): F[Unit] = {
+    def loop(isFirstCall: Boolean): F[Unit] =
+      performGlobalSnapshotProcessing().flatMap {
+        case Left(_) if isFirstCall                => loop(isFirstCall = false)
+        case Left(_)                               => ().pure
+        case Right(snapshots) if snapshots.isEmpty => ().pure
+        case Right(_)                              => loop(isFirstCall = false)
+      }
+    loop(isFirstCall = true)
+  }
 
-  private val globalSnapshotProcessing: Stream[F, Unit] = Stream
-    .awakeEvery(10.seconds)
-    .evalMap { _ =>
-      withRetry(
-        operation = services.globalL0.pullGlobalSnapshots,
-        operationName = "Pull global snapshots"
-      )
-    }
-    .evalTap { snapshots =>
+  def performGlobalSnapshotProcessing()
+    : F[Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]] = {
+    def logSnapshots(
+      snapshots: Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]
+    ): F[Unit] = {
       def log(snapshot: Hashed[GlobalIncrementalSnapshot]) =
         logger.info(s"Pulled following global snapshot: ${SnapshotReference.fromHashedSnapshot(snapshot).show}")
 
@@ -125,44 +116,94 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
         case Right(snapshots)    => snapshots.traverse(log).void
       }
     }
-    .evalMap {
-      case Left((snapshot, state)) =>
-        withRetry(
-          operation = HasherSelector[F].withCurrent { implicit hasher =>
-            programs.snapshotProcessor.process((snapshot, state).asLeft[Hashed[GlobalIncrementalSnapshot]]).map(List(_))
-          },
-          operationName = s"Process single snapshot ${SnapshotReference.fromHashedSnapshot(snapshot).show}"
-        )
-      case Right(snapshots) =>
-        withRetry(
-          operation = (snapshots, List.empty[SnapshotProcessingResult]).tailRecM {
-            case (snapshot :: nextSnapshots, aggResults) =>
-              HasherSelector[F].withCurrent { implicit hasher =>
-                programs.snapshotProcessor
-                  .process(snapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
-              }
-                .map(result => (nextSnapshots, aggResults :+ result).asLeft[List[SnapshotProcessingResult]])
-                .handleErrorWith { e =>
-                  val message = s"Failed to process snapshot ${SnapshotReference.fromHashedSnapshot(snapshot).show}, skipping"
-                  for {
-                    _ <- storages.globalL0Alignment.updateShouldRedownload(
-                      value = true,
-                      reasons = List(message)
-                    )
-                    _ <- logger.error(e)(message)
-                  } yield (nextSnapshots, aggResults).asLeft[List[SnapshotProcessingResult]]
-                }
 
-            case (Nil, aggResults) =>
-              aggResults.asRight[(List[Hashed[GlobalIncrementalSnapshot]], List[SnapshotProcessingResult])].pure[F]
-          },
-          operationName = s"Process ${snapshots.size} snapshots batch"
-        )
-    }
-    .evalMap { results =>
+    def processSnapshots(
+      snapshots: Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]
+    ): F[List[SnapshotProcessingResult]] =
+      snapshots match {
+        case Left((snapshot, state)) =>
+          withRetry(
+            operation = HasherSelector[F].withCurrent { implicit hasher =>
+              programs.snapshotProcessor.process((snapshot, state).asLeft[Hashed[GlobalIncrementalSnapshot]]).map(List(_))
+            },
+            operationName = s"Process single snapshot ${SnapshotReference.fromHashedSnapshot(snapshot).show}"
+          )
+        case Right(snapshots) =>
+          withRetry(
+            operation = performSnapshotsBatchProcessing(snapshots),
+            operationName = s"Process ${snapshots.size} snapshots batch"
+          )
+      }
+
+    def logResults(results: List[SnapshotProcessingResult]): F[Unit] =
       results.traverse(result => logger.info(s"Snapshot processing result: ${result.show}")).void.handleErrorWith { e =>
         logger.warn(e)("Failed to log snapshot processing results")
       }
+
+    for {
+      snapshots <- withRetry(
+        operation = services.globalL0.pullGlobalSnapshots,
+        operationName = "Pull global snapshots"
+      )
+      _ <- logSnapshots(snapshots)
+      results <- processSnapshots(snapshots)
+      _ <- logResults(results)
+    } yield snapshots
+  }
+
+  private def performSnapshotsBatchProcessing(
+    snapshots: List[Hashed[GlobalIncrementalSnapshot]]
+  ): F[List[SnapshotProcessingResult]] =
+    (snapshots, List.empty[SnapshotProcessingResult]).tailRecM {
+      case (snapshot :: nextSnapshots, aggResults) =>
+        HasherSelector[F].withCurrent { implicit hasher =>
+          programs.snapshotProcessor
+            .process(snapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
+        }
+          .map(result => (nextSnapshots, aggResults :+ result).asLeft[List[SnapshotProcessingResult]])
+          .handleErrorWith { e =>
+            val message = s"Failed to process snapshot ${SnapshotReference.fromHashedSnapshot(snapshot).show}, skipping"
+            for {
+              _ <- storages.globalL0Alignment.updateShouldRedownload(
+                value = true,
+                reasons = List(message)
+              )
+              _ <- logger.error(e)(message)
+            } yield (nextSnapshots, aggResults).asLeft[List[SnapshotProcessingResult]]
+          }
+
+      case (Nil, aggResults) =>
+        aggResults.asRight[(List[Hashed[GlobalIncrementalSnapshot]], List[SnapshotProcessingResult])].pure[F]
+    }
+
+  private def checkAlignment: Stream[F, Unit] = Stream
+    .awakeEvery(1.minute)
+    .evalMap { _ =>
+      withRetry(
+        operation = performCheckAlignment(),
+        operationName = "Check alignment"
+      )
+    }
+    .handleErrorWith { e =>
+      Stream.eval(logger.error(e)("Check alignment stream failed, restarting")) ++ checkAlignment
+    }
+
+  private def l0PeerDiscovery: Stream[F, Unit] = Stream
+    .awakeEvery(10.seconds)
+    .evalMap { _ =>
+      withRetry(
+        operation = performL0PeerDiscovery(),
+        operationName = "L0 peer discovery"
+      )
+    }
+    .handleErrorWith { e =>
+      Stream.eval(logger.error(e)("L0 peer discovery stream failed, restarting")) ++ l0PeerDiscovery
+    }
+
+  private def globalSnapshotProcessing: Stream[F, Unit] = Stream
+    .awakeEvery(10.seconds)
+    .evalMap { _ =>
+      performGlobalSnapshotProcessing().void
     }
     .handleErrorWith { e =>
       Stream.eval(logger.error(e)("Global snapshot processing stream failed, restarting")) ++ globalSnapshotProcessing
@@ -180,5 +221,6 @@ object GlobalSnapshotAlignment {
     programs: Programs[F, P, S, SI],
     storages: Storages[F, P, S, SI],
     sharedStorages: SharedStorages[F]
-  ) = new GlobalSnapshotAlignment[F, P, S, SI, R](services, programs, storages, sharedStorages)
+  ): GlobalSnapshotAlignment[F, P, S, SI, R] =
+    new GlobalSnapshotAlignment[F, P, S, SI, R](services, programs, storages, sharedStorages)
 }

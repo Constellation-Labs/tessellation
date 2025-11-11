@@ -238,6 +238,16 @@ abstract class CurrencyL1App(
         services.collateral
       )
 
+      alignment = GlobalSnapshotAlignment
+        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
+          services,
+          programs,
+          storages,
+          sharedStorages
+        )
+
+      _ <- alignment.performGlobalSnapshotProcessingUntilCaughtUp().asResource
+
       _ <- {
         method match {
           case cfg: RunInitialValidator =>
@@ -283,13 +293,6 @@ abstract class CurrencyL1App(
               programs.joining.joinOneOf(cfg.majorityForkPeerIds)
         }
       }.asResource
-      alignment = GlobalSnapshotAlignment
-        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
-          services,
-          programs,
-          storages,
-          sharedStorages
-        )
       _ <- hasherSelector.withCurrent { implicit hasher =>
         services.dataApplication.map { da =>
           DataApplication

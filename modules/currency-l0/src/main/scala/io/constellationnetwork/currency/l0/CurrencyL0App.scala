@@ -17,18 +17,14 @@ import io.constellationnetwork.currency.l0.modules._
 import io.constellationnetwork.currency.l0.node.L0NodeContext
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
 import io.constellationnetwork.currency.schema.currency._
-import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
-import io.constellationnetwork.env.env.AllowanceListPath
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.kryo._
 import io.constellationnetwork.node.shared.app.{NodeShared, TessellationIOApp, getMajorityPeerIds}
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.ext.pureconfig._
-import io.constellationnetwork.node.shared.infrastructure.allowance_list.{Loader => AllowanceListLoader}
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.statechannel.StateChannelAllowanceLists
 import io.constellationnetwork.node.shared.resources.MkHttpServer
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
@@ -38,7 +34,6 @@ import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -231,6 +226,15 @@ abstract class CurrencyL0App(
             innerProgram <- other match {
               case rv: RunValidator =>
                 storages.identifier.setInitial(rv.identifier) >>
+                  performGlobalL0SnapshotProcess(
+                    storages,
+                    sharedStorages,
+                    services,
+                    dataApplicationService,
+                    keyPair,
+                    mkCell,
+                    isStartupCall = true
+                  ) >>
                   gossipDaemon.startAsRegularValidator >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
                   storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
@@ -255,6 +259,15 @@ abstract class CurrencyL0App(
               case m: RunValidatorWithJoinAttempt =>
                 storages.identifier.setInitial(m.identifier) >>
                   gossipDaemon.startAsRegularValidator >>
+                  performGlobalL0SnapshotProcess(
+                    storages,
+                    sharedStorages,
+                    services,
+                    dataApplicationService,
+                    keyPair,
+                    mkCell,
+                    isStartupCall = true
+                  ) >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
                   storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
                   programs.joining.joinOneOf(m.majorityForkPeerIds) >>
@@ -294,6 +307,15 @@ abstract class CurrencyL0App(
 
               case rr: RunRollback =>
                 storages.identifier.setInitial(rr.identifier) >>
+                  performGlobalL0SnapshotProcess(
+                    storages,
+                    sharedStorages,
+                    services,
+                    dataApplicationService,
+                    keyPair,
+                    mkCell,
+                    isStartupCall = true
+                  ) >>
                   storages.node.tryModifyState(
                     NodeState.Initial,
                     NodeState.RollbackInProgress,
@@ -383,6 +405,15 @@ abstract class CurrencyL0App(
                         currencySnapshotInfo.some
                       )
                     }
+                    _ <- performGlobalL0SnapshotProcess(
+                      storages,
+                      sharedStorages,
+                      services,
+                      dataApplicationService,
+                      keyPair,
+                      mkCell,
+                      isStartupCall = true
+                    )
                     _ <- services.consensus.manager.startFacilitatingAfterRollback(
                       currencySnapshot.ordinal,
                       CurrencyConsensusOutcome(
