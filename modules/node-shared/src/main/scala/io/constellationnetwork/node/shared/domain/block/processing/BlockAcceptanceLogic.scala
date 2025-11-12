@@ -12,7 +12,7 @@ trait BlockAcceptanceLogic[F[_]] {
     txChains: TxChains,
     context: BlockAcceptanceContext[F],
     contextUpdate: BlockAcceptanceContextUpdate,
-    shouldValidateCollateral: Boolean
+    shouldPerformMetagraphSpecificValidations: Boolean
   ): EitherT[F, BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]
 
 }

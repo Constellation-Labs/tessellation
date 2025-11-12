@@ -82,6 +82,7 @@ object Main
         )
         .asResource
       p2pClient = P2PClient.make[IO](
+        sharedConfig,
         sharedP2PClient,
         sharedResources.client,
         currencyPathPrefix = "dag"
@@ -167,11 +168,13 @@ object Main
         )
         .asResource
 
-      alignment = GlobalSnapshotAlignment.make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo, Run](
-        services,
-        programs,
-        storages
-      )
+      alignment = GlobalSnapshotAlignment
+        .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo, Run](
+          services,
+          programs,
+          storages,
+          sharedStorages
+        )
 
       swapRuntime = hasherSelector.withCurrent { implicit hasher =>
         Swap.run(
@@ -328,7 +331,7 @@ object Main
         }
       }.asResource
       _ <- stateChannel.runtime
-        .merge(alignment.runtime)
+        .merge(alignment.runtime())
         .merge(swapRuntime)
         .merge(tokenLockRuntime)
         .compile

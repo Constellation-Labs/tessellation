@@ -99,11 +99,12 @@ object Mocks {
     }
 
     val mockAllowSpendBlockAcceptanceManager = new AllowSpendBlockAcceptanceManager[IO] {
-
       override def acceptBlocksIteratively(
         blocks: List[Signed[AllowSpendBlock]],
         context: AllowSpendBlockAcceptanceContext[IO],
-        snapshotOrdinal: SnapshotOrdinal
+        snapshotOrdinal: SnapshotOrdinal,
+        shouldPerformMetagraphSpecificValidations: Boolean,
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[IO]): IO[AllowSpendBlockAcceptanceResult] = AllowSpendBlockAcceptanceResult(
         contextUpdate = AllowSpendBlockAcceptanceContextUpdate.empty,
         accepted = List.empty[Signed[AllowSpendBlock]],
@@ -113,7 +114,9 @@ object Mocks {
       override def acceptBlock(
         block: Signed[AllowSpendBlock],
         context: AllowSpendBlockAcceptanceContext[IO],
-        snapshotOrdinal: SnapshotOrdinal
+        snapshotOrdinal: SnapshotOrdinal,
+        shouldPerformMetagraphSpecificValidations: Boolean,
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[IO]): IO[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]] =
         AllowSpendBlockAcceptanceContextUpdate.empty.asRight.pure[IO]
     }
@@ -122,7 +125,9 @@ object Mocks {
       override def acceptBlocksIteratively(
         blocks: List[Signed[TokenLockBlock]],
         context: TokenLockBlockAcceptanceContext[IO],
-        snapshotOrdinal: SnapshotOrdinal
+        snapshotOrdinal: SnapshotOrdinal,
+        shouldPerformMetagraphSpecificValidations: Boolean,
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[IO]): IO[TokenLockBlockAcceptanceResult] = TokenLockBlockAcceptanceResult(
         contextUpdate = TokenLockBlockAcceptanceContextUpdate.empty,
         accepted = blocks, // Accept all blocks for testing
@@ -132,7 +137,9 @@ object Mocks {
       override def acceptBlock(
         block: Signed[TokenLockBlock],
         context: TokenLockBlockAcceptanceContext[IO],
-        snapshotOrdinal: SnapshotOrdinal
+        snapshotOrdinal: SnapshotOrdinal,
+        shouldPerformMetagraphSpecificValidations: Boolean,
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[IO]): IO[Either[TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate]] =
         TokenLockBlockAcceptanceContextUpdate.empty.asRight.pure[IO]
     }
@@ -245,7 +252,7 @@ object Mocks {
 
     GlobalSnapshotAcceptanceManager
       .make[IO](
-        FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
+        FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
         MetagraphsSyncConfig(PosInt(100)),
         AppEnvironment.Dev,
         blockAcceptanceManager = mockBlockAcceptanceManager,

@@ -6,6 +6,7 @@ import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedSet
 import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.currency.dataApplication._
@@ -25,9 +26,11 @@ import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencySnapshotCreator, CurrencySnapshotValidator}
 import io.constellationnetwork.node.shared.snapshot.currency._
+import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
+import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, HasherSelector, SecurityProvider}
 
 import io.circe.Decoder
@@ -55,7 +58,8 @@ object CurrencySnapshotConsensus {
     hasherSelector: HasherSelector[F],
     restartService: RestartService[F, _],
     leavingDelay: FiniteDuration,
-    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
   ): F[CurrencySnapshotConsensus[F]] = {
     def noopDecoder: Decoder[DataTransaction] = Decoder.failedWithMessage[DataTransaction]("not implemented")
 
@@ -82,7 +86,8 @@ object CurrencySnapshotConsensus {
         collateral,
         maybeRewards,
         creator,
-        validator
+        validator,
+        maybeCustomArtifacts
       )
       consensusStateAdvancer = CurrencySnapshotConsensusStateAdvancer
         .make[F](

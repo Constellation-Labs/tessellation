@@ -3,6 +3,7 @@ package io.constellationnetwork.dag.l0.http.p2p
 import cats.effect.Async
 import cats.syntax.option._
 
+import io.constellationnetwork.node.shared.config.types.SnapshotTimeoutsConfig
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.http.p2p.SharedP2PClient
 import io.constellationnetwork.node.shared.http.p2p.clients._
@@ -16,14 +17,15 @@ object P2PClient {
   def make[F[_]: Async: SecurityProvider](
     sharedP2PClient: SharedP2PClient[F],
     client: Client[F],
-    session: Session[F]
+    session: Session[F],
+    snapshotTimeoutsConfig: SnapshotTimeoutsConfig
   ): P2PClient[F] =
     new P2PClient[F](
       sharedP2PClient.sign,
       sharedP2PClient.cluster,
       sharedP2PClient.gossip,
       sharedP2PClient.node,
-      L0GlobalSnapshotClient.make(client, session.some)
+      L0GlobalSnapshotClient.make(client, session.some, snapshotTimeoutsConfig)
     ) {}
 }
 

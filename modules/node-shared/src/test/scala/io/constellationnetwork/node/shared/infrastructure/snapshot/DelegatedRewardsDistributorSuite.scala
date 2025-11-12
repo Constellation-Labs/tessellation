@@ -100,9 +100,9 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
       )
 
     } yield {
-      val address1Balance = updatedStakes.get(address1).map(_.map(_.rewards.value.value).sum).getOrElse(0L)
-      val address2Balance = updatedStakes.get(address2).map(_.map(_.rewards.value.value).sum).getOrElse(0L)
-      val address3Balance = updatedStakes.get(address3).map(_.map(_.rewards.value.value).sum).getOrElse(0L)
+      val address1Balance = updatedStakes.get(address1).map(_.toList.map(_.rewards.value.value).sum).getOrElse(0L)
+      val address2Balance = updatedStakes.get(address2).map(_.toList.map(_.rewards.value.value).sum).getOrElse(0L)
+      val address3Balance = updatedStakes.get(address3).map(_.toList.map(_.rewards.value.value).sum).getOrElse(0L)
 
       // Address1 balance should be just the existing 50L (no new rewards since it's being modified)
       expect(address1Balance === 50L) &&

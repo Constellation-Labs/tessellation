@@ -1,10 +1,11 @@
 package io.constellationnetwork.currency.l0.cli
 
-import cats.data.NonEmptySet
+import cats.data.{NonEmptySet, Validated}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
 
+import io.constellationnetwork.currency.cli.MetagraphOwnerMessageOpts.MetagraphOwnerMessagePath
 import io.constellationnetwork.currency.cli.{GlobalL0PeerOpts, L0TokenIdentifierOpts}
 import io.constellationnetwork.currency.l0.cli.http.{opts => httpOpts}
 import io.constellationnetwork.currency.l0.config.types._
@@ -64,7 +65,9 @@ object method {
       c.delegatedStaking,
       c.fieldsAddedOrdinals,
       c.metagraphsSync,
-      c.priceOracle.getOrElse(environment, PriceOracleConfig.default)
+      c.priceOracle.getOrElse(environment, PriceOracleConfig.default),
+      c.snapshotBinarySenderTimeouts,
+      c.snapshot.timeouts
     )
   }
 
@@ -118,7 +121,8 @@ object method {
     globalL0Peer: L0Peer,
     trustRatingsPath: Option[Path],
     lastKryoHashOrdinal: SnapshotOrdinal,
-    allowanceListPath: Option[AllowanceListPath]
+    allowanceListPath: Option[AllowanceListPath],
+    metagraphOwnerMessagePath: Option[MetagraphOwnerMessagePath]
   ) extends Run
 
   object RunGenesis extends WithOpts[RunGenesis] {
@@ -136,9 +140,48 @@ object method {
         CollateralAmountOpts.opts,
         GlobalL0PeerOpts.opts,
         trustRatingsPathOpts,
-        Opts.apply(SnapshotOrdinal.MinValue),
-        AllowanceListPath.opts
-      ).mapN(RunGenesis.apply)
+        Opts(SnapshotOrdinal.MinValue),
+        AllowanceListPath.opts,
+        MetagraphOwnerMessagePath.opts
+      ).mapN {
+        (
+          storePath,
+          keyAlias,
+          password,
+          http,
+          env,
+          genesisPath,
+          seedListPath,
+          seedListPriorityPath,
+          collateralAmount,
+          globalL0Peer,
+          trustRatingsPath,
+          snapshotOrdinal,
+          allowanceListPath,
+          maybeOwnerMessage
+        ) =>
+          RunGenesis(
+            storePath,
+            keyAlias,
+            password,
+            http,
+            env,
+            genesisPath,
+            seedListPath,
+            seedListPriorityPath,
+            collateralAmount,
+            globalL0Peer,
+            trustRatingsPath,
+            snapshotOrdinal,
+            allowanceListPath,
+            maybeOwnerMessage
+          )
+      }.mapValidated { runGenesis =>
+        if (runGenesis.environment != AppEnvironment.Dev && runGenesis.metagraphOwnerMessagePath.isEmpty)
+          Validated.invalidNel("--metagraph-owner-message is required when environment is not dev")
+        else
+          Validated.valid(runGenesis)
+      }
     }
   }
 

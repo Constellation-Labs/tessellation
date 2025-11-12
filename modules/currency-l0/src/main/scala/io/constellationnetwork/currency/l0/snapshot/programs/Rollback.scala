@@ -7,8 +7,12 @@ import cats.syntax.all._
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
 
-import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
-import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataApplicationTraverse, L0NodeContext}
+import io.constellationnetwork.currency.dataApplication.storage.{
+  CalculatedStateLocalFileSystemStorage,
+  GlobalSnapshotsWithStateDeltasLocalFileSystemStorage,
+  GlobalSnapshotsWithStateLocalFileSystemStorage
+}
+import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnapshotCleanupStorage
 import io.constellationnetwork.currency.l0.modules.Storages
 import io.constellationnetwork.currency.l0.snapshot.CurrencyConsensusManager
@@ -21,12 +25,15 @@ import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Serv
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
+import io.constellationnetwork.node.shared.infrastructure.dataApplication.DataApplicationTraverse
+import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema.GlobalIncrementalSnapshot
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.signature.Signed
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry.RetryPolicies.{constantDelay, limitRetries}
@@ -39,7 +46,7 @@ case object LastSnapshotHashNotFound extends RollbackError
 case object LastSnapshotInfoNotFound extends RollbackError
 
 trait Rollback[F[_]] {
-  def rollback(implicit hasher: Hasher[F]): F[Unit]
+  def rollback(implicit hasher: Hasher[F]): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hash)]
 }
 
 object Rollback {
@@ -47,19 +54,18 @@ object Rollback {
     nodeId: PeerId,
     globalL0Service: GlobalL0Service[F],
     identifierStorage: IdentifierStorage[F],
-    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-    sharedStorages: SharedStorages[F],
-    storages: Storages[F],
     collateral: Collateral[F],
-    consensusManager: CurrencyConsensusManager[F],
     dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])],
-    currencySnapshotCleanupStorage: CurrencySnapshotCleanupStorage[F]
+    currencySnapshotCleanupStorage: CurrencySnapshotCleanupStorage[F],
+    globalSnapshotsWithStateLocalFileSystemStorage: GlobalSnapshotsWithStateLocalFileSystemStorage[F],
+    globalSnapshotsWithStateDeltasLocalFileSystemStorage: GlobalSnapshotsWithStateDeltasLocalFileSystemStorage[F],
+    globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F]
   )(implicit context: L0NodeContext[F]): Rollback[F] = new Rollback[F] {
     private val logger = Slf4jLogger.getLoggerFromName[F]("CurrencyRollback")
 
     val fetchGlobalSnapshotsRetryPolicy = limitRetries[F](10).join(constantDelay(3.seconds))
 
-    def rollback(implicit hasher: Hasher[F]): F[Unit] = for {
+    def rollback(implicit hasher: Hasher[F]): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hash)] = for {
       (globalSnapshot, globalSnapshotInfo) <- globalL0Service.pullLatestSnapshot
 
       identifier <- identifierStorage.get
@@ -97,14 +103,12 @@ object Rollback {
         .toOptionT
         .getOrRaise(LastSnapshotInfoNotFound)
 
-      _ <- snapshotStorage.prepend(lastIncremental, lastInfo)
-
       _ <- collateral
         .hasCollateral(nodeId)
         .flatMap(OwnCollateralNotSatisfied.raiseError[F, Unit].unlessA)
 
       _ <- dataApplication.map {
-        case ((da, cs)) =>
+        case (da, cs) =>
           val fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]] = (hash: Hash) =>
             globalL0Service
               .pullGlobalSnapshot(hash)
@@ -117,54 +121,34 @@ object Rollback {
                   logger.error(err)(s"Error when trying to fetch incremental global snapshot {attempt=${retryDetails.retriesSoFar}}")
               )
 
-          DataApplicationTraverse.make[F](globalSnapshotStartingPoint, fetchSnapshot, da, cs, identifier).flatMap { dat =>
-            dat.loadChain().flatMap {
-              case Some(_) => Applicative[F].unit
-              case _       => new Exception(s"Metagraph traversing failed").raiseError[F, Unit]
+          DataApplicationTraverse
+            .make[F](
+              globalSnapshotStartingPoint,
+              fetchSnapshot,
+              da,
+              cs,
+              globalSnapshotsWithStateLocalFileSystemStorage,
+              globalSnapshotsWithStateDeltasLocalFileSystemStorage,
+              identifier,
+              globalSnapshotContextFunctions,
+              globalL0Service
+            )
+            .flatMap { dat =>
+              dat.loadChain().flatMap {
+                case Some(_) => Applicative[F].unit
+                case _       => new Exception(s"Metagraph traversing failed").raiseError[F, Unit]
+              }
             }
-          }
 
       }.getOrElse(Applicative[F].unit)
-
-      (globalSnapshotUpdated, globalSnapshotInfoUpdated) <- globalL0Service.pullLatestSnapshot
-      _ <- sharedStorages.lastGlobalSnapshot.setInitial(globalSnapshotUpdated, globalSnapshotInfoUpdated)
-      _ <- sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
-        globalSnapshotUpdated,
-        globalSnapshotInfoUpdated,
-        globalL0Service.asLeft.some,
-        none
-      )
-      _ <- storages.lastSyncGlobalSnapshot.setInitial(globalSnapshotUpdated, globalSnapshotInfoUpdated)
-
-      _ <- logger.info(
-        s"Setting the last global snapshot as: ${globalSnapshotUpdated.ordinal.show}"
-      )
 
       _ <- logger.info(s"[Rollback] Cleanup for snapshots greater than ${lastIncremental.ordinal}")
       _ <- currencySnapshotCleanupStorage.cleanupAbove(lastIncremental.ordinal)
 
-      _ <- consensusManager.startFacilitatingAfterRollback(
-        lastIncremental.ordinal,
-        CurrencyConsensusOutcome(
-          lastIncremental.ordinal,
-          Facilitators(List(nodeId)),
-          RemovedFacilitators.empty,
-          WithdrawnFacilitators.empty,
-          Finished(
-            lastIncremental,
-            lastBinaryHash,
-            CurrencySnapshotContext(identifier, lastInfo),
-            EventTrigger,
-            Candidates.empty,
-            Hash.empty
-          )
-        )
-      )
-
       _ <- logger.info(
         s"Finished rollback to currency snapshot of ${lastIncremental.ordinal.show} pulled from global snapshot of ${globalSnapshot.ordinal.show}"
       )
-    } yield ()
+    } yield (lastIncremental, lastInfo, lastBinaryHash)
   }
 
 }

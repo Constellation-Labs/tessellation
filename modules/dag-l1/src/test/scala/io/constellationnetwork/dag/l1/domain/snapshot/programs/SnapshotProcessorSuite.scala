@@ -86,7 +86,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
     Ref[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]],
     TransactionStorage[IO],
     GlobalSnapshotContextFunctions[IO],
-    Ref[IO, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]],
+    Ref[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]],
     Ref[IO, SortedMap[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]]
   )
 
@@ -101,9 +101,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               balancesR <- Ref.of[IO, Map[Address, Balance]](Map.empty).asResource
               blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]().asResource
               lastSnapR <- SignallingRef.of[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](None).asResource
-              lastNSnapR <- SignallingRef
-                .of[IO, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](SortedMap.empty)
-                .asResource
+              lastNSnapR <- SignallingRef.of[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](None).asResource
               incLastNSnapR <- SignallingRef
                 .of[IO, SortedMap[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]](SortedMap.empty)
                 .asResource
@@ -112,6 +110,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 .asResource
               validators = SharedValidators
                 .make[IO](
+                  Dev,
                   AddressesConfig(Set()),
                   None,
                   None,
@@ -153,7 +152,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
               globalL0AlignmentStorage <- GlobalL0AlignmentStorage.make[IO].asResource
               lastGlobalSnapshotsSyncConfig =
-                LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt.unsafeFrom(10), PosInt.unsafeFrom(5))
+                LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt.unsafeFrom(5))
               lastNSnapshotStorage =
                 LastNGlobalSnapshotStorage.make[IO](lastGlobalSnapshotsSyncConfig, lastNSnapR, incLastNSnapR)
               lastGlobalSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
@@ -161,9 +160,20 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               currencyTokenLockAcceptanceManager = CurrencyTokenLockAcceptanceManager.make[IO]
               currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager
                 .make(
-                  FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
+                  FieldsAddedOrdinals(
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty
+                  ),
                   Dev,
-                  LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(20), PosInt(10)),
+                  LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
                   BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
                   TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
                   AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
@@ -204,7 +214,18 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               globalTokenLockAcceptanceManager = GlobalTokenLockAcceptanceManager.make[IO]
 
               globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
-                FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
+                FieldsAddedOrdinals(
+                  Map.empty,
+                  Map.empty,
+                  Map.empty,
+                  Map.empty,
+                  Map.empty,
+                  Map.empty,
+                  Map.empty,
+                  Map.empty,
+                  Map.empty,
+                  Map.empty
+                ),
                 MetagraphsSyncConfig(PosInt(100)),
                 Dev,
                 BlockAcceptanceManager.make[IO](validators.blockValidator, Hasher.forKryo[IO]),
@@ -232,6 +253,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 globalSnapshotAcceptanceManager,
                 updateDelegatedStakeAcceptanceManager,
                 EpochProgress(NonNegLong.unsafeFrom(1L)),
+                SnapshotOrdinal.MinValue,
                 SnapshotOrdinal.MinValue
               )
               snapshotProcessor = {
@@ -251,7 +273,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 val blockStorage = new BlockStorage[IO](blocksR)
                 val lastSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
                 val lastGlobalSnapshotsSyncConfig =
-                  LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt.unsafeFrom(10), PosInt.unsafeFrom(5))
+                  LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt.unsafeFrom(5))
                 val globalL0Service = new GlobalL0Service[IO] {
                   override def pullLatestSnapshot: IO[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = ???
 
@@ -924,7 +946,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set((hashedLastSnapshot, GlobalSnapshotInfo.empty).some)
-          lastN = SortedMap(hashedLastSnapshot.ordinal -> (hashedLastSnapshot, GlobalSnapshotInfo.empty))
+          lastN = (hashedLastSnapshot, GlobalSnapshotInfo.empty).some
           incLastN = SortedMap(hashedLastSnapshot.ordinal -> hashedLastSnapshot)
           _ <- lastNSnapsR.set(lastN)
           _ <- incLastNSnapR.set(incLastN)
@@ -1146,7 +1168,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           }
           _ <- lastSnapR.set((hashedLastSnapshot, lastSnapshotInfo).some)
           incLastN = SortedMap(hashedLastSnapshot.ordinal -> hashedLastSnapshot)
-          lastN = SortedMap(hashedLastSnapshot.ordinal -> (hashedLastSnapshot, GlobalSnapshotInfo.empty))
+          lastN = (hashedLastSnapshot, GlobalSnapshotInfo.empty).some
           _ <- lastNSnapR.set(lastN)
           _ <- incLastNSnapR.set(incLastN)
           // Inserting tips
@@ -1423,7 +1445,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set((hashedLastSnapshot, lastSnapshotInfo).some)
-          lastN = SortedMap(hashedLastSnapshot.ordinal -> (hashedLastSnapshot, GlobalSnapshotInfo.empty))
+          lastN = (hashedLastSnapshot, GlobalSnapshotInfo.empty).some
           incLastN = SortedMap(hashedLastSnapshot.ordinal -> hashedLastSnapshot)
           _ <- lastNSnapR.set(lastN)
           _ <- incLastNSnapR.set(incLastN)
@@ -1565,7 +1587,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set((hashedLastSnapshot, GlobalSnapshotInfo.empty).some)
-          lastN = SortedMap(hashedLastSnapshot.ordinal -> (hashedLastSnapshot, GlobalSnapshotInfo.empty))
+          lastN = (hashedLastSnapshot, GlobalSnapshotInfo.empty).some
           _ <- lastNSnapR.set(lastN)
           incLastN = SortedMap(hashedLastSnapshot.ordinal -> hashedLastSnapshot)
           _ <- incLastNSnapR.set(incLastN)
@@ -1621,7 +1643,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set((hashedLastSnapshot, GlobalSnapshotInfo.empty).some)
-          lastN = SortedMap(hashedLastSnapshot.ordinal -> (hashedLastSnapshot, GlobalSnapshotInfo.empty))
+          lastN = (hashedLastSnapshot, GlobalSnapshotInfo.empty).some
           _ <- lastNSnapR.set(lastN)
           incLastN = SortedMap(hashedLastSnapshot.ordinal -> hashedLastSnapshot)
           _ <- incLastNSnapR.set(incLastN)

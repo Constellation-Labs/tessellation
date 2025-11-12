@@ -134,6 +134,7 @@ const getNodeParamsNodeIdVerify = async (
   expectedRewardFraction,
   expectedOrdinal,
 ) => {
+  await sleep(5000);
   const response = await axios.get(
     `${urls.globalL0Url}/node-params/${nodeId}?t=${Date.now()}`,
     {

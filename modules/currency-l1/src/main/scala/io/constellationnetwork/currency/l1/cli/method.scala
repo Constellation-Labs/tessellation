@@ -61,7 +61,9 @@ object method {
       c.delegatedStaking,
       c.fieldsAddedOrdinals,
       c.metagraphsSync,
-      c.priceOracle.getOrElse(environment, PriceOracleConfig.default)
+      c.priceOracle.getOrElse(environment, PriceOracleConfig.default),
+      c.snapshotBinarySenderTimeouts,
+      c.snapshot.timeouts
     )
   }
 

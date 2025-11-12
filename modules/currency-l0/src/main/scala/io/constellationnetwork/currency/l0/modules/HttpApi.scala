@@ -5,8 +5,8 @@ import java.security.PrivateKey
 import cats.effect.Async
 import cats.syntax.semigroupk._
 
+import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
-import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataTransaction, L0NodeContext, _}
 import io.constellationnetwork.currency.l0.cli.method.Run
 import io.constellationnetwork.currency.l0.http.routes._
 import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotKey
@@ -88,7 +88,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
     None,
     "/snapshots",
     storages.node,
-    HasherSelector.alwaysCurrent[F]
+    HasherSelector.alwaysCurrent[F],
+    sharedConfig.snapshotTimeoutsConfig
   )
   private val clusterRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>

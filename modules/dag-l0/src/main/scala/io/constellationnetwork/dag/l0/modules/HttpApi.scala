@@ -3,7 +3,6 @@ package io.constellationnetwork.dag.l0.modules
 import java.security.PrivateKey
 
 import cats.effect.Async
-import cats.syntax.flatMap._
 import cats.syntax.option._
 import cats.syntax.semigroupk._
 
@@ -16,7 +15,7 @@ import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.GlobalConse
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment._
 import io.constellationnetwork.node.shared.cli.CliMethod
-import io.constellationnetwork.node.shared.config.types.{DelegatedStakingConfig, HttpConfig, SharedConfig}
+import io.constellationnetwork.node.shared.config.types.{HttpConfig, SharedConfig}
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{MetricsMiddleware, PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
@@ -137,7 +136,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   private val trustRoutes = TrustRoutes[F](storages.trust, programs.trustPush)
   private val stateChannelRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>
-      StateChannelRoutes[F](services.stateChannel, storages.globalSnapshot)
+      StateChannelRoutes[F](services.stateChannel, storages.globalSnapshot, sharedConfig.snapshotBinarySenderTimeouts)
     }
   private val snapshotRoutes =
     SnapshotRoutes[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
@@ -145,7 +144,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
       storages.fullGlobalSnapshot.some,
       "/global-snapshots",
       storages.node,
-      HasherSelector[F]
+      HasherSelector[F],
+      sharedConfig.snapshotTimeoutsConfig
     )
   private val dagRoutes = DAGBlockRoutes[F](mkDagCell)
   private val allowSpendRoutes = AllowSpendBlockRoutes[F](queues.l1AllowSpendOutput)
@@ -167,7 +167,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
         storages.globalSnapshot,
         storages.node,
         delegatedStakingWithdrawalTimeLimit,
-        services.rewards.delegatedRewards
+        services.rewards.rewardsInfoStorage
       )
     }
   private val nodeCollateralsRoutes = HasherSelector[F].withCurrent { implicit hasher =>

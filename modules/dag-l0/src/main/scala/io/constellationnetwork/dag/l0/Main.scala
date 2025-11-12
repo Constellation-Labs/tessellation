@@ -4,6 +4,7 @@ import cats.effect._
 import cats.syntax.all._
 
 import io.constellationnetwork.BuildInfo
+import io.constellationnetwork.dag.l0.StoragesInitializer.initializeStorages
 import io.constellationnetwork.dag.l0.cli.method._
 import io.constellationnetwork.dag.l0.config.types._
 import io.constellationnetwork.dag.l0.http.p2p.P2PClient
@@ -23,6 +24,7 @@ import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, 
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.GlobalSnapshotLocalFileSystemStorage
 import io.constellationnetwork.node.shared.resources.MkHttpServer
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
+import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.NodeState
@@ -35,6 +37,8 @@ import io.constellationnetwork.security.signature.Signed
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.pureconfig._
+import org.typelevel.log4cats.SelfAwareStructuredLogger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 import pureconfig.generic.auto._
 import pureconfig.module.enumeratum._
 
@@ -60,10 +64,11 @@ object Main
 
     for {
       cfgR <- loadConfigAs[AppConfigReader].asResource
+      implicit0(logger: SelfAwareStructuredLogger[IO]) = Slf4jLogger.getLoggerFromName[IO](this.getClass.getName)
       cfg = method.appConfig(cfgR, sharedConfig)
       queues <- Queues.make[IO](sharedQueues).asResource
 
-      p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session)
+      p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session, sharedConfig.snapshotTimeoutsConfig)
       storages <- Storages
         .make[IO](
           sharedStorages,
@@ -104,7 +109,7 @@ object Main
         cfg.incremental.lastFullGlobalSnapshotOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
         p2pClient,
         sharedServices.globalSnapshotContextFns,
-        hashSelect,
+        storages.globalSnapshot,
         sharedStorages.lastNGlobalSnapshot,
         sharedStorages.lastGlobalSnapshot
       )
@@ -214,37 +219,16 @@ object Main
           ) {
             programs.rollbackLoader.load(m.rollbackHash, programs.download).flatMap {
               case (snapshotInfo, snapshot) =>
-                hasherSelector.forOrdinal(snapshot.ordinal) { implicit hasher =>
-                  for {
-                    _ <- storages.globalSnapshot.prepend(snapshot, snapshotInfo)
-                    lastNAlreadyInitialized <- sharedStorages.lastNGlobalSnapshot.alreadyInitialized
-                    _ <-
-                      if (!lastNAlreadyInitialized) {
-                        for {
-                          hashedSnapshot <- snapshot.toHashed[IO]
-                          _ <- sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
-                            hashedSnapshot,
-                            snapshotInfo,
-                            none,
-                            Some((hash, ordinal) => programs.download.fetchSnapshot(hash, ordinal)(hasher))
-                          )
-                          _ <- sharedStorages.lastGlobalSnapshot.setInitial(hashedSnapshot, snapshotInfo)
-                        } yield ()
-                      } else {
-                        ().pure[IO]
-                      }
-                  } yield ()
-                } >>
-                  services.consensus.manager.startFacilitatingAfterRollback(
+                services.consensus.manager.startFacilitatingAfterRollback(
+                  snapshot.ordinal,
+                  GlobalConsensusOutcome(
                     snapshot.ordinal,
-                    GlobalConsensusOutcome(
-                      snapshot.ordinal,
-                      Facilitators(List(nodeId)),
-                      RemovedFacilitators.empty,
-                      WithdrawnFacilitators.empty,
-                      Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty)
-                    )
+                    Facilitators(List(nodeId)),
+                    RemovedFacilitators.empty,
+                    WithdrawnFacilitators.empty,
+                    Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty)
                   )
+                )
             }
           } >>
             services.collateral
@@ -316,15 +300,12 @@ object Main
                                     _ <- services.collateral
                                       .hasCollateral(nodeShared.nodeId)
                                       .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA)
-                                    _ <- storages.globalSnapshot.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info)
                                     hashedSnapshot <- signedFirstIncrementalSnapshot.toHashed[IO]
-                                    _ <- sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(
-                                      hashedSnapshot,
-                                      hashedGenesis.info,
-                                      none,
-                                      Some((hash, ordinal) => programs.download.fetchSnapshot(hash, ordinal)(hasher))
-                                    )
-                                    _ <- sharedStorages.lastGlobalSnapshot.setInitial(
+                                    _ <- initializeStorages[IO](
+                                      storages.globalSnapshot,
+                                      sharedStorages.lastNGlobalSnapshot,
+                                      sharedStorages.lastGlobalSnapshot,
+                                      programs.download,
                                       hashedSnapshot,
                                       hashedGenesis.info
                                     )

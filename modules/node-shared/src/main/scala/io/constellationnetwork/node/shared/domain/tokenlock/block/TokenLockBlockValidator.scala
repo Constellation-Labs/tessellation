@@ -33,24 +33,27 @@ trait TokenLockBlockValidator[F[_]] {
   def validate(
     signedBlock: Signed[TokenLockBlock],
     snapshotOrdinal: SnapshotOrdinal,
-    params: TokenLockBlockValidationParams = TokenLockBlockValidationParams.default
+    params: TokenLockBlockValidationParams = TokenLockBlockValidationParams.default,
+    lastGlobalSnapshotEpochProgress: Option[EpochProgress]
   )(implicit hasher: Hasher[F]): F[TokenLockBlockValidationErrorOr[(Signed[TokenLockBlock], Map[Address, TokenLockNel])]]
 
   def validateGetBlock(
     signedBlock: Signed[TokenLockBlock],
     params: TokenLockBlockValidationParams = TokenLockBlockValidationParams.default,
     epochProgress: EpochProgress,
-    snapshotOrdinal: SnapshotOrdinal
+    snapshotOrdinal: SnapshotOrdinal,
+    lastGlobalSnapshotEpochProgress: Option[EpochProgress]
   )(implicit ev: Functor[F], hasher: Hasher[F]): F[TokenLockBlockValidationErrorOr[Signed[TokenLockBlock]]] =
-    validate(signedBlock, snapshotOrdinal, params).map(_.map(_._1))
+    validate(signedBlock, snapshotOrdinal, params, lastGlobalSnapshotEpochProgress).map(_.map(_._1))
 
   def validateGetTxChains(
     signedBlock: Signed[TokenLockBlock],
     snapshotOrdinal: SnapshotOrdinal,
     epochProgress: EpochProgress,
-    params: TokenLockBlockValidationParams = TokenLockBlockValidationParams.default
+    params: TokenLockBlockValidationParams = TokenLockBlockValidationParams.default,
+    lastGlobalSnapshotEpochProgress: Option[EpochProgress]
   )(implicit ev: Functor[F], hasher: Hasher[F]): F[TokenLockBlockValidationErrorOr[Map[Address, TokenLockNel]]] =
-    validate(signedBlock, snapshotOrdinal, params).map(_.map(_._2))
+    validate(signedBlock, snapshotOrdinal, params, lastGlobalSnapshotEpochProgress).map(_.map(_._2))
 }
 
 object TokenLockBlockValidator {
@@ -65,12 +68,13 @@ object TokenLockBlockValidator {
       def validate(
         signedBlock: Signed[TokenLockBlock],
         snapshotOrdinal: SnapshotOrdinal,
-        params: TokenLockBlockValidationParams
+        params: TokenLockBlockValidationParams,
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[F]): F[TokenLockBlockValidationErrorOr[(Signed[TokenLockBlock], Map[Address, TokenLockNel])]] =
         for {
           signedV <- validateSigned(signedBlock, params)(hasher)
           lockedV = validateNotLockedAtOrdinal(signedBlock, snapshotOrdinal)
-          transactionsV <- validateTokenLocks(signedBlock)
+          transactionsV <- validateTokenLocks(signedBlock, lastGlobalSnapshotEpochProgress)
           transactionChainV <- validateTokenLockChain(signedBlock)
         } yield
           signedV
@@ -92,12 +96,13 @@ object TokenLockBlockValidator {
           .map(_.errorMap[TokenLockBlockValidationError](InvalidSigned))
 
       private def validateTokenLocks(
-        signedBlock: Signed[TokenLockBlock]
+        signedBlock: Signed[TokenLockBlock],
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[F]): F[TokenLockBlockValidationErrorOr[Signed[TokenLockBlock]]] =
         signedBlock.value.tokenLocks.toNonEmptyList.traverse { signedTransaction =>
           for {
             txRef <- TokenLockReference.of(signedTransaction)
-            txV <- TokenLockValidator.validate(signedTransaction)
+            txV <- TokenLockValidator.validate(signedTransaction, lastGlobalSnapshotEpochProgress)
           } yield txV.errorMap(InvalidTokenLock(txRef, _))
         }.map { vs =>
           vs.foldLeft(signedBlock.validNec[TokenLockBlockValidationError]) { (acc, v) =>

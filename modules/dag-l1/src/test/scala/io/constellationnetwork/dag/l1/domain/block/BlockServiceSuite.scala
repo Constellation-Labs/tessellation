@@ -60,7 +60,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
         blocks: List[Signed[Block]],
         context: BlockAcceptanceContext[IO],
         ordinal: SnapshotOrdinal,
-        shouldValidateCollateral: Boolean = true
+        shouldPerformMetagraphSpecificValidations: Boolean = true
       )(implicit hasher: Hasher[F]): IO[BlockAcceptanceResult] =
         ???
 
@@ -68,7 +68,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
         block: Signed[Block],
         context: BlockAcceptanceContext[IO],
         ordinal: SnapshotOrdinal,
-        shouldValidateCollateral: Boolean = true
+        shouldPerformMetagraphSpecificValidations: Boolean = true
       )(implicit hasher: Hasher[F]): IO[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]] =
         IO.pure(notAcceptanceReason).map {
           case None         => (BlockAcceptanceContextUpdate.empty, initUsageCount).asRight[BlockNotAcceptedReason]

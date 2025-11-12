@@ -22,8 +22,8 @@ object FeeTransactionValidator {
   ): F[ValidatedNec[DataApplicationValidationError, Unit]] =
     dataTransactions.existsM {
       case Signed(dataUpdate: DataUpdate, _) =>
-        dataApplication.serializeUpdate(dataUpdate).map { serializedUpdate =>
-          Hash.fromBytes(serializedUpdate) === feeTransaction.dataUpdateRef
+        dataApplication.serializeUpdate(dataUpdate).flatMap { serializedUpdate =>
+          Hash.fromBytesForSync(serializedUpdate).map(_ === feeTransaction.dataUpdateRef)
         }
       case _ => false.pure
     }.ifM(

@@ -6,7 +6,7 @@ import cats.effect.Async
 import cats.kernel.Eq
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedSet
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.reflect.ClassTag
 import scala.util.control.NoStackTrace
 
@@ -25,7 +25,8 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{SharedArtifact, TokenUnlock}
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.round.RoundId
-import io.constellationnetwork.schema.swap.CurrencyId
+import io.constellationnetwork.schema.swap.{AllowSpend, CurrencyId}
+import io.constellationnetwork.schema.tokenLock.TokenLock
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -126,9 +127,11 @@ object FeeTransaction {
       case Signed(feeTransaction: FeeTransaction, proofs) => Signed(feeTransaction, proofs)
     }
 
-    serializeDataUpdate(dataUpdate).map { serializedDataUpdate =>
-      feeTransactions.find { feeTransaction =>
-        Hash.fromBytes(serializedDataUpdate) === feeTransaction.value.dataUpdateRef
+    serializeDataUpdate(dataUpdate).flatMap { serializedDataUpdate =>
+      Hash.fromBytesForSync(serializedDataUpdate).map { hash =>
+        feeTransactions.find { feeTransaction =>
+          hash === feeTransaction.value.dataUpdateRef
+        }
       }
     }
   }
@@ -239,6 +242,8 @@ trait BaseDataApplicationL0ContextualOps[F[_]] extends BaseDataApplicationShared
 
   def hashCalculatedState(state: DataCalculatedState)(implicit context: L0NodeContext[F]): F[Hash]
 
+  def hashDataUpdate: Option[DataUpdate => F[Hash]] = None
+
   def extractFees(ds: Seq[Signed[DataUpdate]])(implicit context: L0NodeContext[F], A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
     A.pure(Seq.empty)
 }
@@ -331,6 +336,8 @@ trait DataApplicationL0ContextualOps[F[_], D <: DataUpdate, DON <: DataOnChainSt
   def setCalculatedState(ordinal: SnapshotOrdinal, state: DOF)(implicit context: L0NodeContext[F]): F[Boolean]
 
   def hashCalculatedState(state: DOF)(implicit context: L0NodeContext[F]): F[Hash]
+
+  def hashDataUpdate: Option[D => F[Hash]] = None
 
   def extractFees(ds: Seq[Signed[D]])(implicit context: L0NodeContext[F], A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
     A.pure(Seq.empty)
@@ -483,6 +490,14 @@ object BaseDataApplicationL0ContextualOps {
         state match {
           case s: DOF => service.hashCalculatedState(s)
           case _      => UnexpectedInput.raiseError[F, Hash]
+        }
+
+      override def hashDataUpdate: Option[DataUpdate => F[Hash]] =
+        service.hashDataUpdate.map { hashFn =>
+          {
+            case d: D => hashFn(d)
+            case _    => UnexpectedInput.raiseError[F, Hash]
+          }
         }
 
       override def validateFee(
@@ -678,6 +693,9 @@ object BaseDataApplicationL0Service {
       def hashCalculatedState(state: DataCalculatedState)(implicit context: L0NodeContext[F]): F[Hash] =
         ctx.hashCalculatedState(state)
 
+      override def hashDataUpdate: Option[DataUpdate => F[Hash]] =
+        ctx.hashDataUpdate
+
       def calculatedStateDecoder: Decoder[DataCalculatedState] = base.calculatedStateDecoder
 
       def calculatedStateEncoder: Encoder[DataCalculatedState] = base.calculatedStateEncoder
@@ -784,7 +802,8 @@ object dataApplication {
   case class DataApplicationBlock(
     roundId: RoundId,
     dataTransactions: NonEmptyList[DataTransactions],
-    dataTransactionsHashes: NonEmptyList[NonEmptyList[Hash]]
+    dataTransactionsHashes: NonEmptyList[NonEmptyList[Hash]],
+    updateHashes: Option[SortedSet[Hash]] = None
   ) extends Encodable[NonEmptyList[NonEmptyList[Hash]]] {
     override def toEncode: NonEmptyList[NonEmptyList[Hash]] = dataTransactionsHashes
     override def jsonEncoder: Encoder[NonEmptyList[NonEmptyList[Hash]]] = implicitly
@@ -799,8 +818,11 @@ object dataApplication {
 
     implicit def eqv: Eq[DataApplicationBlock] =
       Eq.and[DataApplicationBlock](
-        Eq[RoundId].contramap(_.roundId),
-        Eq[NonEmptyList[NonEmptyList[Hash]]].contramap(_.dataTransactionsHashes)
+        Eq.and[DataApplicationBlock](
+          Eq[RoundId].contramap(_.roundId),
+          Eq[NonEmptyList[NonEmptyList[Hash]]].contramap(_.dataTransactionsHashes)
+        ),
+        Eq[Option[SortedSet[Hash]]].contramap(_.updateHashes)
       )
   }
 
@@ -824,8 +846,10 @@ trait L1NodeContext[F[_]] {
 }
 
 trait L0NodeContext[F[_]] {
-  def getLastSynchronizedGlobalSnapshot: F[Option[Hashed[GlobalIncrementalSnapshot]]]
-  def getLastSynchronizedGlobalSnapshotCombined: F[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
+  def getLastSynchronizedGlobalSnapshot: F[Option[GlobalIncrementalSnapshot]]
+  def getLastSynchronizedGlobalSnapshotCombined: F[Option[(GlobalIncrementalSnapshot, GlobalSnapshotInfo)]]
+  def getLastSynchronizedAllowSpends: F[Option[SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]]]
+  def getLastSynchronizedTokenLocks: F[Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]]
   def getLastCurrencySnapshot: F[Option[Hashed[CurrencyIncrementalSnapshot]]]
   def getCurrencySnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[CurrencyIncrementalSnapshot]]]
   def getLastCurrencySnapshotCombined: F[Option[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]

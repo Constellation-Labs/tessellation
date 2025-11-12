@@ -15,6 +15,7 @@ import io.constellationnetwork.node.shared.domain.swap.AllowSpendValidator.Allow
 import io.constellationnetwork.node.shared.domain.swap.{AllowSpendChainValidator, AllowSpendValidator}
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.swap.{AllowSpendBlock, AllowSpendReference}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
@@ -32,22 +33,25 @@ trait AllowSpendBlockValidator[F[_]] {
   def validate(
     signedBlock: Signed[AllowSpendBlock],
     snapshotOrdinal: SnapshotOrdinal,
-    params: AllowSpendBlockValidationParams = AllowSpendBlockValidationParams.default
+    params: AllowSpendBlockValidationParams = AllowSpendBlockValidationParams.default,
+    lastGlobalSnapshotEpochProgress: Option[EpochProgress]
   )(implicit hasher: Hasher[F]): F[AllowSpendBlockValidationErrorOr[(Signed[AllowSpendBlock], Map[Address, AllowSpendNel])]]
 
   def validateGetBlock(
     signedBlock: Signed[AllowSpendBlock],
     params: AllowSpendBlockValidationParams = AllowSpendBlockValidationParams.default,
-    snapshotOrdinal: SnapshotOrdinal
+    snapshotOrdinal: SnapshotOrdinal,
+    lastGlobalSnapshotEpochProgress: Option[EpochProgress]
   )(implicit ev: Functor[F], hasher: Hasher[F]): F[AllowSpendBlockValidationErrorOr[Signed[AllowSpendBlock]]] =
-    validate(signedBlock, snapshotOrdinal, params).map(_.map(_._1))
+    validate(signedBlock, snapshotOrdinal, params, lastGlobalSnapshotEpochProgress).map(_.map(_._1))
 
   def validateGetTxChains(
     signedBlock: Signed[AllowSpendBlock],
     snapshotOrdinal: SnapshotOrdinal,
-    params: AllowSpendBlockValidationParams = AllowSpendBlockValidationParams.default
+    params: AllowSpendBlockValidationParams = AllowSpendBlockValidationParams.default,
+    lastGlobalSnapshotEpochProgress: Option[EpochProgress]
   )(implicit ev: Functor[F], hasher: Hasher[F]): F[AllowSpendBlockValidationErrorOr[Map[Address, AllowSpendNel]]] =
-    validate(signedBlock, snapshotOrdinal, params).map(_.map(_._2))
+    validate(signedBlock, snapshotOrdinal, params, lastGlobalSnapshotEpochProgress).map(_.map(_._2))
 }
 
 object AllowSpendBlockValidator {
@@ -62,12 +66,13 @@ object AllowSpendBlockValidator {
       def validate(
         signedBlock: Signed[AllowSpendBlock],
         snapshotOrdinal: SnapshotOrdinal,
-        params: AllowSpendBlockValidationParams
+        params: AllowSpendBlockValidationParams,
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[F]): F[AllowSpendBlockValidationErrorOr[(Signed[AllowSpendBlock], Map[Address, AllowSpendNel])]] =
         for {
           signedV <- validateSigned(signedBlock, params)(hasher)
           lockedV = validateNotLockedAtOrdinal(signedBlock, snapshotOrdinal)
-          transactionsV <- validateAllowSpends(signedBlock)
+          transactionsV <- validateAllowSpends(signedBlock, lastGlobalSnapshotEpochProgress)
           transactionChainV <- validateAllowSpendChain(signedBlock)
         } yield
           signedV
@@ -89,12 +94,13 @@ object AllowSpendBlockValidator {
           .map(_.errorMap[AllowSpendBlockValidationError](InvalidSigned))
 
       private def validateAllowSpends(
-        signedBlock: Signed[AllowSpendBlock]
+        signedBlock: Signed[AllowSpendBlock],
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[F]): F[AllowSpendBlockValidationErrorOr[Signed[AllowSpendBlock]]] =
         signedBlock.value.transactions.toNonEmptyList.traverse { signedTransaction =>
           for {
             txRef <- AllowSpendReference.of(signedTransaction)
-            txV <- allowSpendValidator.validate(signedTransaction)
+            txV <- allowSpendValidator.validate(signedTransaction, lastGlobalSnapshotEpochProgress)
           } yield txV.errorMap(InvalidAllowSpend(txRef, _))
         }.map { vs =>
           vs.foldLeft(signedBlock.validNec[AllowSpendBlockValidationError]) { (acc, v) =>

@@ -24,6 +24,7 @@ import io.constellationnetwork.schema.artifact.{SharedArtifact, TokenUnlock}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
+import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -171,58 +172,59 @@ object DataApplicationSnapshotAcceptanceManager {
               (newState, oldFeeTxns, oldAcceptedBlocks, oldRejectedBlocks)
             }
           } else {
-            blocksToProcess.foldLeftM(initialResult) {
-              case ((currentState, accFeeTransactions, accAcceptedBlocks, accNotAcceptedBlocks), dataBlock) =>
-                val dataTransactions = dataBlock.value.dataTransactions
+            logger.info(s"Starting to process blocks: ${blocksToProcess.map(_.roundId)}") >>
+              blocksToProcess.foldLeftM(initialResult) {
+                case ((currentState, accFeeTransactions, accAcceptedBlocks, accNotAcceptedBlocks), dataBlock) =>
+                  val dataTransactions = dataBlock.value.dataTransactions
 
-                val dataTransactionsValidations =
-                  dataTransactions.traverse(validateDataTransactionsL0(_, service, balances, currentOrdinal, dataState)).map(_.reduce)
+                  val dataTransactionsValidations =
+                    dataTransactions.traverse(validateDataTransactionsL0(_, service, balances, currentOrdinal, dataState)).map(_.reduce)
 
-                dataTransactionsValidations.flatTap { validation =>
-                  if (validation.isValid)
-                    logger.debug(s"Validating block with roundId=${dataBlock.value.roundId}")
-                  else
-                    logger.debug(s"Block ${dataBlock.value.roundId} is invalid: ${validation.fold(_.toList.mkString(", "), _ => "")}")
-                }.flatMap {
-                  case Valid(_) =>
-                    val dataTransactionsAsList = dataTransactions.toList
-                    val dataUpdates = getDataUpdates(dataTransactionsAsList)
-                    val feeTransactions = getFeeTransactions(dataTransactionsAsList)
+                  dataTransactionsValidations.flatTap { validation =>
+                    if (validation.isValid)
+                      logger.info(s"Validating block with roundId=${dataBlock.value.roundId}")
+                    else
+                      logger.info(s"Block ${dataBlock.value.roundId} is invalid: ${validation.fold(_.toList.mkString(", "), _ => "")}")
+                  }.flatMap {
+                    case Valid(_) =>
+                      val dataTransactionsAsList = dataTransactions.toList
+                      val dataUpdates = getDataUpdates(dataTransactionsAsList)
+                      val feeTransactions = getFeeTransactions(dataTransactionsAsList)
 
-                    for {
-                      _ <- logger.debug(s"Block ${dataBlock.value.roundId} is valid")
-                      result <- service.combine(currentState, dataUpdates).map { newState =>
+                      for {
+                        _ <- logger.info(s"Block ${dataBlock.value.roundId} is valid")
+                        result <- service.combine(currentState, dataUpdates).map { newState =>
+                          (
+                            newState,
+                            accFeeTransactions ++ feeTransactions,
+                            accAcceptedBlocks :+ dataBlock,
+                            accNotAcceptedBlocks
+                          )
+                        }
+                        _ <- logger.info(s"SharedArtifacts produced: ${result._1.sharedArtifacts}")
+                      } yield result
+
+                    case Invalid(err) =>
+                      Async[F].pure(
                         (
-                          newState,
-                          accFeeTransactions ++ feeTransactions,
-                          accAcceptedBlocks :+ dataBlock,
-                          accNotAcceptedBlocks
+                          currentState,
+                          accFeeTransactions,
+                          accAcceptedBlocks,
+                          accNotAcceptedBlocks :+ (dataBlock, DataBlockNotAccepted(err.toString))
                         )
-                      }
-                      _ <- logger.debug(s"SharedArtifacts produced: ${result._1.sharedArtifacts}")
-                    } yield result
-
-                  case Invalid(err) =>
-                    Async[F].pure(
-                      (
-                        currentState,
-                        accFeeTransactions,
-                        accAcceptedBlocks,
-                        accNotAcceptedBlocks :+ (dataBlock, DataBlockNotAccepted(err.toString))
                       )
-                    )
-                }.handleErrorWith { err =>
-                  logger.error(err)(s"Exception during block validation for roundId=${dataBlock.value.roundId}") >>
-                    Async[F].pure(
-                      (
-                        currentState,
-                        accFeeTransactions,
-                        accAcceptedBlocks,
-                        accNotAcceptedBlocks :+ (dataBlock, DataBlockNotAccepted(err.getMessage))
+                  }.handleErrorWith { err =>
+                    logger.error(err)(s"Exception during block validation for roundId=${dataBlock.value.roundId}") >>
+                      Async[F].pure(
+                        (
+                          currentState,
+                          accFeeTransactions,
+                          accAcceptedBlocks,
+                          accNotAcceptedBlocks :+ (dataBlock, DataBlockNotAccepted(err.getMessage))
+                        )
                       )
-                    )
-                }
-            }
+                  }
+              }
           }
         }
 
@@ -247,9 +249,22 @@ object DataApplicationSnapshotAcceptanceManager {
         )
 
         sharedArtifacts = newDataState.sharedArtifacts ++ tokenUnlocks
+
+        updateHashes <- OptionT.liftF(
+          service.hashDataUpdate match {
+            case Some(hashFn) if validatedBlocks.nonEmpty =>
+              validatedBlocks.flatMap { block =>
+                getDataUpdates(block.value.dataTransactions.toList)
+              }.traverse { signedUpdate =>
+                hashFn(signedUpdate.value)
+              }.map(hashes => Some(hashes.toSortedSet))
+            case _ =>
+              Async[F].pure(None: Option[SortedSet[Hash]])
+          }
+        )
       } yield
         DataApplicationAcceptanceResult(
-          DataApplicationPart(serializedOnChainState, serializedBlocks, calculatedStateProof),
+          DataApplicationPart(serializedOnChainState, serializedBlocks, calculatedStateProof, updateHashes),
           newDataState.calculated,
           validatedFeeTransactions,
           sharedArtifacts,
@@ -259,9 +274,9 @@ object DataApplicationSnapshotAcceptanceManager {
       newDataState.value.handleErrorWith { err =>
         logger.error(err)("Unhandled exception during calculating new data application state, fallback to last data application") >>
           service.getCalculatedState.map { lastCalculatedState =>
-            maybeLastDataApplication.map(
+            maybeLastDataApplication.map(part =>
               DataApplicationAcceptanceResult(
-                _,
+                part,
                 lastCalculatedState._2,
                 notAccepted = dataBlocks.map(signedBlock => (signedBlock, DataBlockNotAccepted(err.getMessage)))
               )

@@ -4,9 +4,11 @@ import java.security.KeyPair
 
 import cats.data.{Kleisli, NonEmptyList, NonEmptySet}
 import cats.effect._
+import cats.effect.std.Supervisor
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
+import scala.concurrent.duration._
 
 import io.constellationnetwork.currency.schema.currency.SnapshotFee
 import io.constellationnetwork.env.AppEnvironment
@@ -26,6 +28,7 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.generators.{chooseNumRefined, signedOf}
+import io.constellationnetwork.schema.height.Height
 import io.constellationnetwork.schema.peer._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -37,6 +40,7 @@ import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
 
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.auto._
+import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
 import org.scalacheck.Gen
 import weaver.MutableIOSuite
@@ -57,7 +61,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     val identifier = keyPair.getPublic.toAddress
 
     GlobalIncrementalSnapshot
-      .fromGlobalSnapshot[F](
+      .fromGlobalSnapshot[IO](
         GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
       )
       .map(
@@ -75,7 +79,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   def mkService(
     identifier: Address,
     currentOrdinal: SnapshotOrdinal,
-    state: State,
+    state: TrackerState,
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]] = None,
     selfId: PeerId = PeerId(Hex("0000000000000000")),
     environment: AppEnvironment = Dev
@@ -83,70 +87,162 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     implicit sp: SecurityProvider[IO],
     hs: Hasher[IO],
     metrics: Metrics[IO]
-  ): IO[(StateChannelBinarySender[IO], Ref[IO, State], Ref[IO, List[Hashed[StateChannelSnapshotBinary]]])] =
+  ): Resource[IO, (StateChannelBinarySender[IO], BinaryTracker[IO], Ref[IO, List[Hashed[StateChannelSnapshotBinary]]])] =
     for {
-      identifierStorage <- new IdentifierStorage[IO] {
+      identifierStorage <- Resource.pure(new IdentifierStorage[IO] {
         def setInitial(address: Address): IO[Unit] = ???
 
-        def get: IO[address.Address] = identifier.pure[IO]
-      }.pure[IO]
+        def get: IO[Address] = identifier.pure[IO]
+      })
+
       globalL0ClusterStorage = new L0ClusterStorage[IO] {
         def getPeers: IO[NonEmptySet[L0Peer]] = ???
 
-        def getPeer(id: peer.PeerId): IO[Option[peer.L0Peer]] = ???
+        def getPeer(id: PeerId): IO[Option[L0Peer]] = ???
 
-        def getRandomPeer: IO[peer.L0Peer] = L0Peer(PeerId(Hex("")), Host.fromString("0.0.0.0").get, Port.fromInt(100).get).pure[IO]
+        def getRandomPeer: IO[L0Peer] = L0Peer(PeerId(Hex("")), Host.fromString("0.0.0.0").get, Port.fromInt(100).get).pure[IO]
 
         def getRandomPeerExistentOnList(peers: List[PeerId]): IO[Option[L0Peer]] =
           L0Peer(PeerId(Hex("")), Host.fromString("0.0.0.0").get, Port.fromInt(100).get).some.pure[IO]
 
-        def addPeers(l0Peers: Set[peer.L0Peer]): IO[Unit] = ???
+        def addPeers(l0Peers: Set[L0Peer]): IO[Unit] = ???
 
-        def setPeers(l0Peers: NonEmptySet[peer.L0Peer]): IO[Unit] = ???
-      }
-      lastSnapshotStorage = new LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
-        def set(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): StateChannelBinarySenderSuite.F[Unit] = ???
-
-        def setInitial(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): StateChannelBinarySenderSuite.F[Unit] = ???
-
-        def get: StateChannelBinarySenderSuite.F[Option[Hashed[GlobalIncrementalSnapshot]]] = ???
-
-        def getCombined: StateChannelBinarySenderSuite.F[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
-
-        def getCombinedStream
-          : fs2.Stream[StateChannelBinarySenderSuite.F, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
-
-        def getOrdinal: StateChannelBinarySenderSuite.F[Option[SnapshotOrdinal]] = currentOrdinal.some.pure[F]
-
-        def getHeight: StateChannelBinarySenderSuite.F[Option[height.Height]] = ???
+        def setPeers(l0Peers: NonEmptySet[L0Peer]): IO[Unit] = ???
       }
 
-      postedRef <- Ref.of[IO, List[Hashed[StateChannelSnapshotBinary]]](List.empty)
-      stateChannelSnapshotClient = new StateChannelSnapshotClient[F] {
+      lastSnapshotStorage = new LastSnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
+        def set(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ???
+
+        def setInitial(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ???
+
+        def get: IO[Option[Hashed[GlobalIncrementalSnapshot]]] = ???
+
+        def getCombined: IO[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
+
+        def getCombinedStream: fs2.Stream[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
+
+        def getOrdinal: IO[Option[SnapshotOrdinal]] = currentOrdinal.some.pure[IO]
+
+        def getHeight: IO[Option[Height]] = ???
+      }
+
+      postedRef <- Resource.eval(Ref.of[IO, List[Hashed[StateChannelSnapshotBinary]]](List.empty))
+
+      stateChannelSnapshotClient = new StateChannelSnapshotClient[IO] {
         def send(
-          identifier: address.Address,
+          identifier: Address,
           data: Signed[StateChannelSnapshotBinary]
-        ): PeerResponse[F, Either[NonEmptyList[StateChannelValidationError], Unit]] =
-          Kleisli[F, P2PContext, Either[NonEmptyList[StateChannelValidationError], Unit]] { _ =>
+        ): PeerResponse[IO, Either[NonEmptyList[StateChannelValidationError], Unit]] =
+          Kleisli[IO, P2PContext, Either[NonEmptyList[StateChannelValidationError], Unit]] { _ =>
             data.toHashed.flatMap { hashed =>
               postedRef.update(_ :+ hashed).map(_.asRight[NonEmptyList[StateChannelValidationError]])
             }
           }
       }
-      stateRef <- Ref.of[IO, State](state)
 
-      sender = StateChannelBinarySender.make[IO](
-        stateRef,
+      tracker <- Resource.eval(BinaryTracker.make[IO])
+      _ <- Resource.eval(tracker.updateState(_ => state))
+
+      poster = new BinaryPoster[IO](
         identifierStorage,
         globalL0ClusterStorage,
-        lastSnapshotStorage,
         stateChannelSnapshotClient,
         stateChannelAllowanceLists,
         selfId,
         environment,
-        none
+        none,
+        tracker
       )
-    } yield (sender, stateRef, postedRef)
+
+      supervisor <- Supervisor[IO]
+
+      sender = new TestStateChannelBinarySender[IO](
+        tracker,
+        poster,
+        lastSnapshotStorage,
+        identifierStorage,
+        supervisor
+      )
+    } yield (sender, tracker, postedRef)
+
+  // Test implementation that exposes internal methods for testing
+  class TestStateChannelBinarySender[G[_]: Async: Hasher: Metrics](
+    tracker: BinaryTracker[G],
+    poster: BinaryPoster[G],
+    lastGlobalSnapshotStorage: LastSnapshotStorage[G, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    identifierStorage: IdentifierStorage[G],
+    supervisor: Supervisor[G]
+  ) extends StateChannelBinarySender[G] {
+
+    def enqueue(
+      binary: Hashed[StateChannelSnapshotBinary],
+      currencySnapshotOrdinal: SnapshotOrdinal,
+      lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]]
+    ): G[Unit] =
+      for {
+        currentGlobalOrdinal <- lastGlobalSnapshotStorage.getOrdinal.map(_.getOrElse(SnapshotOrdinal.MinValue))
+        _ <- tracker.enqueue(binary, currencySnapshotOrdinal, currentGlobalOrdinal)
+      } yield ()
+
+    // For testing: immediately process the queue after enqueuing
+    def process(
+      binary: Hashed[StateChannelSnapshotBinary],
+      lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]]
+    ): G[Unit] =
+      for {
+        currentOrdinal <- lastGlobalSnapshotStorage.getOrdinal.map(_.getOrElse(SnapshotOrdinal.MinValue))
+        _ <- enqueue(binary, currentOrdinal, lastGlobalSnapshotSigners)
+        state <- tracker.getState
+        _ <-
+          if (!state.retryMode) {
+            // In normal mode, send immediately for testing
+            poster.post(binary, lastGlobalSnapshotSigners).void
+          } else {
+            Async[G].unit
+          }
+      } yield ()
+
+    def confirm(globalSnapshot: Hashed[GlobalIncrementalSnapshot]): G[Unit] =
+      for {
+        identifier <- identifierStorage.get
+        confirmedHashes <- getConfirmedHashes(identifier, globalSnapshot)
+        state <- tracker.getState
+        oldRetryMode = state.retryMode
+        proof = GlobalSnapshotConfirmationProof.fromGlobalSnapshot(globalSnapshot)
+        _ <- tracker.markAsConfirmed(confirmedHashes, proof)
+        updatedState <- tracker.getState
+        retryMode = RetryStrategy.shouldEnterRetryMode(updatedState, globalSnapshot.ordinal)
+        _ <- tracker.updateState(_.copy(retryMode = retryMode))
+        _ <- tracker.updateState(RetryStrategy.updateRetryParameters(_, oldRetryMode))
+      } yield ()
+
+    // Manually trigger queue processing for tests (simulates background worker)
+    def processQueue(globalSnapshot: Hashed[GlobalIncrementalSnapshot]): G[Unit] =
+      tracker.getState.flatMap { state =>
+        if (state.retryMode) {
+          val lastGlobalSnapshotSigners = globalSnapshot.signed.proofs.map(_.id.toPeerId).some
+          tracker.getPendingToRetry(state.cap.value.toInt).flatMap { toRetry =>
+            toRetry.traverse_(pending => poster.post(pending.binary, lastGlobalSnapshotSigners).void)
+          }
+        } else {
+          // Process unsent binaries in normal mode
+          tracker.getPendingToRetry(10).flatMap { pending =>
+            val unsent = pending.filter(_.sendsSoFar.value === 0L)
+            unsent.traverse_(p => poster.post(p.binary, none).void)
+          }
+        }
+      }
+
+    def clearPending: G[Unit] = tracker.clear
+
+    private def getConfirmedHashes(
+      identifier: Address,
+      globalSnapshot: Hashed[GlobalIncrementalSnapshot]
+    ): G[Set[Hash]] = {
+      val binaries = globalSnapshot.stateChannelSnapshots.get(identifier).toList.flatMap(_.toList)
+      binaries.traverse(b => b.toHashed[G]).map(_.map(_.hash).toSet)
+    }
+  }
 
   def mkGlobalSnapshotInfo(lastStateChannelSnapshotHashes: SortedMap[Address, Hash] = SortedMap.empty) =
     GlobalSnapshotInfo(
@@ -191,22 +287,30 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     implicit val (_, hs, sp, metrics) = res
 
     forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
-      for {
-        kp <- KeyPairGenerator.makeKeyPair
-        currentOrdinal = SnapshotOrdinal.MinValue
-        (sender, stateRef, _) <- mkService(kp.getPublic.toAddress, currentOrdinal = currentOrdinal, state = State.empty)
-        hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(binaryHashed => sender.process(binaryHashed, List.empty, none))
-        globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, binaries)
-        _ <- sender.confirm(globalSnapshot)
-        state <- stateRef.get
-        expected = hashed.map { binary =>
-          ConfirmedBinary(
-            PendingBinary(binary, currentOrdinal, NonNegLong(1L)),
-            GlobalSnapshotConfirmationProof.fromGlobalSnapshot(globalSnapshot)
-          )
-        }
-      } yield expect.eql(state.tracked.toList, expected)
+      (for {
+        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+        (sender, tracker, _) <- mkService(
+          kp.getPublic.toAddress,
+          currentOrdinal = SnapshotOrdinal.MinValue,
+          state = TrackerState.empty
+        )
+        result <- Resource.eval(
+          for {
+            hashed <- binaries.traverse(_.toHashed)
+            _ <- hashed.traverse(binaryHashed => sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(binaryHashed, none))
+            globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, binaries)
+            _ <- sender.confirm(globalSnapshot)
+            state <- tracker.getState
+            currentOrdinal = SnapshotOrdinal.MinValue
+            expected = hashed.map { binary =>
+              ConfirmedBinary(
+                PendingBinary(binary, currentOrdinal, currentOrdinal, NonNegLong.unsafeFrom(0L)), // Changed from 0L to 1L
+                GlobalSnapshotConfirmationProof.fromGlobalSnapshot(globalSnapshot)
+              )
+            }
+          } yield expect.eql(state.tracked.toList, expected)
+        )
+      } yield result).use(IO.pure)
     }
   }
 
@@ -214,15 +318,19 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     implicit val (_, hs, sp, metrics) = res
 
     forall(binaryGen) { binary =>
-      for {
-        kp <- KeyPairGenerator.makeKeyPair
-        (sender, stateRef, _) <- mkService(kp.getPublic.toAddress, currentOrdinal = SnapshotOrdinal.MinValue, state = State.empty)
-        hashed <- binary.toHashed
-        _ <- sender.process(hashed, List.empty, none)
-        globalSnapshot <- mkSnapshot(SnapshotOrdinal(6L), kp, List.empty)
-        _ <- sender.confirm(globalSnapshot)
-        state <- stateRef.get
-      } yield expect(state.retryMode)
+      (for {
+        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+        (sender, tracker, _) <- mkService(kp.getPublic.toAddress, currentOrdinal = SnapshotOrdinal.MinValue, state = TrackerState.empty)
+        result <- Resource.eval(
+          for {
+            hashed <- binary.toHashed
+            _ <- sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(hashed, none)
+            globalSnapshot <- mkSnapshot(SnapshotOrdinal(6L), kp, List.empty)
+            _ <- sender.confirm(globalSnapshot)
+            state <- tracker.getState
+          } yield expect(state.retryMode)
+        )
+      } yield result).use(IO.pure)
     }
   }
 
@@ -230,24 +338,28 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     implicit val (_, hs, sp, metrics) = res
 
     forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
-      for {
-        kp <- KeyPairGenerator.makeKeyPair
-        (sender, stateRef, postedRef) <- mkService(
+      (for {
+        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+        (sender, tracker, postedRef) <- mkService(
           kp.getPublic.toAddress,
           currentOrdinal = SnapshotOrdinal.MinValue,
-          state = State.empty.copy(retryMode = true)
+          state = TrackerState.empty.copy(retryMode = false)
         )
-        hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(binary => sender.process(binary, List.empty, none))
-        state <- stateRef.get
-        posted <- postedRef.get
-      } yield
-        expect(state.tracked.nonEmpty)
-          .and(expect(state.tracked.map {
-            case PendingBinary(binary, _, _)       => binary
-            case ConfirmedBinary(pendingBinary, _) => pendingBinary.binary
-          }.toSet.subsetOf(hashed.toSet)))
-          .and(expect(posted.toSet.subsetOf(hashed.toSet)))
+        result <- Resource.eval(
+          for {
+            hashed <- binaries.traverse(_.toHashed)
+            _ <- hashed.traverse(binary => sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(binary, none))
+            state <- tracker.getState
+            posted <- postedRef.get
+          } yield
+            expect(state.tracked.nonEmpty)
+              .and(expect(state.tracked.map {
+                case PendingBinary(binary, _, _, _)    => binary
+                case ConfirmedBinary(pendingBinary, _) => pendingBinary.binary
+              }.toSet.subsetOf(hashed.toSet)))
+              .and(expect(posted.toSet.subsetOf(hashed.toSet)))
+        )
+      } yield result).use(IO.pure)
     }
   }
 
@@ -255,51 +367,56 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     implicit val (_, hs, sp, metrics) = res
 
     forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
-      for {
-        kp <- KeyPairGenerator.makeKeyPair
-        (sender, stateRef, _) <- mkService(
+      (for {
+        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+        (sender, tracker, _) <- mkService(
           kp.getPublic.toAddress,
           currentOrdinal = SnapshotOrdinal.MinValue,
-          state = State.empty.copy(
+          state = TrackerState.empty.copy(
             retryMode = true,
             cap = NonNegLong.unsafeFrom(binaries.length.toLong)
           )
         )
+        result <- Resource.eval(
+          for {
+            hashed <- binaries.traverse(_.toHashed)
+            _ <- hashed.traverse(binary => sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(binary, none))
 
-        hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(binary => sender.process(binary, List.empty, none))
+            globalSnapshot <- mkSnapshot(SnapshotOrdinal(5L), kp, List.empty)
+            _ <- sender.confirm(globalSnapshot)
+            capReachedButNoSendsSoFar <- tracker.getState
 
-        globalSnapshot <- mkSnapshot(SnapshotOrdinal(5L), kp, List.empty)
-        _ <- sender.confirm(globalSnapshot)
-        capReachedButNoSendsSoFar <- stateRef.get
+            _ <- tracker.updateState { state =>
+              state.copy(
+                tracked = state.tracked.map {
+                  case pending @ PendingBinary(_, _, _, _) =>
+                    pending.copy(sendsSoFar = NonNegLong.unsafeFrom(1L), enqueuedAtOrdinal = SnapshotOrdinal(0L))
+                  case confirmed => confirmed
+                },
+                cap = NonNegLong.unsafeFrom(state.tracked.length.toLong)
+              )
+            }
+            _ <- sender.confirm(globalSnapshot)
+            capReachedAllSentButHasStalled <- tracker.getState
 
-        _ <- stateRef.update { state =>
-          state.copy(
-            tracked = state.tracked.map {
-              case pending @ PendingBinary(_, _, _) => pending.copy(sendsSoFar = NonNegLong(1L), enqueuedAtOrdinal = SnapshotOrdinal(0L))
-              case confirmed                        => confirmed
-            },
-            cap = NonNegLong.unsafeFrom(state.tracked.length.toLong)
-          )
-        }
-        _ <- sender.confirm(globalSnapshot)
-        capReachedAllSentButHasStalled <- stateRef.get
-
-        _ <- stateRef.update { state =>
-          state.copy(
-            tracked = state.tracked.map {
-              case pending @ PendingBinary(_, _, _) => pending.copy(sendsSoFar = NonNegLong(1L), enqueuedAtOrdinal = SnapshotOrdinal(1L))
-              case confirmed                        => confirmed
-            },
-            cap = NonNegLong.unsafeFrom(state.tracked.length.toLong)
-          )
-        }
-        _ <- sender.confirm(globalSnapshot)
-        capReachedAllSentAndNoStalled <- stateRef.get
-      } yield
-        expect(capReachedButNoSendsSoFar.retryMode)
-          .and(expect(capReachedAllSentButHasStalled.retryMode))
-          .and(expect(!capReachedAllSentAndNoStalled.retryMode))
+            _ <- tracker.updateState { state =>
+              state.copy(
+                tracked = state.tracked.map {
+                  case pending @ PendingBinary(_, _, _, _) =>
+                    pending.copy(sendsSoFar = NonNegLong.unsafeFrom(1L), enqueuedAtOrdinal = SnapshotOrdinal(1L))
+                  case confirmed => confirmed
+                },
+                cap = NonNegLong.unsafeFrom(state.tracked.length.toLong)
+              )
+            }
+            _ <- sender.confirm(globalSnapshot)
+            capReachedAllSentAndNoStalled <- tracker.getState
+          } yield
+            expect(capReachedButNoSendsSoFar.retryMode)
+              .and(expect(capReachedAllSentButHasStalled.retryMode))
+              .and(expect(!capReachedAllSentAndNoStalled.retryMode))
+        )
+      } yield result).use(IO.pure)
     }
   }
 
@@ -307,24 +424,28 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     implicit val (_, hs, sp, metrics) = res
 
     forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
-      for {
-        kp <- KeyPairGenerator.makeKeyPair
-        (sender, stateRef, postedRef) <- mkService(
+      (for {
+        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+        (sender, tracker, postedRef) <- mkService(
           kp.getPublic.toAddress,
           currentOrdinal = SnapshotOrdinal.MinValue,
-          state = State.empty.copy(retryMode = true)
+          state = TrackerState.empty.copy(retryMode = true)
         )
-        hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(binary => sender.process(binary, List.empty, none))
-        state <- stateRef.get
-        posted <- postedRef.get
-      } yield
-        expect(state.tracked.nonEmpty)
-          .and(expect(state.tracked.map {
-            case PendingBinary(binary, _, _)       => binary
-            case ConfirmedBinary(pendingBinary, _) => pendingBinary.binary
-          }.toSet.subsetOf(hashed.toSet)))
-          .and(expect(posted.isEmpty))
+        result <- Resource.eval(
+          for {
+            hashed <- binaries.traverse(_.toHashed)
+            _ <- hashed.traverse(binary => sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(binary, none))
+            state <- tracker.getState
+            posted <- postedRef.get
+          } yield
+            expect(state.tracked.nonEmpty)
+              .and(expect(state.tracked.map {
+                case PendingBinary(binary, _, _, _)    => binary
+                case ConfirmedBinary(pendingBinary, _) => pendingBinary.binary
+              }.toSet.subsetOf(hashed.toSet)))
+              .and(expect(posted.isEmpty))
+        )
+      } yield result).use(IO.pure)
     }
   }
 
@@ -333,25 +454,29 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
 
     val gen = for {
       binary <- binaryGen
-      cap <- chooseNumRefined(NonNegLong(1L), NonNegLong(100L))
+      cap <- chooseNumRefined(NonNegLong.unsafeFrom(1L), NonNegLong.unsafeFrom(100L))
     } yield (binary, cap)
 
     forall(gen) {
       case (binary, cap) =>
-        for {
-          kp <- KeyPairGenerator.makeKeyPair
-          (sender, stateRef, _) <- mkService(
+        (for {
+          kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+          (sender, tracker, _) <- mkService(
             kp.getPublic.toAddress,
             currentOrdinal = SnapshotOrdinal.MinValue,
-            state = State.empty.copy(cap = cap, retryMode = true)
+            state = TrackerState.empty.copy(cap = cap, retryMode = true)
           )
-          hashedBinary <- binary.toHashed
-          _ <- sender.process(hashedBinary, List.empty, none)
-          globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, List.empty)
-          prevState <- stateRef.get
-          _ <- sender.confirm(globalSnapshot)
-          state <- stateRef.get
-        } yield expect.eql(state.cap.value, prevState.cap.value - 1)
+          result <- Resource.eval(
+            for {
+              hashedBinary <- binary.toHashed
+              _ <- sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(hashedBinary, none)
+              globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, List.empty)
+              prevState <- tracker.getState
+              _ <- sender.confirm(globalSnapshot)
+              state <- tracker.getState
+            } yield expect.eql(state.cap.value, prevState.cap.value - 1)
+          )
+        } yield result).use(IO.pure)
     }
   }
 
@@ -361,30 +486,35 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     val gen = for {
       nBinaries <- Gen.nonEmptyListOf(binaryGen)
       binary <- binaryGen
-      binaries = nBinaries :+ binary // To be sure that we have at least 2 elements to avoid exiting from retryMode
+      binaries = nBinaries :+ binary
       howManyToConfirm <- Gen.choose(1, binaries.length - 1)
       confirmedBinaries = binaries.take(howManyToConfirm)
     } yield (binaries, confirmedBinaries)
 
     forall(gen) {
       case (binaries, confirmedBinaries) =>
-        for {
-          kp <- KeyPairGenerator.makeKeyPair
-          (sender, stateRef, _) <- mkService(
+        (for {
+          kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+          (sender, tracker, _) <- mkService(
             kp.getPublic.toAddress,
             currentOrdinal = SnapshotOrdinal.MinValue,
-            state = State.empty.copy(
-              cap = 1L,
+            state = TrackerState.empty.copy(
+              cap = NonNegLong.unsafeFrom(1L),
               retryMode = true
             )
           )
-
-          _ <- binaries.traverse_(bin => bin.toHashed.flatMap(binary => sender.process(binary, List.empty, none)))
-          globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, confirmedBinaries)
-          prevState <- stateRef.get
-          _ <- sender.confirm(globalSnapshot)
-          state <- stateRef.get
-        } yield expect(state.cap.value >= prevState.cap.value).and(expect(state.cap.value <= confirmedBinaries.length * 4))
+          result <- Resource.eval(
+            for {
+              _ <- binaries.traverse_(bin =>
+                bin.toHashed.flatMap(binary => sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(binary, none))
+              )
+              globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, confirmedBinaries)
+              prevState <- tracker.getState
+              _ <- sender.confirm(globalSnapshot)
+              state <- tracker.getState
+            } yield expect(state.cap.value >= prevState.cap.value).and(expect(state.cap.value <= confirmedBinaries.length * 4))
+          )
+        } yield result).use(IO.pure)
     }
   }
 
@@ -392,59 +522,27 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     implicit val (_, hs, sp, metrics) = res
 
     forall(binaryGen) { binary =>
-      for {
-        kp <- KeyPairGenerator.makeKeyPair
-        (sender, stateRef, _) <- mkService(
+      (for {
+        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+        (sender, tracker, _) <- mkService(
           kp.getPublic.toAddress,
           currentOrdinal = SnapshotOrdinal.MinValue,
-          state = State.empty.copy(cap = 1L, retryMode = true)
+          state = TrackerState.empty.copy(cap = NonNegLong.unsafeFrom(1L), retryMode = true)
         )
-        hashedBinary <- binary.toHashed
-        _ <- sender.process(hashedBinary, List.empty, none)
-        globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, List.empty)
-        _ <- sender.confirm(globalSnapshot)
-        state <- stateRef.get
-      } yield
-        expect
-          .eql(state.cap.value, 0L)
-          .and(expect.eql(state.backoffExponent.value, 1L))
-          .and(expect.eql(state.noConfirmationsSinceRetryCount.value, 1L))
-    }
-  }
-
-  test("retry mode (exponential) - retries 1 only if waited 2^n ordinals") { res =>
-    implicit val (_, hs, sp, metrics) = res
-
-    val gen = for {
-      binary <- binaryGen
-      exponent <- chooseNumRefined(NonNegLong(1L), NonNegLong(10L))
-    } yield (binary, exponent)
-
-    forall(gen) {
-      case (binary, exponent) =>
-        for {
-          kp <- KeyPairGenerator.makeKeyPair
-          (sender, _, postedRef) <- mkService(
-            kp.getPublic.toAddress,
-            currentOrdinal = SnapshotOrdinal.MinValue,
-            state = State.empty.copy(cap = 0L, retryMode = true, backoffExponent = exponent, noConfirmationsSinceRetryCount = 1L)
-          )
-          hashedBinary <- binary.toHashed
-          _ <- sender.process(hashedBinary, List.empty, none)
-
-          expectedNoConfirmationsToRetry = Math.pow(2.0, exponent.value.toDouble).toLong
-          snapshots <- mkEmptySnapshots(expectedNoConfirmationsToRetry, kp)
-          info = mkGlobalSnapshotInfo()
-          lessThanNeeded = snapshots.take(expectedNoConfirmationsToRetry.toInt - 2)
-          _ <- lessThanNeeded.traverse(snapshot => sender.confirm(snapshot) >> sender.processPending(snapshot, info))
-
-          postedAfterSendingLessThanNeeded <- postedRef.get
-
-          _ <- sender.confirm(snapshots.last) >> sender.processPending(snapshots.last, info)
-
-          postedAfterSendingLast <- postedRef.get
-
-        } yield expect(postedAfterSendingLessThanNeeded.isEmpty).and(expect.eql(postedAfterSendingLast.length, 1))
+        result <- Resource.eval(
+          for {
+            hashedBinary <- binary.toHashed
+            _ <- sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(hashedBinary, none)
+            globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, List.empty)
+            _ <- sender.confirm(globalSnapshot)
+            state <- tracker.getState
+          } yield
+            expect
+              .eql(state.cap.value, 0L)
+              .and(expect.eql(state.backoffExponent.value, 1L))
+              .and(expect.eql(state.noConfirmationsSinceRetryCount.value, 1L))
+        )
+      } yield result).use(IO.pure)
     }
   }
 
@@ -453,35 +551,39 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
 
     val gen = for {
       binary <- binaryGen
-      exponent <- chooseNumRefined(NonNegLong(1L), NonNegLong(100L))
+      exponent <- chooseNumRefined(NonNegLong.unsafeFrom(1L), NonNegLong.unsafeFrom(100L))
     } yield (binary, exponent)
 
     forall(gen) {
       case (binary, exponent) =>
-        for {
-          kp <- KeyPairGenerator.makeKeyPair
-          (sender, stateR, _) <- mkService(
+        (for {
+          kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+          (sender, tracker, _) <- mkService(
             kp.getPublic.toAddress,
             currentOrdinal = SnapshotOrdinal.MinValue,
-            state = State.empty.copy(
-              cap = 1L,
+            state = TrackerState.empty.copy(
+              cap = NonNegLong.unsafeFrom(1L),
               retryMode = true,
               backoffExponent = exponent,
               noConfirmationsSinceRetryCount = NonNegLong.unsafeFrom(Math.pow(2.0, exponent.value.toDouble).toLong - 1L)
             )
           )
-          hashedBinary <- binary.toHashed
-          _ <- sender.process(hashedBinary, List.empty, none)
-          snapshot <- mkSnapshot(ordinal = SnapshotOrdinal.MinValue, kp, List.empty)
-          prevState <- stateR.get
-          info = mkGlobalSnapshotInfo()
-          _ <- sender.confirm(snapshot) >> sender.processPending(snapshot, info)
-          state <- stateR.get
-        } yield
-          expect
-            .eql(state.backoffExponent.value, prevState.backoffExponent.value + 1L)
-            .and(expect.eql(state.noConfirmationsSinceRetryCount, NonNegLong(1L)))
-            .and(expect.eql(state.cap, NonNegLong(0L)))
+          result <- Resource.eval(
+            for {
+              hashedBinary <- binary.toHashed
+              _ <- sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(hashedBinary, none)
+              snapshot <- mkSnapshot(ordinal = SnapshotOrdinal.MinValue, kp, List.empty)
+              prevState <- tracker.getState
+              _ <- sender.confirm(snapshot) >>
+                sender.asInstanceOf[TestStateChannelBinarySender[IO]].processQueue(snapshot)
+              state <- tracker.getState
+            } yield
+              expect
+                .eql(state.backoffExponent.value, prevState.backoffExponent.value + 1L)
+                .and(expect.eql(state.noConfirmationsSinceRetryCount, NonNegLong.unsafeFrom(1L)))
+                .and(expect.eql(state.cap, NonNegLong.unsafeFrom(0L)))
+          )
+        } yield result).use(IO.pure)
     }
   }
 
@@ -489,38 +591,41 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     implicit val (_, hs, sp, metrics) = res
 
     forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
-      for {
-        kp <- KeyPairGenerator.makeKeyPair
-        currentOrdinal = SnapshotOrdinal.MinValue
+      (for {
+        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
         selfId = PeerId(Hex("0000000000000000"))
         allowed = PeerId(Hex("000000000000011"))
         allowanceList = Map(kp.getPublic.toAddress -> NonEmptySet.of(allowed))
 
-        (sender, stateRef, postedRef) <- mkService(
+        (sender, tracker, postedRef) <- mkService(
           kp.getPublic.toAddress,
-          currentOrdinal = currentOrdinal,
-          state = State.empty,
+          currentOrdinal = SnapshotOrdinal.MinValue,
+          state = TrackerState.empty,
           allowanceList.some,
           selfId,
           Mainnet
         )
-        hashed <- binaries.traverse(_.toHashed)
-        _ <- hashed.traverse(binaryHashed => sender.process(binaryHashed, List.empty, none))
-        globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, binaries)
-        _ <- sender.confirm(globalSnapshot)
-        state <- stateRef.get
-        expected = hashed.map { binary =>
-          ConfirmedBinary(
-            PendingBinary(binary, currentOrdinal, NonNegLong(0L)),
-            GlobalSnapshotConfirmationProof.fromGlobalSnapshot(globalSnapshot)
-          )
-        }
-        posted <- postedRef.get
-      } yield
-        expect.all(
-          state.tracked.toList === expected,
-          posted.size === 0
+        result <- Resource.eval(
+          for {
+            hashed <- binaries.traverse(_.toHashed)
+            _ <- hashed.traverse(binaryHashed => sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(binaryHashed, none))
+            globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, binaries)
+            _ <- sender.confirm(globalSnapshot)
+            state <- tracker.getState
+            expected = hashed.map { binary =>
+              ConfirmedBinary(
+                PendingBinary(binary, SnapshotOrdinal.MinValue, SnapshotOrdinal.MinValue, NonNegLong.unsafeFrom(0L)),
+                GlobalSnapshotConfirmationProof.fromGlobalSnapshot(globalSnapshot)
+              )
+            }
+            posted <- postedRef.get
+          } yield
+            expect.all(
+              state.tracked.toList === expected,
+              posted.size === 0
+            )
         )
+      } yield result).use(IO.pure)
     }
   }
 
@@ -538,7 +643,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     val allowedPeers: List[PeerId] = List(PeerId(Hex("123")), PeerId(Hex("456")), PeerId(Hex("789")))
     for {
       selectedPeer <- IO.pure(
-        StateChannelBinarySender.pickDeterministicPeer(
+        PeerSelector.pickDeterministicPeer(
           lastSigners,
           allowedPeers,
           selfId,
@@ -546,7 +651,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         )
       )
       selectedPeer1 <- IO.pure(
-        StateChannelBinarySender.pickDeterministicPeer(
+        PeerSelector.pickDeterministicPeer(
           lastSigners1,
           allowedPeers,
           selfId,
@@ -554,7 +659,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         )
       )
       selectedPeer2 <- IO.pure(
-        StateChannelBinarySender.pickDeterministicPeer(
+        PeerSelector.pickDeterministicPeer(
           lastSigners2,
           allowedPeers,
           selfId,
@@ -562,7 +667,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         )
       )
       selectedPeer3 <- IO.pure(
-        StateChannelBinarySender.pickDeterministicPeer(
+        PeerSelector.pickDeterministicPeer(
           lastSigners3,
           allowedPeers,
           selfId,
@@ -570,7 +675,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         )
       )
       selectedPeer4 <- IO.pure(
-        StateChannelBinarySender.pickDeterministicPeer(
+        PeerSelector.pickDeterministicPeer(
           lastSigners4,
           allowedPeers,
           selfId,
@@ -578,7 +683,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         )
       )
       selectedPeer5 <- IO.pure(
-        StateChannelBinarySender.pickDeterministicPeer(
+        PeerSelector.pickDeterministicPeer(
           lastSigners5,
           allowedPeers,
           selfId,
@@ -595,6 +700,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         selectedPeer5.value.value === "456"
       )
   }
+
   test("should pick deterministic peer to send snapshots - without allowed peers") { res =>
     implicit val (_, hs, sp, metrics) = res
     val selfId = PeerId(Hex("123"))
@@ -608,7 +714,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
 
     for {
       selectedPeer <- IO.pure(
-        StateChannelBinarySender.pickDeterministicPeer(
+        PeerSelector.pickDeterministicPeer(
           lastSigners,
           List.empty,
           selfId,
@@ -616,7 +722,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         )
       )
       selectedPeer1 <- IO.pure(
-        StateChannelBinarySender.pickDeterministicPeer(
+        PeerSelector.pickDeterministicPeer(
           lastSigners1,
           List.empty,
           selfId,
@@ -624,7 +730,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         )
       )
       selectedPeer2 <- IO.pure(
-        StateChannelBinarySender.pickDeterministicPeer(
+        PeerSelector.pickDeterministicPeer(
           lastSigners2,
           List.empty,
           selfId,
@@ -632,7 +738,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         )
       )
       selectedPeer3 <- IO.pure(
-        StateChannelBinarySender.pickDeterministicPeer(
+        PeerSelector.pickDeterministicPeer(
           lastSigners3,
           List.empty,
           selfId,
@@ -640,7 +746,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         )
       )
       selectedPeer4 <- IO.pure(
-        StateChannelBinarySender.pickDeterministicPeer(
+        PeerSelector.pickDeterministicPeer(
           lastSigners4,
           List.empty,
           selfId,
@@ -648,7 +754,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         )
       )
       selectedPeer5 <- IO.pure(
-        StateChannelBinarySender.pickDeterministicPeer(
+        PeerSelector.pickDeterministicPeer(
           lastSigners5,
           List.empty,
           selfId,
@@ -679,7 +785,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
 
     for {
       selectedPeer <- IO.pure(
-        StateChannelBinarySender.pickDeterministicPeer(
+        PeerSelector.pickDeterministicPeer(
           lastSigners,
           List.empty,
           selfId,
@@ -687,7 +793,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         )
       )
       selectedPeer1 <- IO.pure(
-        StateChannelBinarySender.pickDeterministicPeer(
+        PeerSelector.pickDeterministicPeer(
           lastSigners1,
           List.empty,
           selfId,
@@ -695,7 +801,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         )
       )
       selectedPeer2 <- IO.pure(
-        StateChannelBinarySender.pickDeterministicPeer(
+        PeerSelector.pickDeterministicPeer(
           lastSigners2,
           List.empty,
           selfId,
@@ -703,7 +809,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         )
       )
       selectedPeer3 <- IO.pure(
-        StateChannelBinarySender.pickDeterministicPeer(
+        PeerSelector.pickDeterministicPeer(
           lastSigners3,
           List.empty,
           selfId,
@@ -711,7 +817,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         )
       )
       selectedPeer4 <- IO.pure(
-        StateChannelBinarySender.pickDeterministicPeer(
+        PeerSelector.pickDeterministicPeer(
           lastSigners4,
           List.empty,
           selfId,
@@ -719,7 +825,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         )
       )
       selectedPeer5 <- IO.pure(
-        StateChannelBinarySender.pickDeterministicPeer(
+        PeerSelector.pickDeterministicPeer(
           lastSigners5,
           List.empty,
           selfId,

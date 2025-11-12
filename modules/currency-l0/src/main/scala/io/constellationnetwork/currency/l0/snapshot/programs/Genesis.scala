@@ -20,6 +20,7 @@ import io.constellationnetwork.node.shared.http.p2p.clients.StateChannelSnapshot
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.{L0Peer, PeerId}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -32,12 +33,12 @@ trait Genesis[F[_]] {
   def acceptSignedGenesis(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesis: Signed[CurrencySnapshot])(
     implicit context: L0NodeContext[F],
     hasher: Hasher[F]
-  ): F[Unit]
+  ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hash, Address)]
 
   def accept(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesisPath: Path)(
     implicit context: L0NodeContext[F],
     hasher: Hasher[F]
-  ): F[Unit]
+  ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hash, Address)]
 
   def create(dataApplication: Option[BaseDataApplicationL0Service[F]])(
     balancesPath: Path,
@@ -50,11 +51,9 @@ object Genesis {
     keyPair: KeyPair,
     collateral: Collateral[F],
     stateChannelSnapshotService: StateChannelSnapshotService[F],
-    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     stateChannelSnapshotClient: StateChannelSnapshotClient[F],
     globalL0Peer: L0Peer,
     nodeId: PeerId,
-    consensusManager: CurrencyConsensusManager[F],
     genesisLoader: GenesisLoader[F, CurrencySnapshot],
     identifierStorage: IdentifierStorage[F],
     l0Service: GlobalL0Service[F]
@@ -63,11 +62,15 @@ object Genesis {
 
     override def acceptSignedGenesis(
       dataApplication: Option[BaseDataApplicationL0Service[F]]
-    )(genesis: Signed[CurrencySnapshot])(implicit context: L0NodeContext[F], hasher: Hasher[F]): F[Unit] = for {
+    )(
+      genesis: Signed[CurrencySnapshot]
+    )(
+      implicit context: L0NodeContext[F],
+      hasher: Hasher[F]
+    ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hash, Address)] = for {
       hashedGenesis <- genesis.toHashed[F]
       firstIncrementalSnapshot <- CurrencySnapshot.mkFirstIncrementalSnapshot[F](hashedGenesis)
       signedFirstIncrementalSnapshot <- firstIncrementalSnapshot.sign(keyPair)
-      _ <- snapshotStorage.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info.toCurrencySnapshotInfo)
 
       _ <- collateral
         .hasCollateral(nodeId)
@@ -92,30 +95,13 @@ object Genesis {
       incrementalBinaryHash <- signedIncrementalBinary.toHashed.map(_.hash)
       _ <- stateChannelSnapshotClient.send(identifier, signedIncrementalBinary)(globalL0Peer)
 
-      _ <- consensusManager.startFacilitatingAfterRollback(
-        signedFirstIncrementalSnapshot.ordinal,
-        CurrencyConsensusOutcome(
-          signedFirstIncrementalSnapshot.ordinal,
-          Facilitators(List(nodeId)),
-          RemovedFacilitators.empty,
-          WithdrawnFacilitators.empty,
-          Finished(
-            signedFirstIncrementalSnapshot,
-            incrementalBinaryHash,
-            CurrencySnapshotContext(identifier, hashedGenesis.info.toCurrencySnapshotInfo),
-            EventTrigger,
-            Candidates.empty,
-            Hash.empty
-          )
-        )
-      )
       _ <- logger.info(s"Genesis binary ${binaryHash.show} and ${incrementalBinaryHash.show} accepted and sent to Global L0")
-    } yield ()
+    } yield (signedFirstIncrementalSnapshot, hashedGenesis.info.toCurrencySnapshotInfo, incrementalBinaryHash, identifier)
 
     override def accept(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesisPath: Path)(
       implicit context: L0NodeContext[F],
       hasher: Hasher[F]
-    ): F[Unit] = genesisLoader
+    ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hash, Address)] = genesisLoader
       .loadSignedGenesis(genesisPath)
       .flatTap { genesis =>
         dataApplication
@@ -133,7 +119,7 @@ object Genesis {
           .map(_.map(a => (a.address, a.balance)).toMap)
 
       def mkDataApplicationPart =
-        dataApplication.traverse(da => da.serializedOnChainGenesis.map(DataApplicationPart(_, List.empty, Hash.empty)))
+        dataApplication.traverse(da => da.serializedOnChainGenesis.map(DataApplicationPartV1(_, List.empty, Hash.empty)))
 
       for {
         balances <- mkBalances

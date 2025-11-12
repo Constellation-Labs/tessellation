@@ -70,11 +70,9 @@ object Programs {
       keyPair,
       services.collateral,
       services.stateChannelSnapshot,
-      storages.snapshot,
       p2pClient.stateChannelSnapshot,
       globalL0Peer,
       nodeId,
-      services.consensus.manager,
       genesisLoader,
       storages.identifier,
       services.globalL0
@@ -84,13 +82,12 @@ object Programs {
       nodeId,
       services.globalL0,
       storages.identifier,
-      storages.snapshot,
-      sharedStorages,
-      storages,
       services.collateral,
-      services.consensus.manager,
       dataApplication,
-      storages.currencySnapshotCleanup
+      storages.currencySnapshotCleanup,
+      storages.globalSnapshotsWithStateFileStorage,
+      storages.globalSnapshotsWithStateDeltasFileStorage,
+      services.globalSnapshotContextFunctions
     )
 
     new Programs[F](sharedPrograms.peerDiscovery, globalL0PeerDiscovery, sharedPrograms.joining, download, genesis, rollback) {}

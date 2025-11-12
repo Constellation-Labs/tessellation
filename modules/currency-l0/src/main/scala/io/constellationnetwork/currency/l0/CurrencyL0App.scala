@@ -3,7 +3,11 @@ package io.constellationnetwork.currency.l0
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedSet
+
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
+import io.constellationnetwork.currency.l0.StateChannel.performGlobalL0SnapshotProcess
+import io.constellationnetwork.currency.l0.StoragesInitializer.{initializeCurrencySnapshotStorages, initializeGlobalSnapshotStorages}
 import io.constellationnetwork.currency.l0.cell.{L0Cell, L0CellInput}
 import io.constellationnetwork.currency.l0.cli.method
 import io.constellationnetwork.currency.l0.cli.method._
@@ -11,6 +15,7 @@ import io.constellationnetwork.currency.l0.config.types._
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
 import io.constellationnetwork.currency.l0.modules._
 import io.constellationnetwork.currency.l0.node.L0NodeContext
+import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
 import io.constellationnetwork.env.env.AllowanceListPath
@@ -20,6 +25,8 @@ import io.constellationnetwork.node.shared.app.{NodeShared, TessellationIOApp, g
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.allowance_list.{Loader => AllowanceListLoader}
+import io.constellationnetwork.node.shared.infrastructure.consensus._
+import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.statechannel.StateChannelAllowanceLists
@@ -27,16 +34,21 @@ import io.constellationnetwork.node.shared.resources.MkHttpServer
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.node.shared.{NodeSharedOrSharedRegistrationIdRange, nodeSharedKryoRegistrar}
+import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security._
+import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.signature.Signed
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.pureconfig._
 import fs2.concurrent.SignallingRef
+import org.typelevel.log4cats.SelfAwareStructuredLogger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 import pureconfig.generic.auto._
 import pureconfig.module.enumeratum._
 
@@ -46,6 +58,10 @@ trait OverridableL0 extends TessellationIOApp[Run] {
   def rewards(
     implicit sp: SecurityProvider[IO]
   ): Option[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]] = None
+
+  def customArtifacts(
+    lastCurrencySnapshot: Signed[CurrencyIncrementalSnapshot]
+  ): Option[SortedSet[SharedArtifact]] = None
 }
 
 abstract class CurrencyL0App(
@@ -58,7 +74,8 @@ abstract class CurrencyL0App(
       name,
       header,
       clusterId,
-      version = tessellationVersion
+      version = tessellationVersion,
+      metagraphVersion = metagraphVersion
     )
     with OverridableL0 {
 
@@ -76,9 +93,16 @@ abstract class CurrencyL0App(
 
     for {
       cfgR <- loadConfigAs[AppConfigReader].asResource
+      implicit0(logger: SelfAwareStructuredLogger[IO]) = Slf4jLogger.getLoggerFromName[IO](this.getClass.getName)
       cfg = method.appConfig(cfgR, sharedConfig)
 
-      dataApplicationService <- dataApplication.sequence
+      dataApplicationService <- dataApplication.sequence.adaptError {
+        case error =>
+          new RuntimeException(
+            s"Data application initialization failed: ${error.getMessage}. ",
+            error
+          )
+      }
 
       hasherSelectorAlwaysCurrent = HasherSelector.forSyncAlwaysCurrent[IO](hasherSelector.getCurrent)
 
@@ -86,7 +110,7 @@ abstract class CurrencyL0App(
       storages <- Storages
         .make[IO](sharedConfig, sharedStorages, cfg.snapshot, method.globalL0Peer, dataApplicationService, hasherSelectorAlwaysCurrent)
         .asResource
-      p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session)
+      p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session, sharedConfig)
       maybeAllowanceList = StateChannelAllowanceLists.get(cfg.environment)
       validators = Validators.make[IO](cfg.shared, seedlist, maybeAllowanceList, Hasher.forKryo[IO])
       maybeMajorityPeerIds <- getMajorityPeerIds[IO](
@@ -94,12 +118,16 @@ abstract class CurrencyL0App(
         sharedConfig.priorityPeerIds,
         cfg.environment
       ).asResource
+
+      mkCell = (event: CurrencySnapshotEvent) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleCurrencySnapshotEvent(event))
+
       services <- Services
         .make[IO, Run](
           sharedConfig,
           p2pClient,
           sharedServices,
           sharedStorages,
+          sharedValidators,
           storages,
           sharedResources.client,
           sharedServices.session,
@@ -114,7 +142,9 @@ abstract class CurrencyL0App(
           maybeMajorityPeerIds,
           hasherSelectorAlwaysCurrent,
           maybeAllowanceList,
-          nodeShared.customAllowanceList
+          nodeShared.customAllowanceList,
+          mkCell,
+          Some(customArtifacts)
         )
         .asResource
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext
@@ -145,8 +175,6 @@ abstract class CurrencyL0App(
       _ <- Daemons
         .start(storages, services, programs, queues, services.dataApplication, cfg, hasherSelectorAlwaysCurrent)
         .asResource
-
-      mkCell = (event: CurrencySnapshotEvent) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleCurrencySnapshotEvent(event))
 
       api = HttpApi
         .make[IO](
@@ -183,6 +211,8 @@ abstract class CurrencyL0App(
         services.collateral
       )
 
+      _ <- initializeGlobalSnapshotStorages[IO, Run](services, storages, sharedStorages).asResource
+
       program <- (method match {
         case m: CreateGenesis =>
           hasherSelectorAlwaysCurrent.withCurrent { implicit hasher =>
@@ -195,7 +225,6 @@ abstract class CurrencyL0App(
         case other =>
           for {
             _ <- StateChannel.performGlobalL0PeerDiscovery[IO](storages, programs)
-
             innerProgram <- other match {
               case rv: RunValidator =>
                 storages.identifier.setInitial(rv.identifier) >>
@@ -266,7 +295,35 @@ abstract class CurrencyL0App(
                     NodeState.Initial,
                     NodeState.RollbackInProgress,
                     NodeState.RollbackDone
-                  )(hasherSelector.withCurrent(implicit hasher => programs.rollback.rollback)) >>
+                  )(hasherSelector.withCurrent { implicit hasher =>
+                    for {
+                      (currencySnapshot, currencySnapshotInfo, lastBinaryHash) <- programs.rollback.rollback
+                      _ <- HasherSelector[IO].withCurrent { implicit hasher =>
+                        initializeCurrencySnapshotStorages[IO, Run](
+                          storages,
+                          currencySnapshot.some,
+                          currencySnapshotInfo.some
+                        )
+                      }
+                      _ <- services.consensus.manager.startFacilitatingAfterRollback(
+                        currencySnapshot.ordinal,
+                        CurrencyConsensusOutcome(
+                          currencySnapshot.ordinal,
+                          Facilitators(List(nodeId)),
+                          RemovedFacilitators.empty,
+                          WithdrawnFacilitators.empty,
+                          Finished(
+                            currencySnapshot,
+                            lastBinaryHash,
+                            CurrencySnapshotContext(rr.identifier, currencySnapshotInfo),
+                            EventTrigger,
+                            Candidates.empty,
+                            Hash.empty
+                          )
+                        )
+                      )
+                    } yield ()
+                  }) >>
                   gossipDaemon.startAsInitialValidator >>
                   services.cluster.createSession >>
                   services.session.createSession >>
@@ -311,11 +368,44 @@ abstract class CurrencyL0App(
                   NodeState.Initial,
                   NodeState.LoadingGenesis,
                   NodeState.GenesisReady
-                )(hasherSelector.withCurrent(implicit hasher => programs.genesis.accept(dataApplicationService)(m.genesisPath))) >>
+                )(hasherSelector.withCurrent { implicit hasher =>
+                  for {
+                    (currencySnapshot, currencySnapshotInfo, hash, identifier) <- programs.genesis.accept(dataApplicationService)(
+                      m.genesisPath
+                    )
+                    _ <- HasherSelector[IO].withCurrent { implicit hasher =>
+                      initializeCurrencySnapshotStorages[IO, Run](
+                        storages,
+                        currencySnapshot.some,
+                        currencySnapshotInfo.some
+                      )
+                    }
+                    _ <- services.consensus.manager.startFacilitatingAfterRollback(
+                      currencySnapshot.ordinal,
+                      CurrencyConsensusOutcome(
+                        currencySnapshot.ordinal,
+                        Facilitators(List(nodeId)),
+                        RemovedFacilitators.empty,
+                        WithdrawnFacilitators.empty,
+                        Finished(
+                          currencySnapshot,
+                          hash,
+                          CurrencySnapshotContext(identifier, currencySnapshotInfo),
+                          EventTrigger,
+                          Candidates.empty,
+                          Hash.empty
+                        )
+                      )
+                    )
+                  } yield ()
+                }) >>
                   gossipDaemon.startAsInitialValidator >>
                   services.cluster.createSession >>
                   services.session.createSession >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
+                  logger.info(s"Setting owner address filled on path: ${m.metagraphOwnerMessagePath}") >>
+                  services.currencyMessages.setInitialCurrencyOwner(m.metagraphOwnerMessagePath) >>
+                  logger.info(s"Owner address set") >>
                   storages.node.setNodeState(NodeState.Ready) >>
                   storages.identifier.get.flatMap { identifier =>
                     services.restart.setClusterLeaveRestartMethod(
@@ -355,9 +445,8 @@ abstract class CurrencyL0App(
 
               case _ => IO.unit
             }
-            currentLastSyncGlobalSnapshot <- SignallingRef.of[IO, Option[Hashed[GlobalIncrementalSnapshot]]](None)
             _ <- StateChannel
-              .run[IO](services, storages, sharedStorages, programs, dataApplicationService, keyPair, mkCell, currentLastSyncGlobalSnapshot)
+              .run[IO](services, storages, sharedStorages, programs, dataApplicationService, keyPair, mkCell)
               .compile
               .drain
           } yield innerProgram

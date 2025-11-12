@@ -36,12 +36,14 @@ import io.constellationnetwork.schema.node.NodeState.SessionStarted
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
 import io.constellationnetwork.schema.swap.CurrencyId
 import io.constellationnetwork.schema.tokenLock.TokenLockLimitsConfig
-import io.constellationnetwork.security.Hasher
+import io.constellationnetwork.security.{Hasher, HasherSelector}
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.boolean.Or
 import eu.timepit.refined.pureconfig._
+import org.typelevel.log4cats.SelfAwareStructuredLogger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 import pureconfig.generic.auto._
 import pureconfig.module.enumeratum._
 
@@ -62,7 +64,8 @@ abstract class CurrencyL1App(
       name,
       header,
       clusterId,
-      version = tessellationVersion
+      version = tessellationVersion,
+      metagraphVersion = metagraphVersion
     )
     with OverridableL1 {
 
@@ -109,7 +112,7 @@ abstract class CurrencyL1App(
           )
       }.asResource
       dagP2PClient = DAGP2PClient
-        .make[IO](sharedP2PClient, sharedResources.client, currencyPathPrefix = "currency")
+        .make[IO](sharedConfig, sharedP2PClient, sharedResources.client, currencyPathPrefix = "currency")
       p2pClient = P2PClient.make[IO](
         dagP2PClient,
         sharedResources.client
@@ -119,7 +122,13 @@ abstract class CurrencyL1App(
         cfg.priorityPeerIds,
         cfg.environment
       ).asResource
-      dataApplicationService <- dataApplication.sequence
+      dataApplicationService <- dataApplication.sequence.adaptError {
+        case error =>
+          new RuntimeException(
+            s"Data application initialization failed: ${error.getMessage}. ",
+            error
+          )
+      }
       services = Services
         .make[IO, Run](
           storages,
@@ -228,6 +237,7 @@ abstract class CurrencyL1App(
         cfg.gossip.daemon,
         services.collateral
       )
+
       _ <- {
         method match {
           case cfg: RunInitialValidator =>
@@ -274,7 +284,12 @@ abstract class CurrencyL1App(
         }
       }.asResource
       alignment = GlobalSnapshotAlignment
-        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](services, programs, storages)
+        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
+          services,
+          programs,
+          storages,
+          sharedStorages
+        )
       _ <- hasherSelector.withCurrent { implicit hasher =>
         services.dataApplication.map { da =>
           DataApplication
@@ -293,7 +308,7 @@ abstract class CurrencyL1App(
               keyPair,
               nodeId
             )
-            .merge(alignment.runtime)
+            .merge(alignment.runtime())
             .compile
             .drain
             .handleErrorWith { error =>
@@ -338,7 +353,7 @@ abstract class CurrencyL1App(
               )
             }
             .merge(stateChannel.runtime)
-            .merge(alignment.runtime)
+            .merge(alignment.runtime())
             .compile
             .drain
         }.asResource

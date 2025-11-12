@@ -18,6 +18,7 @@ import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
   SnapshotBinaryFeeCalculator,
   UpdateNodeParametersCutter
 }
+import io.constellationnetwork.dag.l0.infrastructure.rewards.RewardsService
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.{GlobalSnapshotEvent, StateChannelEvent}
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment.Dev
@@ -47,6 +48,7 @@ import io.constellationnetwork.node.shared.domain.swap.block._
 import io.constellationnetwork.node.shared.domain.tokenlock.block._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger}
+import io.constellationnetwork.node.shared.infrastructure.delegatedStake.{RewardsInfoCalculator, RewardsInfoStorage}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
@@ -115,7 +117,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       blocks: List[Signed[Block]],
       context: BlockAcceptanceContext[IO],
       ordinal: SnapshotOrdinal,
-      shouldValidateCollateral: Boolean = true
+      shouldPerformMetagraphSpecificValidations: Boolean = true
     )(implicit hasher: Hasher[F]): IO[BlockAcceptanceResult] =
       BlockAcceptanceResult(
         BlockAcceptanceContextUpdate.empty,
@@ -127,7 +129,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       block: Signed[Block],
       context: BlockAcceptanceContext[IO],
       ordinal: SnapshotOrdinal,
-      shouldValidateCollateral: Boolean = true
+      shouldPerformMetagraphSpecificValidations: Boolean = true
     )(implicit hasher: Hasher[F]): IO[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]] = ???
 
   }
@@ -136,13 +138,17 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     override def acceptBlock(
       block: Signed[swap.AllowSpendBlock],
       context: AllowSpendBlockAcceptanceContext[IO],
-      snapshotOrdinal: SnapshotOrdinal
+      snapshotOrdinal: SnapshotOrdinal,
+      shouldPerformMetagraphSpecificValidations: Boolean = true,
+      lastGlobalSnapshotEpochProgress: Option[EpochProgress]
     )(implicit hasher: Hasher[IO]): IO[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]] = ???
 
     override def acceptBlocksIteratively(
       blocks: List[Signed[swap.AllowSpendBlock]],
       context: AllowSpendBlockAcceptanceContext[IO],
-      snapshotOrdinal: SnapshotOrdinal
+      snapshotOrdinal: SnapshotOrdinal,
+      shouldPerformMetagraphSpecificValidations: Boolean = true,
+      lastGlobalSnapshotEpochProgress: Option[EpochProgress]
     )(implicit hasher: Hasher[IO]): IO[AllowSpendBlockAcceptanceResult] =
       AllowSpendBlockAcceptanceResult(
         AllowSpendBlockAcceptanceContextUpdate.empty,
@@ -155,13 +161,17 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     override def acceptBlock(
       block: Signed[TokenLockBlock],
       context: TokenLockBlockAcceptanceContext[IO],
-      snapshotOrdinal: SnapshotOrdinal
+      snapshotOrdinal: SnapshotOrdinal,
+      shouldPerformMetagraphSpecificValidations: Boolean = true,
+      lastGlobalSnapshotEpochProgress: Option[EpochProgress]
     )(implicit hasher: Hasher[IO]): IO[Either[TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate]] = ???
 
     override def acceptBlocksIteratively(
       blocks: List[Signed[TokenLockBlock]],
       context: TokenLockBlockAcceptanceContext[IO],
-      snapshotOrdinal: SnapshotOrdinal
+      snapshotOrdinal: SnapshotOrdinal,
+      shouldPerformMetagraphSpecificValidations: Boolean = true,
+      lastGlobalSnapshotEpochProgress: Option[EpochProgress]
     )(implicit hasher: Hasher[IO]): IO[TokenLockBlockAcceptanceResult] =
       TokenLockBlockAcceptanceResult(
         TokenLockBlockAcceptanceContextUpdate.empty,
@@ -305,7 +315,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     sp: SecurityProvider[IO],
     h: Hasher[IO],
     m: Metrics[IO]
-  ): GlobalSnapshotConsensusFunctions[IO] = {
+  ): IO[GlobalSnapshotConsensusFunctions[IO]] = {
     implicit val hs = HasherSelector.forSyncAlwaysCurrent(h)
 
     val spendActionValidator = SpendActionValidator.make[IO]
@@ -317,7 +327,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
       GlobalSnapshotAcceptanceManager
         .make[IO](
-          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
+          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
           MetagraphsSyncConfig(PosInt(100)),
           Dev,
           bam,
@@ -343,18 +353,24 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       ): IO[NonNegLong] =
         event.value.snapshotBinary.value.fee.value.pure[IO]
     }
-    GlobalSnapshotConsensusFunctions
-      .make[IO](
-        snapshotAcceptanceManager,
-        collateral,
-        classicRewards,
-        delegatorRewards,
-        GlobalSnapshotEventCutter.make[IO](20_000_000, feeCalculator),
-        UpdateNodeParametersCutter.make(100),
-        AppEnvironment.Dev,
-        delegatedRewardsConfigProvider,
-        SnapshotOrdinal.MinValue
-      )
+
+    RewardsInfoStorage.make.map { rewardsInfoStorage =>
+      val rewardsInfoCalculator = RewardsInfoCalculator.make(delegatorRewards)
+      val rewardsService = RewardsService[IO](classicRewards, delegatorRewards, rewardsInfoCalculator, rewardsInfoStorage)
+
+      GlobalSnapshotConsensusFunctions
+        .make[IO](
+          snapshotAcceptanceManager,
+          collateral,
+          rewardsService,
+          GlobalSnapshotEventCutter.make[IO](20_000_000, feeCalculator),
+          UpdateNodeParametersCutter.make(100),
+          AppEnvironment.Dev,
+          delegatedRewardsConfigProvider,
+          SnapshotOrdinal.MinValue,
+          SnapshotOrdinal.MinValue
+        )
+    }
   }
 
   def getTestData(
@@ -367,7 +383,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[F]
 
-      gscf = mkGlobalSnapshotConsensusFunctions
+      gscf <- mkGlobalSnapshotConsensusFunctions
       facilitators = Set.empty[PeerId]
 
       genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)

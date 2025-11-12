@@ -5,6 +5,7 @@ import cats.effect.Async
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
+import cats.syntax.apply._
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
@@ -30,6 +31,7 @@ import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.http.p2p.clients.SignClient
 import io.constellationnetwork.schema.ID.Id
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.cluster._
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.node.NodeState.{SessionStarted, inCluster}
@@ -65,8 +67,10 @@ class Joining[
   selfId: PeerId,
   stateAfterJoining: NodeState,
   versionHash: Hash,
+  metagraphVersionHash: Hash,
   peerDiscovery: PeerDiscovery[F],
-  allowanceList: Option[Set[AllowanceListEntry]]
+  allowanceList: Option[Set[AllowanceListEntry]],
+  metagraphId: Option[Address]
 ) {
 
   private val logger = Slf4jLogger.getLogger[F]
@@ -223,7 +227,15 @@ class Joining[
     for {
 
       _ <- VersionMismatch.raiseError[F, Unit].whenA(registrationRequest.version =!= versionHash)
+      _ <- MetagraphVersionMismatch.raiseError[F, Unit].whenA(registrationRequest.metagraphVersion =!= metagraphVersionHash)
       _ <- EnvMismatch.raiseError[F, Unit].whenA(registrationRequest.environment =!= environment)
+
+      metagraphIdMismatch =
+        (registrationRequest.metagraphId, metagraphId)
+          .mapN(_ =!= _)
+          .getOrElse(false)
+
+      _ <- MetagraphIdMismatch.raiseError[F, Unit].whenA(metagraphIdMismatch)
 
       ip = registrationRequest.ip
       existingPeer <- clusterStorage.getPeer(registrationRequest.id)

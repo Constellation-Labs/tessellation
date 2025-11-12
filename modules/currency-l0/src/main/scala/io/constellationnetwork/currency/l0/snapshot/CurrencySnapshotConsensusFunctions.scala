@@ -4,7 +4,7 @@ import cats.data.Validated.Invalid
 import cats.effect.Async
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
@@ -15,6 +15,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.Signed
@@ -38,7 +39,8 @@ object CurrencySnapshotConsensusFunctions {
     collateral: Amount,
     rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     currencySnapshotCreator: CurrencySnapshotCreator[F],
-    currencySnapshotValidator: CurrencySnapshotValidator[F]
+    currencySnapshotValidator: CurrencySnapshotValidator[F],
+    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
   ): CurrencySnapshotConsensusFunctions[F] = new CurrencySnapshotConsensusFunctions[F] {
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F]("CurrencySnapshotConsensusFunctions")
     override def triggerPredicate(event: CurrencySnapshotEvent): Boolean = event match {
@@ -101,7 +103,8 @@ object CurrencySnapshotConsensusFunctions {
           None,
           None,
           getGlobalSnapshotByOrdinal,
-          shouldValidateCollateral = true
+          shouldPerformMetagraphSpecificValidations = true,
+          maybeCustomArtifacts
         )
         .map(created => (created.artifact, created.context, created.awaitingEvents))
     }

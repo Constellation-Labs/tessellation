@@ -32,7 +32,11 @@ object types {
     checkSyncGlobalSnapshotField: Map[AppEnvironment, SnapshotOrdinal],
     metagraphSyncData: Map[AppEnvironment, SnapshotOrdinal],
     updatedLastSyncGlobalOrder: Map[AppEnvironment, SnapshotOrdinal],
-    updatedLastSyncGlobalFromPeersInConsensus: Map[AppEnvironment, SnapshotOrdinal]
+    updatedLastSyncGlobalFromPeersInConsensus: Map[AppEnvironment, SnapshotOrdinal],
+    updatingCombineFunctionSpendActions: Map[AppEnvironment, SnapshotOrdinal],
+    fixingAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal],
+    fixingAllowSpendAndTokenLockValidation: Map[AppEnvironment, SnapshotOrdinal],
+    setSumFix: Map[AppEnvironment, SnapshotOrdinal]
   )
 
   case class MetagraphsSyncConfig(
@@ -58,7 +62,8 @@ object types {
     delegatedStaking: DelegatedStakingConfig,
     fieldsAddedOrdinals: FieldsAddedOrdinals,
     metagraphsSync: MetagraphsSyncConfig,
-    priceOracle: Map[AppEnvironment, PriceOracleConfig]
+    priceOracle: Map[AppEnvironment, PriceOracleConfig],
+    snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig
   )
 
   case class SharedConfig(
@@ -82,7 +87,9 @@ object types {
     delegatedStaking: DelegatedStakingConfig,
     fieldsAddedOrdinals: FieldsAddedOrdinals,
     metagraphsSync: MetagraphsSyncConfig,
-    priceOracle: PriceOracleConfig
+    priceOracle: PriceOracleConfig,
+    snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig,
+    snapshotTimeoutsConfig: SnapshotTimeoutsConfig
   )
 
   case class SharedTrustConfig(
@@ -90,7 +97,8 @@ object types {
   )
 
   case class SharedSnapshotConfig(
-    size: SnapshotSizeConfig
+    size: SnapshotSizeConfig,
+    timeouts: SnapshotTimeoutsConfig
   )
 
   case class SnapshotSizeConfig(
@@ -140,6 +148,16 @@ object types {
     maxUpdateNodeParametersSize: PosInt
   )
 
+  case class SnapshotBinarySenderTimeoutsConfig(
+    routes: FiniteDuration,
+    client: FiniteDuration
+  )
+
+  case class SnapshotTimeoutsConfig(
+    routes: FiniteDuration,
+    client: FiniteDuration
+  )
+
   case class SnapshotConfig(
     consensus: ConsensusConfig,
     inMemoryCapacity: NonNegLong,
@@ -147,7 +165,11 @@ object types {
     snapshotInfoPath: Path,
     incrementalTmpSnapshotPath: Path,
     incrementalPersistedSnapshotPath: Path,
-    calculatedStatePath: Path
+    calculatedStatePath: Path,
+    globalSnapshotsWithStatePath: Path,
+    globalSnapshotsWithStateDeltasPath: Path,
+    maxGlobalSnapshotsWithStateStored: PosLong,
+    maxGlobalSnapshotsWithStateDeltasStored: PosLong
   )
 
   case class HttpClientConfig(
@@ -244,7 +266,7 @@ object types {
 
   case class TokenLocksConfig(minEpochProgressesToLock: NonNegLong)
 
-  case class LastGlobalSnapshotsSyncConfig(syncOffset: NonNegLong, maxAllowedGap: PosInt, maxLastGlobalSnapshotsInMemory: PosInt)
+  case class LastGlobalSnapshotsSyncConfig(syncOffset: NonNegLong, maxLastGlobalSnapshotsInMemory: PosInt)
 
   case class ValidationErrorStorageConfig(maxSize: PosInt)
 

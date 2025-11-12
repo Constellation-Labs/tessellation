@@ -59,12 +59,14 @@ object SharedServices {
     seedlist: Option[Set[SeedlistEntry]],
     restartSignal: SignallingRef[F, Option[A]],
     versionHash: Hash,
+    metagraphVersionHash: Hash,
     jarHash: Hash,
     collateral: CollateralConfig,
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     environment: AppEnvironment,
     txHasher: Hasher[F],
-    allowanceList: Option[Set[AllowanceListEntry]]
+    allowanceList: Option[Set[AllowanceListEntry]],
+    metagraphId: Option[Address]
   ): F[SharedServices[F, A]] =
     for {
       restartService <- RestartService.make(restartSignal, storages.cluster)
@@ -81,9 +83,11 @@ object SharedServices {
           seedlist,
           restartService,
           versionHash,
+          metagraphVersionHash,
           jarHash,
           environment,
-          allowanceList
+          allowanceList,
+          metagraphId
         )
 
       localHealthcheck <- LocalHealthcheck.make[F](nodeClient, storages.cluster)
@@ -165,7 +169,8 @@ object SharedServices {
         globalSnapshotAcceptanceManager,
         updateDelegatedStakeAcceptanceManager,
         cfg.delegatedStaking.withdrawalTimeLimit.getOrElse(cfg.environment, EpochProgress.MinValue),
-        cfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(cfg.environment, SnapshotOrdinal.MinValue)
+        cfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
+        cfg.fieldsAddedOrdinals.setSumFix.getOrElse(cfg.environment, SnapshotOrdinal.MinValue)
       )
     } yield
       new SharedServices[F, A](

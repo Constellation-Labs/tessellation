@@ -7,6 +7,7 @@ import cats.syntax.all._
 import io.constellationnetwork.node.shared.domain.swap.AllowSpendChainValidator.AllowSpendNel
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.swap.AllowSpendBlock
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
@@ -19,13 +20,17 @@ trait AllowSpendBlockAcceptanceManager[F[_]] {
   def acceptBlocksIteratively(
     blocks: List[Signed[AllowSpendBlock]],
     context: AllowSpendBlockAcceptanceContext[F],
-    snapshotOrdinal: SnapshotOrdinal
+    snapshotOrdinal: SnapshotOrdinal,
+    shouldPerformMetagraphSpecificValidations: Boolean = true,
+    lastGlobalSnapshotEpochProgress: Option[EpochProgress]
   )(implicit hasher: Hasher[F]): F[AllowSpendBlockAcceptanceResult]
 
   def acceptBlock(
     block: Signed[AllowSpendBlock],
     context: AllowSpendBlockAcceptanceContext[F],
-    snapshotOrdinal: SnapshotOrdinal
+    snapshotOrdinal: SnapshotOrdinal,
+    shouldPerformMetagraphSpecificValidations: Boolean = true,
+    lastGlobalSnapshotEpochProgress: Option[EpochProgress]
   )(implicit hasher: Hasher[F]): F[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]]
 
 }
@@ -46,7 +51,9 @@ object AllowSpendBlockAcceptanceManager {
       def acceptBlocksIteratively(
         blocks: List[Signed[AllowSpendBlock]],
         context: AllowSpendBlockAcceptanceContext[F],
-        snapshotOrdinal: SnapshotOrdinal
+        snapshotOrdinal: SnapshotOrdinal,
+        shouldPerformMetagraphSpecificValidations: Boolean = true,
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[F]): F[AllowSpendBlockAcceptanceResult] = {
 
         def go(
@@ -59,7 +66,7 @@ object AllowSpendBlockAcceptanceManager {
                 blockAndTxChains match {
                   case (block, txChains) =>
                     logic
-                      .acceptBlock(block, txChains, context, acc.contextUpdate)
+                      .acceptBlock(block, txChains, context, acc.contextUpdate, shouldPerformMetagraphSpecificValidations)
                       .map {
                         case contextUpdate =>
                           acc
@@ -92,10 +99,12 @@ object AllowSpendBlockAcceptanceManager {
           ) { (acc, block) =>
             acc match {
               case (validList, invalidList) =>
-                blockValidator.validate(block, snapshotOrdinal).map {
-                  case Valid(blockAndTxChains) => (blockAndTxChains :: validList, invalidList)
-                  case Invalid(errors)         => (validList, (block, ValidationFailed(errors.toNonEmptyList)) :: invalidList)
-                }
+                blockValidator
+                  .validate(block, snapshotOrdinal, AllowSpendBlockValidationParams.default, lastGlobalSnapshotEpochProgress)
+                  .map {
+                    case Valid(blockAndTxChains) => (blockAndTxChains :: validList, invalidList)
+                    case Invalid(errors)         => (validList, (block, ValidationFailed(errors.toNonEmptyList)) :: invalidList)
+                  }
             }
           }
           .flatMap {
@@ -112,14 +121,23 @@ object AllowSpendBlockAcceptanceManager {
       def acceptBlock(
         block: Signed[AllowSpendBlock],
         context: AllowSpendBlockAcceptanceContext[F],
-        snapshotOrdinal: SnapshotOrdinal
+        snapshotOrdinal: SnapshotOrdinal,
+        shouldPerformMetagraphSpecificValidations: Boolean = true,
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[F]): F[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]] =
-        blockValidator.validate(block, snapshotOrdinal).flatMap {
+        blockValidator.validate(block, snapshotOrdinal, AllowSpendBlockValidationParams.default, lastGlobalSnapshotEpochProgress).flatMap {
           _.toEither
             .leftMap(errors => ValidationFailed(errors.toNonEmptyList))
             .toEitherT[F]
             .flatMap {
-              case (block, txChains) => logic.acceptBlock(block, txChains, context, AllowSpendBlockAcceptanceContextUpdate.empty)
+              case (block, txChains) =>
+                logic.acceptBlock(
+                  block,
+                  txChains,
+                  context,
+                  AllowSpendBlockAcceptanceContextUpdate.empty,
+                  shouldPerformMetagraphSpecificValidations
+                )
             }
             .leftSemiflatTap(reason => logNotAcceptedBlock((block, reason)))
             .semiflatTap(_ => logAcceptedBlock(block))

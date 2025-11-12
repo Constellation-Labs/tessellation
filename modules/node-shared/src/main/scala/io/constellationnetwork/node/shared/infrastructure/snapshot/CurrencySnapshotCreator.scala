@@ -64,7 +64,8 @@ trait CurrencySnapshotCreator[F[_]] {
     feeTransactionFn: Option[() => SortedSet[Signed[FeeTransaction]]],
     artifactsFn: Option[() => SortedSet[SharedArtifact]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    shouldValidateCollateral: Boolean
+    shouldPerformMetagraphSpecificValidations: Boolean,
+    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
 
@@ -98,7 +99,8 @@ object CurrencySnapshotCreator {
       feeTransactionFn: Option[() => SortedSet[Signed[FeeTransaction]]],
       artifactsFn: Option[() => SortedSet[SharedArtifact]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-      shouldValidateCollateral: Boolean
+      shouldPerformMetagraphSpecificValidations: Boolean,
+      maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
 
@@ -165,6 +167,11 @@ object CurrencySnapshotCreator {
             _.accept(maybeLastDataApplication, dataBlocks, lastArtifact.ordinal, currentOrdinal)
           )
 
+          customArtifacts = maybeCustomArtifacts.map { customArtifactFn =>
+            customArtifactFn(lastArtifact).getOrElse(SortedSet.empty[SharedArtifact])
+          }
+            .getOrElse(SortedSet.empty[SharedArtifact])
+
           sharedArtifactsForAcceptance = dataApplicationAcceptanceResult
             .map(_.sharedArtifacts)
             .orElse(artifactsFn.map(f => f()))
@@ -183,7 +190,7 @@ object CurrencySnapshotCreator {
                 messages,
                 feeTransactions,
                 globalSnapshotSyncEvents,
-                sharedArtifactsForAcceptance,
+                sharedArtifactsForAcceptance ++ customArtifacts,
                 lastContext,
                 currentOrdinal,
                 currentEpochProgress,
@@ -205,7 +212,7 @@ object CurrencySnapshotCreator {
                 facilitators,
                 getGlobalSnapshotByOrdinal,
                 lastArtifact.globalSyncView,
-                shouldValidateCollateral,
+                shouldPerformMetagraphSpecificValidations,
                 lastArtifact.proofs
               )
 

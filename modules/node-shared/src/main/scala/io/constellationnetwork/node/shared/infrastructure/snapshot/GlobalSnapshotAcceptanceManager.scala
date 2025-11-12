@@ -172,6 +172,9 @@ object GlobalSnapshotAcceptanceManager {
       val metagraphSyncDataStartingOrdinal = fieldsAddedOrdinals.metagraphSyncData
         .getOrElse(environment, SnapshotOrdinal.MinValue)
 
+      val fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
+
       for {
         acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips, ordinal)
         acceptedUpdateNodeParameters <- updateNodeParametersAcceptanceManager
@@ -243,7 +246,9 @@ object GlobalSnapshotAcceptanceManager {
         tokenLockBlockAcceptanceResult <- acceptTokenLockBlocks(
           tokenLockBlocksForAcceptance,
           lastSnapshotContext,
-          ordinal
+          ordinal,
+          fixingAllowSpendAndTokenLockValidation,
+          epochProgress
         )
         acceptedGlobalTokenLocks <- tokenLockAcceptanceManager.acceptReplacementTokenLocks(
           tokenLockBlockAcceptanceResult.accepted.flatMap(_.value.tokenLocks.toList),
@@ -339,7 +344,9 @@ object GlobalSnapshotAcceptanceManager {
         allowSpendBlockAcceptanceResult <- acceptAllowSpendBlocks(
           allowSpendBlocksForAcceptance,
           lastSnapshotContext,
-          ordinal
+          ordinal,
+          fixingAllowSpendAndTokenLockValidation,
+          epochProgress
         )
 
         acceptedGlobalAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
@@ -484,7 +491,7 @@ object GlobalSnapshotAcceptanceManager {
                 updatedLastCurrencySnapshots.toList.traverse {
                   case (address, state) =>
                     (address, state).hash
-                      .map(merkleTree.findPath(_))
+                      .flatMap(merkleTree.findPath[F](_))
                       .flatMap(MonadThrow[F].fromOption(_, InvalidMerkleTree))
                       .map((address, _))
                 }
@@ -516,7 +523,7 @@ object GlobalSnapshotAcceptanceManager {
                   case (address, state) =>
                     hasher
                       .hash((address, state))
-                      .map(merkleTree.findPath(_))
+                      .flatMap(merkleTree.findPath[F](_))
                       .flatMap(MonadThrow[F].fromOption(_, InvalidMerkleTree))
                       .map((address, _))
                 }
@@ -1082,7 +1089,9 @@ object GlobalSnapshotAcceptanceManager {
     private def acceptAllowSpendBlocks(
       blocksForAcceptance: List[Signed[AllowSpendBlock]],
       lastSnapshotContext: GlobalSnapshotInfo,
-      snapshotOrdinal: SnapshotOrdinal
+      snapshotOrdinal: SnapshotOrdinal,
+      fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
+      epochProgress: EpochProgress
     )(implicit hasher: Hasher[F]) = {
       val context = AllowSpendBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.balances,
@@ -1090,14 +1099,31 @@ object GlobalSnapshotAcceptanceManager {
         collateral,
         AllowSpendReference.empty
       )
-
-      allowSpendBlockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, snapshotOrdinal)
+      if (snapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {
+        allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
+          blocksForAcceptance,
+          context,
+          snapshotOrdinal,
+          shouldPerformMetagraphSpecificValidations = true,
+          epochProgress.some
+        )
+      } else {
+        allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
+          blocksForAcceptance,
+          context,
+          snapshotOrdinal,
+          shouldPerformMetagraphSpecificValidations = true,
+          none
+        )
+      }
     }
 
     private def acceptTokenLockBlocks(
       blocksForAcceptance: List[Signed[TokenLockBlock]],
       lastSnapshotContext: GlobalSnapshotInfo,
-      snapshotOrdinal: SnapshotOrdinal
+      snapshotOrdinal: SnapshotOrdinal,
+      fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
+      epochProgress: EpochProgress
     )(implicit hasher: Hasher[F]) = {
       val context = TokenLockBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.balances,
@@ -1105,8 +1131,23 @@ object GlobalSnapshotAcceptanceManager {
         collateral,
         TokenLockReference.empty
       )
-
-      tokenLockBlockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, snapshotOrdinal)
+      if (snapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {
+        tokenLockBlockAcceptanceManager.acceptBlocksIteratively(
+          blocksForAcceptance,
+          context,
+          snapshotOrdinal,
+          shouldPerformMetagraphSpecificValidations = true,
+          epochProgress.some
+        )
+      } else {
+        tokenLockBlockAcceptanceManager.acceptBlocksIteratively(
+          blocksForAcceptance,
+          context,
+          snapshotOrdinal,
+          shouldPerformMetagraphSpecificValidations = true,
+          none
+        )
+      }
     }
 
     private def acceptRewardTxs(

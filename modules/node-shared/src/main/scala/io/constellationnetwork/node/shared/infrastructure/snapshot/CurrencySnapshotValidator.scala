@@ -17,6 +17,7 @@ import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
@@ -170,7 +171,8 @@ object CurrencySnapshotValidator {
                 expected.feeTransactions.map(() => _),
                 expected.artifacts.map(() => _),
                 getGlobalSnapshotByOrdinal,
-                shouldValidateCollateral = false
+                shouldPerformMetagraphSpecificValidations = false,
+                Some((_: Signed[CurrencyIncrementalSnapshot]) => expected.artifacts)
               )
 
           def check(result: F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]) =

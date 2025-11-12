@@ -7,9 +7,10 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.ext.cats.syntax.validated._
-import io.constellationnetwork.node.shared.config.types.DelegatedStakingConfig
+import io.constellationnetwork.node.shared.config.types.{AddressesConfig, DelegatedStakingConfig}
 import io.constellationnetwork.node.shared.domain.tokenlock.TokenLockValidator.TokenLockValidationErrorOr
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockLimitsConfig}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
@@ -22,41 +23,50 @@ import eu.timepit.refined.auto.autoUnwrap
 trait TokenLockValidator[F[_]] {
 
   def validate(
-    signedTokenLock: Signed[TokenLock]
+    signedTokenLock: Signed[TokenLock],
+    lastGlobalSnapshotEpochProgress: Option[EpochProgress]
   )(implicit hasher: Hasher[F]): F[TokenLockValidationErrorOr[Signed[TokenLock]]]
 
   def validateWithTokenLockLimits(
     signedTokenLock: Signed[TokenLock],
     tokenLockLimitsConfig: TokenLockLimitsConfig,
-    maybeCurrentTokenLocks: Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]
+    maybeCurrentTokenLocks: Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]],
+    lastGlobalSnapshotEpochProgress: Option[EpochProgress]
   )(implicit hasher: Hasher[F]): F[TokenLockValidationErrorOr[Signed[TokenLock]]]
 
 }
 
 object TokenLockValidator {
   def make[F[_]: Async](
+    cfg: AddressesConfig,
     signedValidator: SignedValidator[F]
   ): TokenLockValidator[F] =
     new TokenLockValidator[F] {
       def validate(
-        signedTokenLock: Signed[TokenLock]
+        signedTokenLock: Signed[TokenLock],
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[F]): F[TokenLockValidationErrorOr[Signed[TokenLock]]] =
         for {
           signaturesV <- signedValidator
             .validateSignatures(signedTokenLock)
             .map(_.errorMap[TokenLockValidationError](InvalidSigned))
           srcAddressSignatureV <- validateSourceAddressSignature(signedTokenLock)
+          expirationV = validateTokenLockExpiration(signedTokenLock, lastGlobalSnapshotEpochProgress)
+          addressNotLockedV = validateAddressIsNotLocked(signedTokenLock)
         } yield
           signaturesV
             .productR(srcAddressSignatureV)
+            .productR(expirationV)
+            .productR(addressNotLockedV)
 
       def validateWithTokenLockLimits(
         signedTokenLock: Signed[TokenLock],
         tokenLockLimitsConfig: TokenLockLimitsConfig,
-        maybeCurrentTokenLocks: Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]
+        maybeCurrentTokenLocks: Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]],
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
       )(implicit hasher: Hasher[F]): F[TokenLockValidationErrorOr[Signed[TokenLock]]] =
         for {
-          signatureValidations <- validate(signedTokenLock)
+          signatureValidations <- validate(signedTokenLock, lastGlobalSnapshotEpochProgress)
           tokenLocksLimitV = validateTokenLocksLimit(
             signedTokenLock,
             tokenLockLimitsConfig,
@@ -86,6 +96,26 @@ object TokenLockValidator {
         else
           signedTx.validNec
       }
+
+      private def validateTokenLockExpiration(
+        signedTx: Signed[TokenLock],
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
+      ): TokenLockValidationErrorOr[Signed[TokenLock]] = {
+        val isExpired = for {
+          epochProgress <- lastGlobalSnapshotEpochProgress
+          unlockEpoch <- signedTx.unlockEpoch
+        } yield unlockEpoch <= epochProgress
+
+        if (isExpired.getOrElse(false)) TokenLockExpired.invalidNec else signedTx.validNec
+      }
+
+      private def validateAddressIsNotLocked(signedTx: Signed[TokenLock]): TokenLockValidationErrorOr[Signed[TokenLock]] =
+        if (lockedAddresses.contains(signedTx.value.source))
+          AddressLocked(signedTx.value.source).invalidNec[Signed[TokenLock]]
+        else
+          signedTx.validNec[TokenLockValidationError]
+
+      private val lockedAddresses = cfg.locked
     }
 
   @derive(eqv, show)
@@ -94,6 +124,8 @@ object TokenLockValidator {
   case object NotSignedBySourceAddressOwner extends TokenLockValidationError
   case object TooManyTokenLocksForAddress extends TokenLockValidationError
   case object TokenLockAmountBelowMinimum extends TokenLockValidationError
+  case object TokenLockExpired extends TokenLockValidationError
+  case class AddressLocked(address: Address) extends TokenLockValidationError
   type TokenLockValidationErrorOr[A] = ValidatedNec[TokenLockValidationError, A]
 
 }
