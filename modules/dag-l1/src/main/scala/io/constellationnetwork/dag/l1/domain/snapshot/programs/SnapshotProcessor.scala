@@ -31,7 +31,7 @@ import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
 
 import derevo.cats.show
 import derevo.derive
-import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
+import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -69,6 +69,8 @@ abstract class SnapshotProcessor[
   def onRedownload(snapshot: Hashed[S], state: SI): F[Unit] = Applicative[F].unit
 
   def setLastNSnapshots(snapshot: Hashed[S], state: SI): F[Unit] = Applicative[F].unit
+
+  def setInitialLastNSnapshots(snapshot: Hashed[S], state: SI): F[Unit] = Applicative[F].unit
 
   def processAlignment(
     alignment: Alignment,
@@ -175,12 +177,17 @@ abstract class SnapshotProcessor[
         val setTransactionRefs: F[Unit] =
           transactionStorage.initByRefs(state.lastTxRefs, snapshot.ordinal)
 
-        val setSnapshot: F[Unit] = lastSnapshotStorage.set(snapshot, state)
+        val setInitialSnapshot: F[Unit] =
+          Slf4jLogger
+            .getLogger[F]
+            .info(s"Setting initial snapshot: ${snapshot.ordinal.show}") >>
+            lastSnapshotStorage.setInitial(snapshot, state)
 
         adjustToMajority >>
           setBalances >>
           setTransactionRefs >>
-          setSnapshot.as[SnapshotProcessingResult] {
+          setInitialSnapshot >>
+          setInitialLastNSnapshots(snapshot, state).as[SnapshotProcessingResult] {
             DownloadPerformed(
               SnapshotReference.fromHashedSnapshot(snapshot),
               toAdd.map(_._1.proofsHash),
@@ -250,8 +257,7 @@ abstract class SnapshotProcessor[
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI],
     txHasher: Hasher[F],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F],
-    tipsCount: PosInt
+    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F]
   )(implicit hasher: Hasher[F]): F[Alignment] = {
     val snapshot = snapshotWithState.fold({ case (snapshot, _) => snapshot }, identity)
     val (blocks, allowSpendBlocks, tokenLockBlocks) = snapshot.signed.value match {
@@ -293,37 +299,37 @@ abstract class SnapshotProcessor[
           case Left((snapshot, state)) =>
             val SnapshotTips(snapshotDeprecatedTips, snapshotRemainedActive) = snapshot.tips
 
-            val isDependent = (block: Signed[Block]) =>
-              BlockRelations.dependsOn[F](
-                acceptedInMajority.values.map(_._1).toSet,
-                snapshotDeprecatedTips.map(_.block) ++ snapshotRemainedActive.map(_.block),
-                txHasher
-              )(block)
+            lastSnapshotStorage.getCombined.flatMap {
+              case None =>
+                val isDependent = (block: Signed[Block]) =>
+                  BlockRelations.dependsOn[F](
+                    acceptedInMajority.values.map(_._1).toSet,
+                    snapshotDeprecatedTips.map(_.block) ++ snapshotRemainedActive.map(_.block),
+                    txHasher
+                  )(block)
 
-            blockStorage.getBlocksForMajorityReconciliation(Height.MinValue, snapshot.height, isDependent).flatMap {
-              case MajorityReconciliationData(_, _, waitingInRange, postponedInRange, relatedPostponed, _, _) =>
-                val initialBlocksAndTips =
-                  acceptedInMajority.keySet ++ snapshotRemainedActive.map(_.block.hash) ++ snapshotDeprecatedTips.map(_.block.hash)
-                val obsoleteToRemove = waitingInRange ++ postponedInRange -- initialBlocksAndTips
-                val postponedToWaiting = relatedPostponed -- postponedInRange -- initialBlocksAndTips
+                blockStorage.getBlocksForMajorityReconciliation(Height.MinValue, snapshot.height, isDependent).flatMap {
+                  case MajorityReconciliationData(_, _, waitingInRange, postponedInRange, relatedPostponed, _, _) =>
+                    val initialBlocksAndTips =
+                      acceptedInMajority.keySet ++ snapshotRemainedActive.map(_.block.hash) ++ snapshotDeprecatedTips.map(_.block.hash)
+                    val obsoleteToRemove = waitingInRange ++ postponedInRange -- initialBlocksAndTips
+                    val postponedToWaiting = relatedPostponed -- postponedInRange -- initialBlocksAndTips
 
-                Applicative[F].pure[Alignment](
-                  DownloadNeeded(
-                    snapshot,
-                    state,
-                    acceptedInMajority.values.toSet,
-                    obsoleteToRemove,
-                    snapshotRemainedActive,
-                    snapshotDeprecatedTips.map(_.block),
-                    postponedToWaiting
-                  )
-                )
+                    Applicative[F].pure[Alignment](
+                      DownloadNeeded(
+                        snapshot,
+                        state,
+                        acceptedInMajority.values.toSet,
+                        obsoleteToRemove,
+                        snapshotRemainedActive,
+                        snapshotDeprecatedTips.map(_.block),
+                        postponedToWaiting
+                      )
+                    )
+                }
+              case _ => (new Throwable("unexpected state: latest snapshot found")).raiseError[F, Alignment]
             }
-
           case Right(snapshot) =>
-            def enoughTipsForConsensus: F[Boolean] =
-              blockStorage.getTips(tipsCount).map(_.isDefined)
-
             val SnapshotTips(snapshotDeprecatedTips, snapshotRemainedActive) = snapshot.tips
             lastSnapshotStorage.getCombined.flatMap {
               case Some((lastSnapshot, lastState)) =>
@@ -340,15 +346,7 @@ abstract class SnapshotProcessor[
                       getGlobalSnapshotByOrdinal
                     ).flatMap { state =>
                       blockStorage.getBlocksForMajorityReconciliation(lastSnapshot.height, snapshot.height, isDependent).flatMap {
-                        case MajorityReconciliationData(
-                              deprecatedTips,
-                              activeTips,
-                              waitingInRange,
-                              postponedInRange,
-                              relatedPostponed,
-                              _,
-                              acceptedAbove
-                            ) =>
+                        case MajorityReconciliationData(deprecatedTips, activeTips, _, _, relatedPostponed, _, acceptedAbove) =>
                           val onlyInMajority = acceptedInMajority -- acceptedAbove
                           val toMarkMajority = acceptedInMajority.view.filterKeys(acceptedAbove.contains).mapValues(_._2)
                           lazy val toAdd = onlyInMajority.values.toSet
@@ -357,16 +355,10 @@ abstract class SnapshotProcessor[
                           val deprecatedTipsToAdd = snapshotDeprecatedTips.map(_.block.hash) -- deprecatedTips
                           val tipsToDeprecate = activeTips -- snapshotRemainedActive.map(_.block.hash)
                           val areTipsAligned = deprecatedTipsToAdd == tipsToDeprecate
-                          val initialBlocksAndTips =
-                            acceptedInMajority.keySet ++ snapshotRemainedActive.map(_.block.hash) ++ snapshotDeprecatedTips.map(
-                              _.block.hash
-                            )
-
                           lazy val txRefsToMarkMajority = extractMajorityTxRefs(acceptedInMajority, state)
                           lazy val allowSpendsToMarkMajority = extractMajorityAllowSpendsTxRefs(acceptedAllowSpendInMajority, state)
                           lazy val tokenLocksToMarkMajority = extractMajorityTokenLocksTxRefs(acceptedTokenLockInMajority, state)
                           lazy val postponedToWaiting = relatedPostponed -- toAdd.map(_._1.proofsHash) -- toReset
-                          lazy val obsoleteToRemove = waitingInRange ++ postponedInRange -- initialBlocksAndTips
 
                           def validateTipsAlignment(): F[Unit] =
                             if (!areTipsAligned)
@@ -374,19 +366,14 @@ abstract class SnapshotProcessor[
                             else
                               Applicative[F].unit
 
-                          def determineAlignment(shouldRedownload: ShouldRedownload): F[Alignment] = for {
-                            haveEnoughTips <- enoughTipsForConsensus
-                            result <-
-                              if (!haveEnoughTips) {
-                                createDownloadNeeded().pure[F]
-                              } else if (shouldRedownload.value) {
-                                handleRedownloadRequired(shouldRedownload)
-                              } else if (onlyInMajority.isEmpty) {
-                                createAlignedAtNewOrdinal().pure[F]
-                              } else {
-                                createRedownloadNeeded().pure[F]
-                              }
-                          } yield result
+                          def determineAlignment(shouldRedownload: ShouldRedownload): F[Alignment] =
+                            if (shouldRedownload.value) {
+                              handleRedownloadRequired(shouldRedownload)
+                            } else if (onlyInMajority.isEmpty) {
+                              createAlignedAtNewOrdinal().pure[F]
+                            } else {
+                              createRedownloadNeeded().pure[F]
+                            }
 
                           def handleRedownloadRequired(shouldRedownload: ShouldRedownload): F[Alignment] =
                             for {
@@ -394,17 +381,6 @@ abstract class SnapshotProcessor[
                               _ <- globalL0AlignmentStorage.clean()
                               alignment = createRedownloadNeeded()
                             } yield alignment
-
-                          def createDownloadNeeded(): Alignment =
-                            DownloadNeeded(
-                              snapshot,
-                              state,
-                              acceptedInMajority.values.toSet,
-                              obsoleteToRemove,
-                              snapshotRemainedActive,
-                              snapshotDeprecatedTips.map(_.block),
-                              postponedToWaiting
-                            )
 
                           def createRedownloadNeeded(): Alignment =
                             RedownloadNeeded(

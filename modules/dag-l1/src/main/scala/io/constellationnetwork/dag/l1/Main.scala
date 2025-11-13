@@ -60,6 +60,7 @@ object Main
 
     for {
       cfgR <- loadConfigAs[AppConfigReader].asResource
+      implicit0(logger: SelfAwareStructuredLogger[IO]) = Slf4jLogger.getLoggerFromName[IO](this.getClass.getName)
       cfg = method.appConfig(cfgR, sharedConfig)
 
       queues <- Queues.make[IO](sharedQueues).asResource
@@ -118,8 +119,7 @@ object Main
         Hasher.forKryo[IO],
         services.globalL0.pullGlobalSnapshot,
         services.globalL0,
-        storages.globalL0Alignment,
-        cfg.consensus.tipsCount
+        storages.globalL0Alignment
       )
       programs = Programs.make(sharedPrograms, p2pClient, storages, snapshotProcessor)
 

@@ -32,8 +32,7 @@ object DAGSnapshotProcessor {
     txHasher: Hasher[F],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     l0Service: GlobalL0Service[F],
-    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F],
-    tipsCount: PosInt
+    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F]
   ): SnapshotProcessor[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] =
     new SnapshotProcessor[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
 
@@ -47,6 +46,14 @@ object DAGSnapshotProcessor {
         allowSpendStorage.replaceByRefs(state.lastAllowSpendRefs.map(_.toMap).getOrElse(Map.empty), snapshot.ordinal) >>
           tokenLockStorage.replaceByRefs(state.lastTokenLockRefs.map(_.toMap).getOrElse(Map.empty), snapshot.ordinal)
 
+      override def setInitialLastNSnapshots(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] =
+        lastNGlobalSnapshotStorage.setInitialFetchingGL0(
+          snapshot,
+          state,
+          l0Service.asLeft.some,
+          none
+        )
+
       override def setLastNSnapshots(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] =
         lastNGlobalSnapshotStorage.set(snapshot, state)
 
@@ -59,8 +66,7 @@ object DAGSnapshotProcessor {
           lastGlobalSnapshotStorage,
           txHasher,
           getGlobalSnapshotByOrdinal,
-          globalL0AlignmentStorage,
-          tipsCount
+          globalL0AlignmentStorage
         )
           .flatMap(
             processAlignment(
