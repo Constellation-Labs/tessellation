@@ -10,10 +10,17 @@ import eu.timepit.refined.numeric.Interval
 import weaver.SimpleIOSuite
 import weaver.scalacheck.Checkers
 
+/** DEPRECATED: Kryo serialization test suite
+  *
+  * Status: All tests disabled due to Kryo removal Reason: Migrating from Kryo to JSON serialization for Java 21 compatibility
+  *
+  * These tests verified Kryo serialization versioning and migration logic. Similar tests should be created for JSON serialization if
+  * versioning is needed.
+  */
 object KryoSerializerSuite extends SimpleIOSuite with Checkers {
   type KryoSerializerSuiteRegistrationIdRange = Interval.Closed[1000, 1999]
 
-  test("v1 bytes should deserialize successfully by v2 serializer") {
+  test("v1 bytes should deserialize successfully by v2 serializer".ignore) {
     val v1 = NoChangesV1(amount = 15, address = "anyAddress")
     val migration = Migration { in: NoChangesV1 =>
       BreakingChangesClassV2(in.amount, "anyRemark")
@@ -44,7 +51,7 @@ object KryoSerializerSuite extends SimpleIOSuite with Checkers {
     } yield expect.same(obj, expectedV2)
   }
 
-  test("v2 bytes should deserialize successfully by v1 serializer") {
+  test("v2 bytes should deserialize successfully by v1 serializer".ignore) {
     val v2 = NonBreakingChangesV2(amount = 15, address = "anyAddress", remark = "remark")
 
     val serializerV1 =
@@ -64,6 +71,5 @@ object KryoSerializerSuite extends SimpleIOSuite with Checkers {
       }
       expectedV1 = NoChangesV1(amount = 15, address = "anyAddress")
     } yield expect.same(obj, expectedV1)
-
   }
 }

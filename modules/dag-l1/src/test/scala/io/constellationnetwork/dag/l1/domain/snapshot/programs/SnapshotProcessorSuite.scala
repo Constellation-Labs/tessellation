@@ -62,7 +62,7 @@ import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.{Hash, ProofsHash}
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.security.signature.Signed.forAsyncHasher
+import io.constellationnetwork.security.signature.Signed.{ProofsHasher, SignedHasher, forAsyncHasher}
 import io.constellationnetwork.transaction.TransactionGenerator
 
 import eu.timepit.refined.auto._
@@ -93,7 +93,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
     TransactionStorage[IO],
     GlobalSnapshotContextFunctions[IO],
     Ref[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]],
-    Ref[IO, SortedMap[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]]
+    Ref[IO, SortedMap[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]],
+    Hasher[IO]
   )
 
   def testResources: Resource[IO, TestResources] =
@@ -319,6 +320,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               srcAddress = srcKey.getPublic.toAddress
               dstAddress = dstKey.getPublic.toAddress
               peerId = PeerId.fromId(srcKey.getPublic.toId)
+              implicit0(k: Hasher[IO]) = Hasher.forKryo[IO]
             } yield
               (
                 snapshotProcessor,
@@ -337,7 +339,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 transactionStorage,
                 globalSnapshotContextFns,
                 lastNSnapR,
-                incLastNSnapR
+                incLastNSnapR,
+                k
               )
           }
         }
@@ -435,7 +438,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             ts,
             _,
             lastNSnapR,
-            incLastNSnapR
+            incLastNSnapR,
+            k
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
@@ -445,7 +449,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         val parent2 = BlockReference(Height(5L), ProofsHash("parent2"))
 
         for {
-          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 1, txHasher = Hasher.forKryo[IO])
+          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 1, kHasher = k, jHasher = h)
           block = Block(NonEmptyList.one(parent2), NonEmptySet.fromSetUnsafe(SortedSet(correctTxs.head.signed)))
           hashedBlock <- forAsyncHasher(block, srcKey).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           snapshotBalances = generateSnapshotBalances(Set(srcAddress))
@@ -563,7 +567,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             ts,
             _,
             lastNSnapR,
-            incLastNSnapR
+            incLastNSnapR,
+            k
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
@@ -577,8 +582,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         val hashedBlock = hashedBlockForKeyPair(keys)
 
         for {
-          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 7, txHasher = Hasher.forKryo[IO]).map(_.toList)
-          wrongTxs <- generateTransactions(dstAddress, dstKey, srcAddress, 1, txHasher = Hasher.forKryo[IO]).map(_.toList)
+          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 7, kHasher = k, jHasher = h).map(_.toList)
+          wrongTxs <- generateTransactions(dstAddress, dstKey, srcAddress, 1, kHasher = k, jHasher = h).map(_.toList)
 
           aboveRangeBlock <- hashedBlock(
             NonEmptyList.one(parent1),
@@ -746,7 +751,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             ts,
             _,
             lastNSnapR,
-            incLastNSnapR
+            incLastNSnapR,
+            k
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
@@ -761,8 +767,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         val hashedBlock = hashedBlockForKeyPair(keys)
 
         for {
-          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 9, txHasher = Hasher.forKryo[IO]).map(_.toList)
-          wrongTxs <- generateTransactions(dstAddress, dstKey, srcAddress, 1, txHasher = Hasher.forKryo[IO]).map(_.toList)
+          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 9, kHasher = k, jHasher = h).map(_.toList)
+          wrongTxs <- generateTransactions(dstAddress, dstKey, srcAddress, 1, kHasher = k, jHasher = h).map(_.toList)
 
           aboveRangeBlock <- hashedBlock(
             NonEmptyList.one(parent5),
@@ -929,7 +935,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("alignment at same height should happen when snapshot with new ordinal but known height is processed") {
     testResources.use {
-      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, balancesR, blocksR, lastSnapR, ts, _, lastNSnapsR, incLastNSnapR) =>
+      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, balancesR, blocksR, lastSnapR, ts, _, lastNSnapsR, incLastNSnapR, k) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
 
@@ -1006,7 +1012,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             ts,
             _,
             lastNSnapR,
-            incLastNSnapR
+            incLastNSnapR,
+            k
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val kryo = ks
@@ -1030,8 +1037,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         val snapshotBalances = generateSnapshotBalances(Set(srcAddress))
 
         for {
-          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 5, txHasher = Hasher.forKryo[IO]).map(_.toList)
-          wrongTxs <- generateTransactions(dstAddress, dstKey, srcAddress, 2, txHasher = Hasher.forKryo[IO]).map(_.toList)
+          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 5, kHasher = k, jHasher = h).map(_.toList)
+          wrongTxs <- generateTransactions(dstAddress, dstKey, srcAddress, 2, kHasher = k, jHasher = h).map(_.toList)
 
           waitingInRangeBlock <- hashedBlock(
             NonEmptyList.of(parent1, parent12),
@@ -1071,11 +1078,12 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           )
 
           _ <- {
-            implicit val hasher = txHasher
+            implicit val kryoHasher: SignedHasher[IO] = SignedHasher(k)
+            implicit val proofsHasher: ProofsHasher[IO] = ProofsHasher(h)
 
-            majorityInRangeBlock.signed.value.transactions.toNonEmptyList.traverse(_.toHashed.flatMap(ts.accept)) >>
-              aboveRangeMajorityBlock.signed.value.transactions.toNonEmptyList.traverse(_.toHashed.flatMap(ts.accept)) >>
-              aboveRangeAcceptedBlock.signed.value.transactions.toNonEmptyList.traverse(_.toHashed.flatMap(ts.accept))
+            majorityInRangeBlock.signed.value.transactions.toNonEmptyList.traverse(_.toHashedHybrid.flatMap(ts.accept)) >>
+              aboveRangeMajorityBlock.signed.value.transactions.toNonEmptyList.traverse(_.toHashedHybrid.flatMap(ts.accept)) >>
+              aboveRangeAcceptedBlock.signed.value.transactions.toNonEmptyList.traverse(_.toHashedHybrid.flatMap(ts.accept))
           }
 
           lastSnapshotInfo = GlobalSnapshotInfo(
@@ -1214,9 +1222,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             m.toList.traverse { case (address, _) => ts.getLastProcessedTransaction(address).map(address -> _) }.map(_.toMap)
           }
           lastTx <- {
-            implicit val hasher = txHasher
+            implicit val kryoHasher: SignedHasher[IO] = SignedHasher(k)
+            implicit val proofsHasher: ProofsHasher[IO] = ProofsHasher(h)
 
-            aboveRangeAcceptedBlock.signed.value.transactions.head.toHashed
+            aboveRangeAcceptedBlock.signed.value.transactions.head.toHashedHybrid
           }
         } yield
           expect.same(
@@ -1286,7 +1295,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             ts,
             _,
             lastNSnapR,
-            incLastNSnapR
+            incLastNSnapR,
+            k
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
@@ -1307,8 +1317,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         val hashedBlock = hashedBlockForKeyPair(keys)
 
         for {
-          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 9, txHasher = Hasher.forKryo[IO]).map(_.toList)
-          wrongTxs <- generateTransactions(dstAddress, dstKey, srcAddress, 4, txHasher = Hasher.forKryo[IO]).map(_.toList)
+          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 9, kHasher = k, jHasher = h).map(_.toList)
+          wrongTxs <- generateTransactions(dstAddress, dstKey, srcAddress, 4, kHasher = k, jHasher = h).map(_.toList)
 
           waitingInRangeBlock <- hashedBlock(
             NonEmptyList.of(parent1, parent12),
@@ -1575,7 +1585,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("snapshot should be ignored when a snapshot pushed for processing is not a next one") {
     testResources.use {
-      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, _, _, lastSnapR, _, _, lastNSnapR, incLastNSnapR) =>
+      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, _, _, lastSnapR, _, _, lastNSnapR, incLastNSnapR, k) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
 
@@ -1615,7 +1625,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("error should be thrown when the tips get misaligned") {
     testResources.use {
-      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, _, blocksR, lastSnapR, _, _, lastNSnapR, incLastNSnapR) =>
+      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, _, blocksR, lastSnapR, _, _, lastNSnapR, incLastNSnapR, k) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
 

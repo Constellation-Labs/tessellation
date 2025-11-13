@@ -48,8 +48,8 @@ object SnapshotDownloadStorage {
         tmpStorage.exists(snapshot.ordinal).flatMap(tmpStorage.delete(snapshot.ordinal).whenA) >>
           tmpStorage.writeUnderOrdinal(snapshot)
 
-      def writePersisted(snapshot: Signed[GlobalIncrementalSnapshot]): F[Unit] = HasherSelector[F].forOrdinal(snapshot.ordinal) {
-        implicit hasher => persistedStorage.write(snapshot)
+      def writePersisted(snapshot: Signed[GlobalIncrementalSnapshot]): F[Unit] = HasherSelector[F].withCurrent { implicit hasher =>
+        persistedStorage.write(snapshot)
       }
 
       def deletePersisted(ordinal: SnapshotOrdinal): F[Unit] = persistedStorage.delete(ordinal)
@@ -111,13 +111,13 @@ object SnapshotDownloadStorage {
         tmpStorage.getPath(hash).flatMap(persistedStorage.move(hash, _) >> persistedStorage.delete(ordinal))
 
       def moveTmpToPersisted(snapshot: Signed[GlobalIncrementalSnapshot]): F[Unit] =
-        HasherSelector[F].forOrdinal(snapshot.ordinal) { implicit hasher =>
+        HasherSelector[F].withCurrent { implicit hasher =>
           persistedStorage.getPath(snapshot).flatMap(tmpStorage.moveByOrdinal(snapshot, _) >> persistedStorage.link(snapshot))
         }
 
       def readGenesis(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalSnapshot]]] = fullGlobalSnapshotStorage.read(ordinal)
 
-      def writeGenesis(genesis: Signed[GlobalSnapshot]): F[Unit] = HasherSelector[F].forOrdinal(genesis.ordinal) { implicit hasher =>
+      def writeGenesis(genesis: Signed[GlobalSnapshot]): F[Unit] = HasherSelector[F].withCurrent { implicit hasher =>
         fullGlobalSnapshotStorage.write(genesis)
       }
 

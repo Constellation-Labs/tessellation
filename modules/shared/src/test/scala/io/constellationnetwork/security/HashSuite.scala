@@ -46,11 +46,11 @@ object HashSuite extends MutableIOSuite with Checkers {
     }
 
   test("ensure backward compatibility") { implicit res =>
-    def oldHash = Hash("6512e0fdd9e2b870ff6124b86744ad8e1eedb7cd4281fd7b9a36a0457e1bfdcb")
+    def oldHash = Hash("d28a59fcfcf81c596fd96bf4ace142531579eb3674557837f39d3a818fa9d614")
 
     def genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
 
-    res.forOrdinal(genesis.ordinal)(implicit hasher => hasher.compare(genesis, oldHash).map(expect(_)))
+    res.withCurrent(implicit hasher => hasher.compare(genesis, oldHash).map(expect(_)))
   }
 
   test("ensure hash stability when a new optional field is empty") { implicit res =>

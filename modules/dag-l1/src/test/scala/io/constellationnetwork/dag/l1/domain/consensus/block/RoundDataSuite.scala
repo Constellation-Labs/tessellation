@@ -29,6 +29,7 @@ import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.ProofsHash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.key.ops.PublicKeyOps
+import io.constellationnetwork.security.signature.Signed.{ProofsHasher, SignedHasher}
 import io.constellationnetwork.security.signature.SignedValidator
 import io.constellationnetwork.security.signature.signature.SignatureProof
 import io.constellationnetwork.transaction.TransactionGenerator
@@ -42,7 +43,18 @@ import weaver.scalacheck.Checkers
 object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenerator {
 
   type Res =
-    (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO], KeyPair, KeyPair, Address, Address, TransactionValidator[IO])
+    (
+      KryoSerializer[IO],
+      Hasher[IO],
+      SecurityProvider[IO],
+      KeyPair,
+      KeyPair,
+      Address,
+      Address,
+      TransactionValidator[IO],
+      Hasher[IO],
+      Hasher[IO]
+    )
 
   def sharedResource: Resource[IO, Res] =
     for {
@@ -55,9 +67,10 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
       srcAddress = srcKey.getPublic.toAddress
       dstAddress = dstKey.getPublic.toAddress
       signedValidator = SignedValidator.make
-      txHasher = Hasher.forKryo[IO]
-      txValidator = TransactionValidator.make[F](AddressesConfig(Set()), signedValidator, txHasher)
-    } yield (ks, h, sp, srcKey, dstKey, srcAddress, dstAddress, txValidator)
+      kryoHasher = Hasher.forKryo[IO]
+      jsonHasher = Hasher.forJson[IO]
+      txValidator = TransactionValidator.make[F](AddressesConfig(Set()), signedValidator, kryoHasher)
+    } yield (ks, h, sp, srcKey, dstKey, srcAddress, dstAddress, txValidator, kryoHasher, jsonHasher)
 
   implicit val logger: SelfAwareStructuredLogger[IO] = Slf4jLogger.getLogger[IO]
 
@@ -83,108 +96,108 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
       tips
     )
 
-  test("formBlock should return None when there were no transactions in RoundData") {
-    case (ks, h, _, _, _, _, _, txValidator) =>
-      implicit val kryo = ks
+  test("formBlock should return None when there were no transactions in RoundData") { res =>
+    val (ks, h, _, _, _, _, _, txValidator, kh, jh) = res
+    implicit val kryo: KryoSerializer[IO] = ks
 
-      baseRoundData.formBlock[IO](txValidator, Hasher.forKryo[IO]).map(maybeBlock => expect.same(None, maybeBlock))
+    baseRoundData.formBlock[IO](txValidator, Hasher.forKryo[IO]).map(maybeBlock => expect.same(None, maybeBlock))
   }
 
   test(
     "formBlock should return the block with properly selected transactions - preferring the ones with higher fee if there are concurrent chains of transactions"
-  ) {
-    case (ks, h, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
-      implicit val securityProvider = sp
-      implicit val kryo = ks
+  ) { res =>
+    val (ks, h, sp, srcKey, _, srcAddress, dstAddress, txValidator, kh, jh) = res
+    implicit val kryo: KryoSerializer[IO] = ks
+    implicit val securityProvider: SecurityProvider[IO] = sp
 
-      for {
-        txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 3, txHasher = Hasher.forKryo[IO])
-        txsA2 <- generateTransactions(srcAddress, srcKey, dstAddress, 3, TransactionFee(1L), txHasher = Hasher.forKryo[IO])
-        roundData = baseRoundData.copy(
-          ownProposal = baseRoundData.ownProposal.copy(transactions = txsA.toList.map(_.signed).toSet),
-          peerProposals = Map(
-            peerIdB -> baseProposal.copy(senderId = peerIdB, transactions = txsA2.toList.map(_.signed).toSet),
-            peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
-          )
+    for {
+      txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 3, kHasher = kh, jHasher = jh)
+      txsA2 <- generateTransactions(srcAddress, srcKey, dstAddress, 3, TransactionFee(1L), kHasher = kh, jHasher = jh)
+      roundData = baseRoundData.copy(
+        ownProposal = baseRoundData.ownProposal.copy(transactions = txsA.toList.map(_.signed).toSet),
+        peerProposals = Map(
+          peerIdB -> baseProposal.copy(senderId = peerIdB, transactions = txsA2.toList.map(_.signed).toSet),
+          peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
         )
-        result <- roundData.formBlock(txValidator, Hasher.forKryo[IO])
-      } yield
-        expect.same(
-          Block(baseProposal.tips.value, txsA2.map(_.signed).toNes).some,
-          result
-        )
+      )
+      result <- roundData.formBlock(txValidator, Hasher.forKryo[IO])
+    } yield
+      expect.same(
+        Block(baseProposal.tips.value, txsA2.map(_.signed).toNes).some,
+        result
+      )
   }
 
-  test("formBlock should pick transactions correctly from the pool of transactions from all facilitators") {
-    case (ks, h, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
-      implicit val securityProvider = sp
-      implicit val kryo = ks
+  test("formBlock should pick transactions correctly from the pool of transactions from all facilitators") { res =>
+    val (ks, h, sp, srcKey, _, srcAddress, dstAddress, txValidator, kh, jh) = res
+    implicit val kryo: KryoSerializer[IO] = ks
+    implicit val securityProvider: SecurityProvider[IO] = sp
 
-      for {
-        txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 1, txHasher = Hasher.forKryo[IO])
-        txRef = TransactionReference.of(txsA.head).some
-        txsA2 <- generateTransactions(srcAddress, srcKey, dstAddress, 1, TransactionFee(1L), txRef, txHasher = Hasher.forKryo[IO])
-        roundData = baseRoundData.copy(
-          ownProposal = baseRoundData.ownProposal.copy(transactions = txsA.toList.map(_.signed).toSet),
-          peerProposals = Map(
-            peerIdB -> baseProposal.copy(senderId = peerIdB, transactions = txsA2.toList.map(_.signed).toSet),
-            peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
-          )
+    for {
+      txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 1, kHasher = kh, jHasher = jh)
+      txRef = TransactionReference.of(txsA.head).some
+      txsA2 <- generateTransactions(srcAddress, srcKey, dstAddress, 1, TransactionFee(1L), txRef, kHasher = kh, jHasher = jh)
+      roundData = baseRoundData.copy(
+        ownProposal = baseRoundData.ownProposal.copy(transactions = txsA.toList.map(_.signed).toSet),
+        peerProposals = Map(
+          peerIdB -> baseProposal.copy(senderId = peerIdB, transactions = txsA2.toList.map(_.signed).toSet),
+          peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
         )
-        result <- roundData.formBlock(txValidator, Hasher.forKryo[IO])
-      } yield
-        expect.same(
-          Block(baseProposal.tips.value, (txsA.map(_.signed) ++ txsA2.map(_.signed).toList).toNes).some,
-          result
-        )
+      )
+      result <- roundData.formBlock(txValidator, Hasher.forKryo[IO])
+    } yield
+      expect.same(
+        Block(baseProposal.tips.value, (txsA.map(_.signed) ++ txsA2.map(_.signed).toList).toNes).some,
+        result
+      )
   }
 
-  test("formBlock should pick transactions correctly when concurrent transactions are proposed by different facilitators") {
-    case (ks, h, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
-      implicit val securityProvider = sp
-      implicit val kryo = ks
+  test("formBlock should pick transactions correctly when concurrent transactions are proposed by different facilitators") { res =>
+    val (ks, h, sp, srcKey, _, srcAddress, dstAddress, txValidator, kh, jh) = res
+    implicit val kryo: KryoSerializer[IO] = ks
+    implicit val securityProvider: SecurityProvider[IO] = sp
 
-      for {
-        txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 2, txHasher = Hasher.forKryo[IO])
-        txRef = TransactionReference.of(txsA.head).some
-        txsA2 <- generateTransactions(srcAddress, srcKey, dstAddress, 2, TransactionFee(1L), txRef, txHasher = Hasher.forKryo[IO])
-        roundData = baseRoundData.copy(
-          ownProposal = baseRoundData.ownProposal.copy(transactions = txsA.toList.map(_.signed).toSet),
-          peerProposals = Map(
-            peerIdB -> baseProposal.copy(senderId = peerIdB, transactions = txsA2.toList.map(_.signed).toSet),
-            peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
-          )
+    for {
+      txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 2, kHasher = kh, jHasher = jh)
+      txRef = TransactionReference.of(txsA.head).some
+      txsA2 <- generateTransactions(srcAddress, srcKey, dstAddress, 2, TransactionFee(1L), txRef, kHasher = kh, jHasher = jh)
+      roundData = baseRoundData.copy(
+        ownProposal = baseRoundData.ownProposal.copy(transactions = txsA.toList.map(_.signed).toSet),
+        peerProposals = Map(
+          peerIdB -> baseProposal.copy(senderId = peerIdB, transactions = txsA2.toList.map(_.signed).toSet),
+          peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
         )
-        result <- roundData.formBlock(txValidator, Hasher.forKryo[IO])
-      } yield
-        expect.same(
-          Block(baseProposal.tips.value, (NonEmptyList.one(txsA.head.signed) ++ txsA2.map(_.signed).toList).toNes).some,
-          result
-        )
+      )
+      result <- roundData.formBlock(txValidator, Hasher.forKryo[IO])
+    } yield
+      expect.same(
+        Block(baseProposal.tips.value, (NonEmptyList.one(txsA.head.signed) ++ txsA2.map(_.signed).toList).toNes).some,
+        result
+      )
   }
 
-  test("formBlock should discard transactions that are invalid") {
-    case (ks, h, sp, srcKey, dstKey, srcAddress, dstAddress, txValidator) =>
-      implicit val securityProvider = sp
-      implicit val kryo = ks
+  test("formBlock should discard transactions that are invalid") { res =>
+    val (ks, h, sp, srcKey, dstKey, srcAddress, dstAddress, txValidator, kh, jh) = res
+    implicit val kryo: KryoSerializer[IO] = ks
+    implicit val securityProvider: SecurityProvider[IO] = sp
 
-      for {
-        txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 3, txHasher = Hasher.forKryo[IO])
-        txToBreak = txsA.toList(1).signed
-        brokenTx = txToBreak.copy(proofs = txToBreak.proofs.map(sp => SignatureProof(dstKey.getPublic.toId, sp.signature)))
-        txs = Set(txsA.head.signed, brokenTx, txsA.last.signed)
-        roundData = baseRoundData.copy(
-          ownProposal = baseRoundData.ownProposal.copy(transactions = txs),
-          peerProposals = Map(
-            peerIdB -> baseProposal.copy(senderId = peerIdB, transactions = Set.empty),
-            peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
-          )
+    for {
+      txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 3, kHasher = kh, jHasher = jh)
+      txToBreak = txsA.toList(1).signed
+      brokenTx = txToBreak.copy(proofs = txToBreak.proofs.map(sp => SignatureProof(dstKey.getPublic.toId, sp.signature)))
+      txs = Set(txsA.head.signed, brokenTx, txsA.last.signed)
+      roundData = baseRoundData.copy(
+        ownProposal = baseRoundData.ownProposal.copy(transactions = txs),
+        peerProposals = Map(
+          peerIdB -> baseProposal.copy(senderId = peerIdB, transactions = Set.empty),
+          peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
         )
-        result <- roundData.formBlock(txValidator, Hasher.forKryo[IO])
-      } yield
-        expect.same(
-          Block(baseProposal.tips.value, NonEmptyList.one(txsA.head.signed).toNes).some,
-          result
-        )
+      )
+      result <- roundData.formBlock(txValidator, Hasher.forKryo[IO])
+    } yield
+      expect.same(
+        Block(baseProposal.tips.value, NonEmptyList.one(txsA.head.signed).toNes).some,
+        result
+      )
   }
 }

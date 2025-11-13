@@ -285,57 +285,54 @@ object Main
                 m.startingEpochProgress
               )
 
-              hasherSelector
-                .forOrdinal(genesis.ordinal) { implicit hasher =>
-                  Signed
-                    .forAsyncHasher[IO, GlobalSnapshot](genesis, keyPair)
-                    .flatMap(_.toHashed[IO])
-                }
-                .flatMap { hashedGenesis =>
-                  GlobalSnapshotLocalFileSystemStorage.make[IO](cfg.snapshot.snapshotPath).flatMap {
-                    fullGlobalSnapshotLocalFileSystemStorage =>
-                      hasherSelector
-                        .forOrdinal(genesis.ordinal.next) { implicit hasher =>
-                          fullGlobalSnapshotLocalFileSystemStorage.write(hashedGenesis.signed) >>
-                            GlobalSnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis).flatMap { firstIncrementalSnapshot =>
-                              Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).flatMap {
-                                signedFirstIncrementalSnapshot =>
-                                  for {
-                                    _ <- services.collateral
-                                      .hasCollateral(nodeShared.nodeId)
-                                      .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA)
-                                    hashedSnapshot <- signedFirstIncrementalSnapshot.toHashed[IO]
-                                    _ <- initializeStorages[IO](
-                                      storages.globalSnapshot,
-                                      sharedStorages.lastNGlobalSnapshot,
-                                      sharedStorages.lastGlobalSnapshot,
-                                      programs.download,
-                                      hashedSnapshot,
-                                      hashedGenesis.info
-                                    )
-                                    _ <- services.consensus.manager
-                                      .startFacilitatingAfterRollback(
-                                        signedFirstIncrementalSnapshot.ordinal,
-                                        GlobalConsensusOutcome(
-                                          signedFirstIncrementalSnapshot.ordinal,
-                                          Facilitators(List(nodeId)),
-                                          RemovedFacilitators.empty,
-                                          WithdrawnFacilitators.empty,
-                                          Finished(
-                                            signedFirstIncrementalSnapshot,
-                                            hashedGenesis.info,
-                                            EventTrigger,
-                                            Candidates.empty,
-                                            Hash.empty
-                                          )
-                                        )
+              hasherSelector.withCurrent { implicit hasher =>
+                Signed
+                  .forAsyncHasher[IO, GlobalSnapshot](genesis, keyPair)
+                  .flatMap(_.toHashed[IO])
+              }.flatMap { hashedGenesis =>
+                GlobalSnapshotLocalFileSystemStorage.make[IO](cfg.snapshot.snapshotPath).flatMap {
+                  fullGlobalSnapshotLocalFileSystemStorage =>
+                    hasherSelector.withCurrent { implicit hasher =>
+                      fullGlobalSnapshotLocalFileSystemStorage.write(hashedGenesis.signed) >>
+                        GlobalSnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis).flatMap { firstIncrementalSnapshot =>
+                          Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).flatMap {
+                            signedFirstIncrementalSnapshot =>
+                              for {
+                                _ <- services.collateral
+                                  .hasCollateral(nodeShared.nodeId)
+                                  .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA)
+                                hashedSnapshot <- signedFirstIncrementalSnapshot.toHashed[IO]
+                                _ <- initializeStorages[IO](
+                                  storages.globalSnapshot,
+                                  sharedStorages.lastNGlobalSnapshot,
+                                  sharedStorages.lastGlobalSnapshot,
+                                  programs.download,
+                                  hashedSnapshot,
+                                  hashedGenesis.info
+                                )
+                                _ <- services.consensus.manager
+                                  .startFacilitatingAfterRollback(
+                                    signedFirstIncrementalSnapshot.ordinal,
+                                    GlobalConsensusOutcome(
+                                      signedFirstIncrementalSnapshot.ordinal,
+                                      Facilitators(List(nodeId)),
+                                      RemovedFacilitators.empty,
+                                      WithdrawnFacilitators.empty,
+                                      Finished(
+                                        signedFirstIncrementalSnapshot,
+                                        hashedGenesis.info,
+                                        EventTrigger,
+                                        Candidates.empty,
+                                        Hash.empty
                                       )
-                                  } yield ()
-                              }
-                            }
+                                    )
+                                  )
+                              } yield ()
+                          }
                         }
-                  }
+                    }
                 }
+              }
             }
           } >>
             gossipDaemon.startAsInitialValidator >>

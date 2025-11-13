@@ -80,7 +80,7 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
         case GET -> Root / "latest" / "metadata" =>
           whenNodeReady {
             snapshotStorage.headSnapshot
-              .flatMap(_.traverse(snapshot => hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[F])))
+              .flatMap(_.traverse(snapshot => hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[F])))
               .map(_.map(snapshot => SnapshotMetadata(snapshot.ordinal, snapshot.hash, snapshot.lastSnapshotHash)))
               .flatMap {
                 case Some(metadata) => Ok(metadata)
@@ -158,14 +158,12 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
 
         case GET -> Root / SnapshotOrdinalVar(ordinal) / "hash" =>
           whenNodeReady {
-            hasherSelector
-              .forOrdinal(ordinal) { implicit hasher =>
-                snapshotStorage.getHash(ordinal)
-              }
-              .flatMap {
-                case None           => NotFound()
-                case Some(snapshot) => Ok(snapshot)
-              }
+            hasherSelector.withCurrent { implicit hasher =>
+              snapshotStorage.getHash(ordinal)
+            }.flatMap {
+              case None           => NotFound()
+              case Some(snapshot) => Ok(snapshot)
+            }
           }
 
         case req @ GET -> Root / HashVar(hash) =>

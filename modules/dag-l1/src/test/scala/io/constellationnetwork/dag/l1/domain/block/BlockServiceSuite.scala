@@ -125,164 +125,164 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("valid block should be accepted") {
-    case (currentHasher, txHasher) =>
-      implicit val hasher = currentHasher
+  test("valid block should be accepted") { res =>
+    val (hj, hk) = res
+    implicit val hasher: Hasher[IO] = hj
 
-      forall(signedBlockGen) { block =>
-        for {
-          hashedBlock <- block.toHashed[IO]
-          blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
-          _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
-          _ <- addParents(blocksR, block)
-          lastAccTxR <- setupTxsStorage(Some(block))
+    forall(signedBlockGen) { block =>
+      for {
+        hashedBlock <- block.toHashed[IO]
+        blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
+        _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
+        _ <- addParents(blocksR, block)
+        lastAccTxR <- setupTxsStorage(Some(block))
 
-          blockService <- mkBlockService(blocksR, lastAccTxR, txHasher = txHasher)
+        blockService <- mkBlockService(blocksR, lastAccTxR, txHasher = hk)
 
-          _ <- blockService.accept(block)
-          blocksRes <- blocksR.toMap
-        } yield
-          expect.same(
-            block.parent.toList
-              .map(parent => parent.hash -> MajorityBlock(parent, 2L, Active))
-              .toMap + (hashedBlock.proofsHash -> AcceptedBlock(hashedBlock)),
-            blocksRes
-          )
-      }
+        _ <- blockService.accept(block)
+        blocksRes <- blocksR.toMap
+      } yield
+        expect.same(
+          block.parent.toList
+            .map(parent => parent.hash -> MajorityBlock(parent, 2L, Active))
+            .toMap + (hashedBlock.proofsHash -> AcceptedBlock(hashedBlock)),
+          blocksRes
+        )
+    }
   }
 
-  test("valid block should be accepted and not related block should stay postponed ") {
-    case (currentHasher, txHasher) =>
-      implicit val hasher = currentHasher
+  test("valid block should be accepted and not related block should stay postponed ") { res =>
+    val (hj, hk) = res
+    implicit val hasher: Hasher[IO] = hj
 
-      forall((block: Signed[Block], notRelatedBlock: Signed[Block]) =>
-        for {
-          hashedBlock <- block.toHashed[IO]
-          hashedNotRelatedBlock <- notRelatedBlock.toHashed[IO]
-          blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
-          _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
-          _ <- blocksR(hashedNotRelatedBlock.proofsHash).set(Some(PostponedBlock(hashedNotRelatedBlock.signed)))
-          _ <- addParents(blocksR, block)
-          lastAccTxR <- setupTxsStorage(Some(block))
+    forall((block: Signed[Block], notRelatedBlock: Signed[Block]) =>
+      for {
+        hashedBlock <- block.toHashed[IO]
+        hashedNotRelatedBlock <- notRelatedBlock.toHashed[IO]
+        blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
+        _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
+        _ <- blocksR(hashedNotRelatedBlock.proofsHash).set(Some(PostponedBlock(hashedNotRelatedBlock.signed)))
+        _ <- addParents(blocksR, block)
+        lastAccTxR <- setupTxsStorage(Some(block))
 
-          blockService <- mkBlockService(blocksR, lastAccTxR, txHasher = txHasher)
+        blockService <- mkBlockService(blocksR, lastAccTxR, txHasher = hk)
 
-          _ <- blockService.accept(block)
-          blocksRes <- blocksR.toMap
-        } yield
-          expect.same(
+        _ <- blockService.accept(block)
+        blocksRes <- blocksR.toMap
+      } yield
+        expect.same(
+          Map(
+            hashedBlock.proofsHash -> AcceptedBlock(hashedBlock),
+            hashedNotRelatedBlock.proofsHash -> PostponedBlock(hashedNotRelatedBlock.signed)
+          ) ++
+            block.parent.toList
+              .map(parent => parent.hash -> MajorityBlock(parent, 2L, Active)),
+          blocksRes
+        )
+    )
+  }
+
+  test("valid block should be accepted and related block should go back to waiting") { res =>
+    val (hj, hk) = res
+    implicit val hasher: Hasher[IO] = hj
+
+    forall((block: Signed[Block], notRelatedBlock: Signed[Block]) =>
+      for {
+        hashedBlock <- block.toHashed[IO]
+        hashedRelatedBlock <- notRelatedBlock
+          .copy(value = notRelatedBlock.value.copy(parent = NonEmptyList.of(hashedBlock.ownReference)))
+          .toHashed[IO]
+        blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
+        _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
+        _ <- blocksR(hashedRelatedBlock.proofsHash).set(Some(PostponedBlock(hashedRelatedBlock.signed)))
+        _ <- addParents(blocksR, block)
+        lastAccTxR <- setupTxsStorage(Some(block))
+
+        blockService <- mkBlockService(blocksR, lastAccTxR, txHasher = hk)
+
+        _ <- blockService.accept(block)
+        blocksRes <- blocksR.toMap
+      } yield
+        expect.same(
+          Map(
+            hashedBlock.proofsHash -> AcceptedBlock(hashedBlock),
+            hashedRelatedBlock.proofsHash -> WaitingBlock(hashedRelatedBlock.signed)
+          ) ++
+            block.parent.toList
+              .map(parent => parent.hash -> MajorityBlock(parent, 2L, Active)),
+          blocksRes
+        )
+    )
+  }
+
+  test("invalid block should be postponed for acceptance") { res =>
+    val (hj, hk) = res
+    implicit val hasher: Hasher[IO] = hj
+
+    forall(signedBlockGen) { block =>
+      for {
+        hashedBlock <- block.toHashed[IO]
+        blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
+        _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
+        _ <- addParents(blocksR, block)
+        lastAccTxR <- setupTxsStorage(Some(block))
+
+        blockService <- mkBlockService(blocksR, lastAccTxR, Some(ParentNotFound(block.parent.head)), txHasher = hk)
+
+        error <- blockService.accept(block).attempt
+        blocksRes <- blocksR.toMap
+      } yield
+        expect.same(
+          (
+            block.parent.toList
+              .map(parent => parent.hash -> MajorityBlock(parent, 1L, Active))
+              .toMap + (hashedBlock.proofsHash -> PostponedBlock(hashedBlock.signed)),
+            Left(
+              BlockService
+                .BlockAcceptanceError(BlockReference(hashedBlock.height, hashedBlock.proofsHash), ParentNotFound(block.parent.head))
+            )
+          ),
+          (blocksRes, error)
+        )
+    }
+  }
+
+  test("invalid block should be postponed for acceptance and not related should stay postponed") { res =>
+    val (hj, hk) = res
+    implicit val hasher: Hasher[IO] = hj
+
+    forall((block: Signed[Block], notRelatedBlock: Signed[Block]) =>
+      for {
+        hashedBlock <- block.toHashed[IO]
+        hashedNotRelatedBlock <- notRelatedBlock.toHashed[IO]
+        blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
+        _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
+        _ <- blocksR(hashedNotRelatedBlock.proofsHash).set(Some(PostponedBlock(hashedNotRelatedBlock.signed)))
+        _ <- addParents(blocksR, block)
+        lastAccTxR <- setupTxsStorage(Some(block))
+
+        blockService <- mkBlockService(blocksR, lastAccTxR, Some(ParentNotFound(block.parent.head)), txHasher = hk)
+
+        error <- blockService.accept(block).attempt
+        blocksRes <- blocksR.toMap
+      } yield
+        expect.same(
+          (
             Map(
-              hashedBlock.proofsHash -> AcceptedBlock(hashedBlock),
+              hashedBlock.proofsHash -> PostponedBlock(hashedBlock.signed),
               hashedNotRelatedBlock.proofsHash -> PostponedBlock(hashedNotRelatedBlock.signed)
             ) ++
               block.parent.toList
-                .map(parent => parent.hash -> MajorityBlock(parent, 2L, Active)),
-            blocksRes
-          )
-      )
-  }
-
-  test("valid block should be accepted and related block should go back to waiting") {
-    case (currentHasher, txHasher) =>
-      implicit val hasher = currentHasher
-
-      forall((block: Signed[Block], notRelatedBlock: Signed[Block]) =>
-        for {
-          hashedBlock <- block.toHashed[IO]
-          hashedRelatedBlock <- notRelatedBlock
-            .copy(value = notRelatedBlock.value.copy(parent = NonEmptyList.of(hashedBlock.ownReference)))
-            .toHashed[IO]
-          blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
-          _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
-          _ <- blocksR(hashedRelatedBlock.proofsHash).set(Some(PostponedBlock(hashedRelatedBlock.signed)))
-          _ <- addParents(blocksR, block)
-          lastAccTxR <- setupTxsStorage(Some(block))
-
-          blockService <- mkBlockService(blocksR, lastAccTxR, txHasher = txHasher)
-
-          _ <- blockService.accept(block)
-          blocksRes <- blocksR.toMap
-        } yield
-          expect.same(
-            Map(
-              hashedBlock.proofsHash -> AcceptedBlock(hashedBlock),
-              hashedRelatedBlock.proofsHash -> WaitingBlock(hashedRelatedBlock.signed)
-            ) ++
-              block.parent.toList
-                .map(parent => parent.hash -> MajorityBlock(parent, 2L, Active)),
-            blocksRes
-          )
-      )
-  }
-
-  test("invalid block should be postponed for acceptance") {
-    case (currentHasher, txHasher) =>
-      implicit val hasher = currentHasher
-
-      forall(signedBlockGen) { block =>
-        for {
-          hashedBlock <- block.toHashed[IO]
-          blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
-          _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
-          _ <- addParents(blocksR, block)
-          lastAccTxR <- setupTxsStorage(Some(block))
-
-          blockService <- mkBlockService(blocksR, lastAccTxR, Some(ParentNotFound(block.parent.head)), txHasher = txHasher)
-
-          error <- blockService.accept(block).attempt
-          blocksRes <- blocksR.toMap
-        } yield
-          expect.same(
-            (
-              block.parent.toList
                 .map(parent => parent.hash -> MajorityBlock(parent, 1L, Active))
-                .toMap + (hashedBlock.proofsHash -> PostponedBlock(hashedBlock.signed)),
-              Left(
-                BlockService
-                  .BlockAcceptanceError(BlockReference(hashedBlock.height, hashedBlock.proofsHash), ParentNotFound(block.parent.head))
-              )
-            ),
-            (blocksRes, error)
-          )
-      }
-  }
-
-  test("invalid block should be postponed for acceptance and not related should stay postponed") {
-    case (currentHasher, txHasher) =>
-      implicit val hasher = currentHasher
-
-      forall((block: Signed[Block], notRelatedBlock: Signed[Block]) =>
-        for {
-          hashedBlock <- block.toHashed[IO]
-          hashedNotRelatedBlock <- notRelatedBlock.toHashed[IO]
-          blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
-          _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
-          _ <- blocksR(hashedNotRelatedBlock.proofsHash).set(Some(PostponedBlock(hashedNotRelatedBlock.signed)))
-          _ <- addParents(blocksR, block)
-          lastAccTxR <- setupTxsStorage(Some(block))
-
-          blockService <- mkBlockService(blocksR, lastAccTxR, Some(ParentNotFound(block.parent.head)), txHasher = txHasher)
-
-          error <- blockService.accept(block).attempt
-          blocksRes <- blocksR.toMap
-        } yield
-          expect.same(
-            (
-              Map(
-                hashedBlock.proofsHash -> PostponedBlock(hashedBlock.signed),
-                hashedNotRelatedBlock.proofsHash -> PostponedBlock(hashedNotRelatedBlock.signed)
-              ) ++
-                block.parent.toList
-                  .map(parent => parent.hash -> MajorityBlock(parent, 1L, Active))
-                  .toMap,
-              Left(
-                BlockService
-                  .BlockAcceptanceError(BlockReference(hashedBlock.height, hashedBlock.proofsHash), ParentNotFound(block.parent.head))
-              )
-            ),
-            (blocksRes, error)
-          )
-      )
+                .toMap,
+            Left(
+              BlockService
+                .BlockAcceptanceError(BlockReference(hashedBlock.height, hashedBlock.proofsHash), ParentNotFound(block.parent.head))
+            )
+          ),
+          (blocksRes, error)
+        )
+    )
   }
 
   private def addParents(blocksR: MapRef[IO, ProofsHash, Option[StoredBlock]], block: Signed[Block]) =

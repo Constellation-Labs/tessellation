@@ -103,18 +103,17 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
             }
           case Some(fullSnapshot) =>
             logger.info("Rollback hash points to full global snapshot") >>
-              HasherSelector[F]
-                .forOrdinal(fullSnapshot.ordinal) { implicit hasher =>
-                  fullSnapshot
-                    .toHashed[F]
-                    .flatMap(GlobalSnapshot.mkFirstIncrementalSnapshot[F](_))
-                    .flatMap { firstIncrementalSnapshot =>
-                      Signed.forAsyncHasher[F, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).map {
-                        signedFirstIncrementalSnapshot =>
-                          (GlobalSnapshotInfoV1.toGlobalSnapshotInfo(fullSnapshot.info), signedFirstIncrementalSnapshot)
-                      }
+              HasherSelector[F].withCurrent { implicit hasher =>
+                fullSnapshot
+                  .toHashed[F]
+                  .flatMap(GlobalSnapshot.mkFirstIncrementalSnapshot[F](_))
+                  .flatMap { firstIncrementalSnapshot =>
+                    Signed.forAsyncHasher[F, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).map {
+                      signedFirstIncrementalSnapshot =>
+                        (GlobalSnapshotInfoV1.toGlobalSnapshotInfo(fullSnapshot.info), signedFirstIncrementalSnapshot)
                     }
-                }
+                  }
+              }
         }
         .flatTap {
           case (_, lastInc) =>

@@ -152,7 +152,7 @@ abstract class SnapshotLocalFileSystemStorage[
   def processFileChunk(
     chunk: Stream[F, File],
     movePersistedToTmp: (Hash, SnapshotOrdinal) => F[Unit]
-  )(implicit hs: HasherSelector[F], kryoSerializer: KryoSerializer[F]): F[Unit] =
+  )(implicit hs: HasherSelector[F]): F[Unit] =
     chunk
       .map(file => file.name.toLongOption.flatMap(SnapshotOrdinal(_)))
       .collect { case Some(fileOrdinal) => fileOrdinal }
@@ -161,26 +161,15 @@ abstract class SnapshotLocalFileSystemStorage[
           snapshotOpt <- read(fileOrdinal)
           _ <- snapshotOpt match {
             case Some(snapshot) =>
-              HasherSelector[F]
-                .forOrdinal(snapshot.ordinal) { implicit hasher =>
-                  for {
-                    hashed <- snapshot.toHashed
-                    _ <- movePersistedToTmp(hashed.hash, hashed.ordinal).handleErrorWith { err =>
-                      logger.warn(err)(s"Failed to move persisted to tmp for ordinal=${snapshot.ordinal}, hash=${hashed.hash}")
-                      Async[F].raiseError(err)
-                    }
-                  } yield ()
-                }
-                .handleErrorWith { error =>
-                  implicit val kryoHasher = Hasher.forKryo[F]
-                  logger.warn(error)(s"cleanupAbove failed for ordinal=${snapshot.ordinal}, retrying with Kryo hasher") >>
-                    snapshot.toHashed.flatMap { s =>
-                      movePersistedToTmp(s.hash, s.ordinal).handleErrorWith { err =>
-                        logger.error(err)(s"Failed to move persisted to tmp even with Kryo hasher for ordinal=${snapshot.ordinal}") >>
-                          Async[F].raiseError(err)
-                      }
-                    }
-                }
+              HasherSelector[F].withCurrent { implicit hasher =>
+                for {
+                  hashed <- snapshot.toHashed
+                  _ <- movePersistedToTmp(hashed.hash, hashed.ordinal).handleErrorWith { err =>
+                    logger.warn(err)(s"Failed to move persisted to tmp for ordinal=${snapshot.ordinal}, hash=${hashed.hash}")
+                    Async[F].raiseError(err)
+                  }
+                } yield ()
+              }
             case None =>
               logger.debug(s"No snapshot found for ordinal $fileOrdinal") >> Async[F].unit
           }

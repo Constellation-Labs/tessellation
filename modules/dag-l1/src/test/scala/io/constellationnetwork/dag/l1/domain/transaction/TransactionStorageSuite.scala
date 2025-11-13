@@ -107,11 +107,11 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
 
         for {
 
-          txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(3L), txHasher = txHasher)
+          txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(3L), kHasher = txHasher, jHasher = h)
 
-          txsB <- generateTransactions(address2, key2, address1, 2, TransactionFee(2L), txHasher = txHasher)
+          txsB <- generateTransactions(address2, key2, address1, 2, TransactionFee(2L), kHasher = txHasher, jHasher = h)
 
-          txsC <- generateTransactions(address3, key3, address2, 2, TransactionFee.zero, txHasher = txHasher)
+          txsC <- generateTransactions(address3, key3, address2, 2, TransactionFee.zero, kHasher = txHasher, jHasher = h)
 
           txsA2 <- generateTransactions(
             address1,
@@ -120,7 +120,8 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
             2,
             TransactionFee(1L),
             Some(TransactionReference(txsA.last.ordinal, txsA.last.hash)),
-            txHasher = txHasher
+            kHasher = txHasher,
+            jHasher = h
           )
           _ <- (txsC.toList ::: txsA.toList ::: txsA2.toList ::: txsB.toList).distinct
             .traverse(transactionStorage.tryPut(_, SnapshotOrdinal.MinValue, Balance(NonNegLong.MaxValue)))
@@ -139,7 +140,7 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
 
         for {
 
-          txsA <- generateTransactions(address1, key1, address2, 1, TransactionFee(10L), txHasher = txHasher)
+          txsA <- generateTransactions(address1, key1, address2, 1, TransactionFee(10L), kHasher = txHasher, jHasher = h)
 
           txsB <- generateTransactions(
             address2,
@@ -147,7 +148,8 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
             address3,
             100,
             TransactionFee(1L),
-            txHasher = txHasher
+            kHasher = txHasher,
+            jHasher = h
           )
 
           txsBHigherFee <- generateTransactions(
@@ -157,7 +159,8 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
             1,
             TransactionFee(8L),
             Some(TransactionReference(txsB.last.ordinal, txsB.last.hash)),
-            txHasher = txHasher
+            kHasher = txHasher,
+            jHasher = h
           )
 
           _ <- (txsA.toList ::: txsB.toList ::: txsBHigherFee.toList).distinct
@@ -175,8 +178,8 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
         implicit val hasher = h
 
         for {
-          txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(1L), txHasher = txHasher)
-          txsB <- generateTransactions(address2, key2, address1, 1, TransactionFee(0L), txHasher = txHasher)
+          txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(1L), kHasher = txHasher, jHasher = h)
+          txsB <- generateTransactions(address2, key2, address1, 1, TransactionFee(0L), kHasher = txHasher, jHasher = h)
           _ <- (txsA.toList ::: txsB.toList).distinct
             .traverse(transactionStorage.tryPut(_, SnapshotOrdinal.MinValue, Balance(NonNegLong.MaxValue)))
 
@@ -193,8 +196,8 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
         implicit val hasher = h
 
         for {
-          txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(3L), txHasher = txHasher)
-          txsB <- generateTransactions(address2, key2, address1, 2, TransactionFee(2L), txHasher = txHasher)
+          txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(3L), kHasher = txHasher, jHasher = h)
+          txsB <- generateTransactions(address2, key2, address1, 2, TransactionFee(2L), kHasher = txHasher, jHasher = h)
           txsA2 <- generateTransactions(
             address1,
             key1,
@@ -202,7 +205,8 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
             2,
             TransactionFee(1L),
             Some(TransactionReference(txsA.last.ordinal, txsA.last.hash)),
-            txHasher = txHasher
+            kHasher = txHasher,
+            jHasher = h
           )
           _ <- (txsA.toList ::: txsA2.toList ::: txsB.toList).distinct
             .traverse(transactionStorage.tryPut(_, SnapshotOrdinal.MinValue, Balance(NonNegLong.MaxValue)))

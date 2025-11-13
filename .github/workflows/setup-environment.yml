@@ -18,7 +18,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          JAVA_VERSION: 11
+          JAVA_VERSION: 21
         uses: "./.github/templates/actions/setup_java_and_scala"
 
       - name: Cache Hypergraph and Shared Jars
@@ -68,7 +68,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          JAVA_VERSION: 11
+          JAVA_VERSION: 21
         uses: "./.github/templates/actions/setup_java_and_scala"
 
       # Cache for project template metagraph

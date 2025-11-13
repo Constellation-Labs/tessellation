@@ -38,17 +38,17 @@ object L0NodeContext {
 
     def getLastCurrencySnapshot: F[Option[Hashed[CurrencyIncrementalSnapshot]]] =
       OptionT(snapshotStorage.headSnapshot)
-        .semiflatMap(snapshot => hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed))
+        .semiflatMap(snapshot => hasherSelector.withCurrent(implicit hasher => snapshot.toHashed))
         .value
 
     def getCurrencySnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[CurrencyIncrementalSnapshot]]] =
       OptionT(snapshotStorage.get(ordinal))
-        .semiflatMap(snapshot => hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed))
+        .semiflatMap(snapshot => hasherSelector.withCurrent(implicit hasher => snapshot.toHashed))
         .value
 
     def getLastCurrencySnapshotCombined: F[Option[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]] =
       OptionT(snapshotStorage.head).semiflatMap {
-        case (snapshot, info) => hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed).map((_, info))
+        case (snapshot, info) => hasherSelector.withCurrent(implicit hasher => snapshot.toHashed).map((_, info))
       }.value
 
     def getLastSynchronizedGlobalSnapshot: F[Option[GlobalIncrementalSnapshot]] =

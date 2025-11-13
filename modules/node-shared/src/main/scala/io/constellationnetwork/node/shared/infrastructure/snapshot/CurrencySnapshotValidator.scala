@@ -204,13 +204,7 @@ object CurrencySnapshotValidator {
                 creationResult.validNec
             }
 
-          check(usingHasher(Hasher.forKryo[F])).flatMap {
-            case Validated.Valid(a) =>
-              Async[F].pure[Validated[NonEmptyChain[SnapshotDifferentThanExpected], CurrencySnapshotCreationResult[CurrencySnapshotEvent]]](
-                Valid(a)
-              )
-            case Validated.Invalid(_) => check(usingHasher(Hasher.forJson[F]))
-          }
+          check(usingHasher(Hasher.forJson[F]))
         }
 
       recreateFn(TimeTrigger).flatMap { tV =>

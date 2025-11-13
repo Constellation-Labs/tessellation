@@ -23,6 +23,7 @@ import io.constellationnetwork.schema.transaction._
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.key.ops._
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.Signed.{ProofsHasher, SignedHasher}
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
 
@@ -39,9 +40,12 @@ trait ConstructionService[F[_]] {
 }
 
 object ConstructionService {
-  def make[F[_]: Async: SecurityProvider: Hasher](
+  def make[F[_]: Async: SecurityProvider](
     getLastAcceptedReference: Address => F[TransactionReference],
     salt: F[TransactionSalt]
+  )(
+    implicit kryoHasher: SignedHasher[F], // Wrapper for Kryo hasher
+    jsonHasher: ProofsHasher[F]
   ): ConstructionService[F] = new ConstructionService[F] {
     def derive(publicKey: RosettaPublicKey): EitherT[F, ConstructionError, AccountIdentifier] =
       publicKey.hexBytes
@@ -55,7 +59,7 @@ object ConstructionService {
       JsonBinarySerializer
         .deserialize[Signed[Transaction]](hex.toBytes)
         .liftTo[F]
-        .flatMap(_.toHashed[F])
+        .flatMap(_.toHashedHybrid[F])
         .map(_.hash)
         .map(TransactionIdentifier(_))
         .attemptT
@@ -133,6 +137,7 @@ object ConstructionService {
 
           } yield (sourceAddress, unsignedTx)).traverse {
             case (sourceAddress, unsignedTx) =>
+              implicit val hasher = kryoHasher.hasher
               unsignedTx.hash.map { unsignedTxHash =>
                 val serializedTxn = JsonBinarySerializer.serialize(unsignedTx)
 
