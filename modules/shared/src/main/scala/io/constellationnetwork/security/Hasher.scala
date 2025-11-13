@@ -142,6 +142,12 @@ object Hasher {
 
       def hash[A: Encoder](data: A): F[Hash] =
         hashJson(data)
+
+      def prefixedHash[A: Encoder](data: A, prefix: Array[Byte]): F[Hash] =
+        JsonSerializer[F]
+          .serialize(data)
+          .map(bytes => prefix ++ bytes)
+          .map(Hash.fromBytes)
     }
   }
 

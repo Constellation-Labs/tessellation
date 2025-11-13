@@ -256,7 +256,11 @@ object GlobalSnapshotContextFunctions {
         calculatedStateProof <- HasherSelector[F].withCurrent { implicit hasher =>
           hasher.getLogic(signedArtifact.ordinal) match {
             case JsonHash => snapshotInfo.stateProof(signedArtifact.ordinal)
-            case KryoHash => GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(snapshotInfo).stateProof(signedArtifact.ordinal)
+            case KryoHash =>
+              GlobalSnapshotInfoV2
+                .fromGlobalSnapshotInfo(snapshotInfo)
+                .stateProof(signedArtifact.ordinal)
+                .map(GlobalSnapshotStateProof.fromLegacyProof)
           }
         }
         validation <- StateProofValidator.validate(hashedArtifact, calculatedStateProof)

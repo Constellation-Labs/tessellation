@@ -341,18 +341,20 @@ object Download {
                       snapshotStorage
                         .hasCorrectSnapshotInfo(snapshot.ordinal, snapshot.stateProof)
                         .ifM(
-                          ().pure[F],
-                          (Hasher[F].getLogic(snapshot.ordinal) match {
+                          ifTrue = ().pure[F],
+                          ifFalse = (Hasher[F].getLogic(snapshot.ordinal) match {
                             case JsonHash => StateProofValidator.validate(snapshot, newContext).map(_.isValid)
                             case KryoHash =>
-                              StateProofValidator
-                                .validate(snapshot, GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(newContext))
-                                .map(_.isValid)
-                          })
-                            .ifM(
-                              snapshotStorage.persistSnapshotInfoWithCutoff(snapshot.ordinal, newContext),
-                              InvalidStateProof(snapshot.ordinal).raiseError[F, Unit]
-                            )
+                              for {
+                                v2Proof <- GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(newContext).stateProof[F](snapshot.ordinal)
+                                mptProof = GlobalSnapshotStateProof.fromLegacyProof(v2Proof)
+                                hashed <- snapshot.toHashed
+                                result <- StateProofValidator.validate(hashed, mptProof).map(_.isValid)
+                              } yield result
+                          }).ifM(
+                            ifTrue = snapshotStorage.persistSnapshotInfoWithCutoff(snapshot.ordinal, newContext),
+                            ifFalse = InvalidStateProof(snapshot.ordinal).raiseError[F, Unit]
+                          )
                         )
                     }
                   )

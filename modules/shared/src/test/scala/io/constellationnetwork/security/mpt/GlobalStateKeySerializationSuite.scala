@@ -23,11 +23,12 @@ object GlobalStateKeySerializationSuite extends MutableIOSuite with Checkers {
     for {
       implicit0(kryo: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
       implicit0(json: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].toResource
-    } yield HasherSelector.forSync[IO](
-      Hasher.forJson[IO],
-      Hasher.forKryo[IO],
-      hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
-    )
+    } yield
+      HasherSelector.forSync[IO](
+        Hasher.forJson[IO],
+        Hasher.forKryo[IO],
+        hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
+      )
 
   test("toHex produces valid hex string of 130 characters for full key without secondary") { implicit res =>
     forall(Gen.zip(addressGen, addressGen)) {
@@ -69,10 +70,9 @@ object GlobalStateKeySerializationSuite extends MutableIOSuite with Checkers {
           for {
             hex1 <- GlobalStateKey.toHex[IO](key1)
             hex2 <- GlobalStateKey.toHex[IO](key2)
-          } yield {
+          } yield
             if (address1 == address2) expect(hex1 == hex2)
             else expect(hex1 != hex2)
-          }
         }
     }
   }
@@ -87,11 +87,12 @@ object GlobalStateKeySerializationSuite extends MutableIOSuite with Checkers {
           for {
             prefixHex <- GlobalStateKey.toHex[IO](prefixKey)
             fullHex <- GlobalStateKey.toHex[IO](fullKey)
-          } yield expect.all(
-            prefixHex.value.length == 66,
-            fullHex.value.length == 130,
-            fullHex.value.startsWith(prefixHex.value)
-          )
+          } yield
+            expect.all(
+              prefixHex.value.length == 66,
+              fullHex.value.length == 130,
+              fullHex.value.startsWith(prefixHex.value)
+            )
         }
     }
   }
@@ -101,16 +102,15 @@ object GlobalStateKeySerializationSuite extends MutableIOSuite with Checkers {
       case (metagraphId, addresses) =>
         res.withCurrent { implicit hasher =>
           val prefixKey = GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), None, None)
-          val fullKeys = addresses.map(addr =>
-            GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(addr), None)
-          )
+          val fullKeys = addresses.map(addr => GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(addr), None))
 
           for {
             prefix <- GlobalStateKey.toHex[IO](prefixKey)
             fullHexes <- fullKeys.traverse(GlobalStateKey.toHex[IO])
-          } yield expect.all(
-            fullHexes.forall(_.value.startsWith(prefix.value))
-          )
+          } yield
+            expect.all(
+              fullHexes.forall(_.value.startsWith(prefix.value))
+            )
         }
     }
   }
@@ -159,14 +159,15 @@ object GlobalStateKeySerializationSuite extends MutableIOSuite with Checkers {
             level1Prefix <- GlobalStateKey.toHex[IO](level1Key)
             level2Prefix <- GlobalStateKey.toHex[IO](level2Key)
             fullHex <- GlobalStateKey.toHex[IO](fullKey)
-          } yield expect.all(
-            fullHex.value.startsWith(level1Prefix.value),
-            fullHex.value.startsWith(level2Prefix.value),
-            level2Prefix.value.startsWith(level1Prefix.value),
-            level1Prefix.value.length == 66,
-            level2Prefix.value.length == 130,
-            fullHex.value.length == 194
-          )
+          } yield
+            expect.all(
+              fullHex.value.startsWith(level1Prefix.value),
+              fullHex.value.startsWith(level2Prefix.value),
+              level2Prefix.value.startsWith(level1Prefix.value),
+              level1Prefix.value.length == 66,
+              level2Prefix.value.length == 130,
+              fullHex.value.length == 194
+            )
         }
     }
   }

@@ -97,6 +97,23 @@ object GlobalStateConverter {
     allPairs.pure[F]
   }
 
+  def toKeyValuePairsForMptOnly[F[_]: Sync](
+    info: GlobalSnapshotInfo
+  ): F[Map[GlobalStateKey, Json]] =
+    toKeyValuePairs[F](info).map { allPairs =>
+      allPairs.filterNot {
+        case (key, _) =>
+          key.fieldId match {
+            case GlobalStateFieldId.LastStateChannelSnapshotHashes => true
+            case GlobalStateFieldId.LastTxRefs                     => true
+            case GlobalStateFieldId.Balances                       => true
+            case GlobalStateFieldId.LastCurrencySnapshots          => true
+            case GlobalStateFieldId.LastCurrencySnapshotsProofs    => true
+            case _                                                 => false
+          }
+      }
+    }
+
   def fromKeyValuePairs[F[_]: Sync](
     pairs: Map[GlobalStateKey, Json]
   ): F[GlobalSnapshotInfo] =

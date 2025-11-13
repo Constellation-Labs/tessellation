@@ -40,3 +40,5 @@ node_modules/
 nodes/
 docker/jars/
 .github/code/
+.workspace/
+.claude/

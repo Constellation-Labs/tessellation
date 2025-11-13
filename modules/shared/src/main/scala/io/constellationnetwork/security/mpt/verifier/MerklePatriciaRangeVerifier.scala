@@ -150,18 +150,19 @@ object MerklePatriciaRangeVerifier {
             ): MerklePatriciaVerificationError)
               .asLeft[Unit]
               .pure[F],
-            ifFalse = for {
-              inclusionResult <- verifyInclusionProofs
-              rangeResult <- verifyPathsInRange
-              orderResult <- verifyPathsOrdered
-              boundaryResult <- verifyBoundaries
-            } yield
+            ifFalse =
               for {
-                _ <- inclusionResult
-                _ <- rangeResult
-                _ <- orderResult
-                _ <- boundaryResult
-              } yield ()
+                inclusionResult <- verifyInclusionProofs
+                rangeResult <- verifyPathsInRange
+                orderResult <- verifyPathsOrdered
+                boundaryResult <- verifyBoundaries
+              } yield
+                for {
+                  _ <- inclusionResult
+                  _ <- rangeResult
+                  _ <- orderResult
+                  _ <- boundaryResult
+                } yield ()
           )
       }.handleError(e => (InvalidWitness(s"Range verification failed: ${e.getMessage}"): MerklePatriciaVerificationError).asLeft[Unit])
     }

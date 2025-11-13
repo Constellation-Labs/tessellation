@@ -54,7 +54,7 @@ object Storages {
       incrementalGlobalSnapshotInfoLocalFileSystemStorage <- GlobalSnapshotInfoLocalFileSystemStorage.make[F](
         snapshotConfig.snapshotInfoPath
       )
-      incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage <- GlobalSnapshotInfoKryoLocalFileSystemStorage.make[F](
+      incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage <- GlobalSnapshotInfoV2KryoLocalFileSystemStorage.make[F](
         snapshotConfig.snapshotInfoPath
       )
 
@@ -108,6 +108,6 @@ sealed abstract class Storages[F[_]] private (
   val incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
   val snapshotDownload: SnapshotDownloadStorage[F],
   val globalSnapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
-  val globalSnapshotInfoLocalFileSystemKryoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2],
+  val globalSnapshotInfoLocalFileSystemKryoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProofV2, GlobalSnapshotInfoV2],
   val combinedGlobalSnapshotCheckpointStorage: CombinedSnapshotCheckpointFileSystemStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 )

@@ -925,7 +925,7 @@ object GlobalSnapshotAcceptanceManager {
             case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by spend transactions: $error")
           }
 
-          MerkleTreeResult(maybeMerkleTree, updatedLastCurrencySnapshotProofs) <- buildMerkleTreeAndProofs(
+          MerkleTreeResult(_, updatedLastCurrencySnapshotProofs) <- buildMerkleTreeAndProofs(
             ordinal,
             updatedLastCurrencySnapshots
           )
@@ -989,7 +989,7 @@ object GlobalSnapshotAcceptanceManager {
             updatedAcceptedMetagraphSyncData
           )
 
-          stateProof <- Async[F].blocking(gsi.stateProof(maybeMerkleTree)).flatten
+          stateProof <- Async[F].blocking(gsi.stateProof[F](ordinal)).flatten
 
           (expiredAllowSpends, expiredTokenLocks) = (
             allowSpendStateManager.filterExpiredAllowSpends(

@@ -72,8 +72,22 @@ object GlobalSnapshotInfoLocalFileSystemStorage {
 object GlobalSnapshotInfoKryoLocalFileSystemStorage {
   def make[F[+_]: Async: KryoSerializer: JsonSerializer](
     path: Path
-  ): F[SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2]] =
-    (new SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2](path) {
+  ): F[SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProofV2, GlobalSnapshotInfoV3]] =
+    (new SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProofV2, GlobalSnapshotInfoV3](path) {
+      def deserializeFallback(bytes: Array[Byte]): Either[Throwable, GlobalSnapshotInfoV3] =
+        KryoSerializer[F].deserialize[GlobalSnapshotInfoV2](bytes).map { v2 =>
+          GlobalSnapshotInfoV3.fromGlobalSnapshotInfo(v2.toGlobalSnapshotInfo)
+        }
+    }).pure[F].flatTap { storage =>
+      storage.createDirectoryIfNotExists().rethrowT
+    }
+}
+
+object GlobalSnapshotInfoV2KryoLocalFileSystemStorage {
+  def make[F[+_]: Async: KryoSerializer: JsonSerializer](
+    path: Path
+  ): F[SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProofV2, GlobalSnapshotInfoV2]] =
+    (new SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProofV2, GlobalSnapshotInfoV2](path) {
       def deserializeFallback(bytes: Array[Byte]): Either[Throwable, GlobalSnapshotInfoV2] =
         KryoSerializer[F].deserialize[GlobalSnapshotInfoV2](bytes)
     }).pure[F].flatTap { storage =>

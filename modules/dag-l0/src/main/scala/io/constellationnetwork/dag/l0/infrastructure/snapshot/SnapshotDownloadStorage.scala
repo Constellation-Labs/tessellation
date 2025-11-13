@@ -26,7 +26,7 @@ object SnapshotDownloadStorage {
     persistedStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     fullGlobalSnapshotStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
     snapshotInfoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
-    snapshotInfoKryoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2],
+    snapshotInfoKryoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProofV2, GlobalSnapshotInfoV2],
     combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[
       F,
       GlobalIncrementalSnapshot,
@@ -61,8 +61,11 @@ object SnapshotDownloadStorage {
         proof: GlobalSnapshotStateProof
       )(implicit hasher: Hasher[F]): F[Boolean] =
         (hashSelect.select(ordinal) match {
-          case JsonHash => snapshotInfoStorage.read(ordinal).flatMap(_.traverse(_.stateProof(ordinal)))
-          case KryoHash => snapshotInfoKryoStorage.read(ordinal).flatMap(_.traverse(_.stateProof(ordinal)))
+          case JsonHash => snapshotInfoStorage.read(ordinal).flatMap(_.traverse(_.mptOnlyStateProof[F](ordinal)))
+          case KryoHash =>
+            snapshotInfoKryoStorage
+              .read(ordinal)
+              .flatMap(_.traverse(_.stateProof[F](ordinal).map(GlobalSnapshotStateProof.fromLegacyProof)))
         }).map {
           case Some(calculatedProof) => calculatedProof === proof
           case _                     => false
@@ -84,14 +87,21 @@ object SnapshotDownloadStorage {
         (readPersisted(ordinal).flatMap(_.traverse(_.toHashed)), maybeInfo).tupled.map(_.tupled).flatMap {
           case Some((snapshot, info)) =>
             info
-              .bitraverse(_.stateProof(ordinal), _.stateProof(ordinal))
-              .map(_.fold(identity, identity))
-              .flatMap(stateProof => StateProofValidator.validate(snapshot, stateProof).map(_.isValid))
-              .ifM(
-                (snapshot.signed, info.leftMap(_.toGlobalSnapshotInfo).fold(identity, identity)).some.pure[F],
-                new Exception("Persisted snapshot info does not match the persisted snapshot")
-                  .raiseError[F, Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
+              .bitraverse(
+                v2 => v2.stateProof[F](ordinal).map(GlobalSnapshotStateProof.fromLegacyProof),
+                _.mptOnlyStateProof[F](ordinal)
               )
+              .flatMap { either =>
+                val stateProof = either.fold(identity, identity)
+                StateProofValidator
+                  .validate(snapshot, stateProof)
+                  .map(_.isValid)
+                  .ifM(
+                    (snapshot.signed, info.leftMap(_.toGlobalSnapshotInfo).fold(identity, identity)).some.pure[F],
+                    new Exception("Persisted snapshot info does not match the persisted snapshot")
+                      .raiseError[F, Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
+                  )
+              }
           case _ => none.pure[F]
         }
       }

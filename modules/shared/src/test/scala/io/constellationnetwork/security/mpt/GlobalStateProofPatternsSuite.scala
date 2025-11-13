@@ -12,7 +12,11 @@ import io.constellationnetwork.schema.mpt.{GlobalStateFieldId, GlobalStateKey}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt.prover._
-import io.constellationnetwork.security.mpt.verifier.{MerklePatriciaBatchInclusionVerifier, MerklePatriciaInclusionVerifier, MerklePatriciaRangeVerifier}
+import io.constellationnetwork.security.mpt.verifier.{
+  MerklePatriciaBatchInclusionVerifier,
+  MerklePatriciaInclusionVerifier,
+  MerklePatriciaRangeVerifier
+}
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -29,11 +33,12 @@ object GlobalStateProofPatternsSuite extends MutableIOSuite with Checkers {
     for {
       implicit0(kryo: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
       implicit0(json: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].toResource
-    } yield HasherSelector.forSync[IO](
-      Hasher.forJson[IO],
-      Hasher.forKryo[IO],
-      hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
-    )
+    } yield
+      HasherSelector.forSync[IO](
+        Hasher.forJson[IO],
+        Hasher.forKryo[IO],
+        hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
+      )
 
   test("Pattern 1: Single Balance Check") { implicit res =>
     forall(Gen.zip(addressGen, addressGen)) {
@@ -52,10 +57,11 @@ object GlobalStateProofPatternsSuite extends MutableIOSuite with Checkers {
 
             verifier = MerklePatriciaInclusionVerifier.make[IO](trie.rootNode.digest)
             result <- verifier.confirm(proof)
-          } yield expect.all(
-            result.isRight,
-            proof.path == path
-          )
+          } yield
+            expect.all(
+              result.isRight,
+              proof.path == path
+            )
         }
     }
   }
@@ -64,9 +70,7 @@ object GlobalStateProofPatternsSuite extends MutableIOSuite with Checkers {
     forall(Gen.zip(addressGen, Gen.listOfN(5, addressGen))) {
       case (metagraphId, addresses) =>
         res.withCurrent { implicit hasher =>
-          val keys = addresses.map(addr =>
-            GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(addr), None)
-          )
+          val keys = addresses.map(addr => GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(addr), None))
 
           for {
             paths <- keys.traverse(GlobalStateKey.toHex[IO])
@@ -81,11 +85,12 @@ object GlobalStateProofPatternsSuite extends MutableIOSuite with Checkers {
 
             verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
             result <- verifier.confirm(proof)
-          } yield expect.all(
-            result.isRight,
-            proof.paths.size == 5,
-            proof.paths.toSet == paths.toSet
-          )
+          } yield
+            expect.all(
+              result.isRight,
+              proof.paths.size == 5,
+              proof.paths.toSet == paths.toSet
+            )
         }
     }
   }
@@ -94,9 +99,7 @@ object GlobalStateProofPatternsSuite extends MutableIOSuite with Checkers {
     forall(Gen.zip(addressGen, addressGen, Gen.listOfN(10, addressGen))) {
       case (metagraphId, otherMetagraphId, addresses) =>
         res.withCurrent { implicit hasher =>
-          val metagraphKeys = addresses.map(addr =>
-            GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(addr), None)
-          )
+          val metagraphKeys = addresses.map(addr => GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(addr), None))
           val prefixKey = GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), None, None)
 
           val otherMetagraphKeys = addresses.take(3).map { addr =>
@@ -123,11 +126,12 @@ object GlobalStateProofPatternsSuite extends MutableIOSuite with Checkers {
 
             verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
             result <- verifier.confirm(proof)
-          } yield expect.all(
-            result.isRight,
-            proof.paths.size == 10,
-            proof.paths.forall(_.value.startsWith(prefix.value))
-          )
+          } yield
+            expect.all(
+              result.isRight,
+              proof.paths.size == 10,
+              proof.paths.forall(_.value.startsWith(prefix.value))
+            )
         }
     }
   }
@@ -157,11 +161,12 @@ object GlobalStateProofPatternsSuite extends MutableIOSuite with Checkers {
 
             verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
             result <- verifier.confirmRange(proof)
-          } yield expect.all(
-            result.isRight,
-            proof.inclusionProofs.size == 10,
-            proof.inclusionProofs.map(_.path).forall(p => p.value >= startPath.value && p.value <= endPath.value)
-          )
+          } yield
+            expect.all(
+              result.isRight,
+              proof.inclusionProofs.size == 10,
+              proof.inclusionProofs.map(_.path).forall(p => p.value >= startPath.value && p.value <= endPath.value)
+            )
         }
     }
   }
