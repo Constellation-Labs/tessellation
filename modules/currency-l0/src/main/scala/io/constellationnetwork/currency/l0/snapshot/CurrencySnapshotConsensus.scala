@@ -101,7 +101,8 @@ object CurrencySnapshotConsensus {
           restartService,
           nodeStorage,
           leavingDelay,
-          getGlobalSnapshotByOrdinal
+          getGlobalSnapshotByOrdinal,
+          clusterStorage
         )
       consensusStateCreator = CurrencySnapshotConsensusStateCreator
         .make[F](consensusFunctions, consensusStorage, lastGlobalSnapshotStorage, gossip, selfId, seedlist, clusterStorage)

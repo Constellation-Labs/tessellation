@@ -4,6 +4,7 @@ import cats.Applicative
 import cats.effect.kernel.Clock
 import cats.effect.{Async, Sync}
 import cats.syntax.all._
+
 import io.constellationnetwork.currency.l0.snapshot.schema.{CollectingFacilities, CurrencyConsensusKind, CurrencyConsensusOutcome}
 import io.constellationnetwork.currency.schema.currency.CurrencySnapshotContext
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
@@ -18,6 +19,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.Cons
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.peer.{PeerId, Responsive, Unresponsive}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
+
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -43,6 +45,8 @@ object CurrencySnapshotConsensusStateCreator {
     seedlist: Option[Set[SeedlistEntry]],
     clusterStorage: ClusterStorage[F]
   ): CurrencySnapshotConsensusStateCreator[F] = new CurrencySnapshotConsensusStateCreator[F] {
+    case class FacilitatorWithStatus(peerId: PeerId, isHealthy: Boolean, message: Option[String])
+
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
     def tryFacilitateConsensus(
@@ -76,40 +80,45 @@ object CurrencySnapshotConsensusStateCreator {
         // Check responsiveness for each old facilitator
         oldFacilitatorsWithStatus <- oldFacilitators.traverse { peerId =>
           if (peerId === selfId) {
-            Applicative[F].pure((peerId, true, "self".some))
+            Applicative[F].pure(
+              FacilitatorWithStatus(peerId, isHealthy = true, "self".some)
+            )
           } else {
             clusterStorage.getPeer(peerId).map {
               case Some(peer) if peer.responsiveness === Responsive =>
-                (peerId, true, "responsive".some)
+                FacilitatorWithStatus(peerId, isHealthy = true, "responsive".some)
               case Some(peer) if peer.responsiveness === Unresponsive =>
-                (peerId, false, "unresponsive".some)
+                FacilitatorWithStatus(peerId, isHealthy = false, "unresponsive".some)
               case Some(peer) =>
-                (peerId, false, peer.responsiveness.show.some)
+                FacilitatorWithStatus(peerId, isHealthy = false, peer.responsiveness.show.some)
               case None =>
-                (peerId, false, "not found in cluster storage".some)
+                FacilitatorWithStatus(peerId, isHealthy = false, "not found in cluster storage".some)
             }
           }
         }
 
-        removedFacilitators = oldFacilitatorsWithStatus.filterNot(_._2)
-        _ <- removedFacilitators.traverse_ { case (peerId, _, reason) =>
-          logger.warn(s"Removing old facilitator ${peerId.show} from consensus - reason: ${reason.getOrElse("unknown")}")
-        }
+        removedFacilitators = oldFacilitatorsWithStatus.filterNot(_.isHealthy)
+        _ <- removedFacilitators.traverse_(facilitatorWithStatus =>
+          logger.warn(
+            s"Removing old facilitator ${facilitatorWithStatus.peerId.show} from consensus - reason: ${facilitatorWithStatus.message.getOrElse("unknown")}"
+          )
+        )
 
-        responsiveOldFacilitators = oldFacilitatorsWithStatus.filter(_._2).map(_._1)
+        responsiveOldFacilitators = oldFacilitatorsWithStatus.filter(_.isHealthy).map(_.peerId)
 
         baseFacilitators = (responsiveOldFacilitators ++ newCandidates).distinct
 
-        facilitators <- baseFacilitators
-          .filterA(consensusFns.facilitatorFilter(
-            lastOutcome.finished.signedMajorityArtifact,
-            lastOutcome.finished.context,
-            _
-          ))
-          .map(_.prepended(selfId).distinct.sorted)
+        facilitators <- (baseFacilitators :+ selfId).distinct
+          .filterA(
+            consensusFns.facilitatorFilter(
+              lastOutcome.finished.signedMajorityArtifact,
+              lastOutcome.finished.context,
+              _
+            )
+          )
+          .map(_.sorted)
           .map { list =>
-            if (list.isEmpty) List(selfId)
-            else list
+            if (list.isEmpty) List(selfId) else list
           }
 
         failedFilter = baseFacilitators.filterNot(facilitators.contains)
