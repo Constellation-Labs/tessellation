@@ -104,7 +104,7 @@ object CurrencySnapshotConsensus {
           getGlobalSnapshotByOrdinal
         )
       consensusStateCreator = CurrencySnapshotConsensusStateCreator
-        .make[F](consensusFunctions, consensusStorage, lastGlobalSnapshotStorage, gossip, selfId, seedlist)
+        .make[F](consensusFunctions, consensusStorage, lastGlobalSnapshotStorage, gossip, selfId, seedlist, clusterStorage)
       consensusStateRemover = CurrencySnapshotConsensusStateRemover.make[F](consensusStorage, gossip)
       consensusStatusOps = CurrencySnapshotConsensusOps.make
       stateUpdater = ConsensusStateUpdater.make(

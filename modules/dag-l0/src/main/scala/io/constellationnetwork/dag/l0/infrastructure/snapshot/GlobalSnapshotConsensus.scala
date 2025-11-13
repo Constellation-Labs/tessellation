@@ -161,7 +161,7 @@ object GlobalSnapshotConsensus {
           lastGlobalSnapshotStorage,
           getGlobalSnapshotByOrdinal
         )
-      consensusStateCreator = GlobalSnapshotConsensusStateCreator.make[F](consensusFunctions, consensusStorage, gossip, selfId, seedlist)
+      consensusStateCreator = GlobalSnapshotConsensusStateCreator.make[F](consensusFunctions, consensusStorage, gossip, selfId, seedlist, clusterStorage)
       consensusStateRemover = GlobalSnapshotConsensusStateRemover.make[F](consensusStorage, gossip)
       consensusStatusOps = GlobalSnapshotConsensusOps.make
       stateUpdater = ConsensusStateUpdater.make(

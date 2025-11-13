@@ -36,29 +36,23 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     getter: PeerDeclarations => Option[A]
   )(implicit asyncF: Async[F]): F[Option[SortedMap[PeerId, A]]] = {
 
-    def processNonStale =
-      state.facilitators.value.traverse { peerId =>
-        resources.peerDeclarationsMap
-          .get(peerId)
-          .flatMap(getter)
-          .map((peerId, _))
-      }.map(SortedMap.from(_))
+    val totalFacilitators = state.facilitators.value.size
 
-    def processStale =
-      processNonStale
+    val declarations = state.facilitators.value.flatMap { peerId =>
+      resources.peerDeclarationsMap
+        .get(peerId)
+        .flatMap(getter)
+        .map((peerId, _))
+    }
 
-    for {
-      now <- Clock[F].monotonic
-      elapsed = now - resources.updatedAt
-      isStale = elapsed > config.peersDeclarationTimeout
-      result <-
-        if (isStale) {
-          logger.warn(
-            s"The process is stale when getting all declarations. Elapsed: ${elapsed.toSeconds}s, Timeout: ${config.peersDeclarationTimeout.toSeconds}s"
-          ) >> processStale.pure
-        } else {
-          processNonStale.pure
-        }
-    } yield result
+    val declarationsMap = SortedMap.from(declarations)
+    val receivedCount = declarationsMap.size
+
+    // CRITICAL: Must have ALL facilitators for deterministic consensus
+    if (receivedCount == totalFacilitators) {
+      declarationsMap.some.pure[F]
+    } else {
+      none[SortedMap[PeerId, A]].pure[F]
+    }
   }
 }

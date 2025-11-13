@@ -1,13 +1,14 @@
 package io.constellationnetwork.currency.l0.snapshot
 
+import cats.Applicative
 import cats.effect.kernel.Clock
 import cats.effect.{Async, Sync}
 import cats.syntax.all._
-
 import io.constellationnetwork.currency.l0.snapshot.schema.{CollectingFacilities, CurrencyConsensusKind, CurrencyConsensusOutcome}
 import io.constellationnetwork.currency.schema.currency.CurrencySnapshotContext
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
+import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus._
@@ -15,8 +16,10 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.snapshot.currency._
-import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.peer.{PeerId, Responsive, Unresponsive}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
+import org.typelevel.log4cats.SelfAwareStructuredLogger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class CurrencySnapshotConsensusStateCreator[F[_]: Sync]
     extends ConsensusStateCreator[
@@ -37,8 +40,11 @@ object CurrencySnapshotConsensusStateCreator {
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     gossip: Gossip[F],
     selfId: PeerId,
-    seedlist: Option[Set[SeedlistEntry]]
+    seedlist: Option[Set[SeedlistEntry]],
+    clusterStorage: ClusterStorage[F]
   ): CurrencySnapshotConsensusStateCreator[F] = new CurrencySnapshotConsensusStateCreator[F] {
+    val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
+
     def tryFacilitateConsensus(
       key: CurrencySnapshotKey,
       lastOutcome: CurrencyConsensusOutcome,
@@ -60,14 +66,63 @@ object CurrencySnapshotConsensusStateCreator {
 
         candidates <- consensusStorage.getCandidates(key.next)
 
-        facilitators <- lastOutcome.facilitators.value
-          .concat(lastOutcome.finished.candidates.value)
+        // Split into old facilitators and new candidates
+        oldFacilitators = lastOutcome.facilitators.value
           .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
-          .filterA(consensusFns.facilitatorFilter(lastOutcome.finished.signedMajorityArtifact, lastOutcome.finished.context, _))
+
+        newCandidates = lastOutcome.finished.candidates.value
+          .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
+
+        // Check responsiveness for each old facilitator
+        oldFacilitatorsWithStatus <- oldFacilitators.traverse { peerId =>
+          if (peerId === selfId) {
+            Applicative[F].pure((peerId, true, "self".some))
+          } else {
+            clusterStorage.getPeer(peerId).map {
+              case Some(peer) if peer.responsiveness === Responsive =>
+                (peerId, true, "responsive".some)
+              case Some(peer) if peer.responsiveness === Unresponsive =>
+                (peerId, false, "unresponsive".some)
+              case Some(peer) =>
+                (peerId, false, peer.responsiveness.show.some)
+              case None =>
+                (peerId, false, "not found in cluster storage".some)
+            }
+          }
+        }
+
+        removedFacilitators = oldFacilitatorsWithStatus.filterNot(_._2)
+        _ <- removedFacilitators.traverse_ { case (peerId, _, reason) =>
+          logger.warn(s"Removing old facilitator ${peerId.show} from consensus - reason: ${reason.getOrElse("unknown")}")
+        }
+
+        responsiveOldFacilitators = oldFacilitatorsWithStatus.filter(_._2).map(_._1)
+
+        baseFacilitators = (responsiveOldFacilitators ++ newCandidates).distinct
+
+        facilitators <- baseFacilitators
+          .filterA(consensusFns.facilitatorFilter(
+            lastOutcome.finished.signedMajorityArtifact,
+            lastOutcome.finished.context,
+            _
+          ))
           .map(_.prepended(selfId).distinct.sorted)
+          .map { list =>
+            if (list.isEmpty) List(selfId)
+            else list
+          }
+
+        failedFilter = baseFacilitators.filterNot(facilitators.contains)
+        _ <- failedFilter.traverse_ { peerId =>
+          logger.warn(s"Facilitator ${peerId.show} removed by facilitatorFilter")
+        }
 
         (withdrawn, remained) = facilitators.partition { peerId =>
           resources.withdrawalsMap.get(peerId).contains(CurrencyConsensusKind.Facility)
+        }
+
+        _ <- withdrawn.traverse_ { peerId =>
+          logger.info(s"Facilitator ${peerId.show} has withdrawn from consensus")
         }
 
         time <- Clock[F].monotonic
