@@ -159,9 +159,11 @@ object GlobalSnapshotConsensus {
           appConfig.shared.leavingDelay,
           lastNGlobalSnapshotStorage,
           lastGlobalSnapshotStorage,
-          getGlobalSnapshotByOrdinal
+          getGlobalSnapshotByOrdinal,
+          clusterStorage
         )
-      consensusStateCreator = GlobalSnapshotConsensusStateCreator.make[F](consensusFunctions, consensusStorage, gossip, selfId, seedlist)
+      consensusStateCreator = GlobalSnapshotConsensusStateCreator
+        .make[F](consensusFunctions, consensusStorage, gossip, selfId, seedlist, clusterStorage)
       consensusStateRemover = GlobalSnapshotConsensusStateRemover.make[F](consensusStorage, gossip)
       consensusStatusOps = GlobalSnapshotConsensusOps.make
       stateUpdater = ConsensusStateUpdater.make(
