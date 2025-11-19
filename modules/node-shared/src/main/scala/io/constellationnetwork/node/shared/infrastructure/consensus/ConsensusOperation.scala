@@ -2,7 +2,6 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 
 import cats.effect._
 import cats.effect.std.{Queue, Supervisor}
-import cats.effect.syntax.all._
 import cats.syntax.all._
 import cats.{Order, Show}
 
@@ -40,16 +39,20 @@ object ConsensusQueue {
       queue = new ConsensusQueueImpl[F, Key](
         operationQueue,
         pendingUpdates,
+        processFacilitation,
+        processStateUpdate,
         logger
       )
 
-      _ <- S.supervise(queue.runProcessor(processFacilitation, processStateUpdate))
+      _ <- S.supervise(queue.runProcessor)
 
     } yield queue
 
   private class ConsensusQueueImpl[F[_]: Async, Key: Order: Show](
     operationQueue: Queue[F, ConsensusOperation[Key]],
     pendingUpdates: Ref[F, Set[Key]],
+    processFacilitation: Option[ConsensusTrigger] => F[Unit],
+    processStateUpdate: Key => F[Unit],
     logger: Logger[F]
   ) extends ConsensusQueue[F, Key] {
 
@@ -71,35 +74,26 @@ object ConsensusQueue {
         if (shouldQueue) {
           operationQueue.offer(ConsensusOperation.UpdateState(key))
         } else {
-          ().pure
+          Async[F].unit
         }
       }
 
     override def clearPendingUpdate(key: Key): F[Unit] =
       pendingUpdates.update(_ - key)
 
-    def runProcessor(
-      processFacilitation: Option[ConsensusTrigger] => F[Unit],
-      processStateUpdate: Key => F[Unit]
-    ): F[Unit] =
-      operationQueue.take.flatMap { operation =>
-        val processOp = operation match {
-          case ConsensusOperation.FacilitateRound(trigger) =>
-            logger.debug(s"Processing facilitation: trigger=${trigger.show}") >>
-              processFacilitation(trigger).handleErrorWith { err =>
-                logger.error(err)(s"Error processing facilitation: trigger=${trigger.show}")
-              }
+    def runProcessor: F[Unit] =
+      operationQueue.take.flatMap {
+        case ConsensusOperation.FacilitateRound(trigger) =>
+          logger.debug(s"Processing facilitation: trigger=${trigger.show}") >>
+            processFacilitation(trigger).handleErrorWith { err =>
+              logger.error(err)(s"Error processing facilitation: trigger=${trigger.show}")
+            }
 
-          case ConsensusOperation.UpdateState(key) =>
-            processStateUpdate(key).handleErrorWith { err =>
-              logger.error(err)(s"Error processing state update: key=${key.show}")
-            }.guarantee(
-              pendingUpdates.update(_ - key) >>
-                logger.trace(s"Cleared pending: key=${key.show}")
-            )
-        }
-
-        processOp
-      } >> runProcessor(processFacilitation, processStateUpdate)
+        case ConsensusOperation.UpdateState(key) =>
+          processStateUpdate(key).handleErrorWith { err =>
+            logger.error(err)(s"Error processing state update: key=${key.show}") >>
+              pendingUpdates.update(_ - key)
+          }
+      } >> runProcessor
   }
 }

@@ -230,6 +230,9 @@ object ConsensusManager {
                 logger.debug(s"Ignoring update for completed round {key=${key.show}, lastKey=${lastKey.show}}") >>
                   queue.clearPendingUpdate(key)
 
+              case Some(lastKey) if key > lastKey.next =>
+                queue.clearPendingUpdate(key)
+
               case _ =>
                 consensusStorage.getResources(key).flatMap { resources =>
                   consensusStateUpdater.tryUpdateConsensus(key, resources).flatMap {
@@ -238,13 +241,14 @@ object ConsensusManager {
                         consensusStateAdvancer
                           .getConsensusOutcome(newState)
                           .fold {
-                            (oldState.status =!= newState.status)
-                              .pure[F]
-                              .ifM(
-                                scheduleStallDetection(key, newState) >>
-                                  queue.requestStateUpdate(key),
-                                handleStatusUnchanged(key, newState.status)
-                              )
+                            val statusChanged = oldState.status =!= newState.status
+                            queue.clearPendingUpdate(key) >>
+                              (if (statusChanged) {
+                                 scheduleStallDetection(key, newState) >>
+                                   queue.requestStateUpdate(key)
+                               } else {
+                                 handleStatusUnchanged(key, newState.status)
+                               })
                           } {
                             case (previousKey, newOutcome) =>
                               queue.clearPendingUpdate(key) >>
@@ -254,7 +258,7 @@ object ConsensusManager {
                     case None =>
                       consensusStorage.getState(key).flatMap {
                         case Some(state) =>
-                          handleStatusUnchanged(key, state.status)
+                          handleNoUpdate(key, state.status)
                         case None =>
                           logger.debug(s"No state found {key=${key.show}}") >>
                             queue.clearPendingUpdate(key)
@@ -263,13 +267,19 @@ object ConsensusManager {
                 }
             }
 
-          private def handleStatusUnchanged(key: Key, status: Status): F[Unit] =
-            if (isActiveCollectingPhase(status)) {
-              Temporal[F].sleep(config.activePhaseRetryInterval) >>
-                queue.requestStateUpdate(key)
-            } else {
-              queue.clearPendingUpdate(key)
-            }
+          private def handleStatusUnchanged(key: Key, status: Status): F[Unit] = {
+            val isActive = isActiveCollectingPhase(status)
+            queue.clearPendingUpdate(key) >>
+              (if (isActive) {
+                 Temporal[F].sleep(config.activePhaseRetryInterval) >>
+                   queue.requestStateUpdate(key)
+               } else {
+                 Async[F].unit
+               })
+          }
+
+          private def handleNoUpdate(key: Key, status: Status): F[Unit] =
+            handleStatusUnchanged(key, status)
 
           private def isActiveCollectingPhase(status: Status): Boolean =
             consensusOps.isCollectingPhase(status)
