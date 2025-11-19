@@ -37,12 +37,6 @@ trait ConsensusManager[F[_], Key, Artifact, Context, Status, OutcomeC, Kind] {
 
   def withdrawFromConsensus: F[Unit]
 
-  private[consensus] def createFollowerState(
-    key: Key,
-    lastOutcome: OutcomeC,
-    resources: ConsensusResources[Artifact, Kind]
-  ): F[Option[ConsensusState[Key, Status, OutcomeC, Kind]]]
-
   private[consensus] def facilitateOnEvent: F[Unit]
 
   private[consensus] def processFacilitation(trigger: Option[ConsensusTrigger]): F[Unit]
@@ -232,18 +226,6 @@ object ConsensusManager {
               }.void
             }
 
-          def createFollowerState(
-            key: Key,
-            lastOutcome: OutcomeC,
-            resources: ConsensusResources[Artifact, Kind]
-          ): F[Option[ConsensusState[Key, Status, OutcomeC, Kind]]] =
-            consensusStateCreator.tryFacilitateConsensus(
-              key,
-              lastOutcome,
-              maybeTrigger = None,
-              resources
-            )
-
           def processStateUpdate(key: Key): F[Unit] =
             consensusStorage.getLastKey.flatMap {
               case Some(lastKey) if key < lastKey =>
@@ -375,7 +357,6 @@ object ConsensusManager {
                 consensusOps,
                 consensusStorage,
                 consensusStateUpdater,
-                clusterStorage,
                 queue,
                 logger,
                 isFirstRoundAfterJoin

@@ -271,20 +271,39 @@ const assertBalanceChange = async (account, expectedBalanceDatum) => {
   }
 }
 
-const getNodeParams = async (urls) => {
-  logWorkflow.info(`Request to: ${urls.globalL0Url}/node-params`)
-  const response = await axios.get(
-    `${urls.globalL0Url}/node-params?t=${Date.now()}`,
-    {
-      headers: {
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        Pragma: 'no-cache',
-        Expires: '0',
+const getNodeParams = async (urls, shouldAcceptEmpty = false) => {
+  return withRetry(
+      async () => {
+        logWorkflow.info(`Request to: ${urls.globalL0Url}/node-params`)
+        const response = await axios.get(
+            `${urls.globalL0Url}/node-params?t=${Date.now()}`,
+            {
+              headers: {
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                Pragma: 'no-cache',
+                Expires: '0',
+              },
+            },
+        )
+        checkOk(response)
+        const nodeParams = response.data
+        if(shouldAcceptEmpty){
+          return nodeParams
+        }
+
+        if (!nodeParams || (Array.isArray(nodeParams) && nodeParams.length === 0) || (typeof nodeParams === 'object' && Object.keys(nodeParams).length === 0)) {
+          throw new Error('nodeParams is null, empty array, or empty object')
+        }
+
+        return nodeParams
       },
-    },
+      {
+        name: 'FetchNodeParams',
+        maxAttempts: 20,
+        interval: 5 * 1000,
+        handleError: () => {},
+      },
   )
-  checkOk(response)
-  return response.data
 }
 
 const fetchSnapshot = async (urls, ordinal) => {
