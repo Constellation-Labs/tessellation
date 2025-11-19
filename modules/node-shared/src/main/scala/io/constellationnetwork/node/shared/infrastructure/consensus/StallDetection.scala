@@ -5,6 +5,8 @@ import cats.effect._
 import cats.effect.std.Supervisor
 import cats.syntax.all._
 
+import scala.concurrent.duration._
+
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.schema.peer.{PeerId, Unresponsive}
@@ -31,14 +33,20 @@ private[consensus] object StallDetection {
     consensusStateUpdater: ConsensusStateUpdater[F, Key, Artifact, Context, Status, OutcomeC, Kind],
     clusterStorage: ClusterStorage[F],
     queue: ConsensusQueue[F, Key],
-    logger: Logger[F]
+    logger: Logger[F],
+    isFirstRoundAfterJoin: Boolean
   )(implicit S: Supervisor[F]): F[Unit] =
     Clock[F].monotonic.flatMap { now =>
       val stallId = now.toMillis
 
       stallDetectionRef.update(_ + (key -> stallId)) >>
         S.supervise {
-          Temporal[F].sleep(config.declarationTimeout) >>
+          val sleepDuration = if (isFirstRoundAfterJoin) {
+            60.seconds
+          } else {
+            config.declarationTimeout
+          }
+          Temporal[F].sleep(sleepDuration) >>
             stallDetectionRef.get.flatMap { currentMap =>
               if (currentMap.get(key).contains(stallId)) {
                 logger.warn(s"Stall detected for consensus round {key=${key.toString}}") >>

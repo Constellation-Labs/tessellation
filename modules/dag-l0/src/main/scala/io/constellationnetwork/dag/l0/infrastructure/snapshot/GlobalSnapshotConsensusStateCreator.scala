@@ -121,7 +121,8 @@ object GlobalSnapshotConsensusStateCreator {
         }
 
         candidatesForNextRound <- consensusStorage.getCandidates(key.next)
-        finalCandidates = Candidates(remained.toSet ++ candidatesForNextRound.value)
+        healthyCandidates = candidatesForNextRound.value.filterNot(peerId => removedFacilitators.map(_.peerId).contains(peerId))
+        finalCandidates = Candidates(remained.toSet ++ healthyCandidates)
 
         time <- Clock[F].monotonic
         upperBound <- consensusStorage.getUpperBound

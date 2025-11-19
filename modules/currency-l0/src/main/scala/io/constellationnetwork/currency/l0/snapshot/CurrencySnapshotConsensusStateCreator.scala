@@ -131,8 +131,9 @@ object CurrencySnapshotConsensusStateCreator {
           logger.info(s"Facilitator ${peerId.show} has withdrawn from consensus")
         }
 
-        candidatesFromStorage <- consensusStorage.getCandidates(key.next)
-        finalCandidates = Candidates(remained.toSet ++ candidatesFromStorage.value)
+        candidatesForNextRound <- consensusStorage.getCandidates(key.next)
+        healthyCandidates = candidatesForNextRound.value.filterNot(peerId => removedFacilitators.map(_.peerId).contains(peerId))
+        finalCandidates = Candidates(remained.toSet ++ healthyCandidates)
 
         time <- Clock[F].monotonic
         lastGlobalSnapshotOrdinal <- lastGlobalSnapshotStorage.getOrdinal.map(_.getOrElse(SnapshotOrdinal.MinValue))

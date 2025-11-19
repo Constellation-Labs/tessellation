@@ -37,6 +37,12 @@ trait ConsensusManager[F[_], Key, Artifact, Context, Status, OutcomeC, Kind] {
 
   def withdrawFromConsensus: F[Unit]
 
+  private[consensus] def createFollowerState(
+    key: Key,
+    lastOutcome: OutcomeC,
+    resources: ConsensusResources[Artifact, Kind]
+  ): F[Option[ConsensusState[Key, Status, OutcomeC, Kind]]]
+
   private[consensus] def facilitateOnEvent: F[Unit]
 
   private[consensus] def processFacilitation(trigger: Option[ConsensusTrigger]): F[Unit]
@@ -84,6 +90,7 @@ object ConsensusManager {
     for {
       stallDetectionRef <- Ref.of[F, Map[Key, Long]](Map.empty)
       managerRef <- Deferred[F, ConsensusManager[F, Key, Artifact, Context, Status, OutcomeC, Kind]]
+      lateJoinerGraceRef <- Ref.of[F, Boolean](false)
 
       queue <- ConsensusQueue.make[F, Key](
         processFacilitation = trigger => managerRef.get.flatMap(_.processFacilitation(trigger)),
@@ -157,6 +164,7 @@ object ConsensusManager {
                   .trySetInitialConsensusOutcome(outcome)
                   .ifM(
                     nodeStorage.tryModifyState(Observing, WaitingForReady) >>
+                      lateJoinerGraceRef.set(true) >>
                       queue.requestFacilitation(none),
                     new Throwable("Error initializing consensus storage").raiseError[F, Unit]
                   )
@@ -223,6 +231,18 @@ object ConsensusManager {
                   }
               }.void
             }
+
+          def createFollowerState(
+            key: Key,
+            lastOutcome: OutcomeC,
+            resources: ConsensusResources[Artifact, Kind]
+          ): F[Option[ConsensusState[Key, Status, OutcomeC, Kind]]] =
+            consensusStateCreator.tryFacilitateConsensus(
+              key,
+              lastOutcome,
+              maybeTrigger = None,
+              resources
+            )
 
           def processStateUpdate(key: Key): F[Unit] =
             consensusStorage.getLastKey.flatMap {
@@ -308,6 +328,7 @@ object ConsensusManager {
                   logger.warn(s"Failed to update last consensus outcome for {key=${key.show}}")
                 )
               _ <- nodeStorage.tryModifyStateGetResult(WaitingForReady, Ready).void
+              _ <- lateJoinerGraceRef.set(false)
             } yield ()
 
           private def afterConsensusFinish(majorityTrigger: ConsensusTrigger): F[Unit] =
@@ -345,18 +366,22 @@ object ConsensusManager {
             } yield ()
 
           private def scheduleStallDetection(key: Key, state: ConsensusState[Key, Status, OutcomeC, Kind]): F[Unit] =
-            StallDetection.scheduleStallDetection(
-              key,
-              state,
-              config,
-              stallDetectionRef,
-              consensusOps,
-              consensusStorage,
-              consensusStateUpdater,
-              clusterStorage,
-              queue,
-              logger
-            )
+            lateJoinerGraceRef.get.flatMap { isFirstRoundAfterJoin =>
+              StallDetection.scheduleStallDetection(
+                key,
+                state,
+                config,
+                stallDetectionRef,
+                consensusOps,
+                consensusStorage,
+                consensusStateUpdater,
+                clusterStorage,
+                queue,
+                logger,
+                isFirstRoundAfterJoin
+              )
+            } >>
+              lateJoinerGraceRef.set(false)
 
           private def cancelStallDetection(key: Key): F[Unit] =
             stallDetectionRef.update(_ - key)
