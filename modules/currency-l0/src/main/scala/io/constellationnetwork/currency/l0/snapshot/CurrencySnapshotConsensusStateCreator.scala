@@ -65,16 +65,14 @@ object CurrencySnapshotConsensusStateCreator {
       lastOutcome: CurrencyConsensusOutcome,
       maybeTrigger: Option[ConsensusTrigger],
       resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind]
-    ): F[(CurrencySnapshotConsensusState, F[Unit])] =
+    ): F[(CurrencySnapshotConsensusState, F[Unit])] = {
+      val oldFacilitators = lastOutcome.facilitators.value
+        .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
+
+      val newCandidates = lastOutcome.finished.candidates.value
+        .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
+
       for {
-        oldFacilitators <- lastOutcome.facilitators.value
-          .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
-          .pure[F]
-
-        newCandidates <- lastOutcome.finished.candidates.value
-          .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
-          .pure[F]
-
         oldFacilitatorsWithStatus <- oldFacilitators.traverse { peerId =>
           if (peerId === selfId) {
             Applicative[F].pure(
@@ -166,5 +164,6 @@ object CurrencySnapshotConsensusStateCreator {
           spreadAckKinds = Set.empty
         )
       } yield (state, effect)
+    }
   }
 }

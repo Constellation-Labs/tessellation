@@ -58,16 +58,14 @@ object GlobalSnapshotConsensusStateCreator {
       lastOutcome: GlobalConsensusOutcome,
       maybeTrigger: Option[ConsensusTrigger],
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind]
-    ): F[(GlobalSnapshotConsensusState, F[Unit])] =
+    ): F[(GlobalSnapshotConsensusState, F[Unit])] = {
+      val oldFacilitators = lastOutcome.facilitators.value
+        .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
+
+      val newCandidates = lastOutcome.finished.candidates.value
+        .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
+
       for {
-        oldFacilitators <- lastOutcome.facilitators.value
-          .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
-          .pure[F]
-
-        newCandidates <- lastOutcome.finished.candidates.value
-          .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
-          .pure[F]
-
         oldFacilitatorsWithStatus <- oldFacilitators.traverse { peerId =>
           if (peerId === selfId) {
             Applicative[F].pure(
@@ -139,7 +137,7 @@ object GlobalSnapshotConsensusStateCreator {
         effect = gossip.spread(
           ConsensusPeerDeclaration(
             key,
-            Facility(upperBound, finalCandidates, maybeTrigger, lastOutcome.finished.facilitatorsHash, lastOutcome.key)
+            facilityDeclaration
           )
         )
 
@@ -156,5 +154,6 @@ object GlobalSnapshotConsensusStateCreator {
           spreadAckKinds = Set.empty
         )
       } yield (state, effect)
+    }
   }
 }

@@ -183,7 +183,7 @@ const thirdNodeFraction1 = 7500000
 
 const testCreateNodeParameters = async (urls) => {
   logWorkflow.info('---- Start testCreateNodeParameters ----')
-  const initialNodeParams = await getNodeParams(urls)
+  const initialNodeParams = await getNodeParams(urls, true)
   verifyInitialNodeParams(initialNodeParams)
   logWorkflow.info('Initial node params is OK')
 
@@ -217,21 +217,29 @@ const testCreateNodeParameters = async (urls) => {
       : path.join(__dirname, 'keys', 'validator-2-node.hex'),
   )
 
-  await checkInitialNodeParamsNode(urls, nodeId1)
-  logWorkflow.info('Check initial node params is OK')
+  await withRetry(
+      async () => {
+          await checkInitialNodeParamsNode(urls, nodeId1)
+          logWorkflow.info('Check initial node params is OK')
 
-  const ur1 = await postNodeParamsNodeId(
-    urls,
-    nodeId1,
-    account1,
-    privateKeyString1,
-    firstNodeParameterName1,
-    firstNodeFraction1,
+          const ur1 = await postNodeParamsNodeId(
+              urls,
+              nodeId1,
+              account1,
+              privateKeyString1,
+              firstNodeParameterName1,
+              firstNodeFraction1,
+          )
+          checkOk(ur1)
+          logWorkflow.info('create node params 1 is OK')
+      }, {
+          name: 'checkInitialNodeParamIsOk',
+          maxAttempts: 10,
+          interval: 1000,
+          handleError: () => {},
+      }
   )
-  checkOk(ur1)
-  logWorkflow.info('create node params 1 is OK')
-
-  const nodeParamsAfterUpdate = await getNodeParams(urls)
+  const nodeParamsAfterUpdate = await getNodeParams(urls, false)
   verifyNodeParamsResponse(
     nodeParamsAfterUpdate,
     nodeId1,
@@ -260,24 +268,32 @@ const testCreateNodeParameters = async (urls) => {
   checkOk(ur2)
   logWorkflow.info('Update node params second time is OK')
 
-  const nodeParamsAfterSecondUpdate = await getNodeParams(urls)
-  verifyNodeParamsResponse(
-    nodeParamsAfterSecondUpdate,
-    nodeId1,
-    firstNodeParameterName2,
-    firstNodeFraction2,
-  )
-  logWorkflow.info('Check second updates node params is OK')
+  await withRetry(
+    async () => {
+          const nodeParamsAfterSecondUpdate = await getNodeParams(urls, false)
+          verifyNodeParamsResponse(
+            nodeParamsAfterSecondUpdate,
+            nodeId1,
+            firstNodeParameterName2,
+            firstNodeFraction2,
+          )
+          logWorkflow.info('Check second updates node params is OK')
 
-  await getNodeParamsNodeIdVerify(
-    urls,
-    nodeId1,
-    firstNodeParameterName2,
-    firstNodeFraction2,
-    1,
-  )
-  logWorkflow.info('Check second updates node params node is OK')
-
+          await getNodeParamsNodeIdVerify(
+            urls,
+            nodeId1,
+            firstNodeParameterName2,
+            firstNodeFraction2,
+            1,
+          )
+          logWorkflow.info('Check second updates node params node is OK')
+        }, {
+            name: 'nodeParamsAfterSecondUpdate',
+            maxAttempts: 10,
+            interval: 1000,
+            handleError: () => {},
+        }
+    )
   //Send incorrect amount
   const ur3 = await postNodeParamsNodeId(
     urls,
@@ -312,13 +328,22 @@ const testCreateNodeParameters = async (urls) => {
   // tends to fail here in CI, wait a little longer
   await sleep(5000)
 
-  await getNodeParamsNodeIdVerify(
-    urls,
-    nodeId2,
-    secondNodeParameterName1,
-    secondNodeFraction1,
-    0,
-  )
+  await withRetry(
+  async () => {
+        await getNodeParamsNodeIdVerify(
+            urls,
+            nodeId2,
+            secondNodeParameterName1,
+            secondNodeFraction1,
+            0,
+        )
+        }, {
+            name: 'checkUpdatingNode2WithCorrectParams',
+            maxAttempts: 10,
+            interval: 1000,
+            handleError: () => {},
+        }
+    )
   logWorkflow.info('Update second node params is OK')
 
   logWorkflow.info('Create third node params')
@@ -335,30 +360,39 @@ const testCreateNodeParameters = async (urls) => {
   // tends to fail here in CI, wait a little longer
   await sleep(5000)
 
-  const allNodeParams = await getNodeParams(urls)
-  if (allNodeParams.length !== 3) {
-    throw new Error(`Expected 3 node params, got ${allNodeParams.length}`)
-  }
+    await withRetry(
+        async () => {
+            const allNodeParams = await getNodeParams(urls, false)
+            if (allNodeParams.length !== 3) {
+                throw new Error(`Expected 3 node params, got ${allNodeParams.length}`)
+            }
 
-  verifyNodeParamsResponse(
-    allNodeParams,
-    nodeId1,
-    firstNodeParameterName2,
-    firstNodeFraction2,
-  )
-  verifyNodeParamsResponse(
-    allNodeParams,
-    nodeId2,
-    secondNodeParameterName1,
-    secondNodeFraction1,
-  )
-  verifyNodeParamsResponse(
-    allNodeParams,
-    nodeId3,
-    thirdNodeParameterName1,
-    thirdNodeFraction1,
-  )
-  logWorkflow.info('All nodes check is OK')
+            verifyNodeParamsResponse(
+                allNodeParams,
+                nodeId1,
+                firstNodeParameterName2,
+                firstNodeFraction2,
+            )
+            verifyNodeParamsResponse(
+                allNodeParams,
+                nodeId2,
+                secondNodeParameterName1,
+                secondNodeFraction1,
+            )
+            verifyNodeParamsResponse(
+                allNodeParams,
+                nodeId3,
+                thirdNodeParameterName1,
+                thirdNodeFraction1,
+            )
+            logWorkflow.info('All nodes check is OK')
+        }, {
+            name: 'expectAllParamsBeOk',
+            maxAttempts: 10,
+            interval: 1000,
+            handleError: () => {},
+        }
+    )
 
   logWorkflow.info('---- End testCreateNodeParameters ----')
 }
@@ -708,10 +742,10 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
 const testDelegatedStaking = async (urls) => {
   const account = setupDag4Account(urls)
   account.loginPrivateKey(PRIVATE_KEYS.key4)
-  
+
   await testCreateNodeParameters(urls)
 
-  const nodeParams = await getNodeParams(urls)
+  const nodeParams = await getNodeParams(urls, false)
 
   const [stakeHash] = await testCreateDelegatedStake(urls, account, [
     nodeParams[0].peerId,
