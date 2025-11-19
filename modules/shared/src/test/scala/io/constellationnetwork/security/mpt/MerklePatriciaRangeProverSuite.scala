@@ -10,6 +10,7 @@ import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.generators.addressGen
 import io.constellationnetwork.schema.mpt.{GlobalStateFieldId, GlobalStateKey}
+import io.constellationnetwork.schema.mpt.PartitionNamespace._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt.prover.MerklePatriciaRangeProver
@@ -213,7 +214,12 @@ object MerklePatriciaRangeProverSuite extends MutableIOSuite with Checkers {
         for {
           keys <- addresses.traverse { addr =>
             GlobalStateKey.toHex[IO](
-              GlobalStateKey(GlobalStateFieldId.Balances, None, Some(addr), None)
+              GlobalStateKey(
+                HypergraphNamespace,
+                GlobalStateFieldId.Balances,
+                EmptyNamespace,
+                AddressNamespace(addr)
+              )
             )
           }
           keyValuePairs <- keys.zipWithIndex.traverse {

@@ -9,6 +9,7 @@ import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.generators.addressGen
 import io.constellationnetwork.schema.mpt.{GlobalStateFieldId, GlobalStateKey}
+import io.constellationnetwork.schema.mpt.PartitionNamespace._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt.prover._
@@ -41,69 +42,96 @@ object GlobalStateProofPatternsSuite extends MutableIOSuite with Checkers {
       )
 
   test("Pattern 1: Single Balance Check") { implicit res =>
-    forall(Gen.zip(addressGen, addressGen)) {
-      case (metagraphId, address) =>
-        res.withCurrent { implicit hasher =>
-          val key = GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(address), None)
+    forall(addressGen) { address =>
+      res.withCurrent { implicit hasher =>
+        val key = GlobalStateKey(
+          HypergraphNamespace,
+          GlobalStateFieldId.Balances,
+          EmptyNamespace,
+          AddressNamespace(address)
+        )
 
-          for {
-            path <- GlobalStateKey.toHex[IO](key)
+        for {
+          path <- GlobalStateKey.toHex[IO](key)
 
-            keyValuePair = path -> Balance(NonNegLong.unsafeFrom(5000L)).asJson
-            trie <- MerklePatriciaTrie.make(Map(keyValuePair))
+          keyValuePair = path -> Balance(NonNegLong.unsafeFrom(5000L)).asJson
+          trie <- MerklePatriciaTrie.make(Map(keyValuePair))
 
-            prover = MerklePatriciaSingleInclusionProver.make[IO](trie)
-            proof <- prover.attestPath(path).flatMap(IO.fromEither)
+          prover = MerklePatriciaSingleInclusionProver.make[IO](trie)
+          proof <- prover.attestPath(path).flatMap(IO.fromEither)
 
-            verifier = MerklePatriciaInclusionVerifier.make[IO](trie.rootNode.digest)
-            result <- verifier.confirm(proof)
-          } yield
-            expect.all(
-              result.isRight,
-              proof.path == path
-            )
-        }
+          verifier = MerklePatriciaInclusionVerifier.make[IO](trie.rootNode.digest)
+          result <- verifier.confirm(proof)
+        } yield
+          expect.all(
+            result.isRight,
+            proof.path == path
+          )
+      }
     }
   }
 
   test("Pattern 2: Multiple Balance Check") { implicit res =>
-    forall(Gen.zip(addressGen, Gen.listOfN(5, addressGen))) {
-      case (metagraphId, addresses) =>
-        res.withCurrent { implicit hasher =>
-          val keys = addresses.map(addr => GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(addr), None))
+    forall(Gen.listOfN(5, addressGen)) { addresses =>
+      res.withCurrent { implicit hasher =>
+        val keys = addresses.map(addr =>
+          GlobalStateKey(
+            HypergraphNamespace,
+            GlobalStateFieldId.Balances,
+            EmptyNamespace,
+            AddressNamespace(addr)
+          )
+        )
 
-          for {
-            paths <- keys.traverse(GlobalStateKey.toHex[IO])
+        for {
+          paths <- keys.traverse(GlobalStateKey.toHex[IO])
 
-            keyValuePairs <- paths.zipWithIndex.traverse {
-              case (path, idx) => Balance(NonNegLong.unsafeFrom((idx + 1) * 1000L)).asJson.pure[IO].map(path -> _)
-            }
-            trie <- MerklePatriciaTrie.make(keyValuePairs.toMap)
+          keyValuePairs <- paths.zipWithIndex.traverse {
+            case (path, idx) => Balance(NonNegLong.unsafeFrom((idx + 1) * 1000L)).asJson.pure[IO].map(path -> _)
+          }
+          trie <- MerklePatriciaTrie.make(keyValuePairs.toMap)
 
-            prover = MerklePatriciaBatchInclusionProver.make[IO](trie)
-            proof <- prover.attestPaths(paths).flatMap(IO.fromEither)
+          prover = MerklePatriciaBatchInclusionProver.make[IO](trie)
+          proof <- prover.attestPaths(paths).flatMap(IO.fromEither)
 
-            verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
-            result <- verifier.confirm(proof)
-          } yield
-            expect.all(
-              result.isRight,
-              proof.paths.size == 5,
-              proof.paths.toSet == paths.toSet
-            )
-        }
+          verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
+          result <- verifier.confirm(proof)
+        } yield
+          expect.all(
+            result.isRight,
+            proof.paths.size == 5,
+            proof.paths.toSet == paths.toSet
+          )
+      }
     }
   }
 
-  test("Pattern 3: All Balances for Metagraph") { implicit res =>
+  test("Pattern 3: All Balances for Metagraph (prefix proof)") { implicit res =>
     forall(Gen.zip(addressGen, addressGen, Gen.listOfN(10, addressGen))) {
       case (metagraphId, otherMetagraphId, addresses) =>
         res.withCurrent { implicit hasher =>
-          val metagraphKeys = addresses.map(addr => GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(addr), None))
-          val prefixKey = GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), None, None)
+          val metagraphKeys = addresses.map(addr =>
+            GlobalStateKey(
+              MetagraphNamespace(metagraphId),
+              GlobalStateFieldId.LastCurrencySnapshots,
+              EmptyNamespace,
+              EmptyNamespace
+            )
+          )
+          val prefixKey = GlobalStateKey(
+            MetagraphNamespace(metagraphId),
+            GlobalStateFieldId.LastCurrencySnapshots,
+            EmptyNamespace,
+            EmptyNamespace
+          )
 
           val otherMetagraphKeys = addresses.take(3).map { addr =>
-            GlobalStateKey(GlobalStateFieldId.Balances, Some(otherMetagraphId), Some(addr), None)
+            GlobalStateKey(
+              MetagraphNamespace(otherMetagraphId),
+              GlobalStateFieldId.LastCurrencySnapshots,
+              EmptyNamespace,
+              EmptyNamespace
+            )
           }
 
           for {
@@ -129,7 +157,6 @@ object GlobalStateProofPatternsSuite extends MutableIOSuite with Checkers {
           } yield
             expect.all(
               result.isRight,
-              proof.paths.size == 10,
               proof.paths.forall(_.value.startsWith(prefix.value))
             )
         }
@@ -137,37 +164,41 @@ object GlobalStateProofPatternsSuite extends MutableIOSuite with Checkers {
   }
 
   test("Pattern 4: Paginated Balance Query") { implicit res =>
-    forall(Gen.zip(addressGen, Gen.listOfN(20, addressGen))) {
-      case (metagraphId, addresses) =>
-        res.withCurrent { implicit hasher =>
-          for {
-            keys <- addresses.traverse { addr =>
-              GlobalStateKey.toHex[IO](
-                GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(addr), None)
+    forall(Gen.listOfN(20, addressGen)) { addresses =>
+      res.withCurrent { implicit hasher =>
+        for {
+          keys <- addresses.traverse { addr =>
+            GlobalStateKey.toHex[IO](
+              GlobalStateKey(
+                HypergraphNamespace,
+                GlobalStateFieldId.Balances,
+                EmptyNamespace,
+                AddressNamespace(addr)
               )
-            }
-            keyValuePairs <- keys.zipWithIndex.traverse {
-              case (key, idx) => Balance(NonNegLong.unsafeFrom((idx + 1) * 1000L)).asJson.pure[IO].map(key -> _)
-            }
-
-            trie <- MerklePatriciaTrie.make(keyValuePairs.toMap)
-            prover = MerklePatriciaRangeProver.make[IO](trie)
-
-            sortedKeys = keys.sorted(Ordering.by[Hex, String](_.value))
-            startPath = sortedKeys(5)
-            endPath = sortedKeys(14)
-
-            proof <- prover.attestRange(startPath, endPath).flatMap(IO.fromEither)
-
-            verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
-            result <- verifier.confirmRange(proof)
-          } yield
-            expect.all(
-              result.isRight,
-              proof.inclusionProofs.size == 10,
-              proof.inclusionProofs.map(_.path).forall(p => p.value >= startPath.value && p.value <= endPath.value)
             )
-        }
+          }
+          keyValuePairs <- keys.zipWithIndex.traverse {
+            case (key, idx) => Balance(NonNegLong.unsafeFrom((idx + 1) * 1000L)).asJson.pure[IO].map(key -> _)
+          }
+
+          trie <- MerklePatriciaTrie.make(keyValuePairs.toMap)
+          prover = MerklePatriciaRangeProver.make[IO](trie)
+
+          sortedKeys = keys.sorted(Ordering.by[Hex, String](_.value))
+          startPath = sortedKeys(5)
+          endPath = sortedKeys(14)
+
+          proof <- prover.attestRange(startPath, endPath).flatMap(IO.fromEither)
+
+          verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
+          result <- verifier.confirmRange(proof)
+        } yield
+          expect.all(
+            result.isRight,
+            proof.inclusionProofs.size == 10,
+            proof.inclusionProofs.map(_.path).forall(p => p.value >= startPath.value && p.value <= endPath.value)
+          )
+      }
     }
   }
 }

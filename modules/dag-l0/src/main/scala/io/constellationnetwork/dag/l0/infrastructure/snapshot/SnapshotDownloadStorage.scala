@@ -61,7 +61,7 @@ object SnapshotDownloadStorage {
         proof: GlobalSnapshotStateProof
       )(implicit hasher: Hasher[F]): F[Boolean] =
         (hashSelect.select(ordinal) match {
-          case JsonHash => snapshotInfoStorage.read(ordinal).flatMap(_.traverse(_.mptOnlyStateProof[F](ordinal)))
+          case JsonHash => snapshotInfoStorage.read(ordinal).flatMap(_.traverse(_.stateProof[F](ordinal)))
           case KryoHash =>
             snapshotInfoKryoStorage
               .read(ordinal)
@@ -88,8 +88,8 @@ object SnapshotDownloadStorage {
           case Some((snapshot, info)) =>
             info
               .bitraverse(
-                v2 => v2.stateProof[F](ordinal).map(GlobalSnapshotStateProof.fromLegacyProof),
-                _.mptOnlyStateProof[F](ordinal)
+                f = _.stateProof[F](ordinal).map(GlobalSnapshotStateProof.fromLegacyProof),
+                g = _.stateProof[F](ordinal)
               )
               .flatMap { either =>
                 val stateProof = either.fold(identity, identity)

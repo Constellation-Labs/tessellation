@@ -8,6 +8,7 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.generators.addressGen
 import io.constellationnetwork.schema.mpt.{GlobalStateFieldId, GlobalStateKey}
+import io.constellationnetwork.schema.mpt.PartitionNamespace._
 import io.constellationnetwork.security._
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
@@ -30,15 +31,40 @@ object GlobalStateKeySerializationSuite extends MutableIOSuite with Checkers {
         hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
       )
 
-  test("toHex produces valid hex string of 130 characters for full key without secondary") { implicit res =>
+  test("toHex produces valid hex string for hypergraph key with user address") { implicit res =>
+    forall(addressGen) { address =>
+      res.withCurrent { implicit hasher =>
+        val key = GlobalStateKey(
+          HypergraphNamespace,
+          GlobalStateFieldId.Balances,
+          EmptyNamespace,
+          AddressNamespace(address)
+        )
+
+        GlobalStateKey.toHex[IO](key).map { hex =>
+          expect.all(
+            hex.value.length == 78,
+            hex.value.forall(c => c.isDigit || (c >= 'a' && c <= 'f'))
+          )
+        }
+      }
+    }
+  }
+
+  test("toHex produces valid hex string for metagraph key") { implicit res =>
     forall(Gen.zip(addressGen, addressGen)) {
       case (metagraphId, address) =>
         res.withCurrent { implicit hasher =>
-          val key = GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(address), None)
+          val key = GlobalStateKey(
+            MetagraphNamespace(metagraphId),
+            GlobalStateFieldId.Balances,
+            EmptyNamespace,
+            AddressNamespace(address)
+          )
 
           GlobalStateKey.toHex[IO](key).map { hex =>
             expect.all(
-              hex.value.length == 130,
+              hex.value.length == 142,
               hex.value.forall(c => c.isDigit || (c >= 'a' && c <= 'f'))
             )
           }
@@ -47,25 +73,39 @@ object GlobalStateKeySerializationSuite extends MutableIOSuite with Checkers {
   }
 
   test("toHex is deterministic for same input") { implicit res =>
-    forall(Gen.zip(addressGen, addressGen)) {
-      case (metagraphId, address) =>
-        res.withCurrent { implicit hasher =>
-          val key = GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(address), None)
+    forall(addressGen) { address =>
+      res.withCurrent { implicit hasher =>
+        val key = GlobalStateKey(
+          HypergraphNamespace,
+          GlobalStateFieldId.Balances,
+          EmptyNamespace,
+          AddressNamespace(address)
+        )
 
-          for {
-            hex1 <- GlobalStateKey.toHex[IO](key)
-            hex2 <- GlobalStateKey.toHex[IO](key)
-          } yield expect(hex1 == hex2)
-        }
+        for {
+          hex1 <- GlobalStateKey.toHex[IO](key)
+          hex2 <- GlobalStateKey.toHex[IO](key)
+        } yield expect(hex1 == hex2)
+      }
     }
   }
 
   test("toHex produces different outputs for different addresses") { implicit res =>
-    forall(Gen.zip(addressGen, addressGen, addressGen)) {
-      case (metagraphId, address1, address2) =>
+    forall(Gen.zip(addressGen, addressGen)) {
+      case (address1, address2) =>
         res.withCurrent { implicit hasher =>
-          val key1 = GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(address1), None)
-          val key2 = GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(address2), None)
+          val key1 = GlobalStateKey(
+            HypergraphNamespace,
+            GlobalStateFieldId.Balances,
+            EmptyNamespace,
+            AddressNamespace(address1)
+          )
+          val key2 = GlobalStateKey(
+            HypergraphNamespace,
+            GlobalStateFieldId.Balances,
+            EmptyNamespace,
+            AddressNamespace(address2)
+          )
 
           for {
             hex1 <- GlobalStateKey.toHex[IO](key1)
@@ -77,127 +117,184 @@ object GlobalStateKeySerializationSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("partial key produces shorter output than full key") { implicit res =>
+  test("prefix key produces shorter output than full key") { implicit res =>
     forall(Gen.zip(addressGen, addressGen)) {
       case (metagraphId, address) =>
         res.withCurrent { implicit hasher =>
-          val prefixKey = GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), None, None)
-          val fullKey = GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(address), None)
+          val prefixKey = GlobalStateKey(
+            MetagraphNamespace(metagraphId),
+            GlobalStateFieldId.LastCurrencySnapshots,
+            EmptyNamespace,
+            EmptyNamespace
+          )
+          val fullKey = GlobalStateKey(
+            MetagraphNamespace(metagraphId),
+            GlobalStateFieldId.Balances,
+            EmptyNamespace,
+            AddressNamespace(address)
+          )
 
           for {
             prefixHex <- GlobalStateKey.toHex[IO](prefixKey)
             fullHex <- GlobalStateKey.toHex[IO](fullKey)
           } yield
             expect.all(
-              prefixHex.value.length == 66,
-              fullHex.value.length == 130,
-              fullHex.value.startsWith(prefixHex.value)
+              prefixHex.value.length == 78,
+              fullHex.value.length == 142
             )
         }
     }
   }
 
-  test("prefix key matches all full keys with same prefix") { implicit res =>
-    forall(Gen.zip(addressGen, Gen.listOfN(5, addressGen))) {
+  test("keys with same network namespace share prefix") { implicit res =>
+    forall(Gen.zip(addressGen, Gen.listOfN(3, addressGen))) {
       case (metagraphId, addresses) =>
         res.withCurrent { implicit hasher =>
-          val prefixKey = GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), None, None)
-          val fullKeys = addresses.map(addr => GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(addr), None))
+          val keys = addresses.map(addr =>
+            GlobalStateKey(
+              MetagraphNamespace(metagraphId),
+              GlobalStateFieldId.Balances,
+              EmptyNamespace,
+              AddressNamespace(addr)
+            )
+          )
 
           for {
-            prefix <- GlobalStateKey.toHex[IO](prefixKey)
-            fullHexes <- fullKeys.traverse(GlobalStateKey.toHex[IO])
-          } yield
+            hexes <- keys.traverse(GlobalStateKey.toHex[IO])
+          } yield {
+            val networkPrefix = hexes.head.value.take(66)
             expect.all(
-              fullHexes.forall(_.value.startsWith(prefix.value))
+              hexes.forall(_.value.take(66) == networkPrefix)
             )
+          }
         }
     }
   }
 
   test("different field IDs produce different hex outputs") { implicit res =>
-    forall(Gen.zip(addressGen, addressGen)) {
-      case (metagraphId, address) =>
-        res.withCurrent { implicit hasher =>
-          val balanceKey = GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(address), None)
-          val txRefKey = GlobalStateKey(GlobalStateFieldId.LastTxRefs, Some(metagraphId), Some(address), None)
+    forall(addressGen) { address =>
+      res.withCurrent { implicit hasher =>
+        val balanceKey = GlobalStateKey(
+          HypergraphNamespace,
+          GlobalStateFieldId.Balances,
+          EmptyNamespace,
+          AddressNamespace(address)
+        )
+        val txRefKey = GlobalStateKey(
+          HypergraphNamespace,
+          GlobalStateFieldId.LastTxRefs,
+          EmptyNamespace,
+          AddressNamespace(address)
+        )
 
-          for {
-            balanceHex <- GlobalStateKey.toHex[IO](balanceKey)
-            txRefHex <- GlobalStateKey.toHex[IO](txRefKey)
-          } yield expect(balanceHex != txRefHex)
-        }
+        for {
+          balanceHex <- GlobalStateKey.toHex[IO](balanceKey)
+          txRefHex <- GlobalStateKey.toHex[IO](txRefKey)
+        } yield expect(balanceHex != txRefHex)
+      }
     }
   }
 
-  test("None metagraphId omits metagraph from output") { implicit res =>
+  test("hypergraph key starts with 00") { implicit res =>
     forall(addressGen) { address =>
       res.withCurrent { implicit hasher =>
-        val key = GlobalStateKey(GlobalStateFieldId.Balances, None, Some(address), None)
+        val key = GlobalStateKey(
+          HypergraphNamespace,
+          GlobalStateFieldId.Balances,
+          EmptyNamespace,
+          AddressNamespace(address)
+        )
 
         GlobalStateKey.toHex[IO](key).map { hex =>
           expect.all(
-            hex.value.length == 66,
-            hex.value.take(2) == f"${GlobalStateFieldId.Balances.toByte}%02x"
+            hex.value.take(2) == "00"
           )
         }
       }
     }
   }
 
-  test("hierarchical prefix matching works for nested keys") { implicit res =>
-    forall(Gen.zip(addressGen, addressGen, addressGen)) {
-      case (metagraphId, primaryAddr, secondaryAddr) =>
-        res.withCurrent { implicit hasher =>
-          val level1Key = GlobalStateKey(GlobalStateFieldId.ActiveTokenLocks, Some(metagraphId), None, None)
-          val level2Key =
-            GlobalStateKey(GlobalStateFieldId.ActiveTokenLocks, Some(metagraphId), Some(primaryAddr), None)
-          val fullKey =
-            GlobalStateKey(GlobalStateFieldId.ActiveTokenLocks, Some(metagraphId), Some(primaryAddr), Some(secondaryAddr))
-
-          for {
-            level1Prefix <- GlobalStateKey.toHex[IO](level1Key)
-            level2Prefix <- GlobalStateKey.toHex[IO](level2Key)
-            fullHex <- GlobalStateKey.toHex[IO](fullKey)
-          } yield
-            expect.all(
-              fullHex.value.startsWith(level1Prefix.value),
-              fullHex.value.startsWith(level2Prefix.value),
-              level2Prefix.value.startsWith(level1Prefix.value),
-              level1Prefix.value.length == 66,
-              level2Prefix.value.length == 130,
-              fullHex.value.length == 194
-            )
-        }
-    }
-  }
-
-  test("field ID is correctly encoded at position 0-1") { implicit res =>
+  test("metagraph key starts with 01") { implicit res =>
     forall(Gen.zip(addressGen, addressGen)) {
       case (metagraphId, address) =>
         res.withCurrent { implicit hasher =>
-          val key = GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(address), None)
+          val key = GlobalStateKey(
+            MetagraphNamespace(metagraphId),
+            GlobalStateFieldId.Balances,
+            EmptyNamespace,
+            AddressNamespace(address)
+          )
 
           GlobalStateKey.toHex[IO](key).map { hex =>
-            val fieldIdHex = hex.value.substring(0, 2)
-            expect(fieldIdHex == f"${GlobalStateFieldId.Balances.toByte}%02x")
+            expect.all(
+              hex.value.take(2) == "01"
+            )
           }
         }
     }
   }
 
-  test("keys with same metagraph and field share prefix") { implicit res =>
-    forall(Gen.zip(addressGen, addressGen, addressGen)) {
-      case (metagraphId, addr1, addr2) =>
+  test("hierarchical prefix matching works for nested keys with contract namespace") { implicit res =>
+    forall(Gen.zip(addressGen, addressGen)) {
+      case (contractAddr, userAddr) =>
         res.withCurrent { implicit hasher =>
-          val key1 = GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(addr1), None)
-          val key2 = GlobalStateKey(GlobalStateFieldId.Balances, Some(metagraphId), Some(addr2), None)
+          val level1Key = GlobalStateKey(
+            HypergraphNamespace,
+            GlobalStateFieldId.TokenLockBalances,
+            EmptyNamespace,
+            EmptyNamespace
+          )
+          val level2Key = GlobalStateKey(
+            HypergraphNamespace,
+            GlobalStateFieldId.TokenLockBalances,
+            AddressNamespace(contractAddr),
+            EmptyNamespace
+          )
+          val fullKey = GlobalStateKey(
+            HypergraphNamespace,
+            GlobalStateFieldId.TokenLockBalances,
+            AddressNamespace(contractAddr),
+            AddressNamespace(userAddr)
+          )
+
+          for {
+            level1Hex <- GlobalStateKey.toHex[IO](level1Key)
+            level2Hex <- GlobalStateKey.toHex[IO](level2Key)
+            fullHex <- GlobalStateKey.toHex[IO](fullKey)
+          } yield
+            expect.all(
+              level1Hex.value.length == 14,
+              level2Hex.value.length == 78,
+              fullHex.value.length == 142,
+              fullHex.value.startsWith(level2Hex.value.take(78)),
+              level2Hex.value.startsWith(level1Hex.value)
+            )
+        }
+    }
+  }
+
+  test("keys with same hypergraph and field share prefix") { implicit res =>
+    forall(Gen.zip(addressGen, addressGen)) {
+      case (addr1, addr2) =>
+        res.withCurrent { implicit hasher =>
+          val key1 = GlobalStateKey(
+            HypergraphNamespace,
+            GlobalStateFieldId.Balances,
+            EmptyNamespace,
+            AddressNamespace(addr1)
+          )
+          val key2 = GlobalStateKey(
+            HypergraphNamespace,
+            GlobalStateFieldId.Balances,
+            EmptyNamespace,
+            AddressNamespace(addr2)
+          )
 
           for {
             hex1 <- GlobalStateKey.toHex[IO](key1)
             hex2 <- GlobalStateKey.toHex[IO](key2)
           } yield {
-            val sharedPrefix = hex1.value.substring(0, 66)
+            val sharedPrefix = hex1.value.substring(0, 10)
             expect(hex2.value.startsWith(sharedPrefix))
           }
         }

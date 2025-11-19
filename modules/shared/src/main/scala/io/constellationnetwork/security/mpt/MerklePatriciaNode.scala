@@ -4,13 +4,18 @@ import cats.effect.Sync
 import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
-
+import cats.{Eq, Order, Show}
+import derevo.cats.{eqv, order, show}
+import derevo.circe.magnolia.{decoder, encoder}
+import derevo.derive
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.mpt.MerklePatriciaCommitment.Extension.extensionCommitEncoder
-
 import io.circe._
 import io.circe.syntax.EncoderOps
+
+@derive(decoder, encoder, eqv, show, order)
+case class MptRoot(value: Hash) extends AnyVal
 
 sealed trait MerklePatriciaNode {
   def digest: Hash

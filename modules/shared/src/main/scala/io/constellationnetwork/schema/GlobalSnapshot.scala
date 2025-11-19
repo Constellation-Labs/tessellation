@@ -65,7 +65,7 @@ case class GlobalIncrementalSnapshot(
 
 object GlobalIncrementalSnapshot {
   def fromGlobalSnapshot[F[_]: Parallel: Sync: Hasher](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshot] =
-    snapshot.info.mptOnlyStateProof[F](snapshot.ordinal).map { stateProof =>
+    GlobalSnapshotInfoV1.toGlobalSnapshotInfo(snapshot.info).stateProof[F](snapshot.ordinal).map { stateProof =>
       GlobalIncrementalSnapshot(
         snapshot.ordinal,
         snapshot.height,
@@ -329,7 +329,7 @@ object GlobalSnapshot {
   def mkFirstIncrementalSnapshot[F[_]: Parallel: Sync: Hasher](
     genesis: Hashed[GlobalSnapshot]
   ): F[GlobalIncrementalSnapshot] =
-    GlobalSnapshotInfoV1.toGlobalSnapshotInfo(genesis.info).mptOnlyStateProof[F](genesis.ordinal).map { stateProof =>
+    GlobalSnapshotInfoV1.toGlobalSnapshotInfo(genesis.info).stateProof[F](genesis.ordinal).map { stateProof =>
       GlobalIncrementalSnapshot(
         genesis.ordinal.next,
         genesis.height,

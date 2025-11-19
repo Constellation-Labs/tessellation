@@ -11,7 +11,9 @@ import io.constellationnetwork.security.mpt.producer.MerklePatriciaProducer
 import io.circe._
 import io.circe.syntax._
 
-final case class MerklePatriciaTrie(rootNode: MerklePatriciaNode)
+final case class MerklePatriciaTrie(rootNode: MerklePatriciaNode) {
+  def rootHash: MptRoot = MptRoot(rootNode.digest)
+}
 
 object MerklePatriciaTrie {
 

@@ -137,7 +137,7 @@ object RewardsServiceSuite extends SimpleIOSuite {
       lastTxRefsProof = Hash("proof2"),
       balancesProof = Hash("proof3"),
       lastCurrencySnapshotsProof = Hash.empty,
-      mptRoot = Hash.empty
+      auxiliaryProof = Hash.empty
     ),
     allowSpendBlocks = Some(SortedSet.empty),
     tokenLockBlocks = Some(SortedSet.empty),

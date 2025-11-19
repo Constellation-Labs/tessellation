@@ -1,5 +1,6 @@
 package io.constellationnetwork.schema.mpt
 
+import cats.Parallel
 import cats.effect.Sync
 import cats.syntax.all._
 
@@ -10,6 +11,9 @@ import io.constellationnetwork.schema.GlobalSnapshotInfo
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.swap.AllowSpend
+import io.constellationnetwork.security.Hasher
+import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.mpt.{MerklePatriciaTrie, MptRoot}
 import io.constellationnetwork.security.signature.Signed
 
 import io.circe.syntax.EncoderOps
@@ -17,24 +21,67 @@ import io.circe.{Encoder, Json}
 
 object GlobalStateConverter {
 
-  def toKeyValuePairs[F[_]: Sync](
+  def toStateChannelHashesKeyValuePairs[F[_]: Sync](
+    info: GlobalSnapshotInfo
+  ): F[Map[GlobalStateKey, Json]] =
+    info.lastStateChannelSnapshotHashes.toSeq.map {
+      case (addr, hash) =>
+        GlobalStateKey.metagraph(addr, GlobalStateFieldId.LastStateChannelSnapshotHashes) -> hash.asJson
+    }.toMap.pure[F]
+
+  def toLastTxRefsKeyValuePairs[F[_]: Sync](
+    info: GlobalSnapshotInfo
+  ): F[Map[GlobalStateKey, Json]] =
+    info.lastTxRefs.toSeq.map {
+      case (addr, txRef) =>
+        GlobalStateKey.hypergraph(GlobalStateFieldId.LastTxRefs, addr) -> txRef.asJson
+    }.toMap.pure[F]
+
+  def toBalancesKeyValuePairs[F[_]: Sync](
+    info: GlobalSnapshotInfo
+  ): F[Map[GlobalStateKey, Json]] =
+    info.balances.toSeq.map {
+      case (addr, balance) =>
+        GlobalStateKey.hypergraph(GlobalStateFieldId.Balances, addr) -> balance.asJson
+    }.toMap.pure[F]
+
+  def toCurrencySnapshotsKeyValuePairs[F[_]: Sync](
+    info: GlobalSnapshotInfo
+  ): F[Map[GlobalStateKey, Json]] = {
+    val snapshotPairs = info.lastCurrencySnapshots.toSeq.flatMap {
+      case (metagraphAddr, Left(fullSnapshot)) =>
+        List(
+          GlobalStateKey.metagraph(metagraphAddr, GlobalStateFieldId.LastCurrencySnapshots) -> fullSnapshot.asJson
+        )
+      case (metagraphAddr, Right((incrementalSnapshot, snapshotInfo))) =>
+        List(
+          GlobalStateKey.metagraph(metagraphAddr, GlobalStateFieldId.LastCurrencySnapshots) -> incrementalSnapshot.asJson,
+          GlobalStateKey.metagraph(metagraphAddr, GlobalStateFieldId.LastCurrencySnapshotsProofs) -> snapshotInfo.asJson
+        )
+    }
+
+    val proofPairs = info.lastCurrencySnapshotsProofs.toSeq.map {
+      case (addr, proof) =>
+        GlobalStateKey.metagraph(addr, GlobalStateFieldId.LastCurrencySnapshotsProofs) -> proof.asJson
+    }
+
+    (snapshotPairs ++ proofPairs).toMap.pure[F]
+  }
+
+  def toOptionalFieldsKeyValuePairs[F[_]: Sync](
     info: GlobalSnapshotInfo
   ): F[Map[GlobalStateKey, Json]] = {
 
-    def flattenAddressMap[A: Encoder](
-      data: SortedMap[Address, A],
-      fieldId: GlobalStateFieldId
-    ): Map[GlobalStateKey, Json] =
-      data.toSeq.map {
-        case (addr, value) =>
-          GlobalStateKey(fieldId, None, Some(addr), None) -> value.asJson
-      }.toMap
-
-    def flattenOptionalAddressMap[A: Encoder](
+    def flattenHypergraphAddressMap[A: Encoder](
       dataOpt: Option[SortedMap[Address, A]],
       fieldId: GlobalStateFieldId
     ): Map[GlobalStateKey, Json] =
-      dataOpt.map(flattenAddressMap(_, fieldId)).getOrElse(Map.empty)
+      dataOpt.map { data =>
+        data.toSeq.map {
+          case (addr, value) =>
+            GlobalStateKey.hypergraph(fieldId, addr) -> value.asJson
+        }.toMap
+      }.getOrElse(Map.empty)
 
     def flattenTokenLockBalances(
       dataOpt: Option[SortedMap[Address, SortedMap[Address, Balance]]]
@@ -44,7 +91,7 @@ object GlobalStateConverter {
           case (tokenAddr, innerMap) =>
             innerMap.toSeq.map {
               case (holderAddr, balance) =>
-                GlobalStateKey(GlobalStateFieldId.TokenLockBalances, None, Some(tokenAddr), Some(holderAddr)) -> balance.asJson
+                GlobalStateKey.hypergraph(GlobalStateFieldId.TokenLockBalances, tokenAddr, holderAddr) -> balance.asJson
             }
         }.toMap
       }.getOrElse(Map.empty)
@@ -57,65 +104,58 @@ object GlobalStateConverter {
           case (optAddr, innerMap) =>
             innerMap.toSeq.map {
               case (addr, allowSpends) =>
-                GlobalStateKey(GlobalStateFieldId.ActiveAllowSpends, optAddr, Some(addr), None) -> allowSpends.asJson
+                GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveAllowSpends, optAddr, addr) -> allowSpends.asJson
             }
         }.toMap
       }.getOrElse(Map.empty)
 
-    def flattenLastCurrencySnapshots(
-      data: SortedMap[Address, Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]
-    ): Map[GlobalStateKey, Json] =
-      data.toSeq.flatMap {
-        case (metagraphAddr, Left(fullSnapshot)) =>
-          List(
-            GlobalStateKey(GlobalStateFieldId.LastCurrencySnapshots, Some(metagraphAddr), None, None) -> fullSnapshot.asJson
-          )
-        case (metagraphAddr, Right((incrementalSnapshot, snapshotInfo))) =>
-          List(
-            GlobalStateKey(GlobalStateFieldId.LastCurrencySnapshots, Some(metagraphAddr), None, None) -> incrementalSnapshot.asJson,
-            GlobalStateKey(GlobalStateFieldId.LastCurrencySnapshotsProofs, Some(metagraphAddr), None, None) -> snapshotInfo.asJson
-          )
-      }.toMap
-
     val allPairs =
-      flattenAddressMap(info.lastStateChannelSnapshotHashes, GlobalStateFieldId.LastStateChannelSnapshotHashes) ++
-        flattenAddressMap(info.lastTxRefs, GlobalStateFieldId.LastTxRefs) ++
-        flattenAddressMap(info.balances, GlobalStateFieldId.Balances) ++
-        flattenLastCurrencySnapshots(info.lastCurrencySnapshots) ++
-        flattenAddressMap(info.lastCurrencySnapshotsProofs, GlobalStateFieldId.LastCurrencySnapshotsProofs) ++
-        flattenActiveAllowSpends(info.activeAllowSpends) ++
-        flattenOptionalAddressMap(info.activeTokenLocks, GlobalStateFieldId.ActiveTokenLocks) ++
+      flattenActiveAllowSpends(info.activeAllowSpends) ++
+        flattenHypergraphAddressMap(info.activeTokenLocks, GlobalStateFieldId.ActiveTokenLocks) ++
         flattenTokenLockBalances(info.tokenLockBalances) ++
-        flattenOptionalAddressMap(info.lastAllowSpendRefs, GlobalStateFieldId.LastAllowSpendRefs) ++
-        flattenOptionalAddressMap(info.lastTokenLockRefs, GlobalStateFieldId.LastTokenLockRefs) ++
-        flattenOptionalAddressMap(info.activeDelegatedStakes, GlobalStateFieldId.ActiveDelegatedStakes) ++
-        flattenOptionalAddressMap(info.delegatedStakesWithdrawals, GlobalStateFieldId.DelegatedStakesWithdrawals) ++
-        flattenOptionalAddressMap(info.activeNodeCollaterals, GlobalStateFieldId.ActiveNodeCollaterals) ++
-        flattenOptionalAddressMap(info.nodeCollateralWithdrawals, GlobalStateFieldId.NodeCollateralWithdrawals) ++
-        flattenOptionalAddressMap(info.metagraphSyncData, GlobalStateFieldId.MetagraphSyncData)
+        flattenHypergraphAddressMap(info.lastAllowSpendRefs, GlobalStateFieldId.LastAllowSpendRefs) ++
+        flattenHypergraphAddressMap(info.lastTokenLockRefs, GlobalStateFieldId.LastTokenLockRefs) ++
+        flattenHypergraphAddressMap(info.activeDelegatedStakes, GlobalStateFieldId.ActiveDelegatedStakes) ++
+        flattenHypergraphAddressMap(info.delegatedStakesWithdrawals, GlobalStateFieldId.DelegatedStakesWithdrawals) ++
+        flattenHypergraphAddressMap(info.activeNodeCollaterals, GlobalStateFieldId.ActiveNodeCollaterals) ++
+        flattenHypergraphAddressMap(info.nodeCollateralWithdrawals, GlobalStateFieldId.NodeCollateralWithdrawals) ++
+        flattenHypergraphAddressMap(info.metagraphSyncData, GlobalStateFieldId.MetagraphSyncData)
 
     allPairs.pure[F]
   }
 
-  def toKeyValuePairsForMptOnly[F[_]: Sync](
-    info: GlobalSnapshotInfo
-  ): F[Map[GlobalStateKey, Json]] =
-    toKeyValuePairs[F](info).map { allPairs =>
-      allPairs.filterNot {
-        case (key, _) =>
-          key.fieldId match {
-            case GlobalStateFieldId.LastStateChannelSnapshotHashes => true
-            case GlobalStateFieldId.LastTxRefs                     => true
-            case GlobalStateFieldId.Balances                       => true
-            case GlobalStateFieldId.LastCurrencySnapshots          => true
-            case GlobalStateFieldId.LastCurrencySnapshotsProofs    => true
-            case _                                                 => false
-          }
-      }
+  object syntax {
+    implicit class GlobalSnapshotInfoMptOps(val info: GlobalSnapshotInfo) extends AnyVal {
+      def stateChannelHashesEntries[F[_]: Sync]: F[Map[GlobalStateKey, Json]] =
+        toStateChannelHashesKeyValuePairs(info)
+
+      def lastTxRefsEntries[F[_]: Sync]: F[Map[GlobalStateKey, Json]] =
+        toLastTxRefsKeyValuePairs(info)
+
+      def balancesEntries[F[_]: Sync]: F[Map[GlobalStateKey, Json]] =
+        toBalancesKeyValuePairs(info)
+
+      def currencySnapshotsEntries[F[_]: Sync]: F[Map[GlobalStateKey, Json]] =
+        toCurrencySnapshotsKeyValuePairs(info)
+
+      def auxiliaryStateEntries[F[_]: Sync]: F[Map[GlobalStateKey, Json]] =
+        toOptionalFieldsKeyValuePairs(info)
     }
 
-  def fromKeyValuePairs[F[_]: Sync](
-    pairs: Map[GlobalStateKey, Json]
-  ): F[GlobalSnapshotInfo] =
-    GlobalSnapshotInfo.empty.pure[F]
+    implicit class MptBuilderOps[F[_]: Parallel: Sync: Hasher](kvPairsF: F[Map[GlobalStateKey, Json]]) {
+      def buildMpt: F[MptRoot] =
+        for {
+          kvPairs <- kvPairsF
+          hexMap <- kvPairs.toList.parTraverse {
+            case (key, value) => GlobalStateKey.toHex[F](key).map(_ -> value)
+          }.map(_.toMap)
+          mptRoot <- hexMap.isEmpty
+            .pure[F]
+            .ifM(
+              ifTrue = MptRoot(Hash.empty).pure[F],
+              ifFalse = MerklePatriciaTrie.make[F, Json](hexMap).map(_.rootHash)
+            )
+        } yield mptRoot
+    }
+  }
 }
