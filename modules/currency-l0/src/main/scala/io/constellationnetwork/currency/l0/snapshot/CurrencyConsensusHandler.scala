@@ -5,7 +5,7 @@ import cats.syntax.semigroupk._
 
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusKind, CurrencyConsensusOutcome}
 import io.constellationnetwork.currency.schema.currency.CurrencySnapshotContext
-import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusRumorHandlers
+import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusQueue, ConsensusRumorHandlers}
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorHandler
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.security.HasherSelector
@@ -15,7 +15,7 @@ import io.circe.Decoder
 object CurrencyConsensusHandler {
   def make[F[_]: Async: HasherSelector](
     storage: CurrencyConsensusStorage[F],
-    manager: CurrencyConsensusManager[F],
+    queue: ConsensusQueue[F, CurrencySnapshotKey],
     fns: CurrencySnapshotConsensusFunctions[F]
   )(implicit eventDecoder: Decoder[CurrencySnapshotEvent]): RumorHandler[F] = {
     val all = new ConsensusRumorHandlers[
@@ -27,7 +27,7 @@ object CurrencyConsensusHandler {
       CurrencySnapshotStatus,
       CurrencyConsensusOutcome,
       CurrencyConsensusKind
-    ](storage, manager, fns)
+    ](storage, queue, fns)
 
     all.eventHandler <+>
       all.facilityHandler <+>

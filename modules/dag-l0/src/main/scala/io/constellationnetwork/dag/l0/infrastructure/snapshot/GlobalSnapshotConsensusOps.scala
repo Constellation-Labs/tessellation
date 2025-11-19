@@ -31,5 +31,12 @@ object GlobalSnapshotConsensusOps {
       case Proposal  => _.proposal
       case Signature => _.signature
     }
+
+    override def isCollectingPhase(status: GlobalSnapshotStatus): Boolean = status match {
+      case _: CollectingFacilities => true
+      case _: CollectingProposals  => true
+      case _: CollectingSignatures => true
+      case _: Finished             => false
+    }
   }
 }

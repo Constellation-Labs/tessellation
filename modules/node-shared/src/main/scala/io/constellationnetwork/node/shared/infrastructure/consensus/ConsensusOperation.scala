@@ -1,0 +1,105 @@
+package io.constellationnetwork.node.shared.infrastructure.consensus
+
+import cats.effect._
+import cats.effect.std.{Queue, Supervisor}
+import cats.effect.syntax.all._
+import cats.syntax.all._
+import cats.{Order, Show}
+
+import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
+
+import org.typelevel.log4cats.Logger
+
+sealed trait ConsensusOperation[Key]
+
+object ConsensusOperation {
+  final case class FacilitateRound[Key](trigger: Option[ConsensusTrigger]) extends ConsensusOperation[Key]
+
+  final case class UpdateState[Key](key: Key) extends ConsensusOperation[Key]
+}
+
+trait ConsensusQueue[F[_], Key] {
+  def requestFacilitation(trigger: Option[ConsensusTrigger]): F[Unit]
+
+  def requestStateUpdate(key: Key): F[Unit]
+
+  def clearPendingUpdate(key: Key): F[Unit]
+}
+
+object ConsensusQueue {
+
+  def make[F[_]: Async, Key: Order: Show](
+    processFacilitation: Option[ConsensusTrigger] => F[Unit],
+    processStateUpdate: Key => F[Unit],
+    logger: Logger[F]
+  )(implicit S: Supervisor[F]): F[ConsensusQueue[F, Key]] =
+    for {
+      operationQueue <- Queue.unbounded[F, ConsensusOperation[Key]]
+      pendingUpdates <- Ref.of[F, Set[Key]](Set.empty)
+
+      queue = new ConsensusQueueImpl[F, Key](
+        operationQueue,
+        pendingUpdates,
+        logger
+      )
+
+      _ <- S.supervise(queue.runProcessor(processFacilitation, processStateUpdate))
+
+    } yield queue
+
+  private class ConsensusQueueImpl[F[_]: Async, Key: Order: Show](
+    operationQueue: Queue[F, ConsensusOperation[Key]],
+    pendingUpdates: Ref[F, Set[Key]],
+    logger: Logger[F]
+  ) extends ConsensusQueue[F, Key] {
+
+    override def requestFacilitation(trigger: Option[ConsensusTrigger]): F[Unit] = {
+      val operation = ConsensusOperation.FacilitateRound[Key](trigger)
+
+      operationQueue.offer(operation) >>
+        logger.debug(s"Facilitation queued: trigger=${trigger.show}")
+    }
+
+    override def requestStateUpdate(key: Key): F[Unit] =
+      pendingUpdates.modify { pending =>
+        if (pending.contains(key)) {
+          (pending, false)
+        } else {
+          (pending + key, true)
+        }
+      }.flatMap { shouldQueue =>
+        if (shouldQueue) {
+          operationQueue.offer(ConsensusOperation.UpdateState(key))
+        } else {
+          ().pure
+        }
+      }
+
+    override def clearPendingUpdate(key: Key): F[Unit] =
+      pendingUpdates.update(_ - key)
+
+    def runProcessor(
+      processFacilitation: Option[ConsensusTrigger] => F[Unit],
+      processStateUpdate: Key => F[Unit]
+    ): F[Unit] =
+      operationQueue.take.flatMap { operation =>
+        val processOp = operation match {
+          case ConsensusOperation.FacilitateRound(trigger) =>
+            logger.debug(s"Processing facilitation: trigger=${trigger.show}") >>
+              processFacilitation(trigger).handleErrorWith { err =>
+                logger.error(err)(s"Error processing facilitation: trigger=${trigger.show}")
+              }
+
+          case ConsensusOperation.UpdateState(key) =>
+            processStateUpdate(key).handleErrorWith { err =>
+              logger.error(err)(s"Error processing state update: key=${key.show}")
+            }.guarantee(
+              pendingUpdates.update(_ - key) >>
+                logger.trace(s"Cleared pending: key=${key.show}")
+            )
+        }
+
+        processOp
+      } >> runProcessor(processFacilitation, processStateUpdate)
+  }
+}

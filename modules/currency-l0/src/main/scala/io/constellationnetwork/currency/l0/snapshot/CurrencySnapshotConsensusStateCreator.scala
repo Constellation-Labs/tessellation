@@ -67,17 +67,14 @@ object CurrencySnapshotConsensusStateCreator {
       resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind]
     ): F[(CurrencySnapshotConsensusState, F[Unit])] =
       for {
-
-        candidates <- consensusStorage.getCandidates(key.next)
-
-        // Split into old facilitators and new candidates
-        oldFacilitators = lastOutcome.facilitators.value
+        oldFacilitators <- lastOutcome.facilitators.value
           .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
+          .pure[F]
 
-        newCandidates = lastOutcome.finished.candidates.value
+        newCandidates <- lastOutcome.finished.candidates.value
           .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
+          .pure[F]
 
-        // Check responsiveness for each old facilitator
         oldFacilitatorsWithStatus <- oldFacilitators.traverse { peerId =>
           if (peerId === selfId) {
             Applicative[F].pure(
@@ -134,16 +131,27 @@ object CurrencySnapshotConsensusStateCreator {
           logger.info(s"Facilitator ${peerId.show} has withdrawn from consensus")
         }
 
+        candidatesFromStorage <- consensusStorage.getCandidates(key.next)
+        finalCandidates = Candidates(remained.toSet ++ candidatesFromStorage.value)
+
         time <- Clock[F].monotonic
         lastGlobalSnapshotOrdinal <- lastGlobalSnapshotStorage.getOrdinal.map(_.getOrElse(SnapshotOrdinal.MinValue))
-        effect = consensusStorage.getUpperBound.flatMap { bound =>
-          gossip.spread(
-            ConsensusPeerDeclaration(
-              key,
-              Facility(bound, candidates, maybeTrigger, lastOutcome.finished.facilitatorsHash, lastGlobalSnapshotOrdinal)
-            )
-          )
-        }
+
+        upperBound <- consensusStorage.getUpperBound
+        facilityDeclaration = Facility(
+          upperBound,
+          finalCandidates,
+          maybeTrigger,
+          lastOutcome.finished.facilitatorsHash,
+          lastGlobalSnapshotOrdinal
+        )
+
+        _ <- consensusStorage.addSelfFacility(selfId, key, facilityDeclaration)
+
+        effect = gossip.spread(
+          ConsensusPeerDeclaration(key, facilityDeclaration)
+        )
+
         state = ConsensusState[CurrencySnapshotKey, CurrencySnapshotStatus, CurrencyConsensusOutcome, CurrencyConsensusKind](
           key,
           lastOutcome,

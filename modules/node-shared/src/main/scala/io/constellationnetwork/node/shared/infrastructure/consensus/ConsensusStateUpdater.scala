@@ -120,7 +120,7 @@ object ConsensusStateUpdater {
       private def logIfUpdatedState(updateResult: StateUpdateResult): F[Unit] =
         updateResult.traverse {
           case (_, newState) =>
-            logger.info(s"State updated ${newState.show}")
+            logger.info(s"[ORDINAL=${newState.key.show}] State updated ${newState.show}")
         }.void
 
       private def lockConsensus(
