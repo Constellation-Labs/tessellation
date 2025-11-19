@@ -60,17 +60,14 @@ object GlobalSnapshotConsensusStateCreator {
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind]
     ): F[(GlobalSnapshotConsensusState, F[Unit])] =
       for {
-
-        candidates <- consensusStorage.getCandidates(key.next)
-
-        // Split into old facilitators and new candidates
-        oldFacilitators = lastOutcome.facilitators.value
+        oldFacilitators <- lastOutcome.facilitators.value
           .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
+          .pure[F]
 
-        newCandidates = lastOutcome.finished.candidates.value
+        newCandidates <- lastOutcome.finished.candidates.value
           .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
+          .pure[F]
 
-        // Check responsiveness for each old facilitator
         oldFacilitatorsWithStatus <- oldFacilitators.traverse { peerId =>
           if (peerId === selfId) {
             Applicative[F].pure(
@@ -123,19 +120,28 @@ object GlobalSnapshotConsensusStateCreator {
           resources.withdrawalsMap.get(peerId).contains(GlobalConsensusKind.Facility)
         }
 
-        _ <- withdrawn.traverse_ { peerId =>
-          logger.info(s"Facilitator ${peerId.show} has withdrawn from consensus")
-        }
+        candidatesForNextRound <- consensusStorage.getCandidates(key.next)
+        finalCandidates = Candidates(remained.toSet ++ candidatesForNextRound.value)
 
         time <- Clock[F].monotonic
-        effect = consensusStorage.getUpperBound.flatMap { bound =>
-          gossip.spread(
-            ConsensusPeerDeclaration(
-              key,
-              Facility(bound, candidates, maybeTrigger, lastOutcome.finished.facilitatorsHash, lastOutcome.key)
-            )
+        upperBound <- consensusStorage.getUpperBound
+        facilityDeclaration = Facility(
+          upperBound,
+          finalCandidates,
+          maybeTrigger,
+          lastOutcome.finished.facilitatorsHash,
+          lastOutcome.key
+        )
+
+        _ <- consensusStorage.addSelfFacility(selfId, key, facilityDeclaration)
+
+        effect = gossip.spread(
+          ConsensusPeerDeclaration(
+            key,
+            Facility(upperBound, finalCandidates, maybeTrigger, lastOutcome.finished.facilitatorsHash, lastOutcome.key)
           )
-        }
+        )
+
         state = ConsensusState[GlobalSnapshotKey, GlobalSnapshotStatus, GlobalConsensusOutcome, GlobalConsensusKind](
           key,
           lastOutcome,

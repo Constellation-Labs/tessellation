@@ -76,6 +76,7 @@ trait ConsensusOps[S, Kind] {
   def collectedKinds(status: S): Set[Kind]
   def maybeCollectingKind(status: S): Option[Kind]
   def kindGetter: Kind => PeerDeclarations => Option[PeerDeclaration]
+  def isCollectingPhase(status: S): Boolean
 }
 
 @derive(eqv)

@@ -60,7 +60,7 @@ object Download {
     val logger = Slf4jLogger.getLogger[F]
 
     val minBatchSizeToStartObserving: Long = 1L
-    val observationOffset = NonNegLong(4L)
+    val observationOffset = NonNegLong(2L)
     val fetchSnapshotDelayBetweenTrials = 10.seconds
 
     type DownloadResult = (Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)

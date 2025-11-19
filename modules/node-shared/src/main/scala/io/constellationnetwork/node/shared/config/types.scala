@@ -142,7 +142,9 @@ object types {
     declarationRangeLimit: NonNegLong,
     lockDuration: FiniteDuration,
     peersDeclarationTimeout: FiniteDuration,
-    eventCutter: EventCutterConfig
+    eventCutter: EventCutterConfig,
+    activePhaseRetryInterval: FiniteDuration,
+    roundCompletionDelay: FiniteDuration
   )
 
   case class EventCutterConfig(

@@ -160,7 +160,8 @@ object GlobalSnapshotConsensus {
           lastNGlobalSnapshotStorage,
           lastGlobalSnapshotStorage,
           getGlobalSnapshotByOrdinal,
-          clusterStorage
+          clusterStorage,
+          selfId
         )
       consensusStateCreator = GlobalSnapshotConsensusStateCreator
         .make[F](consensusFunctions, consensusStorage, gossip, selfId, seedlist, clusterStorage)
@@ -173,7 +174,7 @@ object GlobalSnapshotConsensus {
         consensusStatusOps
       )
       consensusClient = ConsensusClient.make[F, GlobalSnapshotKey, GlobalConsensusOutcome](client, session)
-      manager <- ConsensusManager.make(
+      (manager, queue) <- ConsensusManager.make(
         appConfig.snapshot.consensus,
         consensusStorage,
         consensusStateCreator,
@@ -186,7 +187,7 @@ object GlobalSnapshotConsensus {
         consensusClient
       )
       routes = new ConsensusRoutes(consensusStorage)
-      handler = GlobalConsensusHandler.make(consensusStorage, manager, consensusFunctions)
+      handler = GlobalConsensusHandler.make(consensusStorage, queue, consensusFunctions)
       consensus = new Consensus(handler, consensusStorage, manager, routes, consensusFunctions)
     } yield consensus
 }

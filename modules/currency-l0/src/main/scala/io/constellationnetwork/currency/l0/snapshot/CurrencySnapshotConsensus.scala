@@ -102,7 +102,8 @@ object CurrencySnapshotConsensus {
           nodeStorage,
           leavingDelay,
           getGlobalSnapshotByOrdinal,
-          clusterStorage
+          clusterStorage,
+          selfId
         )
       consensusStateCreator = CurrencySnapshotConsensusStateCreator
         .make[F](consensusFunctions, consensusStorage, lastGlobalSnapshotStorage, gossip, selfId, seedlist, clusterStorage)
@@ -115,7 +116,7 @@ object CurrencySnapshotConsensus {
         consensusStatusOps
       )
       consensusClient = ConsensusClient.make[F, CurrencySnapshotKey, CurrencyConsensusOutcome](client, session)
-      manager <- ConsensusManager.make(
+      (manager, queue) <- ConsensusManager.make(
         snapshotConfig.consensus,
         consensusStorage,
         consensusStateCreator,
@@ -128,7 +129,7 @@ object CurrencySnapshotConsensus {
         consensusClient
       )
       routes = new ConsensusRoutes(consensusStorage)
-      handler = CurrencyConsensusHandler.make(consensusStorage, manager, consensusFunctions)
+      handler = CurrencyConsensusHandler.make(consensusStorage, queue, consensusFunctions)
       consensus = new Consensus(handler, consensusStorage, manager, routes, consensusFunctions)
     } yield consensus
   }

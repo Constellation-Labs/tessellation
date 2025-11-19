@@ -66,13 +66,13 @@ object GlobalSnapshotConsensusStateAdvancer {
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    clusterStorageInstance: ClusterStorage[F]
+    clusterStorageInstance: ClusterStorage[F],
+    selfId: PeerId
   ): GlobalSnapshotConsensusStateAdvancer[F] = new GlobalSnapshotConsensusStateAdvancer[F] {
 
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotConsensusStateAdvancer.getClass)
     val facilitatorsObservationName = "facilitators"
 
-    // Provide access to ClusterStorage and config for the trait
     protected val clusterStorage: ClusterStorage[F] = clusterStorageInstance
     protected val config: ConsensusConfig = consensusConfig
 
@@ -80,18 +80,6 @@ object GlobalSnapshotConsensusStateAdvancer {
       newState: GlobalSnapshotConsensusState,
       sideEffect: F[Unit]
     )
-
-    private def shouldTimeout(
-      state: GlobalSnapshotConsensusState,
-      resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind],
-      now: FiniteDuration
-    ): Boolean = {
-      val elapsedSinceStateCreated = now - state.createdAt
-      val elapsedSinceLastUpdate = now - resources.updatedAt
-
-      elapsedSinceStateCreated > config.peersDeclarationTimeout &&
-      elapsedSinceLastUpdate > config.peersDeclarationTimeout
-    }
 
     def getConsensusOutcome(
       state: GlobalSnapshotConsensusState
@@ -155,30 +143,9 @@ object GlobalSnapshotConsensusStateAdvancer {
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind]
     ): F[Option[StateTransition]] =
       for {
-        now <- Clock[F].monotonic
-        isTimeout = shouldTimeout(state, resources, now)
-        elapsed = now - resources.updatedAt
-
-        maybeFacilities <-
-          if (isTimeout) {
-            getPartialDeclarations(state, resources, elapsed, "Facilities")(_.facility)
-          } else {
-            maybeGetAllDeclarations(state, resources)(_.facility)
-          }
-
+        maybeFacilities <- maybeGetAllDeclarations(state, resources)(_.facility)
         _ <- maybeFacilities.traverse_(facilities => checkForForkingFacilitators(facilities, status.facilitatorsHash))
-
-        result <- maybeFacilities.flatTraverse { facilities =>
-          if (isTimeout) {
-            val respondedPeers = facilities.keySet
-            removeMissingFacilitators(state, respondedPeers, "Facilities").flatMap {
-              case (updatedState, _) =>
-                processFacilitiesData(updatedState, facilities)
-            }
-          } else {
-            processFacilitiesData(state, facilities)
-          }
-        }
+        result <- maybeFacilities.flatTraverse(facilities => processFacilitiesData(state, facilities))
       } yield result
 
     private def checkForForkingFacilitators(
@@ -286,9 +253,15 @@ object GlobalSnapshotConsensusStateAdvancer {
       hash: Hash,
       facilitatorsHash: Hash,
       artifact: GlobalSnapshotArtifact
-    ): F[Unit] =
-      gossip.spread(ConsensusPeerDeclaration(state.key, Proposal(hash, facilitatorsHash))) *>
-        gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
+    ): F[Unit] = {
+      val proposal = Proposal(hash, facilitatorsHash)
+
+      for {
+        _ <- consensusStorage.addSelfProposal(selfId, state.key, proposal)
+        _ <- gossip.spread(ConsensusPeerDeclaration(state.key, proposal))
+        _ <- gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
+      } yield ()
+    }
 
     private def buildProposalsState(
       state: GlobalSnapshotConsensusState,
@@ -315,30 +288,9 @@ object GlobalSnapshotConsensusStateAdvancer {
     ): F[Option[StateTransition]] =
       HasherSelector[F].withCurrent { implicit hasher =>
         for {
-          now <- Clock[F].monotonic
-          isTimeout = shouldTimeout(state, resources, now)
-          elapsed = now - resources.updatedAt
-
-          maybeAllProposals <-
-            if (isTimeout) {
-              getPartialDeclarations(state, resources, elapsed, "Proposals")(_.proposal)
-            } else {
-              maybeGetAllDeclarations(state, resources)(_.proposal)
-            }
-
+          maybeAllProposals <- maybeGetAllDeclarations(state, resources)(_.proposal)
           _ <- maybeAllProposals.traverse_(proposals => checkForForkingProposals(proposals, status.facilitatorsHash))
-
-          result <- maybeAllProposals.flatTraverse { proposals =>
-            if (isTimeout) {
-              val respondedPeers = proposals.keySet
-              removeMissingFacilitators(state, respondedPeers, "Proposals").flatMap {
-                case (updatedState, _) =>
-                  processProposalsData(updatedState, status, resources, proposals)
-              }
-            } else {
-              processProposalsData(state, status, resources, proposals)
-            }
-          }
+          result <- maybeAllProposals.flatTraverse(proposals => processProposalsData(state, status, resources, proposals))
         } yield result
       }
 
@@ -417,8 +369,14 @@ object GlobalSnapshotConsensusStateAdvancer {
       state: GlobalSnapshotConsensusState,
       signature: Signature,
       facilitatorsHash: Hash
-    ): F[Unit] =
-      gossip.spread(ConsensusPeerDeclaration(state.key, MajoritySignature(signature, facilitatorsHash)))
+    ): F[Unit] = {
+      val majoritySignature = MajoritySignature(signature, facilitatorsHash)
+
+      for {
+        _ <- consensusStorage.addSelfSignature(selfId, state.key, majoritySignature)
+        _ <- gossip.spread(ConsensusPeerDeclaration(state.key, majoritySignature))
+      } yield ()
+    }
 
     private def buildSignaturesState(
       state: GlobalSnapshotConsensusState,
@@ -441,30 +399,9 @@ object GlobalSnapshotConsensusStateAdvancer {
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind]
     ): F[Option[StateTransition]] =
       for {
-        now <- Clock[F].monotonic
-        isTimeout = shouldTimeout(state, resources, now)
-        elapsed = now - resources.updatedAt
-
-        maybeAllSignatures <-
-          if (isTimeout) {
-            getPartialDeclarations(state, resources, elapsed, "Signatures")(_.signature)
-          } else {
-            maybeGetAllDeclarations(state, resources)(_.signature)
-          }
-
+        maybeAllSignatures <- maybeGetAllDeclarations(state, resources)(_.signature)
         _ <- maybeAllSignatures.traverse_(signatures => checkForForkingSignatures(signatures, status.facilitatorsHash))
-
-        result <- maybeAllSignatures.flatTraverse { signatures =>
-          if (isTimeout) {
-            val respondedPeers = signatures.keySet
-            removeMissingFacilitators(state, respondedPeers, "Signatures").flatMap {
-              case (updatedState, _) =>
-                processSignaturesData(updatedState, status, signatures)
-            }
-          } else {
-            processSignaturesData(state, status, signatures)
-          }
-        }
+        result <- maybeAllSignatures.flatTraverse(signatures => processSignaturesData(state, status, signatures))
       } yield result
 
     private def checkForForkingSignatures(

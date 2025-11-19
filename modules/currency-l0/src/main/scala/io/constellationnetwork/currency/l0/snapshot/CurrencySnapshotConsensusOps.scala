@@ -34,5 +34,13 @@ object CurrencySnapshotConsensusOps {
       case Signature       => _.signature
       case BinarySignature => _.binarySignature
     }
+
+    override def isCollectingPhase(status: CurrencySnapshotStatus): Boolean = status match {
+      case _: CollectingFacilities       => true
+      case _: CollectingProposals        => true
+      case _: CollectingSignatures       => true
+      case _: CollectingBinarySignatures => true
+      case _: Finished                   => false
+    }
   }
 }
