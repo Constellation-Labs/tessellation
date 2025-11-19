@@ -7,8 +7,8 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.generators.addressGen
-import io.constellationnetwork.schema.mpt.{GlobalStateFieldId, GlobalStateKey}
 import io.constellationnetwork.schema.mpt.PartitionNamespace._
+import io.constellationnetwork.schema.mpt.{GlobalStateFieldId, GlobalStateKey}
 import io.constellationnetwork.security._
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
@@ -234,17 +234,11 @@ object GlobalStateKeySerializationSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("hierarchical prefix matching works for nested keys with contract namespace") { implicit res =>
+  test("hierarchical prefix matching works for nested keys with same contract namespace") { implicit res =>
     forall(Gen.zip(addressGen, addressGen)) {
       case (contractAddr, userAddr) =>
         res.withCurrent { implicit hasher =>
-          val level1Key = GlobalStateKey(
-            HypergraphNamespace,
-            GlobalStateFieldId.TokenLockBalances,
-            EmptyNamespace,
-            EmptyNamespace
-          )
-          val level2Key = GlobalStateKey(
+          val contractOnlyKey = GlobalStateKey(
             HypergraphNamespace,
             GlobalStateFieldId.TokenLockBalances,
             AddressNamespace(contractAddr),
@@ -258,16 +252,44 @@ object GlobalStateKeySerializationSuite extends MutableIOSuite with Checkers {
           )
 
           for {
-            level1Hex <- GlobalStateKey.toHex[IO](level1Key)
-            level2Hex <- GlobalStateKey.toHex[IO](level2Key)
+            contractOnlyHex <- GlobalStateKey.toHex[IO](contractOnlyKey)
             fullHex <- GlobalStateKey.toHex[IO](fullKey)
           } yield
             expect.all(
-              level1Hex.value.length == 14,
-              level2Hex.value.length == 78,
+              contractOnlyHex.value.length == 78,
               fullHex.value.length == 142,
-              fullHex.value.startsWith(level2Hex.value.take(78)),
-              level2Hex.value.startsWith(level1Hex.value)
+              fullHex.value.startsWith(contractOnlyHex.value.take(74))
+            )
+        }
+    }
+  }
+
+  test("keys with different namespace types do not share prefixes beyond field") { implicit res =>
+    forall(Gen.zip(addressGen, addressGen)) {
+      case (contractAddr, userAddr) =>
+        res.withCurrent { implicit hasher =>
+          val emptyContractKey = GlobalStateKey(
+            HypergraphNamespace,
+            GlobalStateFieldId.TokenLockBalances,
+            EmptyNamespace,
+            EmptyNamespace
+          )
+          val addressContractKey = GlobalStateKey(
+            HypergraphNamespace,
+            GlobalStateFieldId.TokenLockBalances,
+            AddressNamespace(contractAddr),
+            EmptyNamespace
+          )
+
+          for {
+            emptyHex <- GlobalStateKey.toHex[IO](emptyContractKey)
+            addressHex <- GlobalStateKey.toHex[IO](addressContractKey)
+          } yield
+            expect.all(
+              emptyHex.value.length == 14,
+              addressHex.value.length == 78,
+              emptyHex.value.take(10) == addressHex.value.take(10),
+              emptyHex.value.drop(10) != addressHex.value.drop(10).take(4)
             )
         }
     }

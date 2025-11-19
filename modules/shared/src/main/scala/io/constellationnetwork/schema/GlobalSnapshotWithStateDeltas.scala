@@ -43,14 +43,7 @@ case class GlobalSnapshotWithStateDeltas(
 )
 
 object GlobalSnapshotWithStateDeltas {
-  // Key encoder/decoder for Option[Address]
-  implicit val optionAddressKeyEncoder: KeyEncoder[Option[Address]] = {
-    case None          => KeyEncoder[String].apply("")
-    case Some(address) => KeyEncoder[Address].apply(address)
-  }
-
-  implicit val optionAddressKeyDecoder: KeyDecoder[Option[Address]] = (key: String) =>
-    if (key === "") Some(None) else KeyDecoder[Address].apply(key).map(_.some)
+  import GlobalSnapshotInfo.{optionAddressKeyDecoder, optionAddressKeyEncoder}
 
   implicit def binaryEncoder[F[_]: Async]: GlobalSnapshotWithStateDeltas => F[Array[Byte]] = { snapshot =>
     Async[F].blocking(JsonBinarySerializer.serialize(snapshot))
