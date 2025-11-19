@@ -23,7 +23,7 @@ import io.constellationnetwork.security.mpt.verifier.{
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._
-import weaver.{MutableIOSuite, SimpleIOSuite}
+import weaver.MutableIOSuite
 
 object ProducerProverIntegrationSuite extends MutableIOSuite {
 

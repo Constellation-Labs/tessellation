@@ -91,7 +91,9 @@ object MerklePatriciaBatchInclusionVerifier {
 
                     case None =>
                       Sync[F].pure(
-                        InvalidWitness(s"No matching commitment found for digest ${expectedDigest.value} at path position")
+                        InvalidWitness(
+                          s"No matching commitment found for digest ${expectedDigest.value} at path ${path.value} (position ${pathNibbles.length - remainingPath.length}/${pathNibbles.length})"
+                        )
                           .asLeft[List[MerklePatriciaCommitment]]
                           .asRight[Continue]
                       )

@@ -62,25 +62,22 @@ object MerklePatriciaBatchInclusionProver {
             s"extension:${shared.mkString}:${childDigest.value}"
         }
 
-        paths.isEmpty
-          .pure[F]
-          .ifM(
-            ifTrue = (ProofGenerationError("Cannot create batch proof for empty path list"): MerklePatriciaProofError)
-              .asLeft[MerklePatriciaBatchInclusionProof]
-              .pure[F],
-            ifFalse = {
-              val sortedPaths = paths.sorted(Ordering.by[Hex, String](_.value))
+        if (paths.isEmpty)
+          (ProofGenerationError("Cannot create batch proof for empty path list"): MerklePatriciaProofError)
+            .asLeft[MerklePatriciaBatchInclusionProof]
+            .pure[F]
+        else {
+          val sortedPaths = paths.sorted(Ordering.by[Hex, String](_.value))
 
-              sortedPaths
-                .traverse(attestSinglePath)
-                .map { results =>
-                  results.sequence.map { pathWitnesses =>
-                    val deduplicated = deduplicateCommitments(pathWitnesses)
-                    MerklePatriciaBatchInclusionProof(sortedPaths, deduplicated)
-                  }
-                }
+          sortedPaths
+            .traverse(attestSinglePath)
+            .map { results =>
+              results.sequence.map { pathWitnesses =>
+                val deduplicated = deduplicateCommitments(pathWitnesses)
+                MerklePatriciaBatchInclusionProof(sortedPaths, deduplicated)
+              }
             }
-          )
+        }
       }.handleError(e => ProofGenerationError(e.getMessage).asLeft[MerklePatriciaBatchInclusionProof])
     }
 

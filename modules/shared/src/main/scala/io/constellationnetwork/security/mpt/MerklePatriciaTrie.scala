@@ -17,10 +17,10 @@ final case class MerklePatriciaTrie(rootNode: MerklePatriciaNode) {
 
 object MerklePatriciaTrie {
 
-  implicit val merkleTreeEncoder: Encoder[MerklePatriciaTrie] =
+  implicit val merklePatriciaTrieEncoder: Encoder[MerklePatriciaTrie] =
     (tree: MerklePatriciaTrie) => Json.obj("rootNode" -> tree.rootNode.asJson)
 
-  implicit val merkleTreeDecoder: Decoder[MerklePatriciaTrie] = (c: HCursor) =>
+  implicit val merklePatriciaTrieDecoder: Decoder[MerklePatriciaTrie] = (c: HCursor) =>
     c.downField("rootNode").as[MerklePatriciaNode].map(MerklePatriciaTrie(_))
 
   def make[F[_]: Hasher: Sync, A: Encoder](data: Map[Hex, A]): F[MerklePatriciaTrie] =

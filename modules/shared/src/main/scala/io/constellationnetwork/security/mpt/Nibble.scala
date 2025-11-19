@@ -69,6 +69,8 @@ object Nibble {
       .collect {
         case Seq(high, low) =>
           ((high.value << 4) | (low.value & 0x0f)).toByte
+        case Seq(single) =>
+          (single.value << 4).toByte
       }
       .toArray
 

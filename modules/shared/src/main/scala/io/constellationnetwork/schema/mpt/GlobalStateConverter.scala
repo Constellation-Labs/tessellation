@@ -55,8 +55,8 @@ object GlobalStateConverter {
         )
       case (metagraphAddr, Right((incrementalSnapshot, snapshotInfo))) =>
         List(
-          GlobalStateKey.metagraph(metagraphAddr, GlobalStateFieldId.LastCurrencySnapshots) -> incrementalSnapshot.asJson,
-          GlobalStateKey.metagraph(metagraphAddr, GlobalStateFieldId.LastCurrencySnapshotsProofs) -> snapshotInfo.asJson
+          GlobalStateKey.metagraph(metagraphAddr, GlobalStateFieldId.LastIncrementalCurrencySnapshots) -> incrementalSnapshot.asJson,
+          GlobalStateKey.metagraph(metagraphAddr, GlobalStateFieldId.LastCurrencySnapshotInfo) -> snapshotInfo.asJson
         )
     }
 

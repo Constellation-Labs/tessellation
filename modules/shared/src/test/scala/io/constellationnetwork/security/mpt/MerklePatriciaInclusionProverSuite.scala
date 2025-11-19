@@ -88,7 +88,7 @@ object MerklePatriciaInclusionProverSuite extends MutableIOSuite with Checkers {
         trie <- MerklePatriciaTrie.make(entries.toMap)
         prover = MerklePatriciaSingleInclusionProver.make[IO](trie)
 
-        randomIndices = scala.util.Random.shuffle((0 until numEntries).toList).take(50)
+        randomIndices = new scala.util.Random(42).shuffle((0 until numEntries).toList).take(50)
 
         proofs <- randomIndices.traverse { idx =>
           val (hex, _) = entries(idx)

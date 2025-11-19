@@ -65,7 +65,7 @@ case class GlobalIncrementalSnapshotV1(
       epochProgress,
       nextFacilitators,
       tips,
-      GlobalSnapshotStateProof.fromLegacyProof(stateProof.toGlobalSnapshotStateProof),
+      GlobalSnapshotStateProof.fromLegacyProof(stateProof.toGlobalSnapshotStateProofV2),
       Some(SortedSet.empty),
       Some(SortedSet.empty),
       Some(SortedMap.empty),

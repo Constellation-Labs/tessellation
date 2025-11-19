@@ -121,7 +121,7 @@ object MerklePatriciaBatchInclusionProverSuite extends MutableIOSuite with Check
         prover = MerklePatriciaBatchInclusionProver.make[IO](trie)
 
         paths = leafPairs.map(_._1)
-        shuffledPaths = scala.util.Random.shuffle(paths)
+        shuffledPaths = new scala.util.Random(42).shuffle(paths)
 
         proof <- prover.attestPaths(shuffledPaths).flatMap(IO.fromEither)
       } yield expect(proof.paths == paths.sorted)

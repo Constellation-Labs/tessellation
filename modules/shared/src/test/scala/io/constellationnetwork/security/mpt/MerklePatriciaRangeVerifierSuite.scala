@@ -161,16 +161,12 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
 
         proof <- prover.attestRange(Hex(start.padTo(64, '0')), Hex(end.padTo(64, '0'))).flatMap(IO.fromEither)
 
-        shuffledProofs = scala.util.Random.shuffle(proof.inclusionProofs)
-        tamperedProof = proof.copy(inclusionProofs = shuffledProofs)
+        reversedProofs = proof.inclusionProofs.reverse
+        tamperedProof = proof.copy(inclusionProofs = reversedProofs)
 
         verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
         result <- verifier.confirmRange(tamperedProof)
-      } yield {
-        val isSorted = shuffledProofs == proof.inclusionProofs
-        if (isSorted) expect(result.isRight)
-        else expect(result.isLeft)
-      }
+      } yield expect(result.isLeft)
     }
   }
 

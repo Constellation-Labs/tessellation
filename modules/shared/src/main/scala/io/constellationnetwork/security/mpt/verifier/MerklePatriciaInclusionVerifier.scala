@@ -1,14 +1,15 @@
 package io.constellationnetwork.security.mpt.verifier
 
 import cats.effect.Sync
+import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.either._
 import cats.syntax.functor._
 
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
-import io.constellationnetwork.security.mpt._
 import io.constellationnetwork.security.mpt.prover.attestation.MerklePatriciaInclusionProof
+import io.constellationnetwork.security.mpt.{verifier, _}
 
 import io.circe.syntax.EncoderOps
 
@@ -62,22 +63,28 @@ object MerklePatriciaInclusionVerifier {
           currentDigest: Hash,
           remainingPath: Seq[Nibble]
         ): F[Either[Continue, Return]] =
-          nodeCommit.pathsDigest.get(remainingPath.head) match {
-            case Some(childDigest) =>
-              Hasher[F]
-                .prefixedHash(nodeCommit.asJson, MerklePatriciaNode.BranchPrefix)
-                .map { digest =>
-                  if (digest == currentDigest)
-                    (tail, childDigest, remainingPath.tail).asLeft[Return]
-                  else
-                    InvalidNodeCommitment("Invalid branch commitment").asLeft[Unit].asRight[Continue]
-                }
-                .handleError(e => InvalidNodeCommitment(s"Hash computation error: ${e.getMessage}").asLeft[Unit].asRight[Continue])
-
+          remainingPath.headOption match {
             case None =>
-              Sync[F].pure(
-                InvalidPath(s"Path not found in branch: ${remainingPath.head}").asLeft[Unit].asRight[Continue]
-              )
+              (InvalidPath("Empty path at branch node"): MerklePatriciaVerificationError).asLeft[Unit].asRight[Continue].pure[F]
+            case Some(nibble) =>
+              nodeCommit.pathsDigest.get(nibble) match {
+                case Some(childDigest) =>
+                  Hasher[F]
+                    .prefixedHash(nodeCommit.asJson, MerklePatriciaNode.BranchPrefix)
+                    .map { digest =>
+                      if (digest == currentDigest)
+                        (tail, childDigest, remainingPath.tail).asLeft[Return]
+                      else
+                        InvalidNodeCommitment("Invalid branch commitment").asLeft[Unit].asRight[Continue]
+                    }
+                    .handleError(e => InvalidNodeCommitment(s"Hash computation error: ${e.getMessage}").asLeft[Unit].asRight[Continue])
+
+                case None =>
+                  (InvalidPath(s"Path not found in branch: $nibble"): MerklePatriciaVerificationError)
+                    .asLeft[Unit]
+                    .asRight[Continue]
+                    .pure[F]
+              }
           }
 
         Sync[F]

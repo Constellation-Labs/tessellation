@@ -15,7 +15,7 @@ case class GlobalSnapshotStateProofV1(
   balancesProof: Hash,
   lastCurrencySnapshotsProof: Option[MerkleRoot]
 ) extends StateProof {
-  def toGlobalSnapshotStateProof: GlobalSnapshotStateProofV2 =
+  def toGlobalSnapshotStateProofV2: GlobalSnapshotStateProofV2 =
     GlobalSnapshotStateProofV2(
       lastStateChannelSnapshotHashesProof,
       lastTxRefsProof,

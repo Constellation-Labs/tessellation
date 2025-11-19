@@ -39,7 +39,7 @@ import eu.timepit.refined.types.numeric.PosInt
 
 // As of 2025.11.19 this is a legacy model where full state was passed between
 // nodes during consensus. This was deprecated in favor of each node maintaining
-// thier own state and the diffs (incrementals) are instead passed around during
+// their own state and the diffs (incrementals) are instead passed around during
 // consensus to generate a new version of state maintained by each peer
 @derive(eqv, show, encoder, decoder)
 case class GlobalSnapshot(

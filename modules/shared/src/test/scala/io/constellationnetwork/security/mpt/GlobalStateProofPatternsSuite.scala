@@ -110,13 +110,11 @@ object GlobalStateProofPatternsSuite extends MutableIOSuite with Checkers {
     forall(Gen.zip(addressGen, addressGen, Gen.listOfN(10, addressGen))) {
       case (metagraphId, otherMetagraphId, addresses) =>
         res.withCurrent { implicit hasher =>
-          val metagraphKeys = addresses.map(addr =>
-            GlobalStateKey(
-              MetagraphNamespace(metagraphId),
-              GlobalStateFieldId.LastCurrencySnapshots,
-              EmptyNamespace,
-              EmptyNamespace
-            )
+          val metagraphKey = GlobalStateKey(
+            MetagraphNamespace(metagraphId),
+            GlobalStateFieldId.LastCurrencySnapshots,
+            EmptyNamespace,
+            EmptyNamespace
           )
           val prefixKey = GlobalStateKey(
             MetagraphNamespace(metagraphId),
@@ -125,27 +123,21 @@ object GlobalStateProofPatternsSuite extends MutableIOSuite with Checkers {
             EmptyNamespace
           )
 
-          val otherMetagraphKeys = addresses.take(3).map { addr =>
-            GlobalStateKey(
-              MetagraphNamespace(otherMetagraphId),
-              GlobalStateFieldId.LastCurrencySnapshots,
-              EmptyNamespace,
-              EmptyNamespace
-            )
-          }
+          val otherMetagraphKey = GlobalStateKey(
+            MetagraphNamespace(otherMetagraphId),
+            GlobalStateFieldId.LastCurrencySnapshots,
+            EmptyNamespace,
+            EmptyNamespace
+          )
 
           for {
-            metagraphPaths <- metagraphKeys.traverse(GlobalStateKey.toHex[IO])
-            otherKeys <- otherMetagraphKeys.traverse(GlobalStateKey.toHex[IO])
+            metagraphPath <- GlobalStateKey.toHex[IO](metagraphKey)
+            otherPath <- GlobalStateKey.toHex[IO](otherMetagraphKey)
 
-            metagraphPairs <- metagraphPaths.zipWithIndex.traverse {
-              case (path, idx) => Balance(NonNegLong.unsafeFrom((idx + 1) * 1000L)).asJson.pure[IO].map(path -> _)
-            }
-            otherPairs <- otherKeys.zipWithIndex.traverse {
-              case (path, idx) => Balance(NonNegLong.unsafeFrom((idx + 1) * 500L)).asJson.pure[IO].map(path -> _)
-            }
+            metagraphPair = metagraphPath -> Balance(NonNegLong.unsafeFrom(1000L)).asJson
+            otherPair = otherPath -> Balance(NonNegLong.unsafeFrom(500L)).asJson
 
-            trie <- MerklePatriciaTrie.make((metagraphPairs ++ otherPairs).toMap)
+            trie <- MerklePatriciaTrie.make(Map(metagraphPair, otherPair))
 
             prefix <- GlobalStateKey.toHex[IO](prefixKey)
 

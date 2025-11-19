@@ -274,8 +274,7 @@ object GlobalSnapshotInfo {
   def legacyStateProof[F[_]: Parallel: Sync: Hasher](
     info: GlobalSnapshotInfo,
     lastCurrencySnapshots: Option[MerkleTree]
-  ): F[GlobalSnapshotStateProofV2] = {
-
+  ): F[GlobalSnapshotStateProofV2] =
     (
       info.lastStateChannelSnapshotHashes.hash,
       info.lastTxRefs.hash,
@@ -293,7 +292,6 @@ object GlobalSnapshotInfo {
       info.priceState.traverse(_.hash),
       info.metagraphSyncData.traverse(_.hash)
     ).mapN(GlobalSnapshotStateProofV2.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _, _, _))
-  }
 
   def empty: GlobalSnapshotInfo = GlobalSnapshotInfo(
     SortedMap.empty,
