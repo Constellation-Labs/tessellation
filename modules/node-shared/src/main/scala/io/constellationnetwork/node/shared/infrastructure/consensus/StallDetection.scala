@@ -1,22 +1,28 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
-import cats._
 import cats.effect._
 import cats.effect.std.Supervisor
-import cats.syntax.all._
+import cats.syntax.applicativeError._
+import cats.syntax.flatMap._
+import cats.syntax.functor._
+import cats.syntax.traverse._
 
 import scala.concurrent.duration._
 
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
-import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
-import io.constellationnetwork.schema.peer.{PeerId, Unresponsive}
 
+import fs2.concurrent.SignallingRef
 import org.typelevel.log4cats.Logger
+
+private[consensus] case class StallDetectionHandle[F[_]](
+  cancelSignal: Deferred[F, Unit],
+  fiber: Fiber[F, Throwable, Unit]
+)
 
 private[consensus] object StallDetection {
 
   def scheduleStallDetection[
-    F[_]: Temporal,
+    F[_]: Async,
     Key,
     Artifact,
     Context,
@@ -25,9 +31,8 @@ private[consensus] object StallDetection {
     Kind
   ](
     key: Key,
-    state: ConsensusState[Key, Status, OutcomeC, Kind],
     config: ConsensusConfig,
-    stallDetectionRef: Ref[F, Map[Key, Long]],
+    stallDetectionRef: SignallingRef[F, Map[Key, StallDetectionHandle[F]]],
     consensusOps: ConsensusOps[Status, Kind],
     consensusStorage: ConsensusStorage[F, _, Key, Artifact, Context, Status, OutcomeC, Kind],
     consensusStateUpdater: ConsensusStateUpdater[F, Key, Artifact, Context, Status, OutcomeC, Kind],
@@ -35,40 +40,67 @@ private[consensus] object StallDetection {
     logger: Logger[F],
     isFirstRoundAfterJoin: Boolean
   )(implicit S: Supervisor[F]): F[Unit] =
-    Clock[F].monotonic.flatMap { now =>
-      val stallId = now.toMillis
+    for {
+      _ <- cancelStallDetection(key, stallDetectionRef, logger)
+      cancelSignal <- Deferred[F, Unit]
 
-      stallDetectionRef.update(_ + (key -> stallId)) >>
-        S.supervise {
-          val sleepDuration = if (isFirstRoundAfterJoin) {
-            60.seconds
-          } else {
-            config.declarationTimeout
-          }
-          Temporal[F].sleep(sleepDuration) >>
-            stallDetectionRef.get.flatMap { currentMap =>
-              if (currentMap.get(key).contains(stallId)) {
-                logger.warn(s"Stall detected for consensus round {key=${key.toString}}") >>
-                  processStallDetection(
-                    key,
-                    state,
-                    config,
-                    consensusOps,
-                    consensusStorage,
-                    consensusStateUpdater,
-                    queue,
-                    logger
-                  ) >>
-                  stallDetectionRef.update(_ - key)
-              } else {
-                Applicative[F].unit
-              }
-            }.handleErrorWith { err =>
-              logger.error(err)(s"Error in stall detection {key=${key.toString}}") >>
-                stallDetectionRef.update(_ - key)
-            }
-        }.void
-    }
+      sleepDuration =
+        if (isFirstRoundAfterJoin) {
+          60.seconds
+        } else {
+          config.declarationTimeout
+        }
+
+      stallDetectionAction =
+        Temporal[F].sleep(sleepDuration) >>
+          logger.warn(s"Stall detected for consensus round {key=${key.toString}}") >>
+          processStallDetection(
+            key,
+            config,
+            consensusOps,
+            consensusStorage,
+            consensusStateUpdater,
+            queue,
+            logger
+          ) >>
+          stallDetectionRef.update(_ - key)
+
+      cancellationAction =
+        cancelSignal.get >>
+          logger.debug(s"Stall detection cancelled for {key=${key.toString}}")
+
+      racedAction = Concurrent[F].race(stallDetectionAction, cancellationAction).void
+
+      actionWithErrorHandling = racedAction.handleErrorWith { err =>
+        logger.error(err)(s"Error in stall detection {key=${key.toString}}") >>
+          stallDetectionRef.update(_ - key)
+      }
+
+      fiber <- S.supervise(actionWithErrorHandling)
+
+      handle = StallDetectionHandle(cancelSignal, fiber)
+      _ <- stallDetectionRef.update(_ + (key -> handle))
+    } yield ()
+
+  private def cancelStallDetection[F[_]: Async, Key](
+    key: Key,
+    stallDetectionRef: SignallingRef[F, Map[Key, StallDetectionHandle[F]]],
+    logger: Logger[F]
+  ): F[Unit] =
+    stallDetectionRef.modify { handles =>
+      handles.get(key) match {
+        case Some(handle) =>
+          val newMap = handles - key
+          val cancelEffect = handle.cancelSignal
+            .complete(())
+            .void
+            .handleErrorWith(err => logger.warn(err)(s"Failed to cancel stall detection for key $key"))
+          (newMap, cancelEffect)
+
+        case None =>
+          (handles, Async[F].unit)
+      }
+    }.flatten
 
   private[consensus] def processStallDetection[
     F[_]: Temporal,
@@ -80,7 +112,6 @@ private[consensus] object StallDetection {
     Kind
   ](
     key: Key,
-    state: ConsensusState[Key, Status, OutcomeC, Kind],
     config: ConsensusConfig,
     consensusOps: ConsensusOps[Status, Kind],
     consensusStorage: ConsensusStorage[F, _, Key, Artifact, Context, Status, OutcomeC, Kind],
@@ -98,7 +129,7 @@ private[consensus] object StallDetection {
                 Temporal[F].sleep(config.lockDuration) >>
                 consensusOps
                   .maybeCollectingKind(lockedState.status)
-                  .traverse { ackKind =>
+                  .traverse { (ackKind: Kind) =>
                     for {
                       resources <- consensusStorage.getResources(key)
                       _ <- consensusStateUpdater.trySpreadAck(key, ackKind, resources)
@@ -113,6 +144,6 @@ private[consensus] object StallDetection {
               logger.debug(s"Could not lock consensus for stall recovery {key=${key.toString}}")
           }
       case None =>
-        logger.debug(s"State no longer exists {key=${key.toString}}")
+        logger.debug(s"State no longer exists for stall recovery {key=${key.toString}}")
     }
 }

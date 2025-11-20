@@ -22,6 +22,7 @@ import io.constellationnetwork.schema.peer.Peer
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
+import fs2.concurrent.SignallingRef
 import monocle.Lens
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry.RetryDetails
@@ -82,7 +83,7 @@ object ConsensusManager {
       } yield ()
 
     for {
-      stallDetectionRef <- Ref.of[F, Map[Key, Long]](Map.empty)
+      stallDetectionRef <- SignallingRef.of[F, Map[Key, StallDetectionHandle[F]]](Map.empty)
       managerRef <- Deferred[F, ConsensusManager[F, Key, Artifact, Context, Status, OutcomeC, Kind]]
       lateJoinerGraceRef <- Ref.of[F, Boolean](false)
 
@@ -92,281 +93,290 @@ object ConsensusManager {
         logger
       )
 
-      manager <- Async[F].delay {
-        new ConsensusManager[F, Key, Artifact, Context, Status, OutcomeC, Kind] {
+      manager = new ConsensusManager[F, Key, Artifact, Context, Status, OutcomeC, Kind] {
 
-          def registerForConsensus(observationKey: Key): F[Unit] =
-            consensusStorage
-              .trySetObservationKey(observationKey)
-              .ifM(
-                nodeStorage.tryModifyState(NodeState.WaitingForObserving, NodeState.Observing) >>
-                  logger.info(s"Registered for consensus {registrationKey=${observationKey.next.show}}"),
-                new Throwable(
-                  s"Registration for consensus failed {registrationKey=${observationKey.next.show}}. Already registered."
-                ).raiseError[F, Unit]
-              )
+        def registerForConsensus(observationKey: Key): F[Unit] =
+          consensusStorage
+            .trySetObservationKey(observationKey)
+            .ifM(
+              nodeStorage.tryModifyState(NodeState.WaitingForObserving, NodeState.Observing) >>
+                logger.info(s"Registered for consensus {registrationKey=${observationKey.next.show}}"),
+              new Throwable(
+                s"Registration for consensus failed {registrationKey=${observationKey.next.show}}. Already registered."
+              ).raiseError[F, Unit]
+            )
 
-          def startFacilitatingAfterDownload(
-            key: Key,
-            lastArtifact: Signed[Artifact],
-            lastContext: Context
-          ): F[Unit] =
-            S.supervise {
-              def fetchOutcomeFromRandomPeer: F[Option[OutcomeC]] =
-                (selectRandomPeer >>= fetchConsensusOutcome)
-                  .retryingOnFailuresAndAllErrors(
-                    wasSuccessful = wasSuccessful,
-                    policy = observationRetryPolicy,
-                    onFailure = onFailure,
-                    onError = onError
-                  )
+        def startFacilitatingAfterDownload(
+          key: Key,
+          lastArtifact: Signed[Artifact],
+          lastContext: Context
+        ): F[Unit] =
+          S.supervise {
+            def fetchOutcomeFromRandomPeer: F[Option[OutcomeC]] =
+              (selectRandomPeer >>= fetchConsensusOutcome)
+                .retryingOnFailuresAndAllErrors(
+                  wasSuccessful = wasSuccessful,
+                  policy = observationRetryPolicy,
+                  onFailure = onFailure,
+                  onError = onError
+                )
 
-              def selectRandomPeer: F[Peer] =
-                clusterStorage.getResponsivePeers
-                  .map(_.filter(_.state === Ready))
-                  .flatMap(Random[F].elementOf)
+            def selectRandomPeer: F[Peer] =
+              clusterStorage.getResponsivePeers
+                .map(_.filter(_.state === Ready))
+                .flatMap(Random[F].elementOf)
 
-              def fetchConsensusOutcome(peer: Peer): F[Option[OutcomeC]] =
-                consensusClient
-                  .getSpecificConsensusOutcome(GetConsensusOutcomeRequest(key))
-                  .run(peer)
+            def fetchConsensusOutcome(peer: Peer): F[Option[OutcomeC]] =
+              consensusClient
+                .getSpecificConsensusOutcome(GetConsensusOutcomeRequest(key))
+                .run(peer)
 
-              def wasSuccessful(maybeOutcome: Option[OutcomeC]): F[Boolean] =
-                maybeOutcome.exists { outcome =>
-                  _key.get(outcome) === key &&
-                  _artifact.get(outcome) === lastArtifact &&
-                  _context.get(outcome) === lastContext
-                }.pure[F]
+            def wasSuccessful(maybeOutcome: Option[OutcomeC]): F[Boolean] =
+              maybeOutcome.exists { outcome =>
+                _key.get(outcome) === key &&
+                _artifact.get(outcome) === lastArtifact &&
+                _context.get(outcome) === lastContext
+              }.pure[F]
 
-              def onFailure(maybeOutcome: Option[OutcomeC], retryDetails: RetryDetails): F[Unit] =
-                maybeOutcome.map { outcome =>
-                  val sameArtifact = _artifact.get(outcome) === lastArtifact
-                  val sameContext = _context.get(outcome) === lastContext
-                  logger.info(
-                    s"Observed outcome {key=${key.show}, outcomeKey=${_key
-                        .get(outcome)}, sameArtifact=${sameArtifact.show}, sameContext=${sameContext.show}, attempt=${retryDetails.retriesSoFar}}"
-                  )
-                }.getOrElse(logger.info(s"Outcome not observed {key=${key.show}, attempt=${retryDetails.retriesSoFar}}"))
+            def onFailure(maybeOutcome: Option[OutcomeC], retryDetails: RetryDetails): F[Unit] =
+              maybeOutcome.map { outcome =>
+                val sameArtifact = _artifact.get(outcome) === lastArtifact
+                val sameContext = _context.get(outcome) === lastContext
+                logger.info(
+                  s"Observed outcome {key=${key.show}, outcomeKey=${_key
+                      .get(outcome)}, sameArtifact=${sameArtifact.show}, sameContext=${sameContext.show}, attempt=${retryDetails.retriesSoFar}}"
+                )
+              }.getOrElse(logger.info(s"Outcome not observed {key=${key.show}, attempt=${retryDetails.retriesSoFar}}"))
 
-              def onError(err: Throwable, retryDetails: RetryDetails): F[Unit] =
-                logger.error(err)(s"Error when trying to observe consensus outcome {attempt=${retryDetails.retriesSoFar}}")
+            def onError(err: Throwable, retryDetails: RetryDetails): F[Unit] =
+              logger.error(err)(s"Error when trying to observe consensus outcome {attempt=${retryDetails.retriesSoFar}}")
 
-              for {
-                maybeOutcome <- fetchOutcomeFromRandomPeer
-                outcome <- maybeOutcome.liftTo[F](new Throwable(s"Outcome not observed, giving up {key=${key.show}}"))
-                _ <- consensusStorage
-                  .trySetInitialConsensusOutcome(outcome)
-                  .ifM(
-                    nodeStorage.tryModifyState(Observing, WaitingForReady) >>
-                      lateJoinerGraceRef.set(true) >>
-                      queue.requestFacilitation(none),
-                    new Throwable("Error initializing consensus storage").raiseError[F, Unit]
-                  )
-              } yield ()
-            }.void
-
-          def facilitateOnEvent: F[Unit] =
-            queue.requestFacilitation(EventTrigger.some)
-
-          def startFacilitatingAfterRollback(lastKey: Key, initialOutcome: OutcomeC): F[Unit] =
-            consensusStorage
-              .trySetInitialConsensusOutcome(initialOutcome)
-              .ifM(
-                consensusStorage.trySetObservationKey(lastKey) >>
-                  scheduleFacility,
-                new Throwable("Error initializing consensus storage").raiseError[F, Unit]
-              )
-
-          private def scheduleFacility: F[Unit] =
-            Clock[F].monotonic.map(_ + config.timeTriggerInterval).flatMap { nextTimeValue =>
-              consensusStorage.setTimeTrigger(nextTimeValue) >>
-                S.supervise {
-                  val condTriggerWithTime = for {
-                    maybeTimeTrigger <- consensusStorage.getTimeTrigger
-                    currentTime <- Clock[F].monotonic
-                    _ <- Applicative[F]
-                      .whenA(maybeTimeTrigger.exists(currentTime >= _))(
-                        queue.requestFacilitation(TimeTrigger.some)
-                      )
-                  } yield ()
-
-                  Temporal[F].sleep(config.timeTriggerInterval) >> condTriggerWithTime
-                    .handleErrorWith(logger.error(_)("Error triggering consensus with time trigger"))
-                }.void
-            }
-
-          def withdrawFromConsensus: F[Unit] =
             for {
-              maybeLastOutcome <- consensusStorage.clearAndGetLastConsensusOutcome
-              _ <- maybeLastOutcome.traverse { lastOutcome =>
-                consensusStateRemover.withdrawFromConsensus(_key.get(lastOutcome).next)
-              }
-              _ <- consensusStorage.clearObservationKey
+              maybeOutcome <- fetchOutcomeFromRandomPeer
+              outcome <- maybeOutcome.liftTo[F](new Throwable(s"Outcome not observed, giving up {key=${key.show}}"))
+              _ <- consensusStorage
+                .trySetInitialConsensusOutcome(outcome)
+                .ifM(
+                  nodeStorage.tryModifyState(Observing, WaitingForReady) >>
+                    lateJoinerGraceRef.set(true) >>
+                    queue.requestFacilitation(none),
+                  new Throwable("Error initializing consensus storage").raiseError[F, Unit]
+                )
             } yield ()
+          }.void
 
-          def processFacilitation(trigger: Option[ConsensusTrigger]): F[Unit] =
-            consensusStorage.getLastConsensusOutcome.flatMap { maybeLastOutcome =>
-              maybeLastOutcome.traverse { lastOutcome =>
-                val nextKey = _key.get(lastOutcome).next
+        def facilitateOnEvent: F[Unit] =
+          queue.requestFacilitation(EventTrigger.some)
 
-                consensusStorage
-                  .getResources(nextKey)
-                  .flatMap { resources =>
-                    logger.debug(s"Facilitating consensus {key=${nextKey.show}, trigger=${trigger.show}}") >>
-                      consensusStateCreator
-                        .tryFacilitateConsensus(nextKey, lastOutcome, trigger, resources)
-                        .flatMap {
-                          case Some(state) =>
-                            scheduleStallDetection(nextKey, state) >>
-                              queue.requestStateUpdate(nextKey)
-                          case None =>
-                            logger.debug(s"Cannot facilitate consensus {key=${nextKey.show}}")
-                        }
-                  }
+        def startFacilitatingAfterRollback(lastKey: Key, initialOutcome: OutcomeC): F[Unit] =
+          consensusStorage
+            .trySetInitialConsensusOutcome(initialOutcome)
+            .ifM(
+              consensusStorage.trySetObservationKey(lastKey) >>
+                scheduleFacility,
+              new Throwable("Error initializing consensus storage").raiseError[F, Unit]
+            )
+
+        private def scheduleFacility: F[Unit] =
+          Clock[F].monotonic.map(_ + config.timeTriggerInterval).flatMap { nextTimeValue =>
+            consensusStorage.setTimeTrigger(nextTimeValue) >>
+              S.supervise {
+                val condTriggerWithTime = for {
+                  maybeTimeTrigger <- consensusStorage.getTimeTrigger
+                  currentTime <- Clock[F].monotonic
+                  _ <- Applicative[F]
+                    .whenA(maybeTimeTrigger.exists(currentTime >= _))(
+                      queue.requestFacilitation(TimeTrigger.some)
+                    )
+                } yield ()
+
+                Temporal[F].sleep(config.timeTriggerInterval) >> condTriggerWithTime
+                  .handleErrorWith(logger.error(_)("Error triggering consensus with time trigger"))
               }.void
-            }
-
-          def processStateUpdate(key: Key): F[Unit] =
-            consensusStorage.getLastKey.flatMap {
-              case Some(lastKey) if key < lastKey =>
-                logger.debug(s"Ignoring update for completed round {key=${key.show}, lastKey=${lastKey.show}}") >>
-                  queue.clearPendingUpdate(key)
-
-              case Some(lastKey) if key > lastKey.next =>
-                queue.clearPendingUpdate(key)
-
-              case _ =>
-                consensusStorage.getResources(key).flatMap { resources =>
-                  consensusStateUpdater.tryUpdateConsensus(key, resources).flatMap {
-                    case Some((oldState, newState)) =>
-                      cancelStallDetection(key) >>
-                        consensusStateAdvancer
-                          .getConsensusOutcome(newState)
-                          .fold {
-                            val statusChanged = oldState.status =!= newState.status
-                            queue.clearPendingUpdate(key) >>
-                              (if (statusChanged) {
-                                 scheduleStallDetection(key, newState) >>
-                                   queue.requestStateUpdate(key)
-                               } else {
-                                 handleStatusUnchanged(key, newState.status)
-                               })
-                          } {
-                            case (previousKey, newOutcome) =>
-                              queue.clearPendingUpdate(key) >>
-                                handleConsensusCompletion(key, previousKey, newOutcome)
-                          }
-
-                    case None =>
-                      consensusStorage.getState(key).flatMap {
-                        case Some(state) =>
-                          handleNoUpdate(key, state.status)
-                        case None =>
-                          logger.debug(s"No state found {key=${key.show}}") >>
-                            queue.clearPendingUpdate(key)
-                      }
-                  }
-                }
-            }
-
-          private def handleStatusUnchanged(key: Key, status: Status): F[Unit] = {
-            val isActive = isActiveCollectingPhase(status)
-            queue.clearPendingUpdate(key) >>
-              (if (isActive) {
-                 Temporal[F].sleep(config.activePhaseRetryInterval) >>
-                   queue.requestStateUpdate(key)
-               } else {
-                 Async[F].unit
-               })
           }
 
-          private def handleNoUpdate(key: Key, status: Status): F[Unit] =
-            handleStatusUnchanged(key, status)
+        def withdrawFromConsensus: F[Unit] =
+          for {
+            maybeLastOutcome <- consensusStorage.clearAndGetLastConsensusOutcome
+            _ <- maybeLastOutcome.traverse { lastOutcome =>
+              consensusStateRemover.withdrawFromConsensus(_key.get(lastOutcome).next)
+            }
+            _ <- consensusStorage.clearObservationKey
+          } yield ()
 
-          private def isActiveCollectingPhase(status: Status): Boolean =
-            consensusOps.isCollectingPhase(status)
+        def processFacilitation(trigger: Option[ConsensusTrigger]): F[Unit] =
+          consensusStorage.getLastConsensusOutcome.flatMap { maybeLastOutcome =>
+            maybeLastOutcome.traverse { lastOutcome =>
+              val nextKey = _key.get(lastOutcome).next
 
-          private def handleConsensusCompletion(
-            key: Key,
-            previousKey: Previous[Key],
-            newOutcome: OutcomeC
-          ): F[Unit] =
-            for {
-              finishedAt <- Clock[F].monotonic
-              _ <- consensusStorage.getState(key).flatMap {
-                _.traverse { state =>
-                  val duration = finishedAt - state.createdAt
-                  logger.info(s"Consensus completed {key=${key.show}, duration=${duration.toMillis}ms}") >>
-                    Metrics[F].recordTime("dag_consensus_duration", duration)
+              consensusStorage
+                .getResources(nextKey)
+                .flatMap { resources =>
+                  logger.debug(s"Facilitating consensus {key=${nextKey.show}, trigger=${trigger.show}}") >>
+                    consensusStateCreator
+                      .tryFacilitateConsensus(nextKey, lastOutcome, trigger, resources)
+                      .flatMap {
+                        case Some(_) =>
+                          scheduleStallDetection(nextKey) >>
+                            queue.requestStateUpdate(nextKey)
+                        case None => Applicative[F].unit
+                      }
+                }
+            }.void
+          }
+
+        def processStateUpdate(key: Key): F[Unit] =
+          consensusStorage.getLastKey.flatMap {
+            case Some(lastKey) if key < lastKey =>
+              logger.debug(s"Ignoring update for completed round {key=${key.show}, lastKey=${lastKey.show}}") >>
+                queue.clearPendingUpdate(key)
+
+            case Some(lastKey) if key > lastKey.next =>
+              queue.clearPendingUpdate(key)
+
+            case _ =>
+              consensusStorage.getResources(key).flatMap { resources =>
+                consensusStateUpdater.tryUpdateConsensus(key, resources).flatMap {
+                  case Some((oldState, newState)) =>
+                    cancelStallDetection(key) >>
+                      consensusStateAdvancer
+                        .getConsensusOutcome(newState)
+                        .fold {
+                          val statusChanged = oldState.status =!= newState.status
+                          for {
+                            _ <- queue.clearPendingUpdate(key)
+                            _ <-
+                              if (statusChanged) {
+                                scheduleStallDetection(key) >>
+                                  queue.requestStateUpdate(key)
+                              } else {
+                                handleStatusUnchanged(key, newState.status)
+                              }
+                          } yield ()
+                        } {
+                          case (previousKey, newOutcome) =>
+                            queue.clearPendingUpdate(key) >>
+                              handleConsensusCompletion(key, previousKey, newOutcome)
+                        }
+
+                  case None =>
+                    consensusStorage.getState(key).flatMap {
+                      case Some(state) =>
+                        handleNoUpdate(key, state.status)
+                      case None =>
+                        queue.clearPendingUpdate(key)
+                    }
                 }
               }
+          }
 
-              _ <- Temporal[F].sleep(config.roundCompletionDelay)
+        private def handleStatusUnchanged(key: Key, status: Status): F[Unit] = {
+          val isActive = isActiveCollectingPhase(status)
+          for {
+            _ <-
+              if (isActive) {
+                Temporal[F].sleep(config.activePhaseRetryInterval) >>
+                  queue.requestStateUpdate(key)
+              } else {
+                Async[F].unit
+              }
+          } yield ()
+        }
 
-              _ <- consensusStorage
-                .tryUpdateLastConsensusOutcomeWithCleanup(previousKey, newOutcome)
-                .ifM(
-                  afterConsensusFinish(_trigger.get(newOutcome)),
-                  logger.warn(s"Failed to update last consensus outcome for {key=${key.show}}")
-                )
-              _ <- nodeStorage.tryModifyStateGetResult(WaitingForReady, Ready).void
-              _ <- lateJoinerGraceRef.set(false)
-            } yield ()
+        private def handleNoUpdate(key: Key, status: Status): F[Unit] =
+          handleStatusUnchanged(key, status)
 
-          private def afterConsensusFinish(majorityTrigger: ConsensusTrigger): F[Unit] =
-            majorityTrigger match {
-              case EventTrigger => afterEventTrigger
-              case TimeTrigger  => afterTimeTrigger
+        private def isActiveCollectingPhase(status: Status): Boolean =
+          consensusOps.isCollectingPhase(status)
+
+        private def handleConsensusCompletion(
+          key: Key,
+          previousKey: Previous[Key],
+          newOutcome: OutcomeC
+        ): F[Unit] =
+          for {
+            finishedAt <- Clock[F].monotonic
+            _ <- consensusStorage.getState(key).flatMap {
+              _.traverse { state =>
+                val duration = finishedAt - state.createdAt
+                logger.info(s"Consensus completed {key=${key.show}, duration=${duration.toMillis}ms}") >>
+                  Metrics[F].recordTime("dag_consensus_duration", duration)
+              }
             }
 
-          private def afterEventTrigger: F[Unit] =
-            for {
-              maybeTimeTrigger <- consensusStorage.getTimeTrigger
-              currentTime <- Clock[F].monotonic
-              containsTriggerEvent <- consensusStorage.containsTriggerEvent
-              _ <-
-                if (maybeTimeTrigger.exists(currentTime >= _))
-                  queue.requestFacilitation(TimeTrigger.some)
-                else if (containsTriggerEvent)
-                  queue.requestFacilitation(EventTrigger.some)
-                else if (maybeTimeTrigger.isEmpty)
-                  queue.requestFacilitation(none)
-                else
-                  Applicative[F].unit
-            } yield ()
+            _ <- Temporal[F].sleep(config.roundCompletionDelay)
 
-          private def afterTimeTrigger: F[Unit] =
-            for {
-              _ <- scheduleFacility
-              containsTriggerEvent <- consensusStorage.containsTriggerEvent
-              _ <-
-                if (containsTriggerEvent) {
-                  queue.requestFacilitation(EventTrigger.some)
-                } else {
-                  Applicative[F].unit
-                }
-            } yield ()
-
-          private def scheduleStallDetection(key: Key, state: ConsensusState[Key, Status, OutcomeC, Kind]): F[Unit] =
-            lateJoinerGraceRef.get.flatMap { isFirstRoundAfterJoin =>
-              StallDetection.scheduleStallDetection(
-                key,
-                state,
-                config,
-                stallDetectionRef,
-                consensusOps,
-                consensusStorage,
-                consensusStateUpdater,
-                queue,
-                logger,
-                isFirstRoundAfterJoin
+            _ <- consensusStorage
+              .tryUpdateLastConsensusOutcomeWithCleanup(previousKey, newOutcome)
+              .ifM(
+                afterConsensusFinish(_trigger.get(newOutcome)),
+                logger.warn(s"Failed to update last consensus outcome for {key=${key.show}}")
               )
-            } >>
-              lateJoinerGraceRef.set(false)
+            _ <- nodeStorage.tryModifyStateGetResult(WaitingForReady, Ready).void
+            _ <- lateJoinerGraceRef.set(false)
+          } yield ()
 
-          private def cancelStallDetection(key: Key): F[Unit] =
-            stallDetectionRef.update(_ - key)
-        }
+        private def afterConsensusFinish(majorityTrigger: ConsensusTrigger): F[Unit] =
+          majorityTrigger match {
+            case EventTrigger => afterEventTrigger
+            case TimeTrigger  => afterTimeTrigger
+          }
+
+        private def afterEventTrigger: F[Unit] =
+          for {
+            maybeTimeTrigger <- consensusStorage.getTimeTrigger
+            currentTime <- Clock[F].monotonic
+            containsTriggerEvent <- consensusStorage.containsTriggerEvent
+            _ <-
+              if (maybeTimeTrigger.exists(currentTime >= _))
+                queue.requestFacilitation(TimeTrigger.some)
+              else if (containsTriggerEvent)
+                queue.requestFacilitation(EventTrigger.some)
+              else if (maybeTimeTrigger.isEmpty)
+                queue.requestFacilitation(none)
+              else
+                Applicative[F].unit
+          } yield ()
+
+        private def afterTimeTrigger: F[Unit] =
+          for {
+            _ <- scheduleFacility
+            containsTriggerEvent <- consensusStorage.containsTriggerEvent
+            _ <-
+              if (containsTriggerEvent) {
+                queue.requestFacilitation(EventTrigger.some)
+              } else {
+                Applicative[F].unit
+              }
+          } yield ()
+
+        private def scheduleStallDetection(key: Key): F[Unit] =
+          lateJoinerGraceRef.get.flatMap { isFirstRoundAfterJoin =>
+            StallDetection.scheduleStallDetection(
+              key,
+              config,
+              stallDetectionRef,
+              consensusOps,
+              consensusStorage,
+              consensusStateUpdater,
+              queue,
+              logger,
+              isFirstRoundAfterJoin
+            )
+          } >>
+            lateJoinerGraceRef.set(false)
+
+        private def cancelStallDetection(key: Key): F[Unit] =
+          stallDetectionRef.modify { handles =>
+            handles.get(key) match {
+              case Some(handle) =>
+                val newMap = handles - key
+                val effect = handle.cancelSignal.complete(()).void.handleError(_ => ())
+                (newMap, effect)
+              case None =>
+                (handles, Applicative[F].unit)
+            }
+          }.flatten
       }
 
       _ <- managerRef.complete(manager)

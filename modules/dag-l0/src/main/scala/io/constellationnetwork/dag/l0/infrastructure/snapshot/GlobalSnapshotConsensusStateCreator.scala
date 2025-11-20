@@ -132,8 +132,6 @@ object GlobalSnapshotConsensusStateCreator {
           lastOutcome.key
         )
 
-        _ <- consensusStorage.addSelfFacility(selfId, key, facilityDeclaration)
-
         effect = gossip.spread(
           ConsensusPeerDeclaration(
             key,

@@ -66,8 +66,7 @@ object GlobalSnapshotConsensusStateAdvancer {
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    clusterStorageInstance: ClusterStorage[F],
-    selfId: PeerId
+    clusterStorageInstance: ClusterStorage[F]
   ): GlobalSnapshotConsensusStateAdvancer[F] = new GlobalSnapshotConsensusStateAdvancer[F] {
 
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotConsensusStateAdvancer.getClass)
@@ -257,7 +256,6 @@ object GlobalSnapshotConsensusStateAdvancer {
       val proposal = Proposal(hash, facilitatorsHash)
 
       for {
-        _ <- consensusStorage.addSelfProposal(selfId, state.key, proposal)
         _ <- gossip.spread(ConsensusPeerDeclaration(state.key, proposal))
         _ <- gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
       } yield ()
@@ -373,7 +371,6 @@ object GlobalSnapshotConsensusStateAdvancer {
       val majoritySignature = MajoritySignature(signature, facilitatorsHash)
 
       for {
-        _ <- consensusStorage.addSelfSignature(selfId, state.key, majoritySignature)
         _ <- gossip.spread(ConsensusPeerDeclaration(state.key, majoritySignature))
       } yield ()
     }

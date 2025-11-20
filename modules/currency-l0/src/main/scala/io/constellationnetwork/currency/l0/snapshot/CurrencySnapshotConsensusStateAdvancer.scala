@@ -69,8 +69,7 @@ object CurrencySnapshotConsensusStateAdvancer {
     nodeStorage: NodeStorage[F],
     leavingDelay: FiniteDuration,
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    clusterStorageInstance: ClusterStorage[F],
-    selfId: PeerId
+    clusterStorageInstance: ClusterStorage[F]
   ): CurrencySnapshotConsensusStateAdvancer[F] =
     new CurrencySnapshotConsensusStateAdvancer[F] {
 
@@ -256,7 +255,6 @@ object CurrencySnapshotConsensusStateAdvancer {
       ): F[Unit] = {
         val proposal = Proposal(hash, facilitatorsHash)
         for {
-          _ <- consensusStorage.addSelfProposal(selfId, state.key, proposal)
           _ <- gossip.spread(ConsensusPeerDeclaration(state.key, proposal))
           _ <- gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
         } yield ()
@@ -367,7 +365,6 @@ object CurrencySnapshotConsensusStateAdvancer {
         val majoritySignature = MajoritySignature(signature, facilitatorsHash)
 
         for {
-          _ <- consensusStorage.addSelfSignature(selfId, state.key, majoritySignature)
           _ <- gossip.spread(ConsensusPeerDeclaration(state.key, majoritySignature))
         } yield ()
       }
@@ -510,7 +507,6 @@ object CurrencySnapshotConsensusStateAdvancer {
             val binarySignature = BinarySignature(signedBinary.proofs.head.signature, facilitatorsHash)
 
             val sideEffect = for {
-              _ <- consensusStorage.addSelfBinarySignature(selfId, state.key, binarySignature)
               _ <- gossip.spread(ConsensusPeerDeclaration(state.key, binarySignature))
             } yield ()
 

@@ -56,11 +56,7 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
 
   private[consensus] def addFacility(peerId: PeerId, key: Key, facility: Facility): F[Option[ConsensusResources[Artifact, Kind]]]
 
-  def addSelfFacility(peerId: PeerId, key: Key, facility: Facility): F[Unit]
-
   private[consensus] def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[Option[ConsensusResources[Artifact, Kind]]]
-
-  def addSelfProposal(peerId: PeerId, key: Key, proposal: Proposal): F[Option[ConsensusResources[Artifact, Kind]]]
 
   private[consensus] def addSignature(
     peerId: PeerId,
@@ -68,19 +64,7 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     signature: MajoritySignature
   ): F[Option[ConsensusResources[Artifact, Kind]]]
 
-  def addSelfSignature(
-    peerId: PeerId,
-    key: Key,
-    signature: MajoritySignature
-  ): F[Option[ConsensusResources[Artifact, Kind]]]
-
   private[consensus] def addBinarySignature(
-    peerId: PeerId,
-    key: Key,
-    signature: BinarySignature
-  ): F[Option[ConsensusResources[Artifact, Kind]]]
-
-  def addSelfBinarySignature(
     peerId: PeerId,
     key: Key,
     signature: BinarySignature
@@ -313,32 +297,20 @@ object ConsensusStorage {
             peerDeclaration.focus(_.facility).modify(_.orElse(facility.some))
           }
 
-        def addSelfFacility(peerId: PeerId, key: Key, facility: Facility): F[Unit] =
-          addFacility(peerId, key, facility).void
-
         def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[Option[ConsensusResources[Artifact, Kind]]] =
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
             peerDeclaration.focus(_.proposal).modify(_.orElse(proposal.some))
           }
-
-        def addSelfProposal(peerId: PeerId, key: Key, proposal: Proposal): F[Option[ConsensusResources[Artifact, Kind]]] =
-          addProposal(peerId, key, proposal)
 
         def addSignature(peerId: PeerId, key: Key, signature: MajoritySignature): F[Option[ConsensusResources[Artifact, Kind]]] =
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
             peerDeclaration.focus(_.signature).modify(_.orElse(signature.some))
           }
 
-        def addSelfSignature(peerId: PeerId, key: Key, signature: MajoritySignature): F[Option[ConsensusResources[Artifact, Kind]]] =
-          addSignature(peerId, key, signature)
-
         def addBinarySignature(peerId: PeerId, key: Key, signature: BinarySignature): F[Option[ConsensusResources[Artifact, Kind]]] =
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
             peerDeclaration.focus(_.binarySignature).modify(_.orElse(signature.some))
           }
-
-        def addSelfBinarySignature(peerId: PeerId, key: Key, signature: BinarySignature): F[Option[ConsensusResources[Artifact, Kind]]] =
-          addBinarySignature(peerId, key, signature)
 
         def addPeerDeclarationAck(
           peerId: PeerId,

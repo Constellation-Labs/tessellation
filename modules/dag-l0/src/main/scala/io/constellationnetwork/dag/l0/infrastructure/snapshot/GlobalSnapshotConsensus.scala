@@ -160,8 +160,7 @@ object GlobalSnapshotConsensus {
           lastNGlobalSnapshotStorage,
           lastGlobalSnapshotStorage,
           getGlobalSnapshotByOrdinal,
-          clusterStorage,
-          selfId
+          clusterStorage
         )
       consensusStateCreator = GlobalSnapshotConsensusStateCreator
         .make[F](consensusFunctions, consensusStorage, gossip, selfId, seedlist, clusterStorage)

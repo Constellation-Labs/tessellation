@@ -145,8 +145,6 @@ object CurrencySnapshotConsensusStateCreator {
           lastGlobalSnapshotOrdinal
         )
 
-        _ <- consensusStorage.addSelfFacility(selfId, key, facilityDeclaration)
-
         effect = gossip.spread(
           ConsensusPeerDeclaration(key, facilityDeclaration)
         )
