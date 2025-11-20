@@ -88,26 +88,31 @@ private[consensus] object StallDetection {
     queue: ConsensusQueue[F, Key],
     logger: Logger[F]
   ): F[Unit] =
-    consensusStateUpdater
-      .tryLockConsensus(key, state)
-      .flatMap {
-        case Some((_, lockedState)) =>
-          logger.info(s"Consensus locked for stall recovery {key=${key.toString}}") >>
-            Temporal[F].sleep(config.lockDuration) >>
-            consensusOps
-              .maybeCollectingKind(lockedState.status)
-              .traverse { ackKind =>
-                for {
-                  resources <- consensusStorage.getResources(key)
-                  _ <- consensusStateUpdater.trySpreadAck(key, ackKind, resources)
-                  _ <- logger.debug(s"ACKs spread for stall recovery {key=${key.toString}, kind=${ackKind.toString}}")
-                  _ <- logger.info(s"Requesting state update after spreading ACKs {key=${key.toString}}")
-                  _ <- queue.requestStateUpdate(key)
-                } yield ()
-              }
-              .void
+    consensusStorage.getState(key).flatMap {
+      case Some(currentState) =>
+        consensusStateUpdater
+          .tryLockConsensus(key, currentState)
+          .flatMap {
+            case Some((_, lockedState)) =>
+              logger.info(s"Consensus locked for stall recovery {key=${key.toString}}") >>
+                Temporal[F].sleep(config.lockDuration) >>
+                consensusOps
+                  .maybeCollectingKind(lockedState.status)
+                  .traverse { ackKind =>
+                    for {
+                      resources <- consensusStorage.getResources(key)
+                      _ <- consensusStateUpdater.trySpreadAck(key, ackKind, resources)
+                      _ <- logger.debug(s"ACKs spread for stall recovery {key=${key.toString}, kind=${ackKind.toString}}")
+                      _ <- logger.info(s"Requesting state update after spreading ACKs {key=${key.toString}}")
+                      _ <- queue.requestStateUpdate(key)
+                    } yield ()
+                  }
+                  .void
 
-        case None =>
-          logger.debug(s"Could not lock consensus for stall recovery {key=${key.toString}}")
-      }
+            case None =>
+              logger.debug(s"Could not lock consensus for stall recovery {key=${key.toString}}")
+          }
+      case None =>
+        logger.debug(s"State no longer exists {key=${key.toString}}")
+    }
 }
