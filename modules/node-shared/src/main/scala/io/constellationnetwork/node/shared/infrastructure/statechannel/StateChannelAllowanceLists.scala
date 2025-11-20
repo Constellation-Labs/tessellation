@@ -91,7 +91,7 @@ object StateChannelAllowanceLists {
               "79c986a5fa6277723783c88c4f829dbff1faa2359566a1454a533c42f4142ea4491fdf30d7cab26b5c4a148d07468e41f7430f768c5d788589a345b380e2bfe0"
             ),
           // Price Oracle
-          Address("DAG6xfTWbFMjp1AmatNCWzuunH1V4XTTJsRKCHLJ") ->
+          Address("DAG4QSG19fPchE5xVpEDA6Y1fE2F7XcSFXJvzvHo") ->
             NonEmptySet.of(
               "73a9257c176e1c5aee4d2d9d576059ac0d5305bcc26da3512e8242a0de6accd1aa8efd3505b1e0b46b12dfd780e9711ba77b21b7ac3fedb60b865dc21087a49f",
               "75d8f472fb2bebfcefbb27a46cb60aeae1a32806c9f3f40a405d4eaf1c44e8041febf5e6eb9e6f525d6142c7df87304b9fe011863c6d8ed121fa6fcae7d5ca66",
