@@ -5,6 +5,7 @@ import cats.syntax.show._
 
 import io.constellationnetwork.currency.schema.currency.CurrencySnapshotContext
 import io.constellationnetwork.node.shared.infrastructure.consensus._
+import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotArtifact
 import io.constellationnetwork.security.hash.Hash

@@ -1,4 +1,4 @@
-package io.constellationnetwork.node.shared.infrastructure.consensus
+package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
 import cats._
 import cats.data.StateT
@@ -13,47 +13,57 @@ import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
-import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusState._
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage.ModifyStateFn
+import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.consensus.update.UnlockConsensusUpdate
-import io.constellationnetwork.node.shared.infrastructure.fork.{ExitOnFork, ForkDetect}
+import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher}
 
-import eu.timepit.refined.auto._
 import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
+/** Updates consensus state based on received declarations.
+  *
+  * ==When Called==
+  *
+  * Called by StateTransitions.checkUpdate() after new data arrives via rumors.
+  *
+  * ==Update Pipeline==
+  *
+  * {{{
+  *   tryUpdateConsensus(key, resources)
+  *       │
+  *       ├── unlockConsensusFn()      // Check if we can unlock
+  *       ├── updateFacilitators()     // Remove withdrawn peers
+  *       ├── spreadHistoricalAck()    // Spread acks we haven't spread
+  *       └── advanceStatus()          // Try to move to next status
+  *             │
+  *             ▼
+  *       Some((oldState, newState)) or None
+  * }}}
+  *
+  * ==Key Methods==
+  *
+  * '''tryUpdateConsensus(key, resources):''' Main update method, returns old/new state if changed
+  *
+  * '''tryLockConsensus(key, state):''' Lock state during stall detection
+  *
+  * '''trySpreadAck(key, kind, resources):''' Spread acknowledgment of what we've seen
+  */
 trait ConsensusStateUpdater[F[_], Key, Artifact, Context, Status, Outcome, Kind] {
 
   type StateUpdateResult = Option[(ConsensusState[Key, Status, Outcome, Kind], ConsensusState[Key, Status, Outcome, Kind])]
 
-  /** Tries to conditionally update a consensus based on information collected in `resources`, this includes:
-    *   - unlocking consensus,
-    *   - updating facilitators,
-    *   - spreading historical acks,
-    *   - advancing consensus status.
-    *
-    * Returns `Some((oldState, newState))` when the consensus with `key` exists and update was successful, otherwise `None`
-    */
   def tryUpdateConsensus(key: Key, resources: ConsensusResources[Artifact, Kind]): F[StateUpdateResult]
-
-  /** Tries to lock a consensus if the current status equals to status in the `referenceState`. Returns `Some((unlockedState, lockedState))`
-    * when the consensus with `key` exists and was successfully locked, otherwise `None`
-    */
   def tryLockConsensus(key: Key, referenceState: ConsensusState[Key, Status, Outcome, Kind]): F[StateUpdateResult]
-
-  /** Tries to spread ack if it wasn't already spread. Returns `Some((oldState, newState))` when the consenus with `key` exists and spread
-    * was successful, otherwise `None`
-    */
   def trySpreadAck(
     key: Key,
     ackKind: Kind,

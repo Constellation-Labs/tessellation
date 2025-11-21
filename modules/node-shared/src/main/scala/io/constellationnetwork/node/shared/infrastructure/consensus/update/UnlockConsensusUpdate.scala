@@ -4,7 +4,7 @@ import cats.Monad
 import cats.data.StateT
 import cats.syntax.all._
 
-import io.constellationnetwork.node.shared.infrastructure.consensus.{Facilitators, LockStatus, RemovedFacilitators}
+import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.schema.peer.PeerId
 
 import monocle.Lens

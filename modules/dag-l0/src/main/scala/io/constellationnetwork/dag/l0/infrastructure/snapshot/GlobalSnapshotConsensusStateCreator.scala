@@ -1,6 +1,5 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
-import cats.Applicative
 import cats.effect.Async
 import cats.effect.kernel.{Clock, Sync}
 import cats.syntax.all._
@@ -13,8 +12,9 @@ import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Facility
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
+import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
-import io.constellationnetwork.schema.peer.{PeerId, Responsive, Unresponsive}
+import io.constellationnetwork.schema.peer.PeerId
 
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -36,10 +36,9 @@ object GlobalSnapshotConsensusStateCreator {
     consensusStorage: GlobalConsensusStorage[F],
     gossip: Gossip[F],
     selfId: PeerId,
-    seedlist: Option[Set[SeedlistEntry]],
-    clusterStorage: ClusterStorage[F]
+    seedlist: Option[Set[SeedlistEntry]]
   ): GlobalSnapshotConsensusStateCreator[F] = new GlobalSnapshotConsensusStateCreator[F] {
-    case class FacilitatorWithStatus(peerId: PeerId, isHealthy: Boolean, message: Option[String])
+
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
     def tryFacilitateConsensus(
@@ -51,7 +50,7 @@ object GlobalSnapshotConsensusStateCreator {
       consensusStorage
         .condModifyState(key)(toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources)))
         .flatMap(evalEffect)
-        .flatTap(logIfCreatedState)
+        .flatTap(logIfCreated)
 
     private def facilitateConsensus(
       key: GlobalSnapshotKey,
@@ -60,46 +59,25 @@ object GlobalSnapshotConsensusStateCreator {
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind]
     ): F[(GlobalSnapshotConsensusState, F[Unit])] =
       for {
-
         candidates <- consensusStorage.getCandidates(key.next)
+        previousFacilitators = lastOutcome.facilitators.value
+        approvedCandidates = lastOutcome.finished.candidates.value
+        seedlistPeerIds = seedlist.map(_.map(_.peerId)).getOrElse(Set.empty)
 
-        // Split into old facilitators and new candidates
-        oldFacilitators = lastOutcome.facilitators.value
-          .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
+        filteredPreviousFacilitators = previousFacilitators
+          .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
 
-        newCandidates = lastOutcome.finished.candidates.value
-          .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
+        filteredCandidates = approvedCandidates
+          .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
 
-        // Check responsiveness for each old facilitator
-        oldFacilitatorsWithStatus <- oldFacilitators.traverse { peerId =>
-          if (peerId === selfId) {
-            Applicative[F].pure(
-              FacilitatorWithStatus(peerId, isHealthy = true, "self".some)
-            )
-          } else {
-            clusterStorage.getPeer(peerId).map {
-              case Some(peer) if peer.responsiveness === Responsive =>
-                FacilitatorWithStatus(peerId, isHealthy = true, "responsive".some)
-              case Some(peer) if peer.responsiveness === Unresponsive =>
-                FacilitatorWithStatus(peerId, isHealthy = false, "unresponsive".some)
-              case Some(peer) =>
-                FacilitatorWithStatus(peerId, isHealthy = false, peer.responsiveness.show.some)
-              case None =>
-                FacilitatorWithStatus(peerId, isHealthy = false, "not found in cluster storage".some)
-            }
-          }
-        }
+        baseFacilitators = (filteredPreviousFacilitators ++ filteredCandidates).distinct
 
-        removedFacilitators = oldFacilitatorsWithStatus.filterNot(_.isHealthy)
-        _ <- removedFacilitators.traverse_(facilitatorWithStatus =>
-          logger.warn(
-            s"Removing old facilitator ${facilitatorWithStatus.peerId.show} from consensus - reason: ${facilitatorWithStatus.message.getOrElse("unknown")}"
-          )
+        _ <- logger.debug(
+          s"Facilitator selection for key=$key: " +
+            s"previous=${filteredPreviousFacilitators.size}, " +
+            s"candidates=${filteredCandidates.size}, " +
+            s"base=${baseFacilitators.size}"
         )
-
-        responsiveOldFacilitators = oldFacilitatorsWithStatus.filter(_.isHealthy).map(_.peerId)
-
-        baseFacilitators = (responsiveOldFacilitators ++ newCandidates).distinct
 
         facilitators <- (baseFacilitators :+ selfId).distinct
           .filterA(
@@ -114,20 +92,21 @@ object GlobalSnapshotConsensusStateCreator {
             if (list.isEmpty) List(selfId) else list
           }
 
-        failedFilter = baseFacilitators.filterNot(facilitators.contains)
-        _ <- failedFilter.traverse_ { peerId =>
-          logger.warn(s"Facilitator ${peerId.show} removed by facilitatorFilter")
+        filteredOut = baseFacilitators.filterNot(facilitators.contains)
+        _ <- filteredOut.traverse_ { peerId =>
+          logger.debug(s"Facilitator ${peerId.show} removed by facilitatorFilter for key=$key")
         }
 
-        (withdrawn, remained) = facilitators.partition { peerId =>
+        (withdrawn, active) = facilitators.partition { peerId =>
           resources.withdrawalsMap.get(peerId).contains(GlobalConsensusKind.Facility)
         }
 
         _ <- withdrawn.traverse_ { peerId =>
-          logger.info(s"Facilitator ${peerId.show} has withdrawn from consensus")
+          logger.info(s"Facilitator ${peerId.show} has withdrawn from consensus at key=$key")
         }
 
         time <- Clock[F].monotonic
+
         effect = consensusStorage.getUpperBound.flatMap { bound =>
           gossip.spread(
             ConsensusPeerDeclaration(
@@ -136,10 +115,11 @@ object GlobalSnapshotConsensusStateCreator {
             )
           )
         }
+
         state = ConsensusState[GlobalSnapshotKey, GlobalSnapshotStatus, GlobalConsensusOutcome, GlobalConsensusKind](
           key,
           lastOutcome,
-          Facilitators(remained),
+          Facilitators(active),
           CollectingFacilities(
             maybeTrigger,
             lastOutcome.finished.facilitatorsHash
@@ -148,6 +128,12 @@ object GlobalSnapshotConsensusStateCreator {
           withdrawnFacilitators = WithdrawnFacilitators(withdrawn.toSet),
           spreadAckKinds = Set.empty
         )
+
+        _ <- logger.info(
+          s"Created consensus state for key=$key with ${active.size} active facilitators" +
+            withdrawn.headOption.fold("")(_ => s", ${withdrawn.size} withdrawn")
+        )
+
       } yield (state, effect)
   }
 }

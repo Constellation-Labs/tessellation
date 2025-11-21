@@ -1,5 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
+import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.security.hash.Hash
@@ -11,6 +12,7 @@ import derevo.derive
 
 object declaration {
 
+  @derive(eqv, show, encoder, decoder)
   sealed trait PeerDeclaration {
     def facilitatorsHash: Hash
   }

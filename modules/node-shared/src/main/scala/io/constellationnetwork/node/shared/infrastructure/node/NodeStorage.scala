@@ -10,22 +10,25 @@ import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.schema.node.{InvalidNodeStateTransition, NodeState, NodeStateTransition}
 
 import fs2.Stream
-import fs2.concurrent.Topic
+import fs2.concurrent.{SignallingRef, Topic}
 
 object NodeStorage {
 
   private val maxQueuedNodeStates = 1000
 
   def make[F[_]: Concurrent: Ref.Make]: F[NodeStorage[F]] =
-    Ref.of[F, NodeState](NodeState.Initial) >>= { ref =>
-      Topic[F, NodeState] >>= { topic =>
-        topic.publish1(NodeState.Initial).map { _ =>
-          make(ref, topic)
-        }
-      }
-    }
+    for {
+      stateRef <- Ref.of[F, NodeState](NodeState.Initial)
+      stateTopic <- Topic[F, NodeState]
+      graceRef <- SignallingRef[F, Boolean](true) // ← true = joining grace period active
+      _ <- stateTopic.publish1(NodeState.Initial)
+    } yield make(stateRef, stateTopic, graceRef)
 
-  def make[F[_]: MonadThrow](nodeState: Ref[F, NodeState], nodeStateTopic: Topic[F, NodeState]): NodeStorage[F] =
+  def make[F[_]: Concurrent](
+    nodeState: Ref[F, NodeState],
+    nodeStateTopic: Topic[F, NodeState],
+    joiningGracePeriod: SignallingRef[F, Boolean]
+  ): NodeStorage[F] =
     new NodeStorage[F] {
       def getNodeState: F[NodeState] = nodeState.get
 
@@ -75,5 +78,14 @@ object NodeStorage {
             case NodeStateTransition.Success => nodeStateTopic.publish1(to).void
             case _                           => Applicative[F].unit
           }
+
+      def setJoiningGracePeriod: F[Unit] =
+        joiningGracePeriod.set(true)
+
+      def clearJoiningGracePeriod: F[Unit] =
+        joiningGracePeriod.set(false)
+
+      def isInJoiningGracePeriod: F[Boolean] =
+        joiningGracePeriod.get
     }
 }

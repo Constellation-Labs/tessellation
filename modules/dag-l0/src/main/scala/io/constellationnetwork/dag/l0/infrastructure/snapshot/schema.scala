@@ -3,7 +3,7 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 import cats.Show
 import cats.syntax.show._
 
-import io.constellationnetwork.node.shared.infrastructure.consensus._
+import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed

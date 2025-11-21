@@ -4,7 +4,8 @@ import cats.syntax.option._
 
 import io.constellationnetwork.currency.l0.snapshot.schema.CurrencyConsensusKind._
 import io.constellationnetwork.currency.l0.snapshot.schema._
-import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusOps, PeerDeclarations, declaration}
+import io.constellationnetwork.node.shared.infrastructure.consensus.state._
+import io.constellationnetwork.node.shared.infrastructure.consensus.{PeerDeclarations, declaration}
 
 trait CurrencySnapshotConsensusOps extends ConsensusOps[CurrencySnapshotStatus, CurrencyConsensusKind]
 
@@ -33,6 +34,11 @@ object CurrencySnapshotConsensusOps {
       case Proposal        => _.proposal
       case Signature       => _.signature
       case BinarySignature => _.binarySignature
+    }
+
+    override def isFinished(status: CurrencySnapshotStatus): Boolean = status match {
+      case _: Finished => true
+      case _           => false
     }
   }
 }

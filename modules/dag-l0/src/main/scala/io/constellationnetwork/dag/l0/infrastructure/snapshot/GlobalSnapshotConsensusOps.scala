@@ -4,7 +4,8 @@ import cats.syntax.option._
 
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.GlobalConsensusKind._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema._
-import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusOps, PeerDeclarations, declaration}
+import io.constellationnetwork.node.shared.infrastructure.consensus.state._
+import io.constellationnetwork.node.shared.infrastructure.consensus.{PeerDeclarations, declaration}
 
 trait GlobalSnapshotConsensusOps extends ConsensusOps[GlobalConsensusStep, GlobalConsensusKind]
 
@@ -30,6 +31,11 @@ object GlobalSnapshotConsensusOps {
       case Facility  => _.facility
       case Proposal  => _.proposal
       case Signature => _.signature
+    }
+
+    def isFinished(status: GlobalSnapshotStatus): Boolean = status match {
+      case _: Finished => true
+      case _           => false
     }
   }
 }

@@ -1,21 +1,39 @@
-package io.constellationnetwork.node.shared.infrastructure.consensus
+package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
 import cats.Show
 import cats.effect.Sync
-import cats.syntax.applicative._
-import cats.syntax.flatMap._
-import cats.syntax.option._
-import cats.syntax.show._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import scala.reflect.runtime.universe.TypeTag
 
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusWithdrawPeerDeclaration
 
 import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
+/** Handles withdrawal from consensus participation.
+  *
+  * ==When Called==
+  *
+  * Called when node wants to leave consensus (e.g., shutting down, leaving cluster).
+  *
+  * ==What It Does==
+  *
+  *   1. Determines current consensus key and status 2. Creates appropriate withdrawal declaration based on current phase 3. Spreads
+  *      ConsensusWithdrawPeerDeclaration via gossip
+  *
+  * ==Why Withdrawal Matters==
+  *
+  * If a peer just disappears, other peers will wait for their declarations forever (until stall detection kicks in). Explicit withdrawal
+  * lets others proceed immediately.
+  *
+  * ==Subclassing==
+  *
+  * Abstract class. Subclasses implement:
+  *   - `getWithdrawalDeclaration(key, state)` - Returns (declarationKey, declarationKind)
+  */
 abstract class ConsensusStateRemover[F[
   _
 ]: Sync, Key: TypeTag: Encoder: Show, Event, Artifact, Context, Status, Outcome, Kind: Encoder: Show: TypeTag](
@@ -32,8 +50,8 @@ abstract class ConsensusStateRemover[F[
 
   def withdrawFromConsensus(key: Key): F[Unit] =
     consensusStorage
-      .condModifyState(key) { state =>
-        val declaration = getWithdrawalDeclaration(key, state)
+      .condModifyState(key) { maybeState =>
+        val declaration = getWithdrawalDeclaration(key, maybeState)
         val effect =
           gossip.spread(declaration) >>
             logger.info(s"Withdrew from consensus {key=${declaration.key.show}, kind=${declaration.kind.show}}")
@@ -43,5 +61,5 @@ abstract class ConsensusStateRemover[F[
       .flatMap(evalEffect)
 
   private def evalEffect(maybeEffect: Option[F[Unit]]): F[Unit] =
-    maybeEffect.traverse(identity).flatMap(_.liftTo[F](new Throwable("Should never happen")))
+    maybeEffect.traverse_(identity)
 }
