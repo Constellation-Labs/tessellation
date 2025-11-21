@@ -1,10 +1,11 @@
-package io.constellationnetwork.node.shared.infrastructure.consensus
+package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
 import cats.Show
 import cats.syntax.show._
 
 import scala.concurrent.duration.FiniteDuration
 
+import io.constellationnetwork.node.shared.infrastructure.consensus.PeerDeclarations
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.PeerDeclaration
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
@@ -14,6 +15,47 @@ import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import monocle.Lens
 import monocle.macros.GenLens
+
+/** Immutable snapshot of a consensus round's current state.
+  *
+  * ==Structure==
+  *
+  * {{{
+  *   ConsensusState(
+  *     key: Key,                          // Ordinal being decided (e.g., SnapshotOrdinal(42))
+  *     status: Status,                    // Current phase (CollectingFacilities, etc.)
+  *     facilitators: Facilitators,        // Active participants
+  *     withdrawnFacilitators: Set[PeerId], // Peers who left
+  *     removedFacilitators: Set[PeerId],  // Peers kicked out
+  *     lockStatus: LockStatus,            // Open or Closed (prevents new facilitators)
+  *     spreadAckKinds: Set[Kind],         // Which acks we've already spread
+  *     createdAt: FiniteDuration          // For metrics
+  *   )
+  * }}}
+  *
+  * ==Status Progression==
+  *
+  * {{{
+  *   CollectingFacilities    // Waiting for all peers' facility info
+  *         │
+  *         ▼
+  *   CollectingProposals     // Waiting for all peers' artifact proposals
+  *         │
+  *         ▼
+  *   CollectingSignatures    // Waiting for majority signatures
+  *         │
+  *         ▼
+  *   CollectingBinarySignatures  // Waiting for final binary signatures
+  *         │
+  *         ▼
+  *   Finished                // Outcome ready, round complete
+  * }}}
+  *
+  * ==Lock Status==
+  *
+  *   - `Open` - New facilitators can join mid-round
+  *   - `Closed` - Locked during stall detection, no new facilitators
+  */
 
 @derive(eqv, encoder, decoder)
 case class Facilitators(value: List[PeerId])
@@ -76,6 +118,7 @@ trait ConsensusOps[S, Kind] {
   def collectedKinds(status: S): Set[Kind]
   def maybeCollectingKind(status: S): Option[Kind]
   def kindGetter: Kind => PeerDeclarations => Option[PeerDeclaration]
+  def isFinished(status: S): Boolean
 }
 
 @derive(eqv)

@@ -3,6 +3,8 @@ package io.constellationnetwork.dag.l0.infrastructure
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome, GlobalConsensusStep}
 import io.constellationnetwork.node.shared.infrastructure.consensus._
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusManager
+import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.snapshot.SnapshotConsensus
 import io.constellationnetwork.schema._
 
@@ -44,6 +46,7 @@ package object snapshot {
   type GlobalConsensusManager[F[_]] =
     ConsensusManager[
       F,
+      GlobalSnapshotEvent,
       GlobalSnapshotKey,
       GlobalSnapshotArtifact,
       GlobalSnapshotContext,

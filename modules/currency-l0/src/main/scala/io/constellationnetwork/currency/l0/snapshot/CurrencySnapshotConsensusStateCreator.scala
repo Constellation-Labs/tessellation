@@ -15,6 +15,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotS
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Facility
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
+import io.constellationnetwork.node.shared.infrastructure.consensus.state.{ConsensusStateCreator, _}
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.peer.{PeerId, Responsive, Unresponsive}
@@ -58,7 +59,7 @@ object CurrencySnapshotConsensusStateCreator {
       consensusStorage
         .condModifyState(key)(toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources)))
         .flatMap(evalEffect)
-        .flatTap(logIfCreatedState)
+        .flatTap(logIfCreated)
 
     private def facilitateConsensus(
       key: CurrencySnapshotKey,

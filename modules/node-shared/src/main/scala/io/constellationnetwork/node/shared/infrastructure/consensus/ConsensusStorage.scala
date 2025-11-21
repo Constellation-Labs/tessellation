@@ -14,6 +14,7 @@ import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage.ModifyStateFn
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
+import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.schema.gossip.Ordinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.Hasher

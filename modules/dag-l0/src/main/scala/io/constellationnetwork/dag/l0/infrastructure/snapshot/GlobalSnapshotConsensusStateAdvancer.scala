@@ -19,10 +19,11 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
-import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStateUpdater._
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
+import io.constellationnetwork.node.shared.infrastructure.consensus.state.ConsensusStateUpdater._
+import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics

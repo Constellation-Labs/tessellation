@@ -5,7 +5,8 @@ import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.domain.cluster.services.Cluster
 import io.constellationnetwork.node.shared.http.routes.ConsensusInfoRoutes.ConsensusInfo
-import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusStorage, Facilitators}
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage
+import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema.peer.{PeerId, PeerInfo}
 import io.constellationnetwork.security.Hasher

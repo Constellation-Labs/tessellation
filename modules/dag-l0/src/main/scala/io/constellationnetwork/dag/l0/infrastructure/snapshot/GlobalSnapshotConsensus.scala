@@ -4,11 +4,9 @@ import java.security.KeyPair
 
 import cats.Parallel
 import cats.data.NonEmptySet
-import cats.effect.kernel.Async
+import cats.effect.kernel.{Async, Fiber}
 import cats.effect.std.{Random, Supervisor}
-import cats.syntax.applicative._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
 
@@ -29,6 +27,7 @@ import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigP
 import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
+import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
@@ -38,6 +37,9 @@ import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcce
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.consensus._
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusEventLoop, _}
+import io.constellationnetwork.node.shared.infrastructure.consensus.state._
+import io.constellationnetwork.node.shared.infrastructure.gossip.RumorHandler
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
@@ -59,9 +61,7 @@ import org.http4s.client.Client
 
 object GlobalSnapshotConsensus {
 
-  def make[F[
-    _
-  ]: Async: Parallel: Random: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Metrics: Supervisor, R <: CliMethod](
+  def make[F[_]: Async: Parallel: Random: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Metrics, R <: CliMethod](
     sharedCfg: SharedConfig,
     gossip: Gossip[F],
     selfId: PeerId,
@@ -86,68 +86,75 @@ object GlobalSnapshotConsensus {
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
-  ): F[GlobalSnapshotConsensus[F]] =
+  )(implicit supervisor: Supervisor[F]): F[GlobalSnapshotConsensus[F]] =
     for {
-      globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
-        .make[F](stateChannelAllowanceLists, pullDelay = stateChannelPullDelay, purgeDelay = stateChannelPurgeDelay)
+      globalStateChannelManager <-
+        GlobalSnapshotStateChannelAcceptanceManager.make[F](
+          stateChannelAllowanceLists,
+          pullDelay = stateChannelPullDelay,
+          purgeDelay = stateChannelPurgeDelay
+        )
+
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       feeCalculator = FeeCalculator.make(feeConfigs)
-      snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
-        sharedCfg.fieldsAddedOrdinals,
-        sharedCfg.metagraphsSync,
-        sharedCfg.environment,
-        BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
-        AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlockValidator),
-        TokenLockBlockAcceptanceManager.make[F](validators.tokenLockBlockValidator),
-        GlobalSnapshotStateChannelEventsProcessor
-          .make[F](
+
+      snapshotAcceptanceManager =
+        GlobalSnapshotAcceptanceManager.make(
+          sharedCfg.fieldsAddedOrdinals,
+          sharedCfg.metagraphsSync,
+          sharedCfg.environment,
+          BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
+          AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlockValidator),
+          TokenLockBlockAcceptanceManager.make[F](validators.tokenLockBlockValidator),
+          GlobalSnapshotStateChannelEventsProcessor.make[F](
             validators.stateChannelValidator,
-            globalSnapshotStateChannelManager,
+            globalStateChannelManager,
             sharedServices.currencySnapshotContextFns,
             jsonBrotliBinarySerializer,
             feeCalculator
           ),
-        sharedServices.updateNodeParametersAcceptanceManager,
-        sharedServices.updateDelegatedStakeAcceptanceManager,
-        sharedServices.updateNodeCollateralAcceptanceManager,
-        validators.spendActionValidator,
-        validators.pricingUpdateValidator,
-        sharedServices.priceStateUpdater,
-        collateral,
-        sharedCfg.delegatedStaking.withdrawalTimeLimit.getOrElse(sharedCfg.environment, EpochProgress.MinValue)
-      )
-      consensusStorage <- ConsensusStorage
-        .make[
-          F,
-          GlobalSnapshotEvent,
-          GlobalSnapshotKey,
-          GlobalSnapshotArtifact,
-          GlobalSnapshotContext,
-          GlobalSnapshotStatus,
-          GlobalConsensusOutcome,
-          GlobalConsensusKind
-        ](
-          appConfig.snapshot.consensus
+          sharedServices.updateNodeParametersAcceptanceManager,
+          sharedServices.updateDelegatedStakeAcceptanceManager,
+          sharedServices.updateNodeCollateralAcceptanceManager,
+          validators.spendActionValidator,
+          validators.pricingUpdateValidator,
+          sharedServices.priceStateUpdater,
+          collateral,
+          sharedCfg.delegatedStaking.withdrawalTimeLimit
+            .getOrElse(sharedCfg.environment, EpochProgress.MinValue)
         )
-      updateNodeParametersCutter = UpdateNodeParametersCutter.make(appConfig.snapshot.consensus.eventCutter.maxUpdateNodeParametersSize)
 
-      consensusFunctions = GlobalSnapshotConsensusFunctions.make[F](
-        snapshotAcceptanceManager,
-        collateral,
-        rewardsService,
-        GlobalSnapshotEventCutter.make[F](
-          appConfig.snapshot.consensus.eventCutter.maxBinarySizeBytes,
-          SnapshotBinaryFeeCalculator.make(appConfig.shared.feeConfigs)
-        ),
-        updateNodeParametersCutter,
-        appConfig.environment,
-        DefaultDelegatedRewardsConfigProvider,
-        sharedCfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
-        sharedCfg.fieldsAddedOrdinals.setSumFix.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue)
-      )
+      consensusStorage <- ConsensusStorage.make[
+        F,
+        GlobalSnapshotEvent,
+        GlobalSnapshotKey,
+        GlobalSnapshotArtifact,
+        GlobalSnapshotContext,
+        GlobalSnapshotStatus,
+        GlobalConsensusOutcome,
+        GlobalConsensusKind
+      ](appConfig.snapshot.consensus)
 
-      consensusStateAdvancer = GlobalSnapshotConsensusStateAdvancer
-        .make[F](
+      consensusFunctions =
+        GlobalSnapshotConsensusFunctions.make[F](
+          snapshotAcceptanceManager,
+          collateral,
+          rewardsService,
+          GlobalSnapshotEventCutter.make(
+            appConfig.snapshot.consensus.eventCutter.maxBinarySizeBytes,
+            SnapshotBinaryFeeCalculator.make(appConfig.shared.feeConfigs)
+          ),
+          UpdateNodeParametersCutter.make(appConfig.snapshot.consensus.eventCutter.maxUpdateNodeParametersSize),
+          appConfig.environment,
+          DefaultDelegatedRewardsConfigProvider,
+          sharedCfg.fieldsAddedOrdinals.tessellation3Migration
+            .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
+          sharedCfg.fieldsAddedOrdinals.setSumFix
+            .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue)
+        )
+
+      stateAdvancer =
+        GlobalSnapshotConsensusStateAdvancer.make(
           appConfig.snapshot.consensus,
           keyPair,
           consensusStorage,
@@ -162,31 +169,81 @@ object GlobalSnapshotConsensus {
           getGlobalSnapshotByOrdinal,
           clusterStorage
         )
-      consensusStateCreator = GlobalSnapshotConsensusStateCreator
-        .make[F](consensusFunctions, consensusStorage, gossip, selfId, seedlist, clusterStorage)
-      consensusStateRemover = GlobalSnapshotConsensusStateRemover.make[F](consensusStorage, gossip)
-      consensusStatusOps = GlobalSnapshotConsensusOps.make
-      stateUpdater = ConsensusStateUpdater.make(
-        consensusStateAdvancer,
-        consensusStorage,
-        gossip,
-        consensusStatusOps
-      )
+
+      stateCreator =
+        GlobalSnapshotConsensusStateCreator.make(
+          consensusFunctions,
+          consensusStorage,
+          gossip,
+          selfId,
+          seedlist,
+          clusterStorage
+        )
+
+      stateRemover =
+        GlobalSnapshotConsensusStateRemover.make(
+          consensusStorage,
+          gossip
+        )
+
+      consensusOps = GlobalSnapshotConsensusOps.make
+
+      stateUpdater =
+        ConsensusStateUpdater.make(
+          stateAdvancer,
+          consensusStorage,
+          gossip,
+          consensusOps
+        )
+
       consensusClient = ConsensusClient.make[F, GlobalSnapshotKey, GlobalConsensusOutcome](client, session)
-      manager <- ConsensusManager.make(
-        appConfig.snapshot.consensus,
-        consensusStorage,
-        consensusStateCreator,
-        stateUpdater,
-        consensusStateAdvancer,
-        consensusStateRemover,
-        consensusStatusOps,
-        nodeStorage,
-        clusterStorage,
-        consensusClient
-      )
-      routes = new ConsensusRoutes(consensusStorage)
-      handler = GlobalConsensusHandler.make(consensusStorage, manager, consensusFunctions)
-      consensus = new Consensus(handler, consensusStorage, manager, routes, consensusFunctions)
+
+      loop <-
+        ConsensusEventLoop.build[
+          F,
+          GlobalSnapshotEvent,
+          GlobalSnapshotKey,
+          GlobalSnapshotArtifact,
+          GlobalSnapshotContext,
+          GlobalSnapshotStatus,
+          GlobalConsensusOutcome,
+          GlobalConsensusKind
+        ](
+          consensusStorage,
+          stateCreator,
+          stateUpdater,
+          stateAdvancer,
+          stateRemover,
+          consensusOps,
+          nodeStorage,
+          clusterStorage,
+          consensusFunctions,
+          consensusClient,
+          appConfig.snapshot.consensus
+        )
+
+      // =========================================================================
+      // Gossip Handler (returned upward)
+      // =========================================================================
+      handler = GlobalConsensusHandler.make(loop.queue)
+
+      // =========================================================================
+      // REST API
+      // =========================================================================
+      routes = new ConsensusRoutes[
+        F,
+        GlobalSnapshotKey,
+        GlobalSnapshotArtifact,
+        GlobalSnapshotContext,
+        GlobalSnapshotStatus,
+        GlobalConsensusOutcome,
+        GlobalConsensusKind
+      ](consensusStorage)
+
+      // =========================================================================
+      // Start FS2 Loop
+      // =========================================================================
+      _ <- supervisor.supervise(loop.run.compile.drain)
+      consensus = new Consensus(handler, consensusStorage, loop.manager, routes, consensusFunctions)
     } yield consensus
 }

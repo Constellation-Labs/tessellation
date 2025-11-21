@@ -2,7 +2,7 @@ package io.constellationnetwork.currency.l0.snapshot
 
 import java.security.KeyPair
 
-import cats.effect.kernel.Async
+import cats.effect.kernel.{Async, Fiber}
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.all._
 
@@ -10,18 +10,24 @@ import scala.collection.immutable.SortedSet
 import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.currency.dataApplication._
-import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusKind, CurrencyConsensusOutcome}
+import io.constellationnetwork.currency.l0.snapshot.schema._
 import io.constellationnetwork.currency.l0.snapshot.services.StateChannelSnapshotService
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.config.types.SnapshotConfig
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
+import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus._
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusEventLoop, _}
+import io.constellationnetwork.node.shared.infrastructure.consensus.message._
+import io.constellationnetwork.node.shared.infrastructure.consensus.state._
+import io.constellationnetwork.node.shared.infrastructure.gossip.RumorHandler
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencySnapshotCreator, CurrencySnapshotValidator}
@@ -38,7 +44,7 @@ import org.http4s.client.Client
 
 object CurrencySnapshotConsensus {
 
-  def make[F[_]: Async: Random: SecurityProvider: Metrics: Supervisor](
+  def make[F[_]: Async: Random: SecurityProvider: Metrics](
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
@@ -60,41 +66,59 @@ object CurrencySnapshotConsensus {
     leavingDelay: FiniteDuration,
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
-  ): F[CurrencySnapshotConsensus[F]] = {
-    def noopDecoder: Decoder[DataTransaction] = Decoder.failedWithMessage[DataTransaction]("not implemented")
+  )(implicit supervisor: Supervisor[F]): F[CurrencySnapshotConsensus[F]] = {
 
-    implicit def daDecoder: Decoder[DataTransaction] = maybeDataApplication.map { da =>
-      implicit val dataUpdateDecoder: Decoder[DataUpdate] = da.dataDecoder
-      DataTransaction.decoder
-    }.getOrElse(noopDecoder)
+    // -----------------------------------------------------------------------
+    // DataTransaction decoder
+    // -----------------------------------------------------------------------
+    def noopDecoder: Decoder[DataTransaction] =
+      Decoder.failedWithMessage("DataTransaction decoder not provided")
+
+    implicit def daDecoder: Decoder[DataTransaction] =
+      maybeDataApplication.map { da =>
+        implicit val dataUpdateDecoder: Decoder[DataUpdate] = da.dataDecoder
+        DataTransaction.decoder
+      }.getOrElse(noopDecoder)
 
     implicit val hs: HasherSelector[F] = hasherSelector
 
     for {
-      consensusStorage <- ConsensusStorage
-        .make[
-          F,
-          CurrencySnapshotEvent,
-          CurrencySnapshotKey,
-          CurrencySnapshotArtifact,
-          CurrencySnapshotContext,
-          CurrencySnapshotStatus,
-          CurrencyConsensusOutcome,
-          CurrencyConsensusKind
-        ](snapshotConfig.consensus)
-      consensusFunctions = CurrencySnapshotConsensusFunctions.make[F](
-        collateral,
-        maybeRewards,
-        creator,
-        validator,
-        maybeCustomArtifacts
-      )
-      consensusStateAdvancer = CurrencySnapshotConsensusStateAdvancer
-        .make[F](
+
+      // =====================================================================
+      // Storage
+      // =====================================================================
+      consensusStorage <- ConsensusStorage.make[
+        F,
+        CurrencySnapshotEvent,
+        CurrencySnapshotKey,
+        CurrencySnapshotArtifact,
+        CurrencySnapshotContext,
+        CurrencySnapshotStatus,
+        CurrencyConsensusOutcome,
+        CurrencyConsensusKind
+      ](snapshotConfig.consensus)
+
+      // =====================================================================
+      // Consensus Functions
+      // =====================================================================
+      consensusFns =
+        CurrencySnapshotConsensusFunctions.make[F](
+          collateral,
+          maybeRewards,
+          creator,
+          validator,
+          maybeCustomArtifacts
+        )
+
+      // =====================================================================
+      // Consensus State Machines
+      // =====================================================================
+      consensusStateAdvancer =
+        CurrencySnapshotConsensusStateAdvancer.make(
           snapshotConfig.consensus,
           keyPair,
           consensusStorage,
-          consensusFunctions,
+          consensusFns,
           stateChannelSnapshotService,
           gossip,
           maybeDataApplication,
@@ -104,32 +128,83 @@ object CurrencySnapshotConsensus {
           getGlobalSnapshotByOrdinal,
           clusterStorage
         )
-      consensusStateCreator = CurrencySnapshotConsensusStateCreator
-        .make[F](consensusFunctions, consensusStorage, lastGlobalSnapshotStorage, gossip, selfId, seedlist, clusterStorage)
-      consensusStateRemover = CurrencySnapshotConsensusStateRemover.make[F](consensusStorage, gossip)
+
+      consensusStateCreator =
+        CurrencySnapshotConsensusStateCreator.make(
+          consensusFns,
+          consensusStorage,
+          lastGlobalSnapshotStorage,
+          gossip,
+          selfId,
+          seedlist,
+          clusterStorage
+        )
+
+      consensusStateRemover =
+        CurrencySnapshotConsensusStateRemover.make(
+          consensusStorage,
+          gossip
+        )
+
       consensusStatusOps = CurrencySnapshotConsensusOps.make
-      stateUpdater = ConsensusStateUpdater.make(
-        consensusStateAdvancer,
-        consensusStorage,
-        gossip,
-        consensusStatusOps
-      )
+
+      stateUpdater =
+        ConsensusStateUpdater.make(
+          consensusStateAdvancer,
+          consensusStorage,
+          gossip,
+          consensusStatusOps
+        )
+
       consensusClient = ConsensusClient.make[F, CurrencySnapshotKey, CurrencyConsensusOutcome](client, session)
-      manager <- ConsensusManager.make(
-        snapshotConfig.consensus,
-        consensusStorage,
-        consensusStateCreator,
-        stateUpdater,
-        consensusStateAdvancer,
-        consensusStateRemover,
-        consensusStatusOps,
-        nodeStorage,
-        clusterStorage,
-        consensusClient
-      )
-      routes = new ConsensusRoutes(consensusStorage)
-      handler = CurrencyConsensusHandler.make(consensusStorage, manager, consensusFunctions)
-      consensus = new Consensus(handler, consensusStorage, manager, routes, consensusFunctions)
+
+      loop <-
+        ConsensusEventLoop.build[
+          F,
+          CurrencySnapshotEvent,
+          CurrencySnapshotKey,
+          CurrencySnapshotArtifact,
+          CurrencySnapshotContext,
+          CurrencySnapshotStatus,
+          CurrencyConsensusOutcome,
+          CurrencyConsensusKind
+        ](
+          consensusStorage,
+          consensusStateCreator,
+          stateUpdater,
+          consensusStateAdvancer,
+          consensusStateRemover,
+          consensusStatusOps,
+          nodeStorage,
+          clusterStorage,
+          consensusFns,
+          consensusClient,
+          snapshotConfig.consensus
+        )
+
+      // =====================================================================
+      // Gossip Handler (returned for registration upstream)
+      // =====================================================================
+      handler = CurrencyConsensusHandler.make(loop.queue)
+
+      // =====================================================================
+      // REST API Routes
+      // =====================================================================
+      routes = new ConsensusRoutes[
+        F,
+        CurrencySnapshotKey,
+        CurrencySnapshotArtifact,
+        CurrencySnapshotContext,
+        CurrencySnapshotStatus,
+        CurrencyConsensusOutcome,
+        CurrencyConsensusKind
+      ](consensusStorage)
+
+      // =====================================================================
+      // Start FS2 Loop under Supervisor
+      // =====================================================================
+      _ <- supervisor.supervise(loop.run.compile.drain)
+      consensus = new Consensus(handler, consensusStorage, loop.manager, routes, consensusFns)
     } yield consensus
   }
 }

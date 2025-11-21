@@ -1,25 +1,63 @@
-package io.constellationnetwork.node.shared.infrastructure.consensus
+package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
 import cats.data.StateT
 import cats.effect.{Async, Clock}
 import cats.syntax.all._
 
-import scala.collection.immutable.{SortedMap, SortedSet}
+import scala.collection.immutable.SortedMap
 import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
+import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusResources, PeerDeclarations}
 import io.constellationnetwork.schema.peer.{PeerId, Responsive, Unresponsive}
 
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+
+/** Advances consensus state through status phases and extracts final outcome.
+  *
+  * ==Purpose==
+  *
+  * Each status transition has specific logic:
+  *   - Check if all required declarations received
+  *   - Compute majority values
+  *   - Create and spread next declaration
+  *
+  * ==Status Transitions==
+  *
+  * '''CollectingFacilities → CollectingProposals:'''
+  *   - Requirement: All facilitators sent Facility declarations
+  *   - Action: Pick majority trigger, create proposal artifact
+  *   - Spread: Proposal(artifactInfo, trigger)
+  *
+  * '''CollectingProposals → CollectingSignatures:'''
+  *   - Requirement: All facilitators sent Proposal declarations
+  *   - Action: Pick majority artifact hash, sign it
+  *   - Spread: MajoritySignature(hash, signature)
+  *
+  * '''CollectingSignatures → CollectingBinarySignatures:'''
+  *   - Requirement: Enough signatures for majority
+  *   - Action: Create signed artifact with all signatures
+  *   - Spread: BinarySignature(signedArtifact)
+  *
+  * '''CollectingBinarySignatures → Finished:'''
+  *   - Requirement: All facilitators sent BinarySignature
+  *   - Action: Build final outcome
+  *
+  * ==Key Methods==
+  *
+  * '''advanceStatus(state, resources):''' Try to move to next status
+  *
+  * '''getConsensusOutcome(state):''' If Finished, extract (prevKey, outcome)
+  */
 
 case class Previous[A](a: A)
 
 trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind] {
 
   type State = ConsensusState[Key, Status, Outcome, Kind]
-  type Resources = ConsensusResources[Artifact, Kind]
+  private type Resources = ConsensusResources[Artifact, Kind]
 
   def getConsensusOutcome(
     state: ConsensusState[Key, Status, Outcome, Kind]
@@ -30,10 +68,8 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
   def logger(implicit async: Async[F]): SelfAwareStructuredLogger[F] =
     Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
-  // Abstract method that implementations must provide to access ClusterStorage
   protected def clusterStorage: ClusterStorage[F]
 
-  // Abstract method for config
   protected def config: ConsensusConfig
 
   private def shouldTimeout(
@@ -75,43 +111,11 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
 
       result <-
         if (receivedCount == totalFacilitators) {
-          // All facilitators responded
           declarationsMap.some.pure[F]
         } else {
-          // Still waiting
           none[SortedMap[PeerId, A]].pure[F]
         }
     } yield result
-  }
-
-  /** Get partial declarations after timeout. This is used when we must proceed despite missing peers.
-    */
-  protected def getPartialDeclarations[A](
-    state: State,
-    resources: Resources,
-    elapsed: FiniteDuration,
-    phaseName: String
-  )(
-    getter: PeerDeclarations => Option[A]
-  )(implicit asyncF: Async[F]): F[Option[SortedMap[PeerId, A]]] = {
-
-    val declarations = state.facilitators.value.flatMap { peerId =>
-      resources.peerDeclarationsMap
-        .get(peerId)
-        .flatMap(getter)
-        .map((peerId, _))
-    }
-
-    val declarationsMap = SortedMap.from(declarations)
-    val missingPeers = state.facilitators.value.filterNot(declarationsMap.contains)
-
-    logger.error(
-      s"TIMEOUT at $phaseName phase (${elapsed.toSeconds}s): Proceeding with ${declarationsMap.size}/${state.facilitators.value.size} facilitators. " +
-        s"Missing: ${missingPeers.map(_.show).take(3).mkString(", ")}${if (missingPeers.size > 3) "..." else ""}"
-    ) >>
-      // Mark missing peers as unresponsive
-      missingPeers.traverse_(peerId => clusterStorage.setPeerResponsiveness(peerId, Unresponsive)) >>
-      declarationsMap.some.pure[F]
   }
 
   private def markSlowPeersAsUnresponsive(
@@ -134,31 +138,4 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     } else {
       Async[F].unit
     }
-
-  /** Update consensus state to remove unresponsive facilitators. Returns updated state and the set of removed peers.
-    */
-  protected def removeMissingFacilitators(
-    state: State,
-    respondedPeers: SortedSet[PeerId],
-    phaseName: String
-  )(implicit asyncF: Async[F]): F[(State, List[PeerId])] = {
-    val missingPeers = state.facilitators.value.filterNot(respondedPeers.contains)
-
-    if (missingPeers.isEmpty) {
-      (state, List.empty[PeerId]).pure[F]
-    } else {
-      logger
-        .warn(
-          s"Removing ${missingPeers.size} unresponsive facilitators at $phaseName phase: " +
-            s"${missingPeers.map(_.show).take(3).mkString(", ")}"
-        )
-        .as {
-          val updatedState = state.copy(
-            facilitators = Facilitators(state.facilitators.value.filterNot(missingPeers.contains)),
-            removedFacilitators = RemovedFacilitators(state.removedFacilitators.value ++ missingPeers)
-          )
-          (updatedState, missingPeers)
-        }
-    }
-  }
 }

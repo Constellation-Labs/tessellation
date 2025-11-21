@@ -13,6 +13,7 @@ import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Facility
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
+import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.schema.peer.{PeerId, Responsive, Unresponsive}
 
@@ -51,7 +52,7 @@ object GlobalSnapshotConsensusStateCreator {
       consensusStorage
         .condModifyState(key)(toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources)))
         .flatMap(evalEffect)
-        .flatTap(logIfCreatedState)
+        .flatTap(logIfCreated)
 
     private def facilitateConsensus(
       key: GlobalSnapshotKey,
