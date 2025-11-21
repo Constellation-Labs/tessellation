@@ -234,21 +234,7 @@ case class GlobalSnapshotInfo(
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
 
   def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
-    (
-      this.stateChannelHashesEntries.buildMpt,
-      this.lastTxRefsEntries.buildMpt,
-      this.balancesEntries.buildMpt,
-      this.currencySnapshotsEntries.buildMpt,
-      this.auxiliaryStateEntries.buildMpt
-    ).parMapN { (stateChannelProof, txRefsProof, balProof, currencyProof, auxProof) =>
-      GlobalSnapshotStateProof(
-        stateChannelProof.value,
-        txRefsProof.value,
-        balProof.value,
-        currencyProof.value,
-        auxProof.value
-      )
-    }
+    this.allStateEntries.buildMpt.map(mptRoot => GlobalSnapshotStateProof(mptRoot.value))
 
   def stateProofFor[F[_]: Parallel: Sync: Hasher](
     hashScheme: HashLogic,

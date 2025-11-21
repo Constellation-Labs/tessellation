@@ -98,28 +98,18 @@ object GlobalSnapshotStateProofV2 {
 
 @derive(encoder, decoder, eqv, show)
 case class GlobalSnapshotStateProof(
-  lastStateChannelSnapshotHashesProof: Hash,
-  lastTxRefsProof: Hash,
-  balancesProof: Hash,
-  lastCurrencySnapshotsProof: Hash,
-  auxiliaryProof: Hash
+  stateRoot: Hash
 ) extends StateProof {
   def toLegacyProof: GlobalSnapshotStateProofV1 =
     GlobalSnapshotStateProofV1(
-      lastStateChannelSnapshotHashesProof,
-      lastTxRefsProof,
-      balancesProof,
+      Hash.empty,
+      Hash.empty,
+      Hash.empty,
       None
     )
 }
 
 object GlobalSnapshotStateProof {
   def fromLegacyProof(proof: GlobalSnapshotStateProofV2): GlobalSnapshotStateProof =
-    GlobalSnapshotStateProof(
-      proof.lastStateChannelSnapshotHashesProof,
-      proof.lastTxRefsProof,
-      proof.balancesProof,
-      proof.lastCurrencySnapshotsProof.map(_.hash).getOrElse(Hash.empty),
-      Hash.empty
-    )
+    GlobalSnapshotStateProof(Hash.empty)
 }

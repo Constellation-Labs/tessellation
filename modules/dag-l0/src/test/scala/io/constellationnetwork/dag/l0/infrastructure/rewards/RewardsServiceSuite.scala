@@ -133,11 +133,7 @@ object RewardsServiceSuite extends SimpleIOSuite {
     nextFacilitators = NonEmptyList.of(testPeerId1),
     tips = SnapshotTips(SortedSet.empty, SortedSet.empty),
     stateProof = GlobalSnapshotStateProof(
-      lastStateChannelSnapshotHashesProof = Hash("proof1"),
-      lastTxRefsProof = Hash("proof2"),
-      balancesProof = Hash("proof3"),
-      lastCurrencySnapshotsProof = Hash.empty,
-      auxiliaryProof = Hash.empty
+      stateRoot = Hash("proof1")
     ),
     allowSpendBlocks = Some(SortedSet.empty),
     tokenLockBlocks = Some(SortedSet.empty),

@@ -122,23 +122,19 @@ object GlobalSnapshotSchemaMigrationSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("GlobalSnapshotStateProof toLegacyProof preserves core fields") { implicit res =>
+  test("GlobalSnapshotStateProof toLegacyProof returns empty proof") { implicit res =>
     res.withCurrent { implicit hasher =>
       val current = GlobalSnapshotStateProof(
-        lastStateChannelSnapshotHashesProof = Hash("abc"),
-        lastTxRefsProof = Hash("def"),
-        balancesProof = Hash("ghi"),
-        lastCurrencySnapshotsProof = Hash("jkl"),
-        auxiliaryProof = Hash("mno")
+        stateRoot = Hash("abc")
       )
 
       val legacy = current.toLegacyProof
 
       IO.pure(
         expect.all(
-          legacy.lastStateChannelSnapshotHashesProof == current.lastStateChannelSnapshotHashesProof,
-          legacy.lastTxRefsProof == current.lastTxRefsProof,
-          legacy.balancesProof == current.balancesProof,
+          legacy.lastStateChannelSnapshotHashesProof == Hash.empty,
+          legacy.lastTxRefsProof == Hash.empty,
+          legacy.balancesProof == Hash.empty,
           legacy.lastCurrencySnapshotsProof.isEmpty
         )
       )
@@ -169,13 +165,7 @@ object GlobalSnapshotSchemaMigrationSuite extends MutableIOSuite with Checkers {
       val current = GlobalSnapshotStateProof.fromLegacyProof(v2)
 
       IO.pure(
-        expect.all(
-          current.lastStateChannelSnapshotHashesProof == v2.lastStateChannelSnapshotHashesProof,
-          current.lastTxRefsProof == v2.lastTxRefsProof,
-          current.balancesProof == v2.balancesProof,
-          current.lastCurrencySnapshotsProof == Hash.empty,
-          current.auxiliaryProof == Hash.empty
-        )
+        expect(current.stateRoot == Hash.empty)
       )
     }
   }
@@ -206,10 +196,7 @@ object GlobalSnapshotSchemaMigrationSuite extends MutableIOSuite with Checkers {
         val ordinal = SnapshotOrdinal.unsafeApply(1000000L)
 
         info.stateProofFor[IO](JsonHash, ordinal).map { proof =>
-          expect.all(
-            proof.lastStateChannelSnapshotHashesProof =!= Hash.empty,
-            proof.balancesProof =!= Hash.empty
-          )
+          expect(proof.stateRoot =!= Hash.empty)
         }
       }
     }
@@ -241,10 +228,7 @@ object GlobalSnapshotSchemaMigrationSuite extends MutableIOSuite with Checkers {
         val ordinal = SnapshotOrdinal.unsafeApply(100L)
 
         info.stateProofFor[IO](KryoHash, ordinal).map { proof =>
-          expect.all(
-            proof.lastStateChannelSnapshotHashesProof =!= Hash.empty,
-            proof.balancesProof =!= Hash.empty
-          )
+          expect(proof.stateRoot == Hash.empty)
         }
       }
     }
