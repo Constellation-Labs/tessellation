@@ -1,6 +1,6 @@
 # Tessellation
 
-![build](https://img.shields.io/github/actions/workflow/status/Constellation-Labs/tessellation/release.yml?label=build)
+[![build](https://img.shields.io/github/actions/workflow/status/Constellation-Labs/tessellation/release.yml?label=build)](https://github.com/Constellation-Labs/tessellation/actions)
 ![Dynamic JSON Badge](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fl0-lb-testnet.constellationnetwork.io%2Fnode%2Finfo&query=%24.version&label=TestNet)
 ![Dynamic JSON Badge](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fl0-lb-integrationnet.constellationnetwork.io%2Fnode%2Finfo&query=%24.version&label=IntegrationNet)
 ![Dynamic JSON Badge](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fl0-lb-mainnet.constellationnetwork.io%2Fnode%2Finfo&query=%24.version&label=MainNet)
