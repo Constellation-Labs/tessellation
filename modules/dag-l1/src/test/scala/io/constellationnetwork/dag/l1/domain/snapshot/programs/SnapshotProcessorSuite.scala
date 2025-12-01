@@ -388,10 +388,6 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       NonEmptyList.one(peerId),
       SnapshotTips(SortedSet.empty, SortedSet.empty),
       GlobalSnapshotStateProof(
-        emptySortedMapHash,
-        emptySortedMapHash,
-        emptySortedMapHash,
-        emptySortedMapHash,
         emptySortedMapHash
       ),
       Some(SortedSet.empty),
