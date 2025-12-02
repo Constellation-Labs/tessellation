@@ -28,6 +28,7 @@ trait Hasher[F[_]] {
   def hash[A: Encoder](data: A): F[Hash]
   def compare[A: Encoder](data: A, expectedHash: Hash): F[Boolean]
   def getLogic(ordinal: SnapshotOrdinal): HashLogic
+  def prefixedHash[A: Encoder](data: A, prefix: Array[Byte]): F[Hash]
 }
 
 trait HasherSelector[F[_]] {
@@ -95,6 +96,13 @@ object Hasher {
 
     def hash[A: Encoder](data: A): F[Hash] =
       hashKryo(data)
+
+    def prefixedHash[A: Encoder](data: A, prefix: Array[Byte]): F[Hash] =
+      KryoSerializer[F]
+        .serialize(data)
+        .map(bytes => prefix ++ bytes)
+        .map(Hash.fromBytes)
+        .liftTo[F]
   }
 
   def forJson[F[_]: Sync: JsonSerializer]: Hasher[F] =
@@ -134,6 +142,12 @@ object Hasher {
 
       def hash[A: Encoder](data: A): F[Hash] =
         hashJson(data)
+
+      def prefixedHash[A: Encoder](data: A, prefix: Array[Byte]): F[Hash] =
+        JsonSerializer[F]
+          .serialize(data)
+          .map(bytes => prefix ++ bytes)
+          .map(Hash.fromBytes)
     }
   }
 
@@ -153,5 +167,11 @@ object Hasher {
 
     def hash[A: Encoder](data: A): F[Hash] =
       hashJson(data)
+
+    def prefixedHash[A: Encoder](data: A, prefix: Array[Byte]): F[Hash] =
+      JsonSerializer[F]
+        .serialize(data)
+        .map(bytes => prefix ++ bytes)
+        .map(Hash.fromBytes)
   }
 }

@@ -15,6 +15,7 @@ import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, PendingDelegatedStakeWithdrawal}
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralRecord, PendingNodeCollateralWithdrawal}
 import io.constellationnetwork.schema.priceOracle.{PriceRecord, TokenPair}
@@ -29,6 +30,7 @@ import io.constellationnetwork.security.signature.Signed
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import eu.timepit.refined.types.numeric.NonNegInt
 import io.circe._
 import io.circe.disjunctionCodecs._
 import io.circe.generic.semiauto.deriveEncoder
@@ -39,9 +41,13 @@ case class GlobalSnapshotInfoV1(
   lastStateChannelSnapshotHashes: SortedMap[Address, Hash],
   lastTxRefs: SortedMap[Address, TransactionReference],
   balances: SortedMap[Address, Balance]
-) extends SnapshotInfo[GlobalSnapshotStateProof] {
-  def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
-    GlobalSnapshotInfoV1.toGlobalSnapshotInfo(this).stateProof[F](ordinal)
+) extends SnapshotInfo[GlobalSnapshotStateProofV2] {
+  def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProofV2] = {
+    val info = GlobalSnapshotInfoV1.toGlobalSnapshotInfo(this)
+    info.lastCurrencySnapshots.merkleTree[F].flatMap { mt =>
+      GlobalSnapshotInfo.legacyStateProof(info, mt)
+    }
+  }
 }
 
 object GlobalSnapshotInfoV1 {
@@ -68,94 +74,6 @@ object GlobalSnapshotInfoV1 {
 }
 
 @derive(encoder, decoder, eqv, show)
-case class GlobalSnapshotStateProofV1(
-  lastStateChannelSnapshotHashesProof: Hash,
-  lastTxRefsProof: Hash,
-  balancesProof: Hash,
-  lastCurrencySnapshotsProof: Option[MerkleRoot]
-) extends StateProof {
-  def toGlobalSnapshotStateProof: GlobalSnapshotStateProof =
-    GlobalSnapshotStateProof(
-      lastStateChannelSnapshotHashesProof,
-      lastTxRefsProof,
-      balancesProof,
-      lastCurrencySnapshotsProof,
-      None,
-      None,
-      None,
-      None,
-      None,
-      None,
-      None,
-      None,
-      None,
-      None,
-      None,
-      None
-    )
-}
-
-object GlobalSnapshotStateProofV1 {
-  def apply: ((Hash, Hash, Hash, Option[MerkleRoot])) => GlobalSnapshotStateProofV1 = {
-    case (x1, x2, x3, x4) => GlobalSnapshotStateProofV1.apply(x1, x2, x3, x4)
-  }
-
-  def fromGlobalSnapshotStateProof(proof: GlobalSnapshotStateProof): GlobalSnapshotStateProofV1 =
-    GlobalSnapshotStateProofV1(
-      proof.lastStateChannelSnapshotHashesProof,
-      proof.lastTxRefsProof,
-      proof.balancesProof,
-      proof.lastCurrencySnapshotsProof
-    )
-}
-
-@derive(encoder, decoder, eqv, show)
-case class GlobalSnapshotStateProof(
-  lastStateChannelSnapshotHashesProof: Hash,
-  lastTxRefsProof: Hash,
-  balancesProof: Hash,
-  lastCurrencySnapshotsProof: Option[MerkleRoot],
-  activeAllowSpends: Option[Hash],
-  activeTokenLocks: Option[Hash],
-  tokenLockBalances: Option[Hash],
-  lastAllowSpendRefs: Option[Hash],
-  lastTokenLockRefs: Option[Hash],
-  updateNodeParameters: Option[Hash],
-  activeDelegatedStakes: Option[Hash],
-  delegatedStakesWithdrawals: Option[Hash],
-  activeNodeCollaterals: Option[Hash],
-  nodeCollateralWithdrawals: Option[Hash],
-  priceState: Option[Hash],
-  lastGlobalSnapshotsWithCurrency: Option[Hash]
-) extends StateProof
-
-object GlobalSnapshotStateProof {
-  def apply: (
-    (
-      Hash,
-      Hash,
-      Hash,
-      Option[MerkleRoot],
-      Option[Hash],
-      Option[Hash],
-      Option[Hash],
-      Option[Hash],
-      Option[Hash],
-      Option[Hash],
-      Option[Hash],
-      Option[Hash],
-      Option[Hash],
-      Option[Hash],
-      Option[Hash],
-      Option[Hash]
-    )
-  ) => GlobalSnapshotStateProof = {
-    case (x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16) =>
-      GlobalSnapshotStateProof.apply(x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16)
-  }
-}
-
-@derive(encoder, decoder, eqv, show)
 case class GlobalSnapshotInfoV2(
   lastStateChannelSnapshotHashes: SortedMap[Address, Hash],
   lastTxRefs: SortedMap[Address, TransactionReference],
@@ -164,7 +82,7 @@ case class GlobalSnapshotInfoV2(
     CurrencySnapshot
   ], (Signed[CurrencyIncrementalSnapshotV1], CurrencySnapshotInfoV1)]],
   lastCurrencySnapshotsProofs: SortedMap[Address, Proof]
-) extends SnapshotInfo[GlobalSnapshotStateProof] {
+) extends SnapshotInfo[GlobalSnapshotStateProofV2] {
   def toGlobalSnapshotInfo: GlobalSnapshotInfo =
     GlobalSnapshotInfo(
       lastStateChannelSnapshotHashes,
@@ -188,12 +106,11 @@ case class GlobalSnapshotInfoV2(
       None
     )
 
-  def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
+  def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProofV2] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
 
-  def stateProof[F[_]: Parallel: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
-    toGlobalSnapshotInfo.stateProof[F](lastCurrencySnapshots)
-
+  def stateProof[F[_]: Parallel: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProofV2] =
+    GlobalSnapshotInfo.legacyStateProof[F](toGlobalSnapshotInfo, lastCurrencySnapshots)
 }
 
 object GlobalSnapshotInfoV2 {
@@ -212,6 +129,86 @@ object GlobalSnapshotInfoV2 {
         }
       }.to(gs.lastCurrencySnapshots.sortedMapFactory),
       gs.lastCurrencySnapshotsProofs
+    )
+}
+
+@derive(encoder, decoder, eqv, show)
+case class GlobalSnapshotInfoV3(
+  lastStateChannelSnapshotHashes: SortedMap[Address, Hash],
+  lastTxRefs: SortedMap[Address, TransactionReference],
+  balances: SortedMap[Address, Balance],
+  lastCurrencySnapshots: SortedMap[Address, Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]],
+  lastCurrencySnapshotsProofs: SortedMap[Address, Proof],
+  activeAllowSpends: Option[SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]],
+  activeTokenLocks: Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]],
+  tokenLockBalances: Option[SortedMap[Address, SortedMap[Address, Balance]]],
+  lastAllowSpendRefs: Option[SortedMap[Address, AllowSpendReference]],
+  lastTokenLockRefs: Option[SortedMap[Address, TokenLockReference]],
+  updateNodeParameters: Option[SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)]],
+  activeDelegatedStakes: Option[SortedMap[Address, SortedSet[DelegatedStakeRecord]]],
+  delegatedStakesWithdrawals: Option[SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]]],
+  activeNodeCollaterals: Option[SortedMap[Address, SortedSet[NodeCollateralRecord]]],
+  nodeCollateralWithdrawals: Option[SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]]],
+  priceState: Option[SortedMap[TokenPair, PriceRecord]],
+  metagraphSyncData: Option[SortedMap[Address, MetagraphSyncDataInfo]]
+) extends SnapshotInfo[GlobalSnapshotStateProofV2] {
+  def legacyStateProof[F[_]: Parallel: Sync: Hasher](
+    lastCurrencySnapshots: Option[MerkleTree]
+  ): F[GlobalSnapshotStateProofV2] =
+    GlobalSnapshotInfo.legacyStateProof[F](toGlobalSnapshotInfo, lastCurrencySnapshots)
+
+  def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProofV2] =
+    lastCurrencySnapshots.merkleTree[F].flatMap(legacyStateProof(_))
+
+  def toGlobalSnapshotInfo: GlobalSnapshotInfo =
+    GlobalSnapshotInfo(
+      lastStateChannelSnapshotHashes,
+      lastTxRefs,
+      balances,
+      lastCurrencySnapshots,
+      lastCurrencySnapshotsProofs,
+      activeAllowSpends,
+      activeTokenLocks,
+      tokenLockBalances,
+      lastAllowSpendRefs,
+      lastTokenLockRefs,
+      updateNodeParameters,
+      activeDelegatedStakes,
+      delegatedStakesWithdrawals,
+      activeNodeCollaterals,
+      nodeCollateralWithdrawals,
+      priceState,
+      metagraphSyncData
+    )
+
+  override def getActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = activeTokenLocks.getOrElse(SortedMap.empty)
+
+  override def getActiveDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]] =
+    activeDelegatedStakes.getOrElse(SortedMap.empty)
+}
+
+object GlobalSnapshotInfoV3 {
+  import GlobalSnapshotInfo.{optionAddressKeyDecoder, optionAddressKeyEncoder}
+
+  def fromGlobalSnapshotInfo(gs: GlobalSnapshotInfo): GlobalSnapshotInfoV3 =
+    GlobalSnapshotInfoV3(
+      gs.lastStateChannelSnapshotHashes,
+      gs.lastTxRefs,
+      gs.balances,
+      gs.lastCurrencySnapshots,
+      gs.lastCurrencySnapshotsProofs,
+      gs.activeAllowSpends,
+      gs.activeTokenLocks,
+      gs.tokenLockBalances,
+      gs.lastAllowSpendRefs,
+      gs.lastTokenLockRefs,
+      gs.updateNodeParameters,
+      gs.activeDelegatedStakes,
+      gs.delegatedStakesWithdrawals,
+      gs.activeNodeCollaterals,
+      gs.nodeCollateralWithdrawals,
+      gs.priceState,
+      gs.metagraphSyncData
     )
 }
 
@@ -235,29 +232,20 @@ case class GlobalSnapshotInfo(
   priceState: Option[SortedMap[TokenPair, PriceRecord]],
   metagraphSyncData: Option[SortedMap[Address, MetagraphSyncDataInfo]]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
+
   def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
-    lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
+    this.allStateEntries.buildMpt.map(mptRoot => GlobalSnapshotStateProof(mptRoot.value))
 
-  def stateProof[F[_]: Parallel: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] = {
-    import GlobalSnapshotInfo._
-
-    (
-      lastStateChannelSnapshotHashes.hash,
-      lastTxRefs.hash,
-      balances.hash,
-      activeAllowSpends.traverse(_.hash),
-      activeTokenLocks.traverse(_.hash),
-      tokenLockBalances.traverse(_.hash),
-      lastAllowSpendRefs.traverse(_.hash),
-      lastTokenLockRefs.traverse(_.hash),
-      updateNodeParameters.traverse(_.hash),
-      activeDelegatedStakes.traverse(_.hash),
-      delegatedStakesWithdrawals.traverse(_.hash),
-      activeNodeCollaterals.traverse(_.hash),
-      nodeCollateralWithdrawals.traverse(_.hash),
-      priceState.traverse(_.hash),
-      metagraphSyncData.traverse(_.hash)
-    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _, _, _))
+  def stateProofFor[F[_]: Parallel: Sync: Hasher](
+    hashScheme: HashLogic,
+    ordinal: SnapshotOrdinal
+  ): F[GlobalSnapshotStateProof] = hashScheme match {
+    case JsonHash => stateProof(ordinal)
+    case KryoHash =>
+      lastCurrencySnapshots
+        .merkleTree[F]
+        .flatMap(mt => GlobalSnapshotInfo.legacyStateProof(this, mt))
+        .map(GlobalSnapshotStateProof.fromLegacyProof)
   }
 
   override def getActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = activeTokenLocks.getOrElse(SortedMap.empty)
@@ -269,7 +257,29 @@ case class GlobalSnapshotInfo(
 object GlobalSnapshotInfo {
   implicit val encoder: Encoder[GlobalSnapshotInfo] = deriveEncoder
 
-  def empty = GlobalSnapshotInfo(
+  def legacyStateProof[F[_]: Parallel: Sync: Hasher](
+    info: GlobalSnapshotInfo,
+    lastCurrencySnapshots: Option[MerkleTree]
+  ): F[GlobalSnapshotStateProofV2] =
+    (
+      info.lastStateChannelSnapshotHashes.hash,
+      info.lastTxRefs.hash,
+      info.balances.hash,
+      info.activeAllowSpends.traverse(_.hash),
+      info.activeTokenLocks.traverse(_.hash),
+      info.tokenLockBalances.traverse(_.hash),
+      info.lastAllowSpendRefs.traverse(_.hash),
+      info.lastTokenLockRefs.traverse(_.hash),
+      info.updateNodeParameters.traverse(_.hash),
+      info.activeDelegatedStakes.traverse(_.hash),
+      info.delegatedStakesWithdrawals.traverse(_.hash),
+      info.activeNodeCollaterals.traverse(_.hash),
+      info.nodeCollateralWithdrawals.traverse(_.hash),
+      info.priceState.traverse(_.hash),
+      info.metagraphSyncData.traverse(_.hash)
+    ).mapN(GlobalSnapshotStateProofV2.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _, _, _))
+
+  def empty: GlobalSnapshotInfo = GlobalSnapshotInfo(
     SortedMap.empty,
     SortedMap.empty,
     SortedMap.empty,

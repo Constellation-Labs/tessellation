@@ -133,22 +133,7 @@ object RewardsServiceSuite extends SimpleIOSuite {
     nextFacilitators = NonEmptyList.of(testPeerId1),
     tips = SnapshotTips(SortedSet.empty, SortedSet.empty),
     stateProof = GlobalSnapshotStateProof(
-      lastStateChannelSnapshotHashesProof = Hash("proof1"),
-      lastTxRefsProof = Hash("proof2"),
-      balancesProof = Hash("proof3"),
-      lastCurrencySnapshotsProof = None,
-      activeAllowSpends = None,
-      activeTokenLocks = None,
-      tokenLockBalances = None,
-      lastAllowSpendRefs = None,
-      lastTokenLockRefs = None,
-      updateNodeParameters = None,
-      activeDelegatedStakes = None,
-      delegatedStakesWithdrawals = None,
-      activeNodeCollaterals = None,
-      nodeCollateralWithdrawals = None,
-      priceState = None,
-      lastGlobalSnapshotsWithCurrency = None
+      stateRoot = Hash("proof1")
     ),
     allowSpendBlocks = Some(SortedSet.empty),
     tokenLockBlocks = Some(SortedSet.empty),

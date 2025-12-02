@@ -27,10 +27,7 @@ import derevo.derive
 
 object snapshot {
 
-  trait StateProof {
-    val lastTxRefsProof: Hash
-    val balancesProof: Hash
-  }
+  trait StateProof
 
   trait FullSnapshot[P <: StateProof, SI <: SnapshotInfo[P]] extends Snapshot {
     val info: SI

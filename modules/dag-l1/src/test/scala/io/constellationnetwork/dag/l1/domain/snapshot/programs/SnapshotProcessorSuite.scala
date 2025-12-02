@@ -388,22 +388,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       NonEmptyList.one(peerId),
       SnapshotTips(SortedSet.empty, SortedSet.empty),
       GlobalSnapshotStateProof(
-        emptySortedMapHash,
-        emptySortedMapHash,
-        emptySortedMapHash,
-        None,
-        Some(emptySortedMapHash),
-        Some(emptySortedMapHash),
-        Some(emptySortedMapHash),
-        Some(emptySortedMapHash),
-        Some(emptySortedMapHash),
-        Some(emptySortedMapHash),
-        Some(emptySortedMapHash),
-        Some(emptySortedMapHash),
-        Some(emptySortedMapHash),
-        Some(emptySortedMapHash),
-        Some(emptySortedMapHash),
-        Some(emptySortedMapHash)
+        emptySortedMapHash
       ),
       Some(SortedSet.empty),
       Some(SortedSet.empty),

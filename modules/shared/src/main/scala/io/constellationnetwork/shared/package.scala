@@ -107,8 +107,8 @@ package object shared {
     DataCancellationReason.PeerCancelled.getClass -> 637,
     classOf[DelegatedStakeRecord] -> 640,
     classOf[PendingDelegatedStakeWithdrawal] -> 641,
-    classOf[GlobalIncrementalSnapshot] -> 642,
-    classOf[GlobalSnapshotStateProof] -> 643
+    classOf[GlobalIncrementalSnapshotV2] -> 642,
+    classOf[GlobalSnapshotStateProofV2] -> 643
   )
 
 }

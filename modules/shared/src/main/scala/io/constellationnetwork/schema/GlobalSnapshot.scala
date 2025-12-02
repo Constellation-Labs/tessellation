@@ -2,12 +2,13 @@ package io.constellationnetwork.schema
 
 import cats.Parallel
 import cats.data.NonEmptyList
-import cats.effect.kernel.Sync
+import cats.effect.Sync
 import cats.syntax.functor._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
+import io.constellationnetwork.merkletree.syntax.SortedMapOpsImpl
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{SharedArtifact, SpendAction}
@@ -36,121 +37,10 @@ import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosInt
 
-@derive(eqv, show, encoder, decoder)
-case class GlobalIncrementalSnapshot(
-  ordinal: SnapshotOrdinal,
-  height: Height,
-  subHeight: SubHeight,
-  lastSnapshotHash: Hash,
-  blocks: SortedSet[BlockAsActiveTip],
-  stateChannelSnapshots: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
-  rewards: SortedSet[RewardTransaction],
-  delegateRewards: Option[SortedMap[PeerId, Map[Address, Amount]]],
-  epochProgress: EpochProgress,
-  nextFacilitators: NonEmptyList[PeerId],
-  tips: SnapshotTips,
-  stateProof: GlobalSnapshotStateProof,
-  allowSpendBlocks: Option[SortedSet[Signed[AllowSpendBlock]]],
-  tokenLockBlocks: Option[SortedSet[Signed[TokenLockBlock]]],
-  spendActions: Option[SortedMap[Address, List[SpendAction]]],
-  updateNodeParameters: Option[SortedMap[Id, Signed[UpdateNodeParameters]]],
-  artifacts: Option[SortedSet[SharedArtifact]],
-  activeDelegatedStakes: Option[SortedMap[Address, List[Signed[UpdateDelegatedStake.Create]]]],
-  delegatedStakesWithdrawals: Option[SortedMap[Address, List[Signed[UpdateDelegatedStake.Withdraw]]]],
-  activeNodeCollaterals: Option[SortedMap[Address, List[Signed[UpdateNodeCollateral.Create]]]],
-  nodeCollateralWithdrawals: Option[SortedMap[Address, List[Signed[UpdateNodeCollateral.Withdraw]]]],
-  version: SnapshotVersion = SnapshotVersion("0.0.1")
-) extends IncrementalSnapshot[GlobalSnapshotStateProof]
-
-object GlobalIncrementalSnapshot {
-  def fromGlobalSnapshot[F[_]: Parallel: Sync: Hasher](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshot] =
-    snapshot.info.stateProof(snapshot.ordinal).map { stateProof =>
-      GlobalIncrementalSnapshot(
-        snapshot.ordinal,
-        snapshot.height,
-        snapshot.subHeight,
-        snapshot.lastSnapshotHash,
-        snapshot.blocks,
-        snapshot.stateChannelSnapshots,
-        snapshot.rewards,
-        Some(SortedMap.empty),
-        snapshot.epochProgress,
-        snapshot.nextFacilitators,
-        snapshot.tips,
-        stateProof,
-        Some(SortedSet.empty),
-        Some(SortedSet.empty),
-        Some(SortedMap.empty),
-        snapshot.info.updateNodeParameters.map(_.map { case (k, v) => (k, v._1) }),
-        Some(SortedSet.empty),
-        Some(SortedMap.empty),
-        Some(SortedMap.empty),
-        Some(SortedMap.empty),
-        Some(SortedMap.empty)
-      )
-    }
-}
-
-@derive(eqv, show, encoder, decoder)
-case class GlobalIncrementalSnapshotV1(
-  ordinal: SnapshotOrdinal,
-  height: Height,
-  subHeight: SubHeight,
-  lastSnapshotHash: Hash,
-  blocks: SortedSet[BlockAsActiveTip],
-  stateChannelSnapshots: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
-  rewards: SortedSet[RewardTransaction],
-  epochProgress: EpochProgress,
-  nextFacilitators: NonEmptyList[PeerId],
-  tips: SnapshotTips,
-  stateProof: GlobalSnapshotStateProofV1,
-  version: SnapshotVersion = SnapshotVersion("0.0.1")
-) extends IncrementalSnapshot[GlobalSnapshotStateProofV1] {
-  def toGlobalIncrementalSnapshot: GlobalIncrementalSnapshot =
-    GlobalIncrementalSnapshot(
-      ordinal,
-      height,
-      subHeight,
-      lastSnapshotHash,
-      blocks,
-      stateChannelSnapshots,
-      rewards,
-      Some(SortedMap.empty),
-      epochProgress,
-      nextFacilitators,
-      tips,
-      stateProof.toGlobalSnapshotStateProof,
-      Some(SortedSet.empty),
-      Some(SortedSet.empty),
-      Some(SortedMap.empty),
-      Some(SortedMap.empty),
-      Some(SortedSet.empty),
-      Some(SortedMap.empty),
-      Some(SortedMap.empty),
-      Some(SortedMap.empty),
-      Some(SortedMap.empty),
-      version
-    )
-}
-
-object GlobalIncrementalSnapshotV1 {
-  def fromGlobalIncrementalSnapshot(snapshot: GlobalIncrementalSnapshot): GlobalIncrementalSnapshotV1 =
-    GlobalIncrementalSnapshotV1(
-      snapshot.ordinal,
-      snapshot.height,
-      snapshot.subHeight,
-      snapshot.lastSnapshotHash,
-      snapshot.blocks,
-      snapshot.stateChannelSnapshots,
-      snapshot.rewards,
-      snapshot.epochProgress,
-      snapshot.nextFacilitators,
-      snapshot.tips,
-      GlobalSnapshotStateProofV1.fromGlobalSnapshotStateProof(snapshot.stateProof),
-      snapshot.version
-    )
-}
-
+// As of 2025.11.19 this is a legacy model where full state was passed between
+// nodes during consensus. This was deprecated in favor of each node maintaining
+// their own state and the diffs (incrementals) are instead passed around during
+// consensus to generate a new version of state maintained by each peer
 @derive(eqv, show, encoder, decoder)
 case class GlobalSnapshot(
   ordinal: SnapshotOrdinal,
@@ -164,7 +54,7 @@ case class GlobalSnapshot(
   nextFacilitators: NonEmptyList[PeerId],
   info: GlobalSnapshotInfoV1,
   tips: SnapshotTips
-) extends FullSnapshot[GlobalSnapshotStateProof, GlobalSnapshotInfoV1] {}
+) extends FullSnapshot[GlobalSnapshotStateProofV2, GlobalSnapshotInfoV1] {}
 
 object GlobalSnapshot {
 
@@ -189,7 +79,7 @@ object GlobalSnapshot {
   def mkFirstIncrementalSnapshot[F[_]: Parallel: Sync: Hasher](
     genesis: Hashed[GlobalSnapshot]
   ): F[GlobalIncrementalSnapshot] =
-    genesis.info.stateProof(genesis.ordinal).map { stateProof =>
+    GlobalSnapshotInfoV1.toGlobalSnapshotInfo(genesis.info).stateProof[F](genesis.ordinal).map { stateProof =>
       GlobalIncrementalSnapshot(
         genesis.ordinal.next,
         genesis.height,
