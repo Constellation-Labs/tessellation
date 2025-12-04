@@ -193,8 +193,9 @@ abstract class SnapshotLocalFileSystemStorage[
     _ <- baseDirectory.tailRecM { currentBase =>
       for {
         baseDir <- dir.map(_ / "ordinal" / currentBase.toString)
+        baseDirExists <- Async[F].blocking(baseDir.exists)
         result <-
-          if (!baseDir.exists) {
+          if (!baseDirExists) {
             ().asRight[Long].pure
           } else {
             for {

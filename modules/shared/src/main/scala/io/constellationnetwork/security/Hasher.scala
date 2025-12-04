@@ -138,7 +138,7 @@ object Hasher {
             JsonSerializer[F].serialize(d.toEncode)(d.jsonEncoder)
           case _ =>
             JsonSerializer[F].serialize[A](data)
-        }).map(Hash.fromBytes)
+        }).flatMap(Hash.fromBytesForSync[F])
 
       def hash[A: Encoder](data: A): F[Hash] =
         hashJson(data)

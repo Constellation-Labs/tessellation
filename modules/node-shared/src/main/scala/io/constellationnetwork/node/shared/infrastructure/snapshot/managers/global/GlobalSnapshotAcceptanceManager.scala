@@ -402,7 +402,7 @@ object GlobalSnapshotAcceptanceManager {
                     .grouped(batchSize)
                     .toList
                     .traverse { batch =>
-                      batch.traverse {
+                      Async[F].cede *> batch.traverse {
                         case (address, state) =>
                           (address, state).hash
                             .flatMap(tree.findPath[F])
@@ -410,8 +410,7 @@ object GlobalSnapshotAcceptanceManager {
                             .map(address -> _)
                       }
                     }
-                    .map(_.flatten)
-                    .map(SortedMap.from(_))
+                    .flatMap(results => Async[F].cede.as(SortedMap.from(results.flatten)))
 
                 case None =>
                   Async[F].pure(SortedMap.empty[Address, Proof])
@@ -444,7 +443,7 @@ object GlobalSnapshotAcceptanceManager {
                     .grouped(batchSize)
                     .toList
                     .traverse { batch =>
-                      batch.traverse {
+                      Async[F].cede *> batch.traverse {
                         case (address, state) =>
                           (address, state).hash
                             .flatMap(tree.findPath[F])
@@ -452,8 +451,7 @@ object GlobalSnapshotAcceptanceManager {
                             .map(address -> _)
                       }
                     }
-                    .map(_.flatten)
-                    .map(SortedMap.from(_))
+                    .flatMap(results => Async[F].cede.as(SortedMap.from(results.flatten)))
 
                 case None =>
                   Async[F].pure(SortedMap.empty[Address, Proof])
@@ -791,13 +789,13 @@ object GlobalSnapshotAcceptanceManager {
                 .covary[F]
                 .chunkN(100)
                 .parEvalMap(10) { chunk =>
-                  chunk.toList.traverse { tokenLock =>
+                  Async[F].cede *> chunk.toList.traverse { tokenLock =>
                     tokenLock.toHashed.map(hashed => hashed.hash -> tokenLock)
-                  }
+                  } <* Async[F].cede
                 }
                 .compile
                 .toList
-                .map(_.flatten.toMap)
+                .flatMap(results => Async[F].cede.as(results.flatten.toMap))
             }
 
           globalLastAllowSpendRefs = lastSnapshotContext.lastAllowSpendRefs.getOrElse(
@@ -898,7 +896,7 @@ object GlobalSnapshotAcceptanceManager {
                 .covary[F]
                 .chunkN(50)
                 .parEvalMap(10) { chunk =>
-                  chunk.toList.traverse {
+                  Async[F].cede *> chunk.toList.traverse {
                     case (address, allowSpends) =>
                       val allowSpendsList = allowSpends.toList
                       if (allowSpendsList.isEmpty) {
@@ -909,9 +907,9 @@ object GlobalSnapshotAcceptanceManager {
                           .covary[F]
                           .chunkN(20)
                           .parEvalMap(5) { innerChunk =>
-                            innerChunk.toList.traverse { (allowSpend: Signed[AllowSpend]) =>
+                            Async[F].cede *> innerChunk.toList.traverse { (allowSpend: Signed[AllowSpend]) =>
                               allowSpend.toHashed: F[Hashed[AllowSpend]]
-                            }
+                            } <* Async[F].cede
                           }
                           .compile
                           .toList
@@ -923,8 +921,8 @@ object GlobalSnapshotAcceptanceManager {
                 }
                 .compile
                 .toList
-                .map { (lists: List[List[(Address, List[Hashed[AllowSpend]])]]) =>
-                  lists.flatten.toSortedMap
+                .flatMap { (lists: List[List[(Address, List[Hashed[AllowSpend]])]]) =>
+                  Async[F].cede.as(lists.flatten.toSortedMap)
                 }
             }
 
@@ -1008,7 +1006,7 @@ object GlobalSnapshotAcceptanceManager {
             updatedAcceptedMetagraphSyncData
           )
 
-          stateProof <- Async[F].blocking(gsi.stateProof[F](ordinal)).flatten
+          stateProof <- gsi.stateProof[F](ordinal)
 
           (expiredAllowSpends, expiredTokenLocks) = (
             allowSpendStateManager.filterExpiredAllowSpends(
