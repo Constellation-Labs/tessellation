@@ -2,7 +2,7 @@ package io.constellationnetwork.schema
 
 import cats.Parallel
 import cats.data.NonEmptyList
-import cats.effect.Sync
+import cats.effect.Async
 import cats.syntax.functor._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
@@ -76,7 +76,7 @@ object GlobalSnapshot {
       )
     )
 
-  def mkFirstIncrementalSnapshot[F[_]: Parallel: Sync: Hasher](
+  def mkFirstIncrementalSnapshot[F[_]: Parallel: Async: Hasher](
     genesis: Hashed[GlobalSnapshot]
   ): F[GlobalIncrementalSnapshot] =
     GlobalSnapshotInfoV1.toGlobalSnapshotInfo(genesis.info).stateProof[F](genesis.ordinal).map { stateProof =>

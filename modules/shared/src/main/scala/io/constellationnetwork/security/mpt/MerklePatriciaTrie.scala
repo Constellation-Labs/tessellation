@@ -1,6 +1,6 @@
 package io.constellationnetwork.security.mpt
 
-import cats.effect.Sync
+import cats.effect.Async
 
 import scala.annotation.tailrec
 
@@ -23,7 +23,7 @@ object MerklePatriciaTrie {
   implicit val merklePatriciaTrieDecoder: Decoder[MerklePatriciaTrie] = (c: HCursor) =>
     c.downField("rootNode").as[MerklePatriciaNode].map(MerklePatriciaTrie(_))
 
-  def make[F[_]: Hasher: Sync, A: Encoder](data: Map[Hex, A]): F[MerklePatriciaTrie] =
+  def make[F[_]: Hasher: Async, A: Encoder](data: Map[Hex, A]): F[MerklePatriciaTrie] =
     MerklePatriciaProducer
       .stateless[F]
       .create(data)

@@ -1,7 +1,7 @@
 package io.constellationnetwork.schema.mpt
 
 import cats.Parallel
-import cats.effect.Sync
+import cats.effect.{Async, Sync}
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
@@ -135,19 +135,22 @@ object GlobalStateConverter {
         toAllStateKeyValuePairs(info)
     }
 
-    implicit class MptBuilderOps[F[_]: Parallel: Sync: Hasher](kvPairsF: F[Map[GlobalStateKey, Json]]) {
+    implicit class MptBuilderOps[F[_]: Parallel: Async: Hasher](kvPairsF: F[Map[GlobalStateKey, Json]]) {
       def buildMpt: F[MptRoot] =
         for {
           kvPairs <- kvPairsF
+          _ <- Async[F].cede
           hexMap <- kvPairs.toList.parTraverse {
             case (key, value) => GlobalStateKey.toHex[F](key).map(_ -> value)
           }.map(_.toMap)
+          _ <- Async[F].cede
           mptRoot <- hexMap.isEmpty
             .pure[F]
             .ifM(
               ifTrue = MptRoot(Hash.empty).pure[F],
               ifFalse = MerklePatriciaTrie.make[F, Json](hexMap).map(_.rootHash)
             )
+          _ <- Async[F].cede
         } yield mptRoot
     }
   }

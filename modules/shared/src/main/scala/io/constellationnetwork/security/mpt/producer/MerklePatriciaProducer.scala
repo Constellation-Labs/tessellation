@@ -1,6 +1,6 @@
 package io.constellationnetwork.security.mpt.producer
 
-import cats.effect.Sync
+import cats.effect.Async
 import cats.syntax.functor._
 
 import io.constellationnetwork.security.Hasher
@@ -39,12 +39,12 @@ trait StatefulMerklePatriciaProducer[F[_]] {
 object MerklePatriciaProducer {
   def apply[F[_]](implicit producer: MerklePatriciaProducer[F]): MerklePatriciaProducer[F] = producer
 
-  def make[F[_]: Hasher: Sync]: MerklePatriciaProducer[F] = stateless[F]
+  def make[F[_]: Hasher: Async]: MerklePatriciaProducer[F] = stateless[F]
 
-  def stateless[F[_]: Hasher: Sync]: MerklePatriciaProducer[F] =
+  def stateless[F[_]: Hasher: Async]: MerklePatriciaProducer[F] =
     new StatelessMerklePatriciaProducer[F]
 
-  def inMemory[F[_]: Sync: Hasher](
+  def inMemory[F[_]: Async: Hasher](
     initial: Map[Hex, Json] = Map.empty
   ): F[StatefulMerklePatriciaProducer[F]] =
     InMemoryMerklePatriciaProducer.make[F](initial).widen[StatefulMerklePatriciaProducer[F]]
