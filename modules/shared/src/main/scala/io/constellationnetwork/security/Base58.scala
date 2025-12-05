@@ -9,6 +9,8 @@ object Base58 {
   val alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
   // char -> value
   val map: Map[Char, Int] = alphabet.zipWithIndex.toMap
+  // Pre-computed Set for O(1) lookups without per-call allocation
+  private val alphabetSet: Set[Char] = alphabet.toSet
 
   /** Documentation.
     *
@@ -59,5 +61,5 @@ object Base58 {
     *   true if input contains base58 chars only, false otherwise
     */
   def isBase58(input: String): Boolean =
-    input.forall(alphabet.toSet.contains)
+    input.forall(alphabetSet.contains)
 }
