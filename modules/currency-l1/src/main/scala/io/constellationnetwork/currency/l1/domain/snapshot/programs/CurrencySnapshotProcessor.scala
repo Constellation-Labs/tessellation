@@ -13,7 +13,7 @@ import io.constellationnetwork.dag.l1.domain.snapshot.programs.SnapshotProcessor
 import io.constellationnetwork.dag.l1.domain.snapshot.programs.SnapshotProcessor._
 import io.constellationnetwork.dag.l1.domain.transaction.{ContextualTransactionValidator, TransactionLimitConfig, TransactionStorage}
 import io.constellationnetwork.dag.l1.infrastructure.address.storage.AddressStorage
-import io.constellationnetwork.json.JsonBrotliBinarySerializer
+import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.node.shared.config.types.{AllowSpendsConfig, LastGlobalSnapshotsSyncConfig, TokenLocksConfig}
 import io.constellationnetwork.node.shared.domain.globalAlignment.GlobalL0AlignmentStorage
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
@@ -53,7 +53,7 @@ object CurrencySnapshotProcessor {
     transactionStorage: TransactionStorage[F],
     globalSnapshotContextFns: SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     currencySnapshotContextFns: SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext],
-    jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F],
+    jsonBrotliBinarySerializer: JsonSerializer[F],
     transactionLimitConfig: TransactionLimitConfig,
     allowSpendsConfig: AllowSpendsConfig,
     tokenLocksConfig: TokenLocksConfig,

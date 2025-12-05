@@ -58,7 +58,7 @@ object GlobalSnapshotSerializationSuite extends MutableIOSuite with Checkers {
   type Res = Hasher[IO]
 
   def sharedResource: Resource[IO, Res] = for {
-    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
     // Using JSON-based hasher instead of Kryo-based hasher
     hk = Hasher.forJson[IO]
   } yield hk

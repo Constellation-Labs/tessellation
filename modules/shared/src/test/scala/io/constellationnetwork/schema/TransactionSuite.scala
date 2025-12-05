@@ -25,7 +25,7 @@ object TransactionSuite extends ResourceSuite with Checkers {
     KryoSerializer
       .forAsync[IO](sharedKryoRegistrar, List.empty, setReferences = true)
       .flatMap { implicit res =>
-        JsonSerializer.forSync[IO].asResource.map { implicit json =>
+        JsonSerializer.forAsync[IO].asResource.map { implicit json =>
           Hasher.forKryo[IO]
         }
       }

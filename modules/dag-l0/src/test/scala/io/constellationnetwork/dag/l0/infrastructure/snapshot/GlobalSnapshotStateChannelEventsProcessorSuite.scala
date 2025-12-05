@@ -53,15 +53,14 @@ import weaver.MutableIOSuite
 object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
   val TestValidationErrorStorageMaxSize: PosInt = PosInt(16)
 
-  type Res = (KryoSerializer[IO], Hasher[IO], JsonSerializer[IO], SecurityProvider[IO], JsonBrotliBinarySerializer[IO])
+  type Res = (KryoSerializer[IO], Hasher[IO], JsonSerializer[IO], SecurityProvider[IO])
 
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
-    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
     h = Hasher.forJson[IO]
-    serializer <- JsonBrotliBinarySerializer.forSync[IO].asResource
-  } yield (ks, h, j, sp, serializer)
+  } yield (ks, h, j, sp)
 
   def mkProcessor(
     stateChannelAllowanceLists: Map[Address, NonEmptySet[PeerId]],
@@ -153,20 +152,19 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           )
         ] = IO.pure((events.groupByNel(_.address).map { case (k, v) => k -> v.map(_.snapshotBinary) }, Set.empty))
       }
-      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       feeCalculator = FeeCalculator.make(SortedMap.empty)
       processor = GlobalSnapshotStateChannelEventsProcessor
-        .make[IO](validator, manager, currencySnapshotContextFns, jsonBrotliBinarySerializer, feeCalculator)
+        .make[IO](validator, manager, currencySnapshotContextFns, J, feeCalculator)
     } yield processor
   }
 
   test("return new sc event") { res =>
-    implicit val (ks, h, j, sp, serializer) = res
+    implicit val (ks, h, j, sp) = res
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       address = keyPair.getPublic().toAddress
-      output <- mkStateChannelOutput(keyPair, serializer = serializer)
+      output <- mkStateChannelOutput(keyPair)
       snapshotInfo = mkGlobalSnapshotInfo()
       snapshot <- mkGlobalIncrementalSnapshot[IO](snapshotInfo)
       service <- mkProcessor(Map(address -> output.snapshotBinary.proofs.map(_.id.toPeerId)))
@@ -189,15 +187,15 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
   }
 
   test("return sc events for different addresses") { res =>
-    implicit val (ks, h, j, sp, serializer) = res
+    implicit val (ks, h, j, sp) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       address1 = keyPair1.getPublic().toAddress
-      output1 <- mkStateChannelOutput(keyPair1, serializer = serializer)
+      output1 <- mkStateChannelOutput(keyPair1)
       keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
       address2 = keyPair2.getPublic().toAddress
-      output2 <- mkStateChannelOutput(keyPair2, serializer = serializer)
+      output2 <- mkStateChannelOutput(keyPair2)
       snapshotInfo = mkGlobalSnapshotInfo()
       snapshot <- mkGlobalIncrementalSnapshot[IO](snapshotInfo)
       service <- mkProcessor(
@@ -222,15 +220,15 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
   }
 
   test("return only valid sc events") { res =>
-    implicit val (ks, h, j, sp, serializer) = res
+    implicit val (ks, h, j, sp) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       address1 = keyPair1.getPublic().toAddress
-      output1 <- mkStateChannelOutput(keyPair1, serializer = serializer)
+      output1 <- mkStateChannelOutput(keyPair1)
       keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
       address2 = keyPair2.getPublic().toAddress
-      output2 <- mkStateChannelOutput(keyPair2, serializer = serializer)
+      output2 <- mkStateChannelOutput(keyPair2)
       snapshotInfo = mkGlobalSnapshotInfo()
       snapshot <- mkGlobalIncrementalSnapshot[IO](snapshotInfo)
       service <- mkProcessor(
@@ -255,12 +253,13 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
 
   }
 
-  def mkStateChannelOutput(keyPair: KeyPair, hash: Option[Hash] = None, serializer: JsonBrotliBinarySerializer[IO])(
+  def mkStateChannelOutput(keyPair: KeyPair, hash: Option[Hash] = None)(
     implicit S: SecurityProvider[IO],
-    H: Hasher[IO]
+    H: Hasher[IO],
+    J: JsonSerializer[IO]
   ) = for {
     content <- Random.scalaUtilRandom[IO].flatMap(_.nextString(10))
-    compressedBytes <- serializer.serialize(content)
+    compressedBytes <- J.serialize(content)
     binary <- StateChannelSnapshotBinary(hash.getOrElse(Hash.empty), compressedBytes, SnapshotFee.MinValue).pure[IO]
     signedSC <- forAsyncHasher(binary, keyPair)
   } yield StateChannelOutput(keyPair.getPublic.toAddress, signedSC)

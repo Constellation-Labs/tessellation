@@ -60,7 +60,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
     for {
       implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar)
       implicit0(sp: SecurityProvider[IO]) <- SecurityProvider.forAsync[IO]
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
       implicit0(h: Hasher[IO]) = Hasher.forKryo[IO]
       srcKey <- KeyPairGenerator.makeKeyPair[IO].asResource
       dstKey <- KeyPairGenerator.makeKeyPair[IO].asResource

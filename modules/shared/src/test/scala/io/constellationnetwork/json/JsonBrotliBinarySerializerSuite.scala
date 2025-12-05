@@ -14,6 +14,7 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._
+import io.circe.Printer
 import weaver.MutableIOSuite
 
 object JsonBrotliBinarySerializerSuite extends MutableIOSuite {
@@ -24,12 +25,12 @@ object JsonBrotliBinarySerializerSuite extends MutableIOSuite {
     KryoSerializer
       .forAsync[IO](sharedKryoRegistrar)
       .flatMap { implicit res =>
-        JsonSerializer.forSync[IO].asResource.map { implicit json =>
+        JsonSerializer.forAsync[IO].asResource.map { implicit json =>
           Hasher.forJson[IO]
         }
       }
       .flatMap { kp =>
-        JsonBrotliBinarySerializer.forSync[IO].asResource.map((kp, _))
+        JsonBrotliBinarySerializer.forAsync[IO](Printer(dropNullValues = true, indent = "", sortKeys = true)).asResource.map((kp, _))
       }
 
   test("should deserialize properly serialized object") {

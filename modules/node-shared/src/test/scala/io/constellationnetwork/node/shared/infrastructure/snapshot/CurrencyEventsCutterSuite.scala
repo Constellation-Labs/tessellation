@@ -76,7 +76,7 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
   }
 
   def sharedResource: Resource[IO, JsonSerializer[IO]] =
-    JsonSerializer.forSync[F].asResource
+    JsonSerializer.forAsync[F].asResource
 
   test("does not cut messages") { implicit j =>
     val cutter = CurrencyEventsCutter.make[IO](testDataApplication.some)

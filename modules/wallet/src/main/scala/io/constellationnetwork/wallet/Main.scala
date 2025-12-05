@@ -57,7 +57,7 @@ object Main
       case (method, envs) =>
         SecurityProvider.forAsync[IO].use { implicit sp =>
           KryoSerializer.forAsync[IO](sharedKryoRegistrar).use { implicit kryo =>
-            JsonSerializer.forSync[IO].asResource.use { implicit jsonSerializer =>
+            JsonSerializer.forAsync[IO].asResource.use { implicit jsonSerializer =>
               loadKeyPair[IO](envs).flatMap { keyPair =>
                 val selfAddress = keyPair.getPublic.toAddress
                 val selfId = keyPair.getPublic.toId

@@ -134,7 +134,7 @@ object SharedServices {
       )
       feeCalculator = FeeCalculator.make(cfg.feeConfigs)
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(stateChannelAllowanceLists)
-      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
+      jsonBrotliBinarySerializer <- JsonSerializer.forAsync
       updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
       updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make(
         validators.updateDelegatedStakeValidator

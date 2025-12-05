@@ -25,7 +25,7 @@ object GenesisFSSuite extends MutableIOSuite with Checkers {
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
-    implicit0(js: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    implicit0(js: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
     h = Hasher.forJson[IO]
   } yield (ks, js, h, sp)
 

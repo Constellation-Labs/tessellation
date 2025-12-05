@@ -183,7 +183,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Initial emission at epoch 100
@@ -221,7 +221,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Test with epoch just at transition - should use formula
@@ -369,7 +369,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Create distributor with test config
@@ -518,7 +518,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Create distributor with test config
@@ -602,7 +602,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Create distributor with test config
@@ -715,7 +715,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Create distributor with specific test config
@@ -851,7 +851,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Create distributor with our test config
@@ -914,7 +914,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     val context = GlobalSnapshotInfo.empty
 
     for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, customConfig)
@@ -1042,7 +1042,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Create distributor with our test config
@@ -1089,7 +1089,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     */
   test("Verify all values from the reference are correctly maintained") {
     // Setup implicit JSON serializer
-    JsonSerializer.forSync[IO].flatMap { implicit j: JsonSerializer[IO] =>
+    JsonSerializer.forAsync[IO].flatMap { implicit j: JsonSerializer[IO] =>
       implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
 
       // 1. Set up addresses for users and nodes

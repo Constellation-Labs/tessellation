@@ -36,7 +36,7 @@ object SignedValidatorSuite extends MutableIOSuite with Checkers {
     KryoSerializer
       .forAsync[IO](sharedKryoRegistrar.union(Map[Class[_], KryoRegistrationId[Interval.Closed[5000, 5001]]](classOf[TestObject] -> 5000)))
       .flatMap { implicit res =>
-        JsonSerializer.forSync[IO].asResource.map { implicit json =>
+        JsonSerializer.forAsync[IO].asResource.map { implicit json =>
           Hasher.forJson[IO]
         }
       }

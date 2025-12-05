@@ -85,7 +85,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   override def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
-    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
     h = Hasher.forJson[IO]
     metrics <- Metrics.forAsync[IO](Seq.empty)
     random <- Random.scalaUtilRandom[IO].asResource
@@ -356,7 +356,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
       stateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L))
-      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
+      jsonBrotliBinarySerializer <- JsonSerializer.forAsync[IO]
       feeCalculator = FeeCalculator.make(SortedMap.empty)
       stateChannelProcessor = GlobalSnapshotStateChannelEventsProcessor
         .make[IO](

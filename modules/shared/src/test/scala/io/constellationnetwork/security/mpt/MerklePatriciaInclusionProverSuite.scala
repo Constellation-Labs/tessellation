@@ -23,7 +23,7 @@ object MerklePatriciaInclusionProverSuite extends MutableIOSuite with Checkers {
 
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { implicit kryo =>
-      JsonSerializer.forSync[IO].asResource.map { implicit json =>
+      JsonSerializer.forAsync[IO].asResource.map { implicit json =>
         HasherSelector.forSync[IO](
           Hasher.forJson[IO],
           Hasher.forKryo[IO],

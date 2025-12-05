@@ -32,31 +32,6 @@ trait DataApplicationTraverse[F[_]] {
 }
 
 object DataApplicationTraverse {
-  def make[F[_]: Async: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector](
-    lastGlobalSnapshot: Hashed[GlobalIncrementalSnapshot],
-    fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    dataApplication: BaseDataApplicationL0Service[F],
-    calculatedStateStorage: CalculatedStateLocalFileSystemStorage[F],
-    globalSnapshotsWithStateLocalFileSystemStorage: GlobalSnapshotsWithStateLocalFileSystemStorage[F],
-    globalSnapshotsWithStateDeltasLocalFileSystemStorage: GlobalSnapshotsWithStateDeltasLocalFileSystemStorage[F],
-    identifier: Address,
-    globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F],
-    globalL0Service: GlobalL0Service[F]
-  )(implicit context: L0NodeContext[F]): F[DataApplicationTraverse[F]] =
-    JsonBrotliBinarySerializer.forSync[F].map { jsonSerializer =>
-      make[F](
-        lastGlobalSnapshot,
-        fetchSnapshot,
-        dataApplication,
-        calculatedStateStorage,
-        globalSnapshotsWithStateLocalFileSystemStorage,
-        globalSnapshotsWithStateDeltasLocalFileSystemStorage,
-        jsonSerializer,
-        identifier,
-        globalSnapshotContextFunctions,
-        globalL0Service
-      )
-    }
 
   def make[F[_]: Async: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector](
     lastGlobalSnapshot: Hashed[GlobalIncrementalSnapshot],
@@ -65,7 +40,6 @@ object DataApplicationTraverse {
     calculatedStateStorage: CalculatedStateLocalFileSystemStorage[F],
     globalSnapshotsWithStateLocalFileSystemStorage: GlobalSnapshotsWithStateLocalFileSystemStorage[F],
     globalSnapshotsWithStateDeltasLocalFileSystemStorage: GlobalSnapshotsWithStateDeltasLocalFileSystemStorage[F],
-    jsonSerializer: JsonBrotliBinarySerializer[F],
     identifier: Address,
     globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F],
     globalL0Service: GlobalL0Service[F]
@@ -280,7 +254,7 @@ object DataApplicationTraverse {
           }
 
           lastGlobalSnapshot.tailRecM { globalSnapshot =>
-            fetchCurrencySnapshots(globalSnapshot, jsonSerializer)
+            fetchCurrencySnapshots(globalSnapshot)
               .flatMap(_.traverse {
                 case Validated.Invalid(_) =>
                   (new Exception(
@@ -334,8 +308,7 @@ object DataApplicationTraverse {
       }
 
       private def fetchCurrencySnapshots(
-        globalSnapshot: GlobalIncrementalSnapshot,
-        jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F]
+        globalSnapshot: GlobalIncrementalSnapshot
       ): F[
         Option[ValidatedNel[Signed.InvalidSignatureForHash[CurrencyIncrementalSnapshot], NonEmptyList[Hashed[CurrencyIncrementalSnapshot]]]]
       ] =
@@ -344,7 +317,7 @@ object DataApplicationTraverse {
           case Some(snapshots) =>
             HasherSelector[F].withCurrent { implicit hasher =>
               snapshots.toList.traverse { binary =>
-                jsonBrotliBinarySerializer.deserialize[Signed[CurrencyIncrementalSnapshot]](binary.content)
+                JsonSerializer[F].deserialize[Signed[CurrencyIncrementalSnapshot]](binary.content)
               }
                 .map(_.flatMap(_.toOption))
                 .map(NonEmptyList.fromList)
@@ -352,7 +325,7 @@ object DataApplicationTraverse {
                 .flatMap(_.map(_.traverse(_.toHashedWithSignatureCheck)).sequence)
                 .map(_.map(_.traverse(_.toValidatedNel)))
             }
-          case None => none.pure[F]
+          case None => Async[F].pure(none)
         }
     }
 }

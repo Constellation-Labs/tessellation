@@ -44,7 +44,7 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
   def sharedResource: Resource[IO, Res] = for {
     sp <- SecurityProvider.forAsync[IO]
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
-    implicit0(js: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    implicit0(js: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
     h = Hasher.forKryo[IO]
   } yield (h, sp, ks, js)
 

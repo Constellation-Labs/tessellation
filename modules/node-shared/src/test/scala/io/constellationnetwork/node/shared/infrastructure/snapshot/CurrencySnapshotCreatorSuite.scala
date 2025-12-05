@@ -24,7 +24,7 @@ object CurrencySnapshotCreatorSuite extends MutableIOSuite with Checkers {
   def sharedResource: Resource[IO, Res] =
     for {
       implicit0(k: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar)
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
       h = Hasher.forJson[IO]
       sp <- SecurityProvider.forAsync[IO]
     } yield (j, h, sp)

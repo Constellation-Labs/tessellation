@@ -47,7 +47,7 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
     SecurityProvider.forAsync[IO].flatMap { implicit sp =>
       KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar).flatMap { implicit kp =>
         for {
-          implicit0(jhs: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+          implicit0(jhs: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
           implicit0(h: Hasher[IO]) = Hasher.forJson[IO]
           transactions <- MapRef.ofConcurrentHashMap[IO, Address, SortedMap[TransactionOrdinal, StoredTransaction]]().asResource
           contextualTransactionValidator = ContextualTransactionValidator

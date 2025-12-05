@@ -80,8 +80,7 @@ object Services {
     maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
   ): F[Services[F, R]] =
     for {
-      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[F]
-      implicit0(hasher: Hasher[F]) = hasherSelector.getCurrent
+      implicit0(hasher: Hasher[F]) <- hasherSelector.getCurrent.pure[F]
 
       stateChannelBinarySender <- StateChannelBinarySender.make(
         storages.identifier,
@@ -109,7 +108,6 @@ object Services {
           keyPair,
           storages.snapshot,
           storages.lastSyncGlobalSnapshot,
-          jsonBrotliBinarySerializer,
           dataApplicationAcceptanceManager,
           stateChannelBinarySender,
           feeCalculator,

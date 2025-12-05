@@ -126,7 +126,7 @@ object Rollback {
                   logger.error(err)(s"Error when trying to fetch incremental global snapshot {attempt=${retryDetails.retriesSoFar}}")
               )
 
-          DataApplicationTraverse
+          val dat = DataApplicationTraverse
             .make[F](
               globalSnapshotStartingPoint,
               fetchSnapshot,
@@ -138,12 +138,11 @@ object Rollback {
               globalSnapshotContextFunctions,
               globalL0Service
             )
-            .flatMap { dat =>
-              dat.loadChain().flatMap {
-                case Some(_) => Applicative[F].unit
-                case _       => new Exception(s"Metagraph traversing failed").raiseError[F, Unit]
-              }
-            }
+
+          dat.loadChain().flatMap {
+            case Some(_) => Applicative[F].unit
+            case _       => new Exception(s"Metagraph traversing failed").raiseError[F, Unit]
+          }
 
       }.getOrElse(Applicative[F].unit)
 

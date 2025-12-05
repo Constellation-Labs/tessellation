@@ -70,7 +70,7 @@ object Main
     cli.method.opts.map { method =>
       SecurityProvider.forAsync[IO].use { implicit sp =>
         KryoSerializer.forAsync[IO](sharedKryoRegistrar).use { implicit kryo =>
-          JsonSerializer.forSync[IO].asResource.use { implicit jsonSerializer =>
+          JsonSerializer.forAsync[IO].asResource.use { implicit jsonSerializer =>
             implicit val hasher = Hasher.forJson[IO]
             EmberClientBuilder.default[IO].build.use { client =>
               Random.scalaUtilRandom[IO].flatMap { implicit random =>

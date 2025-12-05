@@ -46,7 +46,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     implicit0(sp: SecurityProvider[IO]) <- SecurityProvider.forAsync[IO]
-    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
     h = Hasher.forJson[IO]
     kp <- KeyPairGenerator.makeKeyPair[IO].asResource
     sourceAddress <- kp.getPublic.toId.toAddress.asResource

@@ -49,7 +49,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
-    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
     hk = Hasher.forKryo[IO]
     hj = Hasher.forJson[IO]
   } yield (sp, hk, ks, hj)
