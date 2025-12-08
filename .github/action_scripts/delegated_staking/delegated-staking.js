@@ -560,6 +560,78 @@ const testUpdateDelegatedStake = async (urls, account, stakeHash, nodeId) => {
   return updatedStakeHash
 }
 
+const testIncreaseDelegatedStake = async (urls, account, stakeHash, nodeId) => {
+  logWorkflow.info('---- Start testIncreaseDelegatedStake ----')
+
+  logWorkflow.info('Waiting for stake with non-zero rewards balance')
+
+  const originalStake = await fetchStakeWithRewardsBalance(
+    urls,
+    account.address,
+    stakeHash,
+    nodeId,
+  )
+
+  if (!originalStake) {
+    throw new Error('Stake not found, cannot test updating stake')
+  }
+
+  if (nodeId !== originalStake.nodeId) {
+    throw new Error('Cannot increase the node')
+  }
+
+  const thirdLockAmount = 2000000000000
+  const thirdLockHash = await createTokenLock(account, urls, thirdLockAmount, originalStake.tokenLockRef, originalStake.amount)
+
+  // get other stake so we can verify it hasn't changed
+  const stakeResponse = await getAccountDelegatedStakes(urls, account.address)
+  const otherStake = stakeResponse.activeDelegatedStakes.find(
+    (stake) => stake.hash !== stakeHash,
+  )
+
+  logWorkflow.info('Token lock amount increased')
+
+  // new stake in activeDelegatedStakes with updated values, balance transfers
+  // old stake removed (not in active or pendingWithdrawal)
+  await withRetry(
+    async () => {
+      const updatedStakeResponse = await getAccountDelegatedStakes(
+        urls,
+        account.address,
+      )
+      return assertDelegatedStakes(
+        updatedStakeResponse,
+        [
+          {
+            hash: stakeHash,
+            nodeId,
+            amount: thirdLockAmount,
+            tokenLockRef: thirdLockHash,
+            rewardAmount: originalStake.rewardAmount, // balance is transferred
+          }
+        ],
+        [],
+      )
+    },
+    {
+      name: 'assertDelegatedStakeUpdated',
+      maxAttempts: 10,
+      interval: 1000,
+      handleError: (err, attempt) => {
+        if (attempt !== 10) return
+
+        console.log(`assertDelegatedStakeUpdated failed: ${err.message}`)
+        throw err
+      },
+    },
+  )
+  logWorkflow.info('Stake increase verified with balance change')
+
+  logWorkflow.info('---- End testIncreaseDelegatedStake ----')
+
+  return thirdLockHash
+}
+
 const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
   logWorkflow.info('---- Start testWithdrawDelegatedStake ----')
 
@@ -713,7 +785,7 @@ const testDelegatedStaking = async (urls) => {
 
   const nodeParams = await getNodeParams(urls)
 
-  const [stakeHash] = await testCreateDelegatedStake(urls, account, [
+  const [stakeHash, secondStakeHash] = await testCreateDelegatedStake(urls, account, [
     nodeParams[0].peerId,
     nodeParams[1].peerId,
   ])
@@ -726,6 +798,13 @@ const testDelegatedStaking = async (urls) => {
   )
 
   await testWithdrawDelegatedStake(urls, account, updatedStakeHash)
+
+  const increasedStakeHash = await testIncreaseDelegatedStake(
+    urls,
+    account,
+    secondStakeHash,
+    nodeParams[1].peerId,
+  )
 }
 
 const executeWorkflowByType = async (workflowType) => {

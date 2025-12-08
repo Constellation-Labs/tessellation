@@ -70,7 +70,9 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
               NonEmptySet.one[SignatureProof](SignatureProof(nodeId1, Signature(Hex(Hash.empty.value))))
             ),
             SnapshotOrdinal(1L),
-            Balance(NonNegLong.unsafeFrom(amount.value.value * 10 / 100))
+            Balance(NonNegLong.unsafeFrom(amount.value.value * 10 / 100)),
+            none,
+            none
           )
         )
       ),
@@ -295,8 +297,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     val stakes = SortedMap(
-      address1 -> SortedSet(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L))),
-      address2 -> SortedSet(DelegatedStakeRecord(stakeCreate2, SnapshotOrdinal(1L), Balance(200L)))
+      address1 -> SortedSet(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L), none, none)),
+      address2 -> SortedSet(DelegatedStakeRecord(stakeCreate2, SnapshotOrdinal(1L), Balance(200L), none, none))
     )
 
     val nodeParams = SortedMap(
@@ -444,8 +446,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     val stakes = SortedMap(
-      address1 -> SortedSet(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L))),
-      address2 -> SortedSet(DelegatedStakeRecord(stakeCreate2, SnapshotOrdinal(1L), Balance(200L)))
+      address1 -> SortedSet(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L), none, none)),
+      address2 -> SortedSet(DelegatedStakeRecord(stakeCreate2, SnapshotOrdinal(1L), Balance(200L), none, none))
     )
 
     val nodeParams = SortedMap(
@@ -658,7 +660,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     val initialStakes = SortedMap(
-      address1 -> SortedSet(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L)))
+      address1 -> SortedSet(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L), none, none))
     )
 
     val nodeParams = SortedMap(
@@ -794,7 +796,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     val stakes = SortedMap(
-      address1 -> SortedSet(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L)))
+      address1 -> SortedSet(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L), none, none))
     )
 
     val nodeParams = SortedMap(
@@ -964,7 +966,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
 
     // Zero-stake records
     val zeroStakes = SortedMap(
-      address1 -> SortedSet(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance.empty))
+      address1 -> SortedSet(DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance.empty, none, none))
     )
 
     val nodeParams = SortedMap(
@@ -1226,17 +1228,17 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       // Combine stakes into a map organized by address -> stake list
       val stakes = SortedMap(
         userXAddress -> SortedSet(
-          DelegatedStakeRecord(stakeCreateUserXNodeA, SnapshotOrdinal(1L), Balance(0L)),
-          DelegatedStakeRecord(stakeCreateUserXNodeB, SnapshotOrdinal(1L), Balance(0L))
+          DelegatedStakeRecord(stakeCreateUserXNodeA, SnapshotOrdinal(1L), Balance(0L), none, none),
+          DelegatedStakeRecord(stakeCreateUserXNodeB, SnapshotOrdinal(1L), Balance(0L), none, none)
         ),
         userYAddress -> SortedSet(
-          DelegatedStakeRecord(stakeCreateUserYNodeA, SnapshotOrdinal(1L), Balance(0L)),
-          DelegatedStakeRecord(stakeCreateUserYNodeB, SnapshotOrdinal(1L), Balance(0L)),
-          DelegatedStakeRecord(stakeCreateUserYNodeC, SnapshotOrdinal(1L), Balance(0L))
+          DelegatedStakeRecord(stakeCreateUserYNodeA, SnapshotOrdinal(1L), Balance(0L), none, none),
+          DelegatedStakeRecord(stakeCreateUserYNodeB, SnapshotOrdinal(1L), Balance(0L), none, none),
+          DelegatedStakeRecord(stakeCreateUserYNodeC, SnapshotOrdinal(1L), Balance(0L), none, none)
         ),
         userZAddress -> SortedSet(
-          DelegatedStakeRecord(stakeCreateUserZNodeA, SnapshotOrdinal(1L), Balance(0L)),
-          DelegatedStakeRecord(stakeCreateUserZNodeB, SnapshotOrdinal(1L), Balance(0L))
+          DelegatedStakeRecord(stakeCreateUserZNodeA, SnapshotOrdinal(1L), Balance(0L), none, none),
+          DelegatedStakeRecord(stakeCreateUserZNodeB, SnapshotOrdinal(1L), Balance(0L), none, none)
         )
       )
 
