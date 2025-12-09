@@ -141,7 +141,6 @@ object types {
     declarationTimeout: FiniteDuration,
     declarationRangeLimit: NonNegLong,
     lockDuration: FiniteDuration,
-    peersDeclarationTimeout: FiniteDuration,
     eventCutter: EventCutterConfig
   )
 

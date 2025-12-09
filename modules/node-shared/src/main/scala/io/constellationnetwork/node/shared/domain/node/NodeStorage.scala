@@ -27,4 +27,11 @@ trait NodeStorage[F[_]] {
   def canJoinCluster: F[Boolean]
 
   def nodeStates: Stream[F, NodeState]
+
+  def setJoiningGracePeriod: F[Unit]
+
+  def clearJoiningGracePeriod: F[Unit]
+
+  def isInJoiningGracePeriod: F[Boolean]
+
 }

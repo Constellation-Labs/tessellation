@@ -5,6 +5,7 @@ import cats.syntax.all._
 import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.node.shared.infrastructure.consensus._
+import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 

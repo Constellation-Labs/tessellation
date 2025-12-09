@@ -1,19 +1,19 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
 import cats.effect.Async
+import cats.effect.std.Queue
 import cats.syntax.semigroupk._
 
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome}
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusRumorHandlers
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorHandler
 import io.constellationnetwork.security.HasherSelector
 
 object GlobalConsensusHandler {
   def make[F[_]: Async: HasherSelector](
-    storage: GlobalConsensusStorage[F],
-    manager: GlobalConsensusManager[F],
-    fns: GlobalSnapshotConsensusFunctions[F]
+    queue: Queue[F, ConsensusCommand]
   ): RumorHandler[F] = {
     val all = new ConsensusRumorHandlers[
       F,
@@ -24,14 +24,14 @@ object GlobalConsensusHandler {
       GlobalSnapshotStatus,
       GlobalConsensusOutcome,
       GlobalConsensusKind
-    ](storage, manager, fns)
+    ](queue)
 
     all.eventHandler <+>
       all.facilityHandler <+>
       all.proposalHandler <+>
       all.signatureHandler <+>
-      all.peerDeclarationAckHandler <+>
+      all.ackHandler <+>
       all.artifactHandler <+>
-      all.withdrawPeerDeclarationHandler
+      all.withdrawHandler
   }
 }
