@@ -4,7 +4,7 @@ import java.security.PublicKey
 import java.util.UUID
 
 import cats.Show
-import cats.effect.kernel.Async
+import cats.effect.Async
 import cats.kernel.Order
 import cats.syntax.contravariant._
 import cats.syntax.eq._
@@ -30,7 +30,6 @@ import fs2.data.csv.CellDecoder
 import io.circe.{Decoder, Encoder}
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
-import io.getquill.MappedEncoding
 import monocle.macros.GenLens
 import monocle.{Iso, Lens}
 
@@ -55,11 +54,6 @@ object peer {
     implicit val cellDecoder: CellDecoder[PeerId] = CellDecoder.stringDecoder
       .map(Hex(_))
       .map(PeerId(_))
-
-    implicit val quillEncode: MappedEncoding[PeerId, String] =
-      MappedEncoding[PeerId, String](_.value.value)
-
-    implicit val quillDecode: MappedEncoding[String, PeerId] = MappedEncoding[String, PeerId](x => PeerId(Hex(x)))
 
     val fromId: Id => PeerId = _Id.reverseGet
 

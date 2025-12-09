@@ -22,7 +22,7 @@ object BalanceSuite extends FunSuite with Checkers {
     val balance = Balance(NonNegLong(Long.MaxValue))
     val amount = Amount(NonNegLong(2L))
 
-    verify(balance.plus(amount).isLeft)
+    expect(balance.plus(amount).isLeft)
   }
 
   test("minus should subtract given amount from balance") {
@@ -38,6 +38,6 @@ object BalanceSuite extends FunSuite with Checkers {
     val balance = Balance(NonNegLong(1L))
     val amount = Amount(NonNegLong(30L))
 
-    verify(balance.minus(amount).isLeft)
+    expect(balance.minus(amount).isLeft)
   }
 }

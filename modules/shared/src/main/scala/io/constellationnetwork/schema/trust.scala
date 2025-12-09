@@ -16,7 +16,6 @@ import eu.timepit.refined.refineV
 import fs2.data.csv.{CellDecoder, DecoderError}
 import io.circe.refined._
 import io.estatico.newtype.macros.newtype
-import io.getquill.MappedEncoding
 
 object trust {
 
@@ -34,53 +33,13 @@ object trust {
   @newtype
   case class Score(value: TrustValueRefined)
 
-  object Score {
-
-    implicit val quillEncode: MappedEncoding[Score, Double] =
-      MappedEncoding[Score, Double](_.value.value)
-
-    implicit val quillDecode: MappedEncoding[Double, Score] = MappedEncoding[Double, Score](
-      refineV[TrustValueRefinement].apply[Double](_).leftMap(new Throwable(_)) match {
-        case Left(err)    => throw err
-        case Right(value) => Score(value)
-      }
-    )
-  }
-
   @derive(show)
   @newtype
   case class Rating(value: TrustValueRefined)
 
-  object Rating {
-
-    implicit val quillEncode: MappedEncoding[Rating, Double] =
-      MappedEncoding[Rating, Double](_.value.value)
-
-    implicit val quillDecode: MappedEncoding[Double, Rating] = MappedEncoding[Double, Rating](
-      refineV[TrustValueRefinement].apply[Double](_).leftMap(new Throwable(_)) match {
-        case Left(err)    => throw err
-        case Right(value) => Rating(value)
-      }
-    )
-  }
-
   @derive(show)
   @newtype
   case class ObservationAdjustment(value: TrustValueRefined)
-
-  object ObservationAdjustment {
-
-    implicit val quillEncode: MappedEncoding[ObservationAdjustment, Double] =
-      MappedEncoding[ObservationAdjustment, Double](_.value.value)
-
-    implicit val quillDecode: MappedEncoding[Double, ObservationAdjustment] =
-      MappedEncoding[Double, ObservationAdjustment](
-        refineV[TrustValueRefinement].apply[Double](_).leftMap(new Throwable(_)) match {
-          case Left(err)    => throw err
-          case Right(value) => ObservationAdjustment(value)
-        }
-      )
-  }
 
   @derive(show)
   case class TrustDbValues(

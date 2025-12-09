@@ -26,7 +26,7 @@ object refined {
         case Left(e) =>
           Option(e.getCause) match {
             case Some(c) => BadRequest(c.getMessage.asJson)
-            case _       => UnprocessableEntity()
+            case _       => UnprocessableContent()
           }
         case Right(a) => f(a)
       }

@@ -51,7 +51,7 @@ object refined {
     def decodeRosettaWithNetworkValidation[A: Decoder](appEnvironment: AppEnvironment, identifier: A => NetworkIdentifier)(
       f: A => F[Response[F]]
     ): F[Response[F]] =
-      req.decodeRosetta[A] { a =>
+      decodeRosetta[A] { a =>
         validateNetwork(appEnvironment, identifier(a)) {
           f(a)
         }

@@ -1,6 +1,6 @@
 import Dependencies._
 
-ThisBuild / scalaVersion := "2.13.16"
+ThisBuild / scalaVersion := "2.13.18"
 ThisBuild / organization := "io.constellationnetwork"
 ThisBuild / organizationName := "constellationnetwork"
 
@@ -233,14 +233,12 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.derevoCats,
       Libraries.derevoCirce,
       Libraries.derevoScalacheck,
-      Libraries.doobieQuill,
       Libraries.drosteCore,
       Libraries.enumeratumCore,
       Libraries.enumeratumCirce,
       Libraries.fs2Core,
       Libraries.fs2DataCsv,
       Libraries.fs2DataCsvGeneric,
-      Libraries.guava,
       Libraries.log4cats,
       Libraries.logback % Runtime,
       Libraries.logstashLogbackEncoder % Runtime,
@@ -405,11 +403,7 @@ lazy val dagL1 = (project in file("modules/dag-l1"))
       Libraries.derevoCats,
       Libraries.derevoCirce,
       Libraries.derevoCore,
-      Libraries.doobieCore,
-      Libraries.doobieHikari,
-      Libraries.doobieQuill,
       Libraries.drosteCore,
-      Libraries.flyway,
       Libraries.fs2Core,
       Libraries.fs2DataCsv,
       Libraries.fs2DataCsvGeneric,
@@ -421,7 +415,6 @@ lazy val dagL1 = (project in file("modules/dag-l1"))
       Libraries.monocleMacro,
       Libraries.newtype,
       Libraries.refinedCore,
-      Libraries.sqlite
     )
   )
 
@@ -467,9 +460,7 @@ lazy val tools = (project in file("modules/tools"))
       Libraries.monocleCore,
       Libraries.newtype,
       Libraries.refinedCore,
-      Libraries.refinedCats,
-      Libraries.skunkCore,
-      Libraries.skunkCirce
+      Libraries.refinedCats
     )
   )
 
@@ -504,14 +495,10 @@ lazy val dagL0 = (project in file("modules/dag-l0"))
       Libraries.derevoCore,
       Libraries.derevoCats,
       Libraries.derevoCirce,
-      Libraries.doobieCore,
-      Libraries.doobieHikari,
-      Libraries.doobieQuill,
       Libraries.drosteCore,
       Libraries.drosteLaws,
       Libraries.drosteMacros,
       Libraries.fs2Core,
-      Libraries.flyway,
       Libraries.fs2DataCsv,
       Libraries.fs2DataCsvGeneric,
       Libraries.http4sDsl,
@@ -526,13 +513,8 @@ lazy val dagL0 = (project in file("modules/dag-l0"))
       Libraries.mapref,
       Libraries.monocleCore,
       Libraries.newtype,
-      Libraries.redis4catsEffects,
-      Libraries.redis4catsLog4cats,
       Libraries.refinedCore,
-      Libraries.refinedCats,
-      Libraries.skunkCore,
-      Libraries.skunkCirce,
-      Libraries.squants
+      Libraries.refinedCats
     )
   )
 

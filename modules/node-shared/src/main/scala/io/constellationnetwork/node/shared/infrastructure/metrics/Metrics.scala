@@ -23,8 +23,7 @@ import io.micrometer.core.instrument.binder.jvm._
 import io.micrometer.core.instrument.binder.logging.LogbackMetrics
 import io.micrometer.core.instrument.binder.system.{DiskSpaceMetrics => SystemDiskSpaceMetrics, _}
 import io.micrometer.core.instrument.{DistributionSummary, Tag}
-import io.micrometer.prometheus.{PrometheusConfig, PrometheusMeterRegistry}
-import io.prometheus.client.exporter.common.TextFormat
+import io.micrometer.prometheusmetrics.{PrometheusConfig, PrometheusMeterRegistry}
 
 trait Metrics[F[_]] {
 
@@ -330,7 +329,7 @@ object Metrics {
           genericRecordDistribution(key, value, tagsWithBucket)
         }
         def getAllAsText: F[String] = Async[F].delay {
-          registry.scrape(TextFormat.CONTENT_TYPE_OPENMETRICS_100)
+          registry.scrape("application/openmetrics-text; version=1.0.0; charset=utf-8")
         }
       }
   }
