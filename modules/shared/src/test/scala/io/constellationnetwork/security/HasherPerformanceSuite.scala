@@ -167,7 +167,9 @@ object HasherPerformanceSuite extends MutableIOSuite {
           uncachedResults.map(_._2).toSet.size == 1 &&
           cachedResults.head._2 == uncachedResults.head._2
 
-        _ <- IO.println(s"Size: ${sizeMB}MB - Cached: ${f"$cachedAvg%.2f"}ms, Uncached: ${f"$uncachedAvg%.2f"}ms, Speedup: ${f"$speedup%.2f"}x, Consistent: $allHashesEqual")
+        _ <- IO.println(
+          s"Size: ${sizeMB}MB - Cached: ${f"$cachedAvg%.2f"}ms, Uncached: ${f"$uncachedAvg%.2f"}ms, Speedup: ${f"$speedup%.2f"}x, Consistent: $allHashesEqual"
+        )
 
       } yield expect(allHashesEqual, s"Hashes should be consistent for ${sizeMB}MB object")
     }.map(_.combineAll)

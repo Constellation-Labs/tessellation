@@ -33,7 +33,7 @@ object TokenLockOpsManagerSuite extends MutableIOSuite {
   override def sharedResource: Resource[IO, Res] =
     for {
       sp <- SecurityProvider.forAsync[IO]
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
       h = Hasher.forJson[IO]
     } yield (h, sp)
 

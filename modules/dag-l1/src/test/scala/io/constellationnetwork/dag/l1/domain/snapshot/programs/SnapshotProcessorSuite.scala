@@ -208,7 +208,6 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
               currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
               globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L)).asResource
-              jsonBrotliBinarySerializer <- JsonSerializer.forAsync[IO].asResource
               feeCalculator = FeeCalculator.make(SortedMap.empty)
               updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
               updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager
@@ -240,7 +239,6 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                     validators.stateChannelValidator,
                     globalSnapshotStateChannelManager,
                     currencySnapshotContextFns,
-                    jsonBrotliBinarySerializer,
                     feeCalculator
                   ),
                 updateNodeParametersAcceptanceManager,

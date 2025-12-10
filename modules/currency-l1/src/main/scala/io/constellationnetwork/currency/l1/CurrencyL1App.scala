@@ -148,7 +148,6 @@ abstract class CurrencyL1App(
           maybeMajorityPeerIds,
           Hasher.forKryo[IO]
         )
-      jsonBrotliBinarySerializer <- JsonSerializer.forAsync[IO].asResource
       snapshotProcessor = CurrencySnapshotProcessor.make(
         method.identifier,
         storages.address,
@@ -159,7 +158,6 @@ abstract class CurrencyL1App(
         storages.transaction,
         sharedServices.globalSnapshotContextFns,
         sharedServices.currencySnapshotContextFns,
-        jsonBrotliBinarySerializer,
         cfg.transactionLimit,
         sharedConfig.allowSpends,
         sharedConfig.tokenLocks,

@@ -356,14 +356,12 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
       stateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L))
-      jsonBrotliBinarySerializer <- JsonSerializer.forAsync[IO]
       feeCalculator = FeeCalculator.make(SortedMap.empty)
       stateChannelProcessor = GlobalSnapshotStateChannelEventsProcessor
         .make[IO](
           validators.stateChannelValidator,
           stateChannelManager,
           currencySnapshotContextFns,
-          jsonBrotliBinarySerializer,
           feeCalculator
         )
       updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)

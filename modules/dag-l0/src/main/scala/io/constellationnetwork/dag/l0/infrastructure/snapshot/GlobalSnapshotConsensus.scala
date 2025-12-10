@@ -96,9 +96,9 @@ object GlobalSnapshotConsensus {
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit supervisor: Supervisor[F]): F[GlobalSnapshotConsensus[F]] =
     for {
-      globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
+      globalStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
         .make[F](stateChannelAllowanceLists, pullDelay = stateChannelPullDelay, purgeDelay = stateChannelPurgeDelay)
-      jsonBrotliBinarySerializer <- JsonSerializer.forAsync
+
       feeCalculator = FeeCalculator.make(feeConfigs)
 
       snapshotAcceptanceManager =
@@ -113,7 +113,6 @@ object GlobalSnapshotConsensus {
             validators.stateChannelValidator,
             globalStateChannelManager,
             sharedServices.currencySnapshotContextFns,
-            jsonBrotliBinarySerializer,
             feeCalculator
           ),
           sharedServices.updateNodeParametersAcceptanceManager,

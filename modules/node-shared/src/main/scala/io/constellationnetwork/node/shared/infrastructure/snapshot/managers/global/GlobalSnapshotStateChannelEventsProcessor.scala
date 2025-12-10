@@ -53,18 +53,17 @@ trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
 }
 
 object GlobalSnapshotStateChannelEventsProcessor {
-  def make[F[_]: Async: Parallel](
+  def make[F[_]: Async: JsonSerializer: Parallel](
     stateChannelValidator: StateChannelValidator[F],
     stateChannelManager: GlobalSnapshotStateChannelAcceptanceManager[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
-    jsonBrotliBinarySerializer: JsonSerializer[F],
     feeCalculator: FeeCalculator[F]
   ) =
     new GlobalSnapshotStateChannelEventsProcessor[F] {
       private val logger = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotStateChannelEventsProcessor.getClass)
 
       def deserialize[A: Decoder](binary: Signed[StateChannelSnapshotBinary]): F[Option[A]] =
-        jsonBrotliBinarySerializer.deserialize[A](binary.value.content).map(_.toOption)
+        JsonSerializer[F].deserialize[A](binary.value.content).map(_.toOption)
 
       def buildSnapshotFeesInfo(
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,

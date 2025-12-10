@@ -43,7 +43,7 @@ sealed abstract class CurrencySnapshotProcessor[F[_]: Async: SecurityProvider]
 
 object CurrencySnapshotProcessor {
 
-  def make[F[_]: Async: Random: SecurityProvider](
+  def make[F[_]: Async: Random: JsonSerializer: SecurityProvider](
     identifier: Address,
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],
@@ -53,7 +53,6 @@ object CurrencySnapshotProcessor {
     transactionStorage: TransactionStorage[F],
     globalSnapshotContextFns: SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     currencySnapshotContextFns: SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext],
-    jsonBrotliBinarySerializer: JsonSerializer[F],
     transactionLimitConfig: TransactionLimitConfig,
     allowSpendsConfig: AllowSpendsConfig,
     tokenLocksConfig: TokenLocksConfig,
@@ -335,7 +334,7 @@ object CurrencySnapshotProcessor {
           .get(identifier) match {
           case Some(snapshots) =>
             snapshots.toList.traverse { binary =>
-              jsonBrotliBinarySerializer.deserialize[Signed[CurrencyIncrementalSnapshot]](binary.content)
+              JsonSerializer[F].deserialize[Signed[CurrencyIncrementalSnapshot]](binary.content)
             }
               .map(_.flatMap(_.toOption))
               .map(NonEmptyList.fromList)
