@@ -8,6 +8,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotArtifact
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
@@ -99,8 +100,13 @@ object schema {
     facilitators: Facilitators,
     removedFacilitators: RemovedFacilitators,
     withdrawnFacilitators: WithdrawnFacilitators,
+    eligibleFacilitators: EligibleFacilitators,
     finished: Finished
-  )
+  ) {
+    def eligibleOrFacilitators: List[PeerId] =
+      if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value
+      else facilitators.value
+  }
 
   object CurrencyConsensusOutcome {
     implicit val _artifact: Lens[CurrencyConsensusOutcome, Signed[CurrencySnapshotArtifact]] =

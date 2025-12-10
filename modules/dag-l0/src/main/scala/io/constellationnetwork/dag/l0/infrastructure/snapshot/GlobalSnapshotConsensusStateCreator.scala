@@ -36,7 +36,8 @@ object GlobalSnapshotConsensusStateCreator {
     consensusStorage: GlobalConsensusStorage[F],
     gossip: Gossip[F],
     selfId: PeerId,
-    seedlist: Option[Set[SeedlistEntry]]
+    seedlist: Option[Set[SeedlistEntry]],
+    facilitatorSelector: FacilitatorSelector
   ): GlobalSnapshotConsensusStateCreator[F] = new GlobalSnapshotConsensusStateCreator[F] {
 
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
@@ -60,26 +61,27 @@ object GlobalSnapshotConsensusStateCreator {
     ): F[(GlobalSnapshotConsensusState, F[Unit])] =
       for {
         candidates <- consensusStorage.getCandidates(key.next)
-        previousFacilitators = lastOutcome.facilitators.value
+        previousEligible = lastOutcome.eligibleOrFacilitators
         approvedCandidates = lastOutcome.finished.candidates.value
         seedlistPeerIds = seedlist.map(_.map(_.peerId)).getOrElse(Set.empty)
 
-        filteredPreviousFacilitators = previousFacilitators
+        filteredPreviousEligible = previousEligible
           .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
 
         filteredCandidates = approvedCandidates
           .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
 
-        baseFacilitators = (filteredPreviousFacilitators ++ filteredCandidates).distinct
+        baseFacilitators = (filteredPreviousEligible ++ filteredCandidates).distinct
 
         _ <- logger.debug(
           s"Facilitator selection for key=$key: " +
-            s"previous=${filteredPreviousFacilitators.size}, " +
+            s"previousEligible=${filteredPreviousEligible.size}, " +
             s"candidates=${filteredCandidates.size}, " +
             s"base=${baseFacilitators.size}"
         )
 
-        facilitators <- (baseFacilitators :+ selfId).distinct
+        // Full eligible set after collateral filtering
+        eligible <- (baseFacilitators :+ selfId).distinct
           .filterA(
             consensusFns.facilitatorFilter(
               lastOutcome.finished.signedMajorityArtifact,
@@ -87,17 +89,28 @@ object GlobalSnapshotConsensusStateCreator {
               _
             )
           )
-          .map(_.sorted)
           .map { list =>
             if (list.isEmpty) List(selfId) else list
           }
 
-        filteredOut = baseFacilitators.filterNot(facilitators.contains)
-        _ <- filteredOut.traverse_ { peerId =>
+        filteredOutByCollateral = baseFacilitators.filterNot(eligible.contains)
+        _ <- filteredOutByCollateral.traverse_ { peerId =>
           logger.debug(s"Facilitator ${peerId.show} removed by facilitatorFilter for key=$key")
         }
 
-        (withdrawn, active) = facilitators.partition { peerId =>
+        // Apply deterministic subset selection using hash-distance ordering
+        // Uses the previous round's snapshot hash as entropy for randomization
+        entropy = lastOutcome.finished.snapshotHash
+        activeFacilitators = facilitatorSelector.select(eligible, entropy)
+
+        _ <- logger
+          .info(
+            s"Facilitator subsetting for key=$key: " +
+              s"eligible=${eligible.size}, selected=${activeFacilitators.size}"
+          )
+          .whenA(activeFacilitators.size < eligible.size)
+
+        (withdrawn, active) = activeFacilitators.partition { peerId =>
           resources.withdrawalsMap.get(peerId).contains(GlobalConsensusKind.Facility)
         }
 
@@ -134,11 +147,13 @@ object GlobalSnapshotConsensusStateCreator {
           ),
           time,
           withdrawnFacilitators = WithdrawnFacilitators(withdrawn.toSet),
-          spreadAckKinds = Set.empty
+          spreadAckKinds = Set.empty,
+          eligibleFacilitators = EligibleFacilitators(eligible)
         )
 
         _ <- logger.info(
           s"Created consensus state for key=$key with ${active.size} active facilitators" +
+            s" (${eligible.size} eligible)" +
             withdrawn.headOption.fold("")(_ => s", ${withdrawn.size} withdrawn")
         )
 

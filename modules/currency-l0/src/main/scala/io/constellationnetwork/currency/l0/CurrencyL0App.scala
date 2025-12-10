@@ -338,6 +338,7 @@ abstract class CurrencyL0App(
                           Facilitators(List(nodeId)),
                           RemovedFacilitators.empty,
                           WithdrawnFacilitators.empty,
+                          EligibleFacilitators.empty,
                           Finished(
                             currencySnapshot,
                             lastBinaryHash,
@@ -424,6 +425,7 @@ abstract class CurrencyL0App(
                         Facilitators(List(nodeId)),
                         RemovedFacilitators.empty,
                         WithdrawnFacilitators.empty,
+                        EligibleFacilitators.empty,
                         Finished(
                           currencySnapshot,
                           hash,

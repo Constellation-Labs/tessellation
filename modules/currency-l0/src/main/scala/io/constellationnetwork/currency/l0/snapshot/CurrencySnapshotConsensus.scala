@@ -119,6 +119,10 @@ object CurrencySnapshotConsensus {
           clusterStorage
         )
 
+      facilitatorSelector = FacilitatorSelector.make(
+        snapshotConfig.consensus.maxFacilitatorCount.map(_.value)
+      )
+
       consensusStateCreator =
         CurrencySnapshotConsensusStateCreator.make(
           consensusFns,
@@ -126,7 +130,8 @@ object CurrencySnapshotConsensus {
           lastGlobalSnapshotStorage,
           gossip,
           selfId,
-          seedlist
+          seedlist,
+          facilitatorSelector
         )
 
       consensusStateRemover =

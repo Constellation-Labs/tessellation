@@ -99,6 +99,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             state.facilitators,
             state.removedFacilitators,
             state.withdrawnFacilitators,
+            state.eligibleFacilitators,
             Finished(f.signedMajorityArtifact, f.context, f.majorityTrigger, f.candidates, f.facilitatorsHash, f.snapshotHash)
           )
           (Previous(state.lastOutcome.key), outcome).some

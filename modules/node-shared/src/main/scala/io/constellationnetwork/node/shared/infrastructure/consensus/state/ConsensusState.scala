@@ -3,6 +3,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus.state
 import cats.Show
 import cats.syntax.show._
 
+import scala.collection.immutable.SortedSet
 import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.PeerDeclarations
@@ -61,6 +62,12 @@ import monocle.macros.GenLens
 case class Facilitators(value: List[PeerId])
 
 @derive(eqv, encoder, decoder)
+case class EligibleFacilitators(value: List[PeerId])
+object EligibleFacilitators {
+  def empty: EligibleFacilitators = EligibleFacilitators(List.empty)
+}
+
+@derive(eqv, encoder, decoder)
 case class RemovedFacilitators(value: Set[PeerId])
 object RemovedFacilitators {
   def empty: RemovedFacilitators = RemovedFacilitators(Set.empty)
@@ -87,6 +94,7 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   createdAt: FiniteDuration,
   removedFacilitators: RemovedFacilitators = RemovedFacilitators.empty,
   withdrawnFacilitators: WithdrawnFacilitators = WithdrawnFacilitators.empty,
+  eligibleFacilitators: EligibleFacilitators = EligibleFacilitators.empty,
   lockStatus: LockStatus = LockStatus.Open,
   spreadAckKinds: Set[Kind]
 )
