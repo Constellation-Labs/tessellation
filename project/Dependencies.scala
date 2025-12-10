@@ -22,7 +22,7 @@ object Dependencies {
     val fs2 = "3.12.2"
     val fs2Data = "1.6.0"
     val http4s = "0.23.33"
-    val httpSigner = "0.1.1"
+    val httpSigner = "0.1.2"
     val log4cats = "2.7.1"
     val micrometer = "1.16.1"
     val monocle = "3.3.0"
