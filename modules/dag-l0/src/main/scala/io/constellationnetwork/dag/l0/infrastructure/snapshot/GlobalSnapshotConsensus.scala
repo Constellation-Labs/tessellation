@@ -172,13 +172,18 @@ object GlobalSnapshotConsensus {
           clusterStorage
         )
 
+      facilitatorSelector = FacilitatorSelector.make(
+        appConfig.snapshot.consensus.maxFacilitatorCount.map(_.value)
+      )
+
       stateCreator =
         GlobalSnapshotConsensusStateCreator.make(
           consensusFunctions,
           consensusStorage,
           gossip,
           selfId,
-          seedlist
+          seedlist,
+          facilitatorSelector
         )
 
       stateRemover =

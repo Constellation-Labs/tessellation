@@ -103,6 +103,7 @@ object CurrencySnapshotConsensusStateAdvancer {
               state.facilitators,
               state.removedFacilitators,
               state.withdrawnFacilitators,
+              state.eligibleFacilitators,
               f
             )
             (Previous(state.lastOutcome.key), outcome).some

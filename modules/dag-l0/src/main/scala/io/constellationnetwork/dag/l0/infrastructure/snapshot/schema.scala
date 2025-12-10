@@ -5,6 +5,7 @@ import cats.syntax.show._
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
@@ -70,8 +71,13 @@ object schema {
     facilitators: Facilitators,
     removedFacilitators: RemovedFacilitators,
     withdrawnFacilitators: WithdrawnFacilitators,
+    eligibleFacilitators: EligibleFacilitators,
     finished: Finished
-  )
+  ) {
+    def eligibleOrFacilitators: List[PeerId] =
+      if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value
+      else facilitators.value
+  }
 
   @derive(encoder, decoder, eqv, show)
   sealed trait GlobalConsensusKind

@@ -232,6 +232,7 @@ object Main
                       Facilitators(List(nodeId)),
                       RemovedFacilitators.empty,
                       WithdrawnFacilitators.empty,
+                      EligibleFacilitators.empty,
                       Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty, hashedSnapshot.hash)
                     )
                   )
@@ -321,6 +322,7 @@ object Main
                                       Facilitators(List(nodeId)),
                                       RemovedFacilitators.empty,
                                       WithdrawnFacilitators.empty,
+                                      EligibleFacilitators.empty,
                                       Finished(
                                         signedFirstIncrementalSnapshot,
                                         hashedGenesis.info,
