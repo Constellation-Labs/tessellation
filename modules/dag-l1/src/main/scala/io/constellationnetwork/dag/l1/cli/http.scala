@@ -6,6 +6,7 @@ import scala.concurrent.duration._
 
 import io.constellationnetwork.node.shared.cli.http._
 import io.constellationnetwork.node.shared.config.types.{HttpClientConfig, HttpConfig, HttpServerConfig}
+import io.constellationnetwork.node.shared.infrastructure._
 
 import com.comcast.ip4s.IpLiteralSyntax
 import com.monovore.decline.Opts
@@ -17,13 +18,30 @@ object http {
     idleTimeInPool = 30.seconds
   )
 
-  val opts: Opts[HttpConfig] =
-    (
-      externalIpOpts.withDefault(host"127.0.0.1"),
-      publicHttpPortOpts.withDefault(port"9000"),
-      p2pHttpPortOpts.withDefault(port"9001"),
-      cliHttpPortOpts.withDefault(port"9002")
-    ).mapN((externalIp, publicPort, p2pPort, cliPort) =>
+  def opts(l1Layers: L1Layer): Opts[HttpConfig] =
+    (l1Layers match {
+      case DagL1 =>
+        (
+          externalIpOpts.withDefault(host"127.0.0.1"),
+          publicHttpPortOpts.withDefault(port"9100"),
+          p2pHttpPortOpts.withDefault(port"9101"),
+          cliHttpPortOpts.withDefault(port"9102")
+        )
+      case CurrencyL1 =>
+        (
+          externalIpOpts.withDefault(host"127.0.0.1"),
+          publicHttpPortOpts.withDefault(port"9300"),
+          p2pHttpPortOpts.withDefault(port"9301"),
+          cliHttpPortOpts.withDefault(port"9302")
+        )
+      case DataL1 =>
+        (
+          externalIpOpts.withDefault(host"127.0.0.1"),
+          publicHttpPortOpts.withDefault(port"9400"),
+          p2pHttpPortOpts.withDefault(port"9401"),
+          cliHttpPortOpts.withDefault(port"9402")
+        )
+    }).mapN((externalIp, publicPort, p2pPort, cliPort) =>
       HttpConfig(
         externalIp,
         client,

@@ -18,11 +18,15 @@ import fs2.io.file.Path
 
 object CliMethod {
   val collateralConfig: (AppEnvironment, Option[Amount]) => CollateralConfig = (environment: AppEnvironment, amount: Option[Amount]) =>
-    CollateralConfig(
-      amount = amount
-        .filter(_ => environment =!= Mainnet)
-        .getOrElse(Amount(250_000_00000000L))
-    )
+    if (environment === Mainnet) {
+      CollateralConfig(
+        amount = Amount(250_000_00000000L)
+      )
+    } else {
+      CollateralConfig(
+        amount = amount.getOrElse(Amount.empty)
+      )
+    }
 }
 
 trait CliMethod {

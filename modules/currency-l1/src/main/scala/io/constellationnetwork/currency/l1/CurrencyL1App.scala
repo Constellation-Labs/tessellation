@@ -26,6 +26,7 @@ import io.constellationnetwork.node.shared.app.{NodeShared, TessellationIOApp, g
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastNGlobalSnapshotStorage
+import io.constellationnetwork.node.shared.infrastructure.{CurrencyL1, DataL1}
 import io.constellationnetwork.node.shared.resources.MkHttpServer
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
 import io.constellationnetwork.node.shared.{NodeSharedOrSharedRegistrationIdRange, nodeSharedKryoRegistrar}
@@ -69,7 +70,11 @@ abstract class CurrencyL1App(
     )
     with OverridableL1 {
 
-  val opts: Opts[Run] = method.opts
+  val opts: Opts[Run] =
+    dataApplication match {
+      case Some(_) => method.opts(DataL1)
+      case None    => method.opts(CurrencyL1)
+    }
 
   protected val configFiles: List[String] = List("currency-l1.conf", "dag-l1.conf")
 
