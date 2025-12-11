@@ -178,9 +178,12 @@ object TokenLockRoutesSuite extends HttpSuite {
       IO.pure(signedTokenLock.validNec[TokenLockValidationError])
   })
 
-  def buildSignedLockToken(keyPair: KeyPair)(implicit s: SecurityProvider[IO], h: Hasher[IO]): IO[Signed[TokenLock]] = {
+  def buildSignedLockToken(
+    keyPair: KeyPair,
+    amount: TokenLockAmount = TokenLockAmount(1L),
+    replaceTokenLockRef: Option[Hash] = None
+  )(implicit s: SecurityProvider[IO], h: Hasher[IO]): IO[Signed[TokenLock]] = {
     val src = keyPair.getPublic.toAddress
-    val amount = TokenLockAmount(1L)
     val fee = TokenLockFee(0L)
     val parent = TokenLockReference.empty
     val lastValidEpochProgress = EpochProgress(500L)
@@ -191,7 +194,8 @@ object TokenLockRoutesSuite extends HttpSuite {
       fee,
       parent,
       currencyId.some,
-      lastValidEpochProgress.some
+      lastValidEpochProgress.some,
+      replaceTokenLockRef
     )
 
     Signed.forAsyncHasher(tokenLock, keyPair)
@@ -207,7 +211,33 @@ object TokenLockRoutesSuite extends HttpSuite {
         endpoint <- construct()
         keyPair <- KeyPairGenerator.makeKeyPair[IO]
         tokenLock <- buildSignedLockToken(keyPair)
-        hashedTokenLock <- tokenLock.toHashed[F]
+        hashedTokenLock <- tokenLock.toHashed[IO]
+        expectedResponse = Json.obj(
+          "hash" -> Json.fromString(hashedTokenLock.hash.value)
+        )
+        testResult <- expectHttpBodyAndStatus(endpoint, req.withEntity(tokenLock))(
+          expectedResponse,
+          Status.Ok
+        )
+      } yield testResult
+    }
+  }
+
+  test("POST /token-locks replace returns hash") {
+    import org.http4s.circe.CirceEntityEncoder._
+    sharedResource.use { res =>
+      implicit val (sp, h, _, _) = res
+      val req: Request[IO] = POST(uri"/token-locks")
+
+      for {
+        keyPair <- KeyPairGenerator.makeKeyPair[IO]
+        tokenLockToReplace <- buildSignedLockToken(keyPair)
+        hashedTokenLockToReplace <- tokenLockToReplace.toHashed[IO]
+
+        endpoint <- construct(hashedTokenLockToReplace.some)
+
+        tokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(2L), hashedTokenLockToReplace.hash.some)
+        hashedTokenLock <- tokenLock.toHashed[IO]
         expectedResponse = Json.obj(
           "hash" -> Json.fromString(hashedTokenLock.hash.value)
         )
@@ -225,7 +255,7 @@ object TokenLockRoutesSuite extends HttpSuite {
       for {
         keyPair <- KeyPairGenerator.makeKeyPair[IO]
         tokenLock <- buildSignedLockToken(keyPair)
-        hashedTokenLock <- tokenLock.toHashed[F]
+        hashedTokenLock <- tokenLock.toHashed[IO]
         expectedResponse = Json.obj(
           "transaction" -> Json.obj(
             "source" -> Json.fromString(tokenLock.source.value.value),
@@ -236,7 +266,8 @@ object TokenLockRoutesSuite extends HttpSuite {
               "hash" -> Json.fromString(Hash.empty.value)
             ),
             "currencyId" -> Json.fromString(currencyId.value.value.value),
-            "unlockEpoch" -> Json.fromLong(500L)
+            "unlockEpoch" -> Json.fromLong(500L),
+            "replaceTokenLockRef" -> Json.Null
           ),
           "hash" -> Json.fromString(hashedTokenLock.hash.value),
           "status" -> Json.fromString("Waiting")

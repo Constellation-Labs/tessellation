@@ -28,3 +28,7 @@ properties:
     minimum: 0
     description: Optional epoch progress value when the tokens will be unlocked. NULL for indefinite lock. 
     nullable: true
+  replaceTokenLockRef:
+    type: './Hash.yml'
+    description: Reference hash of an existing token lock to increase. When provided, this field allows increasing the amount of an existing token lock by replacing it instead of creating a new one.
+    nullable: true

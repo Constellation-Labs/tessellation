@@ -202,7 +202,8 @@ object Main
                               TokenLockFee(fee.value),
                               p,
                               cur.map(x => x.toCurrencyId),
-                              unlock.map(x => EpochProgress.apply(NonNegLong.unsafeFrom(x)))
+                              unlock.map(x => EpochProgress.apply(NonNegLong.unsafeFrom(x))),
+                              None
                             ),
                             keyPair
                           )

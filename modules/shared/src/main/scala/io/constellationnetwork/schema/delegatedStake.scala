@@ -15,6 +15,7 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.tokenLock.TokenLockAmount
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher}
@@ -41,6 +42,10 @@ object delegatedStake {
       override def empty: DelegatedStakeAmount = emptyAmount
       override def combine(x: DelegatedStakeAmount, y: DelegatedStakeAmount): DelegatedStakeAmount = x.plus(y)
     }
+
+    def fromTokenLockAmount(tokenLockAmount: TokenLockAmount): DelegatedStakeAmount = DelegatedStakeAmount(
+      NonNegLong.unsafeFrom(tokenLockAmount.value.value)
+    )
   }
 
   @derive(decoder, encoder, order, show)
@@ -118,8 +123,13 @@ object delegatedStake {
   case class DelegatedStakeRecord(
     event: Signed[UpdateDelegatedStake.Create],
     createdAt: SnapshotOrdinal,
-    rewards: Amount
-  )
+    rewards: Amount,
+    currentTokenLockRef: Option[Hash],
+    currentAmount: Option[DelegatedStakeAmount]
+  ) {
+    def amount: DelegatedStakeAmount = currentAmount.getOrElse(event.amount)
+    def tokenLockRef: Hash = currentTokenLockRef.getOrElse(event.tokenLockRef)
+  }
 
   object DelegatedStakeRecord {
     implicit val order: Order[DelegatedStakeRecord] = Order[SnapshotOrdinal].contramap(_.createdAt)
@@ -133,8 +143,13 @@ object delegatedStake {
     event: Signed[UpdateDelegatedStake.Create],
     rewards: Amount,
     acceptedOrdinal: SnapshotOrdinal,
-    createdAt: EpochProgress
-  )
+    createdAt: EpochProgress,
+    currentTokenLockRef: Option[Hash],
+    currentAmount: Option[DelegatedStakeAmount]
+  ) {
+    def amount: DelegatedStakeAmount = currentAmount.getOrElse(event.amount)
+    def tokenLockRef: Hash = currentTokenLockRef.getOrElse(event.tokenLockRef)
+  }
 
   object PendingDelegatedStakeWithdrawal {
     implicit val order: Order[PendingDelegatedStakeWithdrawal] = Order[EpochProgress].contramap(_.createdAt)
