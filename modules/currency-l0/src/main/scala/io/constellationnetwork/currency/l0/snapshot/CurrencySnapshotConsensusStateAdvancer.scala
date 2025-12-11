@@ -86,7 +86,7 @@ object CurrencySnapshotConsensusStateAdvancer {
     new CurrencySnapshotConsensusStateAdvancer[F] {
 
       private val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](getClass)
-      private val facilitatorsObservationName = "facilitators"
+      private val lastSnapshotHashObservationName = "last-snapshot-hash"
 
       protected val clusterStorage: ClusterStorage[F] = clusterStorageInstance
       protected val config: ConsensusConfig = consensusConfig
@@ -148,7 +148,7 @@ object CurrencySnapshotConsensusStateAdvancer {
       ): F[Option[Transition]] =
         for {
           maybeFacilities <- maybeGetAllDeclarations(state, resources)(_.facility)
-          _ <- maybeFacilities.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash))
+          _ <- maybeFacilities.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
           result <- maybeFacilities.flatTraverse(toProposalsPhase(state, _))
         } yield result
 
@@ -185,10 +185,11 @@ object CurrencySnapshotConsensusStateAdvancer {
                   majorityTrigger,
                   ArtifactInfo(artifact, context, hash),
                   Candidates(candidates),
-                  facilitatorsHash
+                  facilitatorsHash,
+                  state.lastOutcome.finished.snapshotHash
                 )
               ),
-              sideEffect = spreadProposal(state.key, hash, facilitatorsHash, artifact)
+              sideEffect = spreadProposal(state.key, hash, facilitatorsHash, artifact, state.lastOutcome.finished.snapshotHash)
             )
         }
 
@@ -203,7 +204,7 @@ object CurrencySnapshotConsensusStateAdvancer {
       )(implicit hasher: Hasher[F]): F[Option[Transition]] =
         for {
           maybeProposals <- maybeGetAllDeclarations(state, resources)(_.proposal)
-          _ <- maybeProposals.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash))
+          _ <- maybeProposals.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
           result <- maybeProposals.flatTraverse(toSignaturesPhase(state, status, resources, _))
         } yield result
 
@@ -256,10 +257,11 @@ object CurrencySnapshotConsensusStateAdvancer {
                 majorityInfo,
                 status.majorityTrigger,
                 status.candidates,
-                facilitatorsHash
+                facilitatorsHash,
+                state.lastOutcome.finished.snapshotHash
               )
             ),
-            sideEffect = spreadSignature(state.key, signature, facilitatorsHash)
+            sideEffect = spreadSignature(state.key, signature, facilitatorsHash, state.lastOutcome.finished.snapshotHash)
           )
 
       // =========================================================================
@@ -274,7 +276,7 @@ object CurrencySnapshotConsensusStateAdvancer {
         for {
           maybeSignatures <- maybeGetAllDeclarations(state, resources)(_.signature)
           maybeFacilities <- maybeGetAllDeclarations(state, resources)(_.facility)
-          _ <- maybeSignatures.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash))
+          _ <- maybeSignatures.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
           maybeGlobalOrd = extractGlobalSnapshotOrdinal(maybeFacilities)
           result <- (maybeGlobalOrd, maybeSignatures) match {
             case (Some(globalOrd), Some(signatures)) =>
@@ -328,10 +330,16 @@ object CurrencySnapshotConsensusStateAdvancer {
                       signedBinary.value,
                       status.majorityTrigger,
                       status.candidates,
-                      facilitatorsHash
+                      facilitatorsHash,
+                      state.lastOutcome.finished.snapshotHash
                     )
                   ),
-                  sideEffect = spreadBinarySignature(state.key, signedBinary.proofs.head.signature, facilitatorsHash)
+                  sideEffect = spreadBinarySignature(
+                    state.key,
+                    signedBinary.proofs.head.signature,
+                    facilitatorsHash,
+                    state.lastOutcome.finished.snapshotHash
+                  )
                 )
               }
           }
@@ -348,7 +356,7 @@ object CurrencySnapshotConsensusStateAdvancer {
       ): F[Option[Transition]] =
         for {
           maybeBinarySignatures <- maybeGetAllDeclarations(state, resources)(_.binarySignature)
-          _ <- maybeBinarySignatures.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash))
+          _ <- maybeBinarySignatures.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
           result <- maybeBinarySignatures.flatTraverse(toFinishedPhase(state, status, _))
         } yield result
 
@@ -373,10 +381,12 @@ object CurrencySnapshotConsensusStateAdvancer {
         status: CollectingBinarySignatures,
         validSignatures: List[SignatureProof]
       )(implicit hasher: Hasher[F]): F[Option[Transition]] =
-        state.facilitators.value.hash.flatMap { facilitatorsHash =>
-          NonEmptySet.fromSet(validSignatures.toSortedSet).traverse { signaturesNes =>
-            val finalSignedBinary = Signed(status.binary, signaturesNes)
+        for {
+          facilitatorsHash <- state.facilitators.value.hash
+          snapshotHash <- status.signedMajorityArtifact.hash
 
+          result <- NonEmptySet.fromSet(validSignatures.toSortedSet).traverse { signaturesNes =>
+            val finalSignedBinary = Signed(status.binary, signaturesNes)
             finalSignedBinary.toHashed.map { hashedBinary =>
               Transition(
                 newState = state.copy(status =
@@ -386,14 +396,15 @@ object CurrencySnapshotConsensusStateAdvancer {
                     status.context,
                     status.majorityTrigger,
                     status.candidates,
-                    facilitatorsHash
+                    facilitatorsHash,
+                    snapshotHash
                   )
                 ),
                 sideEffect = persistAndGossip(status.signedMajorityArtifact, hashedBinary, state, status.context)
               )
             }
           }
-        }
+        } yield result
 
       private def hashFacilitators(state: CurrencySnapshotConsensusState): F[Hash] =
         HasherSelector[F].withCurrent(implicit h => state.facilitators.value.hash)
@@ -433,16 +444,22 @@ object CurrencySnapshotConsensusStateAdvancer {
         key: CurrencySnapshotKey,
         hash: Hash,
         facilitatorsHash: Hash,
-        artifact: CurrencySnapshotArtifact
+        artifact: CurrencySnapshotArtifact,
+        lastSnapshotHash: Hash
       ): F[Unit] =
-        gossip.spread(ConsensusPeerDeclaration(key, Proposal(hash, facilitatorsHash))) >>
+        gossip.spread(ConsensusPeerDeclaration(key, Proposal(hash, facilitatorsHash, lastSnapshotHash))) >>
           gossip.spreadCommon(ConsensusArtifact(key, artifact))
 
-      private def spreadSignature(key: CurrencySnapshotKey, signature: Signature, facilitatorsHash: Hash): F[Unit] =
-        gossip.spread(ConsensusPeerDeclaration(key, MajoritySignature(signature, facilitatorsHash)))
+      private def spreadSignature(key: CurrencySnapshotKey, signature: Signature, facilitatorsHash: Hash, lastSnapshotHash: Hash): F[Unit] =
+        gossip.spread(ConsensusPeerDeclaration(key, MajoritySignature(signature, facilitatorsHash, lastSnapshotHash)))
 
-      private def spreadBinarySignature(key: CurrencySnapshotKey, signature: Signature, facilitatorsHash: Hash): F[Unit] =
-        gossip.spread(ConsensusPeerDeclaration(key, BinarySignature(signature, facilitatorsHash)))
+      private def spreadBinarySignature(
+        key: CurrencySnapshotKey,
+        signature: Signature,
+        facilitatorsHash: Hash,
+        lastSnapshotHash: Hash
+      ): F[Unit] =
+        gossip.spread(ConsensusPeerDeclaration(key, BinarySignature(signature, facilitatorsHash, lastSnapshotHash)))
 
       private def persistAndGossip(
         signedArtifact: Signed[CurrencySnapshotArtifact],
@@ -464,17 +481,17 @@ object CurrencySnapshotConsensusStateAdvancer {
           HasherSelector[F].withCurrent(implicit h => signedArtifact.toHashed) >>= da.onSnapshotConsensusResult
         }.handleErrorWith(logger.error(_)("Unhandled exception during onSnapshotConsensusResult"))
 
-      private def checkForkByFacilitatorsHash[A](declarations: SortedMap[PeerId, A], ownHash: Hash)(
+      private def checkForkByLastSnapshotHash[A](declarations: SortedMap[PeerId, A], ownHash: Hash)(
         implicit extract: A => Hash
       ): F[Unit] =
-        recoverIfForking[F](ownHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
+        recoverIfForking[F](ownHash, lastSnapshotHashObservationName, restartService, nodeStorage, leavingDelay)(
           declarations.map { case (pid, decl) => (pid, extract(decl)) }
         )
 
-      private implicit val extractFacilityHash: Facility => Hash = _.facilitatorsHash
-      private implicit val extractProposalHash: Proposal => Hash = _.facilitatorsHash
-      private implicit val extractSignatureHash: MajoritySignature => Hash = _.facilitatorsHash
-      private implicit val extractBinarySignatureHash: BinarySignature => Hash = _.facilitatorsHash
+      private implicit val extractFacilityHash: Facility => Hash = _.lastSnapshotHash
+      private implicit val extractProposalHash: Proposal => Hash = _.lastSnapshotHash
+      private implicit val extractSignatureHash: MajoritySignature => Hash = _.lastSnapshotHash
+      private implicit val extractBinarySignatureHash: BinarySignature => Hash = _.lastSnapshotHash
 
       private def clearTimeTriggerIfNeeded(trigger: ConsensusTrigger): F[Unit] =
         Applicative[F].whenA(trigger === TimeTrigger)(consensusStorage.clearTimeTrigger)

@@ -15,6 +15,7 @@ object declaration {
   @derive(eqv, show, encoder, decoder)
   sealed trait PeerDeclaration {
     def facilitatorsHash: Hash
+    def lastSnapshotHash: Hash
   }
 
   @derive(eqv, show, encoder, decoder)
@@ -23,15 +24,16 @@ object declaration {
     candidates: Candidates,
     trigger: Option[ConsensusTrigger],
     facilitatorsHash: Hash,
-    lastGlobalSnapshotOrdinal: SnapshotOrdinal
+    lastGlobalSnapshotOrdinal: SnapshotOrdinal,
+    lastSnapshotHash: Hash
   ) extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)
-  case class Proposal(hash: Hash, facilitatorsHash: Hash) extends PeerDeclaration
+  case class Proposal(hash: Hash, facilitatorsHash: Hash, lastSnapshotHash: Hash) extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)
-  case class MajoritySignature(signature: Signature, facilitatorsHash: Hash) extends PeerDeclaration
+  case class MajoritySignature(signature: Signature, facilitatorsHash: Hash, lastSnapshotHash: Hash) extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)
-  case class BinarySignature(signature: Signature, facilitatorsHash: Hash) extends PeerDeclaration
+  case class BinarySignature(signature: Signature, facilitatorsHash: Hash, lastSnapshotHash: Hash) extends PeerDeclaration
 }
