@@ -330,6 +330,7 @@ abstract class CurrencyL0App(
                           currencySnapshotInfo.some
                         )
                       }
+                      hashedSnapshot <- currencySnapshot.toHashed[IO]
                       _ <- services.consensus.manager.startFacilitatingAfterRollback(
                         currencySnapshot.ordinal,
                         CurrencyConsensusOutcome(
@@ -343,7 +344,8 @@ abstract class CurrencyL0App(
                             CurrencySnapshotContext(rr.identifier, currencySnapshotInfo),
                             EventTrigger,
                             Candidates.empty,
-                            Hash.empty
+                            Hash.empty,
+                            hashedSnapshot.hash
                           )
                         )
                       )
@@ -414,6 +416,7 @@ abstract class CurrencyL0App(
                       mkCell,
                       isStartupCall = true
                     )
+                    hashedSnapshot <- currencySnapshot.toHashed[IO]
                     _ <- services.consensus.manager.startFacilitatingAfterRollback(
                       currencySnapshot.ordinal,
                       CurrencyConsensusOutcome(
@@ -427,7 +430,8 @@ abstract class CurrencyL0App(
                           CurrencySnapshotContext(identifier, currencySnapshotInfo),
                           EventTrigger,
                           Candidates.empty,
-                          Hash.empty
+                          Hash.empty,
+                          hashedSnapshot.hash
                         )
                       )
                     )

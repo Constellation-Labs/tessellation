@@ -24,11 +24,11 @@ object CurrencySnapshotConsensusStateRemover {
       ): ConsensusWithdrawPeerDeclaration[CurrencySnapshotKey, CurrencyConsensusKind] = {
         val (declarationKey, declarationKind) = maybeState.map { state =>
           state.status match {
-            case CollectingFacilities(_, _)                   => (state.key, Proposal)
-            case CollectingProposals(_, _, _, _)              => (state.key, Signature)
-            case CollectingSignatures(_, _, _, _)             => (state.key.next, BinarySignature)
-            case CollectingBinarySignatures(_, _, _, _, _, _) => (state.key.next, Facility)
-            case Finished(_, _, _, _, _, _)                   => (state.key.next, Facility)
+            case CollectingFacilities(_, _, _)                   => (state.key, Proposal)
+            case CollectingProposals(_, _, _, _, _)              => (state.key, Signature)
+            case CollectingSignatures(_, _, _, _, _)             => (state.key.next, BinarySignature)
+            case CollectingBinarySignatures(_, _, _, _, _, _, _) => (state.key.next, Facility)
+            case Finished(_, _, _, _, _, _, _)                   => (state.key.next, Facility)
           }
         }.getOrElse((key, Facility))
 

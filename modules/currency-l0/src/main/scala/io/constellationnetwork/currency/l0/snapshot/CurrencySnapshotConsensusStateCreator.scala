@@ -114,7 +114,14 @@ object CurrencySnapshotConsensusStateCreator {
           gossip.spread(
             ConsensusPeerDeclaration(
               key,
-              Facility(bound, candidates, maybeTrigger, lastOutcome.finished.facilitatorsHash, lastGlobalSnapshotOrdinal)
+              Facility(
+                bound,
+                candidates,
+                maybeTrigger,
+                lastOutcome.finished.facilitatorsHash,
+                lastGlobalSnapshotOrdinal,
+                lastOutcome.finished.snapshotHash
+              )
             )
           )
         }
@@ -125,7 +132,8 @@ object CurrencySnapshotConsensusStateCreator {
           Facilitators(active),
           CollectingFacilities(
             maybeTrigger,
-            lastOutcome.finished.facilitatorsHash
+            lastOutcome.finished.facilitatorsHash,
+            lastOutcome.finished.snapshotHash
           ),
           time,
           withdrawnFacilitators = WithdrawnFacilitators(withdrawn.toSet),

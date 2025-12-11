@@ -223,16 +223,19 @@ object Main
           ) {
             programs.rollbackLoader.load(m.rollbackHash, programs.download).flatMap {
               case (snapshotInfo, snapshot) =>
-                services.consensus.manager.startFacilitatingAfterRollback(
-                  snapshot.ordinal,
-                  GlobalConsensusOutcome(
+                for {
+                  hashedSnapshot <- hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[IO])
+                  result <- services.consensus.manager.startFacilitatingAfterRollback(
                     snapshot.ordinal,
-                    Facilitators(List(nodeId)),
-                    RemovedFacilitators.empty,
-                    WithdrawnFacilitators.empty,
-                    Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty)
+                    GlobalConsensusOutcome(
+                      snapshot.ordinal,
+                      Facilitators(List(nodeId)),
+                      RemovedFacilitators.empty,
+                      WithdrawnFacilitators.empty,
+                      Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty, hashedSnapshot.hash)
+                    )
                   )
-                )
+                } yield result
             }
           } >>
             services.collateral
@@ -323,7 +326,8 @@ object Main
                                         hashedGenesis.info,
                                         EventTrigger,
                                         Candidates.empty,
-                                        Hash.empty
+                                        Hash.empty,
+                                        hashedSnapshot.hash
                                       )
                                     )
                                   )

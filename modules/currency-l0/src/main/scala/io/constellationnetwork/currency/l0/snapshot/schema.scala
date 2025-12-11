@@ -25,36 +25,39 @@ object schema {
 
   object CurrencyConsensusStep {
     implicit val show: Show[CurrencyConsensusStep] = Show.show {
-      case CollectingFacilities(maybeTrigger, facilitatorsHash) =>
-        s"CollectingFacilities{maybeTrigger=${maybeTrigger.show}, facilitatorsHash=${facilitatorsHash.show}}"
-      case CollectingProposals(majorityTrigger, proposalArtifactInfo, candidates, facilitatorsHash) =>
-        s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, proposalArtifactInfo=${proposalArtifactInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}}"
-      case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, facilitatorsHash) =>
-        s"CollectingSignatures{majorityArtifactInfo=${majorityArtifactInfo.show}, ${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}}"
-      case CollectingBinarySignatures(_, _, _, majorityTrigger, candidates, facilitatorsHash) =>
-        s"CollectingBinarySignatures{majorityTrigger=${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}}"
-      case Finished(_, binaryArtifactHash, _, majorityTrigger, candidates, facilitatorsHash) =>
-        s"Finished{binaryArtifactHash=${binaryArtifactHash}, majorityTrigger=${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}}"
+      case CollectingFacilities(maybeTrigger, facilitatorsHash, lastSnapshotHash) =>
+        s"CollectingFacilities{maybeTrigger=${maybeTrigger.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
+      case CollectingProposals(majorityTrigger, proposalArtifactInfo, candidates, facilitatorsHash, lastSnapshotHash) =>
+        s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, proposalArtifactInfo=${proposalArtifactInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
+      case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, facilitatorsHash, lastSnapshotHash) =>
+        s"CollectingSignatures{majorityArtifactInfo=${majorityArtifactInfo.show}, ${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
+      case CollectingBinarySignatures(_, _, _, majorityTrigger, candidates, facilitatorsHash, lastSnapshotHash) =>
+        s"CollectingBinarySignatures{majorityTrigger=${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
+      case Finished(_, binaryArtifactHash, _, majorityTrigger, candidates, facilitatorsHash, snapshotHash) =>
+        s"Finished{binaryArtifactHash=${binaryArtifactHash}, majorityTrigger=${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, snapshotHash=${snapshotHash.show}}"
     }
   }
 
   final case class CollectingFacilities(
     maybeTrigger: Option[ConsensusTrigger],
-    facilitatorsHash: Hash
+    facilitatorsHash: Hash,
+    lastSnapshotHash: Hash
   ) extends CurrencyConsensusStep
 
   final case class CollectingProposals(
     majorityTrigger: ConsensusTrigger,
     proposalArtifactInfo: ArtifactInfo[CurrencySnapshotArtifact, CurrencySnapshotContext],
     candidates: Candidates,
-    facilitatorsHash: Hash
+    facilitatorsHash: Hash,
+    lastSnapshotHash: Hash
   ) extends CurrencyConsensusStep
 
   final case class CollectingSignatures(
     majorityArtifactInfo: ArtifactInfo[CurrencySnapshotArtifact, CurrencySnapshotContext],
     majorityTrigger: ConsensusTrigger,
     candidates: Candidates,
-    facilitatorsHash: Hash
+    facilitatorsHash: Hash,
+    lastSnapshotHash: Hash
   ) extends CurrencyConsensusStep
 
   final case class CollectingBinarySignatures(
@@ -63,7 +66,8 @@ object schema {
     binary: StateChannelSnapshotBinary,
     majorityTrigger: ConsensusTrigger,
     candidates: Candidates,
-    facilitatorsHash: Hash
+    facilitatorsHash: Hash,
+    lastSnapshotHash: Hash
   ) extends CurrencyConsensusStep
 
   @derive(encoder, decoder, eqv)
@@ -73,7 +77,8 @@ object schema {
     context: CurrencySnapshotContext,
     majorityTrigger: ConsensusTrigger,
     candidates: Candidates,
-    facilitatorsHash: Hash
+    facilitatorsHash: Hash,
+    snapshotHash: Hash
   ) extends CurrencyConsensusStep
 
   @derive(encoder, decoder, eqv, show)
