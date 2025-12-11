@@ -24,7 +24,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state.ConsensusStateUpdater._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
-import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, TimeTrigger}
+import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
@@ -151,9 +151,8 @@ object GlobalSnapshotConsensusStateAdvancer {
     ): F[Option[Transition]] = {
       val (bound, candidates, triggers) = facilities.foldMap(f => (f.upperBound, f.candidates.value, f.trigger.toList))
 
-      pickMajority(triggers).flatTraverse { majorityTrigger =>
-        buildProposalTransition(state, bound, candidates, majorityTrigger).map(_.some)
-      }
+      val trigger = pickMajority(triggers).getOrElse(EventTrigger)
+      buildProposalTransition(state, bound, candidates, trigger).map(_.some)
     }
 
     private def buildProposalTransition(

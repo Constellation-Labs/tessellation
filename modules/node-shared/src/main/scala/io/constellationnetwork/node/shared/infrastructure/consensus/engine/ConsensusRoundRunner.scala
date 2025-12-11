@@ -99,10 +99,10 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
       _ <-
         if (maybeTimeTrigger.exists(currentTime >= _))
           queue.offer(ConsensusCommand.StartRound(Some(TimeTrigger)))
-        else if (containsTriggerEvent)
-          queue.offer(ConsensusCommand.StartRound(Some(EventTrigger)))
         else if (maybeTimeTrigger.isEmpty)
           scheduleTimeTrigger >> queue.offer(ConsensusCommand.StartRound(None))
+        else if (containsTriggerEvent)
+          queue.offer(ConsensusCommand.StartRound(Some(EventTrigger)))
         else
           Async[F].unit
     } yield ()
