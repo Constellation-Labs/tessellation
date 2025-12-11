@@ -3,6 +3,7 @@ package io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glo
 import java.lang.management.ManagementFactory
 
 import cats.data.NonEmptyList
+import cats.data.NonEmptySetImpl.catsDataInstancesForNonEmptySet
 import cats.effect.{Async, Sync}
 import cats.syntax.all._
 import cats.{MonadThrow, Parallel}
@@ -160,6 +161,13 @@ object GlobalSnapshotAcceptanceManager {
     new GlobalSnapshotAcceptanceManager[F] {
       val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](this.getClass)
 
+      case class InitialData(
+        blockResult: BlockAcceptanceResult,
+        delegatedResult: UpdateDelegatedStakeAcceptanceResult,
+        nodeParamsResult: SortedMap[Id, Signed[UpdateNodeParameters]],
+        existingStakes: PartitionedRecords[SortedSet[DelegatedStakeRecord], SortedSet[PendingDelegatedStakeWithdrawal]]
+      )
+
       private def acceptInitialData(
         ordinal: SnapshotOrdinal,
         epochProgress: EpochProgress,
@@ -169,10 +177,11 @@ object GlobalSnapshotAcceptanceManager {
         unpEvents: List[Signed[UpdateNodeParameters]],
         lastSnapshotContext: GlobalSnapshotInfo,
         lastActiveTips: SortedSet[ActiveTip],
-        lastDeprecatedTips: SortedSet[DeprecatedTip]
+        lastDeprecatedTips: SortedSet[DeprecatedTip],
+        acceptedGlobalTokenLocks: List[Signed[TokenLock]]
       )(
         implicit hasher: Hasher[F]
-      ): F[(BlockAcceptanceResult, UpdateDelegatedStakeAcceptanceResult, SortedMap[Id, Signed[UpdateNodeParameters]])] =
+      ): F[InitialData] =
         for {
           blockResult <- blockAcceptanceCoordinatorManager.acceptBlocks(
             blocksForAcceptance,
@@ -182,12 +191,21 @@ object GlobalSnapshotAcceptanceManager {
             ordinal
           )
 
+          unexpiredStakes <- delegatedStakeStateManager
+            .processExistingDelegatedStakes(
+              lastSnapshotContext,
+              epochProgress,
+              acceptedGlobalTokenLocks,
+              withdrawalTimeLimit
+            )
+
           delegatedResult <- updateDelegatedStakeAcceptanceManager.accept(
             cdsEvents,
             wdsEvents,
             lastSnapshotContext,
             epochProgress,
-            ordinal
+            ordinal,
+            acceptedGlobalTokenLocks
           )
 
           nodeParamsResult <- updateNodeParametersAcceptanceManager
@@ -197,7 +215,13 @@ object GlobalSnapshotAcceptanceManager {
                 acceptanceResult.accepted.flatMap(signed => signed.proofs.toList.map(proof => (proof.id, signed)))
               )
             )
-        } yield (blockResult, delegatedResult, nodeParamsResult)
+        } yield
+          InitialData(
+            blockResult,
+            delegatedResult,
+            nodeParamsResult,
+            unexpiredStakes
+          )
 
       private def acceptNodeCollateral(
         ordinal: SnapshotOrdinal,
@@ -579,7 +603,20 @@ object GlobalSnapshotAcceptanceManager {
           .getOrElse(environment, SnapshotOrdinal.MinValue)
 
         for {
-          (acceptanceResult, delegatedStakeAcceptanceResult, acceptedUpdateNodeParametersTemp) <-
+          (allowSpendBlockAcceptanceResult, tokenLockBlockAcceptanceResult) <-
+            acceptAllowSpendAndTokenLockBlocks(
+              ordinal,
+              epochProgress,
+              allowSpendBlocksForAcceptance,
+              tokenLockBlocksForAcceptance,
+              lastSnapshotContext,
+              fixingAllowSpendAndTokenLockValidation
+            )
+
+          acceptedGlobalAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
+          acceptedGlobalTokenLocks = tokenLockBlockAcceptanceResult.accepted.flatMap(_.value.tokenLocks.toList)
+
+          initialData <-
             acceptInitialData(
               ordinal,
               epochProgress,
@@ -589,7 +626,8 @@ object GlobalSnapshotAcceptanceManager {
               unpEvents,
               lastSnapshotContext,
               lastActiveTips,
-              lastDeprecatedTips
+              lastDeprecatedTips,
+              acceptedGlobalTokenLocks
             )
 
           nodeCollateralAcceptanceResult <- acceptNodeCollateral(
@@ -598,16 +636,18 @@ object GlobalSnapshotAcceptanceManager {
             cncEvents,
             wncEvents,
             lastSnapshotContext,
-            delegatedStakeAcceptanceResult
+            initialData.delegatedResult
           )
 
           updatedUpdateNodeParameters = lastSnapshotContext.updateNodeParameters.getOrElse(
             SortedMap.empty[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)]
-          ) ++ acceptedUpdateNodeParametersTemp.view.mapValues(unp => (unp, ordinal))
+          ) ++ initialData.nodeParamsResult.view.mapValues(unp => (unp, ordinal))
 
-          acceptedTransactions = acceptanceResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
+          acceptedTransactions = initialData.blockResult.accepted.flatMap {
+            case (block, _) => block.value.transactions.toSortedSet
+          }.toSortedSet
 
-          updatedGlobalBalances = lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances
+          updatedGlobalBalances = lastSnapshotContext.balances ++ initialData.blockResult.contextUpdate.balances
 
           StateChannelAcceptanceResult(
             scSnapshots,
@@ -626,17 +666,8 @@ object GlobalSnapshotAcceptanceManager {
 
           transactionsRefs = transactionReferenceManager.acceptTransactionRefs(
             lastSnapshotContext.lastTxRefs,
-            acceptanceResult.contextUpdate.lastTxRefs,
+            initialData.blockResult.contextUpdate.lastTxRefs,
             acceptedTransactions
-          )
-
-          unexpiredStakesRaw = delegatedStakeStateManager.acceptDelegatedStakes(lastSnapshotContext, epochProgress, withdrawalTimeLimit)
-          (unexpiredCreateDelegatedStakes, unexpiredWithdrawalsDelegatedStaking, expiredWithdrawalsDelegatedStaking) = unexpiredStakesRaw
-
-          unexpiredStakes = PartitionedRecords(
-            existing = unexpiredCreateDelegatedStakes,
-            unexpired = unexpiredWithdrawalsDelegatedStaking,
-            expired = expiredWithdrawalsDelegatedStaking
           )
 
           currencyBalances = currencySnapshots.toList.map {
@@ -670,8 +701,8 @@ object GlobalSnapshotAcceptanceManager {
             epochProgress,
             tessellation3MigrationStartingOrdinal,
             acceptedTransactions,
-            delegatedStakeAcceptanceResult,
-            unexpiredStakes,
+            initialData.delegatedResult,
+            initialData.existingStakes,
             calculateRewardsFn
           )
 
@@ -723,19 +754,6 @@ object GlobalSnapshotAcceptanceManager {
 
           updatedLastStateChannelSnapshotHashes = lastSnapshotContext.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
           updatedLastCurrencySnapshots = lastSnapshotContext.lastCurrencySnapshots ++ currencySnapshots
-
-          (allowSpendBlockAcceptanceResult, tokenLockBlockAcceptanceResult) <-
-            acceptAllowSpendAndTokenLockBlocks(
-              ordinal,
-              epochProgress,
-              allowSpendBlocksForAcceptance,
-              tokenLockBlocksForAcceptance,
-              lastSnapshotContext,
-              fixingAllowSpendAndTokenLockValidation
-            )
-
-          acceptedGlobalAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
-          acceptedGlobalTokenLocks = tokenLockBlockAcceptanceResult.accepted.flatMap(_.value.tokenLocks.toList)
 
           activeAllowSpendsFromCurrencySnapshots = currencySnapshots
             .mapFilter(_.toOption.flatMap { case (_, info) => info.activeAllowSpends })
@@ -831,13 +849,14 @@ object GlobalSnapshotAcceptanceManager {
             lastSnapshotContext
           )
 
-          generatedTokenUnlocks = tokenLockStateManager.generateTokenUnlocks(
-            expiredWithdrawalsDelegatedStaking,
-            globalActiveTokenLocksByRef
-          ) match {
-            case Right(tokenUnlocks) => tokenUnlocks
-            case Left(error)         => throw new RuntimeException(s"Error when generating token unlocks: $error")
-          }
+          generatedTokenUnlocks <- tokenLockStateManager
+            .generateTokenUnlocks(
+              initialData.existingStakes.expired,
+              acceptedGlobalTokenLocks,
+              globalActiveTokenLocksByRef
+            )
+            .leftMap(error => new RuntimeException(s"Error generating token unlocks: $error"))
+            .liftTo[F]
 
           updatedGlobalTokenLocks <- tokenLockStateManager.acceptTokenLocks(
             epochProgress,
@@ -969,7 +988,7 @@ object GlobalSnapshotAcceptanceManager {
             tessellation301MigrationStartingOrdinal,
             metagraphSyncDataStartingOrdinal,
             lastSnapshotContext,
-            acceptanceResult,
+            initialData.blockResult,
             updatedLastStateChannelSnapshotHashes,
             transactionsRefs,
             updatedBalancesBySpendTransactions,
@@ -1018,10 +1037,10 @@ object GlobalSnapshotAcceptanceManager {
           )
         } yield
           (
-            acceptanceResult,
+            initialData.blockResult,
             allowSpendBlockAcceptanceResult,
             tokenLockBlockAcceptanceResult,
-            delegatedStakeAcceptanceResult,
+            initialData.delegatedResult,
             nodeCollateralAcceptanceResult,
             scSnapshots,
             returnedSCEvents,
