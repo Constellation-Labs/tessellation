@@ -9,6 +9,7 @@ import io.constellationnetwork.env.env._
 import io.constellationnetwork.node.shared.cli.opts.trustRatingsPathOpts
 import io.constellationnetwork.node.shared.cli.{CliMethod, CollateralAmountOpts, L0PeerOpts}
 import io.constellationnetwork.node.shared.config.types._
+import io.constellationnetwork.node.shared.infrastructure.{DagL1, L1Layer}
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.cluster.PeerToJoin
 import io.constellationnetwork.schema.peer.L0Peer
@@ -53,13 +54,13 @@ object method {
 
   object RunInitialValidator {
 
-    val opts = Opts.subcommand("run-initial-validator", "Run initial validator mode") {
+    def opts(l1Layer: L1Layer) = Opts.subcommand("run-initial-validator", "Run initial validator mode") {
       (
         StorePath.opts,
         KeyAlias.opts,
         Password.opts,
         AppEnvironment.opts,
-        http.opts,
+        http.opts(l1Layer),
         L0PeerOpts.opts,
         SeedListPath.opts,
         CollateralAmountOpts.opts,
@@ -101,13 +102,13 @@ object method {
 
   object RunValidator {
 
-    val opts = Opts.subcommand("run-validator", "Run validator mode") {
+    def opts(l1Layer: L1Layer) = Opts.subcommand("run-validator", "Run validator mode") {
       (
         StorePath.opts,
         KeyAlias.opts,
         Password.opts,
         AppEnvironment.opts,
-        http.opts,
+        http.opts(l1Layer),
         L0PeerOpts.opts,
         SeedListPath.opts,
         CollateralAmountOpts.opts,
@@ -118,6 +119,6 @@ object method {
     }
   }
 
-  val opts: Opts[Run] =
-    RunInitialValidator.opts.orElse(RunValidator.opts)
+  def opts(l1Layer: L1Layer): Opts[Run] =
+    RunInitialValidator.opts(l1Layer).orElse(RunValidator.opts(l1Layer))
 }

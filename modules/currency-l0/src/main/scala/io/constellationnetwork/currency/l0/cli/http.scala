@@ -15,9 +15,9 @@ object http {
   val opts: Opts[HttpConfig] =
     (
       externalIpOpts.withDefault(host"127.0.0.1"),
-      publicHttpPortOpts.withDefault(port"9000"),
-      p2pHttpPortOpts.withDefault(port"9001"),
-      cliHttpPortOpts.withDefault(port"9002")
+      publicHttpPortOpts.withDefault(port"9200"),
+      p2pHttpPortOpts.withDefault(port"9201"),
+      cliHttpPortOpts.withDefault(port"9202")
     ).mapN((externalIp, publicPort, p2pPort, cliPort) =>
       HttpConfig(
         externalIp,

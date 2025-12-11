@@ -16,6 +16,7 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.kryo._
 import io.constellationnetwork.node.shared.app.{NodeShared, TessellationIOApp, getMajorityPeerIds}
 import io.constellationnetwork.node.shared.ext.pureconfig._
+import io.constellationnetwork.node.shared.infrastructure.DagL1
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.resources.MkHttpServer
@@ -46,7 +47,7 @@ object Main
       version = TessellationVersion.unsafeFrom(BuildInfo.version)
     ) {
 
-  val opts: Opts[Run] = cli.method.opts
+  val opts: Opts[Run] = cli.method.opts(DagL1)
 
   protected val configFiles: List[String] = List("dag-l1.conf")
 
