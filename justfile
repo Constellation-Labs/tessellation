@@ -39,7 +39,7 @@ clean-configs:
 
 clean:
 	@bash sbt clean
-	@bash cd .github/templates/metagraphs/project_template && sbt clean
+	@bash -c "cd .github/templates/metagraphs/project_template && sbt clean"
 	@just clean-configs
 	@just clean-docker
 
