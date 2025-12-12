@@ -103,7 +103,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         Random.scalaUtilRandom[IO].asResource.flatMap { implicit random =>
           Metrics.forAsync[IO](Seq(("application", name))).flatMap { implicit _metrics =>
             for {
-              implicit0(jhs: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+              implicit0(jhs: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
               implicit0(h: Hasher[IO]) = Hasher.forJson[IO]
               balancesR <- Ref.of[IO, Map[Address, Balance]](Map.empty).asResource
               blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]().asResource
@@ -208,7 +208,6 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
               currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
               globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L)).asResource
-              jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[IO].asResource
               feeCalculator = FeeCalculator.make(SortedMap.empty)
               updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
               updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager
@@ -240,7 +239,6 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                     validators.stateChannelValidator,
                     globalSnapshotStateChannelManager,
                     currencySnapshotContextFns,
-                    jsonBrotliBinarySerializer,
                     feeCalculator
                   ),
                 updateNodeParametersAcceptanceManager,

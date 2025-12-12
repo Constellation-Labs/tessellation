@@ -55,7 +55,6 @@ object StateChannelSnapshotService {
     keyPair: KeyPair,
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
-    jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F],
     dataApplicationSnapshotAcceptanceManager: Option[DataApplicationSnapshotAcceptanceManager[F]],
     stateChannelBinarySender: StateChannelBinarySender[F],
     feeCalculator: FeeCalculator[F],
@@ -94,7 +93,7 @@ object StateChannelSnapshotService {
 
       def createGenesisBinary(snapshot: Signed[CurrencySnapshot])(implicit hasher: Hasher[F]): F[Signed[StateChannelSnapshotBinary]] =
         for {
-          bytes <- jsonBrotliBinarySerializer.serialize(snapshot)
+          bytes <- JsonSerializer[F].serialize(snapshot)
           fee <- calculateFee(Hash.empty, bytes, snapshot.proofs.length, None, None)
           binary <- StateChannelSnapshotBinary(Hash.empty, bytes, fee).sign(keyPair)
         } yield binary
@@ -108,7 +107,7 @@ object StateChannelSnapshotService {
         implicit hasher: Hasher[F]
       ): F[Signed[StateChannelSnapshotBinary]] =
         for {
-          bytes <- jsonBrotliBinarySerializer.serialize(snapshot)
+          bytes <- JsonSerializer[F].serialize(snapshot)
           fee <- calculateFee(lastSnapshotBinaryHash, bytes, snapshot.proofs.length, stakingAddress, maybeGlobalSnapshotOrdinal)
           binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, fee).sign(keyPair)
         } yield binary

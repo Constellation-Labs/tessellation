@@ -20,8 +20,8 @@
     <property name="TRANSACTIONS_JSON_LOG" value="logs/json_logs/transactions.json.log"/>
     <property name="TRANSACTIONS_JSON_ROLLING_LOG" value="logs/json_logs/archived/transactions.%i.json.log"/>
 
-
-    <appender name="APP" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <!-- Synchronous file appenders (wrapped by async appenders below) -->
+    <appender name="APP_SYNC" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${APP_LOG}</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>${APP_ROLLING_LOG}</fileNamePattern>
@@ -33,7 +33,7 @@
             <pattern>%date [%thread] [%property{self_id}] %highlight(%-5level) %cyan(%logger{15}) - %msg%n</pattern>
         </encoder>
     </appender>
-    <appender name="HTTP" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <appender name="HTTP_SYNC" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${HTTP_LOG}</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>${HTTP_ROLLING_LOG}</fileNamePattern>
@@ -45,7 +45,7 @@
             <pattern>%date [%thread] [%property{self_id}] %highlight(%-5level) %cyan(%logger{15}) - %msg %n</pattern>
         </encoder>
     </appender>
-    <appender name="GOSSIP" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <appender name="GOSSIP_SYNC" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${GOSSIP_LOG}</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>${GOSSIP_ROLLING_LOG}</fileNamePattern>
@@ -57,7 +57,7 @@
             <pattern>%date [%thread] [%property{self_id}] %highlight(%-5level) %cyan(%logger{15}) - %msg %n</pattern>
         </encoder>
     </appender>
-    <appender name="PEER_SELECT" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <appender name="PEER_SELECT_SYNC" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${PEER_SELECT_LOG}</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>${PEER_SELECT_ROLLING_LOG}</fileNamePattern>
@@ -69,7 +69,7 @@
             <pattern>%date [%thread] [%property{self_id}] %highlight(%-5level) %cyan(%logger{15}) - %msg %n</pattern>
         </encoder>
     </appender>
-    <appender name="TRANSACTIONS" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <appender name="TRANSACTIONS_SYNC" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${TRANSACTIONS_LOG}</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>${TRANSACTIONS_ROLLING_LOG}</fileNamePattern>
@@ -82,7 +82,7 @@
         </encoder>
     </appender>
 
-    <appender name="APP_JSON" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <appender name="APP_JSON_SYNC" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${APP_JSON_LOG}</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
             <fileNamePattern>${APP_JSON_ROLLING_LOG}</fileNamePattern>
@@ -96,7 +96,7 @@
             <customFields>{"application":"${application_name}", "peer_id_short": "${self_id}", "ip": "${external_ip}"}</customFields>
         </encoder>
     </appender>
-    <appender name="HTTP_JSON" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <appender name="HTTP_JSON_SYNC" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${HTTP_JSON_LOG}</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
             <fileNamePattern>${HTTP_JSON_ROLLING_LOG}</fileNamePattern>
@@ -110,7 +110,7 @@
             <customFields>{"application":"${application_name}", "peer_id_short": "${self_id}", "ip": "${external_ip}"}</customFields>
         </encoder>
     </appender>
-    <appender name="GOSSIP_JSON" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <appender name="GOSSIP_JSON_SYNC" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${GOSSIP_JSON_LOG}</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
             <fileNamePattern>${GOSSIP_JSON_ROLLING_LOG}</fileNamePattern>
@@ -124,7 +124,7 @@
             <customFields>{"application":"${application_name}", "peer_id_short": "${self_id}", "ip": "${external_ip}"}</customFields>
         </encoder>
     </appender>
-    <appender name="TRANSACTIONS_JSON" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <appender name="TRANSACTIONS_JSON_SYNC" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${TRANSACTIONS_JSON_LOG}</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
             <fileNamePattern>${TRANSACTIONS_JSON_ROLLING_LOG}</fileNamePattern>
@@ -137,6 +137,62 @@
         <encoder class="net.logstash.logback.encoder.LogstashEncoder">
             <customFields>{"application":"${application_name}", "peer_id_short": "${self_id}", "ip": "${external_ip}"}</customFields>
         </encoder>
+    </appender>
+
+    <!-- Async wrappers to prevent log calls from blocking compute threads -->
+    <appender name="APP" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>1024</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="APP_SYNC" />
+    </appender>
+    <appender name="HTTP" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>1024</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="HTTP_SYNC" />
+    </appender>
+    <appender name="GOSSIP" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>1024</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="GOSSIP_SYNC" />
+    </appender>
+    <appender name="PEER_SELECT" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>1024</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="PEER_SELECT_SYNC" />
+    </appender>
+    <appender name="TRANSACTIONS" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>1024</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="TRANSACTIONS_SYNC" />
+    </appender>
+    <appender name="APP_JSON" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>1024</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="APP_JSON_SYNC" />
+    </appender>
+    <appender name="HTTP_JSON" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>1024</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="HTTP_JSON_SYNC" />
+    </appender>
+    <appender name="GOSSIP_JSON" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>1024</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="GOSSIP_JSON_SYNC" />
+    </appender>
+    <appender name="TRANSACTIONS_JSON" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>1024</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="TRANSACTIONS_JSON_SYNC" />
     </appender>
 
     <root level="INFO">

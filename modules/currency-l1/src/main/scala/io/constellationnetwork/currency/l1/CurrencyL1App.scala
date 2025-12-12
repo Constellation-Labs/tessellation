@@ -21,7 +21,7 @@ import io.constellationnetwork.dag.l1.infrastructure.tokenlock.rumor.handler.tok
 import io.constellationnetwork.dag.l1.modules.{Daemons => DAGL1Daemons, Queues => DAGL1Queues, Validators => DAGL1Validators}
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.kryo.{KryoRegistrationId, MapRegistrationId}
-import io.constellationnetwork.json.JsonBrotliBinarySerializer
+import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.node.shared.app.{NodeShared, TessellationIOApp, getMajorityPeerIds}
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
@@ -148,7 +148,6 @@ abstract class CurrencyL1App(
           maybeMajorityPeerIds,
           Hasher.forKryo[IO]
         )
-      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[IO].asResource
       snapshotProcessor = CurrencySnapshotProcessor.make(
         method.identifier,
         storages.address,
@@ -159,7 +158,6 @@ abstract class CurrencyL1App(
         storages.transaction,
         sharedServices.globalSnapshotContextFns,
         sharedServices.currencySnapshotContextFns,
-        jsonBrotliBinarySerializer,
         cfg.transactionLimit,
         sharedConfig.allowSpends,
         sharedConfig.tokenLocks,

@@ -33,7 +33,7 @@ object GlobalStateProofPatternsSuite extends MutableIOSuite with Checkers {
   override def sharedResource: Resource[IO, Res] =
     for {
       implicit0(kryo: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
-      implicit0(json: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].toResource
+      implicit0(json: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].toResource
     } yield
       HasherSelector.forSync[IO](
         Hasher.forJson[IO],

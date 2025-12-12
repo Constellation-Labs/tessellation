@@ -46,19 +46,22 @@ object PeerAuthMiddleware {
     privateKey: PrivateKey,
     sessionStorage: SessionStorage[F],
     selfId: PeerId
-  )(http: HttpRoutes[F]): HttpRoutes[F] =
+  )(http: HttpRoutes[F]): HttpRoutes[F] = {
+    val signer = new Http4sResponseSigner[F](getGenerator(privateKey), new TessellationHttpCryptoConfig {})
+
     Kleisli { req: Request[F] =>
       for {
         res <- http(req)
         headerToken <- getOwnTokenHeader(sessionStorage).attemptT.toOption
         newHeaders = headerToken.fold(res.headers)(h => res.headers.put(h)).put(`X-Id`(selfId))
         resWithHeader = res.copy(headers = newHeaders)
-        signedResponse <- new Http4sResponseSigner[F](getGenerator(privateKey), new TessellationHttpCryptoConfig {})
+        signedResponse <- signer
           .sign(resWithHeader)
           .attemptT
           .toOption
       } yield signedResponse
     }
+  }
 
   def responseTokenVerifierMiddleware[F[_]: Async](
     client: Client[F],
@@ -117,30 +120,32 @@ object PeerAuthMiddleware {
     privateKey: PrivateKey,
     sessionStorage: SessionStorage[F],
     selfId: PeerId
-  ): Client[F] = Client { req: Request[F] =>
+  ): Client[F] = {
     val signer = new Http4sRequestSigner(getGenerator(privateKey), new TessellationHttpCryptoConfig {})
 
-    Resource.suspend {
-      Ref[F].of(Vector.empty[Chunk[Byte]]).map { vec =>
-        Resource.liftK[F] {
+    Client { req: Request[F] =>
+      Resource.suspend {
+        Ref[F].of(Vector.empty[Chunk[Byte]]).map { vec =>
+          Resource.liftK[F] {
 
-          val copiedBody = Stream
-            .eval(vec.get)
-            .flatMap(v => Stream.emits(v).covary[F])
-            .flatMap(c => Stream.chunk(c).covary[F])
+            val copiedBody = Stream
+              .eval(vec.get)
+              .flatMap(v => Stream.emits(v).covary[F])
+              .flatMap(c => Stream.chunk(c).covary[F])
 
-          for {
-            tokenHeader <- getOwnTokenHeader(sessionStorage)
-            newHeaders = tokenHeader.fold(req.headers)(h => req.headers.put(h)).put(`X-Id`(selfId))
-            newReq = req
-              .withBodyStream(req.body.observe(_.chunks.flatMap(s => Stream.exec(vec.update(_ :+ s)))))
-              .withHeaders(newHeaders)
-            signedRequest <- signer.sign(newReq).map(r => req.withBodyStream(copiedBody).withHeaders(r.headers))
-          } yield signedRequest
+            for {
+              tokenHeader <- getOwnTokenHeader(sessionStorage)
+              newHeaders = tokenHeader.fold(req.headers)(h => req.headers.put(h)).put(`X-Id`(selfId))
+              newReq = req
+                .withBodyStream(req.body.observe(_.chunks.flatMap(s => Stream.exec(vec.update(_ :+ s)))))
+                .withHeaders(newHeaders)
+              signedRequest <- signer.sign(newReq).map(r => req.withBodyStream(copiedBody).withHeaders(r.headers))
+            } yield signedRequest
 
+          }
         }
-      }
-    } >>= client.run
+      } >>= client.run
+    }
   }
 
   def requestCollateralVerifierMiddleware[F[_]: Async](collateral: Collateral[F])(http: HttpRoutes[F]): HttpRoutes[F] =

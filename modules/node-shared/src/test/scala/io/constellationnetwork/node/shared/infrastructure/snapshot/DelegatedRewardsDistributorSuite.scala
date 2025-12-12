@@ -90,7 +90,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
     )
 
     for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       updatedStakes <- DelegatedRewardsDistributor.getUpdatedCreateDelegatedStakes[IO](
@@ -149,7 +149,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
     )
 
     for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       updatedStakes <- DelegatedRewardsDistributor.getUpdatedCreateDelegatedStakes[IO](
@@ -208,7 +208,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
     )
 
     for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       stakeRef <- DelegatedStakeReference.of[IO](stake1)
@@ -275,7 +275,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
     )
 
     for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
       // Process first round - stake is modified, should preserve existing rewards but not add new ones
@@ -402,7 +402,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
         case DelegateRewardsInput(delegatedStakeAcceptanceResult, partitionedRecords, _) =>
           // Simple calculation: add 100L to each existing balance for unmodified stakes
           for {
-            implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
+            implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
             implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
 
             modifiedStakes = DelegatedRewardsDistributor.identifyModifiedStakes(

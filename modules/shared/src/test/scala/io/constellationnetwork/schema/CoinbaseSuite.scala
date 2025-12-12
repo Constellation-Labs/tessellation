@@ -17,7 +17,7 @@ object CoinbaseSuite extends ResourceSuite with Checkers {
 
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { implicit res =>
-      JsonSerializer.forSync[IO].asResource.map { implicit json =>
+      JsonSerializer.forAsync[IO].asResource.map { implicit json =>
         Hasher.forJson[IO]
       }
     }

@@ -14,7 +14,7 @@ object JsonSerializerSuite extends MutableIOSuite {
   type Res = JsonSerializer[IO]
 
   override def sharedResource: Resource[IO, Res] =
-    JsonSerializer.forSync[IO].asResource
+    JsonSerializer.forAsync[IO].asResource
 
   test("maintains consistent key ordering") { serializer =>
     val foo = Foo("lorem", 1)

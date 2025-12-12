@@ -42,7 +42,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
 
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar)
-    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
     hj = Hasher.forJson[IO]
     hk = Hasher.forKryo[IO]
   } yield (hj, hk)

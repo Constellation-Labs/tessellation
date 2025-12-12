@@ -5,8 +5,8 @@ import cats.syntax.all._
 
 import scala.concurrent.duration._
 
-import io.constellationnetwork.ext.http4s.HashVar
 import io.constellationnetwork.ext.http4s.headers.negotiation.resolveEncoder
+import io.constellationnetwork.ext.http4s.{BlockingEntityEncoder, HashVar}
 import io.constellationnetwork.node.shared.config.types.{RouteRateLimiterConfig, SnapshotTimeoutsConfig}
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
@@ -26,7 +26,6 @@ import io.circe.Encoder
 import io.circe.shapes._
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
-import org.http4s.circe.CirceEntityEncoder
 import org.http4s.dsl.Http4sDsl
 import org.http4s.server.middleware.Timeout
 import shapeless.HNil
@@ -48,7 +47,9 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
 
   object FullSnapshotQueryParam extends FlagQueryParamMatcher("full")
 
-  implicit def jsonEncoders[A <: AnyRef: Encoder]: List[EntityEncoder[F, A]] = List(CirceEntityEncoder.circeEntityEncoder[F, A])
+  // Use blocking encoder to prevent CPU starvation when serializing large snapshots
+  implicit def jsonEncoders[A <: AnyRef: Encoder]: List[EntityEncoder[F, A]] =
+    List(BlockingEntityEncoder.blockingJsonEncoder[F, A])
 
   private val serviceUnavailableNodeNotReady: F[Response[F]] =
     ServiceUnavailable(("message" ->> "Node is not ready yet") :: HNil)

@@ -13,7 +13,7 @@ import io.constellationnetwork.dag.l1.domain.snapshot.programs.SnapshotProcessor
 import io.constellationnetwork.dag.l1.domain.snapshot.programs.SnapshotProcessor._
 import io.constellationnetwork.dag.l1.domain.transaction.{ContextualTransactionValidator, TransactionLimitConfig, TransactionStorage}
 import io.constellationnetwork.dag.l1.infrastructure.address.storage.AddressStorage
-import io.constellationnetwork.json.JsonBrotliBinarySerializer
+import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.node.shared.config.types.{AllowSpendsConfig, LastGlobalSnapshotsSyncConfig, TokenLocksConfig}
 import io.constellationnetwork.node.shared.domain.globalAlignment.GlobalL0AlignmentStorage
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
@@ -43,7 +43,7 @@ sealed abstract class CurrencySnapshotProcessor[F[_]: Async: SecurityProvider]
 
 object CurrencySnapshotProcessor {
 
-  def make[F[_]: Async: Random: SecurityProvider](
+  def make[F[_]: Async: Random: JsonSerializer: SecurityProvider](
     identifier: Address,
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],
@@ -53,7 +53,6 @@ object CurrencySnapshotProcessor {
     transactionStorage: TransactionStorage[F],
     globalSnapshotContextFns: SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     currencySnapshotContextFns: SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext],
-    jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F],
     transactionLimitConfig: TransactionLimitConfig,
     allowSpendsConfig: AllowSpendsConfig,
     tokenLocksConfig: TokenLocksConfig,
@@ -335,7 +334,7 @@ object CurrencySnapshotProcessor {
           .get(identifier) match {
           case Some(snapshots) =>
             snapshots.toList.traverse { binary =>
-              jsonBrotliBinarySerializer.deserialize[Signed[CurrencyIncrementalSnapshot]](binary.content)
+              JsonSerializer[F].deserialize[Signed[CurrencyIncrementalSnapshot]](binary.content)
             }
               .map(_.flatMap(_.toOption))
               .map(NonEmptyList.fromList)

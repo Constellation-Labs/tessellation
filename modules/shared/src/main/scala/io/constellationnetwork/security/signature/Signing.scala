@@ -24,8 +24,10 @@ object Signing {
         .flatMap { secureRandom =>
           Async[F].delay(s.initSign(privateKey, secureRandom))
         }
-      _ <- Async[F].delay(s.update(bytes))
-      signed <- Async[F].delay(s.sign())
+      signed <- Async[F].blocking {
+        s.update(bytes)
+        s.sign()
+      }
     } yield signed
 
   def verifySignature[F[_]: Async: SecurityProvider](
@@ -38,7 +40,9 @@ object Signing {
         Signature.getInstance(signFunc, SecurityProvider[F].provider)
       }
       _ <- Async[F].delay(s.initVerify(publicKey))
-      _ <- Async[F].delay(s.update(originalInput))
-      result <- Async[F].delay(s.verify(signedOutput))
+      result <- Async[F].blocking {
+        s.update(originalInput)
+        s.verify(signedOutput)
+      }
     } yield result
 }

@@ -80,7 +80,7 @@ object TokenLockRoutesSuite extends HttpSuite {
 
   def sharedResource: Resource[IO, Res] = for {
     sp <- SecurityProvider.forAsync[IO]
-    implicit0(json2bin: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    implicit0(json2bin: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
     h: Hasher[IO] = Hasher.forJson[IO]
     sv <- Supervisor[IO]
     r <- Random.scalaUtilRandom.asResource

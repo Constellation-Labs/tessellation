@@ -271,7 +271,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     for {
       implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
       sp <- SecurityProvider.forAsync[IO]
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
       h = Hasher.forJson[IO]
       metrics <- Metrics.forAsync[IO](Seq.empty)
     } yield (ks, h, sp, metrics)

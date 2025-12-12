@@ -2,8 +2,7 @@ package io.constellationnetwork.json
 
 import cats.Parallel
 import cats.data.NonEmptySet
-import cats.effect.kernel.Sync
-import cats.effect.{IO, Resource}
+import cats.effect.{Async, IO, Resource}
 import cats.syntax.functor._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
@@ -31,7 +30,7 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
 
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { implicit res =>
-      JsonSerializer.forSync[IO].asResource.map { implicit json =>
+      JsonSerializer.forAsync[IO].asResource.map { implicit json =>
         Hasher.forJson[IO]
       }
     }
@@ -58,7 +57,7 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
     }
   }
 
-  private[json] def currencyIncrementalSnapshot[F[_]: Parallel: Sync: Hasher](
+  private[json] def currencyIncrementalSnapshot[F[_]: Parallel: Async: Hasher](
     hash: Hash,
     currencySnapshotInfo: CurrencySnapshotInfo
   ): F[Signed[CurrencyIncrementalSnapshot]] =

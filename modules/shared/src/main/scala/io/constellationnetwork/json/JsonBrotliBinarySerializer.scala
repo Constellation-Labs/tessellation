@@ -3,7 +3,7 @@ package io.constellationnetwork.json
 import java.io.{ByteArrayOutputStream, OutputStream}
 import java.nio.charset.StandardCharsets
 
-import cats.effect.kernel.Sync
+import cats.effect.Async
 import cats.syntax.all._
 
 import com.aayushatharva.brotli4j.Brotli4jLoader
@@ -22,10 +22,6 @@ object JsonBrotliBinarySerializer {
   private val compressionLevel = 2
   private val parser = JawnParser(allowDuplicateKeys = false)
   private val UTF8 = StandardCharsets.UTF_8
-  private val deterministicPrinter: Printer = Printer.noSpaces.copy(
-    dropNullValues = true,
-    sortKeys = true
-  )
 
   private class OutputStreamAppendable(os: OutputStream) extends Appendable {
     def append(csq: CharSequence): Appendable = { os.write(csq.toString.getBytes(UTF8)); this }
@@ -58,26 +54,23 @@ object JsonBrotliBinarySerializer {
 
   def apply[F[_]: JsonBrotliBinarySerializer]: JsonBrotliBinarySerializer[F] = implicitly
 
-  def forSync[F[_]: Sync]: F[JsonBrotliBinarySerializer[F]] =
-    forSync[F](deterministicPrinter)
-
-  def forSync[F[_]: Sync](printer: Printer): F[JsonBrotliBinarySerializer[F]] =
-    Sync[F].delay(Brotli4jLoader.ensureAvailability()).map { _ =>
+  def forAsync[F[_]: Async](printer: Printer): F[JsonBrotliBinarySerializer[F]] =
+    Async[F].delay(Brotli4jLoader.ensureAvailability()).map { _ =>
       new JsonBrotliBinarySerializer[F] {
         private val params = new Parameters().setQuality(compressionLevel)
 
         def serialize[A: Encoder](content: A): F[Array[Byte]] =
-          Sync[F].blocking {
+          Async[F].blocking {
             streamPrintAndCompress(content, printer, params)
-          }
+          } <* Async[F].cede
 
         def deserialize[A: Decoder](content: Array[Byte]): F[Either[Throwable, A]] =
-          Sync[F].blocking {
+          Async[F].blocking {
             val decompressed = brotliDecompress(content).getDecompressedData
             parser
               .parseByteBuffer(java.nio.ByteBuffer.wrap(decompressed))
-              .flatMap(_.as[A])
-          }
+              .flatMap[Throwable, A](_.as[A])
+          } <* Async[F].cede
       }
     }
 }

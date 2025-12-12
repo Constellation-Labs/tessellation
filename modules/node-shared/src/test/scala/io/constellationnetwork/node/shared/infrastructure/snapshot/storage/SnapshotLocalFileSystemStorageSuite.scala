@@ -35,7 +35,7 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
     for {
       s <- Supervisor[IO]
       implicit0(k: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar.union(nodeSharedKryoRegistrar))
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
       h = Hasher.forJson[IO]
       sp <- SecurityProvider.forAsync[IO]
     } yield (s, k, j, h, sp)

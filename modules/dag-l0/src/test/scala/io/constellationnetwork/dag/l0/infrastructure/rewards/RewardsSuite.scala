@@ -50,7 +50,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar.union(nodeSharedKryoRegistrar))
     implicit0(sp: SecurityProvider[IO]) <- SecurityProvider.forAsync[IO]
     mkKeyPair = () => KeyPairGenerator.makeKeyPair.map(_.getPublic.toId).unsafeRunSync()
-    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
     h = Hasher.forJson[IO]
   } yield (h, sp, mkKeyPair)
 

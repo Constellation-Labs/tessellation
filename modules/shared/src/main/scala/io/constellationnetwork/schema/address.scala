@@ -66,10 +66,19 @@ object address {
         {
           case a if a == StardustCollective.address => true
           case a if a.length != 40                  => false
-          case a =>
-            val par = a.substring(4).filter(Character.isDigit).map(_.toString.toInt).sum % 9
+          case a                                    =>
+            // optimized lookup without intermediate allocations
+            val suffix = a.substring(4)
+            var digitSum = 0
+            var i = 0
+            while (i < suffix.length) {
+              val c = suffix.charAt(i)
+              if (Character.isDigit(c)) digitSum += c - '0'
+              i += 1
+            }
+            val par = digitSum % 9
 
-            val isBase58 = Base58.isBase58(a.substring(4))
+            val isBase58 = Base58.isBase58(suffix)
             val hasDAGPrefixAndParity = a.startsWith(s"DAG$par")
 
             isBase58 && hasDAGPrefixAndParity

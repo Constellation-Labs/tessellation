@@ -1,7 +1,7 @@
 package io.constellationnetwork.schema
 
 import cats.Parallel
-import cats.effect.Sync
+import cats.effect.{Async, Sync}
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
@@ -42,7 +42,7 @@ case class GlobalSnapshotInfoV1(
   lastTxRefs: SortedMap[Address, TransactionReference],
   balances: SortedMap[Address, Balance]
 ) extends SnapshotInfo[GlobalSnapshotStateProofV2] {
-  def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProofV2] = {
+  def stateProof[F[_]: Parallel: Async: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProofV2] = {
     val info = GlobalSnapshotInfoV1.toGlobalSnapshotInfo(this)
     info.lastCurrencySnapshots.merkleTree[F].flatMap { mt =>
       GlobalSnapshotInfo.legacyStateProof(info, mt)
@@ -106,10 +106,10 @@ case class GlobalSnapshotInfoV2(
       None
     )
 
-  def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProofV2] =
+  def stateProof[F[_]: Parallel: Async: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProofV2] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
 
-  def stateProof[F[_]: Parallel: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProofV2] =
+  def stateProof[F[_]: Parallel: Async: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProofV2] =
     GlobalSnapshotInfo.legacyStateProof[F](toGlobalSnapshotInfo, lastCurrencySnapshots)
 }
 
@@ -152,12 +152,12 @@ case class GlobalSnapshotInfoV3(
   priceState: Option[SortedMap[TokenPair, PriceRecord]],
   metagraphSyncData: Option[SortedMap[Address, MetagraphSyncDataInfo]]
 ) extends SnapshotInfo[GlobalSnapshotStateProofV2] {
-  def legacyStateProof[F[_]: Parallel: Sync: Hasher](
+  def legacyStateProof[F[_]: Parallel: Async: Hasher](
     lastCurrencySnapshots: Option[MerkleTree]
   ): F[GlobalSnapshotStateProofV2] =
     GlobalSnapshotInfo.legacyStateProof[F](toGlobalSnapshotInfo, lastCurrencySnapshots)
 
-  def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProofV2] =
+  def stateProof[F[_]: Parallel: Async: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProofV2] =
     lastCurrencySnapshots.merkleTree[F].flatMap(legacyStateProof(_))
 
   def toGlobalSnapshotInfo: GlobalSnapshotInfo =
@@ -233,10 +233,10 @@ case class GlobalSnapshotInfo(
   metagraphSyncData: Option[SortedMap[Address, MetagraphSyncDataInfo]]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
 
-  def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
+  def stateProof[F[_]: Parallel: Async: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     this.allStateEntries.buildMpt.map(mptRoot => GlobalSnapshotStateProof(mptRoot.value))
 
-  def stateProofFor[F[_]: Parallel: Sync: Hasher](
+  def stateProofFor[F[_]: Parallel: Async: Hasher](
     hashScheme: HashLogic,
     ordinal: SnapshotOrdinal
   ): F[GlobalSnapshotStateProof] = hashScheme match {

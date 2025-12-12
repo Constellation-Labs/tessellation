@@ -2,7 +2,7 @@ package io.constellationnetwork.merkletree
 
 import cats.data.Validated
 import cats.data.Validated.Invalid
-import cats.effect.{Async, Sync}
+import cats.effect.Async
 import cats.kernel.Eq
 import cats.syntax.all._
 import cats.{Parallel, Show}
@@ -32,13 +32,13 @@ object StateProofValidator {
         validate(hashedSnapshot, stateProof)
     }
 
-  def validate[F[_]: Sync: Parallel: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
+  def validate[F[_]: Async: Parallel: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
     snapshot: Hashed[A],
     snapshotInfo: SnapshotInfo[P]
   ): F[Validated[StateBroken, Unit]] =
     snapshotInfo.stateProof(snapshot.ordinal).flatMap(validate(snapshot, _))
 
-  def validate[F[_]: Sync: Parallel, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
+  def validate[F[_]: Async: Parallel, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
     snapshot: Hashed[A],
     stateProof: P
   ): F[Validated[StateBroken, Unit]] = {

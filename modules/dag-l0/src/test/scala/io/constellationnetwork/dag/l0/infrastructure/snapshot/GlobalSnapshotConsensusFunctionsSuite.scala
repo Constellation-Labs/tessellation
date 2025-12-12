@@ -105,7 +105,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   def sharedResource: Resource[IO, Res] = for {
     supervisor <- Supervisor[IO]
     sp <- SecurityProvider.forAsync[IO]
-    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
     h = Hasher.forJson[IO]
     m <- Metrics.forAsync[IO](Seq(("application", name)))
 

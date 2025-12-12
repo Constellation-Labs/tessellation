@@ -39,7 +39,7 @@ object SnapshotEventsPublisherDaemonSuite extends MutableIOSuite with Checkers {
   override def sharedResource: Resource[IO, Res] =
     for {
       s <- Supervisor[IO](await = true)
-      implicit0(js: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].toResource
+      implicit0(js: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].toResource
       implicit0(sp: SecurityProvider[IO]) <- SecurityProvider.forAsync[IO]
       h = Hasher.forJson[IO]
       kp <- KeyPairGenerator.makeKeyPair[IO].toResource

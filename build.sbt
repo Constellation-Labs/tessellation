@@ -295,7 +295,6 @@ lazy val testShared = (project in file("modules/test-shared"))
       Libraries.http4sServer,
       Libraries.http4sClient,
       Libraries.http4sCirce,
-      Libraries.http4sJwtAuth,
       Libraries.weaverCats,
       Libraries.weaverDiscipline,
       Libraries.weaverScalaCheck
@@ -335,7 +334,6 @@ lazy val nodeShared = (project in file("modules/node-shared"))
       Libraries.http4sServer,
       Libraries.http4sClient,
       Libraries.http4sCirce,
-      Libraries.http4sJwtAuth,
       Libraries.httpSignerCore,
       Libraries.httpSignerHttp4s,
       Libraries.jawnParser,
@@ -520,7 +518,6 @@ lazy val dagL0 = (project in file("modules/dag-l0"))
       Libraries.http4sServer,
       Libraries.http4sClient,
       Libraries.http4sCirce,
-      Libraries.http4sJwtAuth,
       Libraries.httpSignerCore,
       Libraries.httpSignerHttp4s,
       Libraries.log4cats,

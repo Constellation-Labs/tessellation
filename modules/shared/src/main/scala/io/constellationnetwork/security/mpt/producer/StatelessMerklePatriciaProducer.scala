@@ -1,7 +1,7 @@
 package io.constellationnetwork.security.mpt.producer
 
 import cats.data.NonEmptyList
-import cats.effect.Sync
+import cats.effect.{Async, Sync}
 import cats.syntax.all._
 
 import scala.collection.immutable.ArraySeq
@@ -15,10 +15,12 @@ import io.constellationnetwork.security.mpt.verifier._
 import io.circe.syntax._
 import io.circe.{Encoder, Json}
 
-class StatelessMerklePatriciaProducer[F[_]: Hasher: Sync] extends MerklePatriciaProducer[F] {
+class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatriciaProducer[F] {
 
   def getProver(trie: MerklePatriciaTrie): F[MerklePatriciaSingleInclusionProver[F]] =
     MerklePatriciaSingleInclusionProver.make[F](trie).pure[F]
+
+  private val yieldEveryN = 100
 
   def create[A: Encoder](data: Map[Hex, A]): F[MerklePatriciaTrie] =
     NonEmptyList.fromList(data.toList) match {
@@ -29,12 +31,14 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Sync] extends MerklePatricia
           initialNode <- MerklePatriciaNode.Leaf[F](Nibble(hPath), hData.asJson)
           sortedTail = nel.tail.sortBy(_._1.value.length)
 
-          resultNode <- sortedTail.foldM[F, MerklePatriciaNode](initialNode) {
-            case (acc, (path, value)) =>
-              insertEncoded(acc, Nibble(path), value.asJson).flatMap {
+          resultNode <- sortedTail.zipWithIndex.foldM[F, MerklePatriciaNode](initialNode) {
+            case (acc, ((path, value), idx)) =>
+              val work = insertEncoded(acc, Nibble(path), value.asJson).flatMap {
                 case Left(err)    => err.raiseError[F, MerklePatriciaNode]
                 case Right(value) => value.pure[F]
               }
+              if (idx % yieldEveryN == 0) Async[F].cede *> work <* Async[F].cede
+              else work
           }
         } yield MerklePatriciaTrie(resultNode)
 
@@ -66,9 +70,11 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Sync] extends MerklePatricia
     initialNode: MerklePatriciaNode,
     entries: List[(Hex, A)]
   ): F[Either[MerklePatriciaError, MerklePatriciaNode]] =
-    entries.foldM(initialNode.asRight[MerklePatriciaError]) {
-      case (Right(acc), (path, value)) =>
-        insertEncoded(acc, Nibble(path), value.asJson)
+    entries.zipWithIndex.foldM(initialNode.asRight[MerklePatriciaError]) {
+      case (Right(acc), ((path, value), idx)) =>
+        val work = insertEncoded(acc, Nibble(path), value.asJson)
+        if (idx % yieldEveryN == 0) Async[F].cede *> work <* Async[F].cede
+        else work
       case (Left(err), _) =>
         err.asLeft[MerklePatriciaNode].pure[F]
     }
@@ -77,9 +83,11 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Sync] extends MerklePatricia
     initialNode: MerklePatriciaNode,
     paths: List[Hex]
   ): F[Either[MerklePatriciaError, MerklePatriciaNode]] =
-    paths.foldM(initialNode.asRight[MerklePatriciaError]) {
-      case (Right(acc), path) =>
-        removeEncoded(acc, Nibble(path))
+    paths.zipWithIndex.foldM(initialNode.asRight[MerklePatriciaError]) {
+      case (Right(acc), (path, idx)) =>
+        val work = removeEncoded(acc, Nibble(path))
+        if (idx % yieldEveryN == 0) Async[F].cede *> work <* Async[F].cede
+        else work
       case (Left(err), _) =>
         err.asLeft[MerklePatriciaNode].pure[F]
     }
@@ -393,6 +401,6 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Sync] extends MerklePatricia
 
 object StatelessMerklePatriciaProducer {
 
-  def apply[F[_]: Hasher: Sync]: StatelessMerklePatriciaProducer[F] =
+  def apply[F[_]: Hasher: Async]: StatelessMerklePatriciaProducer[F] =
     new StatelessMerklePatriciaProducer[F]
 }

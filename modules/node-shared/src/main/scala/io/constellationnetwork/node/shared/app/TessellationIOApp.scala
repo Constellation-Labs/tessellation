@@ -132,7 +132,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                 jarHash(cfg.environment).flatMap { jarHash =>
                   logger.info(s"Jar hash: ${jarHash.value}") >>
                     KryoSerializer.forAsync[IO](registrar).use { implicit _kryoPool =>
-                      JsonSerializer.forSync[IO].asResource.use { implicit _jsonSerializer =>
+                      JsonSerializer.forAsync[IO].asResource.use { implicit _jsonSerializer =>
                         implicit val _hasherSelector = HasherSelector.forSync[IO](Hasher.forJson, Hasher.forKryo, _hashSelect)
                         Metrics.forAsync[IO](Seq(("application", name))).use { implicit _metrics =>
                           SignallingRef.of[IO, Boolean](false).flatMap { _stopSignal =>

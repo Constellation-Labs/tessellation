@@ -66,6 +66,19 @@ object Hasher {
 
   def apply[F[_]: Hasher]: Hasher[F] = implicitly
 
+  /** Cache key wrapper using identity semantics (reference equality).
+    *
+    * Using the data object directly as a cache key requires computing hashCode() on every lookup, which for large objects like
+    * GlobalSnapshotInfo means iterating millions of map entries. Identity-based keys use System.identityHashCode() which is O(1).
+    */
+  private class IdentityKey(val value: AnyRef) {
+    override def hashCode(): Int = System.identityHashCode(value)
+    override def equals(obj: Any): Boolean = obj match {
+      case other: IdentityKey => value eq other.value
+      case _                  => false
+    }
+  }
+
   def forKryo[F[_]: Sync: KryoSerializer]: Hasher[F] = new Hasher[F] {
     def getLogic(ordinal: SnapshotOrdinal): HashLogic = KryoHash
 
@@ -110,12 +123,12 @@ object Hasher {
     else forJsonCached[F]
 
   def forJsonCached[F[_]: Sync: JsonSerializer]: Hasher[F] = {
-    val cache: Cache[Any, Hash] = Scaffeine()
+    val cache: Cache[IdentityKey, Hash] = Scaffeine()
       .recordStats()
       .expireAfterAccess(5.minutes)
       .maximumSize(10000)
       .softValues()
-      .build[Any, Hash]()
+      .build[IdentityKey, Hash]()
 
     new Hasher[F] {
       def getLogic(ordinal: SnapshotOrdinal): HashLogic = JsonHash
@@ -123,14 +136,16 @@ object Hasher {
       def compare[A: Encoder](data: A, expectedHash: Hash): F[Boolean] =
         hashJson(data).map(_ === expectedHash)
 
-      def hashJson[A: Encoder](data: A): F[Hash] =
-        Sync[F].delay(cache.getIfPresent(data)).flatMap {
+      def hashJson[A: Encoder](data: A): F[Hash] = {
+        val key = new IdentityKey(data.asInstanceOf[AnyRef])
+        Sync[F].delay(cache.getIfPresent(key)).flatMap {
           case Some(hash) => hash.pure[F]
           case None =>
             computeHash(data).flatTap { hash =>
-              Sync[F].delay(cache.put(data, hash))
+              Sync[F].delay(cache.put(key, hash))
             }
         }
+      }
 
       private def computeHash[A: Encoder](data: A): F[Hash] =
         (data match {
@@ -138,7 +153,7 @@ object Hasher {
             JsonSerializer[F].serialize(d.toEncode)(d.jsonEncoder)
           case _ =>
             JsonSerializer[F].serialize[A](data)
-        }).map(Hash.fromBytes)
+        }).flatMap(Hash.fromBytesForSync[F])
 
       def hash[A: Encoder](data: A): F[Hash] =
         hashJson(data)

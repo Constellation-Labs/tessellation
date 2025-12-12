@@ -37,7 +37,7 @@ object StateProofSuite extends MutableIOSuite with Checkers {
 
   def sharedResource: Resource[IO, Res] = for {
     // Migrated to JSON serialization for Java 21 compatibility
-    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
     h = Hasher.forJson[IO]
   } yield (j, h)
 

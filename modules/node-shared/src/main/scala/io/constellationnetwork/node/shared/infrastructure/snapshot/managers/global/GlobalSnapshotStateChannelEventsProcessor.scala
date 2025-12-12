@@ -9,7 +9,7 @@ import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.cats.syntax.validated.validatedSyntax
-import io.constellationnetwork.json.JsonBrotliBinarySerializer
+import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.{StateChannelValidationError, getFeeAddresses}
 import io.constellationnetwork.node.shared.domain.statechannel._
@@ -53,18 +53,17 @@ trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
 }
 
 object GlobalSnapshotStateChannelEventsProcessor {
-  def make[F[_]: Async: Parallel](
+  def make[F[_]: Async: JsonSerializer: Parallel](
     stateChannelValidator: StateChannelValidator[F],
     stateChannelManager: GlobalSnapshotStateChannelAcceptanceManager[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
-    jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F],
     feeCalculator: FeeCalculator[F]
   ) =
     new GlobalSnapshotStateChannelEventsProcessor[F] {
       private val logger = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotStateChannelEventsProcessor.getClass)
 
       def deserialize[A: Decoder](binary: Signed[StateChannelSnapshotBinary]): F[Option[A]] =
-        jsonBrotliBinarySerializer.deserialize[A](binary.value.content).map(_.toOption)
+        JsonSerializer[F].deserialize[A](binary.value.content).map(_.toOption)
 
       def buildSnapshotFeesInfo(
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,

@@ -2,7 +2,7 @@ package io.constellationnetwork.schema
 
 import cats.Parallel
 import cats.data.NonEmptyList
-import cats.effect.Sync
+import cats.effect.Async
 import cats.syntax.functor._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
@@ -150,7 +150,7 @@ case class GlobalIncrementalSnapshotV2(
 }
 
 object GlobalIncrementalSnapshotV2 {
-  def fromGlobalSnapshot[F[_]: Parallel: Sync: Hasher](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshotV2] = {
+  def fromGlobalSnapshot[F[_]: Parallel: Async: Hasher](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshotV2] = {
     val gsi = GlobalSnapshotInfoV1.toGlobalSnapshotInfo(snapshot.info)
     val gsiv3 = GlobalSnapshotInfoV3.fromGlobalSnapshotInfo(gsi)
     gsiv3.stateProof[F](snapshot.ordinal).map { stateProof =>
@@ -208,7 +208,7 @@ case class GlobalIncrementalSnapshot(
 ) extends IncrementalSnapshot[GlobalSnapshotStateProof]
 
 object GlobalIncrementalSnapshot {
-  def fromGlobalSnapshot[F[_]: Parallel: Sync: Hasher](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshot] =
+  def fromGlobalSnapshot[F[_]: Parallel: Async: Hasher](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshot] =
     GlobalSnapshotInfoV1.toGlobalSnapshotInfo(snapshot.info).stateProof[F](snapshot.ordinal).map { stateProof =>
       GlobalIncrementalSnapshot(
         snapshot.ordinal,

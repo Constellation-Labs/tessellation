@@ -31,7 +31,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
 
   override def sharedResource: Resource[IO, GlobalSnapshotAcceptanceManagerSuite.Res] = for {
     sp <- SecurityProvider.forAsync[IO]
-    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
     h = Hasher.forJson[IO]
   } yield (h, sp)
 

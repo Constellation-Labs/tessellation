@@ -1,6 +1,6 @@
 package io.constellationnetwork.security.mpt.producer
 
-import cats.effect.{Ref, Sync}
+import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
 import io.constellationnetwork.security.Hasher
@@ -13,7 +13,7 @@ import io.constellationnetwork.security.mpt.verifier._
 import io.circe.syntax._
 import io.circe.{Encoder, Json}
 
-class InMemoryMerklePatriciaProducer[F[_]: Sync: Hasher](
+class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher](
   stateRef: Ref[F, InMemoryMerklePatriciaProducer.ProducerState]
 ) extends StatefulMerklePatriciaProducer[F] {
 
@@ -25,7 +25,7 @@ class InMemoryMerklePatriciaProducer[F[_]: Sync: Hasher](
         case None =>
           build.flatMap {
             case Right(trie) => MerklePatriciaSingleInclusionProver.make[F](trie).pure[F]
-            case Left(err)   => Sync[F].raiseError(err)
+            case Left(err)   => Async[F].raiseError(err)
           }
       }
     }
@@ -142,7 +142,7 @@ object InMemoryMerklePatriciaProducer {
     maxDirtyKeys: Int = 100
   )
 
-  def make[F[_]: Sync: Hasher](
+  def make[F[_]: Async: Hasher](
     initial: Map[Hex, Json] = Map.empty
   ): F[InMemoryMerklePatriciaProducer[F]] =
     for {
