@@ -21,57 +21,56 @@ check_java_home() {
     
 }
 
-# Check and install Java 11
+# Check and install Java 21
 check_java() {
-  echo "Checking for Java 11..."
+  echo "Checking for Java 21..."
   if command -v java >/dev/null 2>&1; then
     java_version=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}')
     echo "Found Java version: $java_version"
-    if [[ "$java_version" == 11* ]] || [[ "$java_version" == 1.11* ]]; then
-      echo "✅ Java 11 is installed."
+    if [[ "$java_version" == 21* ]]; then
+      echo "✅ Java 21 is installed."
       return 0
     else
-      echo "⚠️ Java is installed but not version 11. Will attempt to install Java 11."
+      echo "⚠️ Java is installed but not version 21. Will attempt to install Java 21."
     fi
   else
-    echo "⚠️ Java not found. Will attempt to install Java 11."
+    echo "⚠️ Java not found. Will attempt to install Java 21."
   fi
 
-  
+
   case "$(uname)" in
     Linux)
       if command -v apt >/dev/null 2>&1; then
-        echo "Installing Java 11 using apt..."
-        sudo apt install -y openjdk-11-jdk
+        echo "Installing Java 21 using apt..."
+        sudo apt install -y openjdk-21-jdk
       elif command -v yum >/dev/null 2>&1; then
-        echo "Installing Java 11 using yum..."
-        sudo yum install -y java-11-openjdk-devel
+        echo "Installing Java 21 using yum..."
+        sudo yum install -y java-21-openjdk-devel
       else
-        echo "⚠️ Unsupported Linux distribution. Please install Java 11 manually."
+        echo "⚠️ Unsupported Linux distribution. Please install Java 21 manually."
         return 1
       fi
       ;;
     Darwin)
       if command -v brew >/dev/null 2>&1; then
-        echo "Installing Java 11 using Homebrew..."
-        brew tap adoptopenjdk/openjdk
-        brew install --cask adoptopenjdk11
+        echo "Installing Java 21 using Homebrew..."
+        brew install openjdk@21
       else
-        echo "⚠️ Homebrew not found. Please install Java 11 manually."
+        echo "⚠️ Homebrew not found. Please install Java 21 manually."
         return 1
       fi
       ;;
     MINGW*|MSYS*|CYGWIN*)
-      echo "On Windows, please install Java 11 manually from https://adoptopenjdk.net/"
+      echo "On Windows, please install Java 21 manually from https://adoptium.net/"
       return 1
       ;;
     *)
-      echo "⚠️ Unsupported OS: $(uname). Please install Java 11 manually."
+      echo "⚠️ Unsupported OS: $(uname). Please install Java 21 manually."
       return 1
       ;;
   esac
-  
-  echo "✅ Java 11 installation complete."
+
+  echo "✅ Java 21 installation complete."
   return 0
 }
 
