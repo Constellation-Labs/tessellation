@@ -45,6 +45,7 @@ import io.constellationnetwork.schema.artifact.{PricingUpdate, SpendAction, Toke
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.peer.PeerId
@@ -55,12 +56,14 @@ import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops.PublicKeyOps
+import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedSetSyntax}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
+import io.circe.Json
 
 object Mocks {
 
@@ -249,25 +252,33 @@ object Mocks {
     // Create the manager with mock dependencies
     implicit val hasherSelector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(h)
 
-    GlobalSnapshotAcceptanceManager
-      .make[IO](
-        FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
-        MetagraphsSyncConfig(PosInt(100)),
-        AppEnvironment.Dev,
-        blockAcceptanceManager = mockBlockAcceptanceManager,
-        allowSpendBlockAcceptanceManager = mockAllowSpendBlockAcceptanceManager,
-        tokenLockBlockAcceptanceManager = mockTokenLockBlockAcceptanceManager,
-        stateChannelEventsProcessor = mockStateChannelEventsProcessor,
-        updateNodeParametersAcceptanceManager = mockUpdateNodeParametersAcceptanceManager,
-        updateDelegatedStakeAcceptanceManager = updateDelegatedStakeAcceptanceManager,
-        updateNodeCollateralAcceptanceManager = mockUpdateNodeCollateralAcceptanceManager,
-        spendActionValidator = mockSpendActionValidator,
-        pricingUpdateValidator = mockPricingUpdateValidator,
-        priceStateUpdater = mockPriceStateUpdater,
-        collateral = Amount.empty,
-        withdrawalTimeLimit = EpochProgress(4L)
+    InMemoryMerklePatriciaProducer.make[IO]().flatMap { mptProducer =>
+      val mptStore = MptStore.make[IO, GlobalStateKey](
+        mptProducer,
+        GlobalStateKey.toHex[IO]
       )
-      .pure[IO]
+
+      GlobalSnapshotAcceptanceManager
+        .make[IO](
+          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
+          MetagraphsSyncConfig(PosInt(100)),
+          AppEnvironment.Dev,
+          blockAcceptanceManager = mockBlockAcceptanceManager,
+          allowSpendBlockAcceptanceManager = mockAllowSpendBlockAcceptanceManager,
+          tokenLockBlockAcceptanceManager = mockTokenLockBlockAcceptanceManager,
+          stateChannelEventsProcessor = mockStateChannelEventsProcessor,
+          updateNodeParametersAcceptanceManager = mockUpdateNodeParametersAcceptanceManager,
+          updateDelegatedStakeAcceptanceManager = updateDelegatedStakeAcceptanceManager,
+          updateNodeCollateralAcceptanceManager = mockUpdateNodeCollateralAcceptanceManager,
+          spendActionValidator = mockSpendActionValidator,
+          pricingUpdateValidator = mockPricingUpdateValidator,
+          priceStateUpdater = mockPriceStateUpdater,
+          collateral = Amount.empty,
+          withdrawalTimeLimit = EpochProgress(4L),
+          mptStore = mptStore
+        )
+        .pure[IO]
+    }
   }
 
   private[snapshot] def mkGlobalSnapshotInfo(

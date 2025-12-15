@@ -1,5 +1,6 @@
 package io.constellationnetwork.dag.l1.domain.snapshot.programs
 
+import cats.Parallel
 import cats.effect.Async
 import cats.syntax.all._
 
@@ -15,12 +16,15 @@ import io.constellationnetwork.node.shared.domain.swap.AllowSpendStorage
 import io.constellationnetwork.node.shared.domain.tokenlock.TokenLockStorage
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
 
+import io.circe.Json
+
 object DAGSnapshotProcessor {
 
-  def make[F[_]: Async: SecurityProvider](
+  def make[F[_]: Async: Parallel: SecurityProvider](
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
@@ -32,7 +36,8 @@ object DAGSnapshotProcessor {
     txHasher: Hasher[F],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     l0Service: GlobalL0Service[F],
-    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F]
+    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F],
+    mptStore: MptStore[F, GlobalStateKey]
   ): SnapshotProcessor[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] =
     new SnapshotProcessor[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
 
@@ -76,7 +81,8 @@ object DAGSnapshotProcessor {
               allowSpendStorage,
               tokenLockStorage,
               lastGlobalSnapshotStorage,
-              addressStorage
+              addressStorage,
+              mptStore
             )
           )
 

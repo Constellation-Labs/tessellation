@@ -24,6 +24,8 @@ import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.CombinedSnapshotCheckpointFileSystemStorage
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.Peer
 import io.constellationnetwork.schema.snapshot.SnapshotMetadata
@@ -33,6 +35,7 @@ import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
+import io.circe.Json
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry.RetryPolicies._
 import retry._
@@ -54,7 +57,8 @@ object Download {
       F,
       GlobalIncrementalSnapshot,
       GlobalSnapshotInfo
-    ]
+    ],
+    mptStore: MptStore[F, GlobalStateKey]
   ): Download[F, GlobalIncrementalSnapshot] = new Download[F, GlobalIncrementalSnapshot] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -115,6 +119,8 @@ object Download {
         .flatMap { result =>
           val ((snapshot, context), observationLimit) = result
           for {
+            kvPairs <- context.allStateEntries[F]
+            _ <- mptStore.sync(kvPairs)
             _ <- consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context)
           } yield ()
         }

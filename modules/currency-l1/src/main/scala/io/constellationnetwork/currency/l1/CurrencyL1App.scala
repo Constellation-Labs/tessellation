@@ -146,7 +146,8 @@ abstract class CurrencyL1App(
           dataApplicationService,
           transactionFeeEstimator,
           maybeMajorityPeerIds,
-          Hasher.forKryo[IO]
+          Hasher.forKryo[IO],
+          sharedStorages
         )
       snapshotProcessor = CurrencySnapshotProcessor.make(
         method.identifier,
@@ -166,7 +167,8 @@ abstract class CurrencyL1App(
         storages.tokenLock,
         services.globalL0.pullGlobalSnapshot,
         services.globalL0,
-        storages.globalL0Alignment
+        storages.globalL0Alignment,
+        sharedStorages.mptStore
       )
       programs = Programs
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](

@@ -3,7 +3,7 @@ package io.constellationnetwork.dag.l1.domain.snapshot.programs
 import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.syntax.all._
-import cats.{Applicative, MonadThrow}
+import cats.{Applicative, MonadThrow, Parallel}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
@@ -21,6 +21,8 @@ import io.constellationnetwork.node.shared.domain.tokenlock.TokenLockStorage
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.height.{Height, SubHeight}
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.swap.AllowSpendReference
 import io.constellationnetwork.schema.tokenLock.{TokenLockBlock, TokenLockReference}
@@ -32,11 +34,12 @@ import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
 import derevo.cats.show
 import derevo.derive
 import eu.timepit.refined.types.numeric.NonNegLong
+import io.circe.Json
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class SnapshotProcessor[
-  F[_]: Async: SecurityProvider,
+  F[_]: Async: Parallel: SecurityProvider,
   P <: StateProof,
   S <: Snapshot,
   SI <: SnapshotInfo[P]
@@ -79,7 +82,8 @@ abstract class SnapshotProcessor[
     allowSpendStorage: AllowSpendStorage[F],
     tokenLockStorage: TokenLockStorage[F],
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI],
-    addressStorage: AddressStorage[F]
+    addressStorage: AddressStorage[F],
+    mptStore: MptStore[F, GlobalStateKey]
   ): F[SnapshotProcessingResult] =
     alignment match {
       case AlignedAtNewOrdinal(
@@ -110,9 +114,16 @@ abstract class SnapshotProcessor[
         val setSnapshot: F[Unit] =
           lastSnapshotStorage.set(snapshot, state)
 
+        val updateMptStorage: F[Unit] = state match {
+          case info: GlobalSnapshotInfo =>
+            info.allStateEntries.flatMap(mptStore.sync[Json])
+          case _ => Async[F].unit
+        }
+
         adjustToMajority >>
           markTxRefsAsMajority >>
           setSnapshot >>
+          updateMptStorage >>
           setLastNSnapshots(snapshot, state).as[SnapshotProcessingResult] {
             Aligned(
               SnapshotReference.fromHashedSnapshot(snapshot),
@@ -150,9 +161,16 @@ abstract class SnapshotProcessor[
         val setSnapshot: F[Unit] =
           lastSnapshotStorage.set(snapshot, state)
 
+        val updateMptStorage: F[Unit] = state match {
+          case info: GlobalSnapshotInfo =>
+            info.allStateEntries.flatMap(mptStore.sync[Json])
+          case _ => Async[F].unit
+        }
+
         adjustToMajority >>
           markTxRefsAsMajority >>
           setSnapshot >>
+          updateMptStorage >>
           setLastNSnapshots(snapshot, state).as[SnapshotProcessingResult] {
             Aligned(
               SnapshotReference.fromHashedSnapshot(snapshot),
@@ -183,10 +201,17 @@ abstract class SnapshotProcessor[
             .info(s"Setting initial snapshot: ${snapshot.ordinal.show}") >>
             lastSnapshotStorage.setInitial(snapshot, state)
 
+        val updateMptStorage: F[Unit] = state match {
+          case info: GlobalSnapshotInfo =>
+            info.allStateEntries.flatMap(mptStore.sync[Json])
+          case _ => Async[F].unit
+        }
+
         adjustToMajority >>
           setBalances >>
           setTransactionRefs >>
           setInitialSnapshot >>
+          updateMptStorage >>
           setInitialLastNSnapshots(snapshot, state).as[SnapshotProcessingResult] {
             DownloadPerformed(
               SnapshotReference.fromHashedSnapshot(snapshot),
@@ -229,10 +254,17 @@ abstract class SnapshotProcessor[
         val setSnapshot: F[Unit] =
           lastSnapshotStorage.set(snapshot, state)
 
+        val updateMptStorage: F[Unit] = state match {
+          case info: GlobalSnapshotInfo =>
+            info.allStateEntries.flatMap(mptStore.sync[Json])
+          case _ => Async[F].unit
+        }
+
         adjustToMajority >>
           setBalances >>
           setTransactionRefs >>
           setSnapshot >>
+          updateMptStorage >>
           setLastNSnapshots(snapshot, state).as[SnapshotProcessingResult] {
             RedownloadPerformed(
               SnapshotReference.fromHashedSnapshot(snapshot),

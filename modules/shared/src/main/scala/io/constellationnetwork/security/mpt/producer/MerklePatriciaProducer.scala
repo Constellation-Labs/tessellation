@@ -1,8 +1,10 @@
 package io.constellationnetwork.security.mpt.producer
 
+import cats.Parallel
 import cats.effect.Async
 import cats.syntax.functor._
 
+import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt.MerklePatriciaTrie
@@ -34,6 +36,7 @@ trait StatefulMerklePatriciaProducer[F[_]] {
   def remove(keys: List[Hex]): F[Either[MerklePatriciaError, Unit]]
   def clear: F[Unit]
   def getProver: F[MerklePatriciaSingleInclusionProver[F]]
+  def buildHexMap(data: Map[GlobalStateKey, Json])(implicit parallel: Parallel[F]): F[Map[Hex, Json]]
 }
 
 object MerklePatriciaProducer {
