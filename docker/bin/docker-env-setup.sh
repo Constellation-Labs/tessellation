@@ -126,6 +126,12 @@ for i in 0 1 2; do
     echo "CL_DOCKER_ML0_GENESIS=true" >> .env
     echo "CL_DOCKER_CL1_GENESIS=true" >> .env
     echo "CL_DOCKER_DL1_GENESIS=true" >> .env
+    if [ "$ROLLBACK_MODE" == "true" ]; then
+      echo "CL_DOCKER_ROLLBACK=true" >> .env
+      if [ -n "$ROLLBACK_HASH" ]; then
+        echo "CL_DOCKER_ROLLBACK_HASH=$ROLLBACK_HASH" >> .env
+      fi
+    fi
   fi
 
   echo "CONTAINER_NAME_SUFFIX=-$i" >> .env
