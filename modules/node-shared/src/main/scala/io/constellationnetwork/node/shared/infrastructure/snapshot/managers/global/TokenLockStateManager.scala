@@ -19,6 +19,8 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.types.numeric.NonNegLong
+import org.typelevel.log4cats.SelfAwareStructuredLogger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait TokenLockStateManager[F[_]] {
   def acceptTokenLocks(

@@ -533,7 +533,7 @@ object ContextualTokenLockValidatorSuite extends MutableIOSuite {
       )
 
       res = validator.validate(newHashedTokenLock, context)
-    } yield expect.same(NothingToReplace(existingHashedTokenLock.hash).invalidNec, res)
+    } yield expect.same(NoSourceTokenLocks.invalidNec, res)
   }
 
   test("validate replaceTokenLockRef - replacement reference not found in empty transactions") { res =>

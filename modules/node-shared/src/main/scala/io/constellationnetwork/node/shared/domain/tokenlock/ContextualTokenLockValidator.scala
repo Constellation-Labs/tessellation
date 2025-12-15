@@ -102,7 +102,7 @@ object ContextualTokenLockValidator {
 
       private def validateReplaceTokenLockRef(
         tokenLock: Hashed[TokenLock],
-        txs: Option[SortedMap[TokenLockOrdinal, StoredTokenLock]]
+        sourceTokenLocks: Option[SortedMap[TokenLockOrdinal, StoredTokenLock]]
       ): Either[ContextualTokenLockValidationError, Hashed[TokenLock]] = {
         def findMajorityReference(txs: SortedMap[TokenLockOrdinal, StoredTokenLock]): Boolean =
           txs.exists {
@@ -116,10 +116,10 @@ object ContextualTokenLockValidator {
               tx.transaction
           }
 
-        (tokenLock.replaceTokenLockRef, tokenLock.currencyId.nonEmpty, txs) match {
+        (tokenLock.replaceTokenLockRef, tokenLock.currencyId.nonEmpty, sourceTokenLocks) match {
           case (None, _, _)                                              => tokenLock.asRight
           case (Some(_), true, _)                                        => ReplacementIsNotSupported(tokenLock.currencyId).asLeft
-          case (Some(ref), false, None)                                  => NothingToReplace(ref).asLeft
+          case (Some(ref), false, None)                                  => NoSourceTokenLocks.asLeft
           case (Some(_), false, Some(txs)) if findMajorityReference(txs) => tokenLock.asRight
           case (Some(ref), false, Some(txs)) =>
             findNonMajorityTokenLock(txs) match {
@@ -251,6 +251,7 @@ object ContextualTokenLockValidator {
   case class TooShortUnlockEpochProgress(epochProgress: Option[EpochProgress]) extends ContextualTokenLockValidationError
   case class InvalidCurrencyId(currencyId: Option[CurrencyId]) extends ContextualTokenLockValidationError
   case class NothingToReplace(replaceTokenLockRef: Hash) extends ContextualTokenLockValidationError
+  case object NoSourceTokenLocks extends ContextualTokenLockValidationError
   case class ReplacementLowerThanCurrentTokenLock(replacementAmount: TokenLockAmount, existingAmount: TokenLockAmount)
       extends ContextualTokenLockValidationError
   case class ReplacementIsNotSupported(currencyId: Option[CurrencyId]) extends ContextualTokenLockValidationError
