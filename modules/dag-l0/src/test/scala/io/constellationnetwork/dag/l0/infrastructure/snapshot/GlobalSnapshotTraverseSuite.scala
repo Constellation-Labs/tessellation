@@ -261,6 +261,10 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
     def loadInfo: SnapshotOrdinal => IO[Option[GlobalSnapshotInfo]] = _ => None.pure[F]
 
+    def loadIncV2: Hash => IO[Option[Signed[GlobalIncrementalSnapshotV2]]] = _ => None.pure[F]
+
+    def loadInfoV3: SnapshotOrdinal => IO[Option[GlobalSnapshotInfoV3]] = _ => None.pure[F]
+
     val txHasher = Hasher.forKryo[IO]
 
     val addressesConfig = AddressesConfig(Set())
@@ -451,8 +455,10 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       GlobalSnapshotTraverse
         .make[IO](
           loadGlobalIncrementalSnapshot,
+          loadIncV2,
           loadGlobalSnapshot,
           loadInfo,
+          loadInfoV3,
           snapshotContextFunctions,
           rollbackHash,
           _ => None.pure[IO],
