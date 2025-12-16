@@ -23,20 +23,7 @@ jobs:
         shell: bash
         run: |
           cd .github/action_scripts
-          git clone https://github.com/effects-ai/dag4.js.git
-          cd dag4.js
-          git checkout update_token_lock_schema
-          npm i
-          npm run build
-          cd ..
-          
-          npm i dag4.js/packages/dag4
-          npm i dag4.js/packages/dag4-core
-          npm i dag4.js/packages/dag4-keyring
-          npm i dag4.js/packages/dag4-keystore
-          npm i dag4.js/packages/dag4-ledger
-          npm i dag4.js/packages/dag4-network
-          npm i dag4.js/packages/dag4-wallet
+          npm i @stardust-collective/dag4
           npm i js-sha256
           npm i axios
           npm i brotli

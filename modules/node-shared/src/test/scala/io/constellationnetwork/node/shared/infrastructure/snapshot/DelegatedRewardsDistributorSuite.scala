@@ -65,10 +65,10 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
 
     val existingStakes = SortedMap(
       address1 -> SortedSet(
-        DelegatedStakeRecord(stake1A, SnapshotOrdinal(1L), Balance(50L), None, None)
+        DelegatedStakeRecord(stake1A, SnapshotOrdinal(1L), Balance(50L))
       ),
       address2 -> SortedSet(
-        DelegatedStakeRecord(stake2, SnapshotOrdinal(1L), Balance(75L), None, None)
+        DelegatedStakeRecord(stake2, SnapshotOrdinal(1L), Balance(75L))
       )
     )
 
@@ -128,10 +128,10 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
 
     val existingStakes = SortedMap(
       address1 -> SortedSet(
-        DelegatedStakeRecord(stake1, SnapshotOrdinal(1L), Balance(100L), None, None)
+        DelegatedStakeRecord(stake1, SnapshotOrdinal(1L), Balance(100L))
       ),
       address2 -> SortedSet(
-        DelegatedStakeRecord(stake2, SnapshotOrdinal(1L), Balance(200L), None, None)
+        DelegatedStakeRecord(stake2, SnapshotOrdinal(1L), Balance(200L))
       )
     )
 
@@ -180,10 +180,10 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
 
     val existingStakes = SortedMap(
       address1 -> SortedSet(
-        DelegatedStakeRecord(stake1, SnapshotOrdinal(1L), Balance(100L), None, None)
+        DelegatedStakeRecord(stake1, SnapshotOrdinal(1L), Balance(100L))
       ),
       address2 -> SortedSet(
-        DelegatedStakeRecord(stake2, SnapshotOrdinal(1L), Balance(200L), None, None)
+        DelegatedStakeRecord(stake2, SnapshotOrdinal(1L), Balance(200L))
       )
     )
 
@@ -255,7 +255,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
 
     val initialStakes = SortedMap(
       address1 -> SortedSet(
-        DelegatedStakeRecord(stake1A, SnapshotOrdinal(1L), Balance(50L), None, None)
+        DelegatedStakeRecord(stake1A, SnapshotOrdinal(1L), Balance(50L))
       )
     )
 
@@ -348,7 +348,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
       // Set up existing records and accepted creates
       existingRecords = SortedMap(
         walletAddress -> SortedSet(
-          DelegatedStakeRecord(originalStake, SnapshotOrdinal(10L), Balance(103778187663683L), None, None)
+          DelegatedStakeRecord(originalStake, SnapshotOrdinal(10L), Balance(103778187663683L))
         )
       )
 
@@ -458,7 +458,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
     val balanceValue = NonNegLong.unsafeFrom(initialBalance)
     val unexpiredCreateDelegatedStakes = SortedMap(
       walletAddress -> SortedSet(
-        DelegatedStakeRecord(originalStake, SnapshotOrdinal(10L), Balance(balanceValue), None, None)
+        DelegatedStakeRecord(originalStake, SnapshotOrdinal(10L), Balance(balanceValue))
       )
     )
 

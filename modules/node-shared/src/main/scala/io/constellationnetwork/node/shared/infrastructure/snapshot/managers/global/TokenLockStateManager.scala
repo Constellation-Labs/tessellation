@@ -11,7 +11,7 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.TokenUnlock
 import io.constellationnetwork.schema.balance.{Amount, Balance, BalanceArithmeticError}
-import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeError, MissingTokenLock, PendingDelegatedStakeWithdrawal}
+import io.constellationnetwork.schema.delegatedStake.PendingDelegatedStakeWithdrawal
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.security.Hasher
@@ -27,11 +27,6 @@ trait TokenLockStateManager[F[_]] {
     lastActiveGlobalTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
     generatedTokenUnlocksByAddress: Map[Address, List[TokenUnlock]]
   )(implicit hasher: Hasher[F]): F[SortedMap[Address, SortedSet[Signed[TokenLock]]]]
-
-  def acceptReplacementTokenLocks(
-    acceptedTokenLocks: List[Signed[TokenLock]],
-    lastSnapshotContext: GlobalSnapshotInfo
-  )(implicit hasher: Hasher[F]): F[List[Signed[TokenLock]]]
 
   def acceptTokenLockRefs(
     lastTokenLockRefs: SortedMap[Address, TokenLockReference],
@@ -58,7 +53,6 @@ trait TokenLockStateManager[F[_]] {
 
   def generateTokenUnlocks(
     expiredWithdrawals: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
-    acceptedTokenLocks: List[Signed[TokenLock]],
     globalActiveTokenLocksByRef: Map[Hash, Signed[TokenLock]]
   ): Either[String, Map[Address, List[TokenUnlock]]]
 }
@@ -96,30 +90,6 @@ object TokenLockStateManager {
         }
         .map(updateTokenLocks => updateTokenLocks.filterNot(_._2.isEmpty))
     }
-    def acceptReplacementTokenLocks(
-      acceptedTokenLocks: List[Signed[TokenLock]],
-      lastSnapshotContext: GlobalSnapshotInfo
-    )(implicit hasher: Hasher[F]): F[List[Signed[TokenLock]]] =
-      acceptedTokenLocks.filterA { tx =>
-        tx.replaceTokenLockRef match {
-          case Some(replaceTokenLockRef) =>
-            if (tx.currencyId.nonEmpty) {
-              // we can only replace DAG token locks
-              false.pure[F]
-            } else {
-              lastSnapshotContext.activeTokenLocks
-                .getOrElse(SortedMap.empty[Address, SortedSet[Signed[TokenLock]]])
-                .getOrElse(tx.source, SortedSet.empty[Signed[TokenLock]])
-                .toList
-                .filter(_.currencyId.isEmpty) // we can only replace DAG token locks
-                .traverse(existing => TokenLockReference.of(existing).map(ref => (ref, existing)))
-                .map(_.exists {
-                  case (ref, existing) => ref.hash === replaceTokenLockRef && existing.source == tx.source && existing.amount < tx.amount
-                })
-            }
-          case None => true.pure[F]
-        }
-      }
 
     def acceptTokenLockRefs(
       lastTokenLockRefs: SortedMap[Address, TokenLockReference],
@@ -166,134 +136,75 @@ object TokenLockStateManager {
     ): Either[BalanceArithmeticError, SortedMap[Address, Balance]] = {
       val expiredGlobalTokenLocks = filterExpiredTokenLocks(lastActiveGlobalTokenLocks, epochProgress)
 
-      // First, process all addresses that have token locks
-      val balancesAfterTokenLocks =
-        (acceptedGlobalTokenLocks |+| expiredGlobalTokenLocks).foldLeft[Either[BalanceArithmeticError, SortedMap[Address, Balance]]](
-          Right(currentBalances)
-        ) {
-          case (accEither, (address, tokenLocks)) =>
-            for {
-              acc <- accEither
-              initialBalance = acc.getOrElse(address, Balance.empty)
+      (acceptedGlobalTokenLocks |+| expiredGlobalTokenLocks).foldLeft[Either[BalanceArithmeticError, SortedMap[Address, Balance]]](
+        Right(currentBalances)
+      ) {
+        case (accEither, (address, tokenLocks)) =>
+          for {
+            acc <- accEither
+            initialBalance = acc.getOrElse(address, Balance.empty)
 
-              unexpiredBalance <- {
-                val unexpired = tokenLocks.filter(_.unlockEpoch.forall(_ >= epochProgress))
+            unexpiredBalance <- {
+              val unexpired = tokenLocks.filter(_.unlockEpoch.forall(_ >= epochProgress))
 
-                unexpired.foldLeft[Either[BalanceArithmeticError, Balance]](Right(initialBalance)) { (currentBalanceEither, tokenLock) =>
+              unexpired.foldLeft[Either[BalanceArithmeticError, Balance]](Right(initialBalance)) { (currentBalanceEither, tokenLock) =>
+                for {
+                  currentBalance <- currentBalanceEither
+                  balanceAfterAmount <- currentBalance.minus(TokenLockAmount.toAmount(tokenLock.amount))
+                  balanceAfterFee <- balanceAfterAmount.minus(TokenLockFee.toAmount(tokenLock.fee))
+                } yield balanceAfterFee
+              }
+            }
+
+            expiredBalance <- {
+              val expired = tokenLocks.filter(_.unlockEpoch.exists(_ < epochProgress))
+
+              expired.foldLeft[Either[BalanceArithmeticError, Balance]](Right(unexpiredBalance)) { (currentBalanceEither, allowSpend) =>
+                for {
+                  currentBalance <- currentBalanceEither
+                  balanceAfterExpiredAmount <- currentBalance.plus(TokenLockAmount.toAmount(allowSpend.amount))
+                } yield balanceAfterExpiredAmount
+              }
+            }
+            addressTokenUnlocks = generatedTokenUnlocksByAddress.getOrElse(address, List.empty)
+            finalBalance <-
+              addressTokenUnlocks.foldLeft[Either[BalanceArithmeticError, Balance]](Right(expiredBalance)) {
+                case (currentBalanceEither, tokenUnlock) =>
                   for {
                     currentBalance <- currentBalanceEither
-                    balanceAfterAmount <- currentBalance.minus(TokenLockAmount.toAmount(tokenLock.amount))
-                    balanceAfterFee <- balanceAfterAmount.minus(TokenLockFee.toAmount(tokenLock.fee))
-                  } yield balanceAfterFee
-                }
+                    balanceAfterUnlock <- currentBalance.plus(TokenLockAmount.toAmount(tokenUnlock.amount))
+                  } yield balanceAfterUnlock
               }
 
-              expiredBalance <- {
-                val expired = tokenLocks.filter(_.unlockEpoch.exists(_ < epochProgress))
-
-                expired.foldLeft[Either[BalanceArithmeticError, Balance]](Right(unexpiredBalance)) { (currentBalanceEither, tokenLock) =>
-                  for {
-                    currentBalance <- currentBalanceEither
-                    balanceAfterExpiredAmount <- currentBalance.plus(TokenLockAmount.toAmount(tokenLock.amount))
-                  } yield balanceAfterExpiredAmount
-                }
-              }
-              addressTokenUnlocks = generatedTokenUnlocksByAddress.getOrElse(address, List.empty)
-              finalBalance <-
-                addressTokenUnlocks.foldLeft[Either[BalanceArithmeticError, Balance]](Right(expiredBalance)) {
-                  case (currentBalanceEither, tokenUnlock) =>
-                    for {
-                      currentBalance <- currentBalanceEither
-                      balanceAfterUnlock <- currentBalance.plus(TokenLockAmount.toAmount(tokenUnlock.amount))
-                    } yield balanceAfterUnlock
-                }
-
-              updatedAcc = acc.updated(address, finalBalance)
-            } yield updatedAcc
-        }
-
-      // Then, process token unlocks for addresses that don't have token locks
-      balancesAfterTokenLocks.flatMap { balances =>
-        val addressesWithTokenLocks = (acceptedGlobalTokenLocks.keySet ++ expiredGlobalTokenLocks.keySet).toSet
-        val addressesWithTokenUnlocksOnly = generatedTokenUnlocksByAddress.keySet -- addressesWithTokenLocks
-
-        addressesWithTokenUnlocksOnly.foldLeft[Either[BalanceArithmeticError, SortedMap[Address, Balance]]](
-          Right(balances)
-        ) {
-          case (accEither, address) =>
-            for {
-              acc <- accEither
-              initialBalance = acc.getOrElse(address, Balance.empty)
-              addressTokenUnlocks = generatedTokenUnlocksByAddress.getOrElse(address, List.empty)
-              finalBalance <-
-                addressTokenUnlocks.foldLeft[Either[BalanceArithmeticError, Balance]](Right(initialBalance)) {
-                  case (currentBalanceEither, tokenUnlock) =>
-                    for {
-                      currentBalance <- currentBalanceEither
-                      balanceAfterUnlock <- currentBalance.plus(TokenLockAmount.toAmount(tokenUnlock.amount))
-                    } yield balanceAfterUnlock
-                }
-              updatedAcc = acc.updated(address, finalBalance)
-            } yield updatedAcc
-        }
+            updatedAcc = acc.updated(address, finalBalance)
+          } yield updatedAcc
       }
     }
 
     def generateTokenUnlocks(
       expiredWithdrawals: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
-      acceptedTokenLocks: List[Signed[TokenLock]],
       globalActiveTokenLocksByRef: Map[Hash, Signed[TokenLock]]
     ): Either[String, Map[Address, List[TokenUnlock]]] = {
-
-      val increasedTokenLockUnlocks = acceptedTokenLocks
-        .mapFilter(tl => tl.replaceTokenLockRef.tupleLeft(tl))
-        .traverse {
-          case (tokenLock, replaceRef) =>
-            globalActiveTokenLocksByRef
-              .get(replaceRef)
-              .toRight(s"Token lock not found for replacement ref: $replaceRef")
-              .map { activeTokenLock =>
-                (
-                  tokenLock.source,
+      val result = expiredWithdrawals.toList.traverse {
+        case (address, withdrawals) =>
+          withdrawals.toList.traverse { withdrawal =>
+            globalActiveTokenLocksByRef.get(withdrawal.event.tokenLockRef) match {
+              case Some(tokenLock) =>
+                Right(
                   TokenUnlock(
-                    replaceRef,
-                    activeTokenLock.amount,
-                    activeTokenLock.currencyId,
-                    activeTokenLock.source
+                    withdrawal.event.tokenLockRef,
+                    tokenLock.amount,
+                    tokenLock.currencyId,
+                    address
                   )
                 )
-              }
-        }
-        .map(_.groupBy { case (address, _) => address }.view.mapValues(_.map { case (_, tokenUnlock) => tokenUnlock }).toMap)
-
-      val expiredWithdrawalUnlocks = expiredWithdrawals.toList.traverse {
-        case (address, withdrawals) =>
-          withdrawals.toList.traverse { pw: PendingDelegatedStakeWithdrawal =>
-            for {
-              activeTokenLock <- globalActiveTokenLocksByRef
-                .get(pw.tokenLockRef)
-                .toRight(s"Token lock not found for ref: ${pw.tokenLockRef}")
-            } yield
-              TokenUnlock(
-                pw.tokenLockRef,
-                activeTokenLock.amount,
-                activeTokenLock.currencyId,
-                activeTokenLock.source
-              )
-          }.map(tokenUnlocks => address -> tokenUnlocks)
+              case None =>
+                Left(s"Token lock not found for ref: ${withdrawal.event.tokenLockRef}")
+            }
+          }.map(unlocks => (address, unlocks))
       }.map(_.toMap)
 
-      for {
-        withdrawalUnlocks <- expiredWithdrawalUnlocks
-        replacedUnlocks <- increasedTokenLockUnlocks
-      } yield {
-        val allAddresses = withdrawalUnlocks.keySet ++ replacedUnlocks.keySet
-        allAddresses.map { address =>
-          val withdrawalList = withdrawalUnlocks.getOrElse(address, List.empty)
-          val replacedList = replacedUnlocks.getOrElse(address, List.empty)
-          address -> (withdrawalList ++ replacedList)
-        }.toMap
-      }
+      result
     }
   }
 }

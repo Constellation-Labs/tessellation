@@ -232,7 +232,7 @@ const fetchStakeWithRewardsBalance = async (
   )
 }
 
-const createTokenLock = async (account, urls, lockAmount, replaceRef = null, replaceBalance = 0) => {
+const createTokenLock = async (account, urls, lockAmount) => {
   const initialBalance = dagToDatum(await account.getBalance())
 
   const { hash } = await account.postTokenLock({
@@ -241,7 +241,6 @@ const createTokenLock = async (account, urls, lockAmount, replaceRef = null, rep
     tokenL1Url: urls.dagL1Url,
     unlockEpoch: null,
     currencyId: null,
-    replaceTokenLockRef: replaceRef,
     fee: 0,
   })
 
@@ -250,7 +249,7 @@ const createTokenLock = async (account, urls, lockAmount, replaceRef = null, rep
   }
 
   await withRetry(
-    async () => assertBalanceChange(account, initialBalance - lockAmount + replaceBalance),
+    async () => assertBalanceChange(account, initialBalance - lockAmount),
     {
       name: 'assertBalanceChangeAfterTokenLock',
       maxAttempts: 10,

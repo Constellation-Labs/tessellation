@@ -63,7 +63,7 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
           SortedMap(
             sourceAddress ->
               SortedSet(
-                DelegatedStakeRecord(parent1, SnapshotOrdinal.MinValue, Amount(NonNegLong(0L)), None, None)
+                DelegatedStakeRecord(parent1, SnapshotOrdinal.MinValue, Amount(NonNegLong(0L)))
               )
           )
         )
@@ -75,8 +75,7 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
         withdrawals = List.empty,
         lastSnapshotContext = context,
         currentGlobalEpochProgress = EpochProgress.MinValue,
-        currentSnapshotOrdinal = SnapshotOrdinal.unsafeApply(2),
-        acceptedTokenLocks = List.empty
+        currentSnapshotOrdinal = SnapshotOrdinal.unsafeApply(2)
       )
     } yield
       expect.all(
@@ -104,7 +103,7 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
           SortedMap(
             sourceAddress ->
               SortedSet(
-                DelegatedStakeRecord(parent1, SnapshotOrdinal.MinValue, Amount(NonNegLong(0L)), None, None)
+                DelegatedStakeRecord(parent1, SnapshotOrdinal.MinValue, Amount(NonNegLong(0L)))
               )
           )
         )
@@ -116,8 +115,7 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
         withdrawals = List(valid1, invalid),
         lastSnapshotContext = context,
         currentGlobalEpochProgress = EpochProgress.apply(NonNegLong(1)),
-        currentSnapshotOrdinal = SnapshotOrdinal.unsafeApply(2),
-        acceptedTokenLocks = List.empty
+        currentSnapshotOrdinal = SnapshotOrdinal.unsafeApply(2)
       )
     } yield
       expect.all(
@@ -147,8 +145,8 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
           SortedMap(
             sourceAddress ->
               SortedSet(
-                DelegatedStakeRecord(parent1, SnapshotOrdinal.MinValue, Amount(NonNegLong(0L)), None, None),
-                DelegatedStakeRecord(parent2, SnapshotOrdinal.MinValue, Amount(NonNegLong(0L)), None, None)
+                DelegatedStakeRecord(parent1, SnapshotOrdinal.MinValue, Amount(NonNegLong(0L))),
+                DelegatedStakeRecord(parent2, SnapshotOrdinal.MinValue, Amount(NonNegLong(0L)))
               )
           )
         )
@@ -160,8 +158,7 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
         withdrawals = List(valid1, valid2),
         lastSnapshotContext = context,
         currentGlobalEpochProgress = EpochProgress.apply(NonNegLong(1)),
-        currentSnapshotOrdinal = SnapshotOrdinal.unsafeApply(2),
-        acceptedTokenLocks = List.empty
+        currentSnapshotOrdinal = SnapshotOrdinal.unsafeApply(2)
       )
     } yield
       expect.all(
@@ -212,8 +209,7 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
       fee = TokenLockFee(NonNegLong(0L)),
       parent = parent,
       currencyId = None,
-      unlockEpoch = tokenLockUnlockEpoch,
-      replaceTokenLockRef = None
+      unlockEpoch = tokenLockUnlockEpoch
     )
     for {
       signed <- forAsyncHasher(testTokenLock, keyPair)

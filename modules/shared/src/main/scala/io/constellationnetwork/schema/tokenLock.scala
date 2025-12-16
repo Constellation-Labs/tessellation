@@ -86,8 +86,7 @@ object tokenLock {
     fee: TokenLockFee,
     parent: TokenLockReference,
     currencyId: Option[CurrencyId],
-    unlockEpoch: Option[EpochProgress],
-    replaceTokenLockRef: Option[Hash]
+    unlockEpoch: Option[EpochProgress]
   ) {
     val ordinal: TokenLockOrdinal = parent.ordinal.next
   }

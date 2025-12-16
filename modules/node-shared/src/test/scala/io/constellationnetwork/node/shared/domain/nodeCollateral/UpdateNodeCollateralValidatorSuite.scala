@@ -78,8 +78,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       fee = TokenLockFee(NonNegLong(0L)),
       parent = TokenLockReference.empty,
       currencyId = None,
-      unlockEpoch = tokenLockUnlockEpoch,
-      replaceTokenLockRef = None
+      unlockEpoch = tokenLockUnlockEpoch
     )
     for {
       signed <- forAsyncHasher(testTokenLock, keyPair)
@@ -295,7 +294,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       context = lastContext.copy(activeDelegatedStakes =
         Some(
           SortedMap(
-            address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty, None, None))
+            address -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty))
           )
         )
       )

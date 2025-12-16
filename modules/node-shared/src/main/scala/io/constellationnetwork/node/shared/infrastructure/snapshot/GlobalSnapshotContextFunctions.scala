@@ -69,7 +69,7 @@ object GlobalSnapshotContextFunctions {
         val unexpiredWithdrawals = existingWithdrawals.map {
           case (address, withdrawals) =>
             address -> withdrawals.filterNot {
-              case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch, _, _) =>
+              case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch) =>
                 isWithdrawalExpired(withdrawalEpoch)
             }
         }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
@@ -77,7 +77,7 @@ object GlobalSnapshotContextFunctions {
         val expiredWithdrawals = existingWithdrawals.map {
           case (address, withdrawals) =>
             address -> withdrawals.filter {
-              case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch, _, _) =>
+              case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch) =>
                 isWithdrawalExpired(withdrawalEpoch)
             }
         }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
@@ -95,7 +95,7 @@ object GlobalSnapshotContextFunctions {
         signedArtifact: Signed[GlobalIncrementalSnapshot],
         getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = for {
-        lastActiveTips <- HasherSelector[F].forOrdinal(lastArtifact.ordinal)(implicit hasher => lastArtifact.activeTips)
+        lastActiveTips <- HasherSelector[F].withCurrent(implicit hasher => lastArtifact.activeTips)
 
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
@@ -141,8 +141,7 @@ object GlobalSnapshotContextFunctions {
           wdsEventsForAcceptance,
           context,
           signedArtifact.epochProgress,
-          signedArtifact.ordinal,
-          List.empty
+          signedArtifact.ordinal
         )
 
         (

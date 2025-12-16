@@ -158,7 +158,7 @@ object UpdateDelegatedStakeValidator {
         val withdrawalRef = lastContext.delegatedStakesWithdrawals
           .getOrElse(SortedMap.empty[Address, List[PendingDelegatedStakeWithdrawal]])
           .getOrElse(signed.source, List.empty)
-          .find { case w: PendingDelegatedStakeWithdrawal => signed.tokenLockRef == w.tokenLockRef }
+          .find { case PendingDelegatedStakeWithdrawal(w, _, _, _) => signed.tokenLockRef == w.tokenLockRef }
         if (withdrawalRef.isEmpty) {
           signed.validNec
         } else {
@@ -215,14 +215,15 @@ object UpdateDelegatedStakeValidator {
           val maybeExistingStake = lastContext.activeDelegatedStakes
             .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
             .getOrElse(address, List.empty)
-            .find(_.tokenLockRef === signed.tokenLockRef)
+            .find(_.event.tokenLockRef === signed.tokenLockRef)
+            .map(_.event)
 
           val maybeExistingCollateral = lastContext.activeNodeCollaterals
             .getOrElse(SortedMap.empty[Address, List[NodeCollateralRecord]])
             .getOrElse(address, List.empty[NodeCollateralRecord])
             .find(_.event.tokenLockRef === signed.tokenLockRef)
 
-          maybeExistingCollateral.isEmpty && maybeExistingStake.forall(_.event.nodeId != signed.nodeId)
+          maybeExistingCollateral.isEmpty && maybeExistingStake.forall(_.nodeId != signed.nodeId)
         }
 
         def tokenLockValid(address: Address): F[Boolean] = {
@@ -277,8 +278,6 @@ object UpdateDelegatedStakeValidator {
   case class InvalidTokenLock(tokenLockRef: Hash) extends UpdateDelegatedStakeValidationError
 
   case class DuplicatedTokenLock(tokenLockRef: Hash) extends UpdateDelegatedStakeValidationError
-
-  case class OutdatedTokenLock(tokenLockRef: Hash) extends UpdateDelegatedStakeValidationError
 
   case class InvalidSourceAddress(tokenLockRef: Hash) extends UpdateDelegatedStakeValidationError
 
