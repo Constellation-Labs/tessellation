@@ -17,12 +17,10 @@ import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 
-import com.google.common.html.HtmlEscapers
 import derevo.cats.{eqv, show}
 import derevo.derive
 import eu.timepit.refined.cats.refTypeOrder
 import eu.timepit.refined.types.numeric.PosInt
-import io.micrometer.core.instrument.util.StringEscapeUtils
 
 trait UpdateNodeParametersValidator[F[_]] {
 

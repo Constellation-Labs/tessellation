@@ -1,55 +1,45 @@
-import sbt._
+import sbt.*
 
 object Dependencies {
 
   object V {
-    val bouncyCastle = "1.70"
-    val betterFiles = "3.9.1"
-    val brotli4j = "1.12.0"
-    val cats = "2.10.0"  // Update from 2.9.0
-    val catsEffect = "3.5.4"  // Update from 3.4.2
-    val catsRetry = "3.1.0"
-    val circe = "0.14.3"
-    val ciris = "3.0.0"
-    val comcast = "3.2.0"
-    val decline = "2.4.1"
-    val derevo = "0.13.0"
-    val doobie = "1.0.0-RC1"
-    val droste = "0.9.0"
-    val enumeratum = "1.7.2"
-    val javaxCrypto = "1.0.1"
-    val jawnVersion = "1.4.0"
+    val bouncyCastle = "1.83"
+    val betterFiles = "3.9.2"
+    val brotli4j = "1.12.0" // DO NOT UPDATE, >= 1.13.0 breaks backwards compat
+    val cats = "2.13.0"
+    val catsEffect = "3.6.3"
+    val catsRetry = "3.1.3"
+    val circe = "0.14.15"
+    val ciris = "3.11.1"
+    val comcast = "3.7.0"
+    val decline = "2.5.0"
+    val derevo = "0.14.0"
+    val droste = "0.10.0"
+    val enumeratum = "1.9.1"
+    val jawnVersion = "1.6.0"
     val jawnFs2Version = "2.4.0"
-    val flyway = "9.10.2"
-    val fs2 = "3.4.0"
+    val jol = "0.17"
+    val fs2 = "3.12.2"
     val fs2Data = "1.6.0"
-    val guava = "31.1-jre"
-    val http4s = "0.23.16"
-    val httpSigner = "0.1.1"
-    val log4cats = "2.5.0"
-    val micrometer = "1.10.2"
-    val monocle = "3.1.0"
+    val http4s = "0.23.33"
+    val httpSigner = "0.1.2"
+    val log4cats = "2.7.1"
+    val micrometer = "1.16.1"
+    val monocle = "3.3.0"
     val mapref = "0.2.0-M2"
     val newtype = "0.4.4"
-    val pureconfig = "0.17.5"
-    val refined = "0.10.1"
-    val redis4cats = "1.3.0"
-    val skunk = "0.3.2"
-    val sqlite = "3.40.0.0"
-    val chill = "0.9.5"
-    val shapeless = "2.3.10"
-    val spongyCastle = "1.58.0.0"
-    val squants = "1.8.3"
+    val pureconfig = "0.17.9"
+    val refined = "0.11.3"
+    val shapeless = "2.3.13"
     val twitterChill = "0.10.0"
     val betterMonadicFor = "0.3.1"
-    val kindProjector = "0.13.3"
+    val kindProjector = "0.13.4"
     val logback = "1.3.5"
     val logstashLogbackEncoder = "7.2"
     val scalafixRules = "0.1.2"
-    val semanticDB = "4.13.1.1"
-    val weaver = "0.8.1"
-    val jol = "0.17"
-    val scaffeine = "5.2.1"
+    val scaffeine = "5.3.0"
+    val semanticDB = "4.14.2"
+    val weaver = "0.11.3"
   }
 
   object Libraries {
@@ -63,8 +53,6 @@ object Dependencies {
     def decline(artifact: String = ""): ModuleID =
       "com.monovore" %% { if (artifact.isEmpty) "decline" else s"decline-$artifact" } % V.decline
 
-    def doobie(artifact: String): ModuleID =
-      ("org.tpolecat" %% s"doobie-$artifact" % V.doobie).exclude("org.slf4j", "slf4j-api")
     def droste(artifact: String): ModuleID = "io.higherkindness" %% s"droste-$artifact" % V.droste
     def fs2(artifact: String): ModuleID = "co.fs2" %% s"fs2-$artifact" % V.fs2
     def fs2Data(artifact: String): ModuleID = "org.gnieh" %% s"fs2-data-$artifact" % V.fs2Data
@@ -75,8 +63,8 @@ object Dependencies {
 
     def pureconfig(artifact: String): ModuleID = "com.github.pureconfig" %% s"pureconfig-$artifact" % V.pureconfig
 
-    val bc = bouncyCastle("bcprov-jdk15on")
-    val bcExtensions = bouncyCastle("bcpkix-jdk15on")
+    val bc = bouncyCastle("bcprov-jdk18on")
+    val bcExtensions = bouncyCastle("bcpkix-jdk18on")
 
     val betterFiles = "com.github.pathikrit" %% "better-files" % V.betterFiles
 
@@ -88,21 +76,20 @@ object Dependencies {
     val catsEffectTestkit = "org.typelevel" %% "cats-effect-testkit" % V.catsEffect
     val catsRetry = "com.github.cb372" %% "cats-retry" % V.catsRetry
 
-    val squants = "org.typelevel" %% "squants" % V.squants
     val jol = "org.openjdk.jol" % "jol-core" % V.jol
     val comcast = "com.comcast" %% "ip4s-core" % V.comcast
 
     val fs2Core = fs2("core")
+    val fs2IO = fs2("io")
     val fs2DataCsv = fs2Data("csv")
     val fs2DataCsvGeneric = fs2Data("csv-generic")
-    val fs2IO = fs2("io")
 
     val circeCore = circe("core")
     val circeGeneric = circe("generic")
-    val circeGenericExtras = circe("generic-extras")
+    val circeGenericExtras = circe("generic-extras", "0.14.4")
     val circeParser = circe("parser")
-    val circeRefined = circe("refined")
-    val circeFs2 = circe("fs2", "0.14.0")
+    val circeRefined = circe("refined", "0.15.1")
+    val circeFs2 = circe("fs2", "0.14.1")
     val circeShapes = circe("shapes")
 
     val cirisCore = ciris("ciris")
@@ -118,18 +105,12 @@ object Dependencies {
     val derevoScalacheck = derevo("scalacheck")
     val derevoCirce = derevo("circe-magnolia")
 
-    val doobieCore = doobie("core")
-    val doobieHikari = doobie("hikari")
-    val doobieQuill = doobie("quill")
-
     val drosteCore = droste("core")
     val drosteLaws = droste("laws")
     val drosteMacros = droste("macros")
 
     val enumeratumCore = enumeratum("")
     val enumeratumCirce = enumeratum("circe")
-
-    val flyway = "org.flywaydb" % "flyway-core" % V.flyway
 
     val http4sCore = http4s("core")
     val http4sDsl = http4s("dsl")
@@ -139,8 +120,6 @@ object Dependencies {
 
     val httpSignerCore = "io.constellationnetwork" %% "http-request-signer-core" % V.httpSigner
     val httpSignerHttp4s = "io.constellationnetwork" %% "http4s-request-signer" % V.httpSigner
-
-    val guava = "com.google.guava" % "guava" % V.guava
 
     val jawnParser = jawn("jawn-parser")
     val jawnAst = jawn("jawn-ast")
@@ -157,14 +136,6 @@ object Dependencies {
 
     val log4cats = "org.typelevel" %% "log4cats-slf4j" % V.log4cats
     val newtype = "io.estatico" %% "newtype" % V.newtype
-
-    val redis4catsEffects = "dev.profunktor" %% "redis4cats-effects" % V.redis4cats
-    val redis4catsLog4cats = "dev.profunktor" %% "redis4cats-log4cats" % V.redis4cats
-
-    val skunkCore = "org.tpolecat" %% "skunk-core" % V.skunk
-    val skunkCirce = "org.tpolecat" %% "skunk-circe" % V.skunk
-
-    val sqlite = "org.xerial" % "sqlite-jdbc" % V.sqlite
 
     val chill = "com.twitter" %% "chill" % V.twitterChill
     val shapeless = "com.chuusai" %% "shapeless" % V.shapeless
@@ -189,9 +160,9 @@ object Dependencies {
     val log4catsNoOp = "org.typelevel" %% "log4cats-noop" % V.log4cats
     val monocleLaw = "dev.optics" %% "monocle-law" % V.monocle
     val refinedScalacheck = "eu.timepit" %% "refined-scalacheck" % V.refined
-    val weaverCats = "com.disneystreaming" %% "weaver-cats" % V.weaver
-    val weaverDiscipline = "com.disneystreaming" %% "weaver-discipline" % V.weaver
-    val weaverScalaCheck = "com.disneystreaming" %% "weaver-scalacheck" % V.weaver
+    val weaverCats = "org.typelevel" %% "weaver-cats" % V.weaver
+    val weaverDiscipline = "org.typelevel" %% "weaver-discipline" % V.weaver
+    val weaverScalaCheck = "org.typelevel" %% "weaver-scalacheck" % V.weaver
 
     // Scalafix
     val scalafixRules = "io.constellationnetwork" %% "constellation-scalafix-rules" % V.scalafixRules

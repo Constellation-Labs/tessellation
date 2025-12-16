@@ -65,20 +65,6 @@ object HashSuite extends MutableIOSuite with Checkers {
     res.withCurrent(implicit hasher => (hasher.hash(test), hasher.hash(testUpdated)).mapN(expect.eql(_, _)))
   }
 
-  test("ensure guava/JSA compatibility") {
-    implicit val byteArrayShow: Show[Array[Byte]] = Show.show(a => Hex.fromBytes(a).toString)
-
-    val byte = Arbitrary.arbitrary[Byte]
-    val bytes = Gen.listOfN(1024, byte).map(_.toArray)
-
-    forall(bytes) { data =>
-      @nowarn
-      val hashCode = Hash.hashCodeFromBytes(data)
-      val sha256Digest = Hash.sha256DigestFromBytes(data)
-      expect.eql(hashCode.toString, sha256Digest.toHexString)
-    }
-  }
-
   pureTest("fromBytes produces consistent hashes") {
     val testData = "Hello, World!".getBytes(StandardCharsets.UTF_8)
     val hash1 = Hash.fromBytes(testData)

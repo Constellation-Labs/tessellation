@@ -39,7 +39,7 @@ import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric._
 import fs2.data.csv._
 import fs2.data.csv.generic.semiauto.deriveRowEncoder
-import fs2.io.file.{Files, Path}
+import fs2.io.file.{Files, Path, WalkOptions}
 import fs2.{Pipe, Stream, text}
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
@@ -207,7 +207,7 @@ object Main
   def loadKeys[F[_]: Async: SecurityProvider](opts: LoadedWallets): F[List[KeyPair]] =
     Files
       .forAsync[F]
-      .walk(Path.fromNioPath(opts.walletsPath), 1, followLinks = false)
+      .walk(Path.fromNioPath(opts.walletsPath), WalkOptions.Default.withMaxDepth(1).withFollowLinks(false))
       .filter(_.extName === ".p12")
       .evalMap { keyFile =>
         KeyStoreUtils.readKeyPairFromStore(

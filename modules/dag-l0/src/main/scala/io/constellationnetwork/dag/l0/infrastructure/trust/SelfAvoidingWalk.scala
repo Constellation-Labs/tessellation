@@ -2,11 +2,9 @@ package io.constellationnetwork.dag.l0.infrastructure.trust
 
 import scala.util.Random
 
-import com.typesafe.scalalogging.StrictLogging
-
 /** https://en.wikipedia.org/wiki/Node_influence_metric https://en.wikipedia.org/wiki/Self-avoiding_walk
   */
-object SelfAvoidingWalk extends StrictLogging {
+object SelfAvoidingWalk {
 
   final def sample[A](dist: Map[A, Double]): A = {
     val p = scala.util.Random.nextDouble()
