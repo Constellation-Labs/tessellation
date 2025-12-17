@@ -21,8 +21,8 @@ import fs2.io.file.{Files, Path}
 final class TraverseLocalFileSystemTempStorage[F[_]: Async: KryoSerializer: JsonSerializer] private (path: Path)
     extends SerializableLocalFileSystemStorage[F, CurrencyIncrementalSnapshot](path) {
 
-  def deserializeFallback(bytes: Array[Byte]): Either[Throwable, CurrencyIncrementalSnapshot] =
-    KryoSerializer[F].deserialize[CurrencyIncrementalSnapshotV1](bytes).map(_.toCurrencyIncrementalSnapshot)
+  def deserializeFallback(bytes: Array[Byte]): F[Either[Throwable, CurrencyIncrementalSnapshot]] =
+    KryoSerializer[F].deserialize[CurrencyIncrementalSnapshotV1](bytes).map(_.toCurrencyIncrementalSnapshot).pure[F]
 
   def read(
     ordinal: SnapshotOrdinal

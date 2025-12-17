@@ -229,15 +229,33 @@ object GlobalSnapshotTraverse {
           firstInfo <- loadFullOrIncOrErr(hashCandidate).flatMap(loadInfoForSnapshot)
           (hashedFirstInc, firstInc) <- validateFirstSnapshot(firstIncEither, firstInfo)
 
-          _ <- HasherSelector[F].withCurrent { implicit hasher =>
-            initializeStorages[F](
-              globalSnapshotStorage,
-              lastNGlobalSnapshotStorage,
-              lastGlobalSnapshotStorage,
-              download,
-              hashedFirstInc,
-              firstInfo
-            )
+          // For V2 ordinals, skip globalSnapshotStorage.prepend since V2 data already exists on disk
+          // with a different hash (V2 format hash vs current format hash). Only initialize memory storages.
+          _ <- firstIncEither match {
+            case Left(_) =>
+              HasherSelector[F].withCurrent { implicit hasher =>
+                for {
+                  _ <- logger.info(s"First ordinal is V2, skipping disk persist during initialization")
+                  _ <- lastNGlobalSnapshotStorage.setInitialFetchingGL0(
+                    hashedFirstInc,
+                    firstInfo,
+                    none,
+                    Some((hash, ordinal) => download.fetchSnapshot(hash, ordinal))
+                  )
+                  _ <- lastGlobalSnapshotStorage.setInitial(hashedFirstInc, firstInfo)
+                } yield ()
+              }
+            case Right(_) =>
+              HasherSelector[F].withCurrent { implicit hasher =>
+                initializeStorages[F](
+                  globalSnapshotStorage,
+                  lastNGlobalSnapshotStorage,
+                  lastGlobalSnapshotStorage,
+                  download,
+                  hashedFirstInc,
+                  firstInfo
+                )
+              }
           }
 
           (finalInfo, finalInc) <- processRemainingSnapshots(

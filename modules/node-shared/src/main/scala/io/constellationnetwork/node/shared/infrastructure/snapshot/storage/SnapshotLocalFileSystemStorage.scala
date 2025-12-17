@@ -250,8 +250,8 @@ object GlobalSnapshotLocalFileSystemStorage {
   ): F[SnapshotLocalFileSystemStorage[F, GlobalSnapshot]] =
     Applicative[F]
       .pure(new SnapshotLocalFileSystemStorage[F, GlobalSnapshot](path) {
-        def deserializeFallback(bytes: Array[Byte]): Either[Throwable, Signed[GlobalSnapshot]] =
-          KryoSerializer[F].deserialize[Signed[GlobalSnapshot]](bytes)
+        def deserializeFallback(bytes: Array[Byte]): F[Either[Throwable, Signed[GlobalSnapshot]]] =
+          KryoSerializer[F].deserialize[Signed[GlobalSnapshot]](bytes).pure[F]
       })
       .flatTap { storage =>
         storage.createDirectoryIfNotExists().rethrowT
@@ -265,8 +265,11 @@ object GlobalIncrementalSnapshotLocalFileSystemStorage {
   ): F[SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot]] =
     Applicative[F]
       .pure(new SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot](path) {
-        def deserializeFallback(bytes: Array[Byte]): Either[Throwable, Signed[GlobalIncrementalSnapshot]] =
-          KryoSerializer[F].deserialize[Signed[GlobalIncrementalSnapshotV1]](bytes).map(_.map(_.toGlobalIncrementalSnapshot))
+        // Only try V1 Kryo fallback - do NOT add V2 JSON fallback here!
+        // V2 files need to be read via GlobalIncrementalSnapshotV2LocalFileSystemStorage
+        // so that GlobalSnapshotTraverse can properly detect and validate them as V2 format.
+        def deserializeFallback(bytes: Array[Byte]): F[Either[Throwable, Signed[GlobalIncrementalSnapshot]]] =
+          KryoSerializer[F].deserialize[Signed[GlobalIncrementalSnapshotV1]](bytes).map(_.map(_.toGlobalIncrementalSnapshot)).pure[F]
       })
       .flatTap { storage =>
         storage.createDirectoryIfNotExists().rethrowT
@@ -280,8 +283,8 @@ object GlobalIncrementalSnapshotV2LocalFileSystemStorage {
   ): F[SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshotV2]] =
     Applicative[F]
       .pure(new SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshotV2](path) {
-        def deserializeFallback(bytes: Array[Byte]): Either[Throwable, Signed[GlobalIncrementalSnapshotV2]] =
-          KryoSerializer[F].deserialize[Signed[GlobalIncrementalSnapshotV2]](bytes)
+        def deserializeFallback(bytes: Array[Byte]): F[Either[Throwable, Signed[GlobalIncrementalSnapshotV2]]] =
+          KryoSerializer[F].deserialize[Signed[GlobalIncrementalSnapshotV2]](bytes).pure[F]
       })
       .flatTap { storage =>
         storage.createDirectoryIfNotExists().rethrowT
@@ -295,8 +298,8 @@ object CurrencyIncrementalSnapshotLocalFileSystemStorage {
   ): F[SnapshotLocalFileSystemStorage[F, CurrencyIncrementalSnapshot]] =
     Applicative[F]
       .pure(new SnapshotLocalFileSystemStorage[F, CurrencyIncrementalSnapshot](path) {
-        def deserializeFallback(bytes: Array[Byte]): Either[Throwable, Signed[CurrencyIncrementalSnapshot]] =
-          KryoSerializer[F].deserialize[Signed[CurrencyIncrementalSnapshotV1]](bytes).map(_.map(_.toCurrencyIncrementalSnapshot))
+        def deserializeFallback(bytes: Array[Byte]): F[Either[Throwable, Signed[CurrencyIncrementalSnapshot]]] =
+          KryoSerializer[F].deserialize[Signed[CurrencyIncrementalSnapshotV1]](bytes).map(_.map(_.toCurrencyIncrementalSnapshot)).pure[F]
       })
       .flatTap { storage =>
         storage.createDirectoryIfNotExists().rethrowT

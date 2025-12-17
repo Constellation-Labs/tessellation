@@ -107,6 +107,7 @@ object Main
         keyPair,
         cfg,
         cfg.incremental.lastFullGlobalSnapshotOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
+        cfg.incremental.lastV2IncrementalOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
         p2pClient,
         sharedServices.globalSnapshotContextFns,
         storages.globalSnapshot,

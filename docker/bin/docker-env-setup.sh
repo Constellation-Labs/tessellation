@@ -126,6 +126,8 @@ for i in 0 1 2; do
     echo "CL_DOCKER_ML0_GENESIS=true" >> .env
     echo "CL_DOCKER_CL1_GENESIS=true" >> .env
     echo "CL_DOCKER_DL1_GENESIS=true" >> .env
+    # Rollback settings only for genesis node - it does run-rollback
+    # Followers use run-validator and join/download from the leader
     if [ "$ROLLBACK_MODE" == "true" ]; then
       echo "CL_DOCKER_ROLLBACK=true" >> .env
       if [ -n "$ROLLBACK_HASH" ]; then

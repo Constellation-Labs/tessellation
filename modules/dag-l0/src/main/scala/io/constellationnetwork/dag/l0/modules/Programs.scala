@@ -20,9 +20,13 @@ import io.constellationnetwork.node.shared.domain.snapshot.PeerSelect
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
+  SnapshotInfoLocalFileSystemStorage,
+  SnapshotLocalFileSystemStorage
+}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{GlobalSnapshotContextFunctions, PeerSelect}
 import io.constellationnetwork.node.shared.modules.{SharedPrograms, SharedStorages}
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
+import io.constellationnetwork.schema._
 import io.constellationnetwork.security.{HashSelect, HasherSelector, SecurityProvider}
 
 object Programs {
@@ -34,6 +38,7 @@ object Programs {
     keyPair: KeyPair,
     config: AppConfig,
     lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
+    lastV2IncrementalOrdinal: SnapshotOrdinal,
     p2pClient: P2PClient[F],
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
     globalSnapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
@@ -50,9 +55,12 @@ object Programs {
       val download: Download[F, GlobalIncrementalSnapshot] = Download
         .make[F](
           storages.snapshotDownload,
+          storages.incrementalGlobalSnapshotV2LocalFileSystemStorage,
+          storages.globalSnapshotInfoV3LocalFileSystemStorage,
           p2pClient,
           storages.cluster,
           lastFullGlobalSnapshotOrdinal,
+          lastV2IncrementalOrdinal,
           globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
           storages.node,
           services.consensus,

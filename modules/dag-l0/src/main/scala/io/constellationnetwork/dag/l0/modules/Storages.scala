@@ -83,8 +83,12 @@ object Storages {
           fullGlobalSnapshotLocalFileSystemStorage,
           incrementalGlobalSnapshotInfoLocalFileSystemStorage,
           incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage,
+          incrementalGlobalSnapshotV2PersistedLocalFileSystemStorage,
+          incrementalGlobalSnapshotInfoV3LocalFileSystemStorage,
           combinedGlobalSnapshotCheckpointStorage,
-          hashSelect
+          hashSelect,
+          incrementalConfig.lastFullGlobalSnapshotOrdinal.getOrElse(environment, SnapshotOrdinal.MinValue),
+          incrementalConfig.lastV2IncrementalOrdinal.getOrElse(environment, SnapshotOrdinal.MinValue)
         )
     } yield
       new Storages[F](

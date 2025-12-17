@@ -22,7 +22,11 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalS
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
 import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.CombinedSnapshotCheckpointFileSystemStorage
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
+  CombinedSnapshotCheckpointFileSystemStorage,
+  SnapshotInfoLocalFileSystemStorage,
+  SnapshotLocalFileSystemStorage
+}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.Peer
@@ -41,9 +45,12 @@ import retry.implicits.retrySyntaxError
 object Download {
   def make[F[_]: Async: Parallel: Random: KryoSerializer](
     snapshotStorage: SnapshotDownloadStorage[F],
+    v2SnapshotStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshotV2],
+    v3InfoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProofV2, GlobalSnapshotInfoV3],
     p2pClient: P2PClient[F],
     clusterStorage: ClusterStorage[F],
     lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
+    lastV2IncrementalOrdinal: SnapshotOrdinal,
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
     nodeStorage: NodeStorage[F],
     consensus: GlobalSnapshotConsensus[F],
@@ -65,6 +72,15 @@ object Download {
 
     type DownloadResult = (Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)
     type ObservationLimit = SnapshotOrdinal
+
+    private def isV2Ordinal(ordinal: SnapshotOrdinal): Boolean =
+      ordinal > lastFullGlobalSnapshotOrdinal && ordinal <= lastV2IncrementalOrdinal
+
+    private def readSnapshotByOrdinal(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalIncrementalSnapshot]]] =
+      if (isV2Ordinal(ordinal))
+        v2SnapshotStorage.read(ordinal).map(_.map(_.map(_.toGlobalIncrementalSnapshot)))
+      else
+        snapshotStorage.readPersisted(ordinal)
 
     private def fetchSnapshotByOrdinal(implicit hasherSelector: HasherSelector[F]) = (ordinal: SnapshotOrdinal) =>
       hasherSelector.withCurrent { implicit hasher =>
@@ -283,10 +299,14 @@ object Download {
     def isSnapshotPersistedOrReachedGenesis(hash: Hash, ordinal: SnapshotOrdinal): F[Boolean] = {
       def isSnapshotPersisted = snapshotStorage.isPersisted(hash)
 
+      def isV2SnapshotPersisted = v2SnapshotStorage.exists(ordinal)
+
       def didReachGenesis = ordinal === lastFullGlobalSnapshotOrdinal
 
       if (!didReachGenesis) {
-        isSnapshotPersisted
+        // For V2 ordinals, check by ordinal since hash format differs
+        if (isV2Ordinal(ordinal)) isV2SnapshotPersisted
+        else isSnapshotPersisted
       } else true.pure[F]
     }
 
@@ -305,7 +325,7 @@ object Download {
         def readSnapshot: F[Option[Signed[GlobalIncrementalSnapshot]]] = tmpMap
           .get(nextOrdinal)
           .as(snapshotStorage.readTmp(nextOrdinal))
-          .getOrElse(snapshotStorage.readPersisted(nextOrdinal))
+          .getOrElse(readSnapshotByOrdinal(nextOrdinal))
 
         def persistLastSnapshot: F[Unit] =
           Applicative[F].whenA(tmpMap.contains(lastSnapshot.ordinal)) {
@@ -324,41 +344,73 @@ object Download {
         def processNextOrFinish: F[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] =
           if (lastSnapshot.ordinal.value >= endingOrdinal.value) {
             (lastSnapshot, context).pure[F]
-          } else
+          } else {
             readSnapshot.flatMap {
               case Some(snapshot) =>
-                HasherSelector[F].withCurrent { implicit hasher =>
-                  globalSnapshotContextFns
-                    .createContext(
-                      context,
-                      lastSnapshot,
-                      snapshot,
-                      fetchSnapshotByOrdinal
-                    )
-                }
-                  .flatTap(newContext =>
-                    hasherSelector.withCurrent { implicit hasher =>
-                      snapshotStorage
-                        .hasCorrectSnapshotInfo(snapshot.ordinal, snapshot.stateProof)
-                        .ifM(
-                          ifTrue = ().pure[F],
-                          ifFalse = (for {
-                            proof <- newContext.stateProofFor(Hasher[F].getLogic(snapshot.ordinal), snapshot.ordinal)
-                            hashed <- snapshot.toHashed
-                            result <- StateProofValidator.validate(hashed, proof).map(_.isValid)
-                          } yield result).ifM(
-                            ifTrue = snapshotStorage.persistSnapshotInfoWithCutoff(snapshot.ordinal, newContext),
-                            ifFalse = InvalidStateProof(snapshot.ordinal).raiseError[F, Unit]
-                          )
-                        )
+                if (isV2Ordinal(snapshot.ordinal)) {
+                  // V2 ordinal: read V3 info from disk, validate with V2 types
+                  // Skip storing in lastNGlobalSnapshotStorage since converted hash chain breaks
+                  hasherSelector.withCurrent { implicit hasher =>
+                    v3InfoStorage.read(snapshot.ordinal).flatMap {
+                      case Some(v3Info) =>
+                        v3Info.stateProof(snapshot.ordinal).flatMap { v2Proof =>
+                          v2SnapshotStorage.read(snapshot.ordinal).flatMap {
+                            case Some(v2Snapshot) =>
+                              v2Snapshot.toHashed.flatMap { hashedV2 =>
+                                StateProofValidator
+                                  .validate(hashedV2, v2Proof)
+                                  .map(_.isValid)
+                                  .ifM(
+                                    ifTrue = {
+                                      val newContext = v3Info.toGlobalSnapshotInfo
+                                      // Don't store V2 ordinals - just continue with context
+                                      go(snapshot, newContext)
+                                    },
+                                    ifFalse = InvalidStateProof(snapshot.ordinal).raiseError[F, Agg]
+                                  )
+                              }
+                            case None => InvalidStateProof(snapshot.ordinal).raiseError[F, Agg]
+                          }
+                        }
+                      case None => InvalidStateProof(snapshot.ordinal).raiseError[F, Agg]
                     }
-                  )
-                  .flatMap { state =>
-                    updateStoragesWithDownloadedSnapshot(snapshot, state) >>
-                      go(snapshot, state)
                   }
+                } else {
+                  // Current format: use createContext which validates internally
+                  HasherSelector[F].withCurrent { implicit hasher =>
+                    globalSnapshotContextFns
+                      .createContext(
+                        context,
+                        lastSnapshot,
+                        snapshot,
+                        fetchSnapshotByOrdinal
+                      )
+                  }
+                    .flatTap(newContext =>
+                      hasherSelector.withCurrent { implicit hasher =>
+                        snapshotStorage
+                          .hasCorrectSnapshotInfo(snapshot.ordinal, snapshot.stateProof)
+                          .ifM(
+                            ifTrue = ().pure[F],
+                            ifFalse = (for {
+                              proof <- newContext.stateProofFor(Hasher[F].getLogic(snapshot.ordinal), snapshot.ordinal)
+                              hashed <- snapshot.toHashed
+                              result <- StateProofValidator.validate(hashed, proof).map(_.isValid)
+                            } yield result).ifM(
+                              ifTrue = snapshotStorage.persistSnapshotInfoWithCutoff(snapshot.ordinal, newContext),
+                              ifFalse = InvalidStateProof(snapshot.ordinal).raiseError[F, Unit]
+                            )
+                          )
+                      }
+                    )
+                    .flatMap { state =>
+                      updateStoragesWithDownloadedSnapshot(snapshot, state) >>
+                        go(snapshot, state)
+                    }
+                }
               case None => InvalidChain.raiseError[F, Agg]
             }
+          }
 
         persistLastSnapshot >>
           processNextOrFinish
@@ -377,7 +429,8 @@ object Download {
         }
         .flatMap {
           case (s, c) =>
-            updateStoragesWithDownloadedSnapshot(s, c) >>
+            // Don't store V2 ordinals - their converted hash chain breaks storage
+            (if (isV2Ordinal(s.ordinal)) Applicative[F].unit else updateStoragesWithDownloadedSnapshot(s, c)) >>
               go(s, c)
         }
     }
@@ -401,7 +454,7 @@ object Download {
           tmpMap
             .get(incrementalGenesisOrdinal)
             .as(snapshotStorage.readTmp(incrementalGenesisOrdinal))
-            .getOrElse(snapshotStorage.readPersisted(incrementalGenesisOrdinal))
+            .getOrElse(readSnapshotByOrdinal(incrementalGenesisOrdinal))
             .flatMap {
               case Some(snapshot) => (genesis.value, snapshot).pure[F]
               case None           => FirstIncrementalNotFound.raiseError[F, (GlobalSnapshot, Signed[GlobalIncrementalSnapshot])]

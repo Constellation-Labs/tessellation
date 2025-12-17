@@ -99,6 +99,9 @@ fi
 
 export RUN_COMMAND="run-validator"
 
+# Add Java 21 module access flags for Kryo serialization
+export CL_DOCKER_JAVA_OPTS="${CL_DOCKER_JAVA_OPTS:-} --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.security=ALL-UNNAMED"
+
 if [ "$CL_DOCKER_GENESIS" == "true" ]; then
   if [ "$L0" == "false" ]; then
     RUN_COMMAND="run-initial-validator"

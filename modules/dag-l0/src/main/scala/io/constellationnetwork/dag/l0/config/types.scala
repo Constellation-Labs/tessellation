@@ -9,8 +9,15 @@ import io.constellationnetwork.schema.SnapshotOrdinal
 import ciris.Secret
 import eu.timepit.refined.types.numeric._
 import eu.timepit.refined.types.string.NonEmptyString
+import pureconfig.generic.ProductHint
+import pureconfig.{CamelCase, ConfigFieldMapping, KebabCase}
 
 object types {
+
+  implicit val incrementalConfigHint: ProductHint[IncrementalConfig] = ProductHint[IncrementalConfig](
+    ConfigFieldMapping(CamelCase, KebabCase)
+      .withOverrides("lastV2IncrementalOrdinal" -> "last-v2-incremental-ordinal")
+  )
   case class AppConfigReader(
     trust: TrustConfig,
     snapshot: SnapshotConfig,
@@ -36,7 +43,8 @@ object types {
   }
 
   case class IncrementalConfig(
-    lastFullGlobalSnapshotOrdinal: Map[AppEnvironment, SnapshotOrdinal]
+    lastFullGlobalSnapshotOrdinal: Map[AppEnvironment, SnapshotOrdinal],
+    lastV2IncrementalOrdinal: Map[AppEnvironment, SnapshotOrdinal]
   )
 
   case class StateChannelConfig(

@@ -24,7 +24,7 @@ abstract class SerializableLocalFileSystemStorage[F[_]: JsonSerializer, A: Encod
 
   private val logger = Slf4jLogger.getLoggerFromClass(this.getClass)
 
-  def deserializeFallback(bytes: Array[Byte]): Either[Throwable, A]
+  def deserializeFallback(bytes: Array[Byte]): F[Either[Throwable, A]]
 
   def read(fileName: String): F[Option[A]] =
     readBytes(fileName).flatMap {
@@ -32,7 +32,7 @@ abstract class SerializableLocalFileSystemStorage[F[_]: JsonSerializer, A: Encod
         JsonSerializer[F].deserialize[A](bytes).flatMap { result =>
           result.fold(
             jsonErr =>
-              deserializeFallback(bytes) match {
+              deserializeFallback(bytes).flatMap {
                 case Right(value) => value.some.pure[F]
                 case Left(fallbackErr) =>
                   logger.warn(

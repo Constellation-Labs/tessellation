@@ -62,8 +62,8 @@ object GlobalSnapshotInfoLocalFileSystemStorage {
     path: Path
   ): F[SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo]] =
     (new SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo](path) {
-      def deserializeFallback(bytes: Array[Byte]): Either[Throwable, GlobalSnapshotInfo] =
-        KryoSerializer[F].deserialize[GlobalSnapshotInfoV2](bytes).map(_.toGlobalSnapshotInfo)
+      def deserializeFallback(bytes: Array[Byte]): F[Either[Throwable, GlobalSnapshotInfo]] =
+        KryoSerializer[F].deserialize[GlobalSnapshotInfoV2](bytes).map(_.toGlobalSnapshotInfo).pure[F]
     }).pure[F].flatTap { storage =>
       storage.createDirectoryIfNotExists().rethrowT
     }
@@ -74,10 +74,13 @@ object GlobalSnapshotInfoKryoLocalFileSystemStorage {
     path: Path
   ): F[SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProofV2, GlobalSnapshotInfoV3]] =
     (new SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProofV2, GlobalSnapshotInfoV3](path) {
-      def deserializeFallback(bytes: Array[Byte]): Either[Throwable, GlobalSnapshotInfoV3] =
-        KryoSerializer[F].deserialize[GlobalSnapshotInfoV2](bytes).map { v2 =>
-          GlobalSnapshotInfoV3.fromGlobalSnapshotInfo(v2.toGlobalSnapshotInfo)
-        }
+      def deserializeFallback(bytes: Array[Byte]): F[Either[Throwable, GlobalSnapshotInfoV3]] =
+        KryoSerializer[F]
+          .deserialize[GlobalSnapshotInfoV2](bytes)
+          .map { v2 =>
+            GlobalSnapshotInfoV3.fromGlobalSnapshotInfo(v2.toGlobalSnapshotInfo)
+          }
+          .pure[F]
     }).pure[F].flatTap { storage =>
       storage.createDirectoryIfNotExists().rethrowT
     }
@@ -88,8 +91,8 @@ object GlobalSnapshotInfoV2KryoLocalFileSystemStorage {
     path: Path
   ): F[SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProofV2, GlobalSnapshotInfoV2]] =
     (new SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProofV2, GlobalSnapshotInfoV2](path) {
-      def deserializeFallback(bytes: Array[Byte]): Either[Throwable, GlobalSnapshotInfoV2] =
-        KryoSerializer[F].deserialize[GlobalSnapshotInfoV2](bytes)
+      def deserializeFallback(bytes: Array[Byte]): F[Either[Throwable, GlobalSnapshotInfoV2]] =
+        KryoSerializer[F].deserialize[GlobalSnapshotInfoV2](bytes).pure[F]
     }).pure[F].flatTap { storage =>
       storage.createDirectoryIfNotExists().rethrowT
     }
@@ -100,8 +103,8 @@ object CurrencySnapshotInfoLocalFileSystemStorage {
     path: Path
   ): F[SnapshotInfoLocalFileSystemStorage[F, CurrencySnapshotStateProof, CurrencySnapshotInfo]] =
     (new SnapshotInfoLocalFileSystemStorage[F, CurrencySnapshotStateProof, CurrencySnapshotInfo](path) {
-      def deserializeFallback(bytes: Array[Byte]): Either[Throwable, CurrencySnapshotInfo] =
-        KryoSerializer[F].deserialize[CurrencySnapshotInfoV1](bytes).map(_.toCurrencySnapshotInfo)
+      def deserializeFallback(bytes: Array[Byte]): F[Either[Throwable, CurrencySnapshotInfo]] =
+        KryoSerializer[F].deserialize[CurrencySnapshotInfoV1](bytes).map(_.toCurrencySnapshotInfo).pure[F]
     }).pure[F].flatTap { storage =>
       storage.createDirectoryIfNotExists().rethrowT
     }
