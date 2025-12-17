@@ -34,6 +34,8 @@ trait MptStore[F[_], K] {
 
   def sync[V: Encoder](newState: Map[K, V]): F[Unit]
 
+  def syncFull[V: Encoder](newState: Map[K, V]): F[Unit]
+
   def update[V: Encoder](toUpsert: Map[K, V], toRemove: Set[K]): F[Unit]
 
   def underlying: StatefulMerklePatriciaProducer[F]
@@ -98,7 +100,7 @@ object MptStore {
     override def build: F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
       producer.build
 
-    override def sync[V: Encoder](newState: Map[K, V]): F[Unit] =
+    override def syncFull[V: Encoder](newState: Map[K, V]): F[Unit] =
       if (newState.isEmpty) producer.clear
       else
         for {
@@ -115,6 +117,25 @@ object MptStore {
 
           _ <- if (keysToRemove.nonEmpty) producer.remove(keysToRemove.toList).void else Async[F].unit
           _ <- if (keysToUpsert.nonEmpty) producer.insert(keysToUpsert).void else Async[F].unit
+        } yield ()
+
+    override def sync[V: Encoder](updates: Map[K, V]): F[Unit] =
+      if (updates.isEmpty) Async[F].unit
+      else
+        for {
+          newEntries <- updates.toList.parTraverse {
+            case (k, v) =>
+              toHex(k).map(_ -> v.asJson)
+          }.map(_.toMap)
+
+          currentEntries <- producer.entries
+
+          keysToUpsert = newEntries.filter {
+            case (k, v) =>
+              !currentEntries.get(k).contains(v)
+          }
+
+          _ <- if (keysToUpsert.nonEmpty) producer.insert(keysToUpsert) else Async[F].unit
         } yield ()
 
     override def update[V: Encoder](toUpsert: Map[K, V], toRemove: Set[K]): F[Unit] =

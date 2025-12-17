@@ -84,7 +84,7 @@ abstract class SnapshotProcessor[
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI],
     addressStorage: AddressStorage[F],
     mptStore: MptStore[F, GlobalStateKey]
-  ): F[SnapshotProcessingResult] =
+  )(implicit hasher: Hasher[F]): F[SnapshotProcessingResult] =
     alignment match {
       case AlignedAtNewOrdinal(
             snapshot,

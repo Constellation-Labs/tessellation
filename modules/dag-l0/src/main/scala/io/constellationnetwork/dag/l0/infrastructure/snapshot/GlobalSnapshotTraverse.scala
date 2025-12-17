@@ -14,6 +14,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFuncti
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -37,7 +38,8 @@ object GlobalSnapshotTraverse {
     globalSnapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    download: Download[F, GlobalIncrementalSnapshot]
+    download: Download[F, GlobalIncrementalSnapshot],
+    mptStore: MptStore[F, GlobalStateKey]
   ): GlobalSnapshotTraverse[F] =
     new GlobalSnapshotTraverse[F] {
       implicit val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
@@ -122,7 +124,8 @@ object GlobalSnapshotTraverse {
               lastGlobalSnapshotStorage,
               download,
               hashedFirstInc,
-              firstInfo
+              firstInfo,
+              mptStore
             )
           )
           (info, lastInc) <- incHashesNec.tail.foldLeftM((firstInfo, firstInc)) {

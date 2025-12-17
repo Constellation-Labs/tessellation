@@ -68,7 +68,13 @@ object Services {
         .make[F](p2PClient.l0GlobalSnapshot, globalL0Cluster, lastGlobalSnapshotStorage, None, maybeMajorityPeerIds)
       val session = sharedServices.session
       val transaction =
-        TransactionService.make[F, P, S, SI](storages.transaction, storages.lastSnapshot, validators.transaction, sharedStorages.mptStore)
+        TransactionService.make[F, P, S, SI](
+          storages.transaction,
+          storages.lastSnapshot,
+          validators.transaction,
+          sharedStorages.mptStore,
+          shouldUseMptStore = true
+        )
       val allowSpend =
         AllowSpendService.make[F, P, S, SI](storages.allowSpend, storages.lastSnapshot, validators.allowSpend)
       val allowSpendBlock = AllowSpendBlockService.make[F, P, S, SI](

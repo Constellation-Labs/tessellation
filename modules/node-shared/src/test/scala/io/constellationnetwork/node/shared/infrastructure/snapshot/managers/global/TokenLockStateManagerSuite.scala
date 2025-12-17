@@ -1078,7 +1078,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
 
     for {
       result <- acceptanceManager.acceptTokenLocks(currentEpoch, emptyTokenLocks, emptyTokenLocks, emptyUnlocks)
-    } yield expect(result.isEmpty)
+    } yield expect(result.fullState.isEmpty)
   }
 
   test("acceptTokenLocks - should accept new token locks and filter out expired ones") { res =>
@@ -1146,7 +1146,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       )
     } yield
       expect(
-        result == SortedMap(
+        result.fullState == SortedMap(
           testAddress -> SortedSet(signedNewTokenLock, signedActiveTokenLock)
         )
       ) // Should include new token lock and active token lock, but not expired token lock
@@ -1213,7 +1213,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       )
     } yield
       expect(
-        result == SortedMap(
+        result.fullState == SortedMap(
           testAddress -> SortedSet(signedTokenLockToKeep)
         )
       ) // Should only include token lock that is not being unlocked
@@ -1274,7 +1274,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       )
     } yield
       expect(
-        result == SortedMap(
+        result.fullState == SortedMap(
           address1 -> SortedSet(signedTokenLock1),
           address2 -> SortedSet(signedTokenLock2)
         )
@@ -1335,7 +1335,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       )
     } yield
       expect(
-        result == SortedMap(
+        result.fullState == SortedMap(
           address1 -> SortedSet(signedTokenLock1)
         )
       ) // Should only include address1, address2 should be filtered out due to empty set
@@ -1380,7 +1380,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       )
     } yield
       expect(
-        result == SortedMap(
+        result.fullState == SortedMap(
           testAddress -> SortedSet(signedIndefiniteTokenLock)
         )
       ) // Should include indefinite token lock
@@ -1439,7 +1439,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       )
     } yield
       expect(
-        result == SortedMap(
+        result.fullState == SortedMap(
           testAddress -> SortedSet(signedAcceptedTokenLock)
         )
       ) // Should only include accepted token lock, expired token lock is filtered out
@@ -1532,7 +1532,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       )
     } yield
       expect(
-        result == SortedMap(
+        result.fullState == SortedMap(
           testAddress -> SortedSet(signedNewTokenLock, signedActiveTokenLock)
         )
       ) // Should include new and active token locks, but not expired or unlocked ones
@@ -1557,7 +1557,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
     )
 
     (expect(result.isRight) &&
-      expect(result.toOption.get.isEmpty)).pure[IO]
+      expect(result.toOption.get._1.isEmpty)).pure[IO]
   }
 
   test("updateGlobalBalancesByTokenLocks - should deduct amounts for new token locks") { res =>
@@ -1598,7 +1598,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       expectedBalance = Balance(890L) // 1000 - 100 - 10
     } yield
       expect(result.isRight) &&
-        expect(result.toOption.get(testAddress) == expectedBalance)
+        expect(result.toOption.flatMap(_._1.get(testAddress)).get == expectedBalance)
   }
 
   test("updateGlobalBalancesByTokenLocks - should add back amounts for expired token locks") { res =>
@@ -1639,7 +1639,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       expectedBalance = Balance(600L) // 500 + 100 (only amount, not fee)
     } yield
       expect(result.isRight) &&
-        expect(result.toOption.get(testAddress) == expectedBalance)
+        expect(result.toOption.flatMap(_._1.get(testAddress)).get == expectedBalance)
   }
 
   test("updateGlobalBalancesByTokenLocks - should add amounts for generated token unlocks") { res =>
@@ -1671,7 +1671,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       expectedBalance = Balance(600L) // 500 + 100
     } yield
       expect(result.isRight) &&
-        expect(result.toOption.get(testAddress) == expectedBalance)
+        expect(result.toOption.flatMap(_._1.get(testAddress)).get == expectedBalance)
   }
 
   test("updateGlobalBalancesByTokenLocks - should handle balance arithmetic errors") { res =>
@@ -1767,7 +1767,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       expectedBalance = Balance(1140L)
     } yield
       expect(result.isRight) &&
-        expect(result.toOption.get(testAddress) == expectedBalance)
+        expect(result.toOption.flatMap(_._1.get(testAddress)).get == expectedBalance)
   }
 
   test("updateGlobalBalancesByTokenLocks - should handle multiple addresses") { res =>
@@ -1828,8 +1828,8 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       expectedBalance2 = Balance(700L) // 500 + 200
     } yield
       expect(result.isRight) &&
-        expect(result.toOption.get(address1) == expectedBalance1) &&
-        expect(result.toOption.get(address2) == expectedBalance2)
+        expect(result.toOption.flatMap(_._1.get(address1)).get == expectedBalance1) &&
+        expect(result.toOption.flatMap(_._1.get(address2)).get == expectedBalance2)
   }
 
   test("updateGlobalBalancesByTokenLocks - should handle token locks without unlock epoch") { res =>
@@ -1871,7 +1871,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       expectedBalance = Balance(890L) // 1000 - 100 - 10
     } yield
       expect(result.isRight) &&
-        expect(result.toOption.get(testAddress) == expectedBalance)
+        expect(result.toOption.flatMap(_._1.get(testAddress)).get == expectedBalance)
   }
 
   test("updateGlobalBalancesByTokenLocks - should handle multiple token unlocks for same address") { res =>
@@ -1907,7 +1907,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       expectedBalance = Balance(850L) // 500 + 100 + 200 + 50
     } yield
       expect(result.isRight) &&
-        expect(result.toOption.get(testAddress) == expectedBalance)
+        expect(result.toOption.flatMap(_._1.get(testAddress)).get == expectedBalance)
   }
 
 }

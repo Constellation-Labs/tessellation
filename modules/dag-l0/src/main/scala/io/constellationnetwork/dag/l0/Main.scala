@@ -229,9 +229,6 @@ object Main
               case (snapshotInfo, snapshot) =>
                 for {
                   hashedSnapshot <- hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[IO])
-                  kvPairs <- snapshotInfo.allStateEntries[IO]
-                  _ <- sharedStorages.mptStore.sync(kvPairs)
-
                   result <- services.consensus.manager.startFacilitatingAfterRollback(
                     snapshot.ordinal,
                     GlobalConsensusOutcome(
@@ -319,10 +316,9 @@ object Main
                                   sharedStorages.lastGlobalSnapshot,
                                   programs.download,
                                   hashedSnapshot,
-                                  hashedGenesis.info
+                                  hashedGenesis.info,
+                                  sharedStorages.mptStore
                                 )
-                                kvPairs <- GlobalSnapshotInfoV1.toGlobalSnapshotInfo(hashedGenesis.info).allStateEntries[IO]
-                                _ <- sharedStorages.mptStore.sync(kvPairs)
                                 _ <- services.consensus.manager
                                   .startFacilitatingAfterRollback(
                                     signedFirstIncrementalSnapshot.ordinal,
