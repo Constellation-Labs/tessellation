@@ -78,15 +78,17 @@ object Main
             None
           )
       }
-      storages <- Storages
-        .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
-          sharedStorages,
-          method.l0Peer,
-          validators.transactionContextual,
-          validators.allowSpendContextual,
-          validators.tokenLockContextual
-        )
-        .asResource
+      storages <- hasherSelector.withCurrent { implicit hasher =>
+        Storages
+          .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+            sharedStorages,
+            method.l0Peer,
+            validators.transactionContextual,
+            validators.allowSpendContextual,
+            validators.tokenLockContextual
+          )
+          .asResource
+      }
       p2pClient = P2PClient.make[IO](
         sharedConfig,
         sharedP2PClient,

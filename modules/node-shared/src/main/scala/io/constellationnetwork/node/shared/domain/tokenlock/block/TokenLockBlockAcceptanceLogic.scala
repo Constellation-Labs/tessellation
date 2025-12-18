@@ -4,12 +4,15 @@ import cats.data.{EitherT, NonEmptyList}
 import cats.effect.Async
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedMap
+
 import io.constellationnetwork.node.shared.domain.tokenlock.TokenLockChainValidator.TokenLockNel
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance, BalanceArithmeticError}
 import io.constellationnetwork.schema.tokenLock.{TokenLockBlock, TokenLockReference}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
+import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedSetSyntax}
 
 trait TokenLockBlockAcceptanceLogic[F[_]] {
   def acceptBlock(
@@ -109,12 +112,19 @@ object TokenLockBlockAcceptanceLogic {
         contextUpdate: TokenLockBlockAcceptanceContextUpdate
       ): EitherT[F, TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate] = {
         val minusFn: Amount => Balance => Either[BalanceArithmeticError, Balance] = a => _.minus(a)
+        val plusFn: Amount => Balance => Either[BalanceArithmeticError, Balance] = a => _.plus(a)
 
         val sortedTxs = block.tokenLocks.toNonEmptyList
         val minusAmountOps = sortedTxs.groupMap(_.source)(tx => minusFn(tx.amount))
         val minusFeeOps = sortedTxs.groupMap(_.source)(tx => minusFn(tx.fee))
+        val plusReplacedAmountOps = context.getToBeReplacedHashedTokenLocks
+          .groupMap(_.source)(tx => plusFn(tx.amount))
+          .filter(_._2.nonEmpty)
+          .view
+          .mapValues(NonEmptyList.fromListUnsafe)
+          .toSortedMap
 
-        val allOps = minusAmountOps |+| minusFeeOps
+        val allOps = plusReplacedAmountOps |+| minusAmountOps |+| minusFeeOps
 
         val balancesUpdate = allOps
           .foldLeft(contextUpdate.balances.asRight[AddressBalanceOutOfRange].toEitherT[F]) { (acc, addressAndOps) =>

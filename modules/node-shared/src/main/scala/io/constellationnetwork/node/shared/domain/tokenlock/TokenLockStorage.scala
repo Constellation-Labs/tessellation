@@ -21,8 +21,9 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockOrdinal, TokenLockReference}
-import io.constellationnetwork.security.Hashed
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.{Hashed, Hasher}
 
 import derevo.cats.eqv
 import derevo.derive
@@ -30,7 +31,7 @@ import eu.timepit.refined.types.numeric.NonNegLong
 import io.chrisdavenport.mapref.MapRef
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-class TokenLockStorage[F[_]: Async](
+class TokenLockStorage[F[_]: Async: Hasher](
   tokenLocksR: MapRef[F, Address, Option[SortedMap[TokenLockOrdinal, StoredTokenLock]]],
   initialTokenLockReference: TokenLockReference,
   contextualTokenLockValidator: ContextualTokenLockValidator
@@ -136,27 +137,39 @@ class TokenLockStorage[F[_]: Async](
     tokenLock: Hashed[TokenLock],
     lastSnapshotOrdinal: SnapshotOrdinal,
     lastEpochProgress: EpochProgress,
-    sourceBalance: Balance
+    sourceBalance: Balance,
+    lastActiveTokenLocks: SortedSet[Signed[TokenLock]]
   ): F[Either[NonEmptyList[ContextualTokenLockValidationError], Hash]] =
-    tokenLocksR(tokenLock.source).modify { maybeStored =>
-      val stored = maybeStored.getOrElse(SortedMap.empty[TokenLockOrdinal, StoredTokenLock])
-      val lastProcessedTokenLock = getLastProcessedTokenLock(stored).getOrElse(getInitialTx)
-      val validationContext =
-        TokenLockValidatorContext(maybeStored, sourceBalance, lastProcessedTokenLock.ref, lastSnapshotOrdinal, lastEpochProgress)
-      val validation =
-        contextualTokenLockValidator.validate(tokenLock, validationContext)
+    for {
+      hashedActiveTokenLocks <-
+        if (tokenLock.replaceTokenLockRef.nonEmpty) lastActiveTokenLocks.toList.traverse(_.toHashed[F]) else List.empty.pure[F]
+      result <- tokenLocksR(tokenLock.source).modify { maybeStored =>
+        val stored = maybeStored.getOrElse(SortedMap.empty[TokenLockOrdinal, StoredTokenLock])
+        val lastProcessedTokenLock = getLastProcessedTokenLock(stored).getOrElse(getInitialTx)
+        val validationContext =
+          TokenLockValidatorContext(
+            maybeStored,
+            sourceBalance,
+            lastProcessedTokenLock.ref,
+            lastSnapshotOrdinal,
+            lastEpochProgress,
+            hashedActiveTokenLocks
+          )
+        val validation =
+          contextualTokenLockValidator.validate(tokenLock, validationContext)
 
-      validation match {
-        case Validated.Valid(NoConflict(tx)) =>
-          val updated = stored.updated(tokenLock.ordinal, WaitingTokenLock(tx))
-          (updated.some, tokenLock.hash.asRight[NonEmptyList[ContextualTokenLockValidationError]])
-        case Validated.Valid(CanOverride(tx)) =>
-          val updated = stored.updated(tokenLock.ordinal, WaitingTokenLock(tx)).filterNot { case (ordinal, _) => ordinal > tx.ordinal }
-          (updated.some, tokenLock.hash.asRight[NonEmptyList[ContextualTokenLockValidationError]])
-        case Validated.Invalid(e) =>
-          (maybeStored, e.toNonEmptyList.asLeft[Hash])
+        validation match {
+          case Validated.Valid(NoConflict(tx)) =>
+            val updated = stored.updated(tokenLock.ordinal, WaitingTokenLock(tx))
+            (updated.some, tokenLock.hash.asRight[NonEmptyList[ContextualTokenLockValidationError]])
+          case Validated.Valid(CanOverride(tx)) =>
+            val updated = stored.updated(tokenLock.ordinal, WaitingTokenLock(tx)).filterNot { case (ordinal, _) => ordinal > tx.ordinal }
+            (updated.some, tokenLock.hash.asRight[NonEmptyList[ContextualTokenLockValidationError]])
+          case Validated.Invalid(e) =>
+            (maybeStored, e.toNonEmptyList.asLeft[Hash])
+        }
       }
-    }
+    } yield result
 
   def putBack(tokenLocks: Set[Hashed[TokenLock]]): F[Unit] =
     tokenLocks
@@ -249,7 +262,7 @@ class TokenLockStorage[F[_]: Async](
 }
 
 object TokenLockStorage {
-  def make[F[_]: Async](
+  def make[F[_]: Async: Hasher](
     initialTokenLockReference: TokenLockReference,
     contextualTokenLockValidator: ContextualTokenLockValidator
   ): F[TokenLockStorage[F]] =
@@ -262,7 +275,7 @@ object TokenLockStorage {
         contextualTokenLockValidator
       )
 
-  def make[F[_]: Async](
+  def make[F[_]: Async: Hasher](
     tokenLocks: Map[Address, SortedMap[TokenLockOrdinal, StoredTokenLock]],
     initialTokenLockReference: TokenLockReference,
     contextualTokenLockValidator: ContextualTokenLockValidator

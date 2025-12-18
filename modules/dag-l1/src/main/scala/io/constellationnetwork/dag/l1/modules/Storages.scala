@@ -29,10 +29,11 @@ import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StatePro
 import io.constellationnetwork.schema.swap.AllowSpendReference
 import io.constellationnetwork.schema.tokenLock.TokenLockReference
 import io.constellationnetwork.schema.transaction.TransactionReference
+import io.constellationnetwork.security.Hasher
 
 object Storages {
 
-  def make[F[_]: Async: Parallel: Random, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]](
+  def make[F[_]: Async: Parallel: Hasher: Random, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]](
     sharedStorages: SharedStorages[F],
     l0Peer: L0Peer,
     contextualTransactionValidator: ContextualTransactionValidator,

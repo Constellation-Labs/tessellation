@@ -7,10 +7,11 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.ext.cats.syntax.validated._
-import io.constellationnetwork.node.shared.config.types.{AddressesConfig, DelegatedStakingConfig}
+import io.constellationnetwork.node.shared.config.types.AddressesConfig
 import io.constellationnetwork.node.shared.domain.tokenlock.TokenLockValidator.TokenLockValidationErrorOr
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.swap.CurrencyId
 import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockLimitsConfig}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
@@ -67,14 +68,17 @@ object TokenLockValidator {
       )(implicit hasher: Hasher[F]): F[TokenLockValidationErrorOr[Signed[TokenLock]]] =
         for {
           signatureValidations <- validate(signedTokenLock, lastGlobalSnapshotEpochProgress)
+          currentTokenLocks = maybeCurrentTokenLocks.getOrElse(SortedMap.empty[Address, SortedSet[Signed[TokenLock]]])
           tokenLocksLimitV = validateTokenLocksLimit(
             signedTokenLock,
             tokenLockLimitsConfig,
-            maybeCurrentTokenLocks.getOrElse(SortedMap.empty)
+            currentTokenLocks
           )
+          replacementV = validateReplaceTokenLockRef(signedTokenLock, currentTokenLocks)
         } yield
           signatureValidations
             .productR(tokenLocksLimitV)
+            .productR(replacementV)
 
       private def validateSourceAddressSignature(
         signedTx: Signed[TokenLock]
@@ -111,9 +115,22 @@ object TokenLockValidator {
 
       private def validateAddressIsNotLocked(signedTx: Signed[TokenLock]): TokenLockValidationErrorOr[Signed[TokenLock]] =
         if (lockedAddresses.contains(signedTx.value.source))
-          AddressLocked(signedTx.value.source).invalidNec[Signed[TokenLock]]
+          AddressLocked(signedTx.value.source).invalidNec
         else
-          signedTx.validNec[TokenLockValidationError]
+          signedTx.validNec
+
+      private def validateReplaceTokenLockRef(
+        tokenLock: Signed[TokenLock],
+        currentTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]]
+      ): TokenLockValidationErrorOr[Signed[TokenLock]] =
+        tokenLock.replaceTokenLockRef match {
+          case None => tokenLock.validNec[TokenLockValidationError]
+          case Some(ref) =>
+            if (tokenLock.currencyId.nonEmpty)
+              (ReplacementIsNotSupported(tokenLock.currencyId): TokenLockValidationError).invalidNec[Signed[TokenLock]]
+            else
+              tokenLock.validNec[TokenLockValidationError]
+        }
 
       private val lockedAddresses = cfg.locked
     }
@@ -126,6 +143,7 @@ object TokenLockValidator {
   case object TokenLockAmountBelowMinimum extends TokenLockValidationError
   case object TokenLockExpired extends TokenLockValidationError
   case class AddressLocked(address: Address) extends TokenLockValidationError
+  case class ReplacementIsNotSupported(currencyId: Option[CurrencyId]) extends TokenLockValidationError
   type TokenLockValidationErrorOr[A] = ValidatedNec[TokenLockValidationError, A]
 
 }

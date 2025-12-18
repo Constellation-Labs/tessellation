@@ -130,7 +130,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
         activeTokenLocks = SortedMap(
           testAddress -> SortedSet(signedExistingTokenLock)
         ).some,
-        balances = SortedMap(testAddress -> Balance(10000L))
+        balances = SortedMap(testAddress -> Balance(5000L))
       )
 
       result <- acceptanceManager.acceptReplacementTokenLocks(List(signedTokenLock), snapshotInfo)
@@ -230,7 +230,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
         activeTokenLocks = SortedMap(
           testAddress -> SortedSet(signedExistingTokenLock)
         ).some,
-        balances = SortedMap(testAddress -> Balance(10000L))
+        balances = SortedMap(testAddress -> Balance(5000L))
       )
 
       mixedTokenLocks = List(signedTokenLockWithoutReplacement, signedReplacementTokenLock)
@@ -371,7 +371,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
         activeTokenLocks = SortedMap(
           testAddress -> SortedSet(signedExistingTokenLock)
         ).some,
-        balances = SortedMap(testAddress -> Balance(10000L))
+        balances = SortedMap(testAddress -> Balance(5000L))
       )
 
       result <- acceptanceManager.acceptReplacementTokenLocks(List(signedReplacementTokenLock), snapshotInfo)
@@ -489,7 +489,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
         activeTokenLocks = SortedMap(
           testAddress -> SortedSet(signedExistingTokenLockEmptyCurrency, signedExistingTokenLockWithCurrency)
         ).some,
-        balances = SortedMap(testAddress -> Balance(10000L))
+        balances = SortedMap(testAddress -> Balance(5000L))
       )
 
       result <- acceptanceManager.acceptReplacementTokenLocks(
