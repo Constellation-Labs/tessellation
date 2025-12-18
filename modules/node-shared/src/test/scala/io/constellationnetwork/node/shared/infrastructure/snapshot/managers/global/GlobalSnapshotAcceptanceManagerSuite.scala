@@ -10,7 +10,7 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.Mocks._
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.balance.Amount
+import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
@@ -19,6 +19,7 @@ import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.key.ops.PublicKeyOps
+import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.StateChannelValidationType
 
 import eu.timepit.refined.auto._
@@ -1282,4 +1283,680 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       )
   }
 
+  test("should reject token lock replacement with amount too low") { res =>
+    implicit val (h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address1 = keyPair.getPublic.toAddress
+
+      // Create original token lock
+      originalTokenLock <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(30L),
+        replaceTokenLockRef = none
+      )
+      originalHashedTokenLock <- originalTokenLock.toHashed
+
+      // Create replacement token lock with lower amount (should be rejected)
+      replacementTokenLock <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(20L),
+        replaceTokenLockRef = originalHashedTokenLock.hash.some
+      )
+
+      // Setup context with existing token lock
+      existingTokenLocks = SortedMap(
+        address1 -> SortedSet(originalTokenLock)
+      )
+
+      lastSnapshotInfo = mkGlobalSnapshotInfo(
+        activeTokenLocks = existingTokenLocks.some
+      )
+
+      // Create token lock block with replacement token lock
+      tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock))
+
+      manager <- mkManager()
+      result <- manager.accept(
+        ordinal = SnapshotOrdinal(2L),
+        epochProgress = EpochProgress(10L),
+        blocksForAcceptance = List.empty,
+        allowSpendBlocksForAcceptance = List.empty,
+        tokenLockBlocksForAcceptance = List(tokenLockBlock),
+        scEvents = List.empty,
+        unpEvents = List.empty,
+        cdsEvents = List.empty,
+        wdsEvents = List.empty,
+        cncEvents = List.empty,
+        wncEvents = List.empty,
+        lastSnapshotContext = lastSnapshotInfo,
+        lastActiveTips = SortedSet.empty,
+        lastDeprecatedTips = SortedSet.empty,
+        calculateRewardsFn = delegatedRewardsFunction(lastSnapshotInfo),
+        validationType = StateChannelValidationType.Full,
+        getGlobalSnapshotByOrdinal = _ => None.pure[IO]
+      )
+
+      (_, _, tokenLockResult, _, _, _, _, _, newSnapshotInfo, _, _, _, _, _) = result
+    } yield
+      expect.all(
+        // Token lock replacement should be rejected due to lower amount
+        // Original token lock should still be active
+        newSnapshotInfo.activeTokenLocks.isDefined,
+        newSnapshotInfo.activeTokenLocks.get.get(address1) == SortedSet(originalTokenLock).some,
+        // but the token lock block should be accepted
+        tokenLockResult.accepted.nonEmpty,
+        tokenLockResult.notAccepted.isEmpty
+      )
+  }
+
+  test("should reject token lock replacement with amount equal to existing") { res =>
+    implicit val (h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address1 = keyPair.getPublic.toAddress
+
+      // Create original token lock
+      originalTokenLock <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(30L),
+        replaceTokenLockRef = none
+      )
+      originalHashedTokenLock <- originalTokenLock.toHashed
+
+      // Create replacement token lock with equal amount (should be rejected)
+      replacementTokenLock <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(30L),
+        replaceTokenLockRef = originalHashedTokenLock.hash.some
+      )
+
+      // Setup context with existing token lock
+      existingTokenLocks = SortedMap(
+        address1 -> SortedSet(originalTokenLock)
+      )
+
+      lastSnapshotInfo = mkGlobalSnapshotInfo(
+        activeTokenLocks = existingTokenLocks.some
+      )
+
+      // Create token lock block with replacement token lock
+      tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock))
+
+      manager <- mkManager()
+      result <- manager.accept(
+        ordinal = SnapshotOrdinal(2L),
+        epochProgress = EpochProgress(10L),
+        blocksForAcceptance = List.empty,
+        allowSpendBlocksForAcceptance = List.empty,
+        tokenLockBlocksForAcceptance = List(tokenLockBlock),
+        scEvents = List.empty,
+        unpEvents = List.empty,
+        cdsEvents = List.empty,
+        wdsEvents = List.empty,
+        cncEvents = List.empty,
+        wncEvents = List.empty,
+        lastSnapshotContext = lastSnapshotInfo,
+        lastActiveTips = SortedSet.empty,
+        lastDeprecatedTips = SortedSet.empty,
+        calculateRewardsFn = delegatedRewardsFunction(lastSnapshotInfo),
+        validationType = StateChannelValidationType.Full,
+        getGlobalSnapshotByOrdinal = _ => None.pure[IO]
+      )
+
+      (_, _, tokenLockResult, _, _, _, _, _, newSnapshotInfo, _, _, _, _, _) = result
+    } yield
+      expect.all(
+        // Token lock replacement should be rejected due to equal amount
+        // Original token lock should still be active
+        newSnapshotInfo.activeTokenLocks.isDefined,
+        newSnapshotInfo.activeTokenLocks.get.get(address1) == SortedSet(originalTokenLock).some,
+        // but the token lock block should be accepted
+        tokenLockResult.accepted.nonEmpty,
+        tokenLockResult.notAccepted.isEmpty
+      )
+  }
+
+  test("should reject token lock replacement when reference not found in transactions") { res =>
+    implicit val (h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address = keyPair.getPublic.toAddress
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      address1 = keyPair1.getPublic.toAddress
+
+      // Create original token lock
+      originalTokenLock <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(20L),
+        replaceTokenLockRef = none
+      )
+      originalHashedTokenLock <- originalTokenLock.toHashed
+
+      // Create replacement token lock
+      replacementTokenLock <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(30L),
+        replaceTokenLockRef = originalHashedTokenLock.hash.some
+      )
+
+      anotherTokenLock <- mkTokenLock(
+        keyPair1,
+        TokenLockAmount(100L),
+        replaceTokenLockRef = none
+      )
+      anotherHashedTokenLock <- anotherTokenLock.toHashed
+
+      // No originalTokenLock provided, so replacement reference won't be found
+      lastSnapshotInfo = mkGlobalSnapshotInfo(
+        activeTokenLocks = SortedMap(address1 -> SortedSet(anotherTokenLock)).some
+      )
+
+      // Create token lock block with replacement token lock
+      tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock))
+
+      manager <- mkManager()
+      result <- manager.accept(
+        ordinal = SnapshotOrdinal(2L),
+        epochProgress = EpochProgress(10L),
+        blocksForAcceptance = List.empty,
+        allowSpendBlocksForAcceptance = List.empty,
+        tokenLockBlocksForAcceptance = List(tokenLockBlock),
+        scEvents = List.empty,
+        unpEvents = List.empty,
+        cdsEvents = List.empty,
+        wdsEvents = List.empty,
+        cncEvents = List.empty,
+        wncEvents = List.empty,
+        lastSnapshotContext = lastSnapshotInfo,
+        lastActiveTips = SortedSet.empty,
+        lastDeprecatedTips = SortedSet.empty,
+        calculateRewardsFn = delegatedRewardsFunction(lastSnapshotInfo),
+        validationType = StateChannelValidationType.Full,
+        getGlobalSnapshotByOrdinal = _ => None.pure[IO]
+      )
+
+      (_, _, tokenLockResult, _, _, _, _, _, newSnapshotInfo, _, _, _, _, _) = result
+    } yield
+      expect.all(
+        // Token lock replacement should be rejected because reference not found
+        newSnapshotInfo.activeTokenLocks.isDefined,
+        newSnapshotInfo.activeTokenLocks.get.nonEmpty,
+        newSnapshotInfo.activeTokenLocks.get.get(address1) == SortedSet(anotherTokenLock).some,
+        !newSnapshotInfo.activeTokenLocks.get.contains(address),
+        // but the token lock block should be accepted
+        tokenLockResult.accepted.nonEmpty,
+        tokenLockResult.notAccepted.isEmpty
+      )
+  }
+
+  test("should reject token lock replacement when reference not found in empty transactions") { res =>
+    implicit val (h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address1 = keyPair.getPublic.toAddress
+
+      // Create original token lock
+      originalTokenLock <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(20L),
+        replaceTokenLockRef = none
+      )
+      originalHashedTokenLock <- originalTokenLock.toHashed
+
+      // Create replacement token lock
+      replacementTokenLock <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(30L),
+        replaceTokenLockRef = originalHashedTokenLock.hash.some
+      )
+
+      // Empty sourceTokenLocks
+      lastSnapshotInfo = mkGlobalSnapshotInfo(
+        activeTokenLocks = SortedMap.empty[Address, SortedSet[Signed[TokenLock]]].some
+      )
+
+      // Create token lock block with replacement token lock
+      tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock))
+
+      manager <- mkManager()
+      result <- manager.accept(
+        ordinal = SnapshotOrdinal(2L),
+        epochProgress = EpochProgress(10L),
+        blocksForAcceptance = List.empty,
+        allowSpendBlocksForAcceptance = List.empty,
+        tokenLockBlocksForAcceptance = List(tokenLockBlock),
+        scEvents = List.empty,
+        unpEvents = List.empty,
+        cdsEvents = List.empty,
+        wdsEvents = List.empty,
+        cncEvents = List.empty,
+        wncEvents = List.empty,
+        lastSnapshotContext = lastSnapshotInfo,
+        lastActiveTips = SortedSet.empty,
+        lastDeprecatedTips = SortedSet.empty,
+        calculateRewardsFn = delegatedRewardsFunction(lastSnapshotInfo),
+        validationType = StateChannelValidationType.Full,
+        getGlobalSnapshotByOrdinal = _ => None.pure[IO]
+      )
+
+      (_, _, tokenLockResult, _, _, _, _, _, newSnapshotInfo, _, _, _, _, _) = result
+    } yield
+      expect.all(
+        // Token lock replacement should be rejected because reference not found in empty transactions
+        newSnapshotInfo.activeTokenLocks.isDefined,
+        newSnapshotInfo.activeTokenLocks.get.isEmpty,
+        // but the token lock block should be accepted
+        tokenLockResult.accepted.nonEmpty,
+        tokenLockResult.notAccepted.isEmpty
+      )
+  }
+
+  test("should reject token lock replacement with correct reference but wrong source address") { res =>
+    implicit val (h, sp) = res
+
+    for {
+      originalKeyPair <- KeyPairGenerator.makeKeyPair[IO]
+      differentKeyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address1 = originalKeyPair.getPublic.toAddress
+      address2 = differentKeyPair.getPublic.toAddress
+
+      // Create original token lock with original key pair
+      originalTokenLock <- mkTokenLock(
+        originalKeyPair,
+        TokenLockAmount(20L),
+        replaceTokenLockRef = none
+      )
+      originalHashedTokenLock <- originalTokenLock.toHashed
+
+      // Try to replace with a different key pair (different source address)
+      replacementTokenLock <- mkTokenLock(
+        differentKeyPair,
+        TokenLockAmount(30L),
+        replaceTokenLockRef = originalHashedTokenLock.hash.some
+      )
+
+      // Setup context with existing token lock
+      existingTokenLocks = SortedMap(
+        address1 -> SortedSet(originalTokenLock)
+      )
+
+      lastSnapshotInfo = mkGlobalSnapshotInfo(
+        activeTokenLocks = existingTokenLocks.some
+      )
+
+      // Create token lock block with replacement token lock
+      tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock))
+
+      manager <- mkManager()
+      result <- manager.accept(
+        ordinal = SnapshotOrdinal(2L),
+        epochProgress = EpochProgress(10L),
+        blocksForAcceptance = List.empty,
+        allowSpendBlocksForAcceptance = List.empty,
+        tokenLockBlocksForAcceptance = List(tokenLockBlock),
+        scEvents = List.empty,
+        unpEvents = List.empty,
+        cdsEvents = List.empty,
+        wdsEvents = List.empty,
+        cncEvents = List.empty,
+        wncEvents = List.empty,
+        lastSnapshotContext = lastSnapshotInfo,
+        lastActiveTips = SortedSet.empty,
+        lastDeprecatedTips = SortedSet.empty,
+        calculateRewardsFn = delegatedRewardsFunction(lastSnapshotInfo),
+        validationType = StateChannelValidationType.Full,
+        getGlobalSnapshotByOrdinal = _ => None.pure[IO]
+      )
+
+      (_, _, tokenLockResult, _, _, _, _, _, newSnapshotInfo, _, _, _, _, _) = result
+    } yield
+      expect.all(
+        // Token lock replacement should be rejected because source address doesn't match
+        // Original token lock should still be active
+        newSnapshotInfo.activeTokenLocks.isDefined,
+        newSnapshotInfo.activeTokenLocks.get.get(address1) == SortedSet(originalTokenLock).some,
+        !newSnapshotInfo.activeTokenLocks.get.contains(address2),
+        // but the token lock block should be accepted
+        tokenLockResult.accepted.nonEmpty,
+        tokenLockResult.notAccepted.isEmpty
+      )
+  }
+
+  test("should accept one token lock replacement out of multiple valid blocks") { res =>
+    implicit val (h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address1 = keyPair.getPublic.toAddress
+
+      // Create original token lock
+      originalTokenLock <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(100L),
+        replaceTokenLockRef = none
+      )
+      originalHashedTokenLock <- originalTokenLock.toHashed
+
+      // Create multiple valid replacement token locks (all with higher amounts)
+      replacementTokenLock1 <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(150L),
+        replaceTokenLockRef = originalHashedTokenLock.hash.some
+      )
+      replacementTokenLock2 <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(200L),
+        replaceTokenLockRef = originalHashedTokenLock.hash.some
+      )
+      replacementTokenLock3 <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(250L),
+        replaceTokenLockRef = originalHashedTokenLock.hash.some
+      )
+
+      // Setup context with existing token lock
+      existingTokenLocks = SortedMap(
+        address1 -> SortedSet(originalTokenLock)
+      )
+
+      lastSnapshotInfo = mkGlobalSnapshotInfo(
+        activeTokenLocks = existingTokenLocks.some
+      )
+
+      // Create token lock blocks with all replacement token locks
+      tokenLockBlock1 <- mkTokenLockBlock(List(replacementTokenLock1))
+      tokenLockBlock2 <- mkTokenLockBlock(List(replacementTokenLock2))
+      tokenLockBlock3 <- mkTokenLockBlock(List(replacementTokenLock3))
+
+      manager <- mkManager()
+      result <- manager.accept(
+        ordinal = SnapshotOrdinal(2L),
+        epochProgress = EpochProgress(10L),
+        blocksForAcceptance = List.empty,
+        allowSpendBlocksForAcceptance = List.empty,
+        tokenLockBlocksForAcceptance = List(tokenLockBlock1, tokenLockBlock2, tokenLockBlock3),
+        scEvents = List.empty,
+        unpEvents = List.empty,
+        cdsEvents = List.empty,
+        wdsEvents = List.empty,
+        cncEvents = List.empty,
+        wncEvents = List.empty,
+        lastSnapshotContext = lastSnapshotInfo,
+        lastActiveTips = SortedSet.empty,
+        lastDeprecatedTips = SortedSet.empty,
+        calculateRewardsFn = delegatedRewardsFunction(lastSnapshotInfo),
+        validationType = StateChannelValidationType.Full,
+        getGlobalSnapshotByOrdinal = _ => None.pure[IO]
+      )
+
+      (_, _, tokenLockResult, _, _, _, _, _, newSnapshotInfo, _, _, _, _, _) = result
+      // Determine which replacement was accepted
+      acceptedReplacements = newSnapshotInfo.activeTokenLocks.get.getOrElse(address1, SortedSet.empty[Signed[TokenLock]])
+      acceptedReplacement = acceptedReplacements.headOption
+    } yield
+      expect.all(
+        // Exactly one replacement should be accepted
+        acceptedReplacements.size == 1,
+        acceptedReplacement.isDefined,
+        // The accepted replacement should have a higher amount than the original
+        acceptedReplacement.exists(_.value.amount.value.value > originalTokenLock.amount.value.value),
+        // The original token lock should be replaced by exactly one replacement
+        newSnapshotInfo.activeTokenLocks.isDefined,
+        newSnapshotInfo.activeTokenLocks.get.contains(address1),
+        newSnapshotInfo.activeTokenLocks.get.get(address1).map(_.size) == 1.some,
+        // The replacement in activeTokenLocks should match one of the submitted replacements
+        newSnapshotInfo.activeTokenLocks.get.get(address1).exists { locks =>
+          locks.exists(lock =>
+            lock.value.amount.value.value > originalTokenLock.amount.value.value &&
+              lock.value.replaceTokenLockRef.contains(originalHashedTokenLock.hash)
+          )
+        },
+        // The original token lock should not be in activeTokenLocks
+        !newSnapshotInfo.activeTokenLocks.get.get(address1).exists(_.contains(originalTokenLock)),
+        // but the token lock block should be accepted
+        tokenLockResult.accepted.nonEmpty,
+        tokenLockResult.notAccepted.isEmpty
+      )
+  }
+
+  test("should accept one token lock replacement out of multiple valid replacements") { res =>
+    implicit val (h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address1 = keyPair.getPublic.toAddress
+
+      // Create original token lock
+      originalTokenLock <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(100L),
+        replaceTokenLockRef = none
+      )
+      originalHashedTokenLock <- originalTokenLock.toHashed
+
+      // Create multiple valid replacement token locks (all with higher amounts)
+      replacementTokenLock1 <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(150L),
+        replaceTokenLockRef = originalHashedTokenLock.hash.some
+      )
+      replacementTokenLock2 <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(200L),
+        replaceTokenLockRef = originalHashedTokenLock.hash.some
+      )
+      replacementTokenLock3 <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(250L),
+        replaceTokenLockRef = originalHashedTokenLock.hash.some
+      )
+
+      // Setup context with existing token lock
+      existingTokenLocks = SortedMap(
+        address1 -> SortedSet(originalTokenLock)
+      )
+
+      lastSnapshotInfo = mkGlobalSnapshotInfo(
+        activeTokenLocks = existingTokenLocks.some
+      )
+
+      // Create token lock blocks with all replacement token locks
+      tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock1, replacementTokenLock2, replacementTokenLock3))
+
+      manager <- mkManager()
+      result <- manager.accept(
+        ordinal = SnapshotOrdinal(2L),
+        epochProgress = EpochProgress(10L),
+        blocksForAcceptance = List.empty,
+        allowSpendBlocksForAcceptance = List.empty,
+        tokenLockBlocksForAcceptance = List(tokenLockBlock),
+        scEvents = List.empty,
+        unpEvents = List.empty,
+        cdsEvents = List.empty,
+        wdsEvents = List.empty,
+        cncEvents = List.empty,
+        wncEvents = List.empty,
+        lastSnapshotContext = lastSnapshotInfo,
+        lastActiveTips = SortedSet.empty,
+        lastDeprecatedTips = SortedSet.empty,
+        calculateRewardsFn = delegatedRewardsFunction(lastSnapshotInfo),
+        validationType = StateChannelValidationType.Full,
+        getGlobalSnapshotByOrdinal = _ => None.pure[IO]
+      )
+
+      (_, _, tokenLockResult, _, _, _, _, _, newSnapshotInfo, _, _, _, _, _) = result
+      // Determine which replacement was accepted
+      acceptedReplacements = newSnapshotInfo.activeTokenLocks.get.getOrElse(address1, SortedSet.empty[Signed[TokenLock]])
+      acceptedReplacement = acceptedReplacements.headOption
+    } yield
+      expect.all(
+        // Exactly one replacement should be accepted
+        acceptedReplacements.size == 1,
+        acceptedReplacement.isDefined,
+        // The accepted replacement should have a higher amount than the original
+        acceptedReplacement.exists(_.value.amount.value.value > originalTokenLock.amount.value.value),
+        // The original token lock should be replaced by exactly one replacement
+        newSnapshotInfo.activeTokenLocks.isDefined,
+        newSnapshotInfo.activeTokenLocks.get.contains(address1),
+        newSnapshotInfo.activeTokenLocks.get.get(address1).map(_.size) == 1.some,
+        // The replacement in activeTokenLocks should match one of the submitted replacements
+        newSnapshotInfo.activeTokenLocks.get.get(address1).exists { locks =>
+          locks.exists(lock =>
+            lock.value.amount.value.value > originalTokenLock.amount.value.value &&
+              lock.value.replaceTokenLockRef.contains(originalHashedTokenLock.hash)
+          )
+        },
+        // The original token lock should not be in activeTokenLocks
+        !newSnapshotInfo.activeTokenLocks.get.get(address1).exists(_.contains(originalTokenLock)),
+        // but the token lock block should be accepted
+        tokenLockResult.accepted.nonEmpty,
+        tokenLockResult.notAccepted.isEmpty
+      )
+  }
+
+  test("should reject token lock replacement with correct reference but insufficient balance") { res =>
+    implicit val (h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address1 = keyPair.getPublic.toAddress
+
+      // Create original token lock with amount 50L and fee 10L (total 60L locked)
+      originalTokenLock <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(50L),
+        fee = TokenLockFee(10L),
+        replaceTokenLockRef = none
+      )
+      originalHashedTokenLock <- originalTokenLock.toHashed
+
+      // Create replacement token lock with amount 60L and fee 5L (total 65L needed)
+      replacementTokenLock <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(60L),
+        fee = TokenLockFee(5L),
+        replaceTokenLockRef = originalHashedTokenLock.hash.some
+      )
+
+      // Setup context with existing token lock
+      existingTokenLocks = SortedMap(
+        address1 -> SortedSet(originalTokenLock)
+      )
+
+      // Set balance to 4L, which is insufficient
+      // 10L + 50L < 65L, so should be rejected
+      lastSnapshotInfo = mkGlobalSnapshotInfo(
+        activeTokenLocks = existingTokenLocks.some
+      ).copy(balances = SortedMap(address1 -> Balance(10L)))
+
+      // Create token lock block with replacement token lock
+      tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock))
+
+      manager <- mkManager()
+      result <- manager.accept(
+        ordinal = SnapshotOrdinal(2L),
+        epochProgress = EpochProgress(10L),
+        blocksForAcceptance = List.empty,
+        allowSpendBlocksForAcceptance = List.empty,
+        tokenLockBlocksForAcceptance = List(tokenLockBlock),
+        scEvents = List.empty,
+        unpEvents = List.empty,
+        cdsEvents = List.empty,
+        wdsEvents = List.empty,
+        cncEvents = List.empty,
+        wncEvents = List.empty,
+        lastSnapshotContext = lastSnapshotInfo,
+        lastActiveTips = SortedSet.empty,
+        lastDeprecatedTips = SortedSet.empty,
+        calculateRewardsFn = delegatedRewardsFunction(lastSnapshotInfo),
+        validationType = StateChannelValidationType.Full,
+        getGlobalSnapshotByOrdinal = _ => None.pure[IO]
+      )
+
+      (_, _, tokenLockResult, _, _, _, _, _, newSnapshotInfo, _, _, _, _, _) = result
+    } yield
+      expect.all(
+        // Token lock replacement should be rejected due to insufficient balance
+        // Original token lock should still be active
+        newSnapshotInfo.activeTokenLocks.isDefined,
+        newSnapshotInfo.activeTokenLocks.get.get(address1) == SortedSet(originalTokenLock).some,
+        tokenLockResult.accepted.nonEmpty,
+        tokenLockResult.notAccepted.isEmpty
+      )
+  }
+
+  test("should accept token lock replacement with correct reference and sufficient balance") { res =>
+    implicit val (h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address1 = keyPair.getPublic.toAddress
+
+      // Create original token lock with amount 50L and fee 10L (total 60L locked)
+      originalTokenLock <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(50L),
+        fee = TokenLockFee(10L),
+        replaceTokenLockRef = none
+      )
+      originalHashedTokenLock <- originalTokenLock.toHashed
+
+      // Create replacement token lock with amount 60L and fee 5L (total 65L needed)
+      replacementTokenLock <- mkTokenLock(
+        keyPair,
+        TokenLockAmount(60L),
+        fee = TokenLockFee(5L),
+        replaceTokenLockRef = originalHashedTokenLock.hash.some
+      )
+
+      // Setup context with existing token lock
+      existingTokenLocks = SortedMap(
+        address1 -> SortedSet(originalTokenLock)
+      )
+
+      // Set balance to 10L, which is sufficient
+      // 20L + 50L >= 65L, so should be accepted
+      lastSnapshotInfo = mkGlobalSnapshotInfo(
+        activeTokenLocks = existingTokenLocks.some
+      ).copy(balances = SortedMap(address1 -> Balance(15L)))
+
+      // Create token lock block with replacement token lock
+      tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock))
+
+      manager <- mkManager()
+      result <- manager.accept(
+        ordinal = SnapshotOrdinal(2L),
+        epochProgress = EpochProgress(10L),
+        blocksForAcceptance = List.empty,
+        allowSpendBlocksForAcceptance = List.empty,
+        tokenLockBlocksForAcceptance = List(tokenLockBlock),
+        scEvents = List.empty,
+        unpEvents = List.empty,
+        cdsEvents = List.empty,
+        wdsEvents = List.empty,
+        cncEvents = List.empty,
+        wncEvents = List.empty,
+        lastSnapshotContext = lastSnapshotInfo,
+        lastActiveTips = SortedSet.empty,
+        lastDeprecatedTips = SortedSet.empty,
+        calculateRewardsFn = delegatedRewardsFunction(lastSnapshotInfo),
+        validationType = StateChannelValidationType.Full,
+        getGlobalSnapshotByOrdinal = _ => None.pure[IO]
+      )
+
+      (_, _, tokenLockResult, _, _, _, _, _, newSnapshotInfo, _, _, _, _, _) = result
+    } yield
+      expect.all(
+        // Token lock replacement should be accepted
+        newSnapshotInfo.activeTokenLocks.isDefined,
+        newSnapshotInfo.activeTokenLocks.get.get(address1) == SortedSet(replacementTokenLock).some,
+        tokenLockResult.accepted.nonEmpty,
+        tokenLockResult.notAccepted.isEmpty
+      )
+  }
 }

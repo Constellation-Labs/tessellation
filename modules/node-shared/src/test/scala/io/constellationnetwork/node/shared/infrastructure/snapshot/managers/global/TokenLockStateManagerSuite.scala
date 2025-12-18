@@ -129,7 +129,8 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       snapshotInfo = GlobalSnapshotInfo.empty.copy(
         activeTokenLocks = SortedMap(
           testAddress -> SortedSet(signedExistingTokenLock)
-        ).some
+        ).some,
+        balances = SortedMap(testAddress -> Balance(10000L))
       )
 
       result <- acceptanceManager.acceptReplacementTokenLocks(List(signedTokenLock), snapshotInfo)
@@ -228,7 +229,8 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       snapshotInfo = GlobalSnapshotInfo.empty.copy(
         activeTokenLocks = SortedMap(
           testAddress -> SortedSet(signedExistingTokenLock)
-        ).some
+        ).some,
+        balances = SortedMap(testAddress -> Balance(10000L))
       )
 
       mixedTokenLocks = List(signedTokenLockWithoutReplacement, signedReplacementTokenLock)
@@ -368,7 +370,8 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       snapshotInfo = GlobalSnapshotInfo.empty.copy(
         activeTokenLocks = SortedMap(
           testAddress -> SortedSet(signedExistingTokenLock)
-        ).some
+        ).some,
+        balances = SortedMap(testAddress -> Balance(10000L))
       )
 
       result <- acceptanceManager.acceptReplacementTokenLocks(List(signedReplacementTokenLock), snapshotInfo)
@@ -485,7 +488,8 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       snapshotInfo = GlobalSnapshotInfo.empty.copy(
         activeTokenLocks = SortedMap(
           testAddress -> SortedSet(signedExistingTokenLockEmptyCurrency, signedExistingTokenLockWithCurrency)
-        ).some
+        ).some,
+        balances = SortedMap(testAddress -> Balance(10000L))
       )
 
       result <- acceptanceManager.acceptReplacementTokenLocks(
@@ -493,8 +497,9 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
         snapshotInfo
       )
     } yield
-      expect(
-        result == List(signedReplacementTokenLockEmptyCurrency)
+      expect.eql(
+        result,
+        List(signedReplacementTokenLockEmptyCurrency)
       ) // Only the first should be accepted because the second tries to replace a token lock with non-empty currency ID
   }
 
@@ -1765,6 +1770,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
 
       // Expected: 1000 - 100 - 10 + 200 + 50 = 1140
       expectedBalance = Balance(1140L)
+      _ = println(result)
     } yield
       expect(result.isRight) &&
         expect(result.toOption.flatMap(_._1.get(testAddress)).get == expectedBalance)
