@@ -330,12 +330,13 @@ object Mocks {
     keyPair: KeyPair,
     amount: TokenLockAmount,
     replaceTokenLockRef: Option[Hash],
-    unlockEpoch: Option[EpochProgress] = none
+    unlockEpoch: Option[EpochProgress] = none,
+    fee: TokenLockFee = TokenLockFee(NonNegLong(0L))
   )(implicit h: Hasher[F], sp: SecurityProvider[F]): F[Signed[TokenLock]] = {
     val tokenLock = TokenLock(
       source = keyPair.getPublic.toAddress,
       amount = amount,
-      fee = TokenLockFee(NonNegLong(0L)),
+      fee = fee,
       parent = TokenLockReference.empty,
       currencyId = none,
       unlockEpoch = unlockEpoch,

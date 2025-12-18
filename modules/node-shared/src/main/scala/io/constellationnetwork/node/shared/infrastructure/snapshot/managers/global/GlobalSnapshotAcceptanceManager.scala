@@ -624,7 +624,10 @@ object GlobalSnapshotAcceptanceManager {
               )
 
             acceptedGlobalAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
-            acceptedGlobalTokenLocks = tokenLockBlockAcceptanceResult.accepted.flatMap(_.value.tokenLocks.toList)
+            acceptedGlobalTokenLocks <- tokenLockStateManager.acceptReplacementTokenLocks(
+              tokenLockBlockAcceptanceResult.accepted.flatMap(_.value.tokenLocks.toList),
+              lastSnapshotContext
+            )
 
             initialData <-
               acceptInitialData(

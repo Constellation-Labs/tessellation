@@ -124,8 +124,8 @@ object delegatedStake {
     event: Signed[UpdateDelegatedStake.Create],
     createdAt: SnapshotOrdinal,
     rewards: Amount,
-    currentTokenLockRef: Option[Hash],
-    currentAmount: Option[DelegatedStakeAmount]
+    currentTokenLockRef: Option[Hash] = None,
+    currentAmount: Option[DelegatedStakeAmount] = None
   ) {
     def amount: DelegatedStakeAmount = currentAmount.getOrElse(event.amount)
     def tokenLockRef: Hash = currentTokenLockRef.getOrElse(event.tokenLockRef)
@@ -144,8 +144,8 @@ object delegatedStake {
     rewards: Amount,
     acceptedOrdinal: SnapshotOrdinal,
     createdAt: EpochProgress,
-    currentTokenLockRef: Option[Hash],
-    currentAmount: Option[DelegatedStakeAmount]
+    currentTokenLockRef: Option[Hash] = None,
+    currentAmount: Option[DelegatedStakeAmount] = None
   ) {
     def amount: DelegatedStakeAmount = currentAmount.getOrElse(event.amount)
     def tokenLockRef: Hash = currentTokenLockRef.getOrElse(event.tokenLockRef)
