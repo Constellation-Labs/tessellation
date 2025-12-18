@@ -117,7 +117,8 @@ object Services {
             sharedServices.restart,
             sharedStorages.lastNGlobalSnapshot,
             sharedStorages.lastGlobalSnapshot,
-            storages.globalSnapshot.getHashed
+            storages.globalSnapshot.getHashed,
+            sharedStorages.mptStore
           )
       }
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](cfg.shared.addresses, storages.globalSnapshot)

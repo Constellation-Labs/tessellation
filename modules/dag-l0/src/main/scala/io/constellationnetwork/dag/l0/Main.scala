@@ -24,14 +24,17 @@ import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, 
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.GlobalSnapshotLocalFileSystemStorage
 import io.constellationnetwork.node.shared.resources.MkHttpServer
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.semver.TessellationVersion
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 
 import com.monovore.decline.Opts
@@ -111,7 +114,8 @@ object Main
         sharedServices.globalSnapshotContextFns,
         storages.globalSnapshot,
         sharedStorages.lastNGlobalSnapshot,
-        sharedStorages.lastGlobalSnapshot
+        sharedStorages.lastGlobalSnapshot,
+        sharedStorages.mptStore
       )
 
       rumorHandler = RumorHandlers
@@ -225,6 +229,9 @@ object Main
               case (snapshotInfo, snapshot) =>
                 for {
                   hashedSnapshot <- hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[IO])
+                  kvPairs <- snapshotInfo.allStateEntries[IO]
+                  _ <- sharedStorages.mptStore.sync(kvPairs)
+
                   result <- services.consensus.manager.startFacilitatingAfterRollback(
                     snapshot.ordinal,
                     GlobalConsensusOutcome(
@@ -314,6 +321,8 @@ object Main
                                   hashedSnapshot,
                                   hashedGenesis.info
                                 )
+                                kvPairs <- GlobalSnapshotInfoV1.toGlobalSnapshotInfo(hashedGenesis.info).allStateEntries[IO]
+                                _ <- sharedStorages.mptStore.sync(kvPairs)
                                 _ <- services.consensus.manager
                                   .startFacilitatingAfterRollback(
                                     signedFirstIncrementalSnapshot.ordinal,

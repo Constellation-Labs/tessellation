@@ -22,8 +22,11 @@ import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Serv
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{GlobalSnapshotContextFunctions, PeerSelect}
 import io.constellationnetwork.node.shared.modules.{SharedPrograms, SharedStorages}
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.{HashSelect, HasherSelector, SecurityProvider}
+
+import io.circe.Json
 
 object Programs {
 
@@ -38,7 +41,8 @@ object Programs {
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
     globalSnapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
-    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    mptStore: MptStore[F, GlobalStateKey]
   ): Programs[F] =
     HasherSelector[F].withCurrent { implicit hasher =>
       val trustPush = TrustPush.make(storages.trust, services.gossip)
@@ -59,7 +63,8 @@ object Programs {
           peerSelect,
           lastNGlobalSnapshotStorage,
           lastGlobalSnapshotStorage,
-          storages.combinedGlobalSnapshotCheckpointStorage
+          storages.combinedGlobalSnapshotCheckpointStorage,
+          mptStore
         )
       val rollbackLoader = RollbackLoader.make(
         keyPair,

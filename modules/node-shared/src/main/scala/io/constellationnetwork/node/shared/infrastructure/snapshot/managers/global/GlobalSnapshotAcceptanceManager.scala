@@ -42,6 +42,8 @@ import io.constellationnetwork.schema.artifact._
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralRecord, PendingNodeCollateralWithdrawal, UpdateNodeCollateral}
 import io.constellationnetwork.schema.peer.PeerId
@@ -52,11 +54,13 @@ import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.mpt.producer.StatefulMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedSetSyntax}
 
 import fs2.Stream
+import io.circe.Json
 import io.circe.disjunctionCodecs._
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -137,7 +141,8 @@ object GlobalSnapshotAcceptanceManager {
     pricingUpdateValidator: PricingUpdateValidator[F],
     priceStateUpdater: PriceStateUpdater[F],
     collateral: Amount,
-    withdrawalTimeLimit: EpochProgress
+    withdrawalTimeLimit: EpochProgress,
+    mptStore: MptStore[F, GlobalStateKey]
   ): GlobalSnapshotAcceptanceManager[F] = {
     val artifactEmissionManager = ArtifactEmissionManager.make[F]()
     val tipUsageManager = TipUsageManager.make[F]()
@@ -1006,7 +1011,8 @@ object GlobalSnapshotAcceptanceManager {
             updatedAcceptedMetagraphSyncData
           )
 
-          stateProof <- gsi.stateProof[F](ordinal)
+          _ <- mptStore.syncFromGlobalSnapshotInfo(gsi)
+          stateProof <- gsi.stateProof(mptStore.underlying)
 
           (expiredAllowSpends, expiredTokenLocks) = (
             allowSpendStateManager.filterExpiredAllowSpends(

@@ -11,7 +11,7 @@ import cats.syntax.all._
 import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.env.AppEnvironment
-import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
@@ -163,7 +163,8 @@ object SharedServices {
         validators.pricingUpdateValidator,
         priceStateUpdater,
         collateral.amount,
-        cfg.delegatedStaking.withdrawalTimeLimit.getOrElse(cfg.environment, EpochProgress.MinValue)
+        cfg.delegatedStaking.withdrawalTimeLimit.getOrElse(cfg.environment, EpochProgress.MinValue),
+        storages.mptStore
       )
       globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(
         globalSnapshotAcceptanceManager,

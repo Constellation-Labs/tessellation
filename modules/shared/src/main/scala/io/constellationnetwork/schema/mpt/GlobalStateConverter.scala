@@ -7,10 +7,17 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
+import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.schema.GlobalSnapshotInfo
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
-import io.constellationnetwork.schema.swap.AllowSpend
+import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, PendingDelegatedStakeWithdrawal}
+import io.constellationnetwork.schema.mpt.PartitionNamespace.AddressNamespace
+import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralRecord, PendingNodeCollateralWithdrawal}
+import io.constellationnetwork.schema.snapshot.MetagraphSyncDataInfo
+import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendReference}
+import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockReference}
+import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.mpt.{MerklePatriciaTrie, MptRoot}
@@ -152,6 +159,98 @@ object GlobalStateConverter {
             )
           _ <- Async[F].cede
         } yield mptRoot
+    }
+
+    implicit class MptStoreGlobalSnapshotOps[F[_]: Async: Parallel: Hasher](
+      val store: MptStore[F, GlobalStateKey]
+    ) {
+      def syncFromGlobalSnapshotInfo(info: GlobalSnapshotInfo): F[Unit] =
+        info.allStateEntries[F].flatMap(store.sync[Json])
+
+      def getBalance(address: Address): F[Option[Balance]] =
+        store
+          .get[Balance](GlobalStateKey.hypergraph(GlobalStateFieldId.Balances, address))
+
+      def getBalances(addresses: List[Address]): F[Map[Address, Balance]] = {
+        val keys = addresses.map(addr => GlobalStateKey.hypergraph(GlobalStateFieldId.Balances, addr))
+        store.getMany[Balance](keys).map { results =>
+          results.flatMap {
+            case (key, balance) =>
+              key.userNamespace match {
+                case AddressNamespace(addr) => Some(addr -> balance)
+                case _                      => None
+              }
+          }
+        }
+      }
+
+      def getTxRef(address: Address): F[Option[TransactionReference]] =
+        store
+          .get[TransactionReference](GlobalStateKey.hypergraph(GlobalStateFieldId.LastTxRefs, address))
+
+      def getStateChannelHash(metagraphAddress: Address): F[Option[Hash]] =
+        store
+          .get[Hash](GlobalStateKey.metagraph(metagraphAddress, GlobalStateFieldId.LastStateChannelSnapshotHashes))
+
+      def getAllowSpendRef(address: Address): F[Option[AllowSpendReference]] =
+        store
+          .get[AllowSpendReference](GlobalStateKey.hypergraph(GlobalStateFieldId.LastAllowSpendRefs, address))
+
+      def getActiveAllowSpends(metagraphId: Option[Address], address: Address): F[Option[SortedSet[Signed[AllowSpend]]]] =
+        store
+          .get[SortedSet[Signed[AllowSpend]]](GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveAllowSpends, metagraphId, address))
+
+      def getTokenLockRef(address: Address): F[Option[TokenLockReference]] =
+        store
+          .get[TokenLockReference](GlobalStateKey.hypergraph(GlobalStateFieldId.LastTokenLockRefs, address))
+
+      def getActiveTokenLocks(address: Address): F[Option[SortedSet[Signed[TokenLock]]]] =
+        store
+          .get[SortedSet[Signed[TokenLock]]](GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveTokenLocks, address))
+
+      def getTokenLockBalance(tokenAddress: Address, holderAddress: Address): F[Option[Balance]] =
+        store
+          .get[Balance](GlobalStateKey.hypergraph(GlobalStateFieldId.TokenLockBalances, tokenAddress, holderAddress))
+
+      def getDelegatedStakes(address: Address): F[Option[SortedSet[DelegatedStakeRecord]]] =
+        store
+          .get[SortedSet[DelegatedStakeRecord]](GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveDelegatedStakes, address))
+
+      def getDelegatedStakeWithdrawals(address: Address): F[Option[SortedSet[PendingDelegatedStakeWithdrawal]]] =
+        store
+          .get[SortedSet[PendingDelegatedStakeWithdrawal]](
+            GlobalStateKey.hypergraph(GlobalStateFieldId.DelegatedStakesWithdrawals, address)
+          )
+
+      def getNodeCollaterals(address: Address): F[Option[SortedSet[NodeCollateralRecord]]] =
+        store
+          .get[SortedSet[NodeCollateralRecord]](GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveNodeCollaterals, address))
+
+      def getNodeCollateralWithdrawals(address: Address): F[Option[SortedSet[PendingNodeCollateralWithdrawal]]] =
+        store
+          .get[SortedSet[PendingNodeCollateralWithdrawal]](GlobalStateKey.hypergraph(GlobalStateFieldId.NodeCollateralWithdrawals, address))
+
+      def getCurrencySnapshot(metagraphAddress: Address): F[Option[Signed[CurrencySnapshot]]] =
+        store
+          .get[Signed[CurrencySnapshot]](GlobalStateKey.metagraph(metagraphAddress, GlobalStateFieldId.LastCurrencySnapshots))
+
+      def getIncrementalCurrencySnapshot(metagraphAddress: Address): F[Option[Signed[CurrencyIncrementalSnapshot]]] =
+        store
+          .get[Signed[CurrencyIncrementalSnapshot]](
+            GlobalStateKey.metagraph(metagraphAddress, GlobalStateFieldId.LastIncrementalCurrencySnapshots)
+          )
+
+      def getCurrencySnapshotInfo(metagraphAddress: Address): F[Option[CurrencySnapshotInfo]] =
+        store
+          .get[CurrencySnapshotInfo](GlobalStateKey.metagraph(metagraphAddress, GlobalStateFieldId.LastCurrencySnapshotInfo))
+
+      def getCurrencySnapshotProof(metagraphAddress: Address): F[Option[Proof]] =
+        store
+          .get[Proof](GlobalStateKey.metagraph(metagraphAddress, GlobalStateFieldId.LastCurrencySnapshotsProofs))
+
+      def getMetagraphSyncData(metagraphAddress: Address): F[Option[MetagraphSyncDataInfo]] =
+        store
+          .get[MetagraphSyncDataInfo](GlobalStateKey.hypergraph(GlobalStateFieldId.MetagraphSyncData, metagraphAddress))
     }
   }
 }

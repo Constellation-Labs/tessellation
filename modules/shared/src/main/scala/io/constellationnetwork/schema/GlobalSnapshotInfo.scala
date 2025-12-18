@@ -25,6 +25,7 @@ import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockReference}
 import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.mpt.producer.StatefulMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 
 import derevo.cats.{eqv, show}
@@ -247,6 +248,12 @@ case class GlobalSnapshotInfo(
         .flatMap(mt => GlobalSnapshotInfo.legacyStateProof(this, mt))
         .map(GlobalSnapshotStateProof.fromLegacyProof)
   }
+
+  def stateProof[F[_]: Parallel: Sync: Hasher](statefulMPTProducer: StatefulMerklePatriciaProducer[F]): F[GlobalSnapshotStateProof] =
+    statefulMPTProducer.build.flatMap {
+      case Left(value)  => (new Throwable(s"Error when building MPT. Message: ${value.getMessage}")).raiseError[F, GlobalSnapshotStateProof]
+      case Right(value) => GlobalSnapshotStateProof(value.rootHash.value).pure
+    }
 
   override def getActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = activeTokenLocks.getOrElse(SortedMap.empty)
 
