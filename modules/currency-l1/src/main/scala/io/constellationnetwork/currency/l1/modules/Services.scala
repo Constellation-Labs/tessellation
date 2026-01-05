@@ -72,7 +72,8 @@ object Services {
         storages.transaction,
         storages.lastSnapshot,
         validators.transaction,
-        sharedStorages.mptStore
+        sharedStorages.mptStore,
+        shouldUseMptStore = false
       )
       val allowSpend = AllowSpendService.make[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
         storages.allowSpend,

@@ -8,18 +8,20 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.merkletree.Proof
-import io.constellationnetwork.schema.GlobalSnapshotInfo
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, PendingDelegatedStakeWithdrawal}
+import io.constellationnetwork.schema.mpt.MptStore
 import io.constellationnetwork.schema.mpt.PartitionNamespace.AddressNamespace
 import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralRecord, PendingNodeCollateralWithdrawal}
 import io.constellationnetwork.schema.snapshot.MetagraphSyncDataInfo
 import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendReference}
 import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockReference}
 import io.constellationnetwork.schema.transaction.TransactionReference
+import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.mpt.producer.{MerklePatriciaError, StatefulMerklePatriciaProducer}
 import io.constellationnetwork.security.mpt.{MerklePatriciaTrie, MptRoot}
 import io.constellationnetwork.security.signature.Signed
 
@@ -27,6 +29,26 @@ import io.circe.syntax.EncoderOps
 import io.circe.{Encoder, Json}
 
 object GlobalStateConverter {
+
+  case class StateChangesAccumulator(
+    lastStateChannelSnapshotHashes: SortedMap[Address, Hash] = SortedMap.empty,
+    lastTxRefs: SortedMap[Address, TransactionReference] = SortedMap.empty,
+    balances: SortedMap[Address, Balance] = SortedMap.empty,
+    lastCurrencySnapshots: SortedMap[Address, Either[Signed[
+      CurrencySnapshot
+    ], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]] = SortedMap.empty,
+    lastCurrencySnapshotsProofs: SortedMap[Address, Proof] = SortedMap.empty,
+    activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]] = SortedMap.empty,
+    activeTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = SortedMap.empty,
+    tokenLockBalances: SortedMap[Address, SortedMap[Address, Balance]] = SortedMap.empty,
+    lastAllowSpendRefs: SortedMap[Address, AllowSpendReference] = SortedMap.empty,
+    lastTokenLockRefs: SortedMap[Address, TokenLockReference] = SortedMap.empty,
+    activeDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]] = SortedMap.empty,
+    delegatedStakesWithdrawals: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]] = SortedMap.empty,
+    activeNodeCollaterals: SortedMap[Address, SortedSet[NodeCollateralRecord]] = SortedMap.empty,
+    nodeCollateralWithdrawals: SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]] = SortedMap.empty,
+    metagraphSyncData: SortedMap[Address, MetagraphSyncDataInfo] = SortedMap.empty
+  )
 
   private def convertRequiredHypergraph[F[_]: Sync: Parallel, A: Encoder](
     data: SortedMap[Address, A],
@@ -60,14 +82,22 @@ object GlobalStateConverter {
       .getOrElse(Map.empty)
       .pure[F]
 
-  private def convertCurrencySnapshots[F[_]: Sync: Parallel](
+  private def convertCurrencySnapshots[F[_]: Async: Parallel: Hasher](
     data: SortedMap[Address, Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]
   ): F[Map[GlobalStateKey, Json]] =
     data.toSeq.parTraverse {
       case (metagraphAddr, Left(fullSnapshot)) =>
-        List(
-          GlobalStateKey.metagraph(metagraphAddr, GlobalStateFieldId.LastCurrencySnapshots) -> fullSnapshot.asJson
-        ).pure[F]
+        CurrencyIncrementalSnapshot.fromCurrencySnapshot(fullSnapshot.value).map { currencyIncrementalSnapshot =>
+          List(
+            GlobalStateKey.metagraph(metagraphAddr, GlobalStateFieldId.LastIncrementalCurrencySnapshots) -> Signed(
+              currencyIncrementalSnapshot,
+              fullSnapshot.proofs
+            ).asJson,
+            GlobalStateKey
+              .metagraph(metagraphAddr, GlobalStateFieldId.LastCurrencySnapshotInfo) -> fullSnapshot.info.toCurrencySnapshotInfo.asJson
+          )
+        }
+
       case (metagraphAddr, Right((incrementalSnapshot, snapshotInfo))) =>
         List(
           GlobalStateKey.metagraph(metagraphAddr, GlobalStateFieldId.LastIncrementalCurrencySnapshots) -> incrementalSnapshot.asJson,
@@ -104,7 +134,54 @@ object GlobalStateConverter {
       .getOrElse(Map.empty)
       .pure[F]
 
-  def toAllStateKeyValuePairs[F[_]: Sync: Parallel](
+  def toStateKeyValuePairsFromAccumulator[F[_]: Async: Parallel: Hasher](
+    acc: StateChangesAccumulator
+  ): F[Map[GlobalStateKey, Json]] =
+    (
+      convertRequiredMetagraph(acc.lastStateChannelSnapshotHashes, GlobalStateFieldId.LastStateChannelSnapshotHashes),
+      convertRequiredHypergraph(acc.lastTxRefs, GlobalStateFieldId.LastTxRefs),
+      convertRequiredHypergraph(acc.balances, GlobalStateFieldId.Balances),
+      convertCurrencySnapshots(acc.lastCurrencySnapshots),
+      convertRequiredMetagraph(acc.lastCurrencySnapshotsProofs, GlobalStateFieldId.LastCurrencySnapshotsProofs),
+      convertActiveAllowSpends(if (acc.activeAllowSpends.nonEmpty) acc.activeAllowSpends.some else none),
+      convertOptionalHypergraph(
+        if (acc.activeTokenLocks.nonEmpty) acc.activeTokenLocks.some else none,
+        GlobalStateFieldId.ActiveTokenLocks
+      ),
+      convertTokenLockBalances(if (acc.tokenLockBalances.nonEmpty) acc.tokenLockBalances.some else none),
+      convertOptionalHypergraph(
+        if (acc.lastAllowSpendRefs.nonEmpty) acc.lastAllowSpendRefs.some else none,
+        GlobalStateFieldId.LastAllowSpendRefs
+      ),
+      convertOptionalHypergraph(
+        if (acc.lastTokenLockRefs.nonEmpty) acc.lastTokenLockRefs.some else none,
+        GlobalStateFieldId.LastTokenLockRefs
+      ),
+      convertOptionalHypergraph(
+        if (acc.activeDelegatedStakes.nonEmpty) acc.activeDelegatedStakes.some else none,
+        GlobalStateFieldId.ActiveDelegatedStakes
+      ),
+      convertOptionalHypergraph(
+        if (acc.delegatedStakesWithdrawals.nonEmpty) acc.delegatedStakesWithdrawals.some else none,
+        GlobalStateFieldId.DelegatedStakesWithdrawals
+      ),
+      convertOptionalHypergraph(
+        if (acc.activeNodeCollaterals.nonEmpty) acc.activeNodeCollaterals.some else none,
+        GlobalStateFieldId.ActiveNodeCollaterals
+      ),
+      convertOptionalHypergraph(
+        if (acc.nodeCollateralWithdrawals.nonEmpty) acc.nodeCollateralWithdrawals.some else none,
+        GlobalStateFieldId.NodeCollateralWithdrawals
+      ),
+      convertOptionalHypergraph(
+        if (acc.metagraphSyncData.nonEmpty) acc.metagraphSyncData.some else none,
+        GlobalStateFieldId.MetagraphSyncData
+      )
+    ).parMapN { (m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15) =>
+      m1 ++ m2 ++ m3 ++ m4 ++ m5 ++ m6 ++ m7 ++ m8 ++ m9 ++ m10 ++ m11 ++ m12 ++ m13 ++ m14 ++ m15
+    }
+
+  def toAllStateKeyValuePairs[F[_]: Async: Parallel: Hasher](
     info: GlobalSnapshotInfo
   ): F[Map[GlobalStateKey, Json]] =
     (
@@ -138,8 +215,13 @@ object GlobalStateConverter {
 
   object syntax {
     implicit class GlobalSnapshotInfoMptOps(val info: GlobalSnapshotInfo) extends AnyVal {
-      def allStateEntries[F[_]: Sync: Parallel]: F[Map[GlobalStateKey, Json]] =
+      def allStateEntries[F[_]: Async: Parallel: Hasher]: F[Map[GlobalStateKey, Json]] =
         toAllStateKeyValuePairs(info)
+    }
+
+    implicit class StateChangesAccumulatorMptOps(val acc: StateChangesAccumulator) extends AnyVal {
+      def toStateEntries[F[_]: Async: Parallel: Hasher]: F[Map[GlobalStateKey, Json]] =
+        toStateKeyValuePairsFromAccumulator(acc)
     }
 
     implicit class MptBuilderOps[F[_]: Parallel: Async: Hasher](kvPairsF: F[Map[GlobalStateKey, Json]]) {
@@ -165,7 +247,10 @@ object GlobalStateConverter {
       val store: MptStore[F, GlobalStateKey]
     ) {
       def syncFromGlobalSnapshotInfo(info: GlobalSnapshotInfo): F[Unit] =
-        info.allStateEntries[F].flatMap(store.sync[Json])
+        info.allStateEntries[F].flatMap(store.syncFull[Json])
+
+      def syncFromStateChanges(acc: StateChangesAccumulator): F[Unit] =
+        acc.toStateEntries[F].flatMap(store.sync[Json])
 
       def getBalance(address: Address): F[Option[Balance]] =
         store

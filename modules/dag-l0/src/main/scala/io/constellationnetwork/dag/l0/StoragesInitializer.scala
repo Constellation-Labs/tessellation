@@ -1,5 +1,6 @@
 package io.constellationnetwork.dag.l0
 
+import cats.Parallel
 import cats.effect.Async
 import cats.syntax.all._
 
@@ -9,6 +10,8 @@ import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.modules.SharedStorages
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security.{Hashed, Hasher}
 
@@ -16,14 +19,15 @@ import org.typelevel.log4cats.Logger
 
 object StoragesInitializer {
   def initializeStorages[
-    F[_]: Async: Logger: Hasher
+    F[_]: Async: Logger: Hasher: Parallel
   ](
     globalSnapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     download: Download[F, GlobalIncrementalSnapshot],
     hashedGlobalIncrementalSnapshot: Hashed[GlobalIncrementalSnapshot],
-    globalSnapshotInfo: GlobalSnapshotInfo
+    globalSnapshotInfo: GlobalSnapshotInfo,
+    mptStore: MptStore[F, GlobalStateKey]
   ): F[Unit] = {
     val ordinal = hashedGlobalIncrementalSnapshot.ordinal
 
@@ -49,6 +53,9 @@ object StoragesInitializer {
         globalSnapshotInfo
       )
       _ <- Logger[F].info(s"Successfully initialized lastGlobalSnapshot storage")
+
+      kvPairs <- globalSnapshotInfo.allStateEntries[F]
+      _ <- mptStore.syncFull(kvPairs)
 
       _ <- Logger[F].info(s"Storage initialization completed successfully with ordinal=$ordinal")
     } yield ()

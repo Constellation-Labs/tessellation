@@ -1,8 +1,8 @@
 package io.constellationnetwork.currency.l0
 
-import cats.MonadThrow
 import cats.effect.Async
 import cats.syntax.all._
+import cats.{MonadThrow, Parallel}
 
 import scala.concurrent.duration._
 
@@ -11,6 +11,7 @@ import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnap
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.modules.SharedStorages
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.{GlobalSnapshotWithState, GlobalSnapshotWithStateDeltas}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
@@ -34,7 +35,7 @@ object StoragesInitializer {
   }
 
   def initializeGlobalSnapshotStorages[
-    F[_]: Async: Logger,
+    F[_]: Async: Logger: Parallel: Hasher,
     R <: CliMethod
   ](
     services: Services[F, R],
@@ -75,6 +76,9 @@ object StoragesInitializer {
           state
         )
         _ <- Logger[F].info(s"Successfully initialized lastGlobalSnapshot storage")
+
+        kvPairs <- state.allStateEntries[F]
+        _ <- sharedStorages.mptStore.syncFull(kvPairs)
 
         _ <- Logger[F].info(s"Successfully initialized all global snapshot storages with ordinal=$ordinal")
       } yield ()

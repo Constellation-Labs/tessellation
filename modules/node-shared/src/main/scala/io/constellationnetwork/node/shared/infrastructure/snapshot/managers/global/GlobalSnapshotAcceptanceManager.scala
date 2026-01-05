@@ -42,6 +42,7 @@ import io.constellationnetwork.schema.artifact._
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.StateChangesAccumulator
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.UpdateNodeParameters
@@ -667,7 +668,7 @@ object GlobalSnapshotAcceptanceManager {
             getGlobalSnapshotByOrdinal
           )
 
-          transactionsRefs = transactionReferenceManager.acceptTransactionRefs(
+          (transactionsRefs, transactionsRefsDeltas) = transactionReferenceManager.acceptTransactionRefs(
             lastSnapshotContext.lastTxRefs,
             initialData.blockResult.contextUpdate.lastTxRefs,
             acceptedTransactions
@@ -709,7 +710,7 @@ object GlobalSnapshotAcceptanceManager {
             calculateRewardsFn
           )
 
-          (updatedBalancesByRewards, acceptedRewardTxs) = rewardAcceptanceManager.acceptRewardTxs(
+          (updatedBalancesByRewards, acceptedRewardTxs, rewardBalancesDelta) = rewardAcceptanceManager.acceptRewardTxs(
             updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
             withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards
           )
@@ -810,7 +811,7 @@ object GlobalSnapshotAcceptanceManager {
             SortedMap.empty[Address, TokenLockReference]
           )
 
-          updatedAllowSpends <- allowSpendStateManager.acceptAllowSpends(
+          AllowSpendAcceptanceResult(updatedAllowSpends, allowSpendsDeltas) <- allowSpendStateManager.acceptAllowSpends(
             epochProgress,
             activeAllowSpendsFromCurrencySnapshots,
             globalAllowSpends,
@@ -823,7 +824,7 @@ object GlobalSnapshotAcceptanceManager {
             allowSpendBlockAcceptanceResult.contextUpdate.lastTxRefs
           )
 
-          updatedBalancesByAllowSpends <- Async[F].fromEither(
+          (updatedBalancesByAllowSpends, updatedBalancesByAllowSpendsDeltas) <- Async[F].fromEither(
             allowSpendStateManager
               .updateGlobalBalancesByAllowSpends(
                 epochProgress,
@@ -861,7 +862,7 @@ object GlobalSnapshotAcceptanceManager {
             .leftMap(error => new RuntimeException(s"Error generating token unlocks: $error"))
             .liftTo[F]
 
-          updatedGlobalTokenLocks <- tokenLockStateManager.acceptTokenLocks(
+          TokenLockAcceptanceResult(updatedGlobalTokenLocks, tokenLocksDeltas) <- tokenLockStateManager.acceptTokenLocks(
             epochProgress,
             globalTokenLocks,
             globalActiveTokenLocks,
@@ -873,12 +874,12 @@ object GlobalSnapshotAcceptanceManager {
             tokenLockBlockAcceptanceResult.contextUpdate.lastTokenLocksRefs
           )
 
-          updatedTokenLockBalances = tokenLockStateManager.updateTokenLockBalances(
+          TokenLockBalanceResult(updatedTokenLockBalances, tokenLockBalancesDeltas) = tokenLockStateManager.updateTokenLockBalances(
             currencySnapshots,
             lastSnapshotContext.tokenLockBalances
           )
 
-          updatedBalancesByTokenLocks = tokenLockStateManager.updateGlobalBalancesByTokenLocks(
+          (updatedBalancesByTokenLocks, updatedBalancesByTokenLocksDeltas) = tokenLockStateManager.updateGlobalBalancesByTokenLocks(
             epochProgress,
             updatedBalancesByAllowSpends,
             globalTokenLocks,
@@ -938,11 +939,12 @@ object GlobalSnapshotAcceptanceManager {
                 .filter(_.currencyId.isEmpty)
           }.toList
 
-          updatedBalancesBySpendTransactions = spendTransactionBalanceManager.updateGlobalBalancesBySpendTransactions(
-            updatedBalancesByTokenLocks,
-            allGlobalAllowSpends,
-            globalSpendTransactions
-          ) match {
+          (updatedBalancesBySpendTransactions, updatedBalancesBySpendTransactionsDeltas) = spendTransactionBalanceManager
+            .updateGlobalBalancesBySpendTransactions(
+              updatedBalancesByTokenLocks,
+              allGlobalAllowSpends,
+              globalSpendTransactions
+            ) match {
             case Right(balances) => balances
             case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by spend transactions: $error")
           }
@@ -976,14 +978,15 @@ object GlobalSnapshotAcceptanceManager {
             epochProgress
           )
 
-          updatedAcceptedMetagraphSyncData <- metagraphSyncManager.acceptMetagraphSyncData(
-            lastSnapshotContext,
-            incomingCurrencySnapshots,
-            globalSnapshotsProcessed,
-            acceptedSpendActions,
-            ordinal,
-            epochProgress
-          )
+          MetagraphSyncAcceptanceResult(updatedAcceptedMetagraphSyncData, metagraphSyncDataDeltas) <- metagraphSyncManager
+            .acceptMetagraphSyncData(
+              lastSnapshotContext,
+              incomingCurrencySnapshots,
+              globalSnapshotsProcessed,
+              acceptedSpendActions,
+              ordinal,
+              epochProgress
+            )
 
           gsi = buildGlobalSnapshotInfo(
             ordinal,
@@ -1011,7 +1014,33 @@ object GlobalSnapshotAcceptanceManager {
             updatedAcceptedMetagraphSyncData
           )
 
-          _ <- mptStore.syncFromGlobalSnapshotInfo(gsi)
+          balanceChanges: SortedMap[Address, Balance] =
+            initialData.blockResult.contextUpdate.balances.toSortedMap ++
+              currencyAcceptanceBalanceUpdate.toSortedMap ++
+              rewardBalancesDelta ++
+              updatedBalancesByAllowSpendsDeltas ++
+              updatedBalancesByTokenLocksDeltas ++
+              updatedBalancesBySpendTransactionsDeltas
+
+          stateChangesAccumulator = StateChangesAccumulator(
+            lastStateChannelSnapshotHashes = sCSnapshotHashes.toSortedMap,
+            lastTxRefs = transactionsRefsDeltas,
+            balances = balanceChanges,
+            lastCurrencySnapshots = currencySnapshots,
+            lastCurrencySnapshotsProofs = updatedLastCurrencySnapshotProofs,
+            activeAllowSpends = allowSpendsDeltas,
+            activeTokenLocks = tokenLocksDeltas,
+            tokenLockBalances = tokenLockBalancesDeltas,
+            lastAllowSpendRefs = allowSpendBlockAcceptanceResult.contextUpdate.lastTxRefs.toSortedMap,
+            lastTokenLockRefs = tokenLockBlockAcceptanceResult.contextUpdate.lastTokenLocksRefs.toSortedMap,
+            activeDelegatedStakes = updatedCreateDelegatedStakesCleaned,
+            delegatedStakesWithdrawals = updatedWithdrawDelegatedStakesCleaned,
+            activeNodeCollaterals = updatedCreateNodeCollateralsCleaned,
+            nodeCollateralWithdrawals = updatedWithdrawNodeCollateralsCleaned,
+            metagraphSyncData = metagraphSyncDataDeltas
+          )
+
+          _ <- mptStore.syncFromStateChanges(stateChangesAccumulator)
           stateProof <- gsi.stateProof(mptStore.underlying)
 
           (expiredAllowSpends, expiredTokenLocks) = (

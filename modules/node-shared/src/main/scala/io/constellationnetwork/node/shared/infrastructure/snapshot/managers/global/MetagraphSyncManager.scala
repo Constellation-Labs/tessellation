@@ -17,6 +17,11 @@ import io.constellationnetwork.schema.swap._
 
 import monocle.syntax.all._
 
+case class MetagraphSyncAcceptanceResult(
+  fullState: SortedMap[Address, MetagraphSyncDataInfo],
+  deltas: SortedMap[Address, MetagraphSyncDataInfo]
+)
+
 trait MetagraphSyncManager[F[_]] {
   def acceptMetagraphSyncData(
     lastSnapshotContext: GlobalSnapshotInfo,
@@ -25,7 +30,7 @@ trait MetagraphSyncManager[F[_]] {
     acceptedSpendActions: Map[Address, List[SpendAction]],
     currentGlobalOrdinal: SnapshotOrdinal,
     currentGlobalEpochProgress: EpochProgress
-  ): F[SortedMap[Address, MetagraphSyncDataInfo]]
+  ): F[MetagraphSyncAcceptanceResult]
 }
 
 object MetagraphSyncManager {
@@ -41,10 +46,10 @@ object MetagraphSyncManager {
       acceptedSpendActions: Map[Address, List[SpendAction]],
       currentGlobalOrdinal: SnapshotOrdinal,
       currentGlobalEpochProgress: EpochProgress
-    ): F[SortedMap[Address, MetagraphSyncDataInfo]] =
+    ): F[MetagraphSyncAcceptanceResult] =
       lastSnapshotContext.metagraphSyncData.map { existingData =>
         for {
-          updatedFromSnapshots <- updateFromCurrencySnapshots(
+          (updatedFromSnapshots, snapshotDeltas) <- updateFromCurrencySnapshots(
             existingData,
             incomingCurrencySnapshots,
             globalSnapshotsProcessed,
@@ -52,14 +57,17 @@ object MetagraphSyncManager {
             currentGlobalEpochProgress
           )
 
-          updatedFromSpendActions <- updateFromSpendActions(
+          (updatedFromSpendActions, spendActionDeltas) <- updateFromSpendActions(
             updatedFromSnapshots,
             acceptedSpendActions,
             currentGlobalOrdinal
           )
 
-        } yield updatedFromSpendActions
-      }.getOrElse(SortedMap.empty[Address, MetagraphSyncDataInfo].pure[F])
+        } yield {
+          val mergedDeltas = snapshotDeltas ++ spendActionDeltas
+          MetagraphSyncAcceptanceResult(updatedFromSpendActions, mergedDeltas)
+        }
+      }.getOrElse(MetagraphSyncAcceptanceResult(SortedMap.empty, SortedMap.empty).pure[F])
 
     private def updateFromCurrencySnapshots(
       existingData: SortedMap[Address, MetagraphSyncDataInfo],
@@ -67,7 +75,7 @@ object MetagraphSyncManager {
       globalSnapshotsProcessed: Map[Address, List[GlobalSnapshotsProcessed]],
       currentOrdinal: SnapshotOrdinal,
       currentEpochProgress: EpochProgress
-    ): F[SortedMap[Address, MetagraphSyncDataInfo]] =
+    ): F[(SortedMap[Address, MetagraphSyncDataInfo], SortedMap[Address, MetagraphSyncDataInfo])] =
       incomingCurrencySnapshots.toList.parTraverse {
         case (address, _) =>
           val currentInfo = existingData.getOrElse(address, MetagraphSyncDataInfo.empty)
@@ -84,23 +92,25 @@ object MetagraphSyncManager {
             .focus(_.unappliedGlobalChangeOrdinals)
             .replace(updatedUnappliedGlobalChangeOrdinals)
 
-          (address -> updatedInfo).pure[F]
+          val hasChanged = currentInfo != updatedInfo
+          (address, updatedInfo, hasChanged).pure[F]
       }.map { updatedEntries =>
-        val updatedMap = SortedMap.from(updatedEntries)
-        existingData ++ updatedMap
+        val updatedMap = SortedMap.from(updatedEntries.map { case (addr, info, _) => addr -> info })
+        val deltasMap = SortedMap.from(updatedEntries.collect { case (addr, info, true) => addr -> info })
+        (existingData ++ updatedMap, deltasMap)
       }
 
     private def updateFromSpendActions(
       currentData: SortedMap[Address, MetagraphSyncDataInfo],
       spendActions: Map[Address, List[SpendAction]],
       currentOrdinal: SnapshotOrdinal
-    ): F[SortedMap[Address, MetagraphSyncDataInfo]] = {
+    ): F[(SortedMap[Address, MetagraphSyncDataInfo], SortedMap[Address, MetagraphSyncDataInfo])] = {
       val allCurrencySpendTransactions = extractCurrencySpendTransactions(spendActions)
 
       val transactionsByMetagraph = allCurrencySpendTransactions.groupBy(_.currencyId.get.value)
 
-      transactionsByMetagraph.toList.foldM(currentData) {
-        case (acc, (metagraphId, _)) =>
+      transactionsByMetagraph.toList.foldM((currentData, SortedMap.empty[Address, MetagraphSyncDataInfo])) {
+        case ((acc, deltas), (metagraphId, _)) =>
           val currentInfo = acc.getOrElse(metagraphId, MetagraphSyncDataInfo.empty)
 
           val updatedUnappliedGlobalChangeOrdinals =
@@ -110,7 +120,11 @@ object MetagraphSyncManager {
             .focus(_.unappliedGlobalChangeOrdinals)
             .replace(updatedUnappliedGlobalChangeOrdinals)
 
-          acc.updated(metagraphId, updatedInfo).pure[F]
+          val hasChanged = currentInfo != updatedInfo
+          val newAcc = acc.updated(metagraphId, updatedInfo)
+          val newDeltas = if (hasChanged) deltas.updated(metagraphId, updatedInfo) else deltas
+
+          (newAcc, newDeltas).pure[F]
       }
     }
 

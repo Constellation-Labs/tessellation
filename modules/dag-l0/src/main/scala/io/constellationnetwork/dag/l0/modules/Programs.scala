@@ -77,7 +77,8 @@ object Programs {
         globalSnapshotStorage,
         lastNGlobalSnapshotStorage,
         lastGlobalSnapshotStorage,
-        storages.combinedGlobalSnapshotCheckpointStorage
+        storages.combinedGlobalSnapshotCheckpointStorage,
+        mptStore
       )
 
       new Programs[F](sharedPrograms.peerDiscovery, sharedPrograms.joining, trustPush, download, rollbackLoader) {}

@@ -18,7 +18,7 @@ trait SpendTransactionBalanceManager[F[_]] {
     currentBalances: SortedMap[Address, Balance],
     allGlobalAllowSpends: SortedMap[Address, List[Hashed[AllowSpend]]],
     globalSpendTransactions: List[SpendTransaction]
-  ): Either[BalanceArithmeticError, SortedMap[Address, Balance]]
+  ): Either[BalanceArithmeticError, (SortedMap[Address, Balance], SortedMap[Address, Balance])]
 }
 
 object SpendTransactionBalanceManager {
@@ -29,48 +29,55 @@ object SpendTransactionBalanceManager {
       currentBalances: SortedMap[Address, Balance],
       allGlobalAllowSpends: SortedMap[Address, List[Hashed[AllowSpend]]],
       globalSpendTransactions: List[SpendTransaction]
-    ): Either[BalanceArithmeticError, SortedMap[Address, Balance]] =
-      globalSpendTransactions.foldLeft[Either[BalanceArithmeticError, SortedMap[Address, Balance]]](Right(currentBalances)) {
-        (innerAccEither, spendTransaction) =>
-          for {
-            innerAcc <- innerAccEither
-            destinationAddress = spendTransaction.destination
-            sourceAddress = spendTransaction.source
+    ): Either[BalanceArithmeticError, (SortedMap[Address, Balance], SortedMap[Address, Balance])] =
+      globalSpendTransactions.foldLeft[Either[BalanceArithmeticError, (SortedMap[Address, Balance], SortedMap[Address, Balance])]](
+        Right((currentBalances, SortedMap.empty[Address, Balance]))
+      ) { (innerAccEither, spendTransaction) =>
+        for {
+          (balances, balancesDelta) <- innerAccEither
+          destinationAddress = spendTransaction.destination
+          sourceAddress = spendTransaction.source
 
-            addressAllowSpends = allGlobalAllowSpends.getOrElse(sourceAddress, List.empty)
-            spendTransactionAmount = SwapAmount.toAmount(spendTransaction.amount)
-            currentDestinationBalance = innerAcc.getOrElse(destinationAddress, Balance.empty)
+          addressAllowSpends = allGlobalAllowSpends.getOrElse(sourceAddress, List.empty)
+          spendTransactionAmount = SwapAmount.toAmount(spendTransaction.amount)
+          currentDestinationBalance = balances.getOrElse(destinationAddress, Balance.empty)
 
-            updatedBalances <- spendTransaction.allowSpendRef.flatMap { allowSpendRef =>
-              addressAllowSpends.find(_.hash === allowSpendRef)
-            } match {
-              case Some(allowSpend) =>
-                val sourceAllowSpendAddress = allowSpend.source
-                val currentSourceBalance = innerAcc.getOrElse(sourceAllowSpendAddress, Balance.empty)
-                val balanceToReturnToAddress = allowSpend.amount.value.value - spendTransactionAmount.value.value
+          updatedBalances <- spendTransaction.allowSpendRef.flatMap { allowSpendRef =>
+            addressAllowSpends.find(_.hash === allowSpendRef)
+          } match {
+            case Some(allowSpend) =>
+              val sourceAllowSpendAddress = allowSpend.source
+              val currentSourceBalance = balances.getOrElse(sourceAllowSpendAddress, Balance.empty)
+              val balanceToReturnToAddress = allowSpend.amount.value.value - spendTransactionAmount.value.value
 
-                for {
-                  updatedDestinationBalance <- currentDestinationBalance.plus(spendTransactionAmount)
-                  updatedSourceBalance <- currentSourceBalance.plus(
-                    Amount(NonNegLong.from(balanceToReturnToAddress).getOrElse(NonNegLong.MinValue))
-                  )
-                } yield
-                  innerAcc
-                    .updated(destinationAddress, updatedDestinationBalance)
-                    .updated(sourceAllowSpendAddress, updatedSourceBalance)
+              for {
+                updatedDestinationBalance <- currentDestinationBalance.plus(spendTransactionAmount)
+                updatedSourceBalance <- currentSourceBalance.plus(
+                  Amount(NonNegLong.from(balanceToReturnToAddress).getOrElse(NonNegLong.MinValue))
+                )
+                balancesUpdated = balances
+                  .updated(destinationAddress, updatedDestinationBalance)
+                  .updated(sourceAllowSpendAddress, updatedSourceBalance)
+                balancesDeltaUpdated = balancesDelta
+                  .updated(destinationAddress, updatedDestinationBalance)
+                  .updated(sourceAllowSpendAddress, updatedSourceBalance)
+              } yield (balancesUpdated, balancesDeltaUpdated)
 
-              case None =>
-                val currentSourceBalance = innerAcc.getOrElse(sourceAddress, Balance.empty)
+            case None =>
+              val currentSourceBalance = balances.getOrElse(sourceAddress, Balance.empty)
 
-                for {
-                  updatedDestinationBalance <- currentDestinationBalance.plus(spendTransactionAmount)
-                  updatedSourceBalance <- currentSourceBalance.minus(spendTransactionAmount)
-                } yield
-                  innerAcc
-                    .updated(destinationAddress, updatedDestinationBalance)
-                    .updated(sourceAddress, updatedSourceBalance)
-            }
-          } yield updatedBalances
+              for {
+                updatedDestinationBalance <- currentDestinationBalance.plus(spendTransactionAmount)
+                updatedSourceBalance <- currentSourceBalance.minus(spendTransactionAmount)
+                balancesUpdated = balances
+                  .updated(destinationAddress, updatedDestinationBalance)
+                  .updated(sourceAddress, updatedSourceBalance)
+                balancesDeltaUpdated = balancesDelta
+                  .updated(destinationAddress, updatedDestinationBalance)
+                  .updated(sourceAddress, updatedSourceBalance)
+              } yield (balancesUpdated, balancesDeltaUpdated)
+          }
+        } yield updatedBalances
       }
   }
 }

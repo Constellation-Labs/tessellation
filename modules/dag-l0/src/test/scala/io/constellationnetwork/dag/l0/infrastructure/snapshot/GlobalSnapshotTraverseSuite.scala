@@ -467,7 +467,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           globalSnapshotStorage,
           lastNSnapshotStorage,
           lastSnapshotStorage,
-          download
+          download,
+          mptStore
         )
   }
 

@@ -119,8 +119,8 @@ object Download {
         .flatMap { result =>
           val ((snapshot, context), observationLimit) = result
           for {
-            kvPairs <- context.allStateEntries[F]
-            _ <- mptStore.sync(kvPairs)
+            kvPairs <- hasherSelector.withCurrent(implicit h => context.allStateEntries[F])
+            _ <- mptStore.syncFull(kvPairs)
             _ <- consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context)
           } yield ()
         }
