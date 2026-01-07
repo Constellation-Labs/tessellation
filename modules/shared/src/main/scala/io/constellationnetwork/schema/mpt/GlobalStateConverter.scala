@@ -246,11 +246,11 @@ object GlobalStateConverter {
     implicit class MptStoreGlobalSnapshotOps[F[_]: Async: Parallel: Hasher](
       val store: MptStore[F, GlobalStateKey]
     ) {
-      def syncFromGlobalSnapshotInfo(info: GlobalSnapshotInfo): F[Unit] =
-        info.allStateEntries[F].flatMap(store.syncFull[Json])
+      def syncFromGlobalSnapshotInfo(info: GlobalSnapshotInfo, snapshotOrdinal: SnapshotOrdinal): F[Unit] =
+        info.allStateEntries[F].flatMap(store.syncFull[Json](_, snapshotOrdinal))
 
-      def syncFromStateChanges(acc: StateChangesAccumulator): F[Unit] =
-        acc.toStateEntries[F].flatMap(store.sync[Json])
+      def syncFromStateChanges(acc: StateChangesAccumulator, snapshotOrdinal: SnapshotOrdinal): F[Unit] =
+        acc.toStateEntries[F].flatMap(store.sync[Json](_, snapshotOrdinal))
 
       def getBalance(address: Address): F[Option[Balance]] =
         store

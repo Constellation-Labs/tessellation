@@ -1040,7 +1040,7 @@ object GlobalSnapshotAcceptanceManager {
             metagraphSyncData = metagraphSyncDataDeltas
           )
 
-          _ <- mptStore.syncFromStateChanges(stateChangesAccumulator)
+          _ <- mptStore.syncFromStateChanges(stateChangesAccumulator, ordinal)
           stateProof <- gsi.stateProof(mptStore.underlying)
 
           (expiredAllowSpends, expiredTokenLocks) = (

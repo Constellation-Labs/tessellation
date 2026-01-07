@@ -55,7 +55,7 @@ object StoragesInitializer {
       _ <- Logger[F].info(s"Successfully initialized lastGlobalSnapshot storage")
 
       kvPairs <- globalSnapshotInfo.allStateEntries[F]
-      _ <- mptStore.syncFull(kvPairs)
+      _ <- mptStore.syncFull(kvPairs, ordinal)
 
       _ <- Logger[F].info(s"Storage initialization completed successfully with ordinal=$ordinal")
     } yield ()
