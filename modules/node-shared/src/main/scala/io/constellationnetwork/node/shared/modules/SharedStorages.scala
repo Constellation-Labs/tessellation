@@ -5,6 +5,7 @@ import cats.effect.kernel.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.block.processing.BlockRejectionReason
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, SessionStorage}
@@ -22,14 +23,14 @@ import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEve
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
-import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
+import io.constellationnetwork.security.mpt.producer.FileSystemMerklePatriciaProducer
 import io.constellationnetwork.security.{Hasher, HasherSelector}
 
 import io.circe.Json
 
 object SharedStorages {
 
-  def make[F[_]: Parallel: Async: Hasher](
+  def make[F[_]: Parallel: JsonSerializer: Async: Hasher](
     clusterId: ClusterId,
     cfg: SharedConfig
   ): F[SharedStorages[F]] =
@@ -42,7 +43,7 @@ object SharedStorages {
       currencySnapshotEventValidationErrorStorage <- CurrencySnapshotEventValidationErrorStorage.make(cfg.validationErrorStorage.maxSize)
       lastNGlobalSnapshotStorage <- LastNGlobalSnapshotStorage.make[F](cfg.lastGlobalSnapshotsSync)
       lastGlobalSnapshotStorage <- LastSnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
-      mptProducer <- InMemoryMerklePatriciaProducer.make[F]()
+      mptProducer <- FileSystemMerklePatriciaProducer.make[F](cfg.mptSnapshotInfoPath)
       mptStore = MptStore.make[F, GlobalStateKey](
         mptProducer,
         GlobalStateKey.toHex[F]

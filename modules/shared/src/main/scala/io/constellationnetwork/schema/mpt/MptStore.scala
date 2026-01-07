@@ -4,10 +4,11 @@ import cats.Parallel
 import cats.effect.Async
 import cats.syntax.all._
 
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt.MerklePatriciaTrie
-import io.constellationnetwork.security.mpt.producer.{MerklePatriciaError, StatefulMerklePatriciaProducer}
+import io.constellationnetwork.security.mpt.producer._
 
 import io.circe.syntax._
 import io.circe.{Decoder, Encoder, Json}
@@ -32,9 +33,9 @@ trait MptStore[F[_], K] {
 
   def build: F[Either[MerklePatriciaError, MerklePatriciaTrie]]
 
-  def sync[V: Encoder](newState: Map[K, V]): F[Unit]
+  def sync[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit]
 
-  def syncFull[V: Encoder](newState: Map[K, V]): F[Unit]
+  def syncFull[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit]
 
   def update[V: Encoder](toUpsert: Map[K, V], toRemove: Set[K]): F[Unit]
 
@@ -53,6 +54,17 @@ object MptStore {
     producer: StatefulMerklePatriciaProducer[F],
     toHex: K => F[Hex]
   ) extends MptStore[F, K] {
+
+    private def persistAndCutoff(ordinal: SnapshotOrdinal): F[Unit] =
+      producer match {
+        case p: StatefulWithPersistenceMerklePatriciaProducer[F] =>
+          p.persist(ordinal) >> p.applyCutoff(ordinal)
+        case _ =>
+          Async[F].unit
+      }
+
+    private def toHexEntries[V: Encoder](data: Map[K, V]): F[Map[Hex, Json]] =
+      data.toList.parTraverse { case (k, v) => toHex(k).map(_ -> v.asJson) }.map(_.toMap)
 
     override def get[V: Decoder](key: K): F[Option[V]] =
       for {
@@ -77,9 +89,7 @@ object MptStore {
 
     override def insert[V: Encoder](data: Map[K, V]): F[Unit] =
       if (data.isEmpty) Async[F].unit
-      else
-        data.toList.parTraverse { case (k, v) => toHex(k).map(_ -> v.asJson) }
-          .flatMap(kvs => producer.insert(kvs.toMap).void)
+      else toHexEntries(data).flatMap(kvs => producer.insert(kvs).void)
 
     override def remove(key: K): F[Unit] =
       toHex(key).flatMap(hex => producer.remove(List(hex)).void)
@@ -100,56 +110,34 @@ object MptStore {
     override def build: F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
       producer.build
 
-    override def syncFull[V: Encoder](newState: Map[K, V]): F[Unit] =
+    override def syncFull[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit] =
       if (newState.isEmpty) producer.clear
       else
         for {
-          newEntries <- newState.toList.parTraverse { case (k, v) => toHex(k).map(_ -> v.asJson) }
-            .map(_.toMap)
-
+          newEntries <- toHexEntries(newState)
           currentEntries <- producer.entries
-
           keysToRemove = currentEntries.keySet -- newEntries.keySet
-          keysToUpsert = newEntries.filter {
-            case (k, vJson) =>
-              !currentEntries.get(k).contains(vJson)
-          }
-
+          keysToUpsert = newEntries.filterNot { case (k, v) => currentEntries.get(k).contains(v) }
           _ <- if (keysToRemove.nonEmpty) producer.remove(keysToRemove.toList).void else Async[F].unit
           _ <- if (keysToUpsert.nonEmpty) producer.insert(keysToUpsert).void else Async[F].unit
+          _ <- persistAndCutoff(ordinal)
         } yield ()
 
-    override def sync[V: Encoder](updates: Map[K, V]): F[Unit] =
+    override def sync[V: Encoder](updates: Map[K, V], ordinal: SnapshotOrdinal): F[Unit] =
       if (updates.isEmpty) Async[F].unit
       else
         for {
-          newEntries <- updates.toList.parTraverse {
-            case (k, v) =>
-              toHex(k).map(_ -> v.asJson)
-          }.map(_.toMap)
-
+          newEntries <- toHexEntries(updates)
           currentEntries <- producer.entries
-
-          keysToUpsert = newEntries.filter {
-            case (k, v) =>
-              !currentEntries.get(k).contains(v)
-          }
-
-          _ <- if (keysToUpsert.nonEmpty) producer.insert(keysToUpsert) else Async[F].unit
+          keysToUpsert = newEntries.filterNot { case (k, v) => currentEntries.get(k).contains(v) }
+          _ <- if (keysToUpsert.nonEmpty) producer.insert(keysToUpsert).void else Async[F].unit
+          _ <- persistAndCutoff(ordinal)
         } yield ()
 
     override def update[V: Encoder](toUpsert: Map[K, V], toRemove: Set[K]): F[Unit] =
       for {
-        upsertHex <-
-          if (toUpsert.isEmpty) Async[F].pure(Map.empty[Hex, Json])
-          else
-            toUpsert.toList.parTraverse { case (k, v) => toHex(k).map(_ -> v.asJson) }
-              .map(_.toMap)
-
-        removeHex <-
-          if (toRemove.isEmpty) Async[F].pure(List.empty[Hex])
-          else toRemove.toList.parTraverse(toHex)
-
+        upsertHex <- if (toUpsert.isEmpty) Async[F].pure(Map.empty[Hex, Json]) else toHexEntries(toUpsert)
+        removeHex <- if (toRemove.isEmpty) Async[F].pure(List.empty[Hex]) else toRemove.toList.parTraverse(toHex)
         _ <- if (removeHex.nonEmpty) producer.remove(removeHex).void else Async[F].unit
         _ <- if (upsertHex.nonEmpty) producer.insert(upsertHex).void else Async[F].unit
       } yield ()

@@ -992,7 +992,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             ),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          _ <- mptStore.syncFromGlobalSnapshotInfo(snapshotInfo)
+          _ <- mptStore.syncFromGlobalSnapshotInfo(snapshotInfo, hashedLastSnapshot.ordinal)
           _ <- lastSnapR.set((hashedLastSnapshot, snapshotInfo).some)
           lastN = (hashedLastSnapshot, snapshotInfo).some
           incLastN = SortedMap(hashedLastSnapshot.ordinal -> hashedLastSnapshot)
@@ -1698,7 +1698,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             ),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          _ <- mptStore.syncFromGlobalSnapshotInfo(snapshotInfo)
+          _ <- mptStore.syncFromGlobalSnapshotInfo(snapshotInfo, hashedLastSnapshot.ordinal)
           _ <- lastSnapR.set((hashedLastSnapshot, snapshotInfo).some)
           lastN = (hashedLastSnapshot, snapshotInfo).some
           _ <- lastNSnapR.set(lastN)

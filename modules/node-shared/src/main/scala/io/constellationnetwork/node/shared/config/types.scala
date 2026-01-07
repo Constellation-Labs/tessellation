@@ -91,7 +91,8 @@ object types {
     priceOracle: PriceOracleConfig,
     snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig,
     snapshotTimeoutsConfig: SnapshotTimeoutsConfig,
-    combinedRouteRateLimiter: Map[AppEnvironment, RouteRateLimiterConfig]
+    combinedRouteRateLimiter: Map[AppEnvironment, RouteRateLimiterConfig],
+    mptSnapshotInfoPath: Path
   )
 
   case class SharedTrustConfig(
@@ -100,7 +101,8 @@ object types {
 
   case class SharedSnapshotConfig(
     size: SnapshotSizeConfig,
-    timeouts: SnapshotTimeoutsConfig
+    timeouts: SnapshotTimeoutsConfig,
+    mptSnapshotInfoPath: Path
   )
 
   case class SnapshotSizeConfig(
