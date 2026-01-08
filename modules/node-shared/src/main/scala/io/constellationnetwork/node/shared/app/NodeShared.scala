@@ -12,6 +12,7 @@ import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.http.p2p.SharedP2PClient
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.logger.DatabaseLogger
 import io.constellationnetwork.node.shared.modules._
 import io.constellationnetwork.node.shared.resources.SharedResources
 import io.constellationnetwork.schema.generation.Generation
@@ -49,6 +50,8 @@ trait NodeShared[F[_], A <: CliMethod] {
   val customAllowanceList: Option[Set[AllowanceListEntry]]
 
   val hashSelect: HashSelect
+
+  val databaseLogger: DatabaseLogger[F]
 
   def restartSignal: SignallingRef[F, Option[A]]
   def stopSignal: SignallingRef[F, Boolean]

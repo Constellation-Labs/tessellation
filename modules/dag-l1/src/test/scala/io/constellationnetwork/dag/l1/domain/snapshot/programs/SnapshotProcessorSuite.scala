@@ -46,6 +46,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
   GlobalSnapshotStateChannelEventsProcessor
 }
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
+import io.constellationnetwork.node.shared.logger.NoDbLogger
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
 import io.constellationnetwork.schema._
@@ -216,6 +217,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 .make(validators.updateNodeCollateralValidator)
               priceStateUpdater = PriceStateUpdater.make(Dev, DefaultDelegatedRewardsConfigProvider)
 
+              dbLogger <- NoDbLogger.make[IO]
+
               globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
                 FieldsAddedOrdinals(
                   Map.empty,
@@ -248,7 +251,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 validators.pricingUpdateValidator,
                 priceStateUpdater,
                 Amount(0L),
-                EpochProgress(NonNegLong(136080L))
+                EpochProgress(NonNegLong(136080L)),
+                dbLogger
               )
               globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(
                 globalSnapshotAcceptanceManager,

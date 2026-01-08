@@ -64,7 +64,8 @@ object types {
     metagraphsSync: MetagraphsSyncConfig,
     priceOracle: Map[AppEnvironment, PriceOracleConfig],
     snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig,
-    combinedRouteRateLimiter: Map[AppEnvironment, RouteRateLimiterConfig]
+    combinedRouteRateLimiter: Map[AppEnvironment, RouteRateLimiterConfig],
+    clickHouseConfig: ClickHouseAppConfig
   )
 
   case class SharedConfig(
@@ -91,7 +92,8 @@ object types {
     priceOracle: PriceOracleConfig,
     snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig,
     snapshotTimeoutsConfig: SnapshotTimeoutsConfig,
-    combinedRouteRateLimiter: Map[AppEnvironment, RouteRateLimiterConfig]
+    combinedRouteRateLimiter: Map[AppEnvironment, RouteRateLimiterConfig],
+    clickHouseConfig: ClickHouseAppConfig
   )
 
   case class SharedTrustConfig(
@@ -172,6 +174,21 @@ object types {
         0.second
       )
   }
+  case class ClickHouseAppConfig(
+    maxRetries: Int,
+    maxQueueSize: Int,
+    retryBaseDelay: FiniteDuration,
+    batchSize: Int,
+    flushInterval: FiniteDuration,
+    retentionPeriodInDays: Int,
+    errorPauseDuration: FiniteDuration,
+    host: Option[String],
+    user: Option[String],
+    password: Option[String],
+    tableName: Option[String],
+    port: Option[Int],
+    database: Option[String]
+  )
 
   case class SnapshotConfig(
     consensus: ConsensusConfig,
