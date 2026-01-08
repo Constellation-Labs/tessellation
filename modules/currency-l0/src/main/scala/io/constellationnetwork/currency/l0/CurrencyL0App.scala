@@ -19,7 +19,7 @@ import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOut
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.kryo._
-import io.constellationnetwork.node.shared.app.{NodeShared, TessellationIOApp, getMajorityPeerIds}
+import io.constellationnetwork.node.shared.app._
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
@@ -69,6 +69,7 @@ abstract class CurrencyL0App(
       name,
       header,
       clusterId,
+      layer = CurrencyL0,
       version = tessellationVersion,
       metagraphVersion = metagraphVersion
     )

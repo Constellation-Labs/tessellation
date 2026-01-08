@@ -40,6 +40,8 @@ object Dependencies {
     val scaffeine = "5.3.0"
     val semanticDB = "4.14.2"
     val weaver = "0.11.3"
+    val clickHouse = "0.9.5"
+    val hikari = "7.0.2"
   }
 
   object Libraries {
@@ -166,6 +168,12 @@ object Dependencies {
 
     // Scalafix
     val scalafixRules = "io.constellationnetwork" %% "constellation-scalafix-rules" % V.scalafixRules
+
+    // Clickhouse
+    val clickHouse = "com.clickhouse" % "clickhouse-jdbc" % V.clickHouse
+
+    // Hikari
+    val hikari = "com.zaxxer" % "HikariCP" % V.hikari
   }
 
   object CompilerPlugin {

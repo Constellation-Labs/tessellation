@@ -1,0 +1,199 @@
+package io.constellationnetwork.node.shared.logger.clickhouse
+
+import cats.effect._
+import cats.effect.std.Queue
+import cats.syntax.all._
+
+import io.constellationnetwork.env.AppEnvironment
+import io.constellationnetwork.node.shared.config.types.ClickHouseAppConfig
+import io.constellationnetwork.node.shared.logger.DatabaseLogger
+import io.constellationnetwork.schema.peer.PeerId
+
+import com.zaxxer.hikari.{HikariConfig, HikariDataSource}
+import io.circe._
+import io.circe.generic.auto._
+import io.circe.syntax._
+import org.typelevel.log4cats.SelfAwareStructuredLogger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
+
+object ClickHouseLogger {
+
+  private case class SimpleLog(message: String)
+  private case class LogEntry(logType: String, data: Json, retryCount: Int = 0, retryAfter: Long = 0L)
+
+  case class ConfigError(error: ClickHouseDbConfig.ConfigValidationError) extends Exception(error.getMessage)
+  case class ConnectionError(cause: Throwable) extends Exception(cause.getMessage, cause)
+  case object NotConfigured extends Exception("ClickHouse not configured")
+
+  def make[F[_]: Async](
+    nodeId: PeerId,
+    networkId: AppEnvironment,
+    appConfig: ClickHouseAppConfig
+  ): Resource[F, DatabaseLogger[F]] =
+    for {
+      maybeConfig <- Resource.eval(
+        Async[F].fromEither(
+          ClickHouseDbConfig.fromAppConfig(appConfig).leftMap(ConfigError)
+        )
+      )
+      config <- maybeConfig match {
+        case Some(c) => Resource.pure[F, ClickHouseDbConfig](c)
+        case None    => Resource.raiseError[F, ClickHouseDbConfig, Throwable](NotConfigured)
+      }
+      logger <- Resource.eval(Slf4jLogger.create[F])
+      dataSource <- makeDataSource[F](config).adaptError { case e => ConnectionError(e) }
+      queue <- Resource.eval(Queue.bounded[F, LogEntry](appConfig.maxQueueSize))
+      pausedUntil <- Resource.eval(Ref.of[F, Long](0L))
+      _ <- startFlusher(queue, dataSource, config, nodeId, networkId, appConfig, logger, pausedUntil)
+    } yield new Impl[F](queue, dataSource, config, appConfig, logger)
+
+  private def makeDataSource[F[_]: Async](config: ClickHouseDbConfig): Resource[F, HikariDataSource] =
+    Resource.make(
+      Async[F].blocking {
+        val hc = new HikariConfig()
+        hc.setJdbcUrl(s"jdbc:clickhouse:${config.host}:${config.port}/${config.database}")
+        hc.setUsername(config.user)
+        hc.setPassword(config.password)
+        hc.setMinimumIdle(2)
+        hc.setMaximumPoolSize(10)
+        hc.setConnectionTimeout(30000)
+        hc.setPoolName("clickhouse-logger-pool")
+        hc.setConnectionTestQuery("SELECT 1")
+        new HikariDataSource(hc)
+      }
+    )(ds => Async[F].blocking(ds.close()).handleError(_ => ()))
+
+  private def startFlusher[F[_]: Async](
+    queue: Queue[F, LogEntry],
+    dataSource: HikariDataSource,
+    config: ClickHouseDbConfig,
+    nodeId: PeerId,
+    networkId: AppEnvironment,
+    appConfig: ClickHouseAppConfig,
+    logger: SelfAwareStructuredLogger[F],
+    pausedUntil: Ref[F, Long]
+  ): Resource[F, Unit] = {
+
+    def flush: F[Unit] =
+      for {
+        now <- Async[F].realTime.map(_.toMillis)
+        paused <- pausedUntil.get
+        _ <-
+          if (now < paused) Async[F].unit
+          else
+            queue.tryTakeN(Some(appConfig.batchSize)).flatMap { entries =>
+              val (ready, notReady) = entries.partition(_.retryAfter <= now)
+              notReady.traverse_(e => queue.offer(e)) >>
+                (if (ready.nonEmpty) writeBatch(ready, dataSource, config, nodeId, networkId, appConfig, logger, queue, pausedUntil)
+                 else Async[F].unit)
+            }
+      } yield ()
+
+    Spawn[F]
+      .background(
+        (Temporal[F].sleep(appConfig.flushInterval) >> flush).foreverM
+      )
+      .void
+  }
+
+  private def writeBatch[F[_]: Async](
+    entries: List[LogEntry],
+    dataSource: HikariDataSource,
+    config: ClickHouseDbConfig,
+    nodeId: PeerId,
+    networkId: AppEnvironment,
+    appConfig: ClickHouseAppConfig,
+    logger: SelfAwareStructuredLogger[F],
+    queue: Queue[F, LogEntry],
+    pausedUntil: Ref[F, Long]
+  ): F[Unit] =
+    Resource
+      .make(Async[F].blocking(dataSource.getConnection))(c => Async[F].blocking(c.close()).handleError(_ => ()))
+      .flatMap { conn =>
+        val sql = s"INSERT INTO `${config.tableName}` (timestamp, node_id, network_id, log_type, data) VALUES (now64(3), ?, ?, ?, ?)"
+        Resource.make(Async[F].blocking(conn.prepareStatement(sql)))(s => Async[F].blocking(s.close()).handleError(_ => ()))
+      }
+      .use { stmt =>
+        Async[F].blocking {
+          entries.foreach { entry =>
+            stmt.setString(1, nodeId.toString)
+            stmt.setString(2, networkId.toString)
+            stmt.setString(3, entry.logType)
+            stmt.setString(4, entry.data.noSpaces)
+            stmt.addBatch()
+          }
+          stmt.executeBatch()
+        }
+      }
+      .void
+      .handleErrorWith { e =>
+        for {
+          _ <- logger.warn(s"Failed to write to ClickHouse: ${e.getMessage}")
+          now <- Async[F].realTime.map(_.toMillis)
+          _ <- pausedUntil.set(now + appConfig.errorPauseDuration.toMillis)
+          _ <- entries
+            .filter(_.retryCount < appConfig.maxRetries)
+            .traverse_ { entry =>
+              val newRetryCount = entry.retryCount + 1
+              val delay = Math.min(
+                appConfig.retryBaseDelay.toMillis * (1L << Math.min(newRetryCount, 30)),
+                3600000L // Cap at 1 hour
+              )
+              queue.tryOffer(entry.copy(retryCount = newRetryCount, retryAfter = now + delay))
+            }
+        } yield ()
+      }
+
+  private class Impl[F[_]: Async](
+    queue: Queue[F, LogEntry],
+    dataSource: HikariDataSource,
+    config: ClickHouseDbConfig,
+    appConfig: ClickHouseAppConfig,
+    logger: SelfAwareStructuredLogger[F]
+  ) extends DatabaseLogger[F] {
+
+    def createLogsTable(): F[Unit] =
+      Resource
+        .make(Async[F].blocking(dataSource.getConnection))(c => Async[F].blocking(c.close()).handleError(_ => ()))
+        .flatMap { conn =>
+          Resource.make(Async[F].blocking(conn.createStatement()))(s => Async[F].blocking(s.close()).handleError(_ => ()))
+        }
+        .use { stmt =>
+          Async[F].blocking {
+            stmt.execute(
+              s"""
+                 |CREATE TABLE IF NOT EXISTS `${config.tableName}` (
+                 |    timestamp DateTime64(3),
+                 |    node_id LowCardinality(String),
+                 |    network_id LowCardinality(String),
+                 |    log_type LowCardinality(String),
+                 |    data JSON
+                 |) ENGINE = MergeTree()
+                 |PARTITION BY (network_id, toYYYYMM(timestamp))
+                 |ORDER BY (node_id, timestamp)
+                 |TTL toDateTime(timestamp) + INTERVAL ${appConfig.retentionPeriodInDays} DAY
+                 |""".stripMargin
+            )
+            ()
+          }
+        }
+
+    private def enqueue[T: Encoder](logType: String, data: T): F[Unit] =
+      queue.tryOffer(LogEntry(logType, data.asJson)).flatMap {
+        case true => Async[F].unit
+        case false =>
+          logger.warn(s"Log queue full, dropping $logType: ${data.asJson.noSpaces.take(200)}")
+      }
+
+    def log[T: Encoder](logType: String, data: T): F[Unit] = enqueue(logType, data)
+    def info[T: Encoder](data: T): F[Unit] = enqueue("INFO", data)
+    def error[T: Encoder](data: T): F[Unit] = enqueue("ERROR", data)
+    def warn[T: Encoder](data: T): F[Unit] = enqueue("WARN", data)
+    def debug[T: Encoder](data: T): F[Unit] = enqueue("DEBUG", data)
+
+    def info(message: String): F[Unit] = enqueue("INFO", SimpleLog(message))
+    def error(message: String): F[Unit] = enqueue("ERROR", SimpleLog(message))
+    def warn(message: String): F[Unit] = enqueue("WARN", SimpleLog(message))
+    def debug(message: String): F[Unit] = enqueue("DEBUG", SimpleLog(message))
+  }
+}
