@@ -2,10 +2,13 @@ package io.constellationnetwork.storage
 
 import java.io.{File => JFile}
 import java.nio.file.NoSuchFileException
+
 import cats.data.EitherT
 import cats.effect.Async
 import cats.syntax.all._
+
 import io.constellationnetwork.json.JsonSerializer
+
 import better.files._
 import fs2.Stream
 import fs2.io.file.Path
@@ -104,7 +107,7 @@ abstract class LocalFileSystemStorage[F[_], A](baseDir: Path)(
       .void
       .handleErrorWith {
         case _: NoSuchFileException => logger.info("File does not exist or already removed, skipping")
-        case e => F.raiseError(e)
+        case e                      => F.raiseError(e)
       }
 
   def getUsableSpace: F[Long] = jDir.flatMap { a =>

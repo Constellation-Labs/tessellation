@@ -5,6 +5,7 @@ import cats.effect.Async
 import cats.syntax.all._
 
 import scala.util.control.NoStackTrace
+
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencyIncrementalSnapshotV1}
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.json.JsonSerializer
@@ -17,6 +18,7 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hasher, HasherSelector}
 import io.constellationnetwork.storage.PathGenerator._
 import io.constellationnetwork.storage.{PathGenerator, SerializableLocalFileSystemStorage}
+
 import better.files.File
 import fs2.Stream
 import fs2.io.file.Path
