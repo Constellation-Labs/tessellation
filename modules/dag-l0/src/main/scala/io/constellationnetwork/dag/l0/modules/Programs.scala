@@ -20,10 +20,6 @@ import io.constellationnetwork.node.shared.domain.snapshot.PeerSelect
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
-  SnapshotInfoLocalFileSystemStorage,
-  SnapshotLocalFileSystemStorage
-}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{GlobalSnapshotContextFunctions, PeerSelect}
 import io.constellationnetwork.node.shared.modules.{SharedPrograms, SharedStorages}
 import io.constellationnetwork.schema._
@@ -38,13 +34,12 @@ object Programs {
     keyPair: KeyPair,
     config: AppConfig,
     lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
-    lastV2IncrementalOrdinal: SnapshotOrdinal,
     p2pClient: P2PClient[F],
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
     globalSnapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
-  ): Programs[F] =
+  )(implicit globalStateProofSelector: GlobalStateProofSelector): Programs[F] =
     HasherSelector[F].withCurrent { implicit hasher =>
       val trustPush = TrustPush.make(storages.trust, services.gossip)
       val peerSelect: PeerSelect[F] = PeerSelect.make(
@@ -55,12 +50,9 @@ object Programs {
       val download: Download[F, GlobalIncrementalSnapshot] = Download
         .make[F](
           storages.snapshotDownload,
-          storages.incrementalGlobalSnapshotV2LocalFileSystemStorage,
-          storages.globalSnapshotInfoV3LocalFileSystemStorage,
           p2pClient,
           storages.cluster,
           lastFullGlobalSnapshotOrdinal,
-          lastV2IncrementalOrdinal,
           globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
           storages.node,
           services.consensus,
@@ -73,9 +65,7 @@ object Programs {
         keyPair,
         config.snapshot,
         storages.incrementalGlobalSnapshotLocalFileSystemStorage,
-        storages.incrementalGlobalSnapshotV2LocalFileSystemStorage,
         storages.globalSnapshotInfoLocalFileSystemStorage,
-        storages.globalSnapshotInfoV3LocalFileSystemStorage,
         storages.snapshotDownload,
         globalSnapshotContextFns,
         storages.globalSnapshot.getHashed,

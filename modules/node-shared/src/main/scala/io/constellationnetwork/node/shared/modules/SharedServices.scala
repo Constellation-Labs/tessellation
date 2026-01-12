@@ -40,7 +40,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
   GlobalSnapshotStateChannelAcceptanceManager,
   GlobalSnapshotStateChannelEventsProcessor
 }
-import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.generation.Generation
@@ -73,6 +73,9 @@ object SharedServices {
     txHasher: Hasher[F],
     allowanceList: Option[Set[AllowanceListEntry]],
     metagraphId: Option[Address]
+  )(
+    implicit globalStateProofSelector: GlobalStateProofSelector,
+    currencyStateProofSelector: CurrencyStateProofSelector
   ): F[SharedServices[F, A]] =
     for {
       restartService <- RestartService.make(restartSignal, storages.cluster)

@@ -39,6 +39,7 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
     }
 
   test("should succeed when state matches snapshot's state proof") { implicit res =>
+    implicit val selector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(Long.MaxValue))
     val globalSnapshotInfo = GlobalSnapshotInfo(
       SortedMap.empty,
       SortedMap.empty,
@@ -65,6 +66,7 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when state doesn't match snapshot's state proof for") { implicit res =>
+    implicit val selector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(Long.MaxValue))
     val globalSnapshotInfo = GlobalSnapshotInfo(
       SortedMap.empty,
       SortedMap.empty,
@@ -93,7 +95,7 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
 
   private def globalIncrementalSnapshot[F[_]: Async: Parallel: Hasher](
     globalSnapshotInfo: GlobalSnapshotInfo
-  ): F[Hashed[GlobalIncrementalSnapshot]] =
+  )(implicit selector: GlobalStateProofSelector): F[Hashed[GlobalIncrementalSnapshot]] =
     globalSnapshotInfo.stateProof[F](SnapshotOrdinal(NonNegLong(1L))).flatMap { sp =>
       Signed(
         GlobalIncrementalSnapshot(

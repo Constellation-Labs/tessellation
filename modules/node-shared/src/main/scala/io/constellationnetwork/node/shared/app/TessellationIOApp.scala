@@ -31,7 +31,7 @@ import io.constellationnetwork.node.shared.infrastructure.seedlist.{Loader => Se
 import io.constellationnetwork.node.shared.infrastructure.trust.TrustRatingCsvLoader
 import io.constellationnetwork.node.shared.modules._
 import io.constellationnetwork.node.shared.resources.SharedResources
-import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.{Address, DAGAddressRefined}
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.generation.Generation
@@ -111,6 +111,12 @@ abstract class TessellationIOApp[A <: CliMethod](
           def select(ordinal: SnapshotOrdinal): HashLogic =
             if (ordinal <= cfg.lastKryoHashOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.MinValue)) KryoHash else JsonHash
         }
+
+        implicit val _globalStateProofSelector: GlobalStateProofSelector =
+          GlobalStateProofSelector(cfg.lastLegacyStateProofOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.unsafeApply(Long.MaxValue)))
+
+        implicit val _currencyStateProofSelector: CurrencyStateProofSelector =
+          CurrencyStateProofSelector.instance
 
         Random.scalaUtilRandom[IO].flatMap { implicit _random =>
           SecurityProvider.forAsync[IO].use { implicit _securityProvider =>
@@ -254,6 +260,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                                         val metrics = _metrics
                                         val supervisor = _supervisor
                                         val hasherSelector = _hasherSelector
+                                        val globalStateProofSelector = _globalStateProofSelector
+                                        val currencyStateProofSelector = _currencyStateProofSelector
 
                                         val keyPair = _keyPair
                                         val seedlist = _seedlist

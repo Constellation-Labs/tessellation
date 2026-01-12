@@ -53,13 +53,13 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
   GlobalSnapshotAcceptanceManager,
   GlobalSnapshotStateChannelEventsProcessor
 }
-import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.RewardFraction
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.tokenLock.TokenLockBlock
+import io.constellationnetwork.schema.{GlobalStateProofSelector, _}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops.PublicKeyOps
@@ -77,6 +77,7 @@ import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
 object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checkers {
+  implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
 
   type Res = (Supervisor[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO])
 
@@ -400,7 +401,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       (artifact, _, _) <- gscf.createProposalArtifact(
         SnapshotOrdinal.MinValue,
         signedLastArtifact,
-        signedGenesis.value.info,
+        signedGenesis.value.info.toGlobalSnapshotInfo,
         h,
         EventTrigger,
         Set(scEvent),
@@ -409,7 +410,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       )
       result <- gscf.validateArtifact(
         signedLastArtifact,
-        signedGenesis.value.info,
+        signedGenesis.value.info.toGlobalSnapshotInfo,
         EventTrigger,
         artifact,
         facilitators,
@@ -431,7 +432,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       (artifact, _, _) <- gscf.createProposalArtifact(
         SnapshotOrdinal.MinValue,
         signedLastArtifact,
-        signedGenesis.value.info,
+        signedGenesis.value.info.toGlobalSnapshotInfo,
         h,
         EventTrigger,
         Set(scEvent),
@@ -440,7 +441,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       )
       result <- gscf.validateArtifact(
         signedLastArtifact,
-        signedGenesis.value.info,
+        signedGenesis.value.info.toGlobalSnapshotInfo,
         EventTrigger,
         artifact.copy(ordinal = artifact.ordinal.next),
         facilitators,

@@ -19,12 +19,12 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.curr
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.RewardFraction
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.transaction.TransactionGenerator
 
@@ -34,6 +34,7 @@ import fs2.concurrent.SignallingRef
 import weaver.SimpleIOSuite
 
 object CurrencySnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
+  implicit val currencyStateProofSelector: CurrencyStateProofSelector = CurrencyStateProofSelector.instance
 
   type TestResources = CurrencySnapshotAcceptanceManager[IO]
 

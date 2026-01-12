@@ -3,11 +3,7 @@ package io.constellationnetwork.node.shared.infrastructure.snapshot
 import cats.Parallel
 import cats.data.{NonEmptyChain, Validated}
 import cats.effect.Async
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.show._
+import cats.syntax.all._
 
 import scala.util.control.NoStackTrace
 
@@ -15,7 +11,7 @@ import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnap
 import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
+import io.constellationnetwork.schema._
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher}
 
@@ -27,7 +23,9 @@ abstract class CurrencySnapshotContextFunctions[F[_]]
     extends SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext]
 
 object CurrencySnapshotContextFunctions {
-  def make[F[_]: Async: Parallel](validator: CurrencySnapshotValidator[F]) =
+  def make[F[_]: Async: Parallel](validator: CurrencySnapshotValidator[F])(
+    implicit currencyStateProofSelector: CurrencyStateProofSelector
+  ) =
     new CurrencySnapshotContextFunctions[F] {
       def createContext(
         context: CurrencySnapshotContext,

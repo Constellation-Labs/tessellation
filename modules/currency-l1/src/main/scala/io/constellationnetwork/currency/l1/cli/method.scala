@@ -54,6 +54,7 @@ object method {
       c.feeConfigs.get(environment).map(SortedMap.from(_)).getOrElse(SortedMap.empty),
       c.forkInfoStorage,
       c.lastKryoHashOrdinal,
+      c.lastLegacyStateProofOrdinal,
       c.addresses,
       c.allowSpends,
       c.tokenLocks,

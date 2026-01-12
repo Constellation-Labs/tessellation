@@ -39,6 +39,8 @@ object Storages {
     trustUpdates: Option[PeerObservationAdjustmentUpdateBatch],
     environment: AppEnvironment,
     hashSelect: HashSelect
+  )(
+    implicit globalStateProofSelector: GlobalStateProofSelector
   ): F[Storages[F]] =
     for {
       trustStorage <- TrustStorage.make[F](trustUpdates, sharedConfig.trustStorage, seedlist.map(_.map(_.peerId)))
@@ -48,19 +50,13 @@ object Storages {
       incrementalGlobalSnapshotPersistedLocalFileSystemStorage <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[F](
         snapshotConfig.incrementalPersistedSnapshotPath
       )
-      incrementalGlobalSnapshotV2PersistedLocalFileSystemStorage <- GlobalIncrementalSnapshotV2LocalFileSystemStorage.make[F](
-        snapshotConfig.incrementalPersistedSnapshotPath
-      )
       fullGlobalSnapshotLocalFileSystemStorage <- GlobalSnapshotLocalFileSystemStorage.make[F](
         snapshotConfig.snapshotPath
       )
       incrementalGlobalSnapshotInfoLocalFileSystemStorage <- GlobalSnapshotInfoLocalFileSystemStorage.make[F](
         snapshotConfig.snapshotInfoPath
       )
-      incrementalGlobalSnapshotInfoV3LocalFileSystemStorage <- GlobalSnapshotInfoKryoLocalFileSystemStorage.make[F](
-        snapshotConfig.snapshotInfoPath
-      )
-      incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage <- GlobalSnapshotInfoV2KryoLocalFileSystemStorage.make[F](
+      incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage <- GlobalSnapshotInfoKryoLocalFileSystemStorage.make[F](
         snapshotConfig.snapshotInfoPath
       )
 
@@ -83,12 +79,8 @@ object Storages {
           fullGlobalSnapshotLocalFileSystemStorage,
           incrementalGlobalSnapshotInfoLocalFileSystemStorage,
           incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage,
-          incrementalGlobalSnapshotV2PersistedLocalFileSystemStorage,
-          incrementalGlobalSnapshotInfoV3LocalFileSystemStorage,
           combinedGlobalSnapshotCheckpointStorage,
-          hashSelect,
-          incrementalConfig.lastFullGlobalSnapshotOrdinal.getOrElse(environment, SnapshotOrdinal.MinValue),
-          incrementalConfig.lastV2IncrementalOrdinal.getOrElse(environment, SnapshotOrdinal.MinValue)
+          hashSelect
         )
     } yield
       new Storages[F](
@@ -100,10 +92,8 @@ object Storages {
         globalSnapshot = globalSnapshotStorage,
         fullGlobalSnapshot = fullGlobalSnapshotLocalFileSystemStorage,
         incrementalGlobalSnapshotLocalFileSystemStorage = incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
-        incrementalGlobalSnapshotV2LocalFileSystemStorage = incrementalGlobalSnapshotV2PersistedLocalFileSystemStorage,
         snapshotDownload = snapshotDownloadStorage,
         globalSnapshotInfoLocalFileSystemStorage = incrementalGlobalSnapshotInfoLocalFileSystemStorage,
-        globalSnapshotInfoV3LocalFileSystemStorage = incrementalGlobalSnapshotInfoV3LocalFileSystemStorage,
         globalSnapshotInfoLocalFileSystemKryoStorage = incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage,
         combinedGlobalSnapshotCheckpointStorage = combinedGlobalSnapshotCheckpointStorage
       ) {}
@@ -118,10 +108,8 @@ sealed abstract class Storages[F[_]] private (
   val globalSnapshot: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LatestBalances[F],
   val fullGlobalSnapshot: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
   val incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
-  val incrementalGlobalSnapshotV2LocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshotV2],
   val snapshotDownload: SnapshotDownloadStorage[F],
   val globalSnapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
-  val globalSnapshotInfoV3LocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProofV2, GlobalSnapshotInfoV3],
-  val globalSnapshotInfoLocalFileSystemKryoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProofV2, GlobalSnapshotInfoV2],
+  val globalSnapshotInfoLocalFileSystemKryoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2],
   val combinedGlobalSnapshotCheckpointStorage: CombinedSnapshotCheckpointFileSystemStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 )

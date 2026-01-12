@@ -28,7 +28,7 @@ import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.modules.SharedServices
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalStateProofSelector}
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
 object Services {
@@ -49,6 +49,8 @@ object Services {
     cfg: AppConfig,
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]],
     txHasher: Hasher[F]
+  )(
+    implicit globalStateProofSelector: GlobalStateProofSelector
   ): Services[F, P, S, SI, R] =
     new Services[F, P, S, SI, R] {
       val localHealthcheck = sharedServices.localHealthcheck

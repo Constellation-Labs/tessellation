@@ -273,21 +273,6 @@ object GlobalIncrementalSnapshotLocalFileSystemStorage {
       }
 }
 
-object GlobalIncrementalSnapshotV2LocalFileSystemStorage {
-
-  def make[F[_]: Async: KryoSerializer: JsonSerializer](
-    path: Path
-  ): F[SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshotV2]] =
-    Applicative[F]
-      .pure(new SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshotV2](path) {
-        def deserializeFallback(bytes: Array[Byte]): Either[Throwable, Signed[GlobalIncrementalSnapshotV2]] =
-          KryoSerializer[F].deserialize[Signed[GlobalIncrementalSnapshotV2]](bytes)
-      })
-      .flatTap { storage =>
-        storage.createDirectoryIfNotExists().rethrowT
-      }
-}
-
 object CurrencyIncrementalSnapshotLocalFileSystemStorage {
 
   def make[F[_]: Async: KryoSerializer: JsonSerializer](

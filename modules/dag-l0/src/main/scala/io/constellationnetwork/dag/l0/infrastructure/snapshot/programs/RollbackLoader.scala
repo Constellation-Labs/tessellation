@@ -32,9 +32,7 @@ object RollbackLoader {
     keyPair: KeyPair,
     snapshotConfig: SnapshotConfig,
     incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
-    incrementalGlobalSnapshotV2LocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshotV2],
     snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
-    snapshotInfoV3LocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProofV2, GlobalSnapshotInfoV3],
     snapshotStorage: SnapshotDownloadStorage[F],
     snapshotContextFunctions: GlobalSnapshotContextFunctions[F],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
@@ -51,11 +49,9 @@ object RollbackLoader {
       keyPair,
       snapshotConfig,
       incrementalGlobalSnapshotLocalFileSystemStorage,
-      incrementalGlobalSnapshotV2LocalFileSystemStorage,
       snapshotStorage: SnapshotDownloadStorage[F],
       snapshotContextFunctions,
       snapshotInfoLocalFileSystemStorage,
-      snapshotInfoV3LocalFileSystemStorage,
       getGlobalSnapshotByOrdinal,
       globalSnapshotStorage,
       lastNGlobalSnapshotStorage,
@@ -68,11 +64,9 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
   keyPair: KeyPair,
   snapshotConfig: SnapshotConfig,
   incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
-  incrementalGlobalSnapshotV2LocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshotV2],
   snapshotStorage: SnapshotDownloadStorage[F],
   snapshotContextFunctions: GlobalSnapshotContextFunctions[F],
   snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
-  snapshotInfoV3LocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProofV2, GlobalSnapshotInfoV3],
   getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
   globalSnapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
@@ -85,6 +79,8 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
   def load(
     rollbackHash: Hash,
     download: Download[F, GlobalIncrementalSnapshot]
+  )(
+    implicit globalStateProofSelector: GlobalStateProofSelector
   ): F[(GlobalSnapshotInfo, Signed[GlobalIncrementalSnapshot])] =
     GlobalSnapshotLocalFileSystemStorage.make[F](snapshotConfig.snapshotPath).flatMap { fullGlobalSnapshotLocalFileSystemStorage =>
       fullGlobalSnapshotLocalFileSystemStorage
@@ -95,10 +91,8 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
               val snapshotTraverse = GlobalSnapshotTraverse
                 .make[F](
                   incrementalGlobalSnapshotLocalFileSystemStorage.read(_),
-                  incrementalGlobalSnapshotV2LocalFileSystemStorage.read(_),
                   fullGlobalSnapshotLocalFileSystemStorage.read(_),
                   snapshotInfoLocalFileSystemStorage.read(_),
-                  snapshotInfoV3LocalFileSystemStorage.read(_),
                   snapshotContextFunctions,
                   rollbackHash,
                   getGlobalSnapshotByOrdinal,
@@ -118,7 +112,7 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
                   .flatMap { firstIncrementalSnapshot =>
                     Signed.forAsyncHasher[F, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).map {
                       signedFirstIncrementalSnapshot =>
-                        (GlobalSnapshotInfoV1.toGlobalSnapshotInfo(fullSnapshot.info), signedFirstIncrementalSnapshot)
+                        (fullSnapshot.info.toGlobalSnapshotInfo, signedFirstIncrementalSnapshot)
                     }
                   }
               }
