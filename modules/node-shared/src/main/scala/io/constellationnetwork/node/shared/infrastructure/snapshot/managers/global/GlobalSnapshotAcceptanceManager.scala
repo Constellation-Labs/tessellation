@@ -138,6 +138,8 @@ object GlobalSnapshotAcceptanceManager {
     priceStateUpdater: PriceStateUpdater[F],
     collateral: Amount,
     withdrawalTimeLimit: EpochProgress
+  )(
+    implicit globalStateProofSelector: GlobalStateProofSelector
   ): GlobalSnapshotAcceptanceManager[F] = {
     val artifactEmissionManager = ArtifactEmissionManager.make[F]()
     val tipUsageManager = TipUsageManager.make[F]()

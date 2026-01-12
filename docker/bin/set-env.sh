@@ -13,6 +13,8 @@ export INCLUDE_L0=${INCLUDE_L0:-true}
 export INCLUDE_L1=${INCLUDE_L1:-false}
 export INCLUDE_ALL=${INCLUDE_ALL:-false}
 export PURGE_CONFIG=${PURGE_CONFIG:-true}
+export ROLLBACK_MODE=${ROLLBACK_MODE:-false}
+export ROLLBACK_HASH=${ROLLBACK_HASH:-""}
 export SKIP_ASSEMBLY=${SKIP_ASSEMBLY:-false}
 export NET_PREFIX=${NET_PREFIX:-"172.32.0"}
 export TESSELLATION_DOCKER_VERSION=${TESSELLATION_DOCKER_VERSION:-"test"}
@@ -85,6 +87,13 @@ for arg in "$@"; do
       ;;
     --purge-config)
       export PURGE_CONFIG=true
+      ;;
+    --rollback)
+      export ROLLBACK_MODE=true
+      export PURGE_CONFIG=false
+      ;;
+    --rollback-hash=*)
+      export ROLLBACK_HASH="${arg#*=}"
       ;;
     --skip-assembly)
       export SKIP_ASSEMBLY=true

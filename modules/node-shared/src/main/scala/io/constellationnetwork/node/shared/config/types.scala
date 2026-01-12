@@ -23,6 +23,8 @@ import derevo.cats.eqv
 import derevo.derive
 import eu.timepit.refined.types.numeric._
 import fs2.io.file.Path
+import pureconfig.generic.ProductHint
+import pureconfig.{CamelCase, ConfigFieldMapping, KebabCase}
 
 object types {
 
@@ -54,6 +56,7 @@ object types {
     forkInfoStorage: ForkInfoStorageConfig,
     priorityPeerIds: Map[AppEnvironment, NonEmptySet[PeerId]],
     lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal],
+    lastLegacyStateProofOrdinal: Map[AppEnvironment, SnapshotOrdinal],
     addresses: AddressesConfig,
     allowSpends: AllowSpendsConfig,
     tokenLocks: TokenLocksConfig,
@@ -80,6 +83,7 @@ object types {
     feeConfigs: SortedMap[SnapshotOrdinal, FeeCalculatorConfig],
     forkInfoStorage: ForkInfoStorageConfig,
     lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal],
+    lastLegacyStateProofOrdinal: Map[AppEnvironment, SnapshotOrdinal],
     addresses: AddressesConfig,
     allowSpends: AllowSpendsConfig,
     tokenLocks: TokenLocksConfig,

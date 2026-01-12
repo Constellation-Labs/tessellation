@@ -37,10 +37,6 @@ import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosInt
 
-// As of 2025.11.19 this is a legacy model where full state was passed between
-// nodes during consensus. This was deprecated in favor of each node maintaining
-// their own state and the diffs (incrementals) are instead passed around during
-// consensus to generate a new version of state maintained by each peer
 @derive(eqv, show, encoder, decoder)
 case class GlobalSnapshot(
   ordinal: SnapshotOrdinal,
@@ -54,7 +50,7 @@ case class GlobalSnapshot(
   nextFacilitators: NonEmptyList[PeerId],
   info: GlobalSnapshotInfoV1,
   tips: SnapshotTips
-) extends FullSnapshot[GlobalSnapshotStateProofV2, GlobalSnapshotInfoV1] {}
+) extends FullSnapshot[GlobalSnapshotStateProofV1, GlobalSnapshotInfoV1] {}
 
 object GlobalSnapshot {
 
@@ -78,8 +74,8 @@ object GlobalSnapshot {
 
   def mkFirstIncrementalSnapshot[F[_]: Parallel: Async: Hasher](
     genesis: Hashed[GlobalSnapshot]
-  ): F[GlobalIncrementalSnapshot] =
-    GlobalSnapshotInfoV1.toGlobalSnapshotInfo(genesis.info).stateProof[F](genesis.ordinal).map { stateProof =>
+  )(implicit stateProofSelector: GlobalStateProofSelector): F[GlobalIncrementalSnapshot] =
+    genesis.info.toGlobalSnapshotInfo.stateProof[F](genesis.ordinal).map { stateProof =>
       GlobalIncrementalSnapshot(
         genesis.ordinal.next,
         genesis.height,

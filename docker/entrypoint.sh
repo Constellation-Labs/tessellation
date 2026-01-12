@@ -99,21 +99,38 @@ fi
 
 export RUN_COMMAND="run-validator"
 
+# Add Java 21 module access flags for Kryo serialization
+export CL_DOCKER_JAVA_OPTS="${CL_DOCKER_JAVA_OPTS:-} --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.security=ALL-UNNAMED"
+
 if [ "$CL_DOCKER_GENESIS" == "true" ]; then
   if [ "$L0" == "false" ]; then
     RUN_COMMAND="run-initial-validator"
   elif [ "$ID" == "ml0" ]; then
     if [ ! -f "/tessellation/data/snapshot/ordinal/0/0" ]; then
       RUN_COMMAND="run-genesis /tessellation/data/genesis.snapshot"
+    elif [ "$CL_DOCKER_ROLLBACK" == "true" ]; then
+      if [ -z "$CL_DOCKER_ROLLBACK_HASH" ]; then
+        echo "Error: CL_DOCKER_ROLLBACK=true but CL_DOCKER_ROLLBACK_HASH is not set"
+        echo "Please provide the snapshot hash to rollback to via --rollback-hash=<hash>"
+        exit 1
+      fi
+      RUN_COMMAND="run-rollback $CL_DOCKER_ROLLBACK_HASH"
     else
-      echo "Ordinal 0/0 exists, re-starting mode not yet supported"
+      echo "Ordinal 0/0 exists. Use --rollback --rollback-hash=<hash> to restart from existing data"
       exit 1
     fi
   else
     if [ ! -f "/tessellation/data/snapshot/ordinal/0/0" ]; then
       RUN_COMMAND="run-genesis /tessellation/genesis.csv"
+    elif [ "$CL_DOCKER_ROLLBACK" == "true" ]; then
+      if [ -z "$CL_DOCKER_ROLLBACK_HASH" ]; then
+        echo "Error: CL_DOCKER_ROLLBACK=true but CL_DOCKER_ROLLBACK_HASH is not set"
+        echo "Please provide the snapshot hash to rollback to via --rollback-hash=<hash>"
+        exit 1
+      fi
+      RUN_COMMAND="run-rollback $CL_DOCKER_ROLLBACK_HASH"
     else
-      echo "Ordinal 0/0 exists, re-starting mode not yet supported"
+      echo "Ordinal 0/0 exists. Use --rollback --rollback-hash=<hash> to restart from existing data"
       exit 1
     fi
   fi

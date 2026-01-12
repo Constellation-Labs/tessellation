@@ -58,7 +58,9 @@ object snapshot {
     val lastTxRefs: SortedMap[Address, TransactionReference]
     val balances: SortedMap[Address, Balance]
 
-    def stateProof[F[_]: Parallel: Async: Hasher](ordinal: SnapshotOrdinal): F[P]
+    def stateProof[F[_]: Parallel: Async: Hasher](ordinal: SnapshotOrdinal)(
+      implicit stateProofSelector: StateProofSelector
+    ): F[P]
     def getActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = SortedMap.empty
     def getActiveDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]] = SortedMap.empty
   }

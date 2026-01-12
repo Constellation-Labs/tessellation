@@ -36,7 +36,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.services.Addr
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages, SharedValidators}
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalStateProofSelector}
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
 import org.http4s.client.Client
@@ -61,6 +61,8 @@ object Services {
     keyPair: KeyPair,
     cfg: AppConfig,
     txHasher: Hasher[F]
+  )(
+    implicit globalStateProofSelector: GlobalStateProofSelector
   ): F[Services[F, R]] =
     for {
       classicRewards <- Rewards

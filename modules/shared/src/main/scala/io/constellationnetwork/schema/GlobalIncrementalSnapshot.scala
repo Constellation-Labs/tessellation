@@ -65,7 +65,7 @@ case class GlobalIncrementalSnapshotV1(
       epochProgress,
       nextFacilitators,
       tips,
-      GlobalSnapshotStateProof.fromLegacyProof(stateProof.toGlobalSnapshotStateProofV2),
+      stateProof.toGlobalSnapshotStateProof,
       Some(SortedSet.empty),
       Some(SortedSet.empty),
       Some(SortedMap.empty),
@@ -92,93 +92,9 @@ object GlobalIncrementalSnapshotV1 {
       snapshot.epochProgress,
       snapshot.nextFacilitators,
       snapshot.tips,
-      snapshot.stateProof.toLegacyProof,
+      GlobalSnapshotStateProofV1.fromGlobalSnapshotStateProof(snapshot.stateProof),
       snapshot.version
     )
-}
-
-@derive(eqv, show, encoder, decoder)
-case class GlobalIncrementalSnapshotV2(
-  ordinal: SnapshotOrdinal,
-  height: Height,
-  subHeight: SubHeight,
-  lastSnapshotHash: Hash,
-  blocks: SortedSet[BlockAsActiveTip],
-  stateChannelSnapshots: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
-  rewards: SortedSet[RewardTransaction],
-  delegateRewards: Option[SortedMap[PeerId, Map[Address, Amount]]],
-  epochProgress: EpochProgress,
-  nextFacilitators: NonEmptyList[PeerId],
-  tips: SnapshotTips,
-  stateProof: GlobalSnapshotStateProofV2,
-  allowSpendBlocks: Option[SortedSet[Signed[AllowSpendBlock]]],
-  tokenLockBlocks: Option[SortedSet[Signed[TokenLockBlock]]],
-  spendActions: Option[SortedMap[Address, List[SpendAction]]],
-  updateNodeParameters: Option[SortedMap[Id, Signed[UpdateNodeParameters]]],
-  artifacts: Option[SortedSet[SharedArtifact]],
-  activeDelegatedStakes: Option[SortedMap[Address, List[Signed[UpdateDelegatedStake.Create]]]],
-  delegatedStakesWithdrawals: Option[SortedMap[Address, List[Signed[UpdateDelegatedStake.Withdraw]]]],
-  activeNodeCollaterals: Option[SortedMap[Address, List[Signed[UpdateNodeCollateral.Create]]]],
-  nodeCollateralWithdrawals: Option[SortedMap[Address, List[Signed[UpdateNodeCollateral.Withdraw]]]],
-  version: SnapshotVersion = SnapshotVersion("0.0.1")
-) extends IncrementalSnapshot[GlobalSnapshotStateProofV2] {
-  def toGlobalIncrementalSnapshot: GlobalIncrementalSnapshot =
-    GlobalIncrementalSnapshot(
-      ordinal,
-      height,
-      subHeight,
-      lastSnapshotHash,
-      blocks,
-      stateChannelSnapshots,
-      rewards,
-      delegateRewards,
-      epochProgress,
-      nextFacilitators,
-      tips,
-      GlobalSnapshotStateProof.fromLegacyProof(stateProof),
-      allowSpendBlocks,
-      tokenLockBlocks,
-      spendActions,
-      updateNodeParameters,
-      artifacts,
-      activeDelegatedStakes,
-      delegatedStakesWithdrawals,
-      activeNodeCollaterals,
-      nodeCollateralWithdrawals,
-      version
-    )
-}
-
-object GlobalIncrementalSnapshotV2 {
-  def fromGlobalSnapshot[F[_]: Parallel: Async: Hasher](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshotV2] = {
-    val gsi = GlobalSnapshotInfoV1.toGlobalSnapshotInfo(snapshot.info)
-    val gsiv3 = GlobalSnapshotInfoV3.fromGlobalSnapshotInfo(gsi)
-    gsiv3.stateProof[F](snapshot.ordinal).map { stateProof =>
-      GlobalIncrementalSnapshotV2(
-        snapshot.ordinal,
-        snapshot.height,
-        snapshot.subHeight,
-        snapshot.lastSnapshotHash,
-        snapshot.blocks,
-        snapshot.stateChannelSnapshots,
-        snapshot.rewards,
-        Some(SortedMap.empty),
-        snapshot.epochProgress,
-        snapshot.nextFacilitators,
-        snapshot.tips,
-        stateProof,
-        Some(SortedSet.empty),
-        Some(SortedSet.empty),
-        Some(SortedMap.empty),
-        snapshot.info.updateNodeParameters.map(_.map { case (k, v) => (k, v._1) }),
-        Some(SortedSet.empty),
-        Some(SortedMap.empty),
-        Some(SortedMap.empty),
-        Some(SortedMap.empty),
-        Some(SortedMap.empty)
-      )
-    }
-  }
 }
 
 @derive(eqv, show, encoder, decoder)
@@ -208,8 +124,11 @@ case class GlobalIncrementalSnapshot(
 ) extends IncrementalSnapshot[GlobalSnapshotStateProof]
 
 object GlobalIncrementalSnapshot {
-  def fromGlobalSnapshot[F[_]: Parallel: Async: Hasher](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshot] =
-    GlobalSnapshotInfoV1.toGlobalSnapshotInfo(snapshot.info).stateProof[F](snapshot.ordinal).map { stateProof =>
+  def fromGlobalSnapshot[F[_]: Parallel: Async: Hasher](snapshot: GlobalSnapshot)(
+    implicit stateProofSelector: StateProofSelector
+  ): F[GlobalIncrementalSnapshot] = {
+    val gsi = snapshot.info.toGlobalSnapshotInfo
+    gsi.stateProof[F](snapshot.ordinal).map { stateProof =>
       GlobalIncrementalSnapshot(
         snapshot.ordinal,
         snapshot.height,
@@ -226,7 +145,7 @@ object GlobalIncrementalSnapshot {
         Some(SortedSet.empty),
         Some(SortedSet.empty),
         Some(SortedMap.empty),
-        snapshot.info.updateNodeParameters.map(_.map { case (k, v) => (k, v._1) }),
+        gsi.updateNodeParameters.map(_.map { case (k, v) => (k, v._1) }),
         Some(SortedSet.empty),
         Some(SortedMap.empty),
         Some(SortedMap.empty),
@@ -234,4 +153,5 @@ object GlobalIncrementalSnapshot {
         Some(SortedMap.empty)
       )
     }
+  }
 }

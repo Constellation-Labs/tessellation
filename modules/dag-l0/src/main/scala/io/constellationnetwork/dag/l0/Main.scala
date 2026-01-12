@@ -24,12 +24,12 @@ import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, 
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.GlobalSnapshotLocalFileSystemStorage
 import io.constellationnetwork.node.shared.resources.MkHttpServer
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.semver.TessellationVersion
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -312,7 +312,7 @@ object Main
                                   sharedStorages.lastGlobalSnapshot,
                                   programs.download,
                                   hashedSnapshot,
-                                  hashedGenesis.info
+                                  hashedGenesis.info.toGlobalSnapshotInfo
                                 )
                                 _ <- services.consensus.manager
                                   .startFacilitatingAfterRollback(
@@ -325,7 +325,7 @@ object Main
                                       EligibleFacilitators.empty,
                                       Finished(
                                         signedFirstIncrementalSnapshot,
-                                        hashedGenesis.info,
+                                        hashedGenesis.info.toGlobalSnapshotInfo,
                                         EventTrigger,
                                         Candidates.empty,
                                         Hash.empty,
