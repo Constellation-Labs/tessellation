@@ -38,6 +38,7 @@ import io.constellationnetwork.node.shared.domain.swap.block._
 import io.constellationnetwork.node.shared.domain.tokenlock.block._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{DelegateRewardsInput, DelegatedRewardsResult, RewardsInput}
+import io.constellationnetwork.node.shared.logger.{DatabaseLogger, NoDbLogger}
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -250,25 +251,28 @@ object Mocks {
     implicit val hasherSelector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(h)
     implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(Long.MaxValue))
 
-    GlobalSnapshotAcceptanceManager
-      .make[IO](
-        FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
-        MetagraphsSyncConfig(PosInt(100)),
-        AppEnvironment.Dev,
-        blockAcceptanceManager = mockBlockAcceptanceManager,
-        allowSpendBlockAcceptanceManager = mockAllowSpendBlockAcceptanceManager,
-        tokenLockBlockAcceptanceManager = mockTokenLockBlockAcceptanceManager,
-        stateChannelEventsProcessor = mockStateChannelEventsProcessor,
-        updateNodeParametersAcceptanceManager = mockUpdateNodeParametersAcceptanceManager,
-        updateDelegatedStakeAcceptanceManager = updateDelegatedStakeAcceptanceManager,
-        updateNodeCollateralAcceptanceManager = mockUpdateNodeCollateralAcceptanceManager,
-        spendActionValidator = mockSpendActionValidator,
-        pricingUpdateValidator = mockPricingUpdateValidator,
-        priceStateUpdater = mockPriceStateUpdater,
-        collateral = Amount.empty,
-        withdrawalTimeLimit = EpochProgress(4L)
-      )
-      .pure[IO]
+    NoDbLogger.makeUnsafe[IO].flatMap { dbLogger =>
+      GlobalSnapshotAcceptanceManager
+        .make[IO](
+          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
+          MetagraphsSyncConfig(PosInt(100)),
+          AppEnvironment.Dev,
+          blockAcceptanceManager = mockBlockAcceptanceManager,
+          allowSpendBlockAcceptanceManager = mockAllowSpendBlockAcceptanceManager,
+          tokenLockBlockAcceptanceManager = mockTokenLockBlockAcceptanceManager,
+          stateChannelEventsProcessor = mockStateChannelEventsProcessor,
+          updateNodeParametersAcceptanceManager = mockUpdateNodeParametersAcceptanceManager,
+          updateDelegatedStakeAcceptanceManager = updateDelegatedStakeAcceptanceManager,
+          updateNodeCollateralAcceptanceManager = mockUpdateNodeCollateralAcceptanceManager,
+          spendActionValidator = mockSpendActionValidator,
+          pricingUpdateValidator = mockPricingUpdateValidator,
+          priceStateUpdater = mockPriceStateUpdater,
+          collateral = Amount.empty,
+          withdrawalTimeLimit = EpochProgress(4L),
+          dbLogger = dbLogger
+        )
+        .pure[IO]
+    }
   }
 
   private[snapshot] def mkGlobalSnapshotInfo(

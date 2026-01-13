@@ -14,7 +14,7 @@ import io.constellationnetwork.dag.l0.modules._
 import io.constellationnetwork.ext.cats.effect._
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.kryo._
-import io.constellationnetwork.node.shared.app.{NodeShared, TessellationIOApp}
+import io.constellationnetwork.node.shared.app.{DagL0, NodeShared, TessellationIOApp}
 import io.constellationnetwork.node.shared.domain.collateral.OwnCollateralNotSatisfied
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
@@ -47,7 +47,8 @@ object Main
       name = "dag-l0",
       header = "Tessellation Node",
       version = TessellationVersion.unsafeFrom(BuildInfo.version),
-      clusterId = ClusterId("6d7f1d6a-213a-4148-9d45-d7200f555ecf")
+      clusterId = ClusterId("6d7f1d6a-213a-4148-9d45-d7200f555ecf"),
+      layer = DagL0
     ) {
 
   val opts: Opts[Run] = cli.method.opts
@@ -96,7 +97,8 @@ object Main
           nodeShared.nodeId,
           keyPair,
           cfg,
-          Hasher.forKryo[IO]
+          Hasher.forKryo[IO],
+          nodeShared.databaseLogger
         )
         .asResource
 

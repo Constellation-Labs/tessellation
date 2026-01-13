@@ -22,7 +22,7 @@ import io.constellationnetwork.dag.l1.modules.{Daemons => DAGL1Daemons, Queues =
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.kryo.{KryoRegistrationId, MapRegistrationId}
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
-import io.constellationnetwork.node.shared.app.{NodeShared, TessellationIOApp, getMajorityPeerIds}
+import io.constellationnetwork.node.shared.app.{CurrencyL1 => CurrencyL1Layer, _}
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastNGlobalSnapshotStorage
@@ -65,6 +65,7 @@ abstract class CurrencyL1App(
       name,
       header,
       clusterId,
+      layer = CurrencyL1Layer,
       version = tessellationVersion,
       metagraphVersion = metagraphVersion
     )

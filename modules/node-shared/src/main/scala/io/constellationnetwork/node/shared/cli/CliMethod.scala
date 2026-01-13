@@ -78,7 +78,8 @@ trait CliMethod {
     c.priceOracle.getOrElse(environment, PriceOracleConfig.default),
     c.snapshotBinarySenderTimeouts,
     c.snapshot.timeouts,
-    c.combinedRouteRateLimiter
+    c.combinedRouteRateLimiter,
+    c.clickHouseConfig
   )
 
 }

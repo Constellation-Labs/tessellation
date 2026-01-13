@@ -53,6 +53,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
   GlobalSnapshotAcceptanceManager,
   GlobalSnapshotStateChannelEventsProcessor
 }
+import io.constellationnetwork.node.shared.logger.NoDbLogger
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
@@ -323,25 +324,39 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     val pricingUpdateValidator = PricingUpdateValidator.make[IO](None, NonNegLong(0))
     val priceStateUpdater = PriceStateUpdater.make(Dev, delegatedRewardsConfigProvider)
 
-    val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
-      GlobalSnapshotAcceptanceManager
-        .make[IO](
-          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
-          MetagraphsSyncConfig(PosInt(100)),
-          Dev,
-          bam,
-          asbam,
-          tlbam,
-          scProcessor,
-          updateNodeParametersAcceptanceManager,
-          updateDelegatedStakeAcceptanceManager,
-          updateNodeCollateralAcceptanceManager,
-          spendActionValidator,
-          pricingUpdateValidator,
-          priceStateUpdater,
-          collateral,
-          EpochProgress(NonNegLong(136080L))
-        )
+    val snapshotAcceptanceManagerF: F[GlobalSnapshotAcceptanceManager[IO]] =
+      NoDbLogger.makeUnsafe[IO].map { dbLogger =>
+        GlobalSnapshotAcceptanceManager
+          .make[IO](
+            FieldsAddedOrdinals(
+              Map.empty,
+              Map.empty,
+              Map.empty,
+              Map.empty,
+              Map.empty,
+              Map.empty,
+              Map.empty,
+              Map.empty,
+              Map.empty,
+              Map.empty
+            ),
+            MetagraphsSyncConfig(PosInt(100)),
+            Dev,
+            bam,
+            asbam,
+            tlbam,
+            scProcessor,
+            updateNodeParametersAcceptanceManager,
+            updateDelegatedStakeAcceptanceManager,
+            updateNodeCollateralAcceptanceManager,
+            spendActionValidator,
+            pricingUpdateValidator,
+            priceStateUpdater,
+            collateral,
+            EpochProgress(NonNegLong(136080L)),
+            dbLogger
+          )
+      }
 
     val feeCalculator = new SnapshotBinaryFeeCalculator[IO] {
       override def calculateFee(
@@ -352,11 +367,12 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         event.value.snapshotBinary.value.fee.value.pure[IO]
     }
 
-    RewardsInfoStorage.make.map { rewardsInfoStorage =>
-      val rewardsInfoCalculator = RewardsInfoCalculator.make(delegatorRewards)
-      val rewardsService = RewardsService[IO](classicRewards, delegatorRewards, rewardsInfoCalculator, rewardsInfoStorage)
-
-      GlobalSnapshotConsensusFunctions
+    for {
+      rewardsInfoStorage <- RewardsInfoStorage.make
+      rewardsInfoCalculator = RewardsInfoCalculator.make(delegatorRewards)
+      rewardsService = RewardsService[IO](classicRewards, delegatorRewards, rewardsInfoCalculator, rewardsInfoStorage)
+      snapshotAcceptanceManager <- snapshotAcceptanceManagerF
+      globalSnapshotConsensusFunction = GlobalSnapshotConsensusFunctions
         .make[IO](
           snapshotAcceptanceManager,
           collateral,
@@ -368,7 +384,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
           SnapshotOrdinal.MinValue,
           SnapshotOrdinal.MinValue
         )
-    }
+    } yield globalSnapshotConsensusFunction
   }
 
   def getTestData(

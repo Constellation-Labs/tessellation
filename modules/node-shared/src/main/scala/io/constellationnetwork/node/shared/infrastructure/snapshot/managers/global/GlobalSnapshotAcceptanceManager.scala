@@ -35,6 +35,7 @@ import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator.Spen
 import io.constellationnetwork.node.shared.domain.swap.block.{AllowSpendBlockAcceptanceManager, AllowSpendBlockAcceptanceResult}
 import io.constellationnetwork.node.shared.domain.tokenlock.block.{TokenLockBlockAcceptanceManager, TokenLockBlockAcceptanceResult}
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
+import io.constellationnetwork.node.shared.logger.DatabaseLogger
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -137,7 +138,8 @@ object GlobalSnapshotAcceptanceManager {
     pricingUpdateValidator: PricingUpdateValidator[F],
     priceStateUpdater: PriceStateUpdater[F],
     collateral: Amount,
-    withdrawalTimeLimit: EpochProgress
+    withdrawalTimeLimit: EpochProgress,
+    dbLogger: DatabaseLogger[F]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): GlobalSnapshotAcceptanceManager[F] = {
@@ -746,11 +748,20 @@ object GlobalSnapshotAcceptanceManager {
             globalBalances,
             lastSnapshotContext
           )
+          acceptedSpendActionsMessage = s"[ORDINAL=$ordinal] Accepted spend actions: ${acceptedSpendActions.show}"
+          rejectedSpendActionMessage = s"[ORDINAL=$ordinal] Rejected spend actions: ${rejectedSpendActions.show}"
+          acceptedPricingUpdatesMessage = s"[ORDINAL=$ordinal] Accepted pricing updates: ${acceptedPricingUpdates.show}"
+          rejectedPricingUpdatesMessage = s"[ORDINAL=$ordinal] Rejected pricing updates: ${rejectedPricingUpdates.show}"
 
-          _ <- logger.debug(s"[ORDINAL=$ordinal] Accepted spend actions: ${acceptedSpendActions.show}")
-          _ <- logger.debug(s"[ORDINAL=$ordinal] Rejected spend actions: ${rejectedSpendActions.show}")
-          _ <- logger.debug(s"[ORDINAL=$ordinal] Accepted pricing updates: ${acceptedPricingUpdates.show}")
-          _ <- logger.debug(s"[ORDINAL=$ordinal] Rejected pricing updates: ${rejectedPricingUpdates.show}")
+          _ <- logger.debug(acceptedSpendActionsMessage)
+          _ <- logger.debug(rejectedSpendActionMessage)
+          _ <- logger.debug(acceptedPricingUpdatesMessage)
+          _ <- logger.debug(rejectedPricingUpdatesMessage)
+
+          _ <- dbLogger.debug(acceptedSpendActionsMessage)
+          _ <- dbLogger.debug(rejectedSpendActionMessage)
+          _ <- dbLogger.debug(acceptedPricingUpdatesMessage)
+          _ <- dbLogger.debug(rejectedPricingUpdatesMessage)
 
           updatedLastStateChannelSnapshotHashes = lastSnapshotContext.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
           updatedLastCurrencySnapshots = lastSnapshotContext.lastCurrencySnapshots ++ currencySnapshots

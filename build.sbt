@@ -262,7 +262,9 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.http4sServer,
       Libraries.http4sClient,
       Libraries.http4sCirce,
-      Libraries.circeFs2
+      Libraries.circeFs2,
+      Libraries.clickHouse,
+      Libraries.hikari
     )
   )
 
