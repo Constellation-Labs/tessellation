@@ -27,7 +27,7 @@ import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalStateProofSelector}
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
 object Services {
@@ -48,6 +48,8 @@ object Services {
     maybeTransactionFeeEstimator: Option[TransactionFeeEstimator[F]],
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]],
     txHasher: Hasher[F]
+  )(
+    implicit globalStateProofSelector: GlobalStateProofSelector
   ): Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, R] =
     new Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, R] {
 

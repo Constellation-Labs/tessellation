@@ -94,7 +94,9 @@ object currency {
     lastTokenLockRefs: Option[SortedMap[Address, TokenLockReference]],
     activeTokenLocks: Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]
   ) extends SnapshotInfo[CurrencySnapshotStateProof] {
-    def stateProof[F[_]: Parallel: Async: Hasher](ordinal: SnapshotOrdinal): F[CurrencySnapshotStateProof] =
+    def stateProof[F[_]: Parallel: Async: Hasher](ordinal: SnapshotOrdinal)(
+      implicit stateProofSelector: StateProofSelector
+    ): F[CurrencySnapshotStateProof] =
       (
         lastTxRefs.hash,
         balances.hash,
@@ -116,7 +118,9 @@ object currency {
     lastTxRefs: SortedMap[Address, TransactionReference],
     balances: SortedMap[Address, Balance]
   ) extends SnapshotInfo[CurrencySnapshotStateProofV1] {
-    def stateProof[F[_]: Parallel: Async: Hasher](ordinal: SnapshotOrdinal): F[CurrencySnapshotStateProofV1] =
+    def stateProof[F[_]: Parallel: Async: Hasher](ordinal: SnapshotOrdinal)(
+      implicit stateProofSelector: StateProofSelector
+    ): F[CurrencySnapshotStateProofV1] =
       (lastTxRefs.hash, balances.hash).tupled.map(CurrencySnapshotStateProofV1.apply)
 
     def toCurrencySnapshotInfo: CurrencySnapshotInfo =
@@ -209,7 +213,9 @@ object currency {
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
 
   object CurrencyIncrementalSnapshot {
-    def fromCurrencySnapshot[F[_]: Parallel: Async: Hasher](snapshot: CurrencySnapshot): F[CurrencyIncrementalSnapshot] =
+    def fromCurrencySnapshot[F[_]: Parallel: Async: Hasher](snapshot: CurrencySnapshot)(
+      implicit stateProofSelector: StateProofSelector
+    ): F[CurrencyIncrementalSnapshot] =
       snapshot.info.stateProof[F](snapshot.ordinal).map { stateProof =>
         CurrencyIncrementalSnapshot(
           snapshot.ordinal,
@@ -313,7 +319,7 @@ object currency {
 
     def mkFirstIncrementalSnapshot[F[_]: Parallel: Async: Hasher](
       genesis: Hashed[CurrencySnapshot]
-    ): F[CurrencyIncrementalSnapshot] =
+    )(implicit stateProofSelector: CurrencyStateProofSelector): F[CurrencyIncrementalSnapshot] =
       genesis.info.stateProof[F](genesis.ordinal).map { stateProof =>
         CurrencyIncrementalSnapshot(
           genesis.ordinal.next,

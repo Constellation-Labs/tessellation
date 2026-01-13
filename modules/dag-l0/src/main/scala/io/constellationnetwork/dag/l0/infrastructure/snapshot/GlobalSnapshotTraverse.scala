@@ -38,6 +38,8 @@ object GlobalSnapshotTraverse {
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     download: Download[F, GlobalIncrementalSnapshot]
+  )(
+    implicit globalStateProofSelector: GlobalStateProofSelector
   ): GlobalSnapshotTraverse[F] =
     new GlobalSnapshotTraverse[F] {
       implicit val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
@@ -101,11 +103,14 @@ object GlobalSnapshotTraverse {
 
           firstInfo <- loadFullOrIncOrErr(hashCandidate).flatMap {
             case Left(globalIncrementalSnapshot) => loadInfoOrErr(globalIncrementalSnapshot.ordinal)
-            case Right(globalSnapshot)           => GlobalSnapshotInfoV1.toGlobalSnapshotInfo(globalSnapshot.info).pure[F]
+            case Right(globalSnapshot)           => globalSnapshot.info.toGlobalSnapshotInfo.pure[F]
           }
 
           firstInfoCalculatedProof <- HasherSelector[F].withCurrent { implicit hasher =>
-            firstInfo.stateProofFor(hasher.getLogic(firstInc.ordinal), firstInc.ordinal)
+            hasher.getLogic(firstInc.ordinal) match {
+              case KryoHash => GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(firstInfo).stateProof(firstInc.ordinal)
+              case JsonHash => firstInfo.stateProof(firstInc.ordinal)
+            }
           }
 
           hashedFirstInc <- HasherSelector[F].withCurrent(implicit hasher => firstInc.toHashed)

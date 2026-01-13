@@ -9,8 +9,8 @@ import cats.{Parallel, Show}
 
 import scala.util.control.NoStackTrace
 
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.snapshot.{IncrementalSnapshot, SnapshotInfo, StateProof}
+import io.constellationnetwork.schema.{SnapshotOrdinal, StateProofSelector}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -26,7 +26,7 @@ object StateProofValidator {
   def validate[F[_]: Async: Parallel: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]: Encoder](
     snapshot: Signed[A],
     snapshotInfo: SnapshotInfo[P]
-  ): F[Validated[StateBroken, Unit]] =
+  )(implicit stateProofSelector: StateProofSelector): F[Validated[StateBroken, Unit]] =
     (snapshot.toHashed, snapshotInfo.stateProof(snapshot.ordinal)).flatMapN {
       case (hashedSnapshot, stateProof) =>
         validate(hashedSnapshot, stateProof)
@@ -35,7 +35,7 @@ object StateProofValidator {
   def validate[F[_]: Async: Parallel: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
     snapshot: Hashed[A],
     snapshotInfo: SnapshotInfo[P]
-  ): F[Validated[StateBroken, Unit]] =
+  )(implicit stateProofSelector: StateProofSelector): F[Validated[StateBroken, Unit]] =
     snapshotInfo.stateProof(snapshot.ordinal).flatMap(validate(snapshot, _))
 
   def validate[F[_]: Async: Parallel, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](

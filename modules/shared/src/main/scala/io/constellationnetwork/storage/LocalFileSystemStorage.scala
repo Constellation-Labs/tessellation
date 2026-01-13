@@ -13,6 +13,7 @@ import better.files._
 import fs2.Stream
 import fs2.io.file.Path
 import io.circe.{Decoder, Encoder}
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class SerializableLocalFileSystemStorage[F[_]: JsonSerializer, A: Encoder: Decoder](
   baseDir: Path
@@ -21,13 +22,25 @@ abstract class SerializableLocalFileSystemStorage[F[_]: JsonSerializer, A: Encod
 ) extends LocalFileSystemStorage[F, A](baseDir)
     with SerializableFileSystemStorage[F, A] {
 
+  private val logger = Slf4jLogger.getLoggerFromClass(this.getClass)
+
   def deserializeFallback(bytes: Array[Byte]): Either[Throwable, A]
 
   def read(fileName: String): F[Option[A]] =
     readBytes(fileName).flatMap {
       _.flatTraverse { bytes =>
-        JsonSerializer[F].deserialize[A](bytes).map {
-          _.fold(_ => deserializeFallback(bytes).toOption, _.some)
+        JsonSerializer[F].deserialize[A](bytes).flatMap { result =>
+          result.fold(
+            jsonErr =>
+              deserializeFallback(bytes) match {
+                case Right(value) => value.some.pure[F]
+                case Left(fallbackErr) =>
+                  logger.warn(
+                    s"Failed to deserialize $fileName - JSON error: ${jsonErr.getMessage}, Fallback error: ${fallbackErr.getMessage}"
+                  ) >> none[A].pure[F]
+              },
+            value => value.some.pure[F]
+          )
         }
       }
     }

@@ -24,12 +24,12 @@ import io.constellationnetwork.node.shared.http.p2p.PeerResponse.PeerResponse
 import io.constellationnetwork.node.shared.http.p2p.clients.StateChannelSnapshotClient
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
-import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.generators.{chooseNumRefined, signedOf}
 import io.constellationnetwork.schema.height.Height
 import io.constellationnetwork.schema.peer._
+import io.constellationnetwork.schema.{GlobalStateProofSelector, _}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
@@ -47,16 +47,19 @@ import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
 object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
+  implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
 
   def mkEmptySnapshots(n: Long, keyPair: KeyPair)(
     implicit hs: Hasher[IO],
-    sp: SecurityProvider[IO]
+    sp: SecurityProvider[IO],
+    globalStateProofSelector: GlobalStateProofSelector
   ): IO[List[Hashed[GlobalIncrementalSnapshot]]] =
     (1L to n).toList.traverse(ordinal => mkSnapshot(SnapshotOrdinal(NonNegLong.unsafeFrom(ordinal)), keyPair, List.empty))
 
   def mkSnapshot(ordinal: SnapshotOrdinal, keyPair: KeyPair, confirmedBinaries: List[Signed[StateChannelSnapshotBinary]])(
     implicit hs: Hasher[IO],
-    sp: SecurityProvider[IO]
+    sp: SecurityProvider[IO],
+    globalStateProofSelector: GlobalStateProofSelector
   ): IO[Hashed[GlobalIncrementalSnapshot]] = {
     val identifier = keyPair.getPublic.toAddress
 

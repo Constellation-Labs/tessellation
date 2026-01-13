@@ -22,7 +22,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Serv
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{GlobalSnapshotContextFunctions, PeerSelect}
 import io.constellationnetwork.node.shared.modules.{SharedPrograms, SharedStorages}
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
+import io.constellationnetwork.schema._
 import io.constellationnetwork.security.{HashSelect, HasherSelector, SecurityProvider}
 
 object Programs {
@@ -39,7 +39,7 @@ object Programs {
     globalSnapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
-  ): Programs[F] =
+  )(implicit globalStateProofSelector: GlobalStateProofSelector): Programs[F] =
     HasherSelector[F].withCurrent { implicit hasher =>
       val trustPush = TrustPush.make(storages.trust, services.gossip)
       val peerSelect: PeerSelect[F] = PeerSelect.make(

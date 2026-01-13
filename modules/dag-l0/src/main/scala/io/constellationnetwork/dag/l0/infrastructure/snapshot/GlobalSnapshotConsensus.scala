@@ -96,7 +96,7 @@ object GlobalSnapshotConsensus {
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     dbLogger: DatabaseLogger[F]
-  )(implicit supervisor: Supervisor[F]): F[GlobalSnapshotConsensus[F]] =
+  )(implicit supervisor: Supervisor[F], globalStateProofSelector: GlobalStateProofSelector): F[GlobalSnapshotConsensus[F]] =
     for {
       globalStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
         .make[F](stateChannelAllowanceLists, pullDelay = stateChannelPullDelay, purgeDelay = stateChannelPurgeDelay)

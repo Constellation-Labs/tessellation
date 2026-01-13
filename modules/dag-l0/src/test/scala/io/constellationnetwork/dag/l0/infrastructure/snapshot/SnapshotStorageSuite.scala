@@ -10,18 +10,20 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage._
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
-import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.{GlobalStateProofSelector, SnapshotOrdinal, _}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
 
 import better.files._
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.io.file.Path
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
 object SnapshotStorageSuite extends MutableIOSuite with Checkers {
+  implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
 
   type Res = (Supervisor[IO], KryoSerializer[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO])
 
@@ -83,7 +85,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
       mkStorage(tmpDir).flatMap { storage =>
         mkSnapshots.flatMap {
           case (genesis, snapshot) =>
-            storage.prepend(snapshot, genesis.info) >>
+            storage.prepend(snapshot, genesis.info.toGlobalSnapshotInfo) >>
               storage.headSnapshot.map {
                 expect.eql(snapshot.some, _)
               }
@@ -99,7 +101,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
       mkStorage(tmpDir).flatMap { storage =>
         mkSnapshots.flatMap {
           case (genesis, snapshot) =>
-            storage.prepend(snapshot, genesis.info).map(expect.eql(true, _))
+            storage.prepend(snapshot, genesis.info.toGlobalSnapshotInfo).map(expect.eql(true, _))
         }
       }
     }
@@ -112,7 +114,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
       mkStorage(tmpDir).flatMap { storage =>
         mkSnapshots.flatMap {
           case (genesis, snapshot) =>
-            storage.prepend(snapshot, genesis.info).map(expect.same(true, _))
+            storage.prepend(snapshot, genesis.info.toGlobalSnapshotInfo).map(expect.same(true, _))
         }
       }
     }
@@ -125,7 +127,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
       mkStorage(tmpDir).flatMap { storage =>
         mkSnapshots.flatMap {
           case (genesis, snapshot) =>
-            storage.prepend(snapshot, genesis.info) >>
+            storage.prepend(snapshot, genesis.info.toGlobalSnapshotInfo) >>
               storage.get(snapshot.ordinal).map(expect.eql(snapshot.some, _))
         }
       }
@@ -139,7 +141,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
       mkStorage(tmpDir).flatMap { storage =>
         mkSnapshots.flatMap {
           case (genesis, snapshot) =>
-            storage.prepend(snapshot, genesis.info) >>
+            storage.prepend(snapshot, genesis.info.toGlobalSnapshotInfo) >>
               snapshot.value.hash.flatMap { hash =>
                 storage.get(hash).map(expect.eql(snapshot.some, _))
               }
@@ -155,7 +157,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
       mkStorage(tmpDir).flatMap { storage =>
         mkSnapshots.flatMap {
           case (genesis, snapshot) =>
-            storage.prepend(snapshot, genesis.info) >>
+            storage.prepend(snapshot, genesis.info.toGlobalSnapshotInfo) >>
               storage.getLatestBalancesStream.take(1).compile.toList.map {
                 expect.same(_, List(Map.empty[address.Address, balance.Balance]))
               }
@@ -171,7 +173,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
       mkStorage(tmpDir).flatMap { storage =>
         mkSnapshots.flatMap {
           case (genesis, snapshot) =>
-            storage.prepend(snapshot, genesis.info) >>
+            storage.prepend(snapshot, genesis.info.toGlobalSnapshotInfo) >>
               storage.getLatestBalancesStream.take(1).compile.toList >>
               storage.getLatestBalancesStream.take(1).compile.toList.map {
                 expect.same(_, List(Map.empty[address.Address, balance.Balance]))

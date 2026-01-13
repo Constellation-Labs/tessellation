@@ -249,6 +249,7 @@ object Mocks {
 
     // Create the manager with mock dependencies
     implicit val hasherSelector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(h)
+    implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(Long.MaxValue))
 
     NoDbLogger.makeUnsafe[IO].flatMap { dbLogger =>
       GlobalSnapshotAcceptanceManager

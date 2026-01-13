@@ -23,11 +23,11 @@ import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
 import io.constellationnetwork.schema.ID.Id
-import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.generators.{chooseNumRefined, signatureGen, signedTransactionGen}
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
+import io.constellationnetwork.schema.{GlobalStateProofSelector, _}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed
@@ -43,6 +43,8 @@ import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
 object RewardsSuite extends MutableIOSuite with Checkers {
+  implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
+
   type GenIdFn = () => Id
   type Res = (Hasher[IO], SecurityProvider[IO], GenIdFn)
 

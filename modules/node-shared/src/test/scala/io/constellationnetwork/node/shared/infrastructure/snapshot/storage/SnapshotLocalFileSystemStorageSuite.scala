@@ -29,7 +29,7 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
   val hashPathGenerator = PathGenerator.forHash(Depth(2), PrefixSize(3))
   val ordinalPathGenerator = PathGenerator.forOrdinal(ChunkSize(20000))
 
-  type Res = (Supervisor[IO], KryoSerializer[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO])
+  type Res = (Supervisor[IO], KryoSerializer[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO], GlobalStateProofSelector)
 
   override def sharedResource: Resource[IO, Res] =
     for {
@@ -38,14 +38,16 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
       h = Hasher.forJson[IO]
       sp <- SecurityProvider.forAsync[IO]
-    } yield (s, k, j, h, sp)
+      gsps = GlobalStateProofSelector(SnapshotOrdinal(Long.MaxValue))
+    } yield (s, k, j, h, sp, gsps)
 
   private def mkLocalFileSystemStorage(tmpDir: File)(implicit K: KryoSerializer[IO], J: JsonSerializer[IO], H: Hasher[IO]) =
     GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](Path(tmpDir.pathAsString))
 
   private def mkSnapshots(
     implicit H: Hasher[IO],
-    S: SecurityProvider[IO]
+    S: SecurityProvider[IO],
+    gsps: GlobalStateProofSelector
   ): IO[(Signed[GlobalSnapshot], Signed[GlobalIncrementalSnapshot])] =
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
       Signed.forAsyncHasher[IO, GlobalSnapshot](GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue), keyPair).flatMap { genesis =>
@@ -75,7 +77,7 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
     tmpDir / "ordinal" / ordinalPathGenerator.get(snapshot.ordinal.value.value.toString)
 
   test("write - fail if ordinal file and hash file already exist") { res =>
-    implicit val (_, kryo, j, h, sp) = res
+    implicit val (_, kryo, j, h, sp, gsps) = res
 
     File.temporaryDirectory() { tmpDir =>
       mkLocalFileSystemStorage(tmpDir).flatMap { storage =>
@@ -92,7 +94,7 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
   }
 
   test("write - fail if ordinal file already exists but hash file does not") { res =>
-    implicit val (_, kryo, j, h, sp) = res
+    implicit val (_, kryo, j, h, sp, gsps) = res
 
     File.temporaryDirectory() { tmpDir =>
       mkLocalFileSystemStorage(tmpDir).flatMap { storage =>
@@ -110,7 +112,7 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
   }
 
   test("write - link ordinal file if missing but hash file exists") { res =>
-    implicit val (_, kryo, j, h, sp) = res
+    implicit val (_, kryo, j, h, sp, gsps) = res
 
     File.temporaryDirectory() { tmpDir =>
       mkLocalFileSystemStorage(tmpDir).flatMap { storage =>
@@ -133,7 +135,7 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
   }
 
   test("write - create hash file and link ordinal file to it") { res =>
-    implicit val (_, kryo, j, h, sp) = res
+    implicit val (_, kryo, j, h, sp, gsps) = res
 
     File.temporaryDirectory() { tmpDir =>
       mkLocalFileSystemStorage(tmpDir).flatMap { storage =>

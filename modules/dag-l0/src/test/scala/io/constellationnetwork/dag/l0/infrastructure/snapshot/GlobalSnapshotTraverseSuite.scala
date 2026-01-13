@@ -50,7 +50,6 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.logger.NoDbLogger
 import io.constellationnetwork.node.shared.modules.SharedValidators
-import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
@@ -58,6 +57,7 @@ import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.node.RewardFraction
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.transaction.{Transaction, TransactionReference}
+import io.constellationnetwork.schema.{CurrencyStateProofSelector, GlobalStateProofSelector, _}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.{Hash, ProofsHash}
 import io.constellationnetwork.security.hex.Hex
@@ -97,7 +97,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   def mkSnapshots(dags: List[List[BlockAsActiveTip]], initBalances: Map[Address, Balance])(
     implicit H: Hasher[IO],
     S: SecurityProvider[IO],
-    K: KryoSerializer[IO]
+    K: KryoSerializer[IO],
+    gsps: GlobalStateProofSelector
   ): IO[(Hashed[GlobalSnapshot], NonEmptyList[Hashed[GlobalIncrementalSnapshot]])] =
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
       Signed
@@ -105,7 +106,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         .flatMap(_.toHashed)
         .flatMap { genesis =>
           GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](genesis).flatMap { incremental =>
-            mkSnapshot(genesis.hash, incremental, genesis.info, keyPair, SortedSet.empty, Hasher.forKryo[IO]).flatMap {
+            mkSnapshot(genesis.hash, incremental, genesis.info.toGlobalSnapshotInfo, keyPair, SortedSet.empty, Hasher.forKryo[IO]).flatMap {
               snapshotWithContext =>
                 dags.zipWithIndex
                   .foldLeftM(NonEmptyList.of(snapshotWithContext)) {
@@ -138,7 +139,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     height: Height = Height.MinValue
   )(
     implicit S: SecurityProvider[IO],
-    H: Hasher[IO]
+    H: Hasher[IO],
+    gsps: GlobalStateProofSelector
   ): IO[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] =
     for {
       activeTips <- lastSnapshot.activeTips
@@ -248,6 +250,9 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     incrementalSnapshots: List[Hashed[GlobalIncrementalSnapshot]],
     rollbackHash: Hash
   )(implicit J: JsonSerializer[IO], H: Hasher[IO], S: SecurityProvider[IO], K: KryoSerializer[IO], m: Metrics[IO]) = {
+    implicit val testGlobalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal.MinValue)
+    implicit val testCurrencyStateProofSelector: CurrencyStateProofSelector = CurrencyStateProofSelector.instance
+
     def loadGlobalSnapshot(hash: Hash): IO[Option[Signed[GlobalSnapshot]]] =
       hash match {
         case h if h === globalSnapshot.hash => Some(globalSnapshot.signed).pure[IO]
@@ -453,8 +458,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     } yield
       GlobalSnapshotTraverse
         .make[IO](
-          loadGlobalIncrementalSnapshot,
-          loadGlobalSnapshot,
+          loadGlobalIncrementalSnapshot _,
+          loadGlobalSnapshot _,
           loadInfo,
           snapshotContextFunctions,
           rollbackHash,
@@ -501,6 +506,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   test("computed state contains last refs and preserve total amount of balances when no fees or rewards ") {
     case (ks, h, j, sp, m2, random) =>
       implicit val (a, b, c, d, m) = (ks, j, sp, random, m2)
+      implicit val gsps: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal.MinValue)
 
       forall(dagBlockChainGen(currentHasher = h)) { output: IO[DAGS] =>
         for {
@@ -537,6 +543,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           (addresses, txnsSize, lastTxns, chunkedDags) <- output
           (global, incrementals) <- {
             implicit val hasher = h
+            implicit val gsps: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal.MinValue)
             mkSnapshots(
               chunkedDags,
               addresses.map(address => address -> Balance(NonNegLong(1000L))).toMap

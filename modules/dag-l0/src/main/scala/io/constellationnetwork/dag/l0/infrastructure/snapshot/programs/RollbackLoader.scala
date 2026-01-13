@@ -79,6 +79,8 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
   def load(
     rollbackHash: Hash,
     download: Download[F, GlobalIncrementalSnapshot]
+  )(
+    implicit globalStateProofSelector: GlobalStateProofSelector
   ): F[(GlobalSnapshotInfo, Signed[GlobalIncrementalSnapshot])] =
     GlobalSnapshotLocalFileSystemStorage.make[F](snapshotConfig.snapshotPath).flatMap { fullGlobalSnapshotLocalFileSystemStorage =>
       fullGlobalSnapshotLocalFileSystemStorage
@@ -110,7 +112,7 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
                   .flatMap { firstIncrementalSnapshot =>
                     Signed.forAsyncHasher[F, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).map {
                       signedFirstIncrementalSnapshot =>
-                        (GlobalSnapshotInfoV1.toGlobalSnapshotInfo(fullSnapshot.info), signedFirstIncrementalSnapshot)
+                        (fullSnapshot.info.toGlobalSnapshotInfo, signedFirstIncrementalSnapshot)
                     }
                   }
               }
