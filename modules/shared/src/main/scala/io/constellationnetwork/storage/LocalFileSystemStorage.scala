@@ -33,13 +33,16 @@ abstract class SerializableLocalFileSystemStorage[F[_]: JsonSerializer, A: Encod
         JsonSerializer[F].deserialize[A](bytes).flatMap { result =>
           result.fold(
             jsonErr =>
-              deserializeFallback(bytes) match {
-                case Right(value) => value.some.pure[F]
-                case Left(fallbackErr) =>
-                  logger.warn(
-                    s"Failed to deserialize $fileName - JSON error: ${jsonErr.getMessage}, Fallback error: ${fallbackErr.getMessage}"
-                  ) >> none[A].pure[F]
-              },
+              logger.warn(
+                s"Failed to deserialize $fileName - JSON error: ${jsonErr.getMessage}, using the fallback deserializer..."
+              ) >>
+                (deserializeFallback(bytes) match {
+                  case Right(value) => value.some.pure[F]
+                  case Left(fallbackErr) =>
+                    logger.warn(
+                      s"Failed to deserialize $fileName - Fallback error: ${fallbackErr.getMessage}"
+                    ) >> none[A].pure[F]
+                }),
             value => value.some.pure[F]
           )
         }
