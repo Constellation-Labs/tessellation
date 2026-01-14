@@ -114,8 +114,8 @@ object Hasher {
       KryoSerializer[F]
         .serialize(data)
         .map(bytes => prefix ++ bytes)
-        .map(Hash.fromBytes)
         .liftTo[F]
+        .flatMap(Hash.fromBytesForSync[F])
   }
 
   def forJson[F[_]: Sync: JsonSerializer]: Hasher[F] =
@@ -162,7 +162,7 @@ object Hasher {
         JsonSerializer[F]
           .serialize(data)
           .map(bytes => prefix ++ bytes)
-          .map(Hash.fromBytes)
+          .flatMap(Hash.fromBytesForSync[F])
     }
   }
 
@@ -187,6 +187,6 @@ object Hasher {
       JsonSerializer[F]
         .serialize(data)
         .map(bytes => prefix ++ bytes)
-        .map(Hash.fromBytes)
+        .flatMap(Hash.fromBytesForSync[F])
   }
 }
