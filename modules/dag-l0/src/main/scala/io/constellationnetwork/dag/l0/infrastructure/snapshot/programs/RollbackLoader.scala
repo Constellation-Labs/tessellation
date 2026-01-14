@@ -20,6 +20,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapsho
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage._
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -43,7 +44,8 @@ object RollbackLoader {
       F,
       GlobalIncrementalSnapshot,
       GlobalSnapshotInfo
-    ]
+    ],
+    mptStore: MptStore[F, GlobalStateKey]
   ): RollbackLoader[F] =
     new RollbackLoader[F](
       keyPair,
@@ -56,7 +58,8 @@ object RollbackLoader {
       globalSnapshotStorage,
       lastNGlobalSnapshotStorage,
       lastGlobalSnapshotStorage,
-      combinedSnapshotCheckpointFileSystemStorage
+      combinedSnapshotCheckpointFileSystemStorage,
+      mptStore
     ) {}
 }
 
@@ -71,7 +74,12 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
   globalSnapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
   lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-  combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
+  combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[
+    F,
+    GlobalIncrementalSnapshot,
+    GlobalSnapshotInfo
+  ],
+  mptStore: MptStore[F, GlobalStateKey]
 ) {
 
   private val logger = Slf4jLogger.getLogger[F]
@@ -99,7 +107,8 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
                   globalSnapshotStorage,
                   lastNGlobalSnapshotStorage,
                   lastGlobalSnapshotStorage,
-                  download
+                  download,
+                  mptStore
                 )
               snapshotTraverse.loadChain()
             }

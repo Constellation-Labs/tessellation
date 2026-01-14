@@ -122,7 +122,8 @@ object Services {
             sharedStorages.lastNGlobalSnapshot,
             sharedStorages.lastGlobalSnapshot,
             storages.globalSnapshot.getHashed,
-            dbLogger
+            dbLogger,
+            sharedStorages.mptStore
           )
       }
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](cfg.shared.addresses, storages.globalSnapshot)

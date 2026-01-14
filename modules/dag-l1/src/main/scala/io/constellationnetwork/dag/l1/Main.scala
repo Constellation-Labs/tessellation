@@ -107,7 +107,8 @@ object Main
         p2pClient,
         cfg,
         maybeMajorityPeerIds,
-        Hasher.forKryo[IO]
+        Hasher.forKryo[IO],
+        sharedStorages
       )
 
       snapshotProcessor = DAGSnapshotProcessor.make(
@@ -122,7 +123,8 @@ object Main
         Hasher.forKryo[IO],
         services.globalL0.pullGlobalSnapshot,
         services.globalL0,
-        storages.globalL0Alignment
+        storages.globalL0Alignment,
+        sharedStorages.mptStore
       )
       programs = Programs.make(sharedPrograms, p2pClient, storages, snapshotProcessor)
 

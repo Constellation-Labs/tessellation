@@ -28,10 +28,13 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 
 import com.monovore.decline.Opts
@@ -113,7 +116,8 @@ object Main
         sharedServices.globalSnapshotContextFns,
         storages.globalSnapshot,
         sharedStorages.lastNGlobalSnapshot,
-        sharedStorages.lastGlobalSnapshot
+        sharedStorages.lastGlobalSnapshot,
+        sharedStorages.mptStore
       )
 
       rumorHandler = RumorHandlers
@@ -314,7 +318,8 @@ object Main
                                   sharedStorages.lastGlobalSnapshot,
                                   programs.download,
                                   hashedSnapshot,
-                                  hashedGenesis.info.toGlobalSnapshotInfo
+                                  hashedGenesis.info.toGlobalSnapshotInfo,
+                                  sharedStorages.mptStore
                                 )
                                 _ <- services.consensus.manager
                                   .startFacilitatingAfterRollback(

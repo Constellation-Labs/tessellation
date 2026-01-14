@@ -210,7 +210,9 @@ abstract class CurrencyL0App(
         services.collateral
       )
 
-      _ <- initializeGlobalSnapshotStorages[IO, Run](services, storages, sharedStorages).asResource
+      _ <- hasherSelectorAlwaysCurrent.withCurrent { implicit hasher =>
+        initializeGlobalSnapshotStorages[IO, Run](services, storages, sharedStorages)
+      }.asResource
 
       program <- (method match {
         case m: CreateGenesis =>

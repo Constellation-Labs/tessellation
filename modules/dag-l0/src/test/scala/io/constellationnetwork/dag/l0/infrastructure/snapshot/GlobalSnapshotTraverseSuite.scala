@@ -54,6 +54,7 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.RewardFraction
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.transaction.{Transaction, TransactionReference}
@@ -62,6 +63,7 @@ import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.{Hash, ProofsHash}
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.key.ops.PublicKeyOps
+import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.shared.sharedKryoRegistrar
 import io.constellationnetwork.syntax.sortedCollection._
@@ -72,6 +74,7 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.all.PosLong
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import fs2.concurrent.SignallingRef
+import io.circe.Json
 import org.scalacheck.Gen
 import weaver._
 import weaver.scalacheck.Checkers
@@ -380,6 +383,11 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       priceStateUpdater = PriceStateUpdater.make(Dev, DefaultDelegatedRewardsConfigProvider)
       dbLogger <- NoDbLogger.makeUnsafe[IO]
 
+      mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      mptStore = MptStore.make[IO, GlobalStateKey](
+        mptProducer,
+        GlobalStateKey.toHex[IO]
+      )
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager
         .make[IO](
           FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
@@ -397,7 +405,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           priceStateUpdater,
           Amount.empty,
           EpochProgress(NonNegLong(136080L)),
-          dbLogger
+          dbLogger,
+          mptStore
         )
       snapshotContextFunctions = GlobalSnapshotContextFunctions.make[IO](
         snapshotAcceptanceManager,
@@ -467,7 +476,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           globalSnapshotStorage,
           lastNSnapshotStorage,
           lastSnapshotStorage,
-          download
+          download,
+          mptStore
         )
   }
 

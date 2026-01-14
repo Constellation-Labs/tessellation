@@ -47,7 +47,8 @@ object Services {
     maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
     maybeTransactionFeeEstimator: Option[TransactionFeeEstimator[F]],
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]],
-    txHasher: Hasher[F]
+    txHasher: Hasher[F],
+    sharedStorages: SharedStorages[F]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, R] =
@@ -72,7 +73,9 @@ object Services {
       val transaction = TransactionService.make[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
         storages.transaction,
         storages.lastSnapshot,
-        validators.transaction
+        validators.transaction,
+        sharedStorages.mptStore,
+        shouldUseMptStore = false
       )
       val allowSpend = AllowSpendService.make[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
         storages.allowSpend,

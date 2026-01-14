@@ -97,7 +97,8 @@ object types {
     snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig,
     snapshotTimeoutsConfig: SnapshotTimeoutsConfig,
     combinedRouteRateLimiter: Map[AppEnvironment, RouteRateLimiterConfig],
-    clickHouseConfig: ClickHouseAppConfig
+    clickHouseConfig: ClickHouseAppConfig,
+    mptSnapshotInfoPath: Path
   )
 
   case class SharedTrustConfig(
@@ -106,7 +107,8 @@ object types {
 
   case class SharedSnapshotConfig(
     size: SnapshotSizeConfig,
-    timeouts: SnapshotTimeoutsConfig
+    timeouts: SnapshotTimeoutsConfig,
+    mptSnapshotInfoPath: Path
   )
 
   case class SnapshotSizeConfig(

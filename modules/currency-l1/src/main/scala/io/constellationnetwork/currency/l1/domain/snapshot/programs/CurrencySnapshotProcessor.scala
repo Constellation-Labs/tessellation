@@ -1,10 +1,10 @@
 package io.constellationnetwork.currency.l1.domain.snapshot.programs
 
-import cats.Applicative
 import cats.data.{NonEmptyList, Validated, ValidatedNel}
 import cats.effect.Async
 import cats.effect.std.Random
 import cats.syntax.all._
+import cats.{Applicative, Parallel}
 
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.dag.l1.domain.address.storage.AddressStorage
@@ -24,6 +24,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock.{ContextualTokenLock
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.swap.{AllowSpendReference, CurrencyId}
 import io.constellationnetwork.schema.tokenLock.TokenLockReference
 import io.constellationnetwork.schema.transaction.TransactionReference
@@ -31,9 +32,10 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.Signed.InvalidSignatureForHash
 import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
 
+import io.circe.Json
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-sealed abstract class CurrencySnapshotProcessor[F[_]: Async: SecurityProvider]
+sealed abstract class CurrencySnapshotProcessor[F[_]: Async: Parallel: SecurityProvider]
     extends SnapshotProcessor[
       F,
       CurrencySnapshotStateProof,
@@ -43,7 +45,7 @@ sealed abstract class CurrencySnapshotProcessor[F[_]: Async: SecurityProvider]
 
 object CurrencySnapshotProcessor {
 
-  def make[F[_]: Async: Random: JsonSerializer: SecurityProvider](
+  def make[F[_]: Async: Parallel: Random: JsonSerializer: SecurityProvider](
     identifier: Address,
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],
@@ -61,12 +63,13 @@ object CurrencySnapshotProcessor {
     tokenLockStorage: TokenLockStorage[F],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     l0Service: GlobalL0Service[F],
-    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F]
+    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F],
+    mptStore: MptStore[F, GlobalStateKey]
   ): CurrencySnapshotProcessor[F] =
     new CurrencySnapshotProcessor[F] {
       def process(
         snapshot: Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), Hashed[GlobalIncrementalSnapshot]]
-      )(implicit hasher: Hasher[F]): F[SnapshotProcessingResult] =
+      )(implicit hasher: Hasher[F], stateProofSelector: StateProofSelector): F[SnapshotProcessingResult] =
         snapshot match {
           case Left((globalSnapshot, globalState)) =>
             val globalSnapshotReference = SnapshotReference.fromHashedSnapshot(globalSnapshot)
@@ -171,7 +174,10 @@ object CurrencySnapshotProcessor {
         setGlobalSnapshot: F[SnapshotProcessingResult],
         setNGlobalSnapshot: F[SnapshotProcessingResult],
         getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
-      )(implicit hasher: Hasher[F]): F[SnapshotProcessingResult] =
+      )(
+        implicit hasher: Hasher[F],
+        stateProofSelector: StateProofSelector
+      ): F[SnapshotProcessingResult] =
         fetchCurrencySnapshots(globalSnapshot).flatMap {
           case Some(Validated.Valid(hashedSnapshots)) =>
             prepareIntermediateStorages(
@@ -223,7 +229,7 @@ object CurrencySnapshotProcessor {
                           case _: Ignore =>
                             Applicative[F].pure(none[Success].asRight[Agg])
                           case alignment =>
-                            processAlignment(alignment, bs, ts, als, tls, lcss, as).as {
+                            processAlignment(alignment, bs, ts, als, tls, lcss, as, mptStore).as {
                               val updatedAgg = agg :+ alignment
 
                               NonEmptyList.fromList(nextSnapshots) match {
@@ -249,7 +255,8 @@ object CurrencySnapshotProcessor {
                     allowSpendStorage,
                     tokenLockStorage,
                     lastCurrencySnapshotStorage,
-                    addressStorage
+                    addressStorage,
+                    mptStore
                   )
                 }.flatMap { results =>
                   setGlobalSnapshot >>

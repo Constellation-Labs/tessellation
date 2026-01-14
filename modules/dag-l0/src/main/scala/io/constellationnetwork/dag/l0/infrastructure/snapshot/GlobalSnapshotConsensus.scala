@@ -54,10 +54,12 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security._
 
 import eu.timepit.refined.types.numeric.NonNegLong
+import io.circe.Json
 import org.http4s.client.Client
 
 /** Factory for creating the Global L0 consensus engine.
@@ -95,7 +97,8 @@ object GlobalSnapshotConsensus {
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    dbLogger: DatabaseLogger[F]
+    dbLogger: DatabaseLogger[F],
+    mptStore: MptStore[F, GlobalStateKey]
   )(implicit supervisor: Supervisor[F], globalStateProofSelector: GlobalStateProofSelector): F[GlobalSnapshotConsensus[F]] =
     for {
       globalStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
@@ -126,7 +129,8 @@ object GlobalSnapshotConsensus {
           collateral,
           sharedCfg.delegatedStaking.withdrawalTimeLimit
             .getOrElse(sharedCfg.environment, EpochProgress.MinValue),
-          dbLogger
+          dbLogger,
+          mptStore
         )
 
       consensusStorage <- ConsensusStorage.make[

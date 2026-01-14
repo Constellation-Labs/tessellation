@@ -4,11 +4,14 @@ import cats.Parallel
 import cats.effect.Async
 import cats.syntax.functor._
 
+import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt.MerklePatriciaTrie
 import io.constellationnetwork.security.mpt.prover.MerklePatriciaSingleInclusionProver
 
+import fs2.Stream
 import io.circe.{Encoder, Json}
 
 trait MerklePatriciaProducer[F[_]] {
@@ -35,6 +38,15 @@ trait StatefulMerklePatriciaProducer[F[_]] {
   def remove(keys: List[Hex]): F[Either[MerklePatriciaError, Unit]]
   def clear: F[Unit]
   def getProver: F[MerklePatriciaSingleInclusionProver[F]]
+  def buildHexMap(data: Map[GlobalStateKey, Json]): F[Map[Hex, Json]]
+}
+
+trait StatefulWithPersistenceMerklePatriciaProducer[F[_]] extends StatefulMerklePatriciaProducer[F] {
+  def persist(ordinal: SnapshotOrdinal): F[Unit]
+  def load(ordinal: SnapshotOrdinal): F[Boolean]
+  def deleteAbove(ordinal: SnapshotOrdinal): F[Unit]
+  def listStoredOrdinals: F[Stream[F, SnapshotOrdinal]]
+  def applyCutoff(ordinal: SnapshotOrdinal): F[Unit]
 }
 
 object MerklePatriciaProducer {
@@ -48,7 +60,7 @@ object MerklePatriciaProducer {
   def parallel[F[_]: Hasher: Async: Parallel]: MerklePatriciaProducer[F] =
     new ParallelMerklePatriciaProducer[F]
 
-  def inMemory[F[_]: Async: Hasher](
+  def inMemory[F[_]: Async: Hasher: Parallel](
     initial: Map[Hex, Json] = Map.empty
   ): F[StatefulMerklePatriciaProducer[F]] =
     InMemoryMerklePatriciaProducer.make[F](initial).widen[StatefulMerklePatriciaProducer[F]]

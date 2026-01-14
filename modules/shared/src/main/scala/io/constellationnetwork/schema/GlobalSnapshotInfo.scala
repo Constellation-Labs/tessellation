@@ -25,6 +25,7 @@ import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockReference}
 import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.mpt.producer.StatefulMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 
 import derevo.cats.{eqv, show}
@@ -185,6 +186,43 @@ case class GlobalSnapshotInfo(
   def stateProof[F[_]: Parallel: Async: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
     GlobalSnapshotInfo.legacyStateProof[F](toGlobalSnapshotInfo, lastCurrencySnapshots)
 
+  def stateProof[F[_]: Parallel: Async: Hasher](
+    statefulMPTProducer: StatefulMerklePatriciaProducer[F],
+    ordinal: SnapshotOrdinal
+  )(
+    implicit stateProofSelector: StateProofSelector
+  ): F[GlobalSnapshotStateProof] =
+    stateProofSelector.select(ordinal) match {
+      case LegacyFormat => lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
+      case MerklePatriciaFormat =>
+        statefulMPTProducer.build.flatMap {
+          case Left(value) =>
+            (new Throwable(s"Error when building MPT. Message: ${value.getMessage}")).raiseError[F, GlobalSnapshotStateProof]
+          case Right(value) =>
+            GlobalSnapshotStateProof
+              .apply(
+                Hash.empty,
+                Hash.empty,
+                Hash.empty,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(value.rootHash.value)
+              )
+              .pure
+        }
+    }
+
   override def getActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = activeTokenLocks.getOrElse(SortedMap.empty)
 
   override def getActiveDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]] =
@@ -193,7 +231,9 @@ case class GlobalSnapshotInfo(
 
 object GlobalSnapshotInfo {
 
-  def mptStateProof[F[_]: Parallel: Async: Hasher](info: GlobalSnapshotInfo): F[GlobalSnapshotStateProof] =
+  def mptStateProof[F[_]: Parallel: Async: Hasher](info: GlobalSnapshotInfo)(
+    implicit stateProofSelector: StateProofSelector
+  ): F[GlobalSnapshotStateProof] =
     info.allStateEntries.buildMpt.map { mptRoot =>
       GlobalSnapshotStateProof.apply(
         Hash.empty,
