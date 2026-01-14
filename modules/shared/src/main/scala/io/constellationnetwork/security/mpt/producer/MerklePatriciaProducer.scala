@@ -1,5 +1,6 @@
 package io.constellationnetwork.security.mpt.producer
 
+import cats.Parallel
 import cats.effect.Async
 import cats.syntax.functor._
 
@@ -43,6 +44,9 @@ object MerklePatriciaProducer {
 
   def stateless[F[_]: Hasher: Async]: MerklePatriciaProducer[F] =
     new StatelessMerklePatriciaProducer[F]
+
+  def parallel[F[_]: Hasher: Async: Parallel]: MerklePatriciaProducer[F] =
+    new ParallelMerklePatriciaProducer[F]
 
   def inMemory[F[_]: Async: Hasher](
     initial: Map[Hex, Json] = Map.empty

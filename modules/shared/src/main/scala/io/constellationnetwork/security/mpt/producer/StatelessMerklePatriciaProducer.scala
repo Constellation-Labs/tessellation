@@ -20,7 +20,7 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
   def getProver(trie: MerklePatriciaTrie): F[MerklePatriciaSingleInclusionProver[F]] =
     MerklePatriciaSingleInclusionProver.make[F](trie).pure[F]
 
-  private val yieldEveryN = 100
+  private val yieldEveryN = 50
 
   def create[A: Encoder](data: Map[Hex, A]): F[MerklePatriciaTrie] =
     NonEmptyList.fromList(data.toList) match {
@@ -31,15 +31,17 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
           initialNode <- MerklePatriciaNode.Leaf[F](Nibble(hPath), hData.asJson)
           sortedTail = nel.tail.sortBy(_._1.value.length)
 
-          resultNode <- sortedTail.zipWithIndex.foldM[F, MerklePatriciaNode](initialNode) {
-            case (acc, ((path, value), idx)) =>
-              val work = insertEncoded(acc, Nibble(path), value.asJson).flatMap {
-                case Left(err)    => err.raiseError[F, MerklePatriciaNode]
-                case Right(value) => value.pure[F]
-              }
-              if (idx % yieldEveryN == 0) Async[F].cede *> work <* Async[F].cede
-              else work
-          }
+          resultNode <- sortedTail.zipWithIndex
+            .foldM[F, MerklePatriciaNode](initialNode) {
+              case (acc, ((path, value), idx)) =>
+                val work = insertEncoded(acc, Nibble(path), value.asJson).flatMap {
+                  case Left(err)    => err.raiseError[F, MerklePatriciaNode]
+                  case Right(value) => value.pure[F]
+                }
+
+                if (idx % yieldEveryN == 0) Async[F].cede *> work <* Async[F].cede
+                else work
+            }
         } yield MerklePatriciaTrie(resultNode)
 
       case None => new RuntimeException("Empty data provided").raiseError
@@ -172,11 +174,16 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
         ): InsertState).asLeft[Either[MerklePatriciaError, MerklePatriciaNode]].pure[F]
       } else {
         (for {
-          newExtension <- MerklePatriciaNode.Extension[F](sharedRemaining.tail, extensionNode.child)
+          // If sharedRemaining.tail is empty, use child directly instead of wrapping in Extension([])
+          existingSubtree <-
+            if (sharedRemaining.tail.isEmpty)
+              extensionNode.child.pure[F].widen[MerklePatriciaNode]
+            else
+              MerklePatriciaNode.Extension[F](sharedRemaining.tail, extensionNode.child).widen[MerklePatriciaNode]
           newLeaf <- MerklePatriciaNode.Leaf[F](keyRemaining.tail, data)
           branchNode <- MerklePatriciaNode.Branch[F](
             Map(
-              sharedRemaining.head -> newExtension,
+              sharedRemaining.head -> existingSubtree,
               keyRemaining.head -> newLeaf
             )
           )

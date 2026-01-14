@@ -1,5 +1,6 @@
 package io.constellationnetwork.security.mpt
 
+import cats.Parallel
 import cats.effect.Async
 
 import scala.annotation.tailrec
@@ -26,6 +27,11 @@ object MerklePatriciaTrie {
   def make[F[_]: Hasher: Async, A: Encoder](data: Map[Hex, A]): F[MerklePatriciaTrie] =
     MerklePatriciaProducer
       .stateless[F]
+      .create(data)
+
+  def makeParallel[F[_]: Hasher: Async: Parallel, A: Encoder](data: Map[Hex, A]): F[MerklePatriciaTrie] =
+    MerklePatriciaProducer
+      .parallel[F]
       .create(data)
 
   def collectLeafNodes(trie: MerklePatriciaTrie): List[MerklePatriciaNode.Leaf] = {

@@ -117,16 +117,13 @@ object GlobalStateConverter {
       convertOptionalHypergraph(info.nodeCollateralWithdrawals, GlobalStateFieldId.NodeCollateralWithdrawals),
       convertOptionalHypergraph(info.metagraphSyncData, GlobalStateFieldId.MetagraphSyncData)
     ).parMapN { (m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15) =>
-      List(m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15)
-        .flatMap(_.toList)
-        .foldLeft(Right(Map.empty[GlobalStateKey, Json]): Either[Throwable, Map[GlobalStateKey, Json]]) {
-          case (Right(acc), (k, v)) =>
-            if (acc.contains(k))
-              Left(new IllegalStateException(s"Duplicate key found: $k"))
-            else
-              Right(acc.updated(k, v))
-          case (left @ Left(_), _) => left
-        }
+      // Merge all maps - O(n) instead of O(n log n) foldLeft
+      val allMaps = List(m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15)
+      val expectedSize = allMaps.map(_.size).sum
+      val merged = allMaps.foldLeft(Map.empty[GlobalStateKey, Json])(_ ++ _)
+
+      if (merged.size == expectedSize) Right(merged)
+      else Left(new IllegalStateException(s"Duplicate keys found: expected $expectedSize entries but got ${merged.size}"))
     }.flatMap(_.liftTo[F])
 
   object syntax {
@@ -140,15 +137,21 @@ object GlobalStateConverter {
         for {
           kvPairs <- kvPairsF
           _ <- Async[F].cede
-          hexMap <- kvPairs.toList.parTraverse {
-            case (key, value) => GlobalStateKey.toHex[F](key).map(_ -> value)
-          }.map(_.toMap)
+          hexMap <- kvPairs.toList
+            .grouped(1000)
+            .toList
+            .flatTraverse { batch =>
+              batch.parTraverse {
+                case (key, value) => GlobalStateKey.toHex[F](key).map(_ -> value)
+              } <* Async[F].cede
+            }
+            .map(_.toMap)
           _ <- Async[F].cede
           mptRoot <- hexMap.isEmpty
             .pure[F]
             .ifM(
               ifTrue = MptRoot(Hash.empty).pure[F],
-              ifFalse = MerklePatriciaTrie.make[F, Json](hexMap).map(_.rootHash)
+              ifFalse = MerklePatriciaTrie.makeParallel[F, Json](hexMap).map(_.rootHash)
             )
           _ <- Async[F].cede
         } yield mptRoot
