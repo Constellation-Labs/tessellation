@@ -25,6 +25,7 @@ import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.{Hash, ProofsHash}
+import io.constellationnetwork.security.mpt.producer.StatefulMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection._
 
@@ -110,6 +111,14 @@ object currency {
       ).tupled
         .map(CurrencySnapshotStateProof.apply)
 
+    def stateProof[F[_]: Parallel: Async: Hasher](
+      statefulMPTProducer: StatefulMerklePatriciaProducer[F],
+      ordinal: SnapshotOrdinal
+    )(
+      implicit stateProofSelector: StateProofSelector
+    ): F[CurrencySnapshotStateProof] =
+      stateProof(ordinal)
+
     override def getActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = activeTokenLocks.getOrElse(SortedMap.empty)
   }
 
@@ -122,6 +131,14 @@ object currency {
       implicit stateProofSelector: StateProofSelector
     ): F[CurrencySnapshotStateProofV1] =
       (lastTxRefs.hash, balances.hash).tupled.map(CurrencySnapshotStateProofV1.apply)
+
+    def stateProof[F[_]: Parallel: Async: Hasher](
+      statefulMPTProducer: StatefulMerklePatriciaProducer[F],
+      ordinal: SnapshotOrdinal
+    )(
+      implicit stateProofSelector: StateProofSelector
+    ): F[CurrencySnapshotStateProofV1] =
+      stateProof(ordinal: SnapshotOrdinal)
 
     def toCurrencySnapshotInfo: CurrencySnapshotInfo =
       CurrencySnapshotInfo(lastTxRefs, balances, None, None, None, None, None, None, None)

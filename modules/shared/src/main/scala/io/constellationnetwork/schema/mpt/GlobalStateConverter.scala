@@ -21,6 +21,7 @@ import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal, StateProofSelector}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt.producer.{MerklePatriciaError, StatefulMerklePatriciaProducer}
 import io.constellationnetwork.security.mpt.{MerklePatriciaTrie, MptRoot}
 import io.constellationnetwork.security.signature.Signed
@@ -232,28 +233,47 @@ object GlobalStateConverter {
     }
 
     implicit class MptBuilderOps[F[_]: Parallel: Async: Hasher](kvPairsF: F[Map[GlobalStateKey, Json]]) {
-      def buildMpt: F[MptRoot] =
+
+      private val BatchSize = 5000
+      private val LogProgressEvery = 50000
+
+      def buildMpt(implicit stateProofSelector: StateProofSelector): F[MptRoot] = {
+        val logger = org.typelevel.log4cats.slf4j.Slf4jLogger.getLoggerFromName[F]("MPT.BuildMpt")
+
         for {
           kvPairs <- kvPairsF
-          _ <- Async[F].cede
-          hexMap <- kvPairs.toList
-            .grouped(1000)
-            .toList
-            .flatTraverse { batch =>
-              batch.parTraverse {
-                case (key, value) => GlobalStateKey.toHex[F](key).map(_ -> value)
-              } <* Async[F].cede
+          kvSize = kvPairs.size
+          mptRoot <-
+            if (kvPairs.isEmpty) {
+              logger.info("Empty map, returning empty hash").as(MptRoot(Hash.empty))
+            } else {
+              for {
+                hexMap <-
+                  if (kvSize <= BatchSize) {
+                    kvPairs.toList.parTraverse {
+                      case (key, value) => GlobalStateKey.toHex[F](key).map(_ -> value)
+                    }.map(_.toMap)
+                  } else {
+                    kvPairs.toList
+                      .grouped(BatchSize)
+                      .toList
+                      .zipWithIndex
+                      .foldLeftM(Map.empty[Hex, Json]) {
+                        case (acc, (batch, batchIdx)) =>
+                          for {
+                            batchResult <- batch.parTraverse {
+                              case (key, value) => GlobalStateKey.toHex[F](key).map(_ -> value)
+                            }
+                            newAcc = acc ++ batchResult.toMap
+                            _ <- Async[F].cede
+                          } yield newAcc
+                      }
+                  }
+                root <- MerklePatriciaTrie.makeParallel[F, Json](hexMap).map(_.rootHash)
+              } yield root
             }
-            .map(_.toMap)
-          _ <- Async[F].cede
-          mptRoot <- hexMap.isEmpty
-            .pure[F]
-            .ifM(
-              ifTrue = MptRoot(Hash.empty).pure[F],
-              ifFalse = MerklePatriciaTrie.makeParallel[F, Json](hexMap).map(_.rootHash)
-            )
-          _ <- Async[F].cede
         } yield mptRoot
+      }
     }
 
     implicit class MptStoreGlobalSnapshotOps[F[_]: Async: Parallel: Hasher](
@@ -266,8 +286,25 @@ object GlobalStateConverter {
 
       def syncFromStateChanges(acc: StateChangesAccumulator, snapshotOrdinal: SnapshotOrdinal)(
         implicit stateProofSelector: StateProofSelector
-      ): F[Unit] =
-        acc.toStateEntries[F].flatMap(store.sync[Json](_, snapshotOrdinal))
+      ): F[Unit] = {
+        val BatchSize = 5000
+
+        for {
+          entries <- acc.toStateEntries[F]
+          syncStart <- Async[F].realTime
+          _ <-
+            if (entries.size <= BatchSize) {
+              store.sync[Json](entries, snapshotOrdinal)
+            } else {
+              entries.toList
+                .grouped(BatchSize)
+                .toList
+                .traverse_ { batch =>
+                  store.sync[Json](batch.toMap, snapshotOrdinal) >> Async[F].cede
+                }
+            }
+        } yield ()
+      }
 
       def getBalance(address: Address): F[Option[Balance]] =
         store

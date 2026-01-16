@@ -34,11 +34,20 @@ object MerklePatriciaNode {
 
   object Leaf {
 
-    def apply[F[_]: Sync: Hasher](remaining: Seq[Nibble], data: Json): F[Leaf] = for {
-      dataDigest <- Hasher[F].hash(data)
-      commitment <- MerklePatriciaCommitment.Leaf(remaining, dataDigest).pure[F]
-      nodeDigest <- Hasher[F].prefixedHash(commitment.asJson, LeafPrefix)
-    } yield Leaf(remaining, data, nodeDigest)
+    def apply[F[_]: Sync: Hasher](remaining: Seq[Nibble], data: Json): F[Leaf] =
+      for {
+        dataDigest <- Hasher[F].hash(data)
+        leaf <- withDataDigest[F](remaining, data, dataDigest)
+      } yield leaf
+
+    /** Fast path: create leaf when data digest is already computed. This saves one hash operation per leaf when batch-hashing.
+      */
+    def withDataDigest[F[_]: Sync: Hasher](remaining: Seq[Nibble], data: Json, dataDigest: Hash): F[Leaf] = {
+      val commitment = MerklePatriciaCommitment.Leaf(remaining, dataDigest)
+      Hasher[F].prefixedHash(commitment.asJson, LeafPrefix).map { nodeDigest =>
+        new Leaf(remaining, data, nodeDigest)
+      }
+    }
 
     implicit val leafNodeEncoder: Encoder[Leaf] =
       Encoder.instance { node =>
@@ -61,11 +70,27 @@ object MerklePatriciaNode {
 
   object Branch {
 
-    def apply[F[_]: Sync: Hasher](paths: Map[Nibble, MerklePatriciaNode]): F[Branch] = for {
-      pathDigests <- paths.toSeq.sortBy(_._1.value).map { case (k, v) => k -> v.digest }.toMap.pure[F]
-      commitment <- MerklePatriciaCommitment.Branch(pathDigests).pure[F]
-      nodeDigest <- Hasher[F].prefixedHash(commitment.asJson, BranchPrefix)
-    } yield Branch(paths, nodeDigest)
+    def apply[F[_]: Sync: Hasher](paths: Map[Nibble, MerklePatriciaNode]): F[Branch] = {
+      val pathDigests: Map[Nibble, Hash] = {
+        val builder = Map.newBuilder[Nibble, Hash]
+        builder.sizeHint(paths.size)
+        paths.foreach { case (k, v) => builder += (k -> v.digest) }
+        builder.result()
+      }
+      fromDigests(paths, pathDigests)
+    }
+
+    /** Fast path: create branch when child digests are already extracted. Avoids re-iterating the paths map.
+      */
+    def fromDigests[F[_]: Sync: Hasher](
+      paths: Map[Nibble, MerklePatriciaNode],
+      pathDigests: Map[Nibble, Hash]
+    ): F[Branch] = {
+      val commitment = MerklePatriciaCommitment.Branch(pathDigests)
+      Hasher[F].prefixedHash(commitment.asJson, BranchPrefix).map { nodeDigest =>
+        new Branch(paths, nodeDigest)
+      }
+    }
 
     implicit val encodeBranchNode: Encoder[Branch] =
       Encoder.instance { node =>
@@ -86,10 +111,12 @@ object MerklePatriciaNode {
 
   object Extension {
 
-    def apply[F[_]: Sync: Hasher](shared: Seq[Nibble], child: Branch): F[Extension] = for {
-      commitment <- MerklePatriciaCommitment.Extension(shared, child.digest).pure[F]
-      nodeDigest <- Hasher[F].prefixedHash(commitment, ExtensionPrefix)
-    } yield Extension(shared, child, nodeDigest)
+    def apply[F[_]: Sync: Hasher](shared: Seq[Nibble], child: Branch): F[Extension] = {
+      val commitment = MerklePatriciaCommitment.Extension(shared, child.digest)
+      Hasher[F].prefixedHash(commitment, ExtensionPrefix).map { nodeDigest =>
+        new Extension(shared, child, nodeDigest)
+      }
+    }
 
     implicit val encodeExtensionNode: Encoder[Extension] =
       Encoder.instance { node =>

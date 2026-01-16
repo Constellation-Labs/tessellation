@@ -70,6 +70,14 @@ case class GlobalSnapshotInfoV1(
     GlobalSnapshotInfo
       .legacyStateProof[F](toGlobalSnapshotInfo, None)
       .map(GlobalSnapshotStateProofV1.fromGlobalSnapshotStateProof)
+
+  def stateProof[F[_]: Parallel: Async: Hasher](
+    statefulMPTProducer: StatefulMerklePatriciaProducer[F],
+    ordinal: SnapshotOrdinal
+  )(
+    implicit stateProofSelector: StateProofSelector
+  ): F[GlobalSnapshotStateProofV1] =
+    stateProof(ordinal)
 }
 
 @derive(encoder, decoder, eqv, show)
@@ -109,6 +117,14 @@ case class GlobalSnapshotInfoV2(
     implicit stateProofSelector: StateProofSelector
   ): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
+
+  def stateProof[F[_]: Parallel: Async: Hasher](
+    statefulMPTProducer: StatefulMerklePatriciaProducer[F],
+    ordinal: SnapshotOrdinal
+  )(
+    implicit stateProofSelector: StateProofSelector
+  ): F[GlobalSnapshotStateProof] =
+    stateProof(ordinal)
 
   def stateProof[F[_]: Parallel: Async: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
     GlobalSnapshotInfo.legacyStateProof[F](toGlobalSnapshotInfo, lastCurrencySnapshots)
@@ -191,37 +207,39 @@ case class GlobalSnapshotInfo(
     ordinal: SnapshotOrdinal
   )(
     implicit stateProofSelector: StateProofSelector
-  ): F[GlobalSnapshotStateProof] =
-    stateProofSelector.select(ordinal) match {
-      case LegacyFormat => lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
-      case MerklePatriciaFormat =>
-        statefulMPTProducer.build.flatMap {
-          case Left(value) =>
+  ): F[GlobalSnapshotStateProof] = stateProofSelector.select(ordinal) match {
+    case LegacyFormat =>
+      lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
+    case MerklePatriciaFormat =>
+      statefulMPTProducer.build.flatMap {
+        case Left(value) =>
+          stateProof(ordinal).handleErrorWith { _ =>
             (new Throwable(s"Error when building MPT. Message: ${value.getMessage}")).raiseError[F, GlobalSnapshotStateProof]
-          case Right(value) =>
-            GlobalSnapshotStateProof
-              .apply(
-                Hash.empty,
-                Hash.empty,
-                Hash.empty,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(value.rootHash.value)
-              )
-              .pure
-        }
-    }
+          }
+        case Right(value) =>
+          GlobalSnapshotStateProof
+            .apply(
+              Hash.empty,
+              Hash.empty,
+              Hash.empty,
+              None,
+              None,
+              None,
+              None,
+              None,
+              None,
+              None,
+              None,
+              None,
+              None,
+              None,
+              None,
+              None,
+              Some(value.rootHash.value)
+            )
+            .pure[F]
+      }
+  }
 
   override def getActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = activeTokenLocks.getOrElse(SortedMap.empty)
 

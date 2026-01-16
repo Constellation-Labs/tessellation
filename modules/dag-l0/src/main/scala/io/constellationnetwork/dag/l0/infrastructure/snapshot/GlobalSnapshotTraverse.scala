@@ -110,8 +110,8 @@ object GlobalSnapshotTraverse {
 
           firstInfoCalculatedProof <- HasherSelector[F].withCurrent { implicit hasher =>
             hasher.getLogic(firstInc.ordinal) match {
-              case KryoHash => GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(firstInfo).stateProof(firstInc.ordinal)
-              case JsonHash => firstInfo.stateProof(firstInc.ordinal)
+              case KryoHash => GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(firstInfo).stateProof(mptStore.underlying, firstInc.ordinal)
+              case JsonHash => firstInfo.stateProof(mptStore.underlying, firstInc.ordinal)
             }
           }
 

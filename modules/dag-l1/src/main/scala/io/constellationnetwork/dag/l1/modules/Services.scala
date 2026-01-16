@@ -67,7 +67,14 @@ object Services {
       val cluster = sharedServices.cluster
       val gossip = sharedServices.gossip
       val globalL0 = GlobalL0Service
-        .make[F](p2PClient.l0GlobalSnapshot, globalL0Cluster, lastGlobalSnapshotStorage, None, maybeMajorityPeerIds)
+        .make[F](
+          p2PClient.l0GlobalSnapshot,
+          globalL0Cluster,
+          lastGlobalSnapshotStorage,
+          None,
+          maybeMajorityPeerIds,
+          sharedStorages.mptStore
+        )
       val session = sharedServices.session
       val transaction =
         TransactionService.make[F, P, S, SI](

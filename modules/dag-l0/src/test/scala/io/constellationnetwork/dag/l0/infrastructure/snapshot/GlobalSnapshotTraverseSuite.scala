@@ -363,7 +363,13 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       currencySnapshotValidator = CurrencySnapshotValidator
         .make[IO](SnapshotOrdinal.MinValue, currencySnapshotCreator, validators.signedValidator, None, None)
 
-      currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
+      mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      mptStore = MptStore.make[IO, GlobalStateKey](
+        mptProducer,
+        GlobalStateKey.toHex[IO]
+      )
+
+      currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator, mptStore)
       stateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L))
       feeCalculator = FeeCalculator.make(SortedMap.empty)
       stateChannelProcessor = GlobalSnapshotStateChannelEventsProcessor
@@ -383,11 +389,6 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       priceStateUpdater = PriceStateUpdater.make(Dev, DefaultDelegatedRewardsConfigProvider)
       dbLogger <- NoDbLogger.makeUnsafe[IO]
 
-      mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
-      mptStore = MptStore.make[IO, GlobalStateKey](
-        mptProducer,
-        GlobalStateKey.toHex[IO]
-      )
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager
         .make[IO](
           FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
@@ -413,7 +414,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         updateDelegatedStakeAcceptanceManager,
         EpochProgress(NonNegLong.unsafeFrom(1L)),
         SnapshotOrdinal.MinValue,
-        SnapshotOrdinal.MinValue
+        SnapshotOrdinal.MinValue,
+        mptStore
       )
       lastNSnapshotStorage =
         LastNGlobalSnapshotStorage.make[IO](lastGlobalSnapshotsSyncConfig, lastNSnapR, incLastNSnapR)

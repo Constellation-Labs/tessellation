@@ -1,7 +1,7 @@
 package io.constellationnetwork.schema.mpt
 
 import cats.Parallel
-import cats.effect.Async
+import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
 import io.constellationnetwork.schema.SnapshotOrdinal
@@ -12,34 +12,23 @@ import io.constellationnetwork.security.mpt.producer._
 
 import io.circe.syntax._
 import io.circe.{Decoder, Encoder, Json}
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait MptStore[F[_], K] {
-
   def get[V: Decoder](key: K): F[Option[V]]
-
   def getMany[V: Decoder](keys: List[K]): F[Map[K, V]]
-
   def insert[V: Encoder](key: K, value: V): F[Unit]
-
   def insert[V: Encoder](entries: Map[K, V]): F[Unit]
-
   def remove(key: K): F[Unit]
-
   def remove(keys: List[K]): F[Unit]
-
   def contains(key: K): F[Boolean]
-
   def clear: F[Unit]
-
   def build: F[Either[MerklePatriciaError, MerklePatriciaTrie]]
-
   def sync[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit]
-
   def syncFull[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit]
-
   def update[V: Encoder](toUpsert: Map[K, V], toRemove: Set[K]): F[Unit]
-
   def underlying: StatefulMerklePatriciaProducer[F]
+  def deleteAbove(ordinal: SnapshotOrdinal): F[Unit]
 }
 
 object MptStore {
@@ -55,16 +44,60 @@ object MptStore {
     toHex: K => F[Hex]
   ) extends MptStore[F, K] {
 
-    private def persistAndCutoff(ordinal: SnapshotOrdinal): F[Unit] =
+    private val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
+
+    private def persistAndCutoffAsync(ordinal: SnapshotOrdinal): F[Unit] =
       producer match {
-        case p: StatefulWithPersistenceMerklePatriciaProducer[F] =>
-          p.persist(ordinal) >> p.applyCutoff(ordinal)
+        case p: StatefulWithPersistenceMerklePatriciaProducer[F @unchecked] =>
+          for {
+            _ <- Async[F].start {
+              val persistTask = for {
+                _ <- p.persist(ordinal)
+                cutoffStart <- Async[F].realTime
+                _ <- p.applyCutoff(ordinal)
+              } yield ()
+
+              persistTask
+            }
+          } yield ()
         case _ =>
-          Async[F].unit
+          ().pure
+      }
+
+    private def tryLoadFromDisk(ordinal: SnapshotOrdinal): F[Boolean] =
+      producer match {
+        case p: FileSystemMerklePatriciaProducer[F @unchecked] =>
+          for {
+            loaded <- p.load(ordinal)
+            _ <-
+              if (loaded)
+                logger.info(s"Successfully loaded trie from disk for ordinal=$ordinal")
+              else
+                logger.info(s"No persisted trie found for ordinal=$ordinal")
+          } yield loaded
+        case _ =>
+          logger.debug("Producer does not support loading from disk") >>
+            false.pure[F]
       }
 
     private def toHexEntries[V: Encoder](data: Map[K, V]): F[Map[Hex, Json]] =
-      data.toList.parTraverse { case (k, v) => toHex(k).map(_ -> v.asJson) }.map(_.toMap)
+      if (data.isEmpty) Async[F].pure(Map.empty[Hex, Json])
+      else if (data.size <= 5000) {
+        data.toList.parTraverse { case (k, v) => toHex(k).map(_ -> v.asJson) }.map(_.toMap)
+      } else {
+        val BatchSize = 5000
+        for {
+          result <- data.toList
+            .grouped(BatchSize)
+            .toList
+            .foldLeftM(Map.empty[Hex, Json]) { (acc, batch) =>
+              for {
+                batchResult <- batch.parTraverse { case (k, v) => toHex(k).map(_ -> v.asJson) }
+                _ <- Async[F].cede
+              } yield acc ++ batchResult.toMap
+            }
+        } yield result
+      }
 
     override def get[V: Decoder](key: K): F[Option[V]] =
       for {
@@ -105,34 +138,38 @@ object MptStore {
       } yield entries.contains(hex)
 
     override def clear: F[Unit] =
-      producer.clear
+      logger.info("Clearing MPT store") >> producer.clear
 
     override def build: F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
-      producer.build
+      for {
+        result <- producer.build
+      } yield result
 
     override def syncFull[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit] =
-      if (newState.isEmpty) producer.clear
-      else
+      if (newState.isEmpty) {
+        producer.clear
+      } else {
         for {
+          _ <- logger.info(s"No persisted trie found, performing full build...")
+
           newEntries <- toHexEntries(newState)
-          currentEntries <- producer.entries
-          keysToRemove = currentEntries.keySet -- newEntries.keySet
-          keysToUpsert = newEntries.filterNot { case (k, v) => currentEntries.get(k).contains(v) }
-          _ <- if (keysToRemove.nonEmpty) producer.remove(keysToRemove.toList).void else Async[F].unit
-          _ <- if (keysToUpsert.nonEmpty) producer.insert(keysToUpsert).void else Async[F].unit
-          _ <- persistAndCutoff(ordinal)
+          _ <- producer.clear
+          _ <- producer.insert(newEntries).void
+          _ <- persistAndCutoffAsync(ordinal)
+          _ <- build
         } yield ()
+      }
 
     override def sync[V: Encoder](updates: Map[K, V], ordinal: SnapshotOrdinal): F[Unit] =
-      if (updates.isEmpty) Async[F].unit
-      else
+      if (updates.isEmpty) {
+        ().pure
+      } else {
         for {
           newEntries <- toHexEntries(updates)
-          currentEntries <- producer.entries
-          keysToUpsert = newEntries.filterNot { case (k, v) => currentEntries.get(k).contains(v) }
-          _ <- if (keysToUpsert.nonEmpty) producer.insert(keysToUpsert).void else Async[F].unit
-          _ <- persistAndCutoff(ordinal)
+          _ <- if (newEntries.nonEmpty) producer.insert(newEntries).void else Async[F].unit
+          _ <- persistAndCutoffAsync(ordinal)
         } yield ()
+      }
 
     override def update[V: Encoder](toUpsert: Map[K, V], toRemove: Set[K]): F[Unit] =
       for {
@@ -143,5 +180,14 @@ object MptStore {
       } yield ()
 
     override def underlying: StatefulMerklePatriciaProducer[F] = producer
+
+    override def deleteAbove(ordinal: SnapshotOrdinal): F[Unit] =
+      producer match {
+        case p: StatefulWithPersistenceMerklePatriciaProducer[F @unchecked] =>
+          logger.info(s"Deleting above ordinal=$ordinal") >>
+            p.deleteAbove(ordinal)
+        case _ =>
+          Async[F].unit
+      }
   }
 }

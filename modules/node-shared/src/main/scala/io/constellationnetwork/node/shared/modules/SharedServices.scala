@@ -135,7 +135,8 @@ object SharedServices {
         None
       )
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(
-        currencySnapshotValidator
+        currencySnapshotValidator,
+        storages.mptStore
       )
       feeCalculator = FeeCalculator.make(cfg.feeConfigs)
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(stateChannelAllowanceLists)
@@ -177,7 +178,8 @@ object SharedServices {
         updateDelegatedStakeAcceptanceManager,
         cfg.delegatedStaking.withdrawalTimeLimit.getOrElse(cfg.environment, EpochProgress.MinValue),
         cfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
-        cfg.fieldsAddedOrdinals.setSumFix.getOrElse(cfg.environment, SnapshotOrdinal.MinValue)
+        cfg.fieldsAddedOrdinals.setSumFix.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
+        storages.mptStore
       )
     } yield
       new SharedServices[F, A](

@@ -20,6 +20,7 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.peer.PeerId
@@ -42,7 +43,8 @@ object GlobalSnapshotContextFunctions {
     updateDelegatedStakeAcceptanceManager: UpdateDelegatedStakeAcceptanceManager[F],
     withdrawalTimeLimit: EpochProgress,
     tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
-    setSumFixOrdinal: SnapshotOrdinal
+    setSumFixOrdinal: SnapshotOrdinal,
+    mptStore: MptStore[F, GlobalStateKey]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ) =
@@ -257,7 +259,7 @@ object GlobalSnapshotContextFunctions {
         hashedArtifact <- HasherSelector[F].withCurrent(implicit hasher => signedArtifact.toHashed)
 
         calculatedStateProof <- HasherSelector[F].withCurrent { implicit hasher =>
-          snapshotInfo.stateProof(signedArtifact.ordinal)
+          snapshotInfo.stateProof(mptStore.underlying, signedArtifact.ordinal)
         }
         validation <- StateProofValidator.validate(hashedArtifact, calculatedStateProof)
         _ = validation match {

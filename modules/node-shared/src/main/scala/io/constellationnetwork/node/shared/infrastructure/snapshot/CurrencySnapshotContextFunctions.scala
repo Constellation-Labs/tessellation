@@ -12,6 +12,7 @@ import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher}
 
@@ -23,7 +24,7 @@ abstract class CurrencySnapshotContextFunctions[F[_]]
     extends SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext]
 
 object CurrencySnapshotContextFunctions {
-  def make[F[_]: Async: Parallel](validator: CurrencySnapshotValidator[F])(
+  def make[F[_]: Async: Parallel](validator: CurrencySnapshotValidator[F], mptStore: MptStore[F, GlobalStateKey])(
     implicit currencyStateProofSelector: CurrencyStateProofSelector
   ) =
     new CurrencySnapshotContextFunctions[F] {
@@ -43,7 +44,7 @@ object CurrencySnapshotContextFunctions {
           case Validated.Valid((_, validatedContext)) => validatedContext.pure[F]
           case Validated.Invalid(e)                   => CannotCreateContext(e).raiseError[F, CurrencySnapshotContext]
         }
-        _ <- StateProofValidator.validate(signedArtifact, validatedContext.snapshotInfo).flatMap {
+        _ <- StateProofValidator.validate(signedArtifact, validatedContext.snapshotInfo, mptStore).flatMap {
           case Validated.Valid(_)   => Async[F].unit
           case Validated.Invalid(e) => e.raiseError[F, Unit]
         }

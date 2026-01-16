@@ -80,7 +80,8 @@ object Storages {
           incrementalGlobalSnapshotInfoLocalFileSystemStorage,
           incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage,
           combinedGlobalSnapshotCheckpointStorage,
-          hashSelect
+          hashSelect,
+          sharedStorages.mptStore
         )
     } yield
       new Storages[F](

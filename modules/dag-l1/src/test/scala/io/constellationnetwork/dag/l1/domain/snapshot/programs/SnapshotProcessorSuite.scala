@@ -216,9 +216,15 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               currencySnapshotValidator = CurrencySnapshotValidator
                 .make[IO](SnapshotOrdinal.MinValue, currencySnapshotCreator, validators.signedValidator, None, None)
 
+              mptProducer <- InMemoryMerklePatriciaProducer.make[IO]().asResource
+              mptStore = MptStore.make[IO, GlobalStateKey](
+                mptProducer,
+                GlobalStateKey.toHex[IO]
+              )
+
               currencySnapshotContextFns = {
                 implicit val testCurrencyStateProofSelector: CurrencyStateProofSelector = CurrencyStateProofSelector.instance
-                CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
+                CurrencySnapshotContextFunctions.make(currencySnapshotValidator, mptStore)
               }
               globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L)).asResource
               feeCalculator = FeeCalculator.make(SortedMap.empty)
@@ -281,7 +287,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   updateDelegatedStakeAcceptanceManager,
                   EpochProgress(NonNegLong.unsafeFrom(1L)),
                   SnapshotOrdinal.MinValue,
-                  SnapshotOrdinal.MinValue
+                  SnapshotOrdinal.MinValue,
+                  mptStore
                 )
               }
               snapshotProcessor = {

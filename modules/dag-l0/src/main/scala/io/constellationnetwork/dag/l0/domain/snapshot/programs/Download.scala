@@ -122,7 +122,6 @@ object Download {
           val ((snapshot, context), observationLimit) = result
           for {
             kvPairs <- hasherSelector.withCurrent(implicit h => context.allStateEntries[F])
-            _ <- mptStore.syncFull(kvPairs, snapshot.ordinal)
             _ <- consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context)
           } yield ()
         }
@@ -146,7 +145,8 @@ object Download {
         Async[F].whenA(result.isEmpty)(
           logger.info(s"[Download] Cleanup for snapshots greater than ${metadata.ordinal}") >>
             snapshotStorage.cleanupAbove(metadata.ordinal) >>
-            combinedSnapshotCheckpointFileSystemStorage.deleteAbove(metadata.ordinal)
+            combinedSnapshotCheckpointFileSystemStorage.deleteAbove(metadata.ordinal) >>
+            mptStore.deleteAbove(metadata.ordinal)
         )
 
       def logDownloadInfo(startingPoint: SnapshotOrdinal, metadata: SnapshotMetadata): F[Unit] =
@@ -177,6 +177,7 @@ object Download {
             } else {
               for {
                 (snapshot, context) <- download(metadata.hash, metadata.ordinal, result)
+                kvPairs <- hasherSelector.withCurrent(implicit h => context.allStateEntries[F])
                 nextResult <- downloadLoop(snapshot.ordinal, (snapshot, context).some)
               } yield nextResult
             }
@@ -351,10 +352,10 @@ object Download {
                         .ifM(
                           ().pure[F],
                           (Hasher[F].getLogic(snapshot.ordinal) match {
-                            case JsonHash => StateProofValidator.validate(snapshot, newContext).map(_.isValid)
+                            case JsonHash => StateProofValidator.validate(snapshot, newContext, mptStore).map(_.isValid)
                             case KryoHash =>
                               StateProofValidator
-                                .validate(snapshot, GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(newContext))
+                                .validate(snapshot, GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(newContext), mptStore)
                                 .map(_.isValid)
                           })
                             .ifM(

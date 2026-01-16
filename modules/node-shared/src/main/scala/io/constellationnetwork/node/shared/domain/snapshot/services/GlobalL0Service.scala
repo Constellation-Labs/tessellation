@@ -21,6 +21,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotS
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.http.p2p.clients.L0GlobalSnapshotClient
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.peer.{L0Peer, PeerId}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -53,7 +54,8 @@ object GlobalL0Service {
     globalL0ClusterStorage: L0ClusterStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     singlePullLimit: Option[PosLong],
-    maybeMajorityPeerIdSet: Option[NonEmptySet[PeerId]]
+    maybeMajorityPeerIdSet: Option[NonEmptySet[PeerId]],
+    mptStore: MptStore[F, GlobalStateKey]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): GlobalL0Service[F] =
@@ -170,7 +172,7 @@ object GlobalL0Service {
         implicit hasher: Hasher[F]
       ): F[Boolean] =
         StateProofValidator
-          .validate(snapshot, info)
+          .validate(snapshot, info, mptStore)
           .flatTap(v => logger.debug(s"Failed StateProofValidation: $v").whenA(v.isInvalid))
           .map(_.isValid)
 

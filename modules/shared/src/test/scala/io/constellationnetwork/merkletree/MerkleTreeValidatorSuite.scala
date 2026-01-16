@@ -15,10 +15,12 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
+import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 import io.constellationnetwork.shared.sharedKryoRegistrar
@@ -60,8 +62,13 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
       Some(SortedMap.empty)
     )
     for {
+      mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      mptStore = MptStore.make[IO, GlobalStateKey](
+        mptProducer,
+        GlobalStateKey.toHex[IO]
+      )
       snapshot <- globalIncrementalSnapshot(globalSnapshotInfo)
-      result <- StateProofValidator.validate(snapshot, globalSnapshotInfo)
+      result <- StateProofValidator.validate(snapshot, globalSnapshotInfo, mptStore)
     } yield expect.same(Validated.Valid(()), result)
   }
 
@@ -89,7 +96,12 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
 
     for {
       snapshot <- globalIncrementalSnapshot(globalSnapshotInfo)
-      result <- StateProofValidator.validate(snapshot, GlobalSnapshotInfo.empty)
+      mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      mptStore = MptStore.make[IO, GlobalStateKey](
+        mptProducer,
+        GlobalStateKey.toHex[IO]
+      )
+      result <- StateProofValidator.validate(snapshot, GlobalSnapshotInfo.empty, mptStore)
     } yield expect.same(Validated.Invalid(StateProofValidator.StateBroken(SnapshotOrdinal(NonNegLong(1L)), snapshot.hash)), result)
   }
 
