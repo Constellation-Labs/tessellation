@@ -121,7 +121,6 @@ object Download {
         .flatMap { result =>
           val ((snapshot, context), observationLimit) = result
           for {
-            kvPairs <- hasherSelector.withCurrent(implicit h => context.allStateEntries[F])
             _ <- consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context)
           } yield ()
         }
@@ -177,7 +176,6 @@ object Download {
             } else {
               for {
                 (snapshot, context) <- download(metadata.hash, metadata.ordinal, result)
-                kvPairs <- hasherSelector.withCurrent(implicit h => context.allStateEntries[F])
                 nextResult <- downloadLoop(snapshot.ordinal, (snapshot, context).some)
               } yield nextResult
             }
@@ -372,8 +370,21 @@ object Download {
               case None => InvalidChain.raiseError[F, Agg]
             }
 
-        persistLastSnapshot >>
-          processNextOrFinish
+        for {
+          mptEntries <- mptStore.underlying.entries
+          _ <-
+            if (mptEntries.isEmpty) {
+              for {
+                _ <- logger.info("Performing initial sync of MPT")
+                kvPairs <- hasherSelector.withCurrent(implicit h => context.allStateEntries[F])
+                _ <- mptStore.syncFull(kvPairs, lastSnapshot.ordinal)
+              } yield ()
+            } else {
+              ().pure[F]
+            }
+          _ <- persistLastSnapshot
+          result <- processNextOrFinish
+        } yield result
       }
 
       state
