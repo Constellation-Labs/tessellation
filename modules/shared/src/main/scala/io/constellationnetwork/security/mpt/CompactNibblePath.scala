@@ -73,6 +73,20 @@ final class CompactNibblePath private (
     }
   }
 
+  /** Check if this path starts with the given prefix.
+    */
+  def startsWith(prefix: CompactNibblePath): Boolean =
+    if (prefix.length > this.length) false
+    else {
+      var i = 0
+      var matches = true
+      while (i < prefix.length && matches) {
+        if (this.apply(i) != prefix.apply(i)) matches = false
+        i += 1
+      }
+      matches
+    }
+
   /** Concatenate two paths.
     */
   def ++(other: CompactNibblePath): CompactNibblePath =

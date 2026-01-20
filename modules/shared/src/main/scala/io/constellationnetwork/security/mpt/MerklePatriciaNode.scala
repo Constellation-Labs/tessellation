@@ -4,11 +4,9 @@ import cats.effect.Sync
 import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
-import cats.{Eq, Order, Show}
 
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
-import io.constellationnetwork.security.mpt.MerklePatriciaCommitment.Extension.extensionCommitEncoder
 
 import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
@@ -28,15 +26,18 @@ object MerklePatriciaNode {
   private[mpt] val BranchPrefix: Array[Byte] = Array(1: Byte)
   private[mpt] val ExtensionPrefix: Array[Byte] = Array(2: Byte)
 
-  /** Leaf node with memory-optimized path storage.
+  /** Leaf node with memory-optimized storage.
     *
-    * Uses CompactNibblePath internally (2 nibbles per byte) but converts to Seq[Nibble] for hashing to maintain blockchain compatibility.
+    * Stores only the dataDigest instead of the full Json data. Original data can be retrieved from external storage using dataDigest as
+    * key.
     *
-    * Memory savings: ~16x reduction for path storage (64-nibble path: ~1KB -> ~40 bytes)
+    * Memory savings:
+    *   - Path: ~16x reduction via CompactNibblePath (64-nibble path: ~1KB -> ~40 bytes)
+    *   - Data: Eliminates Json object graph entirely (potentially 500MB+ for large tries)
     */
   final case class Leaf private (
     private val remainingCompact: CompactNibblePath,
-    data: Json,
+    dataDigest: Hash,
     digest: Hash
   ) extends MerklePatriciaNode {
 
@@ -60,9 +61,7 @@ object MerklePatriciaNode {
     def paths: Map[Nibble, MerklePatriciaNode] =
       pathsInternal.map { case (k, v) => Nibble.unsafe(k) -> v }
 
-    /** Get child by nibble value directly (avoids Nibble boxing). Use this for efficient operations. For Nibble, use
-      * getChild(nibble.value).
-      */
+    /** Get child by nibble value directly (avoids Nibble boxing). */
     def getChild(nibbleValue: Byte): Option[MerklePatriciaNode] =
       pathsInternal.get(nibbleValue)
 
@@ -81,8 +80,7 @@ object MerklePatriciaNode {
       pathsInternal.foreach { case (k, v) => f(k, v) }
   }
 
-  /** Extension node with memory-optimized shared path storage.
-    */
+  /** Extension node with memory-optimized shared path storage. */
   final case class Extension private (
     private val sharedCompact: CompactNibblePath,
     child: Branch,
@@ -98,42 +96,38 @@ object MerklePatriciaNode {
 
   object Leaf {
 
-    def apply[F[_]: Sync: Hasher](remaining: Seq[Nibble], data: Json): F[Leaf] =
+    /** Create leaf from data - computes dataDigest internally. The data is NOT stored in the leaf; store it externally using the returned
+      * dataDigest.
+      */
+    def apply[F[_]: Sync: Hasher](remaining: Seq[Nibble], data: Json): F[(Leaf, Hash)] =
+      fromCompact(CompactNibblePath.fromNibbleSeq(remaining), data)
+
+    /** Create from CompactNibblePath (preferred for new code). Returns the leaf and the dataDigest for external storage.
+      */
+    def fromCompact[F[_]: Sync: Hasher](remaining: CompactNibblePath, data: Json): F[(Leaf, Hash)] =
       for {
         dataDigest <- Hasher[F].hash(data)
-        leaf <- withDataDigest[F](remaining, data, dataDigest)
-      } yield leaf
+        leaf <- fromDataDigest[F](remaining, dataDigest)
+      } yield (leaf, dataDigest)
 
-    /** Create from CompactNibblePath (preferred for new code).
+    /** Create leaf directly from pre-computed data digest. Use this when you already have the digest or don't need to store the data.
       */
-    def fromCompact[F[_]: Sync: Hasher](remaining: CompactNibblePath, data: Json): F[Leaf] =
-      for {
-        dataDigest <- Hasher[F].hash(data)
-        leaf <- withDataDigestCompact[F](remaining, data, dataDigest)
-      } yield leaf
-
-    /** Fast path: create leaf when data digest is already computed. This saves one hash operation per leaf when batch-hashing.
-      */
-    def withDataDigest[F[_]: Sync: Hasher](remaining: Seq[Nibble], data: Json, dataDigest: Hash): F[Leaf] = {
-      val remainingCompact = CompactNibblePath.fromNibbleSeq(remaining)
-      withDataDigestCompact[F](remainingCompact, data, dataDigest)
-    }
-
-    /** Fast path with CompactNibblePath (avoids conversion).
-      */
-    def withDataDigestCompact[F[_]: Sync: Hasher](remaining: CompactNibblePath, data: Json, dataDigest: Hash): F[Leaf] = {
-      // CRITICAL: Use toNibbleSeq for hashing to maintain blockchain compatibility
+    def fromDataDigest[F[_]: Sync: Hasher](remaining: CompactNibblePath, dataDigest: Hash): F[Leaf] = {
       val commitment = MerklePatriciaCommitment.Leaf(remaining.toNibbleSeq, dataDigest)
       Hasher[F].prefixedHash(commitment.asJson, LeafPrefix).map { nodeDigest =>
-        new Leaf(remaining, data, nodeDigest)
+        new Leaf(remaining, dataDigest, nodeDigest)
       }
     }
+
+    /** Create leaf from Seq[Nibble] path and pre-computed data digest. */
+    def fromDataDigestSeq[F[_]: Sync: Hasher](remaining: Seq[Nibble], dataDigest: Hash): F[Leaf] =
+      fromDataDigest(CompactNibblePath.fromNibbleSeq(remaining), dataDigest)
 
     implicit val leafNodeEncoder: Encoder[Leaf] =
       Encoder.instance { node =>
         Json.obj(
           "remaining" -> node.remaining.asJson(Nibble.nibbleSeqEncoder),
-          "data" -> node.data.asJson,
+          "dataDigest" -> node.dataDigest.asJson,
           "digest" -> node.digest.asJson
         )
       }
@@ -142,24 +136,21 @@ object MerklePatriciaNode {
       Decoder.instance { hCursor =>
         for {
           remaining <- hCursor.downField("remaining").as[Seq[Nibble]](Nibble.nibbleSeqDecoder)
-          data <- hCursor.downField("data").as[Json]
+          dataDigest <- hCursor.downField("dataDigest").as[Hash]
           digest <- hCursor.downField("digest").as[Hash]
-        } yield new Leaf(CompactNibblePath.fromNibbleSeq(remaining), data, digest)
+        } yield new Leaf(CompactNibblePath.fromNibbleSeq(remaining), dataDigest, digest)
       }
   }
 
   object Branch {
 
     def apply[F[_]: Sync: Hasher](paths: Map[Nibble, MerklePatriciaNode]): F[Branch] = {
-      // Convert to byte-keyed map
       val byteKeyedPaths: Map[Byte, MerklePatriciaNode] = paths.map { case (k, v) => k.value -> v }
       fromByteKeys(byteKeyedPaths)
     }
 
-    /** Create from byte-keyed map (preferred for new code, avoids Nibble boxing).
-      */
+    /** Create from byte-keyed map (preferred for new code, avoids Nibble boxing). */
     def fromByteKeys[F[_]: Sync: Hasher](paths: Map[Byte, MerklePatriciaNode]): F[Branch] = {
-      // For hashing, we need Nibble keys (blockchain compatibility)
       val pathDigests: Map[Nibble, Hash] = {
         val builder = Map.newBuilder[Nibble, Hash]
         builder.sizeHint(paths.size)
@@ -172,8 +163,7 @@ object MerklePatriciaNode {
       }
     }
 
-    /** Fast path: create branch when child digests are already extracted. Avoids re-iterating the paths map.
-      */
+    /** Fast path: create branch when child digests are already extracted. */
     def fromDigests[F[_]: Sync: Hasher](
       paths: Map[Nibble, MerklePatriciaNode],
       pathDigests: Map[Nibble, Hash]
@@ -185,8 +175,7 @@ object MerklePatriciaNode {
       }
     }
 
-    /** Fast path with byte keys and pre-computed digests.
-      */
+    /** Fast path with byte keys and pre-computed digests. */
     def fromByteKeysWithDigests[F[_]: Sync: Hasher](
       paths: Map[Byte, MerklePatriciaNode],
       pathDigests: Map[Nibble, Hash]
@@ -221,10 +210,8 @@ object MerklePatriciaNode {
       fromCompact[F](sharedCompact, child)
     }
 
-    /** Create from CompactNibblePath (preferred for new code).
-      */
+    /** Create from CompactNibblePath (preferred for new code). */
     def fromCompact[F[_]: Sync: Hasher](shared: CompactNibblePath, child: Branch): F[Extension] = {
-      // CRITICAL: Use toNibbleSeq for hashing to maintain blockchain compatibility
       val commitment = MerklePatriciaCommitment.Extension(shared.toNibbleSeq, child.digest)
       Hasher[F].prefixedHash(commitment, ExtensionPrefix).map { nodeDigest =>
         new Extension(shared, child, nodeDigest)

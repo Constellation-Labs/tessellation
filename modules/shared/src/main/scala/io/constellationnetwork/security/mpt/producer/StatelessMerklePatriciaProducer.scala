@@ -1,12 +1,11 @@
 package io.constellationnetwork.security.mpt.producer
 
 import cats.data.NonEmptyList
-import cats.effect.{Async, Sync}
+import cats.effect.{Async, Ref, Sync}
 import cats.syntax.all._
 
-import scala.collection.immutable.ArraySeq
-
 import io.constellationnetwork.security.Hasher
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt._
 import io.constellationnetwork.security.mpt.prover.MerklePatriciaSingleInclusionProver
@@ -15,9 +14,22 @@ import io.constellationnetwork.security.mpt.verifier._
 import io.circe.syntax._
 import io.circe.{Encoder, Json}
 
+/** Result of trie operations that tracks both the trie and external data storage. */
+case class MerklePatriciaTrieWithData(
+  trie: MerklePatriciaTrie,
+  dataStore: Map[Hash, Json]
+) {
+
+  /** Get data by its digest. */
+  def getData(digest: Hash): Option[Json] = dataStore.get(digest)
+
+  /** Get all stored data. */
+  def allData: Map[Hash, Json] = dataStore
+}
+
 /** Stateless MPT producer with memory-optimized operations.
   *
-  * Uses CompactNibblePath internally for efficient path operations while maintaining full compatibility with existing serialization.
+  * Data is stored externally in a Map[Hash, Json] rather than in leaf nodes. This dramatically reduces memory usage for large tries.
   */
 class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatriciaProducer[F] {
 
@@ -26,33 +38,67 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
 
   private val yieldEveryN = 50
 
-  def create[A: Encoder](data: Map[Hex, A]): F[MerklePatriciaTrie] =
+  /** Create a trie with external data storage. */
+  def createWithData[A: Encoder](data: Map[Hex, A]): F[MerklePatriciaTrieWithData] =
     NonEmptyList.fromList(data.toList) match {
       case Some(nel) =>
-        val (hPath, hData) = nel.head
-
         for {
-          initialNode <- MerklePatriciaNode.Leaf.fromCompact[F](
+          dataStoreRef <- Ref.of[F, Map[Hash, Json]](Map.empty)
+
+          (hPath, hData) = nel.head
+          hDataJson = hData.asJson
+          hDataDigest <- Hasher[F].hash(hDataJson)
+          _ <- dataStoreRef.update(_ + (hDataDigest -> hDataJson))
+
+          initialNode <- MerklePatriciaNode.Leaf.fromDataDigest[F](
             CompactNibblePath.fromHexString(hPath.value),
-            hData.asJson
+            hDataDigest
           )
+
           sortedTail = nel.tail.sortBy(_._1.value.length)
 
           resultNode <- sortedTail.zipWithIndex
             .foldM[F, MerklePatriciaNode](initialNode) {
               case (acc, ((path, value), idx)) =>
                 val compactPath = CompactNibblePath.fromHexString(path.value)
-                val work = insertEncodedCompact(acc, compactPath, value.asJson).flatMap {
-                  case Left(err)    => err.raiseError[F, MerklePatriciaNode]
-                  case Right(value) => value.pure[F]
-                }
+                val valueJson = value.asJson
+                val work = for {
+                  dataDigest <- Hasher[F].hash(valueJson)
+                  _ <- dataStoreRef.update(_ + (dataDigest -> valueJson))
+                  result <- insertWithDigest(acc, compactPath, dataDigest).flatMap {
+                    case Left(err)   => err.raiseError[F, MerklePatriciaNode]
+                    case Right(node) => node.pure[F]
+                  }
+                } yield result
 
                 if (idx % yieldEveryN == 0) Async[F].cede *> work <* Async[F].cede
                 else work
             }
-        } yield MerklePatriciaTrie(resultNode)
+
+          finalDataStore <- dataStoreRef.get
+        } yield MerklePatriciaTrieWithData(MerklePatriciaTrie(resultNode), finalDataStore)
 
       case None => new RuntimeException("Empty data provided").raiseError
+    }
+
+  /** Original create method - returns trie without data store for backward compatibility. */
+  def create[A: Encoder](data: Map[Hex, A]): F[MerklePatriciaTrie] =
+    createWithData(data).map(_.trie)
+
+  /** Insert with external data storage tracking. */
+  def insertWithData[A: Encoder](
+    current: MerklePatriciaTrieWithData,
+    data: Map[Hex, A]
+  ): F[Either[MerklePatriciaError, MerklePatriciaTrieWithData]] =
+    if (data.isEmpty) {
+      current.asRight[MerklePatriciaError].pure[F]
+    } else {
+      (for {
+        dataStoreRef <- Ref.of[F, Map[Hash, Json]](current.dataStore)
+        result <- insertMultipleWithStore(current.trie.rootNode, data.toList, dataStoreRef)
+        finalDataStore <- dataStoreRef.get
+      } yield result.map(node => MerklePatriciaTrieWithData(MerklePatriciaTrie(node), finalDataStore)))
+        .handleError(e => OperationError(e.getMessage).asLeft)
     }
 
   def insert[A: Encoder](
@@ -76,6 +122,60 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
         .handleError(e => OperationError(e.getMessage).asLeft[MerklePatriciaTrie])
     }
 
+  /** Remove with data store cleanup. */
+  def removeWithData(
+    current: MerklePatriciaTrieWithData,
+    paths: List[Hex]
+  ): F[Either[MerklePatriciaError, MerklePatriciaTrieWithData]] =
+    if (paths.isEmpty) {
+      current.asRight[MerklePatriciaError].pure[F]
+    } else {
+      // Collect digests to remove, then remove from trie
+      val digestsToRemove = paths.flatMap { path =>
+        findLeafDigest(current.trie.rootNode, CompactNibblePath.fromHexString(path.value))
+      }.toSet
+
+      removeMultiple(current.trie.rootNode, paths)
+        .map(_.map { node =>
+          val newDataStore = current.dataStore -- digestsToRemove
+          MerklePatriciaTrieWithData(MerklePatriciaTrie(node), newDataStore)
+        })
+        .handleError(e => OperationError(e.getMessage).asLeft)
+    }
+
+  private def findLeafDigest(node: MerklePatriciaNode, path: CompactNibblePath): Option[Hash] =
+    node match {
+      case leaf: MerklePatriciaNode.Leaf =>
+        if (leaf.remainingPath == path) Some(leaf.dataDigest) else None
+      case branch: MerklePatriciaNode.Branch =>
+        if (path.isEmpty) None
+        else branch.getChild(path.head).flatMap(child => findLeafDigest(child, path.tail))
+      case ext: MerklePatriciaNode.Extension =>
+        val shared = ext.sharedPath
+        if (path.startsWith(shared)) findLeafDigest(ext.child, path.drop(shared.length))
+        else None
+    }
+
+  private def insertMultipleWithStore[A: Encoder](
+    initialNode: MerklePatriciaNode,
+    entries: List[(Hex, A)],
+    dataStoreRef: Ref[F, Map[Hash, Json]]
+  ): F[Either[MerklePatriciaError, MerklePatriciaNode]] =
+    entries.zipWithIndex.foldM(initialNode.asRight[MerklePatriciaError]) {
+      case (Right(acc), ((path, value), idx)) =>
+        val compactPath = CompactNibblePath.fromHexString(path.value)
+        val valueJson = value.asJson
+        val work = for {
+          dataDigest <- Hasher[F].hash(valueJson)
+          _ <- dataStoreRef.update(_ + (dataDigest -> valueJson))
+          result <- insertWithDigest(acc, compactPath, dataDigest)
+        } yield result
+        if (idx % yieldEveryN == 0) Async[F].cede *> work <* Async[F].cede
+        else work
+      case (Left(err), _) =>
+        err.asLeft[MerklePatriciaNode].pure[F]
+    }
+
   private def insertMultiple[A: Encoder](
     initialNode: MerklePatriciaNode,
     entries: List[(Hex, A)]
@@ -83,7 +183,11 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
     entries.zipWithIndex.foldM(initialNode.asRight[MerklePatriciaError]) {
       case (Right(acc), ((path, value), idx)) =>
         val compactPath = CompactNibblePath.fromHexString(path.value)
-        val work = insertEncodedCompact(acc, compactPath, value.asJson)
+        val valueJson = value.asJson
+        val work = for {
+          dataDigest <- Hasher[F].hash(valueJson)
+          result <- insertWithDigest(acc, compactPath, dataDigest)
+        } yield result
         if (idx % yieldEveryN == 0) Async[F].cede *> work <* Async[F].cede
         else work
       case (Left(err), _) =>
@@ -104,30 +208,20 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
         err.asLeft[MerklePatriciaNode].pure[F]
     }
 
-  // Legacy method for compatibility
-  private def insertEncoded(
-    currentNode: MerklePatriciaNode,
-    path: Seq[Nibble],
-    data: Json
-  ): F[Either[MerklePatriciaError, MerklePatriciaNode]] =
-    insertEncodedCompact(currentNode, CompactNibblePath.fromNibbleSeq(path), data)
-
-  sealed private trait InsertState
-
-  private case class InsertContinue(
-    currentNode: MerklePatriciaNode,
-    key: CompactNibblePath,
-    updateParent: MerklePatriciaNode => F[Either[MerklePatriciaError, MerklePatriciaNode]]
-  ) extends InsertState
-  private case class InsertDone(node: Either[MerklePatriciaError, MerklePatriciaNode]) extends InsertState
-
-  /** Insert with CompactNibblePath for memory efficiency.
-    */
-  private def insertEncodedCompact(
+  /** Insert using pre-computed data digest. */
+  private def insertWithDigest(
     currentNode: MerklePatriciaNode,
     path: CompactNibblePath,
-    data: Json
+    dataDigest: Hash
   ): F[Either[MerklePatriciaError, MerklePatriciaNode]] = {
+
+    sealed trait InsertState
+    case class InsertContinue(
+      currentNode: MerklePatriciaNode,
+      key: CompactNibblePath,
+      updateParent: MerklePatriciaNode => F[Either[MerklePatriciaError, MerklePatriciaNode]]
+    ) extends InsertState
+    case class InsertDone(node: Either[MerklePatriciaError, MerklePatriciaNode]) extends InsertState
 
     def insertForLeafNode(
       leafNode: MerklePatriciaNode.Leaf,
@@ -138,7 +232,7 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
 
       if (leafRemaining.length == _key.length && leafRemaining == _key) {
         for {
-          newLeaf <- MerklePatriciaNode.Leaf.fromCompact[F](_key, data)
+          newLeaf <- MerklePatriciaNode.Leaf.fromDataDigest[F](_key, dataDigest)
           result <- updateParent(newLeaf)
         } yield result.asRight[InsertState]
       } else {
@@ -148,8 +242,8 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
         val keyRemainingAfter = _key.drop(commonPrefixLen)
 
         (for {
-          existingLeaf <- MerklePatriciaNode.Leaf.fromCompact[F](leafRemainingAfter.tail, leafNode.data)
-          newLeaf <- MerklePatriciaNode.Leaf.fromCompact[F](keyRemainingAfter.tail, data)
+          existingLeaf <- MerklePatriciaNode.Leaf.fromDataDigest[F](leafRemainingAfter.tail, leafNode.dataDigest)
+          newLeaf <- MerklePatriciaNode.Leaf.fromDataDigest[F](keyRemainingAfter.tail, dataDigest)
           branchNode <- MerklePatriciaNode.Branch.fromByteKeys[F](
             Map[Byte, MerklePatriciaNode](
               leafRemainingAfter.head -> existingLeaf,
@@ -205,7 +299,7 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
               extensionNode.child.pure[F].widen[MerklePatriciaNode]
             else
               MerklePatriciaNode.Extension.fromCompact[F](sharedRemaining.tail, extensionNode.child).widen[MerklePatriciaNode]
-          newLeaf <- MerklePatriciaNode.Leaf.fromCompact[F](keyRemaining.tail, data)
+          newLeaf <- MerklePatriciaNode.Leaf.fromDataDigest[F](keyRemaining.tail, dataDigest)
           branchNode <- MerklePatriciaNode.Branch.fromByteKeys[F](
             Map(
               sharedRemaining.head -> existingSubtree,
@@ -252,7 +346,7 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
 
           case None =>
             (for {
-              newLeaf <- MerklePatriciaNode.Leaf.fromCompact[F](keyRemaining, data)
+              newLeaf <- MerklePatriciaNode.Leaf.fromDataDigest[F](keyRemaining, dataDigest)
               updatedBranch <- MerklePatriciaNode.Branch.fromByteKeys[F](
                 branchNode.internalPaths + (nibbleValue -> newLeaf)
               )
@@ -283,15 +377,7 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
     initialState.tailRecM[F, Either[MerklePatriciaError, MerklePatriciaNode]](step)
   }
 
-  // Legacy method for compatibility
-  private def removeEncoded(
-    currentNode: MerklePatriciaNode,
-    path: Seq[Nibble]
-  ): F[Either[MerklePatriciaError, MerklePatriciaNode]] =
-    removeEncodedCompact(currentNode, CompactNibblePath.fromNibbleSeq(path))
-
   sealed private trait RemoveState
-
   private case class RemoveContinue(
     currentNode: MerklePatriciaNode,
     key: CompactNibblePath,
@@ -299,8 +385,6 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
   ) extends RemoveState
   private case class RemoveDone(nodeOpt: Either[MerklePatriciaError, Option[MerklePatriciaNode]]) extends RemoveState
 
-  /** Remove with CompactNibblePath for memory efficiency.
-    */
   private def removeEncodedCompact(
     currentNode: MerklePatriciaNode,
     path: CompactNibblePath
@@ -342,7 +426,7 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
 
                 case childLeaf: MerklePatriciaNode.Leaf =>
                   MerklePatriciaNode.Leaf
-                    .fromCompact[F](extShared ++ childLeaf.remainingPath, childLeaf.data)
+                    .fromDataDigest[F](extShared ++ childLeaf.remainingPath, childLeaf.dataDigest)
                     .flatMap(node => updateParent(Some(node)))
                     .handleError(e => OperationError(e.getMessage).asLeft)
 
@@ -395,7 +479,10 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
                       onlyChild match {
                         case leafNode: MerklePatriciaNode.Leaf =>
                           MerklePatriciaNode.Leaf
-                            .fromCompact[F](CompactNibblePath.single(remainingNibbleValue) ++ leafNode.remainingPath, leafNode.data)
+                            .fromDataDigest[F](
+                              CompactNibblePath.single(remainingNibbleValue) ++ leafNode.remainingPath,
+                              leafNode.dataDigest
+                            )
                             .flatMap(node => updateParent(Some(node)))
                             .handleError(e => OperationError(e.getMessage).asLeft)
 
@@ -451,7 +538,6 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
 }
 
 object StatelessMerklePatriciaProducer {
-
   def apply[F[_]: Hasher: Async]: StatelessMerklePatriciaProducer[F] =
     new StatelessMerklePatriciaProducer[F]
 }

@@ -32,12 +32,13 @@ object MerklePatriciaSingleInclusionProver {
             case (currentNode, remainingPath: Seq[Nibble], acc) =>
               currentNode match {
                 case leaf: MerklePatriciaNode.Leaf if leaf.remaining == remainingPath =>
-                  Hasher[F]
-                    .hash(leaf.data)
-                    .map(dataDigest => MerklePatriciaCommitment.Leaf(leaf.remaining, dataDigest) :: acc)
-                    .map(commitments => commitments.asRight[MerklePatriciaProofError])
-                    .map(_.asRight[Continue])
-                    .handleError(e => ProofGenerationError(e.getMessage).asLeft[List[MerklePatriciaCommitment]].asRight[Continue])
+                  // Use the stored dataDigest directly - no need to hash the data
+                  val commitment = MerklePatriciaCommitment.Leaf(leaf.remaining, leaf.dataDigest)
+                  Sync[F].pure(
+                    (commitment :: acc)
+                      .asRight[MerklePatriciaProofError]
+                      .asRight[Continue]
+                  )
 
                 case extension: MerklePatriciaNode.Extension if remainingPath.startsWith(extension.shared) =>
                   Sync[F].pure(

@@ -19,6 +19,12 @@ import io.circe.syntax._
 import io.circe.{Encoder, Json}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
+/** Result of parallel trie creation with external data storage. */
+case class ParallelTrieWithData(
+  trie: MerklePatriciaTrie,
+  dataStore: Map[Hash, Json]
+)
+
 class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel](
   maxThreads: Int = Runtime.getRuntime.availableProcessors()
 ) extends MerklePatriciaProducer[F] {
@@ -30,6 +36,39 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel](
   def getProver(trie: MerklePatriciaTrie): F[MerklePatriciaSingleInclusionProver[F]] =
     MerklePatriciaSingleInclusionProver.make[F](trie).pure[F]
 
+  /** Create trie with external data storage for memory efficiency. */
+  def createWithData[A: Encoder](data: Map[Hex, A]): F[ParallelTrieWithData] =
+    if (data.isEmpty) {
+      MerklePatriciaNode.Branch[F](Map.empty).map(node => ParallelTrieWithData(MerklePatriciaTrie(node), Map.empty))
+    } else {
+      for {
+        totalStart <- Async[F].realTime
+        _ <- logger.info(s"Starting MPT creation with ${data.size} entries")
+
+        prepStart <- Async[F].realTime
+        entries <- Async[F].blocking(prepareAndSort(data))
+        prepEnd <- Async[F].realTime
+        _ <- logger.info(s"Phase 1 - prepareAndSort took ${(prepEnd - prepStart).toMillis}ms")
+
+        hashStart <- Async[F].realTime
+        dataHashes <- batchComputeDataHashes(entries)
+        hashEnd <- Async[F].realTime
+        _ <- logger.info(s"Phase 2 - batchComputeDataHashes took ${(hashEnd - hashStart).toMillis}ms")
+
+        // Build data store from hashes
+        dataStore = buildDataStore(entries, dataHashes)
+
+        buildStart <- Async[F].realTime
+        root <- buildTreeWithHashes(entries, dataHashes, 0, entries.length, 0)
+        buildEnd <- Async[F].realTime
+        _ <- logger.info(s"Phase 3 - buildTree took ${(buildEnd - buildStart).toMillis}ms")
+
+        totalEnd <- Async[F].realTime
+        _ <- logger.info(s"Total MPT creation took ${(totalEnd - totalStart).toMillis}ms")
+      } yield ParallelTrieWithData(MerklePatriciaTrie(root), dataStore)
+    }
+
+  /** Original create method - returns trie without data store for backward compatibility. */
   def create[A: Encoder](data: Map[Hex, A]): F[MerklePatriciaTrie] =
     if (data.isEmpty) {
       MerklePatriciaNode.Branch[F](Map.empty).map(MerklePatriciaTrie(_))
@@ -70,8 +109,22 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel](
   ): F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
     new StatelessMerklePatriciaProducer[F].remove(current, data)
 
-  /** Batch compute data hashes. Uses CompactNibblePath entries.
-    */
+  /** Build data store mapping Hash -> Json from entries and computed hashes. */
+  private def buildDataStore(
+    entries: Array[(CompactNibblePath, Json)],
+    dataHashes: Array[String]
+  ): Map[Hash, Json] = {
+    val builder = Map.newBuilder[Hash, Json]
+    builder.sizeHint(entries.length)
+    var i = 0
+    while (i < entries.length) {
+      builder += (Hash(dataHashes(i)) -> entries(i)._2)
+      i += 1
+    }
+    builder.result()
+  }
+
+  /** Batch compute data hashes. Uses CompactNibblePath entries. */
   private def batchComputeDataHashes(entries: Array[(CompactNibblePath, Json)]): F[Array[String]] = {
     val numEntries = entries.length
     val batchSize = math.max(100, numEntries / (maxThreads * 4))
@@ -89,7 +142,7 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel](
     } yield results
   }
 
-  /** Build tree using CompactNibblePath for memory efficiency.
+  /** Build tree using CompactNibblePath for memory efficiency. Now creates Leaf nodes with only dataDigest, not the full Json data.
     */
   private def buildTreeWithHashes(
     entries: Array[(CompactNibblePath, Json)],
@@ -103,10 +156,11 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel](
     if (size == 0) {
       MerklePatriciaNode.Branch[F](Map.empty).widen
     } else if (size == 1) {
-      val (path, data) = entries(start)
+      val (path, _) = entries(start)
       val dataHash = Hash(dataHashes(start))
       val remaining = if (depth >= path.length) CompactNibblePath.empty else path.drop(depth)
-      MerklePatriciaNode.Leaf.withDataDigestCompact[F](remaining, data, dataHash).widen
+      // Use fromDataDigest - don't store the Json data in the leaf
+      MerklePatriciaNode.Leaf.fromDataDigest[F](remaining, dataHash).widen
     } else {
       buildWithGroupsHashed(entries, dataHashes, start, end, depth)
     }
@@ -119,13 +173,12 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel](
     end: Int,
     depth: Int
   ): F[MerklePatriciaNode] = {
-    // Groups now use Byte instead of Nibble to avoid boxing
     val groups = findGroups(entries, start, end, depth)
 
     if (groups.length == 1) {
       val (nibbleValue, gs, ge) = groups(0)
       buildTreeWithHashes(entries, dataHashes, gs, ge, depth + 1)
-        .flatMap(child => createSingleGroupNode(nibbleValue, child, entries, dataHashes, gs))
+        .flatMap(child => createSingleGroupNode(nibbleValue, child, dataHashes, gs))
     } else {
       val useParallel = depth <= ParallelDepthThreshold || groups.length >= 4
 
@@ -143,18 +196,16 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel](
         }
 
       buildChildren.flatMap { children =>
-        // Use byte-keyed map directly
         MerklePatriciaNode.Branch.fromByteKeys[F](children.toMap).widen
       }
     }
   }
 
-  /** Create node for single group. Uses byte nibble values and CompactNibblePath.
+  /** Create node for single group. Uses byte nibble values and CompactNibblePath. Now uses dataDigest only for Leaf nodes.
     */
   private def createSingleGroupNode(
     nibbleValue: Byte,
     child: MerklePatriciaNode,
-    entries: Array[(CompactNibblePath, Json)],
     dataHashes: Array[String],
     entryIndex: Int
   ): F[MerklePatriciaNode] =
@@ -171,11 +222,11 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel](
           .widen
 
       case leaf: MerklePatriciaNode.Leaf =>
+        // Use fromDataDigest with the leaf's existing dataDigest
         MerklePatriciaNode.Leaf
-          .withDataDigestCompact[F](
+          .fromDataDigest[F](
             CompactNibblePath.single(nibbleValue) ++ leaf.remainingPath,
-            leaf.data,
-            Hash(dataHashes(entryIndex))
+            leaf.dataDigest
           )
           .widen
     }
@@ -202,7 +253,6 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel](
             var j = startIdx
             while (j < endIdx) {
               val (hex, value) = dataArray(j)
-              // Use CompactNibblePath instead of ArraySeq[Nibble]
               results(j) = (CompactNibblePath.fromHexString(hex.value), value.asJson)
               j += 1
             }
@@ -221,8 +271,7 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel](
     results
   }
 
-  /** Find groups by nibble at given depth. Returns groups with Byte nibble values instead of Nibble objects.
-    */
+  /** Find groups by nibble at given depth. Returns groups with Byte nibble values instead of Nibble objects. */
   @inline private def findGroups(
     entries: Array[(CompactNibblePath, Json)],
     start: Int,

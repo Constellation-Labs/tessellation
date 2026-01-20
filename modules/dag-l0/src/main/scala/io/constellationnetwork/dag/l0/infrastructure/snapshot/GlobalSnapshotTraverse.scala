@@ -108,19 +108,7 @@ object GlobalSnapshotTraverse {
             case Right(globalSnapshot)           => globalSnapshot.info.toGlobalSnapshotInfo.pure[F]
           }
 
-          firstInfoCalculatedProof <- HasherSelector[F].withCurrent { implicit hasher =>
-            hasher.getLogic(firstInc.ordinal) match {
-              case KryoHash => GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(firstInfo).stateProof(mptStore.underlying, firstInc.ordinal)
-              case JsonHash => firstInfo.stateProof(mptStore.underlying, firstInc.ordinal)
-            }
-          }
-
           hashedFirstInc <- HasherSelector[F].withCurrent(implicit hasher => firstInc.toHashed)
-          stateProofInvalid <- StateProofValidator.validate(hashedFirstInc, firstInfoCalculatedProof).map(_.isInvalid)
-
-          _ <- (new Exception(s"Snapshot info does not match the snapshot at ordinal=${firstInc.ordinal.show}"))
-            .raiseError[F, Unit]
-            .whenA(stateProofInvalid)
 
           _ <- HasherSelector[F].withCurrent(implicit hasher =>
             initializeStorages[F](
@@ -133,6 +121,20 @@ object GlobalSnapshotTraverse {
               mptStore
             )
           )
+
+          firstInfoCalculatedProof <- HasherSelector[F].withCurrent { implicit hasher =>
+            hasher.getLogic(firstInc.ordinal) match {
+              case KryoHash => GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(firstInfo).stateProof(mptStore.underlying, firstInc.ordinal)
+              case JsonHash => firstInfo.stateProof(mptStore.underlying, firstInc.ordinal)
+            }
+          }
+
+          stateProofInvalid <- StateProofValidator.validate(hashedFirstInc, firstInfoCalculatedProof).map(_.isInvalid)
+
+          _ <- (new Exception(s"Snapshot info does not match the snapshot at ordinal=${firstInc.ordinal.show}"))
+            .raiseError[F, Unit]
+            .whenA(stateProofInvalid)
+
           (info, lastInc) <- incHashesNec.tail.foldLeftM((firstInfo, firstInc)) {
             case ((lastCtx, lastInc), hash) =>
               for {
