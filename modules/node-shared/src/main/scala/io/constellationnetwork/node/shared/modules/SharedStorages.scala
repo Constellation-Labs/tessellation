@@ -44,7 +44,7 @@ object SharedStorages {
       lastNGlobalSnapshotStorage <- LastNGlobalSnapshotStorage.make[F](cfg.lastGlobalSnapshotsSync)
       lastGlobalSnapshotStorage <- LastSnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
       mptProducer <- FileSystemMerklePatriciaProducer.make[F](cfg.mptSnapshotInfoPath)
-      mptStore = MptStore.make[F, GlobalStateKey](
+      mptStore <- MptStore.make[F, GlobalStateKey](
         mptProducer,
         GlobalStateKey.toHex[F]
       )

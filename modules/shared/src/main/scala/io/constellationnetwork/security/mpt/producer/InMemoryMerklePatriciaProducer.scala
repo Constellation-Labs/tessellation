@@ -4,6 +4,7 @@ import cats.Parallel
 import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hex.Hex
@@ -13,10 +14,10 @@ import io.constellationnetwork.security.mpt.prover.MerklePatriciaSingleInclusion
 import io.circe.syntax._
 import io.circe.{Encoder, Json}
 
-class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher: Parallel](
-  stateRef: Ref[F, Map[Hex, Json]],
+class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher: Parallel: JsonSerializer](
+  stateRef: Ref[F, Map[Hex, Array[Byte]]],
   trieRef: Ref[F, Option[MerklePatriciaTrie]],
-  pendingInsertsRef: Ref[F, Map[Hex, Json]],
+  pendingInsertsRef: Ref[F, Map[Hex, Array[Byte]]],
   pendingRemovesRef: Ref[F, List[Hex]]
 ) extends StatefulMerklePatriciaProducer[F] {
 
@@ -28,7 +29,7 @@ class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher: Parallel](
       case Left(err)   => Async[F].raiseError(err)
     }
 
-  override def entries: F[Map[Hex, Json]] =
+  override def entries: F[Map[Hex, Array[Byte]]] =
     stateRef.get
 
   override def build: F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
@@ -58,11 +59,15 @@ class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher: Parallel](
             OperationError("Cannot build trie with no entries").asLeft[MerklePatriciaTrie]
           err.pure[F]
         } else {
-          parallelProducer.create(currentEntries).attempt.flatMap {
+          // Use bytes-based creation - NO JSON CONVERSION
+          parallelProducer.createFromBytes(currentEntries).attempt.flatMap {
             case Right(trie) =>
-              (trieRef.set(Some(trie)) >>
-                pendingInsertsRef.set(Map.empty) >>
-                pendingRemovesRef.set(List.empty)).as(trie.asRight[MerklePatriciaError])
+              MerklePatriciaTrie.rootHash[F](trie).flatMap {
+                case (_, hashedTrie) =>
+                  (trieRef.set(Some(hashedTrie)) >>
+                    pendingInsertsRef.set(Map.empty) >>
+                    pendingRemovesRef.set(List.empty)).as(hashedTrie.asRight[MerklePatriciaError])
+              }
             case Left(e) =>
               val err: Either[MerklePatriciaError, MerklePatriciaTrie] =
                 OperationError(e.getMessage).asLeft[MerklePatriciaTrie]
@@ -73,7 +78,7 @@ class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher: Parallel](
 
   private def incrementalUpdate(
     currentTrie: MerklePatriciaTrie,
-    inserts: Map[Hex, Json],
+    inserts: Map[Hex, Array[Byte]],
     removes: List[Hex]
   ): F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
     for {
@@ -87,37 +92,51 @@ class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher: Parallel](
           errResult.pure[F]
         case Right(trieAfterRemoves) =>
           if (inserts.isEmpty) {
-            (trieRef.set(Some(trieAfterRemoves)) >>
-              pendingInsertsRef.set(Map.empty) >>
-              pendingRemovesRef.set(List.empty)).as(trieAfterRemoves.asRight[MerklePatriciaError])
+            MerklePatriciaTrie.rootHash[F](trieAfterRemoves).flatMap {
+              case (_, hashedTrie) =>
+                (trieRef.set(Some(hashedTrie)) >>
+                  pendingInsertsRef.set(Map.empty) >>
+                  pendingRemovesRef.set(List.empty)).as(hashedTrie.asRight[MerklePatriciaError])
+            }
           } else {
-            parallelProducer.insert(trieAfterRemoves, inserts).flatMap {
+            parallelProducer.insertFromBytes(trieAfterRemoves, inserts).flatMap {
               case Left(err) =>
                 val errResult: Either[MerklePatriciaError, MerklePatriciaTrie] = err.asLeft[MerklePatriciaTrie]
                 errResult.pure[F]
               case Right(finalTrie) =>
-                (trieRef.set(Some(finalTrie)) >>
-                  pendingInsertsRef.set(Map.empty) >>
-                  pendingRemovesRef.set(List.empty)).as(finalTrie.asRight[MerklePatriciaError])
+                MerklePatriciaTrie.rootHash[F](finalTrie).flatMap {
+                  case (_, hashedTrie) =>
+                    (trieRef.set(Some(hashedTrie)) >>
+                      pendingInsertsRef.set(Map.empty) >>
+                      pendingRemovesRef.set(List.empty)).as(hashedTrie.asRight[MerklePatriciaError])
+                }
             }
           }
       }
     } yield result
 
   override def insert[A: Encoder](data: Map[Hex, A]): F[Either[MerklePatriciaError, Unit]] =
-    if (data.isEmpty) {
-      val ok: Either[MerklePatriciaError, Unit] = ().asRight[MerklePatriciaError]
-      ok.pure[F]
-    } else {
-      val jsonEntries = data.map { case (k, v) => k -> v.asJson }
+    if (data.isEmpty) ().asRight[MerklePatriciaError].pure[F]
+    else {
       for {
-        _ <- stateRef.update(_ ++ jsonEntries)
-        _ <- pendingRemovesRef.update(_.filterNot(jsonEntries.contains))
-        _ <- pendingInsertsRef.update(_ ++ jsonEntries)
-      } yield {
-        val ok: Either[MerklePatriciaError, Unit] = ().asRight[MerklePatriciaError]
-        ok
-      }
+        byteEntries <- data.toList.traverse {
+          case (k, v) =>
+            JsonSerializer[F].serialize(v.asJson).map(k -> _)
+        }.map(_.toMap)
+        _ <- stateRef.update(_ ++ byteEntries)
+        _ <- pendingRemovesRef.update(_.filterNot(byteEntries.contains))
+        _ <- pendingInsertsRef.update(_ ++ byteEntries)
+      } yield ().asRight[MerklePatriciaError]
+    }
+
+  override def insertBytes(data: Map[Hex, Array[Byte]]): F[Either[MerklePatriciaError, Unit]] =
+    if (data.isEmpty) ().asRight[MerklePatriciaError].pure[F]
+    else {
+      for {
+        _ <- stateRef.update(_ ++ data)
+        _ <- pendingRemovesRef.update(_.filterNot(data.contains))
+        _ <- pendingInsertsRef.update(_ ++ data)
+      } yield ().asRight[MerklePatriciaError]
     }
 
   override def update[A: Encoder](key: Hex, value: A): F[Either[MerklePatriciaError, Unit]] =
@@ -127,28 +146,21 @@ class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher: Parallel](
         err.pure[F]
       } else {
         for {
-          _ <- stateRef.update(_ + (key -> value.asJson))
-          _ <- pendingInsertsRef.update(_ + (key -> value.asJson))
-        } yield {
-          val ok: Either[MerklePatriciaError, Unit] = ().asRight[MerklePatriciaError]
-          ok
-        }
+          bytes <- JsonSerializer[F].serialize(value.asJson)
+          _ <- stateRef.update(_ + (key -> bytes))
+          _ <- pendingInsertsRef.update(_ + (key -> bytes))
+        } yield ().asRight[MerklePatriciaError]
       }
     }
 
   override def remove(keys: List[Hex]): F[Either[MerklePatriciaError, Unit]] =
-    if (keys.isEmpty) {
-      val ok: Either[MerklePatriciaError, Unit] = ().asRight[MerklePatriciaError]
-      ok.pure[F]
-    } else {
+    if (keys.isEmpty) ().asRight[MerklePatriciaError].pure[F]
+    else {
       for {
         _ <- stateRef.update(_ -- keys)
         _ <- pendingInsertsRef.update(_ -- keys)
         _ <- pendingRemovesRef.update(existing => (existing ++ keys).distinct)
-      } yield {
-        val ok: Either[MerklePatriciaError, Unit] = ().asRight[MerklePatriciaError]
-        ok
-      }
+      } yield ().asRight[MerklePatriciaError]
     }
 
   override def clear: F[Unit] =
@@ -157,21 +169,29 @@ class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher: Parallel](
       pendingInsertsRef.set(Map.empty) >>
       pendingRemovesRef.set(List.empty)
 
-  override def buildHexMap(data: Map[GlobalStateKey, Json]): F[Map[Hex, Json]] = {
+  override def buildHexMap(data: Map[GlobalStateKey, Json]): F[Map[Hex, Array[Byte]]] = {
     val BatchSize = 5000
 
     if (data.size <= BatchSize) {
       data.toList.parTraverse {
-        case (key, value) => GlobalStateKey.toHex[F](key).map(_ -> value)
+        case (key, value) =>
+          for {
+            hex <- GlobalStateKey.toHex[F](key)
+            bytes <- JsonSerializer[F].serialize(value)
+          } yield hex -> bytes
       }.map(_.toMap)
     } else {
       data.toList
         .grouped(BatchSize)
         .toList
-        .foldLeftM(Map.empty[Hex, Json]) { (acc, batch) =>
+        .foldLeftM(Map.empty[Hex, Array[Byte]]) { (acc, batch) =>
           for {
             batchResult <- batch.parTraverse {
-              case (key, value) => GlobalStateKey.toHex[F](key).map(_ -> value)
+              case (key, value) =>
+                for {
+                  hex <- GlobalStateKey.toHex[F](key)
+                  bytes <- JsonSerializer[F].serialize(value)
+                } yield hex -> bytes
             }
             _ <- Async[F].cede
           } yield acc ++ batchResult.toMap
@@ -182,13 +202,13 @@ class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher: Parallel](
 
 object InMemoryMerklePatriciaProducer {
 
-  def make[F[_]: Async: Hasher: Parallel](
-    initial: Map[Hex, Json] = Map.empty
+  def make[F[_]: Async: Hasher: Parallel: JsonSerializer](
+    initial: Map[Hex, Array[Byte]] = Map.empty
   ): F[InMemoryMerklePatriciaProducer[F]] =
     for {
-      stateRef <- Ref.of[F, Map[Hex, Json]](initial)
+      stateRef <- Ref.of[F, Map[Hex, Array[Byte]]](initial)
       trieRef <- Ref.of[F, Option[MerklePatriciaTrie]](None)
-      pendingInsertsRef <- Ref.of[F, Map[Hex, Json]](Map.empty)
+      pendingInsertsRef <- Ref.of[F, Map[Hex, Array[Byte]]](Map.empty)
       pendingRemovesRef <- Ref.of[F, List[Hex]](List.empty)
     } yield new InMemoryMerklePatriciaProducer[F](stateRef, trieRef, pendingInsertsRef, pendingRemovesRef)
 }

@@ -59,8 +59,8 @@ object GlobalStateProofPatternsSuite extends MutableIOSuite with Checkers {
 
           prover = MerklePatriciaSingleInclusionProver.make[IO](trie)
           proof <- prover.attestPath(path).flatMap(IO.fromEither)
-
-          verifier = MerklePatriciaInclusionVerifier.make[IO](trie.rootNode.digest)
+          root <- MerklePatriciaTrie.getRootHash[F](trie)
+          verifier = MerklePatriciaInclusionVerifier.make[IO](root.value)
           result <- verifier.confirm(proof)
         } yield
           expect.all(
@@ -94,7 +94,9 @@ object GlobalStateProofPatternsSuite extends MutableIOSuite with Checkers {
           prover = MerklePatriciaBatchInclusionProver.make[IO](trie)
           proof <- prover.attestPaths(paths).flatMap(IO.fromEither)
 
-          verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
+          root <- MerklePatriciaTrie.getRootHash[F](trie)
+          verifier = MerklePatriciaBatchInclusionVerifier.make[IO](root.value)
+
           result <- verifier.confirm(proof)
         } yield
           expect.all(
@@ -144,7 +146,8 @@ object GlobalStateProofPatternsSuite extends MutableIOSuite with Checkers {
             prover = MerklePatriciaPrefixProver.make[IO](trie)
             proof <- prover.attestPrefix(prefix).flatMap(IO.fromEither)
 
-            verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
+            root <- MerklePatriciaTrie.getRootHash[F](trie)
+            verifier = MerklePatriciaBatchInclusionVerifier.make[IO](root.value)
             result <- verifier.confirm(proof)
           } yield
             expect.all(
@@ -181,8 +184,8 @@ object GlobalStateProofPatternsSuite extends MutableIOSuite with Checkers {
           endPath = sortedKeys(14)
 
           proof <- prover.attestRange(startPath, endPath).flatMap(IO.fromEither)
-
-          verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
+          root <- MerklePatriciaTrie.getRootHash[F](trie)
+          verifier = MerklePatriciaRangeVerifier.make[IO](root.value)
           result <- verifier.confirmRange(proof)
         } yield
           expect.all(

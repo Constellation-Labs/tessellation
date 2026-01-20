@@ -269,7 +269,8 @@ object GlobalStateConverter {
                           } yield newAcc
                       }
                   }
-                root <- MerklePatriciaTrie.makeParallel[F, Json](hexMap).map(_.rootHash)
+                trie <- MerklePatriciaTrie.makeParallel[F, Json](hexMap)
+                root <- MerklePatriciaTrie.getRootHash[F](trie)
               } yield root
             }
         } yield mptRoot

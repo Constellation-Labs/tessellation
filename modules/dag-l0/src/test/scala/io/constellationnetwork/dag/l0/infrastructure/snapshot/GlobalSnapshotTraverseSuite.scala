@@ -364,7 +364,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         .make[IO](SnapshotOrdinal.MinValue, currencySnapshotCreator, validators.signedValidator, None, None)
 
       mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
-      mptStore = MptStore.make[IO, GlobalStateKey](
+      mptStore <- MptStore.make[IO, GlobalStateKey](
         mptProducer,
         GlobalStateKey.toHex[IO]
       )

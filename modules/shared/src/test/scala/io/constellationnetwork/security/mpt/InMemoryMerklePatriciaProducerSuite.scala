@@ -9,6 +9,7 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hex.Hex
+import io.constellationnetwork.security.mpt.GlobalStateProofPatternsSuite.F
 import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
@@ -33,6 +34,7 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
   test("stateful insert operations change state") { implicit res =>
     res.withCurrent { implicit hasher =>
       for {
+        implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 
         key1 <- hasher.hash("key1").map(hash => Hex(hash.value))
@@ -53,6 +55,7 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
   test("build trie from accumulated entries") { implicit res =>
     res.withCurrent { implicit hasher =>
       for {
+        implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 
         entries <- (1 to 10).toList.traverse { i =>
@@ -63,13 +66,15 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
 
         trieEither <- producer.build
         trie <- IO.fromEither(trieEither)
-      } yield expect(trie.rootNode.digest.value.nonEmpty)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+      } yield expect(trieRoot.value.getBytes.nonEmpty)
     }
   }
 
   test("update existing key replaces old value") { implicit res =>
     res.withCurrent { implicit hasher =>
       for {
+        implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 
         key <- hasher.hash("key").map(hash => Hex(hash.value))
@@ -78,13 +83,16 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
 
         _ <- producer.update(key, "updated_value")
         updatedTrie <- producer.build.flatMap(IO.fromEither)
-      } yield expect(initialTrie.rootNode.digest != updatedTrie.rootNode.digest)
+        initialTrieRoot <- MerklePatriciaTrie.getRootHash[F](initialTrie)
+        updatedTrieRoot <- MerklePatriciaTrie.getRootHash[F](updatedTrie)
+      } yield expect(initialTrieRoot.value != updatedTrieRoot.value)
     }
   }
 
   test("clear state resets to empty") { implicit res =>
     res.withCurrent { implicit hasher =>
       for {
+        implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 
         entries <- (1 to 5).toList.traverse { i =>
@@ -107,6 +115,7 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
   test("get prover before build triggers build") { implicit res =>
     res.withCurrent { implicit hasher =>
       for {
+        implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 
         entries <- (1 to 10).toList.traverse { i =>
@@ -126,6 +135,7 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
   test("get prover after build uses cached trie") { implicit res =>
     res.withCurrent { implicit hasher =>
       for {
+        implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 
         entries <- (1 to 10).toList.traverse { i =>
@@ -135,13 +145,16 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
         _ <- entries.traverse { case (key, value) => producer.insert(Map(key -> value)) }
         trie1 <- producer.build.flatMap(IO.fromEither)
         trie2 <- producer.build.flatMap(IO.fromEither)
-      } yield expect(trie1.rootNode.digest == trie2.rootNode.digest)
+        trie1Root <- MerklePatriciaTrie.getRootHash[F](trie1)
+        trie2Root <- MerklePatriciaTrie.getRootHash[F](trie2)
+      } yield expect(trie1Root.value == trie2Root.value)
     }
   }
 
   test("remove operations update state correctly") { implicit res =>
     res.withCurrent { implicit hasher =>
       for {
+        implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 
         entries <- (1 to 10).toList.traverse { i =>
@@ -165,6 +178,7 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
   test("multiple updates in sequence maintain consistency") { implicit res =>
     res.withCurrent { implicit hasher =>
       for {
+        implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 
         key1 <- hasher.hash("key1").map(hash => Hex(hash.value))
@@ -184,11 +198,15 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
         trie4 <- producer.build.flatMap(IO.fromEither)
 
         finalEntries <- producer.entries
+        trie1Root <- MerklePatriciaTrie.getRootHash[F](trie1)
+        trie2Root <- MerklePatriciaTrie.getRootHash[F](trie2)
+        trie3Root <- MerklePatriciaTrie.getRootHash[F](trie3)
+        trie4Root <- MerklePatriciaTrie.getRootHash[F](trie4)
       } yield
         expect.all(
-          trie1.rootNode.digest != trie2.rootNode.digest,
-          trie2.rootNode.digest != trie3.rootNode.digest,
-          trie3.rootNode.digest != trie4.rootNode.digest,
+          trie1Root.value != trie2Root.value,
+          trie2Root.value != trie3Root.value,
+          trie3Root.value != trie4Root.value,
           finalEntries.size == 1
         )
     }

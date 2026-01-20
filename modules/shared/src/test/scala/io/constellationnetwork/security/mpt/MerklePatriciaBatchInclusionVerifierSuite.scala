@@ -9,6 +9,7 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hex.Hex
+import io.constellationnetwork.security.mpt.GlobalStateProofPatternsSuite.F
 import io.constellationnetwork.security.mpt.prover.attestation.MerklePatriciaBatchInclusionProof
 import io.constellationnetwork.security.mpt.prover.{MerklePatriciaBatchInclusionProver, MerklePatriciaSingleInclusionProver}
 import io.constellationnetwork.security.mpt.verifier.MerklePatriciaBatchInclusionVerifier
@@ -44,7 +45,8 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
         paths = entries.take(5).map(_._1)
         proof <- batchProver.attestPaths(paths).flatMap(IO.fromEither)
 
-        verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+        verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trieRoot.value)
         result <- verifier.confirm(proof)
       } yield expect(result.isRight)
     }
@@ -70,8 +72,8 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
           mixedPaths.sorted(Ordering.by[Hex, String](_.value)),
           validProofs.flatMap(_.witness).distinct
         )
-
-        verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+        verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trieRoot.value)
         result <- verifier.confirm(fakeProof)
       } yield expect(result.isLeft)
     }
@@ -90,8 +92,8 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
         proof <- batchProver.attestPaths(paths).flatMap(IO.fromEither)
 
         incompleteProof = proof.copy(witness = proof.witness.take(proof.witness.size / 2))
-
-        verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+        verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trieRoot.value)
         result <- verifier.confirm(incompleteProof)
       } yield expect(result.isLeft)
     }
@@ -106,8 +108,8 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
         trie <- MerklePatriciaTrie.make(entries.toMap)
 
         emptyProof = MerklePatriciaBatchInclusionProof(List.empty, List.empty)
-
-        verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+        verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trieRoot.value)
         result <- verifier.confirm(emptyProof)
       } yield expect(result.isLeft)
     }
@@ -125,7 +127,8 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
         paths = entries.map(_._1)
         proof <- batchProver.attestPaths(paths).flatMap(IO.fromEither)
 
-        verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+        verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trieRoot.value)
         result <- verifier.confirm(proof)
       } yield
         expect.all(
@@ -151,7 +154,9 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
 
         proof <- batchProver.attestPaths(paths).flatMap(IO.fromEither)
 
-        verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trie.rootNode.digest)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+
+        verifier = MerklePatriciaBatchInclusionVerifier.make[IO](trieRoot.value)
         result <- verifier.confirm(proof)
       } yield
         expect.all(

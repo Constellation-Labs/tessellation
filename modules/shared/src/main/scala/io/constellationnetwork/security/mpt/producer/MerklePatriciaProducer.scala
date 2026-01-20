@@ -4,6 +4,7 @@ import cats.Parallel
 import cats.effect.Async
 import cats.syntax.functor._
 
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.security.Hasher
@@ -31,14 +32,15 @@ trait MerklePatriciaProducer[F[_]] {
 }
 
 trait StatefulMerklePatriciaProducer[F[_]] {
-  def entries: F[Map[Hex, Json]]
+  def entries: F[Map[Hex, Array[Byte]]]
   def build: F[Either[MerklePatriciaError, MerklePatriciaTrie]]
   def insert[A: Encoder](data: Map[Hex, A]): F[Either[MerklePatriciaError, Unit]]
+  def insertBytes(data: Map[Hex, Array[Byte]]): F[Either[MerklePatriciaError, Unit]]
   def update[A: Encoder](key: Hex, value: A): F[Either[MerklePatriciaError, Unit]]
   def remove(keys: List[Hex]): F[Either[MerklePatriciaError, Unit]]
   def clear: F[Unit]
   def getProver: F[MerklePatriciaSingleInclusionProver[F]]
-  def buildHexMap(data: Map[GlobalStateKey, Json]): F[Map[Hex, Json]]
+  def buildHexMap(data: Map[GlobalStateKey, Json]): F[Map[Hex, Array[Byte]]]
 }
 
 trait StatefulWithPersistenceMerklePatriciaProducer[F[_]] extends StatefulMerklePatriciaProducer[F] {
@@ -60,8 +62,8 @@ object MerklePatriciaProducer {
   def parallel[F[_]: Hasher: Async: Parallel]: MerklePatriciaProducer[F] =
     new ParallelMerklePatriciaProducer[F]
 
-  def inMemory[F[_]: Async: Hasher: Parallel](
-    initial: Map[Hex, Json] = Map.empty
+  def inMemory[F[_]: Async: Hasher: Parallel: JsonSerializer](
+    initial: Map[Hex, Array[Byte]] = Map.empty
   ): F[StatefulMerklePatriciaProducer[F]] =
     InMemoryMerklePatriciaProducer.make[F](initial).widen[StatefulMerklePatriciaProducer[F]]
 }

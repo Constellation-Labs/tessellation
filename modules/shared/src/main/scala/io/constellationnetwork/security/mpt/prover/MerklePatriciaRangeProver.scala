@@ -1,6 +1,6 @@
 package io.constellationnetwork.security.mpt.prover
 
-import cats.effect.Sync
+import cats.effect.Async
 import cats.syntax.all._
 
 import io.constellationnetwork.security.Hasher
@@ -24,7 +24,7 @@ trait MerklePatriciaRangeProver[F[_]] {
 object MerklePatriciaRangeProver {
   def apply[F[_]](implicit prover: MerklePatriciaRangeProver[F]): MerklePatriciaRangeProver[F] = prover
 
-  def make[F[_]: Sync: Hasher](
+  def make[F[_]: Async: Hasher](
     trie: MerklePatriciaTrie
   ): MerklePatriciaRangeProver[F] =
     new MerklePatriciaRangeProver[F] {

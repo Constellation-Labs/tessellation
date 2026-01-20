@@ -1,6 +1,6 @@
 package io.constellationnetwork.security.mpt.verifier
 
-import cats.effect.Sync
+import cats.effect.Async
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.either._
@@ -8,8 +8,8 @@ import cats.syntax.functor._
 
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.mpt._
 import io.constellationnetwork.security.mpt.prover.attestation.MerklePatriciaInclusionProof
-import io.constellationnetwork.security.mpt.{verifier, _}
 
 import io.circe.syntax.EncoderOps
 
@@ -21,7 +21,7 @@ trait MerklePatriciaInclusionVerifier[F[_]] {
 object MerklePatriciaInclusionVerifier {
   def apply[F[_]](implicit verifier: MerklePatriciaInclusionVerifier[F]): MerklePatriciaInclusionVerifier[F] = verifier
 
-  def make[F[_]: Sync: Hasher](root: Hash): MerklePatriciaInclusionVerifier[F] =
+  def make[F[_]: Async: Hasher](root: Hash): MerklePatriciaInclusionVerifier[F] =
     new MerklePatriciaInclusionVerifier[F] {
 
       def confirm(proof: MerklePatriciaInclusionProof): F[Either[MerklePatriciaVerificationError, Unit]] = {
@@ -87,7 +87,7 @@ object MerklePatriciaInclusionVerifier {
               }
           }
 
-        Sync[F]
+        Async[F]
           .tailRecM[Continue, Return]((proof.witness.reverse, root, Nibble(proof.path))) {
             case (commitments, currentDigest, remainingPath) =>
               commitments match {
@@ -101,7 +101,7 @@ object MerklePatriciaInclusionVerifier {
                   verifyBranch(nodeCommit, tail, currentDigest, remainingPath)
 
                 case _ =>
-                  Sync[F].pure(
+                  Async[F].pure(
                     InvalidWitness("Invalid witness structure").asLeft[Unit].asRight[Continue]
                   )
               }

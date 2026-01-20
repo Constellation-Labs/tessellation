@@ -18,7 +18,12 @@ import io.circe.syntax.EncoderOps
 case class MptRoot(value: Hash) extends AnyVal
 
 sealed trait MerklePatriciaNode {
-  def digest: Hash
+
+  /** Cached digest - None means dirty/not yet computed */
+  def cachedDigest: Option[Hash]
+
+  /** Check if this node needs rehashing */
+  def isDirty: Boolean = cachedDigest.isEmpty
 }
 
 object MerklePatriciaNode {
@@ -26,101 +31,100 @@ object MerklePatriciaNode {
   private[mpt] val BranchPrefix: Array[Byte] = Array(1: Byte)
   private[mpt] val ExtensionPrefix: Array[Byte] = Array(2: Byte)
 
-  /** Leaf node with memory-optimized storage.
-    *
-    * Stores only the dataDigest instead of the full Json data. Original data can be retrieved from external storage using dataDigest as
-    * key.
-    *
-    * Memory savings:
-    *   - Path: ~16x reduction via CompactNibblePath (64-nibble path: ~1KB -> ~40 bytes)
-    *   - Data: Eliminates Json object graph entirely (potentially 500MB+ for large tries)
-    */
   final case class Leaf private (
     private val remainingCompact: CompactNibblePath,
     dataDigest: Hash,
-    digest: Hash
+    cachedDigest: Option[Hash]
   ) extends MerklePatriciaNode {
-
-    /** Get remaining path as Seq[Nibble] for compatibility. */
     def remaining: Seq[Nibble] = remainingCompact.toNibbleSeq
-
-    /** Get remaining path in compact form for efficient operations. */
     def remainingPath: CompactNibblePath = remainingCompact
+
+    /** Mark as dirty (needs rehashing) */
+    private[mpt] def markDirty: Leaf =
+      if (cachedDigest.isEmpty) this else copy(cachedDigest = None)
+
+    /** Set computed hash */
+    private[mpt] def withDigest(hash: Hash): Leaf =
+      copy(cachedDigest = Some(hash))
   }
 
-  /** Branch node with optimized child map using Byte keys instead of Nibble.
-    *
-    * Using Byte keys avoids Nibble boxing in the map keys. There are at most 16 children (nibble values 0-15).
-    */
-  final case class Branch private (
+  final case class Branch private[mpt] (
     private val pathsInternal: Map[Byte, MerklePatriciaNode],
-    digest: Hash
+    cachedDigest: Option[Hash]
   ) extends MerklePatriciaNode {
 
-    /** Get paths with Nibble keys for compatibility. */
     def paths: Map[Nibble, MerklePatriciaNode] =
       pathsInternal.map { case (k, v) => Nibble.unsafe(k) -> v }
 
-    /** Get child by nibble value directly (avoids Nibble boxing). */
     def getChild(nibbleValue: Byte): Option[MerklePatriciaNode] =
       pathsInternal.get(nibbleValue)
 
-    /** Check if has child for nibble value. */
     def hasChild(nibbleValue: Byte): Boolean =
       pathsInternal.contains(nibbleValue)
 
-    /** Internal map for efficient operations. */
-    private[mpt] def internalPaths: Map[Byte, MerklePatriciaNode] = pathsInternal
+    def internalPaths: Map[Byte, MerklePatriciaNode] = pathsInternal
 
-    /** Number of children. */
     def childCount: Int = pathsInternal.size
 
-    /** Iterate over children with byte keys (avoids boxing). */
     def foreachChild(f: (Byte, MerklePatriciaNode) => Unit): Unit =
       pathsInternal.foreach { case (k, v) => f(k, v) }
+
+    /** Update a child and mark this branch as dirty */
+    def withUpdatedChild(nibble: Byte, child: MerklePatriciaNode): Branch =
+      new Branch(pathsInternal.updated(nibble, child), None)
+
+    /** Remove a child and mark as dirty */
+    def withRemovedChild(nibble: Byte): Branch =
+      new Branch(pathsInternal - nibble, None)
+
+    /** Set computed hash */
+    def withDigest(hash: Hash): Branch =
+      copy(cachedDigest = Some(hash))
+
+    /** Mark as dirty */
+    def markDirty: Branch =
+      if (cachedDigest.isEmpty) this else copy(cachedDigest = None)
   }
 
-  /** Extension node with memory-optimized shared path storage. */
-  final case class Extension private (
+  final case class Extension private[mpt] (
     private val sharedCompact: CompactNibblePath,
     child: Branch,
-    digest: Hash
+    cachedDigest: Option[Hash]
   ) extends MerklePatriciaNode {
-
-    /** Get shared path as Seq[Nibble] for compatibility. */
     def shared: Seq[Nibble] = sharedCompact.toNibbleSeq
-
-    /** Get shared path in compact form for efficient operations. */
     def sharedPath: CompactNibblePath = sharedCompact
+
+    /** Update child and mark as dirty */
+    def withUpdatedChild(newChild: Branch): Extension =
+      new Extension(sharedCompact, newChild, None)
+
+    /** Set computed hash */
+    def withDigest(hash: Hash): Extension =
+      copy(cachedDigest = Some(hash))
+
+    /** Mark as dirty */
+    def markDirty: Extension =
+      if (cachedDigest.isEmpty) this else copy(cachedDigest = None)
   }
 
   object Leaf {
 
-    /** Create leaf from data - computes dataDigest internally. The data is NOT stored in the leaf; store it externally using the returned
-      * dataDigest.
-      */
-    def apply[F[_]: Sync: Hasher](remaining: Seq[Nibble], data: Json): F[(Leaf, Hash)] =
-      fromCompact(CompactNibblePath.fromNibbleSeq(remaining), data)
+    /** Create dirty leaf (no hash computed yet) */
+    def apply[F[_]: Sync](remaining: Seq[Nibble], dataDigest: Hash): F[Leaf] =
+      new Leaf(CompactNibblePath.fromNibbleSeq(remaining), dataDigest, None).pure[F]
 
-    /** Create from CompactNibblePath (preferred for new code). Returns the leaf and the dataDigest for external storage.
-      */
-    def fromCompact[F[_]: Sync: Hasher](remaining: CompactNibblePath, data: Json): F[(Leaf, Hash)] =
+    def fromCompact[F[_]: Sync](remaining: CompactNibblePath, dataDigest: Hash): F[Leaf] =
+      new Leaf(remaining, dataDigest, None).pure[F]
+
+    def fromData[F[_]: Sync: Hasher](remaining: CompactNibblePath, data: Array[Byte]): F[(Leaf, Hash)] =
       for {
         dataDigest <- Hasher[F].hash(data)
-        leaf <- fromDataDigest[F](remaining, dataDigest)
-      } yield (leaf, dataDigest)
+      } yield (new Leaf(remaining, dataDigest, None), dataDigest)
 
-    /** Create leaf directly from pre-computed data digest. Use this when you already have the digest or don't need to store the data.
-      */
-    def fromDataDigest[F[_]: Sync: Hasher](remaining: CompactNibblePath, dataDigest: Hash): F[Leaf] = {
-      val commitment = MerklePatriciaCommitment.Leaf(remaining.toNibbleSeq, dataDigest)
-      Hasher[F].prefixedHash(commitment.asJson, LeafPrefix).map { nodeDigest =>
-        new Leaf(remaining, dataDigest, nodeDigest)
-      }
-    }
+    def fromDataDigest[F[_]: Sync](remaining: CompactNibblePath, dataDigest: Hash): F[Leaf] =
+      new Leaf(remaining, dataDigest, None).pure[F]
 
-    /** Create leaf from Seq[Nibble] path and pre-computed data digest. */
-    def fromDataDigestSeq[F[_]: Sync: Hasher](remaining: Seq[Nibble], dataDigest: Hash): F[Leaf] =
+    def fromDataDigestSeq[F[_]: Sync](remaining: Seq[Nibble], dataDigest: Hash): F[Leaf] =
       fromDataDigest(CompactNibblePath.fromNibbleSeq(remaining), dataDigest)
 
     implicit val leafNodeEncoder: Encoder[Leaf] =
@@ -128,7 +132,7 @@ object MerklePatriciaNode {
         Json.obj(
           "remaining" -> node.remaining.asJson(Nibble.nibbleSeqEncoder),
           "dataDigest" -> node.dataDigest.asJson,
-          "digest" -> node.digest.asJson
+          "cachedDigest" -> node.cachedDigest.asJson
         )
       }
 
@@ -137,60 +141,31 @@ object MerklePatriciaNode {
         for {
           remaining <- hCursor.downField("remaining").as[Seq[Nibble]](Nibble.nibbleSeqDecoder)
           dataDigest <- hCursor.downField("dataDigest").as[Hash]
-          digest <- hCursor.downField("digest").as[Hash]
-        } yield new Leaf(CompactNibblePath.fromNibbleSeq(remaining), dataDigest, digest)
+          cachedDigest <- hCursor.downField("cachedDigest").as[Option[Hash]]
+        } yield new Leaf(CompactNibblePath.fromNibbleSeq(remaining), dataDigest, cachedDigest)
       }
   }
 
   object Branch {
 
-    def apply[F[_]: Sync: Hasher](paths: Map[Nibble, MerklePatriciaNode]): F[Branch] = {
+    /** Create dirty branch (no hash computed yet) */
+    def apply[F[_]: Sync](paths: Map[Nibble, MerklePatriciaNode]): F[Branch] = {
       val byteKeyedPaths: Map[Byte, MerklePatriciaNode] = paths.map { case (k, v) => k.value -> v }
-      fromByteKeys(byteKeyedPaths)
+      new Branch(byteKeyedPaths, None).pure[F]
     }
 
-    /** Create from byte-keyed map (preferred for new code, avoids Nibble boxing). */
-    def fromByteKeys[F[_]: Sync: Hasher](paths: Map[Byte, MerklePatriciaNode]): F[Branch] = {
-      val pathDigests: Map[Nibble, Hash] = {
-        val builder = Map.newBuilder[Nibble, Hash]
-        builder.sizeHint(paths.size)
-        paths.foreach { case (k, v) => builder += (Nibble.unsafe(k) -> v.digest) }
-        builder.result()
-      }
-      val commitment = MerklePatriciaCommitment.Branch(pathDigests)
-      Hasher[F].prefixedHash(commitment.asJson, BranchPrefix).map { nodeDigest =>
-        new Branch(paths, nodeDigest)
-      }
-    }
+    def fromByteKeys[F[_]: Sync](paths: Map[Byte, MerklePatriciaNode]): F[Branch] =
+      new Branch(paths, None).pure[F]
 
-    /** Fast path: create branch when child digests are already extracted. */
-    def fromDigests[F[_]: Sync: Hasher](
-      paths: Map[Nibble, MerklePatriciaNode],
-      pathDigests: Map[Nibble, Hash]
-    ): F[Branch] = {
-      val commitment = MerklePatriciaCommitment.Branch(pathDigests)
-      val byteKeyedPaths: Map[Byte, MerklePatriciaNode] = paths.map { case (k, v) => k.value -> v }
-      Hasher[F].prefixedHash(commitment.asJson, BranchPrefix).map { nodeDigest =>
-        new Branch(byteKeyedPaths, nodeDigest)
-      }
-    }
-
-    /** Fast path with byte keys and pre-computed digests. */
-    def fromByteKeysWithDigests[F[_]: Sync: Hasher](
-      paths: Map[Byte, MerklePatriciaNode],
-      pathDigests: Map[Nibble, Hash]
-    ): F[Branch] = {
-      val commitment = MerklePatriciaCommitment.Branch(pathDigests)
-      Hasher[F].prefixedHash(commitment.asJson, BranchPrefix).map { nodeDigest =>
-        new Branch(paths, nodeDigest)
-      }
-    }
+    /** Create empty branch */
+    def empty[F[_]: Sync]: F[Branch] =
+      new Branch(Map.empty, None).pure[F]
 
     implicit val encodeBranchNode: Encoder[Branch] =
       Encoder.instance { node =>
         Json.obj(
           "paths" -> node.paths.toSeq.sortBy(_._1.value).toMap.asJson,
-          "digest" -> node.digest.asJson
+          "cachedDigest" -> node.cachedDigest.asJson
         )
       }
 
@@ -198,32 +173,26 @@ object MerklePatriciaNode {
       Decoder.instance { hCursor =>
         for {
           children <- hCursor.downField("paths").as[Map[Nibble, MerklePatriciaNode]]
-          digest <- hCursor.downField("digest").as[Hash]
-        } yield new Branch(children.map { case (k, v) => k.value -> v }, digest)
+          cachedDigest <- hCursor.downField("cachedDigest").as[Option[Hash]]
+        } yield new Branch(children.map { case (k, v) => k.value -> v }, cachedDigest)
       }
   }
 
   object Extension {
 
-    def apply[F[_]: Sync: Hasher](shared: Seq[Nibble], child: Branch): F[Extension] = {
-      val sharedCompact = CompactNibblePath.fromNibbleSeq(shared)
-      fromCompact[F](sharedCompact, child)
-    }
+    /** Create dirty extension (no hash computed yet) */
+    def apply[F[_]: Sync](shared: Seq[Nibble], child: Branch): F[Extension] =
+      new Extension(CompactNibblePath.fromNibbleSeq(shared), child, None).pure[F]
 
-    /** Create from CompactNibblePath (preferred for new code). */
-    def fromCompact[F[_]: Sync: Hasher](shared: CompactNibblePath, child: Branch): F[Extension] = {
-      val commitment = MerklePatriciaCommitment.Extension(shared.toNibbleSeq, child.digest)
-      Hasher[F].prefixedHash(commitment, ExtensionPrefix).map { nodeDigest =>
-        new Extension(shared, child, nodeDigest)
-      }
-    }
+    def fromCompact[F[_]: Sync](shared: CompactNibblePath, child: Branch): F[Extension] =
+      new Extension(shared, child, None).pure[F]
 
     implicit val encodeExtensionNode: Encoder[Extension] =
       Encoder.instance { node =>
         Json.obj(
           "shared" -> node.shared.asJson(Nibble.nibbleSeqEncoder),
           "child" -> (node.child: MerklePatriciaNode).asJson,
-          "digest" -> node.digest.asJson
+          "cachedDigest" -> node.cachedDigest.asJson
         )
       }
 
@@ -232,27 +201,18 @@ object MerklePatriciaNode {
         for {
           shared <- hCursor.downField("shared").as[Seq[Nibble]](Nibble.nibbleSeqDecoder)
           child <- hCursor.downField("child").downField("contents").as[Branch]
-          digest <- hCursor.downField("digest").as[Hash]
-        } yield new Extension(CompactNibblePath.fromNibbleSeq(shared), child, digest)
+          cachedDigest <- hCursor.downField("cachedDigest").as[Option[Hash]]
+        } yield new Extension(CompactNibblePath.fromNibbleSeq(shared), child, cachedDigest)
       }
   }
 
   implicit val encodeMptNode: Encoder[MerklePatriciaNode] = Encoder.instance {
     case node: Leaf =>
-      Json.obj(
-        "type" -> Json.fromString("Leaf"),
-        "contents" -> node.asJson
-      )
+      Json.obj("type" -> Json.fromString("Leaf"), "contents" -> node.asJson)
     case node: Extension =>
-      Json.obj(
-        "type" -> Json.fromString("Extension"),
-        "contents" -> node.asJson
-      )
+      Json.obj("type" -> Json.fromString("Extension"), "contents" -> node.asJson)
     case node: Branch =>
-      Json.obj(
-        "type" -> Json.fromString("Branch"),
-        "contents" -> node.asJson
-      )
+      Json.obj("type" -> Json.fromString("Branch"), "contents" -> node.asJson)
   }
 
   implicit val decodeMptNode: Decoder[MerklePatriciaNode] = Decoder.instance { cursor =>

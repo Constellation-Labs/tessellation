@@ -1,7 +1,7 @@
 package io.constellationnetwork.security.mpt.producer
 
 import cats.data.NonEmptyList
-import cats.effect.{Async, Ref, Sync}
+import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
 import io.constellationnetwork.security.Hasher
@@ -9,7 +9,6 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt._
 import io.constellationnetwork.security.mpt.prover.MerklePatriciaSingleInclusionProver
-import io.constellationnetwork.security.mpt.verifier._
 
 import io.circe.syntax._
 import io.circe.{Encoder, Json}
@@ -17,19 +16,19 @@ import io.circe.{Encoder, Json}
 /** Result of trie operations that tracks both the trie and external data storage. */
 case class MerklePatriciaTrieWithData(
   trie: MerklePatriciaTrie,
-  dataStore: Map[Hash, Json]
+  dataStore: Map[Hash, Array[Byte]]
 ) {
 
   /** Get data by its digest. */
-  def getData(digest: Hash): Option[Json] = dataStore.get(digest)
+  def getData(digest: Hash): Option[Array[Byte]] = dataStore.get(digest)
 
   /** Get all stored data. */
-  def allData: Map[Hash, Json] = dataStore
+  def allData: Map[Hash, Array[Byte]] = dataStore
 }
 
 /** Stateless MPT producer with memory-optimized operations.
   *
-  * Data is stored externally in a Map[Hash, Json] rather than in leaf nodes. This dramatically reduces memory usage for large tries.
+  * Data is stored externally in a Map[Hash, Array[Byte]] rather than in leaf nodes. This dramatically reduces memory usage for large tries.
   */
 class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatriciaProducer[F] {
 
@@ -38,17 +37,16 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
 
   private val yieldEveryN = 50
 
-  /** Create a trie with external data storage. */
-  def createWithData[A: Encoder](data: Map[Hex, A]): F[MerklePatriciaTrieWithData] =
+  /** Create a trie with external data storage from bytes - MEMORY EFFICIENT. */
+  def createWithDataFromBytes(data: Map[Hex, Array[Byte]]): F[MerklePatriciaTrieWithData] =
     NonEmptyList.fromList(data.toList) match {
       case Some(nel) =>
         for {
-          dataStoreRef <- Ref.of[F, Map[Hash, Json]](Map.empty)
+          dataStoreRef <- Ref.of[F, Map[Hash, Array[Byte]]](Map.empty)
 
-          (hPath, hData) = nel.head
-          hDataJson = hData.asJson
-          hDataDigest <- Hasher[F].hash(hDataJson)
-          _ <- dataStoreRef.update(_ + (hDataDigest -> hDataJson))
+          (hPath, hDataBytes) = nel.head
+          hDataDigest <- Hasher[F].hashBytes(hDataBytes)
+          _ <- dataStoreRef.update(_ + (hDataDigest -> hDataBytes))
 
           initialNode <- MerklePatriciaNode.Leaf.fromDataDigest[F](
             CompactNibblePath.fromHexString(hPath.value),
@@ -59,12 +57,11 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
 
           resultNode <- sortedTail.zipWithIndex
             .foldM[F, MerklePatriciaNode](initialNode) {
-              case (acc, ((path, value), idx)) =>
+              case (acc, ((path, bytes), idx)) =>
                 val compactPath = CompactNibblePath.fromHexString(path.value)
-                val valueJson = value.asJson
                 val work = for {
-                  dataDigest <- Hasher[F].hash(valueJson)
-                  _ <- dataStoreRef.update(_ + (dataDigest -> valueJson))
+                  dataDigest <- Hasher[F].hashBytes(bytes)
+                  _ <- dataStoreRef.update(_ + (dataDigest -> bytes))
                   result <- insertWithDigest(acc, compactPath, dataDigest).flatMap {
                     case Left(err)   => err.raiseError[F, MerklePatriciaNode]
                     case Right(node) => node.pure[F]
@@ -81,11 +78,76 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
       case None => new RuntimeException("Empty data provided").raiseError
     }
 
-  /** Original create method - returns trie without data store for backward compatibility. */
+  /** Create a trie with external data storage - LEGACY, use createWithDataFromBytes for better memory. */
+  def createWithData[A: Encoder](data: Map[Hex, A]): F[MerklePatriciaTrieWithData] =
+    NonEmptyList.fromList(data.toList) match {
+      case Some(nel) =>
+        for {
+          dataStoreRef <- Ref.of[F, Map[Hash, Array[Byte]]](Map.empty)
+
+          (hPath, hData) = nel.head
+          hDataJson = hData.asJson
+          hDataBytes <- Async[F].delay(hDataJson.noSpaces.getBytes("UTF-8"))
+          hDataDigest <- Hasher[F].hash(hDataJson)
+          _ <- dataStoreRef.update(_ + (hDataDigest -> hDataBytes))
+
+          initialNode <- MerklePatriciaNode.Leaf.fromDataDigest[F](
+            CompactNibblePath.fromHexString(hPath.value),
+            hDataDigest
+          )
+
+          sortedTail = nel.tail.sortBy(_._1.value.length)
+
+          resultNode <- sortedTail.zipWithIndex
+            .foldM[F, MerklePatriciaNode](initialNode) {
+              case (acc, ((path, value), idx)) =>
+                val compactPath = CompactNibblePath.fromHexString(path.value)
+                val valueJson = value.asJson
+                val work = for {
+                  dataDigest <- Hasher[F].hash(valueJson)
+                  dataBytes <- Async[F].delay(valueJson.noSpaces.getBytes("UTF-8"))
+                  _ <- dataStoreRef.update(_ + (dataDigest -> dataBytes))
+                  result <- insertWithDigest(acc, compactPath, dataDigest).flatMap {
+                    case Left(err)   => err.raiseError[F, MerklePatriciaNode]
+                    case Right(node) => node.pure[F]
+                  }
+                } yield result
+
+                if (idx % yieldEveryN == 0) Async[F].cede *> work <* Async[F].cede
+                else work
+            }
+
+          finalDataStore <- dataStoreRef.get
+        } yield MerklePatriciaTrieWithData(MerklePatriciaTrie(resultNode), finalDataStore)
+
+      case None => new RuntimeException("Empty data provided").raiseError
+    }
+
+  /** Create trie from bytes - MEMORY EFFICIENT. */
+  def createFromBytes(data: Map[Hex, Array[Byte]]): F[MerklePatriciaTrie] =
+    createWithDataFromBytes(data).map(_.trie)
+
+  /** Original create method - LEGACY, use createFromBytes for better memory. */
   def create[A: Encoder](data: Map[Hex, A]): F[MerklePatriciaTrie] =
     createWithData(data).map(_.trie)
 
-  /** Insert with external data storage tracking. */
+  /** Insert with external data storage tracking from bytes - MEMORY EFFICIENT. */
+  def insertWithDataFromBytes(
+    current: MerklePatriciaTrieWithData,
+    data: Map[Hex, Array[Byte]]
+  ): F[Either[MerklePatriciaError, MerklePatriciaTrieWithData]] =
+    if (data.isEmpty) {
+      current.asRight[MerklePatriciaError].pure[F]
+    } else {
+      (for {
+        dataStoreRef <- Ref.of[F, Map[Hash, Array[Byte]]](current.dataStore)
+        result <- insertMultipleWithStoreFromBytes(current.trie.rootNode, data.toList, dataStoreRef)
+        finalDataStore <- dataStoreRef.get
+      } yield result.map(node => MerklePatriciaTrieWithData(MerklePatriciaTrie(node), finalDataStore)))
+        .handleError(e => OperationError(e.getMessage).asLeft)
+    }
+
+  /** Insert with external data storage tracking - LEGACY. */
   def insertWithData[A: Encoder](
     current: MerklePatriciaTrieWithData,
     data: Map[Hex, A]
@@ -94,13 +156,27 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
       current.asRight[MerklePatriciaError].pure[F]
     } else {
       (for {
-        dataStoreRef <- Ref.of[F, Map[Hash, Json]](current.dataStore)
+        dataStoreRef <- Ref.of[F, Map[Hash, Array[Byte]]](current.dataStore)
         result <- insertMultipleWithStore(current.trie.rootNode, data.toList, dataStoreRef)
         finalDataStore <- dataStoreRef.get
       } yield result.map(node => MerklePatriciaTrieWithData(MerklePatriciaTrie(node), finalDataStore)))
         .handleError(e => OperationError(e.getMessage).asLeft)
     }
 
+  /** Insert from bytes - MEMORY EFFICIENT. */
+  def insertFromBytes(
+    current: MerklePatriciaTrie,
+    data: Map[Hex, Array[Byte]]
+  ): F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
+    if (data.isEmpty) {
+      current.asRight[MerklePatriciaError].pure[F]
+    } else {
+      insertMultipleFromBytes(current.rootNode, data.toList)
+        .map(_.map(MerklePatriciaTrie(_)))
+        .handleError(e => OperationError(e.getMessage).asLeft[MerklePatriciaTrie])
+    }
+
+  /** Insert - LEGACY, use insertFromBytes for better memory. */
   def insert[A: Encoder](
     current: MerklePatriciaTrie,
     data: Map[Hex, A]
@@ -156,10 +232,29 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
         else None
     }
 
+  private def insertMultipleWithStoreFromBytes(
+    initialNode: MerklePatriciaNode,
+    entries: List[(Hex, Array[Byte])],
+    dataStoreRef: Ref[F, Map[Hash, Array[Byte]]]
+  ): F[Either[MerklePatriciaError, MerklePatriciaNode]] =
+    entries.zipWithIndex.foldM(initialNode.asRight[MerklePatriciaError]) {
+      case (Right(acc), ((path, bytes), idx)) =>
+        val compactPath = CompactNibblePath.fromHexString(path.value)
+        val work = for {
+          dataDigest <- Hasher[F].hashBytes(bytes)
+          _ <- dataStoreRef.update(_ + (dataDigest -> bytes))
+          result <- insertWithDigest(acc, compactPath, dataDigest)
+        } yield result
+        if (idx % yieldEveryN == 0) Async[F].cede *> work <* Async[F].cede
+        else work
+      case (Left(err), _) =>
+        err.asLeft[MerklePatriciaNode].pure[F]
+    }
+
   private def insertMultipleWithStore[A: Encoder](
     initialNode: MerklePatriciaNode,
     entries: List[(Hex, A)],
-    dataStoreRef: Ref[F, Map[Hash, Json]]
+    dataStoreRef: Ref[F, Map[Hash, Array[Byte]]]
   ): F[Either[MerklePatriciaError, MerklePatriciaNode]] =
     entries.zipWithIndex.foldM(initialNode.asRight[MerklePatriciaError]) {
       case (Right(acc), ((path, value), idx)) =>
@@ -167,7 +262,25 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
         val valueJson = value.asJson
         val work = for {
           dataDigest <- Hasher[F].hash(valueJson)
-          _ <- dataStoreRef.update(_ + (dataDigest -> valueJson))
+          dataBytes <- Async[F].delay(valueJson.noSpaces.getBytes("UTF-8"))
+          _ <- dataStoreRef.update(_ + (dataDigest -> dataBytes))
+          result <- insertWithDigest(acc, compactPath, dataDigest)
+        } yield result
+        if (idx % yieldEveryN == 0) Async[F].cede *> work <* Async[F].cede
+        else work
+      case (Left(err), _) =>
+        err.asLeft[MerklePatriciaNode].pure[F]
+    }
+
+  private def insertMultipleFromBytes(
+    initialNode: MerklePatriciaNode,
+    entries: List[(Hex, Array[Byte])]
+  ): F[Either[MerklePatriciaError, MerklePatriciaNode]] =
+    entries.zipWithIndex.foldM(initialNode.asRight[MerklePatriciaError]) {
+      case (Right(acc), ((path, bytes), idx)) =>
+        val compactPath = CompactNibblePath.fromHexString(path.value)
+        val work = for {
+          dataDigest <- Hasher[F].hashBytes(bytes)
           result <- insertWithDigest(acc, compactPath, dataDigest)
         } yield result
         if (idx % yieldEveryN == 0) Async[F].cede *> work <* Async[F].cede

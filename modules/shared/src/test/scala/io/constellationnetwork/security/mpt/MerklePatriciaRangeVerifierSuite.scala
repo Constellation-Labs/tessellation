@@ -9,6 +9,7 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hex.Hex
+import io.constellationnetwork.security.mpt.GlobalStateProofPatternsSuite.F
 import io.constellationnetwork.security.mpt.prover.MerklePatriciaRangeProver
 import io.constellationnetwork.security.mpt.prover.attestation.{MerklePatriciaRangeProof, RangeExclusionBoundaries}
 import io.constellationnetwork.security.mpt.verifier.MerklePatriciaRangeVerifier
@@ -47,7 +48,8 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
 
         proof <- prover.attestRange(Hex(start.padTo(64, '0')), Hex(end.padTo(64, '0'))).flatMap(IO.fromEither)
 
-        verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+        verifier = MerklePatriciaRangeVerifier.make[IO](trieRoot.value)
         result <- verifier.confirmRange(proof)
       } yield expect(result.isRight)
     }
@@ -68,7 +70,9 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
 
         proof <- prover.attestRange(Hex(start.padTo(64, '0')), Hex(end.padTo(64, '0'))).flatMap(IO.fromEither)
 
-        verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+
+        verifier = MerklePatriciaRangeVerifier.make[IO](trieRoot.value)
         result <- verifier.confirmRange(proof)
       } yield
         expect.all(
@@ -94,7 +98,9 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
 
         proof <- prover.attestRange(Hex(start.padTo(64, '0')), Hex(end.padTo(64, '0'))).flatMap(IO.fromEither)
 
-        verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+
+        verifier = MerklePatriciaRangeVerifier.make[IO](trieRoot.value)
         result <- verifier.confirmRange(proof)
       } yield expect(result.isRight)
     }
@@ -113,7 +119,9 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
         minKey = entries.map(_._1).min(Ordering.by[Hex, String](_.value))
         proof <- prover.attestRange(minKey, Hex("3500".padTo(64, '0'))).flatMap(IO.fromEither)
 
-        verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+
+        verifier = MerklePatriciaRangeVerifier.make[IO](trieRoot.value)
         result <- verifier.confirmRange(proof)
       } yield
         expect.all(
@@ -136,7 +144,9 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
         maxKey = entries.map(_._1).max(Ordering.by[Hex, String](_.value))
         proof <- prover.attestRange(Hex("3500".padTo(64, '0')), maxKey).flatMap(IO.fromEither)
 
-        verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+
+        verifier = MerklePatriciaRangeVerifier.make[IO](trieRoot.value)
         result <- verifier.confirmRange(proof)
       } yield
         expect.all(
@@ -164,7 +174,9 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
         reversedProofs = proof.inclusionProofs.reverse
         tamperedProof = proof.copy(inclusionProofs = reversedProofs)
 
-        verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+
+        verifier = MerklePatriciaRangeVerifier.make[IO](trieRoot.value)
         result <- verifier.confirmRange(tamperedProof)
       } yield expect(result.isLeft)
     }
@@ -188,7 +200,9 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
 
         tamperedProof = validProof.copy(inclusionProofs = wideProof.inclusionProofs)
 
-        verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+
+        verifier = MerklePatriciaRangeVerifier.make[IO](trieRoot.value)
         result <- verifier.confirmRange(tamperedProof)
       } yield expect(result.isLeft)
     }

@@ -62,8 +62,9 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
       Some(SortedMap.empty)
     )
     for {
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
       mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
-      mptStore = MptStore.make[IO, GlobalStateKey](
+      mptStore <- MptStore.make[IO, GlobalStateKey](
         mptProducer,
         GlobalStateKey.toHex[IO]
       )
@@ -95,9 +96,10 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
     )
 
     for {
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
       snapshot <- globalIncrementalSnapshot(globalSnapshotInfo)
       mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
-      mptStore = MptStore.make[IO, GlobalStateKey](
+      mptStore <- MptStore.make[IO, GlobalStateKey](
         mptProducer,
         GlobalStateKey.toHex[IO]
       )

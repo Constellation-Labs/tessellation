@@ -9,6 +9,7 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hex.Hex
+import io.constellationnetwork.security.mpt.GlobalStateProofPatternsSuite.F
 import io.constellationnetwork.security.mpt.prover.MerklePatriciaSingleInclusionProver
 import io.constellationnetwork.security.mpt.verifier.MerklePatriciaInclusionVerifier
 import io.constellationnetwork.shared.sharedKryoRegistrar
@@ -43,7 +44,8 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
         targetPath = entries.head._1
         proof <- prover.attestPath(targetPath).flatMap(IO.fromEither)
 
-        verifier = MerklePatriciaInclusionVerifier.make[IO](trie.rootNode.digest)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+        verifier = MerklePatriciaInclusionVerifier.make[IO](trieRoot.value)
         result <- verifier.confirm(proof)
       } yield expect(result.isRight)
     }
@@ -82,7 +84,9 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
 
         tamperedProof = proof.copy(witness = proof.witness.drop(1))
 
-        verifier = MerklePatriciaInclusionVerifier.make[IO](trie.rootNode.digest)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+
+        verifier = MerklePatriciaInclusionVerifier.make[IO](trieRoot.value)
         result <- verifier.confirm(tamperedProof)
       } yield expect(result.isLeft)
     }
@@ -103,7 +107,9 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
         wrongPath = entries(1)._1
         tamperedProof = proof.copy(path = wrongPath)
 
-        verifier = MerklePatriciaInclusionVerifier.make[IO](trie.rootNode.digest)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+
+        verifier = MerklePatriciaInclusionVerifier.make[IO](trieRoot.value)
         result <- verifier.confirm(tamperedProof)
       } yield expect(result.isLeft)
     }
@@ -127,7 +133,8 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
           prover.attestPath(hex).flatMap(IO.fromEither)
         }
 
-        verifier = MerklePatriciaInclusionVerifier.make[IO](trie.rootNode.digest)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+        verifier = MerklePatriciaInclusionVerifier.make[IO](trieRoot.value)
         results <- proofs.traverse(proof => verifier.confirm(proof))
       } yield
         expect.all(
@@ -149,7 +156,8 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
           prover.attestPath(path).flatMap(IO.fromEither)
         }
 
-        verifier = MerklePatriciaInclusionVerifier.make[IO](trie.rootNode.digest)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+        verifier = MerklePatriciaInclusionVerifier.make[IO](trieRoot.value)
         results <- proofs.traverse(proof => verifier.confirm(proof))
       } yield
         expect.all(

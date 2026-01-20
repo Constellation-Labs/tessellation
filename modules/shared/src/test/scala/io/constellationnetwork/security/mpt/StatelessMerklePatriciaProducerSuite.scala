@@ -9,6 +9,7 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hex.Hex
+import io.constellationnetwork.security.mpt.GlobalStateProofPatternsSuite.F
 import io.constellationnetwork.security.mpt.producer.StatelessMerklePatriciaProducer
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
@@ -39,7 +40,8 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
 
         producer = StatelessMerklePatriciaProducer[IO]
         trie <- producer.create(entries.toMap)
-      } yield expect(trie.rootNode.digest.value.nonEmpty)
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](trie)
+      } yield expect(trieRoot.value.getBytes.nonEmpty)
     }
   }
 
@@ -52,14 +54,16 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
 
         producer = StatelessMerklePatriciaProducer[IO]
         initialTrie <- producer.create(initialEntries.toMap)
-        initialRoot = initialTrie.rootNode.digest
+        trieRoot <- MerklePatriciaTrie.getRootHash[F](initialTrie)
+        initialRoot = trieRoot.value
 
         newKey <- hasher.hash("new_value").map(hash => Hex(hash.value))
         newEntry = Map(newKey -> "new_value")
 
         updatedTrieEither <- producer.insert(initialTrie, newEntry)
         updatedTrie <- IO.fromEither(updatedTrieEither)
-      } yield expect(updatedTrie.rootNode.digest != initialRoot)
+        updatedTrieRoot <- MerklePatriciaTrie.getRootHash[F](updatedTrie)
+      } yield expect(updatedTrieRoot.value != initialRoot)
     }
   }
 
@@ -79,7 +83,9 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
 
         updatedTrieEither <- producer.insert(initialTrie, newEntries.toMap)
         updatedTrie <- IO.fromEither(updatedTrieEither)
-      } yield expect(updatedTrie.rootNode.digest.value.nonEmpty)
+        updatedTrieRoot <- MerklePatriciaTrie.getRootHash[F](updatedTrie)
+
+      } yield expect(updatedTrieRoot.value.getBytes.nonEmpty)
     }
   }
 
@@ -91,12 +97,14 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
 
         producer = StatelessMerklePatriciaProducer[IO]
         initialTrie <- producer.create(entries)
-        initialRoot = initialTrie.rootNode.digest
+        initialTrieRoot <- MerklePatriciaTrie.getRootHash[F](initialTrie)
+        initialRoot = initialTrieRoot.value
 
         updateEntry = Map(key -> "updated_value")
         updatedTrieEither <- producer.insert(initialTrie, updateEntry)
         updatedTrie <- IO.fromEither(updatedTrieEither)
-      } yield expect(updatedTrie.rootNode.digest != initialRoot)
+        updatedTrieRoot <- MerklePatriciaTrie.getRootHash[F](updatedTrie)
+      } yield expect(updatedTrieRoot.value != initialRoot)
     }
   }
 
@@ -109,12 +117,14 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
 
         producer = StatelessMerklePatriciaProducer[IO]
         initialTrie <- producer.create(entries.toMap)
-        initialRoot = initialTrie.rootNode.digest
+        initialTrieRoot <- MerklePatriciaTrie.getRootHash[F](initialTrie)
+        initialRoot = initialTrieRoot.value
 
         keyToRemove = entries.head._1
         updatedTrieEither <- producer.remove(initialTrie, List(keyToRemove))
         updatedTrie <- IO.fromEither(updatedTrieEither)
-      } yield expect(updatedTrie.rootNode.digest != initialRoot)
+        updatedTrieRoot <- MerklePatriciaTrie.getRootHash[F](updatedTrie)
+      } yield expect(updatedTrieRoot.value != initialRoot)
     }
   }
 
@@ -131,7 +141,8 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
         keysToRemove = entries.take(3).map(_._1)
         updatedTrieEither <- producer.remove(initialTrie, keysToRemove)
         updatedTrie <- IO.fromEither(updatedTrieEither)
-      } yield expect(updatedTrie.rootNode.digest.value.nonEmpty)
+        updatedTrieRoot <- MerklePatriciaTrie.getRootHash[F](updatedTrie)
+      } yield expect(updatedTrieRoot.value.getBytes.nonEmpty)
     }
   }
 
@@ -144,12 +155,14 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
 
         producer = StatelessMerklePatriciaProducer[IO]
         initialTrie <- producer.create(entries.toMap)
-        initialRoot = initialTrie.rootNode.digest
+        initialTrieRoot <- MerklePatriciaTrie.getRootHash[F](initialTrie)
+        initialRoot = initialTrieRoot.value
 
         nonExistentKey = Hex("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")
         updatedTrieEither <- producer.remove(initialTrie, List(nonExistentKey))
         updatedTrie <- IO.fromEither(updatedTrieEither)
-      } yield expect(updatedTrie.rootNode.digest == initialRoot)
+        updatedTrieRoot <- MerklePatriciaTrie.getRootHash[F](updatedTrie)
+      } yield expect(updatedTrieRoot.value == initialRoot)
     }
   }
 
@@ -180,7 +193,9 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
         producer = StatelessMerklePatriciaProducer[IO]
         trie1 <- producer.create(entries.toMap)
         trie2 <- producer.create(entries.toMap)
-      } yield expect(trie1.rootNode.digest == trie2.rootNode.digest)
+        trie1Root <- MerklePatriciaTrie.getRootHash[F](trie1)
+        trie2Root <- MerklePatriciaTrie.getRootHash[F](trie2)
+      } yield expect(trie1Root.value == trie2Root.value)
     }
   }
 }

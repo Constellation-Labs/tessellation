@@ -20,10 +20,10 @@ import io.circe.syntax._
 import io.circe.{Encoder, Json}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher](
-  stateRef: Ref[F, Map[Hex, Json]],
+class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher: JsonSerializer](
+  stateRef: Ref[F, Map[Hex, Array[Byte]]],
   trieRef: Ref[F, Option[MerklePatriciaTrie]],
-  pendingInsertsRef: Ref[F, Map[Hex, Json]],
+  pendingInsertsRef: Ref[F, Map[Hex, Array[Byte]]],
   pendingRemovesRef: Ref[F, List[Hex]],
   storage: MerklePatriciaTrieLocalFileSystemStorage[F]
 ) extends StatefulWithPersistenceMerklePatriciaProducer[F] {
@@ -40,8 +40,31 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher](
       case Left(err)   => Async[F].raiseError(err)
     }
 
-  override def entries: F[Map[Hex, Json]] =
+  override def entries: F[Map[Hex, Array[Byte]]] =
     stateRef.get
+
+  /** Get entries as Json (deserializes on demand). */
+  def entriesAsJson: F[Map[Hex, Json]] =
+    stateRef.get.flatMap { state =>
+      state.toList.traverse {
+        case (k, bytes) =>
+          JsonSerializer[F].deserialize[Json](bytes).flatMap {
+            case Right(json) => (k -> json).pure[F]
+            case Left(err)   => Async[F].raiseError[(Hex, Json)](err)
+          }
+      }.map(_.toMap)
+    }
+
+  /** Get a single entry as Json. */
+  def getAsJson(key: Hex): F[Option[Json]] =
+    stateRef.get.flatMap { state =>
+      state.get(key).traverse { bytes =>
+        JsonSerializer[F].deserialize[Json](bytes).flatMap {
+          case Right(json) => json.pure[F]
+          case Left(err)   => Async[F].raiseError[Json](err)
+        }
+      }
+    }
 
   override def build: F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
     for {
@@ -77,11 +100,14 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher](
         if (currentEntries.isEmpty) {
           emptyError.pure[F]
         } else {
-          parallelProducer.create(currentEntries).attempt.flatMap {
+          parallelProducer.createFromBytes(currentEntries).attempt.flatMap {
             case Right(trie) =>
-              (trieRef.set(Some(trie)) >>
-                pendingInsertsRef.set(Map.empty) >>
-                pendingRemovesRef.set(List.empty)).as(trie.asRight[MerklePatriciaError])
+              MerklePatriciaTrie.rootHash[F](trie).flatMap {
+                case (_, hashedTrie) =>
+                  (trieRef.set(Some(hashedTrie)) >>
+                    pendingInsertsRef.set(Map.empty) >>
+                    pendingRemovesRef.set(List.empty)).as(hashedTrie.asRight[MerklePatriciaError])
+              }
             case Left(e) =>
               val err: Either[MerklePatriciaError, MerklePatriciaTrie] =
                 OperationError(e.getMessage).asLeft[MerklePatriciaTrie]
@@ -96,7 +122,7 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher](
 
   private def incrementalUpdate(
     currentTrie: MerklePatriciaTrie,
-    inserts: Map[Hex, Json],
+    inserts: Map[Hex, Array[Byte]],
     removes: List[Hex]
   ): F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
     for {
@@ -109,22 +135,26 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher](
 
       result <- afterRemoves match {
         case Left(err) =>
-          val errResult: Either[MerklePatriciaError, MerklePatriciaTrie] = err.asLeft[MerklePatriciaTrie]
-          errResult.pure[F]
+          err.asLeft[MerklePatriciaTrie].pure[F]
         case Right(trieAfterRemoves) =>
           if (inserts.isEmpty) {
-            (trieRef.set(Some(trieAfterRemoves)) >>
-              pendingInsertsRef.set(Map.empty) >>
-              pendingRemovesRef.set(List.empty)).as(trieAfterRemoves.asRight[MerklePatriciaError])
-          } else {
-            parallelProducer.insert(trieAfterRemoves, inserts).flatMap {
-              case Left(err) =>
-                val errResult: Either[MerklePatriciaError, MerklePatriciaTrie] = err.asLeft[MerklePatriciaTrie]
-                errResult.pure[F]
-              case Right(finalTrie) =>
-                (trieRef.set(Some(finalTrie)) >>
+            MerklePatriciaTrie.rootHash[F](trieAfterRemoves).flatMap {
+              case (_, hashedTrie) =>
+                (trieRef.set(Some(hashedTrie)) >>
                   pendingInsertsRef.set(Map.empty) >>
-                  pendingRemovesRef.set(List.empty)).as(finalTrie.asRight[MerklePatriciaError])
+                  pendingRemovesRef.set(List.empty)).as(hashedTrie.asRight[MerklePatriciaError])
+            }
+          } else {
+            parallelProducer.insertFromBytes(trieAfterRemoves, inserts).flatMap {
+              case Left(err) =>
+                err.asLeft[MerklePatriciaTrie].pure[F]
+              case Right(finalTrie) =>
+                MerklePatriciaTrie.rootHash[F](finalTrie).flatMap {
+                  case (_, hashedTrie) =>
+                    (trieRef.set(Some(hashedTrie)) >>
+                      pendingInsertsRef.set(Map.empty) >>
+                      pendingRemovesRef.set(List.empty)).as(hashedTrie.asRight[MerklePatriciaError])
+                }
             }
           }
       }
@@ -136,11 +166,25 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher](
   override def insert[A: Encoder](data: Map[Hex, A]): F[Either[MerklePatriciaError, Unit]] =
     if (data.isEmpty) ().asRight[MerklePatriciaError].pure[F]
     else {
-      val jsonEntries = data.map { case (k, v) => k -> v.asJson }
       for {
-        _ <- stateRef.update(_ ++ jsonEntries)
-        _ <- pendingRemovesRef.update(_.filterNot(jsonEntries.contains))
-        _ <- pendingInsertsRef.update(_ ++ jsonEntries)
+        byteEntries <- data.toList.traverse {
+          case (k, v) =>
+            JsonSerializer[F].serialize(v.asJson).map(k -> _)
+        }.map(_.toMap)
+        _ <- stateRef.update(_ ++ byteEntries)
+        _ <- pendingRemovesRef.update(_.filterNot(byteEntries.contains))
+        _ <- pendingInsertsRef.update(_ ++ byteEntries)
+      } yield ().asRight[MerklePatriciaError]
+    }
+
+  /** Insert raw bytes directly (avoids serialization if already have bytes). */
+  def insertBytes(data: Map[Hex, Array[Byte]]): F[Either[MerklePatriciaError, Unit]] =
+    if (data.isEmpty) ().asRight[MerklePatriciaError].pure[F]
+    else {
+      for {
+        _ <- stateRef.update(_ ++ data)
+        _ <- pendingRemovesRef.update(_.filterNot(data.contains))
+        _ <- pendingInsertsRef.update(_ ++ data)
       } yield ().asRight[MerklePatriciaError]
     }
 
@@ -151,8 +195,9 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher](
         err.pure[F]
       } else {
         for {
-          _ <- stateRef.update(_ + (key -> value.asJson))
-          _ <- pendingInsertsRef.update(_ + (key -> value.asJson))
+          bytes <- JsonSerializer[F].serialize(value.asJson)
+          _ <- stateRef.update(_ + (key -> bytes))
+          _ <- pendingInsertsRef.update(_ + (key -> bytes))
         } yield ().asRight[MerklePatriciaError]
       }
     }
@@ -172,12 +217,16 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher](
       pendingInsertsRef.set(Map.empty) >>
       pendingRemovesRef.set(List.empty)
 
-  override def buildHexMap(data: Map[GlobalStateKey, Json]): F[Map[Hex, Json]] = {
+  override def buildHexMap(data: Map[GlobalStateKey, Json]): F[Map[Hex, Array[Byte]]] = {
     val totalSize = data.size
 
     if (totalSize <= BatchSize) {
       data.toList.parTraverse {
-        case (key, value) => GlobalStateKey.toHex[F](key).map(_ -> value)
+        case (key, value) =>
+          for {
+            hex <- GlobalStateKey.toHex[F](key)
+            bytes <- JsonSerializer[F].serialize(value)
+          } yield hex -> bytes
       }.map(_.toMap)
     } else {
       for {
@@ -185,24 +234,24 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher](
           .grouped(BatchSize)
           .toList
           .zipWithIndex
-          .foldLeftM(Map.empty[Hex, Json]) {
-            case (acc, (batch, batchIdx)) =>
+          .foldLeftM(Map.empty[Hex, Array[Byte]]) {
+            case (acc, (batch, _)) =>
               for {
                 batchResult <- batch.parTraverse {
-                  case (key, value) => GlobalStateKey.toHex[F](key).map(_ -> value)
+                  case (key, value) =>
+                    for {
+                      hex <- GlobalStateKey.toHex[F](key)
+                      bytes <- JsonSerializer[F].serialize(value)
+                    } yield hex -> bytes
                 }
                 newAcc = acc ++ batchResult.toMap
                 _ <- Async[F].cede
               } yield newAcc
           }
-
-        end <- Async[F].realTime
       } yield result
     }
   }
 
-  /** Persist the current trie and state to disk.
-    */
   override def persist(ordinal: SnapshotOrdinal): F[Unit] =
     for {
       currentTrie <- trieRef.get
@@ -216,8 +265,6 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher](
       }
     } yield ()
 
-  /** Load trie and state from disk for the given ordinal. Returns true if successfully loaded, false if no data found.
-    */
   override def load(ordinal: SnapshotOrdinal): F[Boolean] =
     for {
       start <- Async[F].realTime
@@ -232,7 +279,7 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher](
             _ <- pendingInsertsRef.set(Map.empty)
             _ <- pendingRemovesRef.set(List.empty)
             end <- Async[F].realTime
-            _ <- logger.info(s"Trie loaded successfully in ${(end - start).toMillis}ms, rootHash=${trie.rootHash.value}")
+            _ <- logger.info(s"Trie loaded successfully in ${(end - start).toMillis}ms")
           } yield true
 
         case None =>
@@ -241,18 +288,9 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher](
       }
     } yield loaded
 
-  /** Try to load trie from disk for the given ordinal. If not found or load fails, populate state from provided data and build the trie.
-    *
-    * @param ordinal
-    *   The ordinal to try loading from
-    * @param buildData
-    *   Function that provides the data to build from if load fails
-    * @return
-    *   The built or loaded trie
-    */
   def loadOrBuild(
     ordinal: SnapshotOrdinal,
-    buildData: => F[Map[Hex, Json]]
+    buildData: => F[Map[Hex, Array[Byte]]]
   ): F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
     for {
       start <- Async[F].realTime
@@ -260,7 +298,6 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher](
 
       result <- load(ordinal).flatMap {
         case true =>
-          // Successfully loaded from disk
           for {
             end <- Async[F].realTime
             _ <- logger.info(s"Trie loaded from disk in ${(end - start).toMillis}ms")
@@ -297,12 +334,12 @@ object FileSystemMerklePatriciaProducer {
 
   def make[F[_]: Async: Parallel: Hasher: JsonSerializer](
     path: Path,
-    initial: Map[Hex, Json] = Map.empty
+    initial: Map[Hex, Array[Byte]] = Map.empty
   ): F[FileSystemMerklePatriciaProducer[F]] =
     for {
-      stateRef <- Ref.of[F, Map[Hex, Json]](initial)
+      stateRef <- Ref.of[F, Map[Hex, Array[Byte]]](initial)
       trieRef <- Ref.of[F, Option[MerklePatriciaTrie]](None)
-      pendingInsertsRef <- Ref.of[F, Map[Hex, Json]](Map.empty)
+      pendingInsertsRef <- Ref.of[F, Map[Hex, Array[Byte]]](Map.empty)
       pendingRemovesRef <- Ref.of[F, List[Hex]](List.empty)
       storage <- MerklePatriciaTrieLocalFileSystemStorage.make[F](path)
     } yield new FileSystemMerklePatriciaProducer[F](stateRef, trieRef, pendingInsertsRef, pendingRemovesRef, storage)
@@ -310,12 +347,12 @@ object FileSystemMerklePatriciaProducer {
   def make[F[_]: Async: Parallel: Hasher: JsonSerializer](
     path: Path,
     cutoffLogic: OrdinalCutoff,
-    initial: Map[Hex, Json]
+    initial: Map[Hex, Array[Byte]]
   ): F[FileSystemMerklePatriciaProducer[F]] =
     for {
-      stateRef <- Ref.of[F, Map[Hex, Json]](initial)
+      stateRef <- Ref.of[F, Map[Hex, Array[Byte]]](initial)
       trieRef <- Ref.of[F, Option[MerklePatriciaTrie]](None)
-      pendingInsertsRef <- Ref.of[F, Map[Hex, Json]](Map.empty)
+      pendingInsertsRef <- Ref.of[F, Map[Hex, Array[Byte]]](Map.empty)
       pendingRemovesRef <- Ref.of[F, List[Hex]](List.empty)
       storage <- MerklePatriciaTrieLocalFileSystemStorage.make[F](path, cutoffLogic)
     } yield new FileSystemMerklePatriciaProducer[F](stateRef, trieRef, pendingInsertsRef, pendingRemovesRef, storage)

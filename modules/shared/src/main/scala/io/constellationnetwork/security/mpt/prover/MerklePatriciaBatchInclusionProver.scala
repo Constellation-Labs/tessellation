@@ -1,6 +1,6 @@
 package io.constellationnetwork.security.mpt.prover
 
-import cats.effect.Sync
+import cats.effect.{Async, Sync}
 import cats.syntax.all._
 
 import scala.annotation.tailrec
@@ -18,7 +18,7 @@ trait MerklePatriciaBatchInclusionProver[F[_]] {
 object MerklePatriciaBatchInclusionProver {
   def apply[F[_]](implicit prover: MerklePatriciaBatchInclusionProver[F]): MerklePatriciaBatchInclusionProver[F] = prover
 
-  def make[F[_]: Sync: Hasher](
+  def make[F[_]: Async: Hasher](
     trie: MerklePatriciaTrie
   ): MerklePatriciaBatchInclusionProver[F] =
     new MerklePatriciaBatchInclusionProver[F] {

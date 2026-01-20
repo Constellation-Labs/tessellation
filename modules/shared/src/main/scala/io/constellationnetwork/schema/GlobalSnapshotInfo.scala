@@ -25,6 +25,7 @@ import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockReference}
 import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.mpt.MerklePatriciaTrie
 import io.constellationnetwork.security.mpt.producer.StatefulMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 
@@ -216,28 +217,29 @@ case class GlobalSnapshotInfo(
           stateProof(ordinal).handleErrorWith { _ =>
             (new Throwable(s"Error when building MPT. Message: ${value.getMessage}")).raiseError[F, GlobalSnapshotStateProof]
           }
-        case Right(value) =>
-          GlobalSnapshotStateProof
-            .apply(
-              Hash.empty,
-              Hash.empty,
-              Hash.empty,
-              None,
-              None,
-              None,
-              None,
-              None,
-              None,
-              None,
-              None,
-              None,
-              None,
-              None,
-              None,
-              None,
-              Some(value.rootHash.value)
-            )
-            .pure[F]
+        case Right(trie) =>
+          MerklePatriciaTrie.getRootHash[F](trie).map { mptRoot =>
+            GlobalSnapshotStateProof
+              .apply(
+                Hash.empty,
+                Hash.empty,
+                Hash.empty,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(mptRoot.value)
+              )
+          }
       }
   }
 
