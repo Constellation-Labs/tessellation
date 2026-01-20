@@ -12,6 +12,15 @@ import io.constellationnetwork.security.hex.Hex
 import io.circe._
 import io.circe.syntax.EncoderOps
 
+/** Nibble represents a single hex digit (4 bits, values 0-15).
+  *
+  * Note: This class is kept for serialization compatibility and hashing. For internal operations, use CompactNibblePath which is much more
+  * memory efficient (packs 2 nibbles per byte).
+  *
+  * Memory comparison for a 64-nibble path (32-byte hash):
+  *   - Seq[Nibble]: 64 objects × ~16 bytes = ~1KB + collection overhead
+  *   - CompactNibblePath: 32 bytes + ~8 bytes overhead = ~40 bytes
+  */
 class Nibble private (val value: Byte) extends AnyVal {
 
   override def toString: String = "" + Nibble.hexChars(value & 0x0f)
@@ -20,7 +29,7 @@ class Nibble private (val value: Byte) extends AnyVal {
 object Nibble {
   val empty: Nibble = new Nibble(0: Byte)
 
-  private val hexChars: Array[Char] = "0123456789abcdef".toCharArray
+  private[mpt] val hexChars: Array[Char] = "0123456789abcdef".toCharArray
 
   private def charToByteValue(char: Char): Option[Byte] = char match {
     case c if c >= '0' && c <= '9' => Some((c - '0').toByte)

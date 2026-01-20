@@ -25,8 +25,6 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel](
 
   private val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
-  import java.util.concurrent.{CountDownLatch, Executors}
-
   private val ParallelDepthThreshold = 10
 
   def getProver(trie: MerklePatriciaTrie): F[MerklePatriciaSingleInclusionProver[F]] =
@@ -72,7 +70,9 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel](
   ): F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
     new StatelessMerklePatriciaProducer[F].remove(current, data)
 
-  private def batchComputeDataHashes(entries: Array[(ArraySeq[Nibble], Json)]): F[Array[String]] = {
+  /** Batch compute data hashes. Uses CompactNibblePath entries.
+    */
+  private def batchComputeDataHashes(entries: Array[(CompactNibblePath, Json)]): F[Array[String]] = {
     val numEntries = entries.length
     val batchSize = math.max(100, numEntries / (maxThreads * 4))
 
@@ -89,8 +89,10 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel](
     } yield results
   }
 
+  /** Build tree using CompactNibblePath for memory efficiency.
+    */
   private def buildTreeWithHashes(
-    entries: Array[(ArraySeq[Nibble], Json)],
+    entries: Array[(CompactNibblePath, Json)],
     dataHashes: Array[String],
     start: Int,
     end: Int,
@@ -103,74 +105,88 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel](
     } else if (size == 1) {
       val (path, data) = entries(start)
       val dataHash = Hash(dataHashes(start))
-      val remaining = if (depth >= path.length) ArraySeq.empty[Nibble] else path.drop(depth)
-      MerklePatriciaNode.Leaf.withDataDigest[F](remaining, data, dataHash).widen
+      val remaining = if (depth >= path.length) CompactNibblePath.empty else path.drop(depth)
+      MerklePatriciaNode.Leaf.withDataDigestCompact[F](remaining, data, dataHash).widen
     } else {
       buildWithGroupsHashed(entries, dataHashes, start, end, depth)
     }
   }
 
   private def buildWithGroupsHashed(
-    entries: Array[(ArraySeq[Nibble], Json)],
+    entries: Array[(CompactNibblePath, Json)],
     dataHashes: Array[String],
     start: Int,
     end: Int,
     depth: Int
   ): F[MerklePatriciaNode] = {
+    // Groups now use Byte instead of Nibble to avoid boxing
     val groups = findGroups(entries, start, end, depth)
 
     if (groups.length == 1) {
-      val (nibble, gs, ge) = groups(0)
+      val (nibbleValue, gs, ge) = groups(0)
       buildTreeWithHashes(entries, dataHashes, gs, ge, depth + 1)
-        .flatMap(child => createSingleGroupNode(nibble, child, dataHashes, gs))
+        .flatMap(child => createSingleGroupNode(nibbleValue, child, entries, dataHashes, gs))
     } else {
       val useParallel = depth <= ParallelDepthThreshold || groups.length >= 4
 
-      val buildChildren: F[List[(Nibble, MerklePatriciaNode)]] =
+      val buildChildren: F[List[(Byte, MerklePatriciaNode)]] =
         if (useParallel) {
           groups.toList.parTraverse {
-            case (nibble, gs, ge) =>
-              buildTreeWithHashes(entries, dataHashes, gs, ge, depth + 1).map(nibble -> _)
+            case (nibbleValue, gs, ge) =>
+              buildTreeWithHashes(entries, dataHashes, gs, ge, depth + 1).map(nibbleValue -> _)
           }
         } else {
           groups.toList.traverse {
-            case (nibble, gs, ge) =>
-              buildTreeWithHashes(entries, dataHashes, gs, ge, depth + 1).map(nibble -> _)
+            case (nibbleValue, gs, ge) =>
+              buildTreeWithHashes(entries, dataHashes, gs, ge, depth + 1).map(nibbleValue -> _)
           }
         }
 
       buildChildren.flatMap { children =>
-        MerklePatriciaNode.Branch[F](children.toMap).widen
+        // Use byte-keyed map directly
+        MerklePatriciaNode.Branch.fromByteKeys[F](children.toMap).widen
       }
     }
   }
 
+  /** Create node for single group. Uses byte nibble values and CompactNibblePath.
+    */
   private def createSingleGroupNode(
-    nibble: Nibble,
+    nibbleValue: Byte,
     child: MerklePatriciaNode,
+    entries: Array[(CompactNibblePath, Json)],
     dataHashes: Array[String],
     entryIndex: Int
   ): F[MerklePatriciaNode] =
     child match {
       case branch: MerklePatriciaNode.Branch =>
-        MerklePatriciaNode.Extension[F](ArraySeq(nibble), branch).widen
+        MerklePatriciaNode.Extension.fromCompact[F](CompactNibblePath.single(nibbleValue), branch).widen
 
       case ext: MerklePatriciaNode.Extension =>
-        MerklePatriciaNode.Extension[F](ArraySeq(nibble) ++ ext.shared, ext.child).widen
+        MerklePatriciaNode.Extension
+          .fromCompact[F](
+            CompactNibblePath.single(nibbleValue) ++ ext.sharedPath,
+            ext.child
+          )
+          .widen
 
       case leaf: MerklePatriciaNode.Leaf =>
         MerklePatriciaNode.Leaf
-          .withDataDigest[F](
-            ArraySeq(nibble) ++ leaf.remaining,
+          .withDataDigestCompact[F](
+            CompactNibblePath.single(nibbleValue) ++ leaf.remainingPath,
             leaf.data,
             Hash(dataHashes(entryIndex))
           )
           .widen
     }
 
-  private def prepareAndSort[A: Encoder](data: Map[Hex, A]): Array[(ArraySeq[Nibble], Json)] = {
+  /** Prepare and sort data using CompactNibblePath.
+    *
+    * This is the main memory optimization - we now store paths as packed bytes instead of boxed Nibble objects.
+    */
+  private def prepareAndSort[A: Encoder](data: Map[Hex, A]): Array[(CompactNibblePath, Json)] = {
     val dataArray = data.toArray
-    val results = new Array[(ArraySeq[Nibble], Json)](dataArray.length)
+    val results = new Array[(CompactNibblePath, Json)](dataArray.length)
     val numThreads = maxThreads
 
     val chunkSize = math.max(1, (dataArray.length + numThreads - 1) / numThreads)
@@ -186,7 +202,8 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel](
             var j = startIdx
             while (j < endIdx) {
               val (hex, value) = dataArray(j)
-              results(j) = (ArraySeq.unsafeWrapArray(Nibble(hex).toArray), value.asJson)
+              // Use CompactNibblePath instead of ArraySeq[Nibble]
+              results(j) = (CompactNibblePath.fromHexString(hex.value), value.asJson)
               j += 1
             }
           } finally
@@ -198,37 +215,28 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel](
 
     java.util.Arrays.parallelSort(
       results,
-      (a: (ArraySeq[Nibble], Json), b: (ArraySeq[Nibble], Json)) => compareNibblePaths(a._1, b._1)
+      (a: (CompactNibblePath, Json), b: (CompactNibblePath, Json)) => CompactNibblePath.ordering.compare(a._1, b._1)
     )
 
     results
   }
 
-  @inline private def compareNibblePaths(pathA: ArraySeq[Nibble], pathB: ArraySeq[Nibble]): Int = {
-    val minLen = math.min(pathA.length, pathB.length)
-    var i = 0
-    while (i < minLen) {
-      val cmp = java.lang.Byte.compare(pathA(i).value, pathB(i).value)
-      if (cmp != 0) return cmp
-      i += 1
-    }
-    pathA.length - pathB.length
-  }
-
+  /** Find groups by nibble at given depth. Returns groups with Byte nibble values instead of Nibble objects.
+    */
   @inline private def findGroups(
-    entries: Array[(ArraySeq[Nibble], Json)],
+    entries: Array[(CompactNibblePath, Json)],
     start: Int,
     end: Int,
     depth: Int
-  ): mutable.ArrayBuffer[(Nibble, Int, Int)] = {
-    val groups = mutable.ArrayBuffer[(Nibble, Int, Int)]()
+  ): mutable.ArrayBuffer[(Byte, Int, Int)] = {
+    val groups = mutable.ArrayBuffer[(Byte, Int, Int)]()
     var groupStart = start
-    var currentNibble = getNibbleAt(entries(start)._1, depth)
+    var currentNibble = entries(start)._1.getOrEmpty(depth)
 
     var i = start + 1
     while (i < end) {
-      val nibble = getNibbleAt(entries(i)._1, depth)
-      if (nibble.value != currentNibble.value) {
+      val nibble = entries(i)._1.getOrEmpty(depth)
+      if (nibble != currentNibble) {
         groups += ((currentNibble, groupStart, i))
         groupStart = i
         currentNibble = nibble
@@ -238,9 +246,6 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel](
     groups += ((currentNibble, groupStart, end))
     groups
   }
-
-  @inline private def getNibbleAt(path: ArraySeq[Nibble], depth: Int): Nibble =
-    if (depth < path.length) path(depth) else Nibble.empty
 }
 
 object ParallelMerklePatriciaProducer {
