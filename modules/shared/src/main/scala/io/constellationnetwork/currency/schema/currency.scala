@@ -10,6 +10,7 @@ import io.constellationnetwork.currency.dataApplication.FeeTransaction
 import io.constellationnetwork.currency.schema.globalSnapshotSync.{GlobalSnapshotSync, GlobalSyncView}
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.crypto._
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.SharedArtifact
@@ -95,7 +96,7 @@ object currency {
     lastTokenLockRefs: Option[SortedMap[Address, TokenLockReference]],
     activeTokenLocks: Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]
   ) extends SnapshotInfo[CurrencySnapshotStateProof] {
-    def stateProof[F[_]: Parallel: Async: Hasher](ordinal: SnapshotOrdinal)(
+    def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](ordinal: SnapshotOrdinal)(
       implicit stateProofSelector: StateProofSelector
     ): F[CurrencySnapshotStateProof] =
       (
@@ -111,7 +112,7 @@ object currency {
       ).tupled
         .map(CurrencySnapshotStateProof.apply)
 
-    def stateProof[F[_]: Parallel: Async: Hasher](
+    def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](
       statefulMPTProducer: StatefulMerklePatriciaProducer[F],
       ordinal: SnapshotOrdinal
     )(
@@ -127,12 +128,12 @@ object currency {
     lastTxRefs: SortedMap[Address, TransactionReference],
     balances: SortedMap[Address, Balance]
   ) extends SnapshotInfo[CurrencySnapshotStateProofV1] {
-    def stateProof[F[_]: Parallel: Async: Hasher](ordinal: SnapshotOrdinal)(
+    def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](ordinal: SnapshotOrdinal)(
       implicit stateProofSelector: StateProofSelector
     ): F[CurrencySnapshotStateProofV1] =
       (lastTxRefs.hash, balances.hash).tupled.map(CurrencySnapshotStateProofV1.apply)
 
-    def stateProof[F[_]: Parallel: Async: Hasher](
+    def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](
       statefulMPTProducer: StatefulMerklePatriciaProducer[F],
       ordinal: SnapshotOrdinal
     )(
@@ -230,7 +231,7 @@ object currency {
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
 
   object CurrencyIncrementalSnapshot {
-    def fromCurrencySnapshot[F[_]: Parallel: Async: Hasher](snapshot: CurrencySnapshot)(
+    def fromCurrencySnapshot[F[_]: Parallel: Async: Hasher: JsonSerializer](snapshot: CurrencySnapshot)(
       implicit stateProofSelector: StateProofSelector
     ): F[CurrencyIncrementalSnapshot] =
       snapshot.info.stateProof[F](snapshot.ordinal).map { stateProof =>
@@ -334,7 +335,7 @@ object currency {
         }
       )
 
-    def mkFirstIncrementalSnapshot[F[_]: Parallel: Async: Hasher](
+    def mkFirstIncrementalSnapshot[F[_]: Parallel: Async: Hasher: JsonSerializer](
       genesis: Hashed[CurrencySnapshot]
     )(implicit stateProofSelector: CurrencyStateProofSelector): F[CurrencyIncrementalSnapshot] =
       genesis.info.stateProof[F](genesis.ordinal).map { stateProof =>

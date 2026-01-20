@@ -1,4 +1,4 @@
-package io.constellationnetwork.merkletree
+package io.constellationnetwork.validator
 
 import cats.data.Validated
 import cats.data.Validated.Invalid
@@ -9,6 +9,7 @@ import cats.{Parallel, Show}
 
 import scala.util.control.NoStackTrace
 
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.snapshot.{IncrementalSnapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.{SnapshotOrdinal, StateProofSelector}
@@ -24,7 +25,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object StateProofValidator {
 
-  def validate[F[_]: Async: Parallel: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]: Encoder](
+  def validate[F[_]: Async: Parallel: Hasher: JsonSerializer, P <: StateProof: Eq, A <: IncrementalSnapshot[P]: Encoder](
     snapshot: Signed[A],
     snapshotInfo: SnapshotInfo[P]
   )(implicit stateProofSelector: StateProofSelector): F[Validated[StateBroken, Unit]] =
@@ -33,13 +34,13 @@ object StateProofValidator {
         validate(hashedSnapshot, stateProof)
     }
 
-  def validate[F[_]: Async: Parallel: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
+  def validate[F[_]: Async: Parallel: Hasher: JsonSerializer, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
     snapshot: Hashed[A],
     snapshotInfo: SnapshotInfo[P]
   )(implicit stateProofSelector: StateProofSelector): F[Validated[StateBroken, Unit]] =
     snapshotInfo.stateProof(snapshot.ordinal).flatMap(validate(snapshot, _))
 
-  def validate[F[_]: Async: Parallel: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]: Encoder](
+  def validate[F[_]: Async: Parallel: Hasher: JsonSerializer, P <: StateProof: Eq, A <: IncrementalSnapshot[P]: Encoder](
     snapshot: Signed[A],
     snapshotInfo: SnapshotInfo[P],
     mptStore: MptStore[F, GlobalStateKey]
@@ -49,14 +50,14 @@ object StateProofValidator {
         validate(hashedSnapshot, stateProof)
     }
 
-  def validate[F[_]: Async: Parallel: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
+  def validate[F[_]: Async: Parallel: Hasher: JsonSerializer, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
     snapshot: Hashed[A],
     snapshotInfo: SnapshotInfo[P],
     mptStore: MptStore[F, GlobalStateKey]
   )(implicit stateProofSelector: StateProofSelector): F[Validated[StateBroken, Unit]] =
     snapshotInfo.stateProof(mptStore.underlying, snapshot.ordinal).flatMap(validate(snapshot, _))
 
-  def validate[F[_]: Async: Parallel, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
+  def validate[F[_]: Async: Parallel: JsonSerializer, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
     snapshot: Hashed[A],
     stateProof: P
   ): F[Validated[StateBroken, Unit]] = {

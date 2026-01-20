@@ -5,6 +5,7 @@ import cats.effect.Async
 import cats.syntax.all._
 
 import io.constellationnetwork.dag.l0.modules.{Programs, Storages}
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
@@ -19,7 +20,7 @@ import org.typelevel.log4cats.Logger
 
 object StoragesInitializer {
   def initializeStorages[
-    F[_]: Async: Logger: Hasher: Parallel
+    F[_]: Async: Logger: Hasher: Parallel: JsonSerializer
   ](
     globalSnapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],

@@ -7,6 +7,7 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
@@ -83,7 +84,7 @@ object GlobalStateConverter {
       .getOrElse(Map.empty)
       .pure[F]
 
-  private def convertCurrencySnapshots[F[_]: Async: Parallel: Hasher](
+  private def convertCurrencySnapshots[F[_]: Async: Parallel: Hasher: JsonSerializer](
     data: SortedMap[Address, Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]
   )(
     implicit stateProofSelector: StateProofSelector
@@ -137,7 +138,7 @@ object GlobalStateConverter {
       .getOrElse(Map.empty)
       .pure[F]
 
-  def toStateKeyValuePairsFromAccumulator[F[_]: Async: Parallel: Hasher](
+  def toStateKeyValuePairsFromAccumulator[F[_]: Async: Parallel: Hasher: JsonSerializer](
     acc: StateChangesAccumulator
   )(
     implicit stateProofSelector: StateProofSelector
@@ -186,7 +187,7 @@ object GlobalStateConverter {
       m1 ++ m2 ++ m3 ++ m4 ++ m5 ++ m6 ++ m7 ++ m8 ++ m9 ++ m10 ++ m11 ++ m12 ++ m13 ++ m14 ++ m15
     }
 
-  def toAllStateKeyValuePairs[F[_]: Async: Parallel: Hasher](
+  def toAllStateKeyValuePairs[F[_]: Async: Parallel: Hasher: JsonSerializer](
     info: GlobalSnapshotInfo
   )(
     implicit stateProofSelector: StateProofSelector
@@ -219,14 +220,14 @@ object GlobalStateConverter {
 
   object syntax {
     implicit class GlobalSnapshotInfoMptOps(val info: GlobalSnapshotInfo) extends AnyVal {
-      def allStateEntries[F[_]: Async: Parallel: Hasher](
+      def allStateEntries[F[_]: Async: Parallel: Hasher: JsonSerializer](
         implicit stateProofSelector: StateProofSelector
       ): F[Map[GlobalStateKey, Json]] =
         toAllStateKeyValuePairs(info)
     }
 
     implicit class StateChangesAccumulatorMptOps(val acc: StateChangesAccumulator) extends AnyVal {
-      def toStateEntries[F[_]: Async: Parallel: Hasher](
+      def toStateEntries[F[_]: Async: Parallel: Hasher: JsonSerializer](
         implicit stateProofSelector: StateProofSelector
       ): F[Map[GlobalStateKey, Json]] =
         toStateKeyValuePairsFromAccumulator(acc)
@@ -237,46 +238,45 @@ object GlobalStateConverter {
       private val BatchSize = 5000
       private val LogProgressEvery = 50000
 
-      def buildMpt(implicit stateProofSelector: StateProofSelector): F[MptRoot] = {
+      def buildMpt(implicit stateProofSelector: StateProofSelector, j: JsonSerializer[F]): F[MptRoot] = {
         val logger = org.typelevel.log4cats.slf4j.Slf4jLogger.getLoggerFromName[F]("MPT.BuildMpt")
+
+        def toHexMap(kvPairs: Map[GlobalStateKey, Json]): F[Map[Hex, Json]] = {
+          def convertBatch(batch: List[(GlobalStateKey, Json)]): F[List[(Hex, Json)]] =
+            batch.parTraverse {
+              case (key, value) =>
+                GlobalStateKey.toHex[F](key).map(_ -> value)
+            }
+
+          if (kvPairs.size <= BatchSize)
+            convertBatch(kvPairs.toList).map(_.toMap)
+          else
+            kvPairs.toList
+              .grouped(BatchSize)
+              .toList
+              .foldLeftM(Map.empty[Hex, Json]) { (acc, batch) =>
+                convertBatch(batch).map(acc ++ _) <* Async[F].cede
+              }
+        }
+
+        def buildMptRoot(hexMap: Map[Hex, Json]): F[MptRoot] =
+          for {
+            root <- MerklePatriciaTrie.makeParallel[F, Json](hexMap).map(_.rootHash)
+          } yield root
 
         for {
           kvPairs <- kvPairsF
-          kvSize = kvPairs.size
           mptRoot <-
-            if (kvPairs.isEmpty) {
+            if (kvPairs.isEmpty)
               logger.info("Empty map, returning empty hash").as(MptRoot(Hash.empty))
-            } else {
-              for {
-                hexMap <-
-                  if (kvSize <= BatchSize) {
-                    kvPairs.toList.parTraverse {
-                      case (key, value) => GlobalStateKey.toHex[F](key).map(_ -> value)
-                    }.map(_.toMap)
-                  } else {
-                    kvPairs.toList
-                      .grouped(BatchSize)
-                      .toList
-                      .zipWithIndex
-                      .foldLeftM(Map.empty[Hex, Json]) {
-                        case (acc, (batch, batchIdx)) =>
-                          for {
-                            batchResult <- batch.parTraverse {
-                              case (key, value) => GlobalStateKey.toHex[F](key).map(_ -> value)
-                            }
-                            newAcc = acc ++ batchResult.toMap
-                            _ <- Async[F].cede
-                          } yield newAcc
-                      }
-                  }
-                root <- MerklePatriciaTrie.makeParallel[F, Json](hexMap).map(_.rootHash)
-              } yield root
-            }
+            else
+              toHexMap(kvPairs).flatMap(buildMptRoot)
         } yield mptRoot
+
       }
     }
 
-    implicit class MptStoreGlobalSnapshotOps[F[_]: Async: Parallel: Hasher](
+    implicit class MptStoreGlobalSnapshotOps[F[_]: Async: Parallel: Hasher: JsonSerializer](
       val store: MptStore[F, GlobalStateKey]
     ) {
       def syncFromGlobalSnapshotInfo(info: GlobalSnapshotInfo, snapshotOrdinal: SnapshotOrdinal)(
@@ -291,7 +291,6 @@ object GlobalStateConverter {
 
         for {
           entries <- acc.toStateEntries[F]
-          syncStart <- Async[F].realTime
           _ <-
             if (entries.size <= BatchSize) {
               store.sync[Json](entries, snapshotOrdinal)

@@ -147,12 +147,12 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       currencySnapshotValidator = CurrencySnapshotValidator
         .make[IO](SnapshotOrdinal.MinValue, creator, validators.signedValidator, None, None)
       mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
-      mptStore = MptStore.make[IO, GlobalStateKey](
+      mptStore <- MptStore.make[IO, GlobalStateKey](
         mptProducer,
         GlobalStateKey.toHex[IO]
       )
 
-      currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator, mptStore)
+      currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
       manager = new GlobalSnapshotStateChannelAcceptanceManager[IO] {
         def accept(ordinal: SnapshotOrdinal, lastGlobalSnapshotInfo: GlobalSnapshotInfo, events: List[StateChannelOutput])(
           implicit hasher: Hasher[IO]
@@ -275,7 +275,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
     signedSC <- forAsyncHasher(binary, keyPair)
   } yield StateChannelOutput(keyPair.getPublic.toAddress, signedSC)
 
-  def mkGlobalIncrementalSnapshot[F[_]: Parallel: Async: Hasher](
+  def mkGlobalIncrementalSnapshot[F[_]: Parallel: Async: Hasher: JsonSerializer](
     globalSnapshotInfo: GlobalSnapshotInfo
   ): F[Hashed[GlobalIncrementalSnapshot]] =
     globalSnapshotInfo.stateProof[F](SnapshotOrdinal(NonNegLong(1L))).flatMap { sp =>

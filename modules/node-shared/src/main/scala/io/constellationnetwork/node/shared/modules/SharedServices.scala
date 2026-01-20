@@ -135,8 +135,7 @@ object SharedServices {
         None
       )
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(
-        currencySnapshotValidator,
-        storages.mptStore
+        currencySnapshotValidator
       )
       feeCalculator = FeeCalculator.make(cfg.feeConfigs)
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(stateChannelAllowanceLists)

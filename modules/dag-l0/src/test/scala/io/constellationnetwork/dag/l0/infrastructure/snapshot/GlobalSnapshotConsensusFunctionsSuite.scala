@@ -95,7 +95,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   def mkSignedArtifacts()(
     implicit sp: SecurityProvider[IO],
-    h: Hasher[IO]
+    h: Hasher[IO],
+    js: JsonSerializer[IO]
   ): IO[(Signed[GlobalSnapshotArtifact], Signed[GlobalSnapshot])] = for {
     keyPair <- KeyPairGenerator.makeKeyPair[IO]
 
@@ -328,43 +329,46 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     val snapshotAcceptanceManagerF: F[GlobalSnapshotAcceptanceManager[IO]] =
       InMemoryMerklePatriciaProducer.make[IO]().flatMap { mptProducer =>
-        val mptStore = MptStore.make[IO, GlobalStateKey](
-          mptProducer,
-          GlobalStateKey.toHex[IO]
-        )
-        NoDbLogger.makeUnsafe[IO].map { dbLogger =>
-          GlobalSnapshotAcceptanceManager
-            .make[IO](
-              FieldsAddedOrdinals(
-                Map.empty,
-                Map.empty,
-                Map.empty,
-                Map.empty,
-                Map.empty,
-                Map.empty,
-                Map.empty,
-                Map.empty,
-                Map.empty,
-                Map.empty
-              ),
-              MetagraphsSyncConfig(PosInt(100)),
-              Dev,
-              bam,
-              asbam,
-              tlbam,
-              scProcessor,
-              updateNodeParametersAcceptanceManager,
-              updateDelegatedStakeAcceptanceManager,
-              updateNodeCollateralAcceptanceManager,
-              spendActionValidator,
-              pricingUpdateValidator,
-              priceStateUpdater,
-              collateral,
-              EpochProgress(NonNegLong(136080L)),
-              dbLogger,
-              mptStore
-            )
-        }
+        MptStore
+          .make[IO, GlobalStateKey](
+            mptProducer,
+            GlobalStateKey.toHex[IO]
+          )
+          .flatMap { mptStore =>
+            NoDbLogger.makeUnsafe[IO].map { dbLogger =>
+              GlobalSnapshotAcceptanceManager
+                .make[IO](
+                  FieldsAddedOrdinals(
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty
+                  ),
+                  MetagraphsSyncConfig(PosInt(100)),
+                  Dev,
+                  bam,
+                  asbam,
+                  tlbam,
+                  scProcessor,
+                  updateNodeParametersAcceptanceManager,
+                  updateDelegatedStakeAcceptanceManager,
+                  updateNodeCollateralAcceptanceManager,
+                  spendActionValidator,
+                  pricingUpdateValidator,
+                  priceStateUpdater,
+                  collateral,
+                  EpochProgress(NonNegLong(136080L)),
+                  dbLogger,
+                  mptStore
+                )
+            }
+          }
       }
 
     val feeCalculator = new SnapshotBinaryFeeCalculator[IO] {
@@ -378,7 +382,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     for {
       mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
-      mptStore = MptStore.make[IO, GlobalStateKey](
+      mptStore <- MptStore.make[IO, GlobalStateKey](
         mptProducer,
         GlobalStateKey.toHex[IO]
       )

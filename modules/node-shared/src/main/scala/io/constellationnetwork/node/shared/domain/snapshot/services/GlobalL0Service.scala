@@ -14,7 +14,7 @@ import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
-import io.constellationnetwork.merkletree.StateProofValidator
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
 import io.constellationnetwork.node.shared.domain.snapshot.Validator.isNextSnapshot
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
@@ -26,6 +26,7 @@ import io.constellationnetwork.schema.peer.{L0Peer, PeerId}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.validator.StateProofValidator
 
 import eu.timepit.refined.auto.autoUnwrap
 import eu.timepit.refined.types.numeric.PosLong
@@ -48,7 +49,7 @@ object GlobalL0Service {
   case object NoPeerAlignedWithMajority extends Exception("No peer available that is aligned with majority") with NoStackTrace
 
   def make[
-    F[_]: Async: Parallel: SecurityProvider: HasherSelector
+    F[_]: Async: Parallel: SecurityProvider: HasherSelector: JsonSerializer
   ](
     l0GlobalSnapshotClient: L0GlobalSnapshotClient[F],
     globalL0ClusterStorage: L0ClusterStorage[F],

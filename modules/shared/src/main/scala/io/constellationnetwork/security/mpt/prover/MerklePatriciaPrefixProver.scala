@@ -1,6 +1,7 @@
 package io.constellationnetwork.security.mpt.prover
 
 import cats.effect.Sync
+import cats.effect.kernel.Async
 import cats.syntax.all._
 
 import io.constellationnetwork.security.Hasher
@@ -16,7 +17,7 @@ trait MerklePatriciaPrefixProver[F[_]] {
 object MerklePatriciaPrefixProver {
   def apply[F[_]](implicit prover: MerklePatriciaPrefixProver[F]): MerklePatriciaPrefixProver[F] = prover
 
-  def make[F[_]: Sync: Hasher](
+  def make[F[_]: Async: Hasher](
     trie: MerklePatriciaTrie
   ): MerklePatriciaPrefixProver[F] =
     new MerklePatriciaPrefixProver[F] {

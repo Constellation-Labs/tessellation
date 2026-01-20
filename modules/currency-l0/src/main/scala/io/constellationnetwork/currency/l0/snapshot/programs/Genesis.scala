@@ -12,6 +12,7 @@ import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOut
 import io.constellationnetwork.currency.l0.snapshot.services.StateChannelSnapshotService
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.crypto._
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
 import io.constellationnetwork.node.shared.domain.genesis.{GenesisFS => GenesisLoader}
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
@@ -50,7 +51,7 @@ trait Genesis[F[_]] {
 }
 
 object Genesis {
-  def make[F[_]: Async: Parallel: SecurityProvider](
+  def make[F[_]: Async: Parallel: SecurityProvider: JsonSerializer](
     keyPair: KeyPair,
     collateral: Collateral[F],
     stateChannelSnapshotService: StateChannelSnapshotService[F],

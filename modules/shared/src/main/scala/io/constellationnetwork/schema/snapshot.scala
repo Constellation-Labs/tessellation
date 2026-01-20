@@ -7,6 +7,7 @@ import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.delegatedStake.DelegatedStakeRecord
@@ -59,11 +60,11 @@ object snapshot {
     val lastTxRefs: SortedMap[Address, TransactionReference]
     val balances: SortedMap[Address, Balance]
 
-    def stateProof[F[_]: Parallel: Async: Hasher](ordinal: SnapshotOrdinal)(
+    def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](ordinal: SnapshotOrdinal)(
       implicit stateProofSelector: StateProofSelector
     ): F[P]
 
-    def stateProof[F[_]: Parallel: Async: Hasher](
+    def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](
       statefulMPTProducer: StatefulMerklePatriciaProducer[F],
       ordinal: SnapshotOrdinal
     )(

@@ -8,7 +8,7 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
-import io.constellationnetwork.merkletree.StateProofValidator
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceManager
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
@@ -29,6 +29,7 @@ import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.SignatureProof
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelValidationType}
+import io.constellationnetwork.validator.StateProofValidator
 
 import derevo.cats.{eqv, show}
 import derevo.derive
@@ -38,7 +39,7 @@ abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunct
 
 object GlobalSnapshotContextFunctions {
 
-  def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider](
+  def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider: JsonSerializer](
     snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     updateDelegatedStakeAcceptanceManager: UpdateDelegatedStakeAcceptanceManager[F],
     withdrawalTimeLimit: EpochProgress,

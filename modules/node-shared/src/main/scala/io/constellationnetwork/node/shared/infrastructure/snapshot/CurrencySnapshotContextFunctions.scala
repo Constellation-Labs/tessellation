@@ -8,13 +8,13 @@ import cats.syntax.all._
 import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotContext}
-import io.constellationnetwork.merkletree.StateProofValidator
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.schema._
-import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher}
+import io.constellationnetwork.validator.StateProofValidator
 
 import derevo.cats.{eqv, show}
 import derevo.derive
@@ -24,7 +24,7 @@ abstract class CurrencySnapshotContextFunctions[F[_]]
     extends SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext]
 
 object CurrencySnapshotContextFunctions {
-  def make[F[_]: Async: Parallel](validator: CurrencySnapshotValidator[F], mptStore: MptStore[F, GlobalStateKey])(
+  def make[F[_]: Async: Parallel: JsonSerializer](validator: CurrencySnapshotValidator[F])(
     implicit currencyStateProofSelector: CurrencyStateProofSelector
   ) =
     new CurrencySnapshotContextFunctions[F] {
@@ -44,7 +44,7 @@ object CurrencySnapshotContextFunctions {
           case Validated.Valid((_, validatedContext)) => validatedContext.pure[F]
           case Validated.Invalid(e)                   => CannotCreateContext(e).raiseError[F, CurrencySnapshotContext]
         }
-        _ <- StateProofValidator.validate(signedArtifact, validatedContext.snapshotInfo, mptStore).flatMap {
+        _ <- StateProofValidator.validate(signedArtifact, validatedContext.snapshotInfo).flatMap {
           case Validated.Valid(_)   => Async[F].unit
           case Validated.Invalid(e) => e.raiseError[F, Unit]
         }

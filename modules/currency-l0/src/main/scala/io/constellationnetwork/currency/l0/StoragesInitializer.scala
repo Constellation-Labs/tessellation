@@ -8,6 +8,7 @@ import scala.concurrent.duration._
 
 import io.constellationnetwork.currency.l0.modules.{Services, Storages}
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.modules.SharedStorages
@@ -35,7 +36,7 @@ object StoragesInitializer {
   }
 
   def initializeGlobalSnapshotStorages[
-    F[_]: Async: Logger: Parallel: Hasher,
+    F[_]: Async: Logger: Parallel: Hasher: JsonSerializer,
     R <: CliMethod
   ](
     services: Services[F, R],

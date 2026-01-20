@@ -181,7 +181,6 @@ object GlobalStateProofPatternsSuite extends MutableIOSuite with Checkers {
           endPath = sortedKeys(14)
 
           proof <- prover.attestRange(startPath, endPath).flatMap(IO.fromEither)
-
           verifier = MerklePatriciaRangeVerifier.make[IO](trie.rootNode.digest)
           result <- verifier.confirmRange(proof)
         } yield

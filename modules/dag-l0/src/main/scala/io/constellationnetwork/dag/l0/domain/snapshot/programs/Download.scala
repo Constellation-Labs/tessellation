@@ -13,8 +13,8 @@ import io.constellationnetwork.dag.l0.http.p2p.P2PClient
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.{GlobalSnapshotConsensus, GlobalSnapshotContext}
 import io.constellationnetwork.ext.cats.kernel.PartialPrevious
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
@@ -32,6 +32,7 @@ import io.constellationnetwork.schema.snapshot.SnapshotMetadata
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.validator.StateProofValidator
 
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -42,7 +43,7 @@ import retry._
 import retry.implicits.retrySyntaxError
 
 object Download {
-  def make[F[_]: Async: Parallel: Random: KryoSerializer](
+  def make[F[_]: Async: Parallel: Random: KryoSerializer: JsonSerializer](
     snapshotStorage: SnapshotDownloadStorage[F],
     p2pClient: P2PClient[F],
     clusterStorage: ClusterStorage[F],
@@ -121,7 +122,6 @@ object Download {
         .flatMap { result =>
           val ((snapshot, context), observationLimit) = result
           for {
-            kvPairs <- hasherSelector.withCurrent(implicit h => context.allStateEntries[F])
             _ <- consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context)
           } yield ()
         }
@@ -177,7 +177,6 @@ object Download {
             } else {
               for {
                 (snapshot, context) <- download(metadata.hash, metadata.ordinal, result)
-                kvPairs <- hasherSelector.withCurrent(implicit h => context.allStateEntries[F])
                 nextResult <- downloadLoop(snapshot.ordinal, (snapshot, context).some)
               } yield nextResult
             }
@@ -372,8 +371,19 @@ object Download {
               case None => InvalidChain.raiseError[F, Agg]
             }
 
-        persistLastSnapshot >>
-          processNextOrFinish
+        def performInitialSync: F[Unit] =
+          for {
+            _ <- logger.info("Performing initial sync of MPT")
+            kvPairs <- hasherSelector.withCurrent(implicit h => context.allStateEntries[F])
+            _ <- mptStore.syncFull(kvPairs, lastSnapshot.ordinal)
+          } yield ()
+
+        for {
+          mptEntries <- mptStore.underlying.entries
+          _ <- performInitialSync.whenA(mptEntries.isEmpty)
+          _ <- persistLastSnapshot
+          result <- processNextOrFinish
+        } yield result
       }
 
       state

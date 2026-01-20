@@ -9,15 +9,17 @@ import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.dag.l0.StoragesInitializer.initializeStorages
 import io.constellationnetwork.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
-import io.constellationnetwork.merkletree.StateProofValidator
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.validator.StateProofValidator
 
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -28,7 +30,7 @@ trait GlobalSnapshotTraverse[F[_]] {
 
 object GlobalSnapshotTraverse {
 
-  def make[F[_]: Async: Parallel: HasherSelector](
+  def make[F[_]: Async: Parallel: HasherSelector: JsonSerializer](
     loadInc: Hash => F[Option[Signed[GlobalIncrementalSnapshot]]],
     loadFull: Hash => F[Option[Signed[GlobalSnapshot]]],
     loadInfo: SnapshotOrdinal => F[Option[GlobalSnapshotInfo]],
@@ -110,8 +112,16 @@ object GlobalSnapshotTraverse {
 
           firstInfoCalculatedProof <- HasherSelector[F].withCurrent { implicit hasher =>
             hasher.getLogic(firstInc.ordinal) match {
-              case KryoHash => GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(firstInfo).stateProof(mptStore.underlying, firstInc.ordinal)
-              case JsonHash => firstInfo.stateProof(mptStore.underlying, firstInc.ordinal)
+              case KryoHash =>
+                GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(firstInfo).stateProof(firstInc.ordinal)
+              case JsonHash =>
+                mptStore.underlying.entries.flatMap { entries =>
+                  val syncIfNeeded =
+                    if (entries.isEmpty) firstInfo.allStateEntries[F].flatMap(mptStore.syncFull(_, firstInc.ordinal))
+                    else Async[F].unit
+
+                  syncIfNeeded >> firstInfo.stateProof(mptStore.underlying, firstInc.ordinal)
+                }
             }
           }
 

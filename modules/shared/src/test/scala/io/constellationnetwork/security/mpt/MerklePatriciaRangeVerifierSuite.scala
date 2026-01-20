@@ -19,21 +19,25 @@ import weaver.{MutableIOSuite, SimpleIOSuite}
 
 object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
 
-  type Res = HasherSelector[IO]
+  type Res = (HasherSelector[IO], JsonSerializer[IO])
 
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { implicit kryo =>
       JsonSerializer.forAsync[IO].asResource.map { implicit json =>
-        HasherSelector.forSync[IO](
-          Hasher.forJson[IO],
-          Hasher.forKryo[IO],
-          hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
+        (
+          HasherSelector.forSync[IO](
+            Hasher.forJson[IO],
+            Hasher.forKryo[IO],
+            hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
+          ),
+          json
         )
       }
     }
 
   test("valid range proof with entries verifies successfully") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       val start = "3000"
       val end = "7000"
 
@@ -54,7 +58,8 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
   }
 
   test("empty range with boundaries verifies gap is proven") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       val start = "5000"
       val end = "5500"
 
@@ -80,7 +85,8 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
   }
 
   test("boundary validation enforces constraints") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       val start = "5000"
       val end = "7000"
 
@@ -101,7 +107,8 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
   }
 
   test("missing left boundary when start is at minimum") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- List("2000", "3000", "4000", "5000").traverse { key =>
           val paddedKey = Hex(key.padTo(64, '0'))
@@ -124,7 +131,8 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
   }
 
   test("missing right boundary when end is at maximum") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- List("2000", "3000", "4000", "5000").traverse { key =>
           val paddedKey = Hex(key.padTo(64, '0'))
@@ -147,7 +155,8 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
   }
 
   test("unsorted paths fail verification") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       val start = "3000"
       val end = "7000"
 
@@ -171,7 +180,8 @@ object MerklePatriciaRangeVerifierSuite extends MutableIOSuite {
   }
 
   test("paths outside range fail verification") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       val start = "5000"
       val end = "7000"
 

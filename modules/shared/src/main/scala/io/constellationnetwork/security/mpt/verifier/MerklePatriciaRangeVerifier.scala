@@ -1,6 +1,7 @@
 package io.constellationnetwork.security.mpt.verifier
 
 import cats.effect.Sync
+import cats.effect.kernel.Async
 import cats.syntax.all._
 
 import io.constellationnetwork.security.Hasher
@@ -17,7 +18,7 @@ trait MerklePatriciaRangeVerifier[F[_]] {
 object MerklePatriciaRangeVerifier {
   def apply[F[_]](implicit verifier: MerklePatriciaRangeVerifier[F]): MerklePatriciaRangeVerifier[F] = verifier
 
-  def make[F[_]: Sync: Hasher](root: Hash): MerklePatriciaRangeVerifier[F] =
+  def make[F[_]: Async: Hasher](root: Hash): MerklePatriciaRangeVerifier[F] =
     new MerklePatriciaRangeVerifier[F] {
 
       def confirmRange(proof: MerklePatriciaRangeProof): F[Either[MerklePatriciaVerificationError, Unit]] = {
