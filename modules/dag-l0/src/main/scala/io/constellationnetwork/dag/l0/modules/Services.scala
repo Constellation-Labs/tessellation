@@ -33,7 +33,7 @@ import io.constellationnetwork.node.shared.infrastructure.delegatedStake.{Reward
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
-import io.constellationnetwork.node.shared.logger.DatabaseLogger
+import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages, SharedValidators}
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.PeerId
@@ -62,7 +62,7 @@ object Services {
     keyPair: KeyPair,
     cfg: AppConfig,
     txHasher: Hasher[F],
-    dbLogger: DatabaseLogger[F]
+    loggerBundle: LoggerBundle[F]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): F[Services[F, R]] =
@@ -122,8 +122,8 @@ object Services {
             sharedStorages.lastNGlobalSnapshot,
             sharedStorages.lastGlobalSnapshot,
             storages.globalSnapshot.getHashed,
-            dbLogger,
-            sharedStorages.mptStore
+            sharedStorages.mptStore,
+            loggerBundle
           )
       }
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](cfg.shared.addresses, storages.globalSnapshot)
