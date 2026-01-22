@@ -5,60 +5,79 @@
 ![Dynamic JSON Badge](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fl0-lb-integrationnet.constellationnetwork.io%2Fnode%2Finfo&query=%24.version&label=IntegrationNet)
 ![Dynamic JSON Badge](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fl0-lb-mainnet.constellationnetwork.io%2Fnode%2Finfo&query=%24.version&label=MainNet)
 
-The Constellation Network Node Software, written in Scala, ready for Kubernetes Deployment.
+Constellation Network Node Software - a DAG-based distributed ledger with Layer 0 (L0) and Layer 1 (L1) validators.
 
-## Documentation
+## Overview
 
-Thorough resources are available on the [documentation site](https://docs.constellationnetwork.io).
+Tessellation implements a hierarchical DAG consensus where L1 metagraphs create blocks that L0 aggregates into global snapshots. This architecture enables scalable, parallel processing of transactions across multiple metagraphs while maintaining a unified global state.
 
-The [Constellation Network Primer](https://docs.constellationnetwork.io/learn) provides an overview of the Constellation Network.
+Written in Scala 2.13.
 
-## Dev Setup / Contributing
+## Tech Stack
 
-* [Dev System Setup](SETUP.md)
-* [Contributing Instructions and Guidelines](CONTRIBUTING.md)
+- **Scala 2.13.18** with **Java 21**
+- **Cats-Effect 3** - Async/IO
+- **FS2** - Streaming
+- **HTTP4s** (Ember) - HTTP server/client
+- **Circe** - JSON serialization
+- **Weaver** - Testing framework
 
 ## Quick Start
 
-Run node-clusters from source-code, using a local kubernetes.
-
 ### Prerequisites
 
-1. [sbt](https://www.scala-sbt.org/)
-2. [Docker Desktop](https://www.docker.com/get-started/) with [Kubernetes](https://docs.docker.com/desktop/kubernetes/) enabled
-3. [Skaffold CLI](https://skaffold.dev/docs/install/#standalone-binary)
+- Java 21
+- SBT
+- Docker
 
-### Starting clusters
+### Development with Docker (Recommended)
 
-```
-# within tesselation root
-skaffold dev --trigger=manual
-```
-
-This will start both L0 and L1 clusters on kubernetes using current kube-context.
-
-Initial validators for L0 and L1 have their public ports mapped to local ports 9000 and 9010 respectively.
-
-```
-curl localhost:9000/cluster/info
-curl localhost:9010/cluster/info
+```bash
+just test              # Full test suite
+just test --skip-assembly  # Skip compilation, reuse JARs
+just up                # Start environment
+just down              # Stop environment
+just check             # Lint + tests (CI equivalent)
 ```
 
-This will return a list of validators on L0 and L1. By default, both L0 and L1 clusters starts with 3 validators 
-(1 initial and 2 regular).
+### SBT Commands
 
-### Scaling a cluster
+```bash
+sbt compile            # Compile
+sbt test               # Run tests
+sbt runLinter          # Format code (scalafmt + scalafix)
+sbt dagL0/assembly     # Build L0 JAR
+sbt dagL1/assembly     # Build L1 JAR
+```
+
+## Project Structure
 
 ```
-kubectl scale deployment/l0-validator-deployment --replicas=9
+modules/
+├── shared        # Core data structures, crypto, serialization
+├── node-shared   # P2P networking, consensus, gossip
+├── dag-l0        # Layer 0 validator (global consensus)
+├── dag-l1        # Layer 1 validator (metagraph consensus)
+├── currency-l0   # Currency metagraph L0
+├── currency-l1   # Currency metagraph L1
+├── sdk           # SDK for metagraph development
+└── ...           # keytool, wallet, rosetta, tools
 ```
 
-This scales the L0 cluster to 10 validators total: 1 initial and 9 regular.
+For detailed architecture, see [docs/CODEBASE_MAP.md](docs/CODEBASE_MAP.md).
 
-### Going Deeper
+## Documentation
 
-The full [Validator Node Documentation](https://docs.constellationnetwork.io/validate/)
+- [Metagraph Development](https://docs.constellationnetwork.io/metagraph-development/)
+- [Network APIs](https://docs.constellationnetwork.io/network-apis/)
+- [Run a Validator Node](https://docs.constellationnetwork.io/run-a-node/)
+- [Full Documentation](https://docs.constellationnetwork.io)
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+Conventional commits required. Run `sbt runLinter` before committing.
 
 ## License
 
