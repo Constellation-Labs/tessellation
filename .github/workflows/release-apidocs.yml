@@ -6,10 +6,10 @@ on:
       - release/integrationnet
       - develop
     paths:
-      - 'doc/api/**'
+      - 'docs/api/**'
   pull_request:
     paths:
-      - 'doc/api/**'
+      - 'docs/api/**'
 
 name: Publish API docs
 
@@ -34,21 +34,21 @@ jobs:
         run: npm i -g @redocly/cli@1.0.0-beta.124
 
       - name: Bundle DAG api docs
-        working-directory: doc/api/dag/
+        working-directory: docs/api/dag/
         run: |
           redocly bundle l0/public.yml -o l0/public.yml
           redocly bundle l1/public.yml -o l1/public.yml
           redocly bundle cli/cli.yml -o cli/cli.yml
 
       - name: Bundle Currency api docs
-        working-directory: doc/api/currency/
+        working-directory: docs/api/currency/
         run: |
           redocly bundle l0/public.yml -o l0/public.yml
           redocly bundle l1/public.yml -o l1/public.yml
           redocly bundle cli/cli.yml -o cli/cli.yml
 
       - name: Bundle Data api docs
-        working-directory: doc/api/currency/
+        working-directory: docs/api/currency/
         run: |
           redocly bundle l1-data/public.yml -o l1-data/public.yml
 
@@ -56,32 +56,32 @@ jobs:
         uses: hashicorp/setup-terraform@v1
 
       - name: Terraform Format
-        working-directory: doc/api/terraform
+        working-directory: docs/api/terraform
         id: fmt
         run: terraform fmt -check
 
       - name: Terraform init
-        working-directory: doc/api/terraform
+        working-directory: docs/api/terraform
         id: init
         run: terraform init
 
       - name: Terraform workspace select
-        working-directory: doc/api/terraform
+        working-directory: docs/api/terraform
         id: workspace
         run: terraform workspace select ${{ (github.ref == 'refs/heads/release/mainnet' && 'mainnet') || (github.ref == 'refs/heads/release/integrationnnet' && 'integrationnet') || (github.ref == 'refs/heads/release/testnet' && 'testnet') || 'dev' }}
 
 
       - name: Terraform Validate
-        working-directory: doc/api/terraform
+        working-directory: docs/api/terraform
         id: validate
         run: terraform validate -no-color
 
       - name: Terraform Refresh
-        working-directory: doc/api/terraform
+        working-directory: docs/api/terraform
         run: terraform refresh -var="bucket=${{ env.AWS_BUCKET }}"
 
       - name: Terraform Plan
-        working-directory: doc/api/terraform
+        working-directory: docs/api/terraform
         id: plan
         if: github.event_name == 'pull_request'
         run: terraform plan -no-color -var="bucket=${{ env.AWS_BUCKET }}"
@@ -118,12 +118,12 @@ jobs:
             })
 
       - name: Terraform Plan Status
-        working-directory: doc/api/terraform
+        working-directory: docs/api/terraform
         if: steps.plan.outcome == 'failure'
         run: exit 1
 
       - name: Terraform Apply
-        working-directory: doc/api/terraform
+        working-directory: docs/api/terraform
         if: (github.ref == 'refs/heads/release/mainnet' || github.ref == 'refs/heads/release/integrationnet' || github.ref == 'refs/heads/release/testnet' || github.ref == 'refs/heads/develop' ) && github.event_name == 'push'
         run: terraform apply -auto-approve -var="bucket=${{ env.AWS_BUCKET }}"
 
