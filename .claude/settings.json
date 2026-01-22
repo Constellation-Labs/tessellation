@@ -1,0 +1,15 @@
+{
+  "enabledPlugins": {
+    "cartographer@cartographer-marketplace": true
+  },
+  "git": {
+    "_comment": "Git-related settings for commits and PRs",
+    "auto_stage": false,
+    "sign_commits": false,
+    "default_branch": "develop",
+    "commit_message_style": {
+      "include_co_author": false,
+      "include_generated_badge": false
+    }
+  }
+}

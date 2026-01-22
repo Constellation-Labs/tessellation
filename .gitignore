@@ -41,4 +41,4 @@ nodes/
 docker/jars/
 .github/code/
 .workspace/
-.claude/
+.claude/*.local.*
