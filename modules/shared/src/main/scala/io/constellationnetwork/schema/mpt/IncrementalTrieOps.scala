@@ -95,10 +95,14 @@ object IncrementalTrieOps {
     path: CompactNibblePath,
     depth: Int,
     dataDigest: Hash
-  ): F[MerklePatriciaNode] = {
-    val shared = ext.sharedPath
-    val keyRemaining = if (depth >= path.length) CompactNibblePath.empty else path.drop(depth)
-    val commonLen = shared.commonPrefixLength(keyRemaining)
+  ): F[MerklePatriciaNode] =
+    // Fixed-length keys should never be exhausted at an Extension node
+    if (depth >= path.length)
+      Async[F].raiseError(new IllegalStateException(s"Key exhausted at Extension node (depth=$depth, pathLen=${path.length})"))
+    else {
+      val shared = ext.sharedPath
+      val keyRemaining = path.drop(depth)
+      val commonLen = shared.commonPrefixLength(keyRemaining)
 
     if (commonLen == shared.length) {
       // Full match - recurse into child
@@ -194,8 +198,10 @@ object IncrementalTrieOps {
           else leafRemaining.drop(commonLen + 1)
         existingLeaf <- MerklePatriciaNode.Leaf.fromCompact[F](existingLeafRemaining, leaf.dataDigest)
 
-        existingNibble = if (commonLen < leafRemaining.length) leafRemaining.get(commonLen) else 0.toByte
-        newNibble = if (commonLen < keyRemaining.length) keyRemaining.get(commonLen) else 0.toByte
+        // Fixed-length keys guarantee both paths have a nibble at commonLen
+        // (if they were equal length and matched fully, line 176 would handle it)
+        existingNibble = leafRemaining.get(commonLen)
+        newNibble = keyRemaining.get(commonLen)
 
         branch <- MerklePatriciaNode.Branch.fromByteKeys(
           Map(
