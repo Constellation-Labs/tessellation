@@ -44,7 +44,7 @@ object GlobalSnapshotSchemaMigrationSuite extends MutableIOSuite with Checkers {
           balances = SortedMap(address -> Balance(100L))
         )
 
-        val current = GlobalSnapshotInfoV1.toGlobalSnapshotInfo(v1)
+        val current = v1.toGlobalSnapshotInfo
 
         IO.pure(
           expect.all(
@@ -85,92 +85,36 @@ object GlobalSnapshotSchemaMigrationSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("GlobalSnapshotInfoV3 converts to GlobalSnapshotInfo preserving all fields") { implicit res =>
-    forall(addressGen) { address =>
-      res.withCurrent { implicit hasher =>
-        val v3 = GlobalSnapshotInfoV3(
-          lastStateChannelSnapshotHashes = SortedMap(address -> Hash.empty),
-          lastTxRefs = SortedMap.empty[Address, TransactionReference],
-          balances = SortedMap(address -> Balance(300L)),
-          lastCurrencySnapshots = SortedMap.empty,
-          lastCurrencySnapshotsProofs = SortedMap.empty,
-          activeAllowSpends = Some(SortedMap.empty),
-          activeTokenLocks = Some(SortedMap.empty),
-          tokenLockBalances = Some(SortedMap.empty),
-          lastAllowSpendRefs = Some(SortedMap.empty),
-          lastTokenLockRefs = Some(SortedMap.empty),
-          updateNodeParameters = Some(SortedMap.empty),
-          activeDelegatedStakes = Some(SortedMap.empty),
-          delegatedStakesWithdrawals = Some(SortedMap.empty),
-          activeNodeCollaterals = Some(SortedMap.empty),
-          nodeCollateralWithdrawals = Some(SortedMap.empty),
-          priceState = Some(SortedMap.empty),
-          metagraphSyncData = Some(SortedMap.empty)
-        )
-
-        val current = v3.toGlobalSnapshotInfo
-
-        IO.pure(
-          expect.all(
-            current.lastStateChannelSnapshotHashes == v3.lastStateChannelSnapshotHashes,
-            current.balances == v3.balances,
-            current.activeAllowSpends == v3.activeAllowSpends,
-            current.activeDelegatedStakes == v3.activeDelegatedStakes
-          )
-        )
-      }
-    }
-  }
-
-  test("GlobalSnapshotStateProof toLegacyProof returns empty proof") { implicit res =>
+  test("GlobalStateProofSelector returns LegacyFormat for ordinal <= boundary") { implicit res =>
     res.withCurrent { implicit hasher =>
-      val current = GlobalSnapshotStateProof(
-        stateRoot = Hash("abc")
-      )
-
-      val legacy = current.toLegacyProof
+      val selector = GlobalStateProofSelector(SnapshotOrdinal.unsafeApply(10))
 
       IO.pure(
         expect.all(
-          legacy.lastStateChannelSnapshotHashesProof == Hash.empty,
-          legacy.lastTxRefsProof == Hash.empty,
-          legacy.balancesProof == Hash.empty,
-          legacy.lastCurrencySnapshotsProof.isEmpty
+          selector.select(SnapshotOrdinal.unsafeApply(5)) == LegacyFormat,
+          selector.select(SnapshotOrdinal.unsafeApply(10)) == LegacyFormat,
+          selector.select(SnapshotOrdinal.unsafeApply(11)) == MerklePatriciaFormat,
+          selector.select(SnapshotOrdinal.unsafeApply(100)) == MerklePatriciaFormat
         )
       )
     }
   }
 
-  test("GlobalSnapshotStateProof fromLegacyProof converts V2 to current") { implicit res =>
+  test("CurrencyStateProofSelector always returns LegacyFormat") { implicit res =>
     res.withCurrent { implicit hasher =>
-      val v2 = GlobalSnapshotStateProofV2(
-        lastStateChannelSnapshotHashesProof = Hash("abc"),
-        lastTxRefsProof = Hash("def"),
-        balancesProof = Hash("ghi"),
-        lastCurrencySnapshotsProof = None,
-        activeAllowSpends = None,
-        activeTokenLocks = None,
-        tokenLockBalances = None,
-        lastAllowSpendRefs = None,
-        lastTokenLockRefs = None,
-        updateNodeParameters = None,
-        activeDelegatedStakes = None,
-        delegatedStakesWithdrawals = None,
-        activeNodeCollaterals = None,
-        nodeCollateralWithdrawals = None,
-        priceState = None,
-        lastGlobalSnapshotsWithCurrency = None
-      )
-
-      val current = GlobalSnapshotStateProof.fromLegacyProof(v2)
+      val selector = CurrencyStateProofSelector.instance
 
       IO.pure(
-        expect(current.stateRoot == Hash.empty)
+        expect.all(
+          selector.select(SnapshotOrdinal.unsafeApply(0)) == LegacyFormat,
+          selector.select(SnapshotOrdinal.unsafeApply(100)) == LegacyFormat,
+          selector.select(SnapshotOrdinal.unsafeApply(Long.MaxValue)) == LegacyFormat
+        )
       )
     }
   }
 
-  test("stateProofFor with JsonHash produces MPT-based proof") { implicit res =>
+  test("GlobalSnapshotInfo.stateProof uses selector to choose format") { implicit res =>
     forall(addressGen) { address =>
       res.withCurrent { implicit hasher =>
         val info = GlobalSnapshotInfo(
@@ -193,42 +137,26 @@ object GlobalSnapshotSchemaMigrationSuite extends MutableIOSuite with Checkers {
           metagraphSyncData = Some(SortedMap.empty)
         )
 
-        val ordinal = SnapshotOrdinal.unsafeApply(1000000L)
-
-        info.stateProofFor[IO](JsonHash, ordinal).map { proof =>
-          expect(proof.stateRoot =!= Hash.empty)
+        // Test with legacy format (ordinal 5, boundary 10)
+        val legacyProof = {
+          implicit val legacySelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal.unsafeApply(10))
+          info.stateProof[IO](SnapshotOrdinal.unsafeApply(5))
         }
-      }
-    }
-  }
 
-  test("stateProofFor with KryoHash produces legacy proof converted to current") { implicit res =>
-    forall(addressGen) { address =>
-      res.withCurrent { implicit hasher =>
-        val info = GlobalSnapshotInfo(
-          lastStateChannelSnapshotHashes = SortedMap(address -> Hash.empty),
-          lastTxRefs = SortedMap.empty,
-          balances = SortedMap(address -> Balance(100L)),
-          lastCurrencySnapshots = SortedMap.empty,
-          lastCurrencySnapshotsProofs = SortedMap.empty,
-          activeAllowSpends = Some(SortedMap.empty),
-          activeTokenLocks = Some(SortedMap.empty),
-          tokenLockBalances = Some(SortedMap.empty),
-          lastAllowSpendRefs = Some(SortedMap.empty),
-          lastTokenLockRefs = Some(SortedMap.empty),
-          updateNodeParameters = Some(SortedMap.empty),
-          activeDelegatedStakes = Some(SortedMap.empty),
-          delegatedStakesWithdrawals = Some(SortedMap.empty),
-          activeNodeCollaterals = Some(SortedMap.empty),
-          nodeCollateralWithdrawals = Some(SortedMap.empty),
-          priceState = Some(SortedMap.empty),
-          metagraphSyncData = Some(SortedMap.empty)
-        )
+        // Test with MPT format (ordinal 15, boundary 10)
+        val mptProof = {
+          implicit val mptSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal.unsafeApply(10))
+          info.stateProof[IO](SnapshotOrdinal.unsafeApply(15))
+        }
 
-        val ordinal = SnapshotOrdinal.unsafeApply(100L)
-
-        info.stateProofFor[IO](KryoHash, ordinal).map { proof =>
-          expect(proof.stateRoot == Hash.empty)
+        (legacyProof, mptProof).tupled.map {
+          case (legacy, mpt) =>
+            expect.all(
+              legacy.mptRoot.isEmpty, // Legacy proof has no MPT root
+              legacy.balancesProof =!= Hash.empty, // Legacy proof has balance proof
+              mpt.mptRoot.isDefined, // MPT proof has MPT root
+              mpt.balancesProof == Hash.empty // MPT proof has empty legacy fields
+            )
         }
       }
     }

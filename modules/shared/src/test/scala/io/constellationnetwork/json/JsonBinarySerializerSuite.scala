@@ -60,7 +60,8 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
   private[json] def currencyIncrementalSnapshot[F[_]: Parallel: Async: Hasher](
     hash: Hash,
     currencySnapshotInfo: CurrencySnapshotInfo
-  ): F[Signed[CurrencyIncrementalSnapshot]] =
+  ): F[Signed[CurrencyIncrementalSnapshot]] = {
+    implicit val selector: CurrencyStateProofSelector = CurrencyStateProofSelector.instance
     currencySnapshotInfo.stateProof[F](SnapshotOrdinal(NonNegLong(56L))).map { sp =>
       Signed(
         CurrencyIncrementalSnapshot(
@@ -91,4 +92,5 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
         NonEmptySet.one(SignatureProof(ID.Id(Hex("")), Signature(Hex(""))))
       )
     }
+  }
 }

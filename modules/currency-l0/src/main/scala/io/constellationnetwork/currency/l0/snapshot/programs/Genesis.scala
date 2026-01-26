@@ -20,6 +20,7 @@ import io.constellationnetwork.node.shared.http.p2p.clients.StateChannelSnapshot
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
+import io.constellationnetwork.schema.CurrencyStateProofSelector
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.{L0Peer, PeerId}
 import io.constellationnetwork.security.hash.Hash
@@ -32,12 +33,14 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 trait Genesis[F[_]] {
   def acceptSignedGenesis(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesis: Signed[CurrencySnapshot])(
     implicit context: L0NodeContext[F],
-    hasher: Hasher[F]
+    hasher: Hasher[F],
+    currencyStateProofSelector: CurrencyStateProofSelector
   ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hash, Address)]
 
   def accept(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesisPath: Path)(
     implicit context: L0NodeContext[F],
-    hasher: Hasher[F]
+    hasher: Hasher[F],
+    currencyStateProofSelector: CurrencyStateProofSelector
   ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hash, Address)]
 
   def create(dataApplication: Option[BaseDataApplicationL0Service[F]])(
@@ -66,7 +69,8 @@ object Genesis {
       genesis: Signed[CurrencySnapshot]
     )(
       implicit context: L0NodeContext[F],
-      hasher: Hasher[F]
+      hasher: Hasher[F],
+      currencyStateProofSelector: CurrencyStateProofSelector
     ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hash, Address)] = for {
       hashedGenesis <- genesis.toHashed[F]
       firstIncrementalSnapshot <- CurrencySnapshot.mkFirstIncrementalSnapshot[F](hashedGenesis)
@@ -100,7 +104,8 @@ object Genesis {
 
     override def accept(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesisPath: Path)(
       implicit context: L0NodeContext[F],
-      hasher: Hasher[F]
+      hasher: Hasher[F],
+      currencyStateProofSelector: CurrencyStateProofSelector
     ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hash, Address)] = genesisLoader
       .loadSignedGenesis(genesisPath)
       .flatTap { genesis =>

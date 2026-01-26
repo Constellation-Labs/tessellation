@@ -42,10 +42,10 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.services.Addr
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages, SharedValidators}
 import io.constellationnetwork.node.shared.snapshot.currency._
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 
@@ -78,6 +78,9 @@ object Services {
     customPeersAllowanceList: Option[Set[AllowanceListEntry]],
     mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
     maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
+  )(
+    implicit globalStateProofSelector: GlobalStateProofSelector,
+    currencyStateProofSelector: CurrencyStateProofSelector
   ): F[Services[F, R]] =
     for {
       implicit0(hasher: Hasher[F]) <- hasherSelector.getCurrent.pure[F]

@@ -54,6 +54,8 @@ object GlobalL0Service {
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     singlePullLimit: Option[PosLong],
     maybeMajorityPeerIdSet: Option[NonEmptySet[PeerId]]
+  )(
+    implicit globalStateProofSelector: GlobalStateProofSelector
   ): GlobalL0Service[F] =
     new GlobalL0Service[F] {
 

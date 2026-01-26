@@ -11,6 +11,7 @@ import eu.timepit.refined.types.numeric._
 import eu.timepit.refined.types.string.NonEmptyString
 
 object types {
+
   case class AppConfigReader(
     trust: TrustConfig,
     snapshot: SnapshotConfig,

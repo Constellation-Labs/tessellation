@@ -80,57 +80,60 @@ object CurrencySnapshotAcceptanceManager {
     globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
-  ): F[CurrencySnapshotAcceptanceManager[F]] = for {
+  )(
+    implicit currencyStateProofSelector: CurrencyStateProofSelector
+  ): F[CurrencySnapshotAcceptanceManager[F]] =
+    for {
 
-    // Holds a cache of the most recent GlobalIncrementalSnapshots by their SnapshotOrdinal.
-    // Used to avoid redundant network calls and repeated deserialization of global snapshots
-    // when multiple currency snapshots are being processed concurrently or in sequence.
-    lastGlobalSnapshotsCached <- SignallingRef.of[F, Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]](Map.empty)
+      // Holds a cache of the most recent GlobalIncrementalSnapshots by their SnapshotOrdinal.
+      // Used to avoid redundant network calls and repeated deserialization of global snapshots
+      // when multiple currency snapshots are being processed concurrently or in sequence.
+      lastGlobalSnapshotsCached <- SignallingRef.of[F, Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]](Map.empty)
 
-    // Tracks which global snapshot ordinals have already been processed for each metagraph address.
-    // This avoids re-extracting global-layer artifacts such as SpendActions when multiple
-    // currency snapshots are produced before lastGlobalSnapshotInfo is updated.
-    // Not maintaining this state would result in applying the same actions multiple times,
-    // leading to inconsistencies like double deduction and snapshot diff mismatches.
-    globalSnapshotsAlreadyProcessed <- SignallingRef.of[F, Map[Address, Map[SnapshotOrdinal, List[SnapshotOrdinal]]]](Map.empty)
+      // Tracks which global snapshot ordinals have already been processed for each metagraph address.
+      // This avoids re-extracting global-layer artifacts such as SpendActions when multiple
+      // currency snapshots are produced before lastGlobalSnapshotInfo is updated.
+      // Not maintaining this state would result in applying the same actions multiple times,
+      // leading to inconsistencies like double deduction and snapshot diff mismatches.
+      globalSnapshotsAlreadyProcessed <- SignallingRef.of[F, Map[Address, Map[SnapshotOrdinal, List[SnapshotOrdinal]]]](Map.empty)
 
-    // Initialize operational components
-    blockOps = BlockAcceptanceOpsManager.make[F](
-      blockAcceptanceManager,
-      tokenLockBlockAcceptanceManager,
-      allowSpendBlockAcceptanceManager,
-      collateral
-    )
+      // Initialize operational components
+      blockOps = BlockAcceptanceOpsManager.make[F](
+        blockAcceptanceManager,
+        tokenLockBlockAcceptanceManager,
+        allowSpendBlockAcceptanceManager,
+        collateral
+      )
 
-    messageOps = MessageValidationOpsManager.make[F](
-      messageValidator,
-      globalSnapshotSyncValidator
-    )
+      messageOps = MessageValidationOpsManager.make[F](
+        messageValidator,
+        globalSnapshotSyncValidator
+      )
 
-    globalSnapshotOps = GlobalSnapshotOpsManager.make[F](
-      lastGlobalSnapshotsSyncConfig,
-      lastGlobalSnapshotsCached,
-      globalSnapshotsAlreadyProcessed
-    )
+      globalSnapshotOps = GlobalSnapshotOpsManager.make[F](
+        lastGlobalSnapshotsSyncConfig,
+        lastGlobalSnapshotsCached,
+        globalSnapshotsAlreadyProcessed
+      )
 
-    allowSpendOps = AllowSpendOpsManager.make[F]
-    tokenLockOps = TokenLockOpsManager.make[F]
-    balanceOps = BalanceOpsManager.make[F](feeTransactionValidator)
+      allowSpendOps = AllowSpendOpsManager.make[F]
+      tokenLockOps = TokenLockOpsManager.make[F]
+      balanceOps = BalanceOpsManager.make[F](feeTransactionValidator)
 
-  } yield
-    new CurrencySnapshotAcceptanceManagerImpl[F](
-      fieldsAddedOrdinals,
-      environment,
-      lastGlobalSnapshotsSyncConfig,
-      lastNGlobalSnapshotStorage,
-      lastGlobalSnapshotStorage,
-      blockOps,
-      messageOps,
-      globalSnapshotOps,
-      allowSpendOps,
-      tokenLockOps,
-      balanceOps
-    )
+    } yield
+      new CurrencySnapshotAcceptanceManagerImpl[F](
+        fieldsAddedOrdinals,
+        environment,
+        lastGlobalSnapshotsSyncConfig,
+        lastNGlobalSnapshotStorage,
+        lastGlobalSnapshotStorage,
+        blockOps,
+        messageOps,
+        globalSnapshotOps,
+        allowSpendOps,
+        tokenLockOps,
+        balanceOps
+      )
 }
 
 /** Main implementation with parallelized operations for improved performance
@@ -147,7 +150,8 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel](
   allowSpendOps: AllowSpendOpsManager[F],
   tokenLockOps: TokenLockOpsManager[F],
   balanceOps: BalanceOpsManager[F]
-) extends CurrencySnapshotAcceptanceManager[F] {
+)(implicit currencyStateProofSelector: CurrencyStateProofSelector)
+    extends CurrencySnapshotAcceptanceManager[F] {
 
   def accept(
     blocksForAcceptance: List[Signed[Block]],

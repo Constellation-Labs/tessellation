@@ -1,23 +1,24 @@
 package io.constellationnetwork.security.mpt.producer
 
+import cats.Parallel
 import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
+import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt.MerklePatriciaTrie
-import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer.TrieCache
+import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer.{ProducerState, TrieCache}
 import io.constellationnetwork.security.mpt.prover.MerklePatriciaSingleInclusionProver
-import io.constellationnetwork.security.mpt.verifier._
 
 import io.circe.syntax._
 import io.circe.{Encoder, Json}
 
-class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher](
-  stateRef: Ref[F, InMemoryMerklePatriciaProducer.ProducerState]
+class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher: Parallel](
+  stateRef: Ref[F, ProducerState]
 ) extends StatefulMerklePatriciaProducer[F] {
 
-  def getProver: F[MerklePatriciaSingleInclusionProver[F]] =
+  override def getProver: F[MerklePatriciaSingleInclusionProver[F]] =
     stateRef.get.flatMap { state =>
       state.currentTrie match {
         case Some(trie) =>
@@ -30,10 +31,10 @@ class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher](
       }
     }
 
-  def entries: F[Map[Hex, Json]] =
+  override def entries: F[Map[Hex, Json]] =
     stateRef.get.map(_.entries)
 
-  def build: F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
+  override def build: F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
     stateRef.get.flatMap { state =>
       if (state.entries.isEmpty) {
         OperationError("Cannot build trie with no entries").asLeft[MerklePatriciaTrie].pure[F].widen
@@ -62,22 +63,21 @@ class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher](
       }
     }
 
-  def insert[A: Encoder](data: Map[Hex, A]): F[Either[MerklePatriciaError, Unit]] =
+  override def insert[A: Encoder](data: Map[Hex, A]): F[Either[MerklePatriciaError, Unit]] =
     if (data.isEmpty) ().asRight[MerklePatriciaError].pure[F]
     else {
       stateRef.update { state =>
         val jsonEntries = data.map { case (k, v) => k -> v.asJson }
-        val newKeys = data.keySet
         state.copy(
           entries = state.entries ++ jsonEntries,
-          dirtyKeys = state.dirtyKeys ++ newKeys,
+          dirtyKeys = state.dirtyKeys ++ data.keySet,
           currentTrie = None
         )
       }
         .as(().asRight[MerklePatriciaError])
     }
 
-  def update[A: Encoder](key: Hex, value: A): F[Either[MerklePatriciaError, Unit]] =
+  override def update[A: Encoder](key: Hex, value: A): F[Either[MerklePatriciaError, Unit]] =
     stateRef.get.flatMap { state =>
       if (!state.entries.contains(key)) {
         OperationError(s"Key not found for update: $key").asLeft[Unit].pure[F].widen
@@ -93,28 +93,23 @@ class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher](
       }
     }
 
-  def remove(keys: List[Hex]): F[Either[MerklePatriciaError, Unit]] =
-    if (keys.isEmpty) {
-      ().asRight[MerklePatriciaError].pure[F]
-    } else {
-      stateRef.get.flatMap { state =>
+  override def remove(keys: List[Hex]): F[Either[MerklePatriciaError, Unit]] =
+    if (keys.isEmpty) ().asRight[MerklePatriciaError].pure[F]
+    else {
+      stateRef.update { state =>
         val existing = keys.filter(state.entries.contains)
-        if (existing.isEmpty) {
-          ().asRight[MerklePatriciaError].pure[F]
-        } else {
-          stateRef.update { s =>
-            s.copy(
-              entries = s.entries -- existing,
-              dirtyKeys = s.dirtyKeys ++ existing.toSet,
-              currentTrie = None
-            )
-          }
-            .as(().asRight[MerklePatriciaError])
-        }
+        if (existing.isEmpty) state
+        else
+          state.copy(
+            entries = state.entries -- existing,
+            dirtyKeys = state.dirtyKeys ++ existing.toSet,
+            currentTrie = None
+          )
       }
+        .as(().asRight[MerklePatriciaError])
     }
 
-  def clear: F[Unit] =
+  override def clear: F[Unit] =
     stateRef.update(
       _.copy(
         entries = Map.empty,
@@ -124,6 +119,13 @@ class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher](
         trieCache = None
       )
     )
+
+  override def buildHexMap(data: Map[GlobalStateKey, Json]): F[Map[Hex, Json]] =
+    data.toList.parTraverse {
+      case (key, value) =>
+        GlobalStateKey.toHex[F](key).map(_ -> value)
+    }
+      .map(_.toMap)
 }
 
 object InMemoryMerklePatriciaProducer {
@@ -142,11 +144,11 @@ object InMemoryMerklePatriciaProducer {
     maxDirtyKeys: Int = 100
   )
 
-  def make[F[_]: Async: Hasher](
+  def make[F[_]: Async: Hasher: Parallel](
     initial: Map[Hex, Json] = Map.empty
   ): F[InMemoryMerklePatriciaProducer[F]] =
-    for {
-      stateRef <- Ref.of[F, ProducerState](
+    Ref
+      .of[F, ProducerState](
         ProducerState(
           entries = initial,
           currentTrie = None,
@@ -155,5 +157,5 @@ object InMemoryMerklePatriciaProducer {
           trieCache = None
         )
       )
-    } yield new InMemoryMerklePatriciaProducer[F](stateRef)
+      .map(new InMemoryMerklePatriciaProducer[F](_))
 }

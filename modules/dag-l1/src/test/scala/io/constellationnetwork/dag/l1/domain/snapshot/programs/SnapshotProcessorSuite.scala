@@ -46,6 +46,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
   GlobalSnapshotStateChannelEventsProcessor
 }
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
+import io.constellationnetwork.node.shared.logger.NoDbLogger
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
 import io.constellationnetwork.schema._
@@ -53,6 +54,8 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.RewardFraction
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.swap.AllowSpendReference
@@ -61,6 +64,7 @@ import io.constellationnetwork.schema.transaction._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.{Hash, ProofsHash}
 import io.constellationnetwork.security.key.ops.PublicKeyOps
+import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.Signed.{ProofsHasher, SignedHasher, forAsyncHasher}
 import io.constellationnetwork.transaction.TransactionGenerator
@@ -69,6 +73,7 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
 import fs2.concurrent.SignallingRef
 import io.chrisdavenport.mapref.MapRef
+import io.circe.Json
 import org.scalacheck.Gen.Parameters
 import org.scalacheck.rng.Seed
 import weaver.SimpleIOSuite
@@ -94,7 +99,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
     GlobalSnapshotContextFunctions[IO],
     Ref[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]],
     Ref[IO, SortedMap[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]],
-    Hasher[IO]
+    Hasher[IO],
+    MptStore[IO, GlobalStateKey]
   )
 
   def testResources: Resource[IO, TestResources] =
@@ -164,33 +170,37 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 LastNGlobalSnapshotStorage.make[IO](lastGlobalSnapshotsSyncConfig, lastNSnapR, incLastNSnapR)
               lastGlobalSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
 
-              currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager
-                .make(
-                  FieldsAddedOrdinals(
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty
-                  ),
-                  Dev,
-                  LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
-                  BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
-                  TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
-                  AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
-                  Amount(0L),
-                  validators.currencyMessageValidator,
-                  validators.feeTransactionValidator,
-                  validators.globalSnapshotSyncValidator,
-                  lastNSnapshotStorage,
-                  lastGlobalSnapshotStorage
-                )
-                .asResource
+              currencySnapshotAcceptanceManager <- {
+                implicit val csps: CurrencyStateProofSelector = CurrencyStateProofSelector.instance
+
+                CurrencySnapshotAcceptanceManager
+                  .make(
+                    FieldsAddedOrdinals(
+                      Map.empty,
+                      Map.empty,
+                      Map.empty,
+                      Map.empty,
+                      Map.empty,
+                      Map.empty,
+                      Map.empty,
+                      Map.empty,
+                      Map.empty,
+                      Map.empty
+                    ),
+                    Dev,
+                    LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
+                    BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
+                    TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
+                    AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
+                    Amount(0L),
+                    validators.currencyMessageValidator,
+                    validators.feeTransactionValidator,
+                    validators.globalSnapshotSyncValidator,
+                    lastNSnapshotStorage,
+                    lastGlobalSnapshotStorage
+                  )
+                  .asResource
+              }
               implicit0(hs: HasherSelector[IO]) = HasherSelector.forSyncAlwaysCurrent(h)
               currencyEventsCutter = CurrencyEventsCutter.make[IO](None)
               validationErrorStorage <- CurrencySnapshotEventValidationErrorStorage.make(TestValidationErrorStorageMaxSize).asResource
@@ -206,7 +216,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               currencySnapshotValidator = CurrencySnapshotValidator
                 .make[IO](SnapshotOrdinal.MinValue, currencySnapshotCreator, validators.signedValidator, None, None)
 
-              currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
+              currencySnapshotContextFns = {
+                implicit val testCurrencyStateProofSelector: CurrencyStateProofSelector = CurrencyStateProofSelector.instance
+                CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
+              }
               globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L)).asResource
               feeCalculator = FeeCalculator.make(SortedMap.empty)
               updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
@@ -215,48 +228,62 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               updateNodeCollateralAcceptanceManager = UpdateNodeCollateralAcceptanceManager
                 .make(validators.updateNodeCollateralValidator)
               priceStateUpdater = PriceStateUpdater.make(Dev, DefaultDelegatedRewardsConfigProvider)
+              mptProducer <- InMemoryMerklePatriciaProducer.make[IO]().asResource
+              mptStore = MptStore.make[IO, GlobalStateKey](
+                mptProducer,
+                GlobalStateKey.toHex[IO]
+              )
+              dbLogger <- NoDbLogger.make[IO]
 
-              globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
-                FieldsAddedOrdinals(
-                  Map.empty,
-                  Map.empty,
-                  Map.empty,
-                  Map.empty,
-                  Map.empty,
-                  Map.empty,
-                  Map.empty,
-                  Map.empty,
-                  Map.empty,
-                  Map.empty
-                ),
-                MetagraphsSyncConfig(PosInt(100)),
-                Dev,
-                BlockAcceptanceManager.make[IO](validators.blockValidator, Hasher.forKryo[IO]),
-                AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
-                TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
-                GlobalSnapshotStateChannelEventsProcessor
-                  .make[IO](
-                    validators.stateChannelValidator,
-                    globalSnapshotStateChannelManager,
-                    currencySnapshotContextFns,
-                    feeCalculator
+              globalSnapshotAcceptanceManager = {
+                implicit val testGlobalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal.MinValue)
+                GlobalSnapshotAcceptanceManager.make(
+                  FieldsAddedOrdinals(
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty
                   ),
-                updateNodeParametersAcceptanceManager,
-                updateDelegatedStakeAcceptanceManager,
-                updateNodeCollateralAcceptanceManager,
-                validators.spendActionValidator,
-                validators.pricingUpdateValidator,
-                priceStateUpdater,
-                Amount(0L),
-                EpochProgress(NonNegLong(136080L))
-              )
-              globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(
-                globalSnapshotAcceptanceManager,
-                updateDelegatedStakeAcceptanceManager,
-                EpochProgress(NonNegLong.unsafeFrom(1L)),
-                SnapshotOrdinal.MinValue,
-                SnapshotOrdinal.MinValue
-              )
+                  MetagraphsSyncConfig(PosInt(100)),
+                  Dev,
+                  BlockAcceptanceManager.make[IO](validators.blockValidator, Hasher.forKryo[IO]),
+                  AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
+                  TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
+                  GlobalSnapshotStateChannelEventsProcessor
+                    .make[IO](
+                      validators.stateChannelValidator,
+                      globalSnapshotStateChannelManager,
+                      currencySnapshotContextFns,
+                      feeCalculator
+                    ),
+                  updateNodeParametersAcceptanceManager,
+                  updateDelegatedStakeAcceptanceManager,
+                  updateNodeCollateralAcceptanceManager,
+                  validators.spendActionValidator,
+                  validators.pricingUpdateValidator,
+                  priceStateUpdater,
+                  Amount(0L),
+                  EpochProgress(NonNegLong(136080L)),
+                  dbLogger,
+                  mptStore
+                )
+              }
+              globalSnapshotContextFns = {
+                implicit val testGlobalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal.MinValue)
+                GlobalSnapshotContextFunctions.make(
+                  globalSnapshotAcceptanceManager,
+                  updateDelegatedStakeAcceptanceManager,
+                  EpochProgress(NonNegLong.unsafeFrom(1L)),
+                  SnapshotOrdinal.MinValue,
+                  SnapshotOrdinal.MinValue
+                )
+              }
               snapshotProcessor = {
                 val addressStorage = new AddressStorage[IO] {
                   def getState: IO[Map[Address, Balance]] =
@@ -305,7 +332,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                     Hasher.forKryo[IO],
                     globalL0Service.pullGlobalSnapshot,
                     globalL0Service,
-                    globalL0AlignmentStorage
+                    globalL0AlignmentStorage,
+                    mptStore
                   )
               }
               keys <- (
@@ -338,7 +366,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 globalSnapshotContextFns,
                 lastNSnapR,
                 incLastNSnapR,
-                k
+                k,
+                mptStore
               )
           }
         }
@@ -386,7 +415,23 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       NonEmptyList.one(peerId),
       SnapshotTips(SortedSet.empty, SortedSet.empty),
       GlobalSnapshotStateProof(
-        emptySortedMapHash
+        lastStateChannelSnapshotHashesProof = emptySortedMapHash,
+        lastTxRefsProof = Hash.empty,
+        balancesProof = Hash.empty,
+        lastCurrencySnapshotsProof = None,
+        activeAllowSpends = None,
+        activeTokenLocks = None,
+        tokenLockBalances = None,
+        lastAllowSpendRefs = None,
+        lastTokenLockRefs = None,
+        updateNodeParameters = None,
+        activeDelegatedStakes = None,
+        delegatedStakesWithdrawals = None,
+        activeNodeCollaterals = None,
+        nodeCollateralWithdrawals = None,
+        priceState = None,
+        lastGlobalSnapshotsWithCurrency = None,
+        mptRoot = None
       ),
       Some(SortedSet.empty),
       Some(SortedSet.empty),
@@ -402,6 +447,26 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   def generateGlobalSnapshotInfo: GlobalSnapshotInfo = GlobalSnapshotInfo.empty
 
+  def mkGlobalSnapshotInfo(lastStateChannelSnapshotHashes: SortedMap[Address, Hash]) =
+    GlobalSnapshotInfo(
+      lastStateChannelSnapshotHashes,
+      SortedMap.empty,
+      SortedMap.empty,
+      SortedMap.empty,
+      SortedMap.empty,
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty)
+    )
   test("download should happen for the base no blocks case") {
     testResources.use {
       case (
@@ -422,11 +487,14 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             _,
             lastNSnapR,
             incLastNSnapR,
-            k
+            k,
+            _
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
         implicit val kryo = ks
+        implicit val globalStateProofSelector: GlobalStateProofSelector =
+          GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
 
         val parent1 = BlockReference(Height(4L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(5L), ProofsHash("parent2"))
@@ -551,11 +619,14 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             _,
             lastNSnapR,
             incLastNSnapR,
-            k
+            k,
+            _
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
         implicit val kryo = ks
+        implicit val globalStateProofSelector: GlobalStateProofSelector =
+          GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
 
         val parent1 = BlockReference(Height(8L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(2L), ProofsHash("parent2"))
@@ -735,11 +806,14 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             _,
             lastNSnapR,
             incLastNSnapR,
-            k
+            k,
+            _
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
         implicit val kryo = ks
+        implicit val globalStateProofSelector: GlobalStateProofSelector =
+          GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
 
         val parent1 = BlockReference(Height(8L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(2L), ProofsHash("parent2"))
@@ -918,10 +992,34 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("alignment at same height should happen when snapshot with new ordinal but known height is processed") {
     testResources.use {
-      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, balancesR, blocksR, lastSnapR, ts, _, lastNSnapsR, incLastNSnapR, k) =>
+      case (
+            snapshotProcessor,
+            sp,
+            h,
+            _,
+            _,
+            srcKey,
+            _,
+            _,
+            _,
+            peerId,
+            balancesR,
+            blocksR,
+            lastSnapR,
+            ts,
+            _,
+            lastNSnapsR,
+            incLastNSnapR,
+            k,
+            mptStore
+          ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
+        implicit val globalStateProofSelector: GlobalStateProofSelector =
+          GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
 
+        val address = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
+        val snapshotInfo = mkGlobalSnapshotInfo(SortedMap(address -> Hash("someHash")))
         for {
           hashedLastSnapshot <- forAsyncHasher(
             generateSnapshot(peerId),
@@ -936,8 +1034,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             ),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          _ <- lastSnapR.set((hashedLastSnapshot, GlobalSnapshotInfo.empty).some)
-          lastN = (hashedLastSnapshot, GlobalSnapshotInfo.empty).some
+          _ <- mptStore.syncFromGlobalSnapshotInfo(snapshotInfo, hashedLastSnapshot.ordinal)
+          _ <- lastSnapR.set((hashedLastSnapshot, snapshotInfo).some)
+          lastN = (hashedLastSnapshot, snapshotInfo).some
           incLastN = SortedMap(hashedLastSnapshot.ordinal -> hashedLastSnapshot)
           _ <- lastNSnapsR.set(lastN)
           _ <- incLastNSnapR.set(incLastN)
@@ -969,7 +1068,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               ),
               Map.empty,
               Map.empty,
-              Some((hashedNextSnapshot, GlobalSnapshotInfo.empty)),
+              Some((hashedNextSnapshot, snapshotInfo)),
               Map.empty
             )
           )
@@ -996,7 +1095,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             _,
             lastNSnapR,
             incLastNSnapR,
-            k
+            k,
+            _
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val kryo = ks
@@ -1090,6 +1190,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           )
           lastSnapshotStateProof <- {
             implicit val hasher = currentHasher
+            implicit val selector = GlobalStateProofSelector(SnapshotOrdinal.MinValue)
 
             lastSnapshotInfo.stateProof[IO](snapshotOrdinal10)
           }
@@ -1130,6 +1231,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           }
           newSnapshotInfoStateProof <- {
             implicit val hasher = currentHasher
+            implicit val selector = GlobalStateProofSelector(SnapshotOrdinal.MinValue)
 
             newSnapshotInfo.stateProof[IO](snapshotOrdinal11)
           }
@@ -1192,7 +1294,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
           processingResult <- {
             implicit val hasher = currentHasher
-
+            implicit val globalStateProofSelector: GlobalStateProofSelector =
+              GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
             snapshotProcessor.process(
               hashedNextSnapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]
             )
@@ -1279,7 +1382,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             _,
             lastNSnapR,
             incLastNSnapR,
-            k
+            k,
+            _
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
@@ -1377,7 +1481,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             Some(SortedMap.empty),
             Some(SortedMap.empty)
           )
-          lastSnapshotInfoStateProof <- lastSnapshotInfo.stateProof[IO](snapshotOrdinal10)
+          lastSnapshotInfoStateProof <- {
+            implicit val testGlobalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal.MinValue)
+            lastSnapshotInfo.stateProof[IO](snapshotOrdinal10)
+          }
           hashedLastSnapshot <- forAsyncHasher(
             generateSnapshot(peerId).copy(
               delegateRewards = None,
@@ -1409,7 +1516,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               balances = balances
             )
           }
-          newSnapshotInfoStateProof <- newSnapshotInfo.stateProof[IO](snapshotOrdinal11)
+          newSnapshotInfoStateProof <- {
+            implicit val testGlobalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal.MinValue)
+            newSnapshotInfo.stateProof[IO](snapshotOrdinal11)
+          }
           hashedNextSnapshot <- forAsyncHasher(
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal11,
@@ -1482,7 +1592,11 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             PostponedBlock(postponedAboveRangeNotRelatedBlock.signed).some
           )
 
-          processingResult <- snapshotProcessor.process(hashedNextSnapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
+          processingResult <- {
+            implicit val globalStateProofSelector: GlobalStateProofSelector =
+              GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
+            snapshotProcessor.process(hashedNextSnapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
+          }
 
           balancesAfter <- balancesR.get
           blocksAfter <- blocksR.toMap
@@ -1568,7 +1682,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("snapshot should be ignored when a snapshot pushed for processing is not a next one") {
     testResources.use {
-      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, _, _, lastSnapR, _, _, lastNSnapR, incLastNSnapR, k) =>
+      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, _, _, lastSnapR, _, _, lastNSnapR, incLastNSnapR, k, _) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
 
@@ -1586,10 +1700,14 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           _ <- lastNSnapR.set(lastN)
           incLastN = SortedMap(hashedLastSnapshot.ordinal -> hashedLastSnapshot)
           _ <- incLastNSnapR.set(incLastN)
-          processingResult <- snapshotProcessor
-            .process(hashedNextSnapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
-            .map(_.asRight[Throwable])
-            .handleErrorWith(e => IO.pure(e.asLeft[SnapshotProcessingResult]))
+          processingResult <- {
+            implicit val globalStateProofSelector: GlobalStateProofSelector =
+              GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
+            snapshotProcessor
+              .process(hashedNextSnapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
+              .map(_.asRight[Throwable])
+              .handleErrorWith(e => IO.pure(e.asLeft[SnapshotProcessingResult]))
+          }
           lastSnapshotAfter <- lastSnapR.get.map(_.get)
         } yield
           expect.same(
@@ -1608,12 +1726,14 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("error should be thrown when the tips get misaligned") {
     testResources.use {
-      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, _, blocksR, lastSnapR, _, _, lastNSnapR, incLastNSnapR, k) =>
+      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, _, blocksR, lastSnapR, _, _, lastNSnapR, incLastNSnapR, k, mptStore) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
 
         val parent1 = BlockReference(Height(8L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(9L), ProofsHash("parent2"))
+        val address = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
+        val snapshotInfo = mkGlobalSnapshotInfo(SortedMap(address -> Hash("someHash")))
 
         for {
           hashedLastSnapshot <- forAsyncHasher(
@@ -1637,25 +1757,34 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             ),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          _ <- lastSnapR.set((hashedLastSnapshot, GlobalSnapshotInfo.empty).some)
-          lastN = (hashedLastSnapshot, GlobalSnapshotInfo.empty).some
+          _ <- {
+            implicit val globalStateProofSelector: GlobalStateProofSelector =
+              GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
+            mptStore.syncFromGlobalSnapshotInfo(snapshotInfo, hashedLastSnapshot.ordinal)
+          }
+          _ <- lastSnapR.set((hashedLastSnapshot, snapshotInfo).some)
+          lastN = (hashedLastSnapshot, snapshotInfo).some
           _ <- lastNSnapR.set(lastN)
           incLastN = SortedMap(hashedLastSnapshot.ordinal -> hashedLastSnapshot)
           _ <- incLastNSnapR.set(incLastN)
           // Inserting tips
           _ <- blocksR(parent2.hash).set(MajorityBlock(parent2, 1L, Active).some)
 
-          processingResult <- snapshotProcessor
-            .process(hashedNextSnapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
-            .map(_.asRight[Throwable])
-            .handleErrorWith(e => IO.pure(e.asLeft[SnapshotProcessingResult]))
+          processingResult <- {
+            implicit val globalStateProofSelector: GlobalStateProofSelector =
+              GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
+            snapshotProcessor
+              .process(hashedNextSnapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
+              .map(_.asRight[Throwable])
+              .handleErrorWith(e => IO.pure(e.asLeft[SnapshotProcessingResult]))
+          }
           lastSnapshotAfter <- lastSnapR.get.map(_.get)
         } yield
           expect.same(
             (processingResult, lastSnapshotAfter),
             (
               Left(TipsGotMisaligned(Set(parent1.hash), Set.empty)),
-              (hashedLastSnapshot, GlobalSnapshotInfo.empty)
+              (hashedLastSnapshot, snapshotInfo)
             )
           )
     }

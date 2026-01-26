@@ -53,16 +53,19 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
   GlobalSnapshotAcceptanceManager,
   GlobalSnapshotStateChannelEventsProcessor
 }
-import io.constellationnetwork.schema._
+import io.constellationnetwork.node.shared.logger.NoDbLogger
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.RewardFraction
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.tokenLock.TokenLockBlock
+import io.constellationnetwork.schema.{GlobalStateProofSelector, _}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops.PublicKeyOps
+import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed.forAsyncHasher
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationErrorOr
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
@@ -71,12 +74,13 @@ import io.constellationnetwork.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
-import io.circe.Encoder
+import io.circe.{Encoder, Json}
 import org.scalacheck.Gen
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
 object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checkers {
+  implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
 
   type Res = (Supervisor[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO])
 
@@ -322,25 +326,46 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     val pricingUpdateValidator = PricingUpdateValidator.make[IO](None, NonNegLong(0))
     val priceStateUpdater = PriceStateUpdater.make(Dev, delegatedRewardsConfigProvider)
 
-    val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
-      GlobalSnapshotAcceptanceManager
-        .make[IO](
-          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
-          MetagraphsSyncConfig(PosInt(100)),
-          Dev,
-          bam,
-          asbam,
-          tlbam,
-          scProcessor,
-          updateNodeParametersAcceptanceManager,
-          updateDelegatedStakeAcceptanceManager,
-          updateNodeCollateralAcceptanceManager,
-          spendActionValidator,
-          pricingUpdateValidator,
-          priceStateUpdater,
-          collateral,
-          EpochProgress(NonNegLong(136080L))
+    val snapshotAcceptanceManagerF: F[GlobalSnapshotAcceptanceManager[IO]] =
+      InMemoryMerklePatriciaProducer.make[IO]().flatMap { mptProducer =>
+        val mptStore = MptStore.make[IO, GlobalStateKey](
+          mptProducer,
+          GlobalStateKey.toHex[IO]
         )
+        NoDbLogger.makeUnsafe[IO].map { dbLogger =>
+          GlobalSnapshotAcceptanceManager
+            .make[IO](
+              FieldsAddedOrdinals(
+                Map.empty,
+                Map.empty,
+                Map.empty,
+                Map.empty,
+                Map.empty,
+                Map.empty,
+                Map.empty,
+                Map.empty,
+                Map.empty,
+                Map.empty
+              ),
+              MetagraphsSyncConfig(PosInt(100)),
+              Dev,
+              bam,
+              asbam,
+              tlbam,
+              scProcessor,
+              updateNodeParametersAcceptanceManager,
+              updateDelegatedStakeAcceptanceManager,
+              updateNodeCollateralAcceptanceManager,
+              spendActionValidator,
+              pricingUpdateValidator,
+              priceStateUpdater,
+              collateral,
+              EpochProgress(NonNegLong(136080L)),
+              dbLogger,
+              mptStore
+            )
+        }
+      }
 
     val feeCalculator = new SnapshotBinaryFeeCalculator[IO] {
       override def calculateFee(
@@ -351,11 +376,17 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         event.value.snapshotBinary.value.fee.value.pure[IO]
     }
 
-    RewardsInfoStorage.make.map { rewardsInfoStorage =>
-      val rewardsInfoCalculator = RewardsInfoCalculator.make(delegatorRewards)
-      val rewardsService = RewardsService[IO](classicRewards, delegatorRewards, rewardsInfoCalculator, rewardsInfoStorage)
-
-      GlobalSnapshotConsensusFunctions
+    for {
+      mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      mptStore = MptStore.make[IO, GlobalStateKey](
+        mptProducer,
+        GlobalStateKey.toHex[IO]
+      )
+      rewardsInfoStorage <- RewardsInfoStorage.make
+      rewardsInfoCalculator = RewardsInfoCalculator.make(delegatorRewards)
+      rewardsService = RewardsService[IO](classicRewards, delegatorRewards, rewardsInfoCalculator, rewardsInfoStorage)
+      snapshotAcceptanceManager <- snapshotAcceptanceManagerF
+      globalSnapshotConsensusFunction = GlobalSnapshotConsensusFunctions
         .make[IO](
           snapshotAcceptanceManager,
           collateral,
@@ -367,7 +398,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
           SnapshotOrdinal.MinValue,
           SnapshotOrdinal.MinValue
         )
-    }
+    } yield globalSnapshotConsensusFunction
   }
 
   def getTestData(
@@ -400,7 +431,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       (artifact, _, _) <- gscf.createProposalArtifact(
         SnapshotOrdinal.MinValue,
         signedLastArtifact,
-        signedGenesis.value.info,
+        signedGenesis.value.info.toGlobalSnapshotInfo,
         h,
         EventTrigger,
         Set(scEvent),
@@ -409,7 +440,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       )
       result <- gscf.validateArtifact(
         signedLastArtifact,
-        signedGenesis.value.info,
+        signedGenesis.value.info.toGlobalSnapshotInfo,
         EventTrigger,
         artifact,
         facilitators,
@@ -431,7 +462,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       (artifact, _, _) <- gscf.createProposalArtifact(
         SnapshotOrdinal.MinValue,
         signedLastArtifact,
-        signedGenesis.value.info,
+        signedGenesis.value.info.toGlobalSnapshotInfo,
         h,
         EventTrigger,
         Set(scEvent),
@@ -440,7 +471,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       )
       result <- gscf.validateArtifact(
         signedLastArtifact,
-        signedGenesis.value.info,
+        signedGenesis.value.info.toGlobalSnapshotInfo,
         EventTrigger,
         artifact.copy(ordinal = artifact.ordinal.next),
         facilitators,

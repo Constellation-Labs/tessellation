@@ -43,6 +43,8 @@ object GlobalSnapshotContextFunctions {
     withdrawalTimeLimit: EpochProgress,
     tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
     setSumFixOrdinal: SnapshotOrdinal
+  )(
+    implicit globalStateProofSelector: GlobalStateProofSelector
   ) =
     new GlobalSnapshotContextFunctions[F] {
 
@@ -255,7 +257,7 @@ object GlobalSnapshotContextFunctions {
         hashedArtifact <- HasherSelector[F].withCurrent(implicit hasher => signedArtifact.toHashed)
 
         calculatedStateProof <- HasherSelector[F].withCurrent { implicit hasher =>
-          snapshotInfo.stateProofFor(hasher.getLogic(signedArtifact.ordinal), signedArtifact.ordinal)
+          snapshotInfo.stateProof(signedArtifact.ordinal)
         }
         validation <- StateProofValidator.validate(hashedArtifact, calculatedStateProof)
         _ = validation match {

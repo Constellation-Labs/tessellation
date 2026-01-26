@@ -33,10 +33,11 @@ import io.constellationnetwork.node.shared.infrastructure.delegatedStake.{Reward
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
+import io.constellationnetwork.node.shared.logger.DatabaseLogger
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages, SharedValidators}
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalStateProofSelector}
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
 import org.http4s.client.Client
@@ -60,7 +61,10 @@ object Services {
     selfId: PeerId,
     keyPair: KeyPair,
     cfg: AppConfig,
-    txHasher: Hasher[F]
+    txHasher: Hasher[F],
+    dbLogger: DatabaseLogger[F]
+  )(
+    implicit globalStateProofSelector: GlobalStateProofSelector
   ): F[Services[F, R]] =
     for {
       classicRewards <- Rewards
@@ -117,7 +121,9 @@ object Services {
             sharedServices.restart,
             sharedStorages.lastNGlobalSnapshot,
             sharedStorages.lastGlobalSnapshot,
-            storages.globalSnapshot.getHashed
+            storages.globalSnapshot.getHashed,
+            dbLogger,
+            sharedStorages.mptStore
           )
       }
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](cfg.shared.addresses, storages.globalSnapshot)

@@ -29,13 +29,13 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
 }
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.modules.SharedValidators
-import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.node.RewardFraction
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.{GlobalStateProofSelector, _}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
@@ -51,6 +51,8 @@ import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
 import fs2.concurrent.SignallingRef
 import weaver.MutableIOSuite
 object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
+  implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
+
   val TestValidationErrorStorageMaxSize: PosInt = PosInt(16)
 
   type Res = (KryoSerializer[IO], Hasher[IO], JsonSerializer[IO], SecurityProvider[IO])
@@ -67,6 +69,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
     failed: Option[(Address, StateChannelValidator.StateChannelValidationError)] = None
   )(implicit H: Hasher[IO], S: SecurityProvider[IO], J: JsonSerializer[IO], K: KryoSerializer[IO]) = {
     implicit val hs = HasherSelector.forSyncAlwaysCurrent(H)
+    implicit val csps = CurrencyStateProofSelector.instance
 
     for {
       _ <- IO.unit

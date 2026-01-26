@@ -92,7 +92,9 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
         programs.l0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
     }
 
-  def performGlobalSnapshotProcessingUntilCaughtUp(): F[Unit] = {
+  def performGlobalSnapshotProcessingUntilCaughtUp()(
+    implicit stateProofSelector: GlobalStateProofSelector
+  ): F[Unit] = {
     def loop(isFirstCall: Boolean): F[Unit] =
       performGlobalSnapshotProcessing().flatMap {
         case Left(_) if isFirstCall                => loop(isFirstCall = false)
@@ -103,8 +105,9 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
     loop(isFirstCall = true)
   }
 
-  def performGlobalSnapshotProcessing()
-    : F[Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]] = {
+  def performGlobalSnapshotProcessing()(
+    implicit stateProofSelector: StateProofSelector
+  ): F[Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]] = {
     def logSnapshots(
       snapshots: Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]
     ): F[Unit] = {
@@ -153,6 +156,8 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
 
   private def performSnapshotsBatchProcessing(
     snapshots: List[Hashed[GlobalIncrementalSnapshot]]
+  )(
+    implicit stateProofSelector: StateProofSelector
   ): F[List[SnapshotProcessingResult]] =
     (snapshots, List.empty[SnapshotProcessingResult]).tailRecM {
       case (snapshot :: nextSnapshots, aggResults) =>
@@ -200,7 +205,9 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
       Stream.eval(logger.error(e)("L0 peer discovery stream failed, restarting")) ++ l0PeerDiscovery
     }
 
-  private def globalSnapshotProcessing: Stream[F, Unit] = Stream
+  private def globalSnapshotProcessing(
+    implicit stateProofSelector: GlobalStateProofSelector
+  ): Stream[F, Unit] = Stream
     .awakeEvery(10.seconds)
     .evalMap { _ =>
       performGlobalSnapshotProcessing().void
@@ -209,7 +216,9 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
       Stream.eval(logger.error(e)("Global snapshot processing stream failed, restarting")) ++ globalSnapshotProcessing
     }
 
-  def runtime(): Stream[F, Unit] =
+  def runtime()(
+    implicit stateProofSelector: GlobalStateProofSelector
+  ): Stream[F, Unit] =
     Stream(l0PeerDiscovery, globalSnapshotProcessing, checkAlignment)
       .covary[F]
       .parJoinUnbounded

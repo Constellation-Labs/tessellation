@@ -14,7 +14,8 @@ import io.constellationnetwork.dag.l1.infrastructure.tokenlock.rumor.handler.tok
 import io.constellationnetwork.dag.l1.modules._
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.kryo._
-import io.constellationnetwork.node.shared.app.{NodeShared, TessellationIOApp, getMajorityPeerIds}
+import io.constellationnetwork.node.shared.app._
+import io.constellationnetwork.node.shared.app.{DagL1 => DagL1Layer}
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.DagL1
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
@@ -44,7 +45,8 @@ object Main
       "dag-l1",
       "DAG L1 node",
       ClusterId("17e78993-37ea-4539-a4f3-039068ea1e92"),
-      version = TessellationVersion.unsafeFrom(BuildInfo.version)
+      version = TessellationVersion.unsafeFrom(BuildInfo.version),
+      layer = DagL1Layer
     ) {
 
   val opts: Opts[Run] = cli.method.opts(DagL1)
@@ -105,7 +107,8 @@ object Main
         p2pClient,
         cfg,
         maybeMajorityPeerIds,
-        Hasher.forKryo[IO]
+        Hasher.forKryo[IO],
+        sharedStorages
       )
 
       snapshotProcessor = DAGSnapshotProcessor.make(
@@ -120,7 +123,8 @@ object Main
         Hasher.forKryo[IO],
         services.globalL0.pullGlobalSnapshot,
         services.globalL0,
-        storages.globalL0Alignment
+        storages.globalL0Alignment,
+        sharedStorages.mptStore
       )
       programs = Programs.make(sharedPrograms, p2pClient, storages, snapshotProcessor)
 

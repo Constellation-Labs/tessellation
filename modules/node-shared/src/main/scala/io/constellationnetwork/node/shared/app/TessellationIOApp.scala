@@ -29,9 +29,11 @@ import io.constellationnetwork.node.shared.infrastructure.logs.LoggerConfigurato
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.seedlist.{Loader => SeedlistLoader}
 import io.constellationnetwork.node.shared.infrastructure.trust.TrustRatingCsvLoader
+import io.constellationnetwork.node.shared.logger.clickhouse.ClickHouseLogger
+import io.constellationnetwork.node.shared.logger.{DatabaseLogger, NoDbLogger}
 import io.constellationnetwork.node.shared.modules._
 import io.constellationnetwork.node.shared.resources.SharedResources
-import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.{Address, DAGAddressRefined}
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.generation.Generation
@@ -59,6 +61,7 @@ abstract class TessellationIOApp[A <: CliMethod](
   name: String,
   header: String,
   clusterId: ClusterId,
+  layer: Layer,
   helpFlag: Boolean = true,
   version: TessellationVersion = TessellationVersion.unsafeFrom("0.0.1"),
   metagraphVersion: MetagraphVersion = MetagraphVersion.unsafeFrom("0.0.1")
@@ -111,6 +114,12 @@ abstract class TessellationIOApp[A <: CliMethod](
           def select(ordinal: SnapshotOrdinal): HashLogic =
             if (ordinal <= cfg.lastKryoHashOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.MinValue)) KryoHash else JsonHash
         }
+
+        implicit val _globalStateProofSelector: GlobalStateProofSelector =
+          GlobalStateProofSelector(cfg.lastLegacyStateProofOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.unsafeApply(Long.MaxValue)))
+
+        implicit val _currencyStateProofSelector: CurrencyStateProofSelector =
+          CurrencyStateProofSelector.instance
 
         Random.scalaUtilRandom[IO].flatMap { implicit _random =>
           SecurityProvider.forAsync[IO].use { implicit _securityProvider =>
@@ -190,6 +199,35 @@ abstract class TessellationIOApp[A <: CliMethod](
                                       session = Session.make[IO](storages.session, storages.node, storages.cluster)
                                       p2pClient = SharedP2PClient.make[IO](res.client, session, cfg)
                                       queues <- SharedQueues.make[IO].asResource
+
+                                      _databaseLogger <- {
+                                        val useClickHouse = layer == DagL0 || layer == DagL1
+
+                                        if (useClickHouse) {
+                                          ClickHouseLogger
+                                            .make[IO](selfId, cfg.environment, cfg.clickHouseConfig)
+                                            .recoverWith {
+                                              case ClickHouseLogger.NotConfigured =>
+                                                Resource.eval(logger.info("ClickHouse not configured. Using console logger.")) >>
+                                                  NoDbLogger.make[IO]
+                                              case ClickHouseLogger.ConfigError(e) =>
+                                                Resource.eval(
+                                                  logger.warn(s"ClickHouse config invalid: ${e.getMessage}. Using console logger.")
+                                                ) >>
+                                                  NoDbLogger.make[IO]
+                                              case ClickHouseLogger.ConnectionError(e) =>
+                                                Resource.eval(
+                                                  logger.warn(s"ClickHouse connection failed: ${e.getMessage}. Using console logger.")
+                                                ) >>
+                                                  NoDbLogger.make[IO]
+                                            }
+                                        } else {
+                                          NoDbLogger.make[IO]
+                                        }
+                                      }
+
+                                      _ <- _databaseLogger.createLogsTable().asResource
+
                                       validators = _hasherSelector.withCurrent { implicit hasher =>
                                         SharedValidators.make[IO](
                                           cfg.environment,
@@ -225,7 +263,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                                           cfg.environment,
                                           Hasher.forKryo[IO],
                                           maybeCustomAllowanceList,
-                                          tokenIdentifierOpt
+                                          tokenIdentifierOpt,
+                                          _databaseLogger
                                         )
                                         .asResource
 
@@ -254,6 +293,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                                         val metrics = _metrics
                                         val supervisor = _supervisor
                                         val hasherSelector = _hasherSelector
+                                        val globalStateProofSelector = _globalStateProofSelector
+                                        val currencyStateProofSelector = _currencyStateProofSelector
 
                                         val keyPair = _keyPair
                                         val seedlist = _seedlist
@@ -273,6 +314,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                                         val sharedValidators = validators
                                         val prioritySeedlist = _prioritySeedlist
                                         val customAllowanceList = maybeCustomAllowanceList
+
+                                        val databaseLogger = _databaseLogger
 
                                         def restartSignal = _restartSignal
 

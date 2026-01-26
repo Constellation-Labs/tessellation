@@ -24,6 +24,8 @@ import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.CombinedSnapshotCheckpointFileSystemStorage
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.Peer
 import io.constellationnetwork.schema.snapshot.SnapshotMetadata
@@ -33,6 +35,7 @@ import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
+import io.circe.Json
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry.RetryPolicies._
 import retry._
@@ -54,7 +57,10 @@ object Download {
       F,
       GlobalIncrementalSnapshot,
       GlobalSnapshotInfo
-    ]
+    ],
+    mptStore: MptStore[F, GlobalStateKey]
+  )(
+    implicit globalStateProofSelector: GlobalStateProofSelector
   ): Download[F, GlobalIncrementalSnapshot] = new Download[F, GlobalIncrementalSnapshot] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -115,6 +121,8 @@ object Download {
         .flatMap { result =>
           val ((snapshot, context), observationLimit) = result
           for {
+            kvPairs <- hasherSelector.withCurrent(implicit h => context.allStateEntries[F])
+            _ <- mptStore.syncFull(kvPairs, snapshot.ordinal)
             _ <- consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context)
           } yield ()
         }
@@ -341,15 +349,18 @@ object Download {
                       snapshotStorage
                         .hasCorrectSnapshotInfo(snapshot.ordinal, snapshot.stateProof)
                         .ifM(
-                          ifTrue = ().pure[F],
-                          ifFalse = (for {
-                            proof <- newContext.stateProofFor(Hasher[F].getLogic(snapshot.ordinal), snapshot.ordinal)
-                            hashed <- snapshot.toHashed
-                            result <- StateProofValidator.validate(hashed, proof).map(_.isValid)
-                          } yield result).ifM(
-                            ifTrue = snapshotStorage.persistSnapshotInfoWithCutoff(snapshot.ordinal, newContext),
-                            ifFalse = InvalidStateProof(snapshot.ordinal).raiseError[F, Unit]
-                          )
+                          ().pure[F],
+                          (Hasher[F].getLogic(snapshot.ordinal) match {
+                            case JsonHash => StateProofValidator.validate(snapshot, newContext).map(_.isValid)
+                            case KryoHash =>
+                              StateProofValidator
+                                .validate(snapshot, GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(newContext))
+                                .map(_.isValid)
+                          })
+                            .ifM(
+                              snapshotStorage.persistSnapshotInfoWithCutoff(snapshot.ordinal, newContext),
+                              InvalidStateProof(snapshot.ordinal).raiseError[F, Unit]
+                            )
                         )
                     }
                   )
@@ -406,7 +417,7 @@ object Download {
               case Some(snapshot) => (genesis.value, snapshot).pure[F]
               case None           => FirstIncrementalNotFound.raiseError[F, (GlobalSnapshot, Signed[GlobalIncrementalSnapshot])]
             }
-            .map { case (full, incremental) => (incremental, GlobalSnapshotInfoV1.toGlobalSnapshotInfo(full.info)) }
+            .map { case (full, incremental) => (incremental, full.info.toGlobalSnapshotInfo) }
         }
 
     def fetchSnapshot(hash: Option[Hash], ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Signed[GlobalIncrementalSnapshot]] =

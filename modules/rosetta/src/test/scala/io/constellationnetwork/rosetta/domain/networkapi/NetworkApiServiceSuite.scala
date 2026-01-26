@@ -20,7 +20,7 @@ import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.generators._
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.timestamp.SnapshotTimestamp
-import io.constellationnetwork.schema.{GlobalSnapshot, SnapshotOrdinal}
+import io.constellationnetwork.schema.{GlobalSnapshot, GlobalStateProofSelector, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
@@ -33,6 +33,8 @@ import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
 object NetworkApiServiceSuite extends MutableIOSuite with Checkers {
+  implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal.unsafeApply(Long.MaxValue))
+
   type Res = (SecurityProvider[IO], Hasher[IO])
 
   def sharedResource: Resource[IO, Res] = for {

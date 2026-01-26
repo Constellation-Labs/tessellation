@@ -38,6 +38,7 @@ import io.constellationnetwork.node.shared.domain.swap.block._
 import io.constellationnetwork.node.shared.domain.tokenlock.block._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{DelegateRewardsInput, DelegatedRewardsResult, RewardsInput}
+import io.constellationnetwork.node.shared.logger.{DatabaseLogger, NoDbLogger}
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -45,6 +46,7 @@ import io.constellationnetwork.schema.artifact.{PricingUpdate, SpendAction, Toke
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.peer.PeerId
@@ -55,12 +57,14 @@ import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops.PublicKeyOps
+import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedSetSyntax}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
+import io.circe.Json
 
 object Mocks {
 
@@ -248,26 +252,48 @@ object Mocks {
 
     // Create the manager with mock dependencies
     implicit val hasherSelector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(h)
+    implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(Long.MaxValue))
 
-    GlobalSnapshotAcceptanceManager
-      .make[IO](
-        FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
-        MetagraphsSyncConfig(PosInt(100)),
-        AppEnvironment.Dev,
-        blockAcceptanceManager = mockBlockAcceptanceManager,
-        allowSpendBlockAcceptanceManager = mockAllowSpendBlockAcceptanceManager,
-        tokenLockBlockAcceptanceManager = mockTokenLockBlockAcceptanceManager,
-        stateChannelEventsProcessor = mockStateChannelEventsProcessor,
-        updateNodeParametersAcceptanceManager = mockUpdateNodeParametersAcceptanceManager,
-        updateDelegatedStakeAcceptanceManager = updateDelegatedStakeAcceptanceManager,
-        updateNodeCollateralAcceptanceManager = mockUpdateNodeCollateralAcceptanceManager,
-        spendActionValidator = mockSpendActionValidator,
-        pricingUpdateValidator = mockPricingUpdateValidator,
-        priceStateUpdater = mockPriceStateUpdater,
-        collateral = Amount.empty,
-        withdrawalTimeLimit = EpochProgress(4L)
-      )
-      .pure[IO]
+    NoDbLogger.makeUnsafe[IO].flatMap { dbLogger =>
+      InMemoryMerklePatriciaProducer.make[IO]().flatMap { mptProducer =>
+        val mptStore = MptStore.make[IO, GlobalStateKey](
+          mptProducer,
+          GlobalStateKey.toHex[IO]
+        )
+        GlobalSnapshotAcceptanceManager
+          .make[IO](
+            FieldsAddedOrdinals(
+              Map.empty,
+              Map.empty,
+              Map.empty,
+              Map.empty,
+              Map.empty,
+              Map.empty,
+              Map.empty,
+              Map.empty,
+              Map.empty,
+              Map.empty
+            ),
+            MetagraphsSyncConfig(PosInt(100)),
+            AppEnvironment.Dev,
+            blockAcceptanceManager = mockBlockAcceptanceManager,
+            allowSpendBlockAcceptanceManager = mockAllowSpendBlockAcceptanceManager,
+            tokenLockBlockAcceptanceManager = mockTokenLockBlockAcceptanceManager,
+            stateChannelEventsProcessor = mockStateChannelEventsProcessor,
+            updateNodeParametersAcceptanceManager = mockUpdateNodeParametersAcceptanceManager,
+            updateDelegatedStakeAcceptanceManager = updateDelegatedStakeAcceptanceManager,
+            updateNodeCollateralAcceptanceManager = mockUpdateNodeCollateralAcceptanceManager,
+            spendActionValidator = mockSpendActionValidator,
+            pricingUpdateValidator = mockPricingUpdateValidator,
+            priceStateUpdater = mockPriceStateUpdater,
+            collateral = Amount.empty,
+            withdrawalTimeLimit = EpochProgress(4L),
+            dbLogger = dbLogger,
+            mptStore = mptStore
+          )
+          .pure[IO]
+      }
+    }
   }
 
   private[snapshot] def mkGlobalSnapshotInfo(

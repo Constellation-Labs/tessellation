@@ -11,7 +11,7 @@ import cats.syntax.all._
 import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.env.AppEnvironment
-import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
@@ -40,7 +40,8 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
   GlobalSnapshotStateChannelAcceptanceManager,
   GlobalSnapshotStateChannelEventsProcessor
 }
-import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.node.shared.logger.DatabaseLogger
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.generation.Generation
@@ -72,7 +73,11 @@ object SharedServices {
     environment: AppEnvironment,
     txHasher: Hasher[F],
     allowanceList: Option[Set[AllowanceListEntry]],
-    metagraphId: Option[Address]
+    metagraphId: Option[Address],
+    dbLogger: DatabaseLogger[F]
+  )(
+    implicit globalStateProofSelector: GlobalStateProofSelector,
+    currencyStateProofSelector: CurrencyStateProofSelector
   ): F[SharedServices[F, A]] =
     for {
       restartService <- RestartService.make(restartSignal, storages.cluster)
@@ -163,7 +168,9 @@ object SharedServices {
         validators.pricingUpdateValidator,
         priceStateUpdater,
         collateral.amount,
-        cfg.delegatedStaking.withdrawalTimeLimit.getOrElse(cfg.environment, EpochProgress.MinValue)
+        cfg.delegatedStaking.withdrawalTimeLimit.getOrElse(cfg.environment, EpochProgress.MinValue),
+        dbLogger,
+        storages.mptStore
       )
       globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(
         globalSnapshotAcceptanceManager,

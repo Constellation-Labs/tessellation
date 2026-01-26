@@ -48,15 +48,18 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
   GlobalSnapshotStateChannelAcceptanceManager,
   GlobalSnapshotStateChannelEventsProcessor
 }
+import io.constellationnetwork.node.shared.logger.DatabaseLogger
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedValidators}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security._
 
 import eu.timepit.refined.types.numeric.NonNegLong
+import io.circe.Json
 import org.http4s.client.Client
 
 /** Factory for creating the Global L0 consensus engine.
@@ -93,8 +96,10 @@ object GlobalSnapshotConsensus {
     restartService: RestartService[F, R],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
-  )(implicit supervisor: Supervisor[F]): F[GlobalSnapshotConsensus[F]] =
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    dbLogger: DatabaseLogger[F],
+    mptStore: MptStore[F, GlobalStateKey]
+  )(implicit supervisor: Supervisor[F], globalStateProofSelector: GlobalStateProofSelector): F[GlobalSnapshotConsensus[F]] =
     for {
       globalStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
         .make[F](stateChannelAllowanceLists, pullDelay = stateChannelPullDelay, purgeDelay = stateChannelPurgeDelay)
@@ -123,7 +128,9 @@ object GlobalSnapshotConsensus {
           sharedServices.priceStateUpdater,
           collateral,
           sharedCfg.delegatedStaking.withdrawalTimeLimit
-            .getOrElse(sharedCfg.environment, EpochProgress.MinValue)
+            .getOrElse(sharedCfg.environment, EpochProgress.MinValue),
+          dbLogger,
+          mptStore
         )
 
       consensusStorage <- ConsensusStorage.make[

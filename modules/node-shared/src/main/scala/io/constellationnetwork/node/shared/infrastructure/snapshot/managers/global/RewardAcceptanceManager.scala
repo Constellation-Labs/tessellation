@@ -10,7 +10,7 @@ trait RewardAcceptanceManager[F[_]] {
   def acceptRewardTxs(
     balances: SortedMap[Address, Balance],
     txs: SortedSet[RewardTransaction]
-  ): (SortedMap[Address, Balance], SortedSet[RewardTransaction])
+  ): (SortedMap[Address, Balance], SortedSet[RewardTransaction], SortedMap[Address, Balance])
 }
 
 object RewardAcceptanceManager {
@@ -20,14 +20,18 @@ object RewardAcceptanceManager {
     def acceptRewardTxs(
       balances: SortedMap[Address, Balance],
       txs: SortedSet[RewardTransaction]
-    ): (SortedMap[Address, Balance], SortedSet[RewardTransaction]) =
-      txs.foldLeft((balances, SortedSet.empty[RewardTransaction])) { (acc, tx) =>
-        val (updatedBalances, acceptedTxs) = acc
+    ): (SortedMap[Address, Balance], SortedSet[RewardTransaction], SortedMap[Address, Balance]) =
+      txs.foldLeft((balances, SortedSet.empty[RewardTransaction], SortedMap.empty[Address, Balance])) { (acc, tx) =>
+        val (updatedBalances, acceptedTxs, balanceDeltas) = acc
 
-        updatedBalances
+        val updatedBalance = updatedBalances
           .getOrElse(tx.destination, Balance.empty)
           .plus(tx.amount)
-          .map(balance => (updatedBalances.updated(tx.destination, balance), acceptedTxs + tx))
+
+        updatedBalance
+          .map(balance =>
+            (updatedBalances.updated(tx.destination, balance), acceptedTxs + tx, balanceDeltas.updated(tx.destination, balance))
+          )
           .getOrElse(acc)
       }
   }

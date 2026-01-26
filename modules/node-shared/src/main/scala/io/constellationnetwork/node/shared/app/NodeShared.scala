@@ -12,11 +12,13 @@ import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.http.p2p.SharedP2PClient
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.logger.DatabaseLogger
 import io.constellationnetwork.node.shared.modules._
 import io.constellationnetwork.node.shared.resources.SharedResources
 import io.constellationnetwork.schema.generation.Generation
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.trust.PeerObservationAdjustmentUpdateBatch
+import io.constellationnetwork.schema.{CurrencyStateProofSelector, GlobalStateProofSelector, StateProofSelector}
 import io.constellationnetwork.security.{HashSelect, HasherSelector, SecurityProvider}
 
 import fs2.concurrent.SignallingRef
@@ -29,6 +31,9 @@ trait NodeShared[F[_], A <: CliMethod] {
   implicit val metrics: Metrics[F]
   implicit val supervisor: Supervisor[F]
   implicit val hasherSelector: HasherSelector[F]
+
+  implicit val globalStateProofSelector: GlobalStateProofSelector
+  implicit val currencyStateProofSelector: CurrencyStateProofSelector
 
   val keyPair: KeyPair
   lazy val nodeId: PeerId = PeerId.fromPublic(keyPair.getPublic)
@@ -49,6 +54,8 @@ trait NodeShared[F[_], A <: CliMethod] {
   val customAllowanceList: Option[Set[AllowanceListEntry]]
 
   val hashSelect: HashSelect
+
+  val databaseLogger: DatabaseLogger[F]
 
   def restartSignal: SignallingRef[F, Option[A]]
   def stopSignal: SignallingRef[F, Boolean]

@@ -14,7 +14,7 @@ import io.constellationnetwork.dag.l0.modules._
 import io.constellationnetwork.ext.cats.effect._
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.kryo._
-import io.constellationnetwork.node.shared.app.{NodeShared, TessellationIOApp}
+import io.constellationnetwork.node.shared.app.{DagL0, NodeShared, TessellationIOApp}
 import io.constellationnetwork.node.shared.domain.collateral.OwnCollateralNotSatisfied
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
@@ -24,14 +24,17 @@ import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, 
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.GlobalSnapshotLocalFileSystemStorage
 import io.constellationnetwork.node.shared.resources.MkHttpServer
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.semver.TessellationVersion
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 
 import com.monovore.decline.Opts
@@ -47,7 +50,8 @@ object Main
       name = "dag-l0",
       header = "Tessellation Node",
       version = TessellationVersion.unsafeFrom(BuildInfo.version),
-      clusterId = ClusterId("6d7f1d6a-213a-4148-9d45-d7200f555ecf")
+      clusterId = ClusterId("6d7f1d6a-213a-4148-9d45-d7200f555ecf"),
+      layer = DagL0
     ) {
 
   val opts: Opts[Run] = cli.method.opts
@@ -96,7 +100,8 @@ object Main
           nodeShared.nodeId,
           keyPair,
           cfg,
-          Hasher.forKryo[IO]
+          Hasher.forKryo[IO],
+          nodeShared.databaseLogger
         )
         .asResource
 
@@ -111,7 +116,8 @@ object Main
         sharedServices.globalSnapshotContextFns,
         storages.globalSnapshot,
         sharedStorages.lastNGlobalSnapshot,
-        sharedStorages.lastGlobalSnapshot
+        sharedStorages.lastGlobalSnapshot,
+        sharedStorages.mptStore
       )
 
       rumorHandler = RumorHandlers
@@ -312,7 +318,8 @@ object Main
                                   sharedStorages.lastGlobalSnapshot,
                                   programs.download,
                                   hashedSnapshot,
-                                  hashedGenesis.info
+                                  hashedGenesis.info.toGlobalSnapshotInfo,
+                                  sharedStorages.mptStore
                                 )
                                 _ <- services.consensus.manager
                                   .startFacilitatingAfterRollback(
@@ -325,7 +332,7 @@ object Main
                                       EligibleFacilitators.empty,
                                       Finished(
                                         signedFirstIncrementalSnapshot,
-                                        hashedGenesis.info,
+                                        hashedGenesis.info.toGlobalSnapshotInfo,
                                         EventTrigger,
                                         Candidates.empty,
                                         Hash.empty,

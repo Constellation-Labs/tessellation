@@ -25,10 +25,10 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlock
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
-import io.constellationnetwork.node.shared.modules.SharedServices
+import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalStateProofSelector}
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
 object Services {
@@ -48,7 +48,10 @@ object Services {
     p2PClient: P2PClient[F],
     cfg: AppConfig,
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]],
-    txHasher: Hasher[F]
+    txHasher: Hasher[F],
+    sharedStorages: SharedStorages[F]
+  )(
+    implicit globalStateProofSelector: GlobalStateProofSelector
   ): Services[F, P, S, SI, R] =
     new Services[F, P, S, SI, R] {
       val localHealthcheck = sharedServices.localHealthcheck
@@ -66,7 +69,14 @@ object Services {
       val globalL0 = GlobalL0Service
         .make[F](p2PClient.l0GlobalSnapshot, globalL0Cluster, lastGlobalSnapshotStorage, None, maybeMajorityPeerIds)
       val session = sharedServices.session
-      val transaction = TransactionService.make[F, P, S, SI](storages.transaction, storages.lastSnapshot, validators.transaction)
+      val transaction =
+        TransactionService.make[F, P, S, SI](
+          storages.transaction,
+          storages.lastSnapshot,
+          validators.transaction,
+          sharedStorages.mptStore,
+          shouldUseMptStore = true
+        )
       val allowSpend =
         AllowSpendService.make[F, P, S, SI](storages.allowSpend, storages.lastSnapshot, validators.allowSpend)
       val allowSpendBlock = AllowSpendBlockService.make[F, P, S, SI](

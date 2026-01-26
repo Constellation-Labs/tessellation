@@ -23,6 +23,8 @@ import derevo.cats.eqv
 import derevo.derive
 import eu.timepit.refined.types.numeric._
 import fs2.io.file.Path
+import pureconfig.generic.ProductHint
+import pureconfig.{CamelCase, ConfigFieldMapping, KebabCase}
 
 object types {
 
@@ -54,6 +56,7 @@ object types {
     forkInfoStorage: ForkInfoStorageConfig,
     priorityPeerIds: Map[AppEnvironment, NonEmptySet[PeerId]],
     lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal],
+    lastLegacyStateProofOrdinal: Map[AppEnvironment, SnapshotOrdinal],
     addresses: AddressesConfig,
     allowSpends: AllowSpendsConfig,
     tokenLocks: TokenLocksConfig,
@@ -64,7 +67,8 @@ object types {
     metagraphsSync: MetagraphsSyncConfig,
     priceOracle: Map[AppEnvironment, PriceOracleConfig],
     snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig,
-    combinedRouteRateLimiter: Map[AppEnvironment, RouteRateLimiterConfig]
+    combinedRouteRateLimiter: Map[AppEnvironment, RouteRateLimiterConfig],
+    clickHouseConfig: ClickHouseAppConfig
   )
 
   case class SharedConfig(
@@ -80,6 +84,7 @@ object types {
     feeConfigs: SortedMap[SnapshotOrdinal, FeeCalculatorConfig],
     forkInfoStorage: ForkInfoStorageConfig,
     lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal],
+    lastLegacyStateProofOrdinal: Map[AppEnvironment, SnapshotOrdinal],
     addresses: AddressesConfig,
     allowSpends: AllowSpendsConfig,
     tokenLocks: TokenLocksConfig,
@@ -91,7 +96,9 @@ object types {
     priceOracle: PriceOracleConfig,
     snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig,
     snapshotTimeoutsConfig: SnapshotTimeoutsConfig,
-    combinedRouteRateLimiter: Map[AppEnvironment, RouteRateLimiterConfig]
+    combinedRouteRateLimiter: Map[AppEnvironment, RouteRateLimiterConfig],
+    clickHouseConfig: ClickHouseAppConfig,
+    mptSnapshotInfoPath: Path
   )
 
   case class SharedTrustConfig(
@@ -100,7 +107,8 @@ object types {
 
   case class SharedSnapshotConfig(
     size: SnapshotSizeConfig,
-    timeouts: SnapshotTimeoutsConfig
+    timeouts: SnapshotTimeoutsConfig,
+    mptSnapshotInfoPath: Path
   )
 
   case class SnapshotSizeConfig(
@@ -172,6 +180,21 @@ object types {
         0.second
       )
   }
+  case class ClickHouseAppConfig(
+    maxRetries: Int,
+    maxQueueSize: Int,
+    retryBaseDelay: FiniteDuration,
+    batchSize: Int,
+    flushInterval: FiniteDuration,
+    retentionPeriodInDays: Int,
+    errorPauseDuration: FiniteDuration,
+    host: Option[String],
+    user: Option[String],
+    password: Option[String],
+    tableName: Option[String],
+    port: Option[Int],
+    database: Option[String]
+  )
 
   case class SnapshotConfig(
     consensus: ConsensusConfig,

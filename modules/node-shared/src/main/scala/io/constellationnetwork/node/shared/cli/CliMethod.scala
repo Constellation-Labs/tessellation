@@ -66,6 +66,7 @@ trait CliMethod {
     c.feeConfigs.get(environment).map(SortedMap.from(_)).getOrElse(SortedMap.empty),
     c.forkInfoStorage,
     c.lastKryoHashOrdinal,
+    c.lastLegacyStateProofOrdinal,
     c.addresses,
     c.allowSpends,
     c.tokenLocks,
@@ -77,7 +78,9 @@ trait CliMethod {
     c.priceOracle.getOrElse(environment, PriceOracleConfig.default),
     c.snapshotBinarySenderTimeouts,
     c.snapshot.timeouts,
-    c.combinedRouteRateLimiter
+    c.combinedRouteRateLimiter,
+    c.clickHouseConfig,
+    c.snapshot.mptSnapshotInfoPath
   )
 
 }
