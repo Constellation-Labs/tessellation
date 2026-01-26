@@ -53,7 +53,6 @@ import org.http4s.client.Client
 object CurrencySnapshotConsensus {
 
   def make[F[_]: Async: Parallel: Random: SecurityProvider: Metrics](
-    currencyId: Address,
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
