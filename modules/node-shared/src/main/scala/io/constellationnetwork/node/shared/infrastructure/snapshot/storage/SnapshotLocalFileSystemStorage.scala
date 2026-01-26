@@ -38,8 +38,6 @@ abstract class SnapshotLocalFileSystemStorage[
   val ordinalPathGenerator = PathGenerator.forOrdinal(ordinalChunkSize)
   val maxParallelFileOperations = 4
 
-  private val logger = Slf4jLogger.getLoggerFromName[F]("SnapshotLocalFileSystemStorage")
-
   def write(snapshot: Signed[S])(implicit hasher: Hasher[F]): F[Unit] = {
     val ordinalName = toOrdinalName(snapshot.value)
 
