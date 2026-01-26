@@ -13,6 +13,7 @@ import cats.syntax.functor._
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.cell.L0Cell
 import io.constellationnetwork.dag.l0.domain.statechannel.StateChannelService
+import io.constellationnetwork.dag.l0.infrastructure.mempool.GlobalEventMempool
 import io.constellationnetwork.dag.l0.infrastructure.rewards._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot._
 import io.constellationnetwork.dag.l0.infrastructure.trust.TrustStorageUpdater
@@ -95,6 +96,12 @@ object Services {
         rewardsInfoStorage
       )
 
+      eventMempool <- HasherSelector[F].withCurrent { implicit hasher =>
+        GlobalEventMempool.make[F](
+          GlobalEventMempool.defaultConfig
+        )
+      }
+
       consensus <- HasherSelector[F].withCurrent { implicit hs =>
         GlobalSnapshotConsensus
           .make[F, R](
@@ -123,6 +130,7 @@ object Services {
             sharedStorages.lastGlobalSnapshot,
             storages.globalSnapshot.getHashed,
             sharedStorages.mptStore,
+            eventMempool,
             loggerBundle
           )
       }

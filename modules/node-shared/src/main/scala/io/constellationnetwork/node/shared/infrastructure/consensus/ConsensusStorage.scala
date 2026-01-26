@@ -15,7 +15,6 @@ import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage.ModifyStateFn
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
-import io.constellationnetwork.schema.gossip.Ordinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.Hasher
 
@@ -28,20 +27,6 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
   def getState(key: Key): F[Option[ConsensusState[Key, Status, Outcome, Kind]]]
 
   def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[F, Key, Status, Outcome, Kind, B]): F[Option[B]]
-
-  private[consensus] def containsTriggerEvent: F[Boolean]
-
-  private[consensus] def addTriggerEvent(peerId: PeerId, peerEvent: (Ordinal, Event)): F[Unit]
-
-  private[consensus] def addEvent(peerId: PeerId, peerEvent: (Ordinal, Event)): F[Unit]
-
-  def containsEvent(events: Event): F[Boolean]
-
-  def addEvents(events: Map[PeerId, List[(Ordinal, Event)]]): F[Unit]
-
-  def pullEvents(upperBound: Bound): F[Map[PeerId, List[(Ordinal, Event)]]]
-
-  def getUpperBound: F[Bound]
 
   def getResources(key: Key): F[ConsensusResources[Artifact, Kind]]
 
@@ -137,7 +122,6 @@ object ConsensusStorage {
       timeTriggerR <- Ref.of(none[FiniteDuration])
       observationKeyR <- Ref.of(Option.empty[Key])
       peerRegistrationsR <- Ref.of(Map.empty[PeerId, Key])
-      eventsR <- MapRef.ofConcurrentHashMap[F, PeerId, PeerEvents[Event]]()
       statesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusState[Key, Status, Outcome, Kind]]()
       resourcesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusResources[Artifact, Kind]]()
     } yield
@@ -212,86 +196,6 @@ object ConsensusStorage {
           condModifyState[Unit](key) { _ =>
             (none[ConsensusState[Key, Status, Outcome, Kind]], ()).some.pure[F]
           }.void >> cleanResources(key)
-
-        def containsTriggerEvent: F[Boolean] =
-          eventsR.keys.flatMap { keys =>
-            keys.existsM { peerId =>
-              eventsR(peerId).get
-                .map(_.flatMap(_.trigger).isDefined)
-            }
-          }
-
-        def containsEvent(event: Event): F[Boolean] =
-          eventsR.keys.flatMap { keys =>
-            keys.existsM { peerId =>
-              eventsR(peerId).get
-                .map(_.exists(_.events.exists { case (_, e) => e == event }))
-            }
-          }
-
-        def addTriggerEvent(peerId: PeerId, peerEvent: (Ordinal, Event)): F[Unit] =
-          addEvents(peerId, List(peerEvent), updateTrigger = true)
-
-        def addEvent(peerId: PeerId, peerEvent: (Ordinal, Event)): F[Unit] =
-          addEvents(peerId, List(peerEvent), updateTrigger = false)
-
-        def addEvents(events: Map[PeerId, List[(Ordinal, Event)]]): F[Unit] =
-          events.toList.traverse {
-            case (peerId, peerEvents) =>
-              addEvents(peerId, peerEvents, updateTrigger = false)
-          }.void
-
-        private def addEvents(peerId: PeerId, events: List[(Ordinal, Event)], updateTrigger: Boolean): F[Unit] =
-          eventsR(peerId).update { maybePeerEvents =>
-            maybePeerEvents
-              .getOrElse(PeerEvents.empty[Event])
-              .focus(_.events)
-              .modify(events ++ _)
-              .focus(_.trigger)
-              .modify { maybeCurrentTrigger =>
-                if (updateTrigger) {
-                  val maybeNewTrigger = events.map(_._1).maximumOption
-
-                  (maybeCurrentTrigger, maybeNewTrigger)
-                    .mapN(Order[Ordinal].max)
-                    .orElse(maybeCurrentTrigger)
-                    .orElse(maybeNewTrigger)
-                } else
-                  maybeCurrentTrigger
-              }
-              .some
-          }
-
-        def pullEvents(upperBound: Bound): F[Map[PeerId, List[(Ordinal, Event)]]] =
-          upperBound.toList.traverse {
-            case (peerId, peerBound) =>
-              eventsR(peerId).modify { maybePeerEvents =>
-                maybePeerEvents.traverse { peerEvents =>
-                  val (eventsAboveBound, pulledEvents) = peerEvents.events.partition {
-                    case (eventOrdinal, _) => eventOrdinal > peerBound
-                  }
-                  val updatedPeerEvents = peerEvents
-                    .focus(_.events)
-                    .replace(eventsAboveBound)
-                    .focus(_.trigger)
-                    .modify(_.filter(_ > peerBound))
-
-                  (pulledEvents, updatedPeerEvents)
-                }.swap
-              }.map((peerId, _))
-          }.map(_.toMap)
-
-        def getUpperBound: F[Bound] =
-          for {
-            peerIds <- eventsR.keys
-            bound <- peerIds.traverseFilter { peerId =>
-              eventsR(peerId).get.map { maybePeerEvents =>
-                maybePeerEvents.flatMap { peerEvents =>
-                  peerEvents.events.map(_._1).maximumOption.map((peerId, _))
-                }
-              }
-            }
-          } yield bound.toMap
 
         def addFacility(peerId: PeerId, key: Key, facility: Facility): F[Option[ConsensusResources[Artifact, Kind]]] =
           updatePeerDeclaration(key, peerId) { peerDeclaration =>

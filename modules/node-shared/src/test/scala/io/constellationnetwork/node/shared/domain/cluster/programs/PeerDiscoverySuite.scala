@@ -47,6 +47,8 @@ object PeerDiscoverySuite extends SimpleIOSuite with Checkers {
 
       override def getResponsivePeers: IO[Set[Peer]] = IO(peersInCluster)
 
+      override def getReadyPeers: IO[Set[Peer]] = IO(peersInCluster)
+
       override def getPeer(id: PeerId): IO[Option[Peer]] = ???
 
       override def addPeer(peer: Peer): IO[Boolean] = ???

@@ -10,9 +10,11 @@ import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
 
-import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
+import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock.dataTransactionEncoder
+import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataTransaction, DataUpdate}
 import io.constellationnetwork.currency.l0.config.types.AppConfig
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
+import io.constellationnetwork.currency.l0.infrastructure.mempool.CurrencyEventMempool
 import io.constellationnetwork.currency.l0.infrastructure.snapshot.services.CurrencyMessagesService
 import io.constellationnetwork.currency.l0.node.L0NodeContext
 import io.constellationnetwork.currency.l0.snapshot._
@@ -49,6 +51,7 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 
+import io.circe.Encoder
 import org.http4s.client.Client
 
 object Services {
@@ -81,7 +84,12 @@ object Services {
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector,
     currencyStateProofSelector: CurrencyStateProofSelector
-  ): F[Services[F, R]] =
+  ): F[Services[F, R]] = {
+    implicit val daEncoder: Encoder[DataTransaction] = maybeDataApplication.map { da =>
+      implicit val dataUpdateEncoder: Encoder[DataUpdate] = da.dataEncoder
+      DataTransaction.encoder
+    }.getOrElse(Encoder.instance[DataTransaction](_ => io.circe.Json.Null))
+
     for {
       implicit0(hasher: Hasher[F]) <- hasherSelector.getCurrent.pure[F]
 
@@ -154,8 +162,15 @@ object Services {
         sharedStorages.lastGlobalSnapshot
       )
 
+      eventMempool <- CurrencyEventMempool.make[F](
+        CurrencyEventMempool.defaultConfig
+      )
+
+      currencyId <- storages.identifier.get
+
       consensus <- CurrencySnapshotConsensus
         .make[F](
+          currencyId,
           sharedServices.gossip,
           selfId,
           keyPair,
@@ -172,11 +187,13 @@ object Services {
           maybeDataApplication,
           creator,
           validator,
+          signedValidator,
           hasherSelector,
           sharedServices.restart,
           cfg.shared.leavingDelay,
           globalL0Service.pullGlobalSnapshot,
-          maybeCustomArtifacts
+          maybeCustomArtifacts,
+          eventMempool
         )
     } yield
       new Services[F, R](
@@ -196,6 +213,7 @@ object Services {
         restart = sharedServices.restart,
         currencyMessages = currencyMessagesService
       ) {}
+  }
 }
 
 sealed abstract class Services[F[_], R <: CliMethod] private (

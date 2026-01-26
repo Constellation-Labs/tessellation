@@ -1,6 +1,7 @@
 package io.constellationnetwork.currency.l0
 
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusKind, CurrencyConsensusOutcome, CurrencyConsensusStep}
+import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency.CurrencySnapshotContext
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusManager
@@ -21,6 +22,7 @@ package object snapshot {
       CurrencySnapshotArtifact,
       CurrencySnapshotContext,
       CurrencySnapshotEvent,
+      CurrencyStateKey,
       CurrencySnapshotStatus,
       CurrencyConsensusOutcome,
       CurrencyConsensusKind

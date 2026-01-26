@@ -1,4 +1,4 @@
-package io.constellationnetwork.dag.l0.infrastructure.snapshot
+package io.constellationnetwork.node.shared.snapshot
 
 import io.constellationnetwork.schema.Block
 import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
@@ -13,7 +13,7 @@ import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 
-object event {
+object global {
 
   @derive(eqv, decoder, encoder, show)
   sealed trait GlobalSnapshotEvent

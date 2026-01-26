@@ -2,11 +2,9 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 
 import cats.effect.Async
 import cats.effect.std.Queue
-import cats.syntax.semigroupk._
 
 import scala.reflect.runtime.universe.TypeTag
 
-import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, RumorHandlerWithQueue}
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
@@ -21,11 +19,7 @@ class ConsensusRumorHandlers[F[
   queue: Queue[F, ConsensusCommand]
 ) {
 
-  /** 1. Events */
-  val eventHandler: RumorHandler[F] =
-    RumorHandlerWithQueue.peer[F, ConsensusEvent[Event]](queue)
-
-  /** 2. Facility */
+  /** 1. Facility */
   val facilityHandler: RumorHandler[F] =
     RumorHandlerWithQueue.peer[F, ConsensusPeerDeclaration[Key, Facility]](queue)
 

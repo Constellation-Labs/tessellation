@@ -5,7 +5,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
 
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.UpdateNodeParametersEvent
+import io.constellationnetwork.node.shared.snapshot.global.UpdateNodeParametersEvent
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}

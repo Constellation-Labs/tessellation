@@ -8,7 +8,7 @@ package object snapshot {
 
   type SnapshotArtifact[S <: Snapshot] = S
 
-  type SnapshotConsensus[F[_], S <: Snapshot, Context, Event, Status, Outcome, Kind] =
-    Consensus[F, Event, SnapshotOrdinal, SnapshotArtifact[S], Context, Status, Outcome, Kind]
+  type SnapshotConsensus[F[_], S <: Snapshot, Context, Event, StateKey, Status, Outcome, Kind] =
+    Consensus[F, Event, StateKey, SnapshotOrdinal, SnapshotArtifact[S], Context, Status, Outcome, Kind]
 
 }
