@@ -166,11 +166,8 @@ object Services {
         CurrencyEventMempool.defaultConfig
       )
 
-      currencyId <- storages.identifier.get
-
       consensus <- CurrencySnapshotConsensus
         .make[F](
-          currencyId,
           sharedServices.gossip,
           selfId,
           keyPair,
