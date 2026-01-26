@@ -104,27 +104,27 @@ object IncrementalTrieOps {
       val keyRemaining = path.drop(depth)
       val commonLen = shared.commonPrefixLength(keyRemaining)
 
-    if (commonLen == shared.length) {
-      // Full match - recurse into child
-      insertAt(ext.child, path, depth + shared.length, dataDigest).flatMap {
-        case updatedBranch: MerklePatriciaNode.Branch =>
-          MerklePatriciaNode.Extension.fromCompact(shared, updatedBranch).widen
-        case other =>
-          // Child collapsed to non-branch, merge paths
-          other match {
-            case leaf: MerklePatriciaNode.Leaf =>
-              MerklePatriciaNode.Leaf.fromCompact(shared ++ leaf.remainingPath, leaf.dataDigest).widen
-            case childExt: MerklePatriciaNode.Extension =>
-              MerklePatriciaNode.Extension.fromCompact(shared ++ childExt.sharedPath, childExt.child).widen
-            case b: MerklePatriciaNode.Branch =>
-              MerklePatriciaNode.Extension.fromCompact(shared, b).widen
-          }
+      if (commonLen == shared.length) {
+        // Full match - recurse into child
+        insertAt(ext.child, path, depth + shared.length, dataDigest).flatMap {
+          case updatedBranch: MerklePatriciaNode.Branch =>
+            MerklePatriciaNode.Extension.fromCompact(shared, updatedBranch).widen
+          case other =>
+            // Child collapsed to non-branch, merge paths
+            other match {
+              case leaf: MerklePatriciaNode.Leaf =>
+                MerklePatriciaNode.Leaf.fromCompact(shared ++ leaf.remainingPath, leaf.dataDigest).widen
+              case childExt: MerklePatriciaNode.Extension =>
+                MerklePatriciaNode.Extension.fromCompact(shared ++ childExt.sharedPath, childExt.child).widen
+              case b: MerklePatriciaNode.Branch =>
+                MerklePatriciaNode.Extension.fromCompact(shared, b).widen
+            }
+        }
+      } else {
+        // Partial match - need to split
+        splitExtension(shared, ext.child, keyRemaining, dataDigest, commonLen)
       }
-    } else {
-      // Partial match - need to split
-      splitExtension(shared, ext.child, keyRemaining, dataDigest, commonLen)
     }
-  }
 
   private def splitExtension[F[_]: Async: Hasher](
     extShared: CompactNibblePath,

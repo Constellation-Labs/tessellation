@@ -22,6 +22,7 @@ trait MptStore[F[_], K] {
   def remove(key: K): F[Unit]
   def remove(keys: List[K]): F[Unit]
   def contains(key: K): F[Boolean]
+  def isEmpty: F[Boolean]
   def clear: F[Unit]
   def build: F[Either[MerklePatriciaError, MerklePatriciaTrie]]
   def sync[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit]
@@ -172,6 +173,9 @@ object MptStore {
         hex <- toHex(key)
         entries <- producer.entries
       } yield entries.contains(hex)
+
+    override def isEmpty: F[Boolean] =
+      producer.entries.map(_.isEmpty)
 
     override def clear: F[Unit] =
       logger.info("[MptStore] Clearing store") >> producer.clear

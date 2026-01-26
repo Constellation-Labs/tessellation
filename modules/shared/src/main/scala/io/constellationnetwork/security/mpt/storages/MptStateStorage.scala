@@ -12,6 +12,7 @@ import io.constellationnetwork.storage.SerializableLocalFileSystemStorage
 import fs2.io.file.Path
 import io.circe.syntax._
 import io.circe.{Decoder, Encoder, Json}
+import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 /** Storage for MPT state only. Trie is rebuilt on load to save memory and disk space. */
@@ -20,7 +21,7 @@ class MptStateStorage[F[_]: Async: JsonSerializer](
   cutoffLogic: OrdinalCutoff = LogarithmicOrdinalCutoff.make
 ) extends SerializableLocalFileSystemStorage[F, Map[Hex, Array[Byte]]](path) {
 
-  private val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
+  override val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
   implicit val stateEncoder: Encoder[Map[Hex, Array[Byte]]] =
     Encoder.instance { map =>

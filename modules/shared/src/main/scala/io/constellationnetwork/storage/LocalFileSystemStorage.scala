@@ -22,7 +22,7 @@ abstract class SerializableLocalFileSystemStorage[F[_]: JsonSerializer, A: Encod
 ) extends LocalFileSystemStorage[F, A](baseDir)
     with SerializableFileSystemStorage[F, A] {
 
-  private val logger = Slf4jLogger.getLoggerFromClass(this.getClass)
+  val logger = Slf4jLogger.getLoggerFromClass(this.getClass)
 
   def deserializeFallback(bytes: Array[Byte]): Either[Throwable, A]
 

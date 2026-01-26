@@ -21,6 +21,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotS
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.http.p2p.clients.L0GlobalSnapshotClient
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.peer.{L0Peer, PeerId}
 import io.constellationnetwork.security._
@@ -30,6 +31,7 @@ import io.constellationnetwork.validator.StateProofValidator
 
 import eu.timepit.refined.auto.autoUnwrap
 import eu.timepit.refined.types.numeric.PosLong
+import io.circe.Json
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait GlobalL0Service[F[_]] {
@@ -172,10 +174,22 @@ object GlobalL0Service {
       private def stateProofValidation(snapshot: Hashed[GlobalIncrementalSnapshot], info: GlobalSnapshotInfo)(
         implicit hasher: Hasher[F]
       ): F[Boolean] =
-        StateProofValidator
-          .validate(snapshot, info, mptStore)
-          .flatTap(v => logger.debug(s"Failed StateProofValidation: $v").whenA(v.isInvalid))
-          .map(_.isValid)
+        mptStore.isEmpty.flatMap { isEmpty =>
+          val initializeIfNeeded =
+            if (isEmpty)
+              info.allStateEntries[F].flatMap { kvPairs =>
+                logger.info(s"Initializing MPT store for validation with ${kvPairs.size} entries") >>
+                  mptStore.syncFull[Json](kvPairs, snapshot.ordinal)
+              }
+            else
+              Async[F].unit
+
+          initializeIfNeeded >>
+            StateProofValidator
+              .validate(snapshot, info, mptStore)
+              .flatTap(v => logger.debug(s"Failed StateProofValidation: $v").whenA(v.isInvalid))
+              .map(_.isValid)
+        }
 
       private def majorityOrdinalValidation(snapshot: Hashed[GlobalIncrementalSnapshot], majorityPeers: NonEmptyList[L0Peer]): F[Boolean] =
         getMajorityOrdinal(majorityPeers).flatMap { maybeMajorityOrdinal =>
