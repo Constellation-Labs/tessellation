@@ -12,9 +12,9 @@ import cats.syntax.semigroupal._
 import cats.syntax.traverse._
 import cats.syntax.unorderedFoldable._
 
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.event.EventCutter
+import io.constellationnetwork.node.shared.snapshot.global._
 import io.constellationnetwork.schema.{Block, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.hash._
 import io.constellationnetwork.security.{Hashed, Hasher}

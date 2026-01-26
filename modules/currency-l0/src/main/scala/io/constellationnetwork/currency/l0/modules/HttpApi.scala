@@ -11,6 +11,7 @@ import io.constellationnetwork.currency.l0.cli.method.Run
 import io.constellationnetwork.currency.l0.http.routes._
 import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotKey
 import io.constellationnetwork.currency.l0.snapshot.schema.CurrencyConsensusOutcome
+import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment.{Dev, Integrationnet, Testnet}
@@ -26,7 +27,7 @@ import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVers
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
 import eu.timepit.refined.auto._
-import io.circe.Decoder
+import io.circe.{Decoder, Encoder}
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
 import org.http4s.{HttpApp, HttpRoutes}
@@ -180,6 +181,26 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
       ).publicRoutes
     }
 
+  private val mempoolRoutes: HttpRoutes[F] =
+    MempoolRoutes.make(services.consensus.eventMempool).publicRoutes
+
+  private val eventGossipRoutes: HttpRoutes[F] = {
+    val trigger = Some(services.consensus.manager.triggerEventConsensus)
+    (services.consensus.eventMempool, maybeDataApplication) match {
+      case (mempool, Some(da)) =>
+        implicit val dataTransactionDecoder: Decoder[DataTransaction] = DataTransaction.decoder(da.dataDecoder)
+        implicit val dataTransactionEncoder: Encoder[DataTransaction] = DataTransaction.encoder(da.dataEncoder)
+        EventGossipRoutes.make[F, CurrencySnapshotEvent, CurrencyStateKey](mempool, trigger).p2pRoutes
+
+      case (mempool, None) =>
+        implicit val dataTransactionDecoder: Decoder[DataTransaction] =
+          Decoder.failedWithMessage("DataTransaction not supported without data application")
+        implicit val dataTransactionEncoder: Encoder[DataTransaction] =
+          Encoder.instance(_ => io.circe.Json.Null)
+        EventGossipRoutes.make[F, CurrencySnapshotEvent, CurrencyStateKey](mempool, trigger).p2pRoutes
+    }
+  }
+
   private val openRoutes: HttpRoutes[F] =
     CORS.policy.withAllowOriginAll.withAllowHeadersAll.withAllowCredentials(false).apply {
       PeerAuthMiddleware
@@ -200,7 +221,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
               currencyMessageRoutes <+>
               DataApplicationCustomRoutes.publicRoutes[F, L0NodeContext[F]](maybeDataApplication) <+>
               allowSpendBlockRoutes.publicRoutes <+>
-              tokenLockBlockRoutes.publicRoutes
+              tokenLockBlockRoutes.publicRoutes <+>
+              mempoolRoutes
           }
         }
     }
@@ -218,7 +240,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
                 gossipRoutes.p2pRoutes <+>
                 consensusRoutes <+>
                 dataBlockRoutes.map(_.p2pRoutes).getOrElse(HttpRoutes.empty) <+>
-                metagraphNodeRoutes.map(_.p2pRoutes).getOrElse(HttpRoutes.empty)
+                metagraphNodeRoutes.map(_.p2pRoutes).getOrElse(HttpRoutes.empty) <+>
+                eventGossipRoutes
             )
           )
         )

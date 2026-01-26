@@ -11,11 +11,11 @@ import io.constellationnetwork.block.generators.{blockReferencesGen, signedBlock
 import io.constellationnetwork.currency.schema.currency.SnapshotFee
 import io.constellationnetwork.dag.l0.dagL0KryoRegistrar
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalSnapshotContext
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.{DAGEvent, StateChannelEvent}
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.generators.nonEmptyStringGen
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.snapshot.global.{DAGEvent, StateChannelEvent}
 import io.constellationnetwork.schema.Block._
 import io.constellationnetwork.schema.generators._
 import io.constellationnetwork.schema.transaction.TransactionFee

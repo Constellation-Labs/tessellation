@@ -7,6 +7,7 @@ import cats.syntax.all._
 
 import io.constellationnetwork.dag.l0.config.types.IncrementalConfig
 import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
+import io.constellationnetwork.dag.l0.infrastructure.mempool.GlobalEventMempool
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.SnapshotDownloadStorage
 import io.constellationnetwork.dag.l0.infrastructure.trust.storage.TrustStorage
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
@@ -20,17 +21,20 @@ import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.domain.trust.storage.TrustStorage
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage
+import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage._
-import io.constellationnetwork.node.shared.modules.SharedStorages
+import io.constellationnetwork.node.shared.modules.{SharedStorages, SharedValidators}
+import io.constellationnetwork.node.shared.snapshot.global.GlobalSnapshotEvent
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.trust.PeerObservationAdjustmentUpdateBatch
-import io.constellationnetwork.security.{HashSelect, HasherSelector}
+import io.constellationnetwork.security.{HashSelect, HasherSelector, SecurityProvider}
 
 import fs2.io.file.Files
 
 object Storages {
 
-  def make[F[+_]: Async: Parallel: KryoSerializer: JsonSerializer: HasherSelector: Supervisor: Files](
+  def make[F[+_]: Async: Parallel: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Supervisor: Files](
     sharedStorages: SharedStorages[F],
     sharedConfig: SharedConfig,
     seedlist: Option[Set[SeedlistEntry]],
@@ -111,5 +115,9 @@ sealed abstract class Storages[F[_]] private (
   val snapshotDownload: SnapshotDownloadStorage[F],
   val globalSnapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
   val globalSnapshotInfoLocalFileSystemKryoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2],
-  val combinedGlobalSnapshotCheckpointStorage: CombinedSnapshotCheckpointFileSystemStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
+  val combinedGlobalSnapshotCheckpointStorage: CombinedSnapshotCheckpointFileSystemStorage[
+    F,
+    GlobalIncrementalSnapshot,
+    GlobalSnapshotInfo
+  ]
 )

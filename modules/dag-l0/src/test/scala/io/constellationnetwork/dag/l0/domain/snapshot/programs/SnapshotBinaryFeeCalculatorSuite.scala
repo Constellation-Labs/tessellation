@@ -8,8 +8,8 @@ import cats.syntax.option._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.schema.currency._
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.StateChannelEvent
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculatorConfig
+import io.constellationnetwork.node.shared.snapshot.global.StateChannelEvent
 import io.constellationnetwork.schema.address.{Address, DAGAddressRefined}
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.currencyMessage.MessageType.Staking

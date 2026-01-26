@@ -10,7 +10,6 @@ import cats.{Applicative, MonadThrow}
 import scala.collection.immutable.SortedMap
 import scala.concurrent.duration.FiniteDuration
 
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema._
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.ext.crypto._
@@ -26,11 +25,14 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.state.Consen
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
+import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.SnapshotConsensusFunctions.gossipForkInfo
 import io.constellationnetwork.node.shared.logger.LoggerBundle
+import io.constellationnetwork.node.shared.snapshot.global.GlobalSnapshotEvent
 import io.constellationnetwork.schema.gossip.Ordinal
+import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security._
@@ -80,6 +82,7 @@ object GlobalSnapshotConsensusStateAdvancer {
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     clusterStorageInstance: ClusterStorage[F],
+    eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey],
     loggerBundle: LoggerBundle[F]
   ): GlobalSnapshotConsensusStateAdvancer[F] = new GlobalSnapshotConsensusStateAdvancer[F] {
 
@@ -158,26 +161,48 @@ object GlobalSnapshotConsensusStateAdvancer {
       state: GlobalSnapshotConsensusState,
       facilities: SortedMap[PeerId, Facility]
     ): F[Option[Transition]] = {
-      val (bound, candidates, triggers) = facilities.foldMap(f => (f.upperBound, f.candidates.value, f.trigger.toList))
+      val (candidates, triggers) = facilities.foldMap(f => (f.candidates.value, f.trigger.toList))
+
+      // Compute hash intersection for consensus safety - only include events ALL facilitators have
+      val allHashSets = facilities.values.map(_.eventHashes).toList
+      val commonHashes = allHashSets.reduceOption(_ intersect _).getOrElse(Set.empty[Hash])
 
       val trigger = pickMajority(triggers).getOrElse(EventTrigger)
-      buildProposalTransition(state, bound, candidates, trigger).map(_.some)
+
+      buildProposalTransition(state, commonHashes, candidates, trigger).map(_.some)
     }
 
     private def buildProposalTransition(
       state: GlobalSnapshotConsensusState,
-      bound: Bound,
+      commonHashes: Set[Hash],
       candidates: Set[PeerId],
       majorityTrigger: ConsensusTrigger
     ): F[Transition] =
       for {
         _ <- clearTimeTriggerIfNeeded(majorityTrigger)
         facilitatorsHash <- hashFacilitators(state)
-        peerEvents <- consensusStorage.pullEvents(bound)
 
-        (artifact, context, returnedEvents) <- createArtifact(state, majorityTrigger, extractEvents(peerEvents))
+        // Pull events from mempool using hash intersection for consensus safety
+        // Only include events that ALL facilitators have declared
+        mempoolData <- eventMempool.getMultiple(commonHashes).map { hashToHashed =>
+          val events = hashToHashed.values.map(_.signed.value).toSet
+          val hashToEvent = hashToHashed.map { case (h, hashed) => h -> hashed.signed.value }
+          (events, hashToEvent)
+        }
+        (mempoolEvents, mempoolHashToEvent) = mempoolData
 
-        _ <- storeReturnedEvents(peerEvents, returnedEvents)
+        (artifact, context, returnedEvents) <- createArtifact(state, majorityTrigger, mempoolEvents)
+
+        // Clear included events from mempool (events not returned were included)
+        // Use hash-based lookup to avoid value-equality collision issues
+        includedHashes = {
+          val returnedSet = returnedEvents.toSet
+          mempoolHashToEvent.collect {
+            case (hash, event) if !returnedSet.contains(event) => hash
+          }.toSet
+        }
+        _ <- eventMempool.clearIncluded(includedHashes)
+
         hash <- hashArtifact(artifact)
         _ <- checkFollowerExit(state)
       } yield
@@ -348,9 +373,6 @@ object GlobalSnapshotConsensusStateAdvancer {
     private def hashArtifact(artifact: GlobalSnapshotArtifact): F[Hash] =
       HasherSelector[F].withCurrent(implicit h => artifact.hash)
 
-    private def extractEvents(peerEvents: Map[PeerId, List[(Ordinal, GlobalSnapshotEvent)]]): Set[GlobalSnapshotEvent] =
-      peerEvents.values.flatten.map(_._2).toSet
-
     private def createArtifact(
       state: GlobalSnapshotConsensusState,
       trigger: ConsensusTrigger,
@@ -371,15 +393,6 @@ object GlobalSnapshotConsensusStateAdvancer {
           )
         }
       }
-
-    private def storeReturnedEvents(
-      peerEvents: Map[PeerId, List[(Ordinal, GlobalSnapshotEvent)]],
-      returnedEvents: Set[GlobalSnapshotEvent]
-    ): F[Unit] = {
-      val filtered = peerEvents.map { case (pid, evts) => (pid, evts.filter { case (_, e) => returnedEvents.contains(e) }) }
-        .filter(_._2.nonEmpty)
-      consensusStorage.addEvents(filtered)
-    }
 
     private def spreadProposal(
       key: GlobalSnapshotKey,

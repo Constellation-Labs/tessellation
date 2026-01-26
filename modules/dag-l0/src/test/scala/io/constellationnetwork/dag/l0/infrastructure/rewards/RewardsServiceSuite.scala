@@ -7,7 +7,6 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.DataCalculatedState
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.node.shared.config.types.EmissionConfigEntry
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
@@ -18,6 +17,8 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.{
   DelegatedRewardsResult,
   PartitionedStakeUpdates
 }
+import io.constellationnetwork.node.shared.snapshot.global.GlobalSnapshotEvent
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake.{NextDagPrice, RewardsInfo}
@@ -26,7 +27,6 @@ import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.SnapshotVersion
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction}
-import io.constellationnetwork.schema.{SnapshotOrdinal, _}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.signature.Signed

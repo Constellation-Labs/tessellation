@@ -11,7 +11,6 @@ import cats.syntax.option._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.dag.l0.config.types._
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.kryo._
@@ -22,12 +21,13 @@ import io.constellationnetwork.node.shared.config.types.ClassicRewardsConfig
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
+import io.constellationnetwork.node.shared.snapshot.global.GlobalSnapshotEvent
 import io.constellationnetwork.schema.ID.Id
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.generators.{chooseNumRefined, signatureGen, signedTransactionGen}
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
-import io.constellationnetwork.schema.{GlobalStateProofSelector, _}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed

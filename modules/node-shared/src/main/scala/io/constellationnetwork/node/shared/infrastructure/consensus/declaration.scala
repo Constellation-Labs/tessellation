@@ -20,7 +20,7 @@ object declaration {
 
   @derive(eqv, show, encoder, decoder)
   case class Facility(
-    upperBound: Bound,
+    eventHashes: Set[Hash],
     candidates: Candidates,
     trigger: Option[ConsensusTrigger],
     facilitatorsHash: Hash,
