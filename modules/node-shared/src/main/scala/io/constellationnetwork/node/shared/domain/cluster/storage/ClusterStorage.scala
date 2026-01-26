@@ -12,6 +12,7 @@ import fs2.Stream
 trait ClusterStorage[F[_]] {
   def getPeers: F[Set[Peer]]
   def getResponsivePeers: F[Set[Peer]]
+  def getReadyPeers: F[Set[Peer]]
   def getPeer(id: PeerId): F[Option[Peer]]
   def addPeer(peer: Peer): F[Boolean]
   def hasPeerId(id: PeerId): F[Boolean]

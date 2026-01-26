@@ -6,10 +6,10 @@ import cats.implicits.catsSyntaxApplicativeId
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.dag.l0.dagL0KryoRegistrar
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.UpdateNodeParametersEvent
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.snapshot.global.UpdateNodeParametersEvent
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.generators.signatureProofN

@@ -4,11 +4,11 @@ import cats.effect.Async
 import cats.effect.std.Queue
 import cats.syntax.semigroupk._
 
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome}
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusRumorHandlers
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorHandler
+import io.constellationnetwork.node.shared.snapshot.global.GlobalSnapshotEvent
 import io.constellationnetwork.security.HasherSelector
 
 object GlobalConsensusHandler {
@@ -26,8 +26,7 @@ object GlobalConsensusHandler {
       GlobalConsensusKind
     ](queue)
 
-    all.eventHandler <+>
-      all.facilityHandler <+>
+    all.facilityHandler <+>
       all.proposalHandler <+>
       all.signatureHandler <+>
       all.ackHandler <+>

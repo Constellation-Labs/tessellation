@@ -5,7 +5,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
 
-import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
+import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.l0.StoragesInitializer.initializeCurrencySnapshotStorages
 import io.constellationnetwork.currency.l0.cell.{L0Cell, L0CellInput}
 import io.constellationnetwork.currency.l0.cli.method
@@ -15,6 +15,7 @@ import io.constellationnetwork.currency.l0.http.p2p.P2PClient
 import io.constellationnetwork.currency.l0.modules._
 import io.constellationnetwork.currency.l0.node.L0NodeContext
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
+import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.kryo._
@@ -23,6 +24,7 @@ import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.{EventGossipConfig, EventGossipDaemon}
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import io.constellationnetwork.node.shared.infrastructure.statechannel.StateChannelAllowanceLists
 import io.constellationnetwork.node.shared.resources.MkHttpServer
@@ -41,6 +43,7 @@ import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.pureconfig._
 import fs2.concurrent.SignallingRef
+import io.circe.{Decoder, Encoder}
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import pureconfig.generic.auto._
@@ -167,8 +170,29 @@ abstract class CurrencyL0App(
         .make[IO](storages.cluster, services.localHealthcheck, sharedStorages.forkInfo)
         .handlers <+>
         services.consensus.handler
+
+      implicit0(daEncoder: Encoder[DataTransaction]) = dataApplicationService.map { da =>
+        implicit val dataUpdateEncoder: Encoder[DataUpdate] = da.dataEncoder
+        DataTransaction.encoder
+      }.getOrElse(Encoder.instance[DataTransaction](_ => io.circe.Json.Null))
+
+      implicit0(daDecoder: Decoder[DataTransaction]) = dataApplicationService.map { da =>
+        implicit val dataUpdateDecoder: Decoder[DataUpdate] = da.dataDecoder
+        DataTransaction.decoder
+      }.getOrElse(Decoder.failedWithMessage[DataTransaction]("DataTransaction not supported without data application"))
+
+      eventGossipDaemon <-
+        EventGossipDaemon
+          .make[IO, CurrencySnapshotEvent, CurrencyStateKey](
+            services.consensus.eventMempool,
+            storages.cluster,
+            sharedResources.client,
+            sharedServices.session
+          )
+          .asResource
+
       _ <- Daemons
-        .start(storages, services, programs, queues, services.dataApplication, cfg, hasherSelectorAlwaysCurrent)
+        .start(storages, services, programs, queues, services.dataApplication, cfg, hasherSelectorAlwaysCurrent, keyPair, eventGossipDaemon)
         .asResource
 
       api <- Resource.eval(
@@ -235,6 +259,7 @@ abstract class CurrencyL0App(
                     )
                   } >>
                   gossipDaemon.startAsRegularValidator >>
+                  eventGossipDaemon.start >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
                   storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
                   services.restart.setNodeForkedRestartMethod(
@@ -258,6 +283,7 @@ abstract class CurrencyL0App(
               case m: RunValidatorWithJoinAttempt =>
                 storages.identifier.setInitial(m.identifier) >>
                   gossipDaemon.startAsRegularValidator >>
+                  eventGossipDaemon.start >>
                   HasherSelector[IO].withCurrent { implicit hs =>
                     StateChannel.performGlobalL0SnapshotProcess(
                       storages,
@@ -354,6 +380,7 @@ abstract class CurrencyL0App(
                     } yield ()
                   }) >>
                   gossipDaemon.startAsInitialValidator >>
+                  eventGossipDaemon.start >>
                   services.cluster.createSession >>
                   services.session.createSession >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
@@ -440,6 +467,7 @@ abstract class CurrencyL0App(
                   } yield ()
                 }) >>
                   gossipDaemon.startAsInitialValidator >>
+                  eventGossipDaemon.start >>
                   services.cluster.createSession >>
                   services.session.createSession >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>

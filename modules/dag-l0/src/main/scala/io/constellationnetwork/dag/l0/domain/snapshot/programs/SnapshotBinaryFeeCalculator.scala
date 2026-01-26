@@ -7,8 +7,8 @@ import cats.syntax.functor._
 
 import scala.collection.immutable.SortedMap
 
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.StateChannelEvent
 import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig}
+import io.constellationnetwork.node.shared.snapshot.global.StateChannelEvent
 import io.constellationnetwork.schema.currencyMessage.fetchStakingBalance
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 

@@ -94,25 +94,18 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
     for {
       maybeTimeTrigger <- storage.getTimeTrigger
       currentTime <- Async[F].monotonic
-      containsTriggerEvent <- storage.containsTriggerEvent
 
       _ <-
         if (maybeTimeTrigger.exists(currentTime >= _))
           queue.offer(ConsensusCommand.StartRound(Some(TimeTrigger)))
         else if (maybeTimeTrigger.isEmpty)
           scheduleTimeTrigger >> queue.offer(ConsensusCommand.StartRound(None))
-        else if (containsTriggerEvent)
-          queue.offer(ConsensusCommand.StartRound(Some(EventTrigger)))
         else
           Async[F].unit
     } yield ()
 
   private def afterTimeTrigger: F[Unit] =
-    for {
-      _ <- scheduleTimeTrigger
-      containsTriggerEvent <- storage.containsTriggerEvent
-      _ <- queue.offer(ConsensusCommand.StartRound(Some(EventTrigger))).whenA(containsTriggerEvent)
-    } yield ()
+    scheduleTimeTrigger
 
   private def scheduleTimeTrigger: F[Unit] =
     for {

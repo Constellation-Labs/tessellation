@@ -32,14 +32,14 @@ import io.constellationnetwork.security.HasherSelector
   *       │                    │
   *       │                    ├── ConsensusWithdrawPeerDeclaration → storage.addWithdrawPeerDeclaration()
   *       │                    │
-  *       │                    ├── ConsensusEvent → storage.addEvent() or addTriggerEvent()
-  *       │                    │
   *       │                    └── ConsensusArtifact → storage.addArtifact()
   *       │
   *       └── CommonRumor? → processCommonRumor()
   *
   *   After storing: triggerUpdateIfChanged(key) → queue.offer(CheckUpdate(key))
   * }}}
+  *
+  * Note: Events are now propagated through EventMempool + EventGossipDaemon, not through consensus rumors.
   *
   * ==Key Method==
   *
@@ -66,7 +66,6 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
       case d: ConsensusPeerDeclaration[_, _]         => handleDeclaration(origin, d)
       case a: ConsensusPeerDeclarationAck[_, _]      => handleDeclarationAck(origin, a)
       case w: ConsensusWithdrawPeerDeclaration[_, _] => handleWithdrawDeclaration(origin, w)
-      case ConsensusEvent(event)                     => handleEvent(Some(origin -> ordinal), event.asInstanceOf[Event])
       case ConsensusArtifact(key, artifact)          => handleArtifact(key.asInstanceOf[Key], artifact.asInstanceOf[Artifact])
       case other                                     => log.warn(s"Unknown peer rumor content: $other")
     }
@@ -74,9 +73,7 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
   private def processCommonRumor(rumor: CommonRumor[_]): F[Unit] =
     rumor.content match {
       case ConsensusArtifact(key, artifact) => handleArtifact(key.asInstanceOf[Key], artifact.asInstanceOf[Artifact])
-      case ConsensusEvent(event) if fns.triggerPredicate(event.asInstanceOf[Event]) => queue.offer(FacilitateByEvent)
-      case ConsensusEvent(_)                                                        => Async[F].unit
-      case other                                                                    => log.warn(s"Unknown common rumor content: $other")
+      case other                            => log.warn(s"Unknown common rumor content: $other")
     }
 
   private def handleDeclaration(origin: PeerId, decl: ConsensusPeerDeclaration[_, _]): F[Unit] = {
@@ -105,18 +102,6 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
       .addWithdrawPeerDeclaration(origin, key, w.kind.asInstanceOf[Kind])
       .flatMap(triggerUpdateIfChanged(queue, key))
   }
-
-  private def handleEvent(source: Option[(PeerId, Ordinal)], event: Event): F[Unit] =
-    source match {
-      case Some((origin, ordinal)) =>
-        if (fns.triggerPredicate(event))
-          storage.addTriggerEvent(origin, (ordinal, event)) *> queue.offer(FacilitateByEvent)
-        else
-          storage.addEvent(origin, (ordinal, event))
-      case None =>
-        if (fns.triggerPredicate(event)) queue.offer(FacilitateByEvent)
-        else Async[F].unit
-    }
 
   private def handleArtifact(key: Key, artifact: Artifact): F[Unit] =
     HasherSelector[F].withCurrent { implicit h =>

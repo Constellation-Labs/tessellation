@@ -63,6 +63,9 @@ object ClusterStorage {
       def getResponsivePeers: F[Set[Peer]] =
         getPeers.map(_.filter(_.responsiveness === Responsive))
 
+      def getReadyPeers: F[Set[Peer]] =
+        getResponsivePeers.map(NodeState.ready)
+
       def getPeer(id: PeerId): F[Option[Peer]] =
         peers(id).get
 

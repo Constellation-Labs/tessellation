@@ -13,6 +13,7 @@ import scala.concurrent.duration.FiniteDuration
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
 import io.constellationnetwork.currency.l0.snapshot.schema._
 import io.constellationnetwork.currency.l0.snapshot.services.StateChannelSnapshotService
+import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency.CurrencySnapshotContext
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.ext.crypto._
@@ -26,12 +27,12 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state.ConsensusStateUpdater._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
+import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.SnapshotConsensusFunctions.gossipForkInfo
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.currencyMessage.fetchStakingAddress
-import io.constellationnetwork.schema.gossip.Ordinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security._
@@ -81,7 +82,8 @@ object CurrencySnapshotConsensusStateAdvancer {
     nodeStorage: NodeStorage[F],
     leavingDelay: FiniteDuration,
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    clusterStorageInstance: ClusterStorage[F]
+    clusterStorageInstance: ClusterStorage[F],
+    eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey]
   ): CurrencySnapshotConsensusStateAdvancer[F] =
     new CurrencySnapshotConsensusStateAdvancer[F] {
 
@@ -157,15 +159,20 @@ object CurrencySnapshotConsensusStateAdvancer {
         state: CurrencySnapshotConsensusState,
         facilities: SortedMap[PeerId, Facility]
       ): F[Option[Transition]] = {
-        val (bound, candidates, triggers) = facilities.foldMap(f => (f.upperBound, f.candidates.value, f.trigger.toList))
+        val (candidates, triggers) = facilities.foldMap(f => (f.candidates.value, f.trigger.toList))
+
+        // Compute hash intersection for consensus safety - only include events ALL facilitators have
+        val allHashSets = facilities.values.map(_.eventHashes).toList
+        val commonHashes = allHashSets.reduceOption(_ intersect _).getOrElse(Set.empty[Hash])
 
         val trigger = pickMajority(triggers).getOrElse(EventTrigger)
-        buildProposalTransition(state, bound, candidates, trigger).map(_.some)
+
+        buildProposalTransition(state, commonHashes, candidates, trigger).map(_.some)
       }
 
       private def buildProposalTransition(
         state: CurrencySnapshotConsensusState,
-        bound: Bound,
+        commonHashes: Set[Hash],
         candidates: Set[PeerId],
         majorityTrigger: ConsensusTrigger
       ): F[Transition] =
@@ -173,11 +180,28 @@ object CurrencySnapshotConsensusStateAdvancer {
           for {
             _ <- clearTimeTriggerIfNeeded(majorityTrigger)
             facilitatorsHash <- hashFacilitators(state)
-            peerEvents <- consensusStorage.pullEvents(bound)
 
-            (artifact, context, returnedEvents) <- createArtifact(state, majorityTrigger, extractEvents(peerEvents))
+            // Pull events from mempool using hash intersection for consensus safety
+            // Only include events that ALL facilitators have declared
+            mempoolData <- eventMempool.getMultiple(commonHashes).map { hashToHashed =>
+              val events = hashToHashed.values.map(_.signed.value).toSet
+              val hashToEvent = hashToHashed.map { case (h, hashed) => h -> hashed.signed.value }
+              (events, hashToEvent)
+            }
+            (mempoolEvents, mempoolHashToEvent) = mempoolData
 
-            _ <- storeReturnedEvents(peerEvents, returnedEvents)
+            (artifact, context, returnedEvents) <- createArtifact(state, majorityTrigger, mempoolEvents)
+
+            // Clear included events from mempool (events not returned were included)
+            // Use hash-based lookup to avoid value-equality collision issues
+            includedHashes = {
+              val returnedSet = returnedEvents.toSet
+              mempoolHashToEvent.collect {
+                case (hash, event) if !returnedSet.contains(event) => hash
+              }.toSet
+            }
+            _ <- eventMempool.clearIncluded(includedHashes)
+
             hash <- hashArtifact(artifact)
           } yield
             Transition(
@@ -413,9 +437,6 @@ object CurrencySnapshotConsensusStateAdvancer {
       private def hashArtifact(artifact: CurrencySnapshotArtifact): F[Hash] =
         HasherSelector[F].withCurrent(implicit h => artifact.hash)
 
-      private def extractEvents(peerEvents: Map[PeerId, List[(Ordinal, CurrencySnapshotEvent)]]): Set[CurrencySnapshotEvent] =
-        peerEvents.values.flatten.map(_._2).toSet
-
       private def createArtifact(
         state: CurrencySnapshotConsensusState,
         trigger: ConsensusTrigger,
@@ -431,15 +452,6 @@ object CurrencySnapshotConsensusStateAdvancer {
           state.facilitators.value.toSet,
           getGlobalSnapshotByOrdinal
         )
-
-      private def storeReturnedEvents(
-        peerEvents: Map[PeerId, List[(Ordinal, CurrencySnapshotEvent)]],
-        returnedEvents: Set[CurrencySnapshotEvent]
-      ): F[Unit] = {
-        val filtered = peerEvents.map { case (pid, evts) => (pid, evts.filter { case (_, e) => returnedEvents.contains(e) }) }
-          .filter(_._2.nonEmpty)
-        consensusStorage.addEvents(filtered)
-      }
 
       private def spreadProposal(
         key: CurrencySnapshotKey,

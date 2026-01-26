@@ -21,10 +21,13 @@ import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.genesis.{GenesisFS => GenesisLoader}
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.{EventGossipConfig, EventGossipDaemon}
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.GlobalSnapshotLocalFileSystemStorage
 import io.constellationnetwork.node.shared.resources.MkHttpServer
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
+import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
+import io.constellationnetwork.node.shared.snapshot.global.GlobalSnapshotEvent
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.cluster.ClusterId
@@ -126,8 +129,18 @@ object Main
         .handlers <+>
         trustHandler(storages.trust) <+> ordinalTrustHandler(storages.trust) <+> services.consensus.handler
 
+      eventGossipDaemon <-
+        EventGossipDaemon
+          .make[IO, GlobalSnapshotEvent, GlobalStateKey](
+            services.consensus.eventMempool,
+            storages.cluster,
+            sharedResources.client,
+            sharedServices.session
+          )
+          .asResource
+
       _ <- Daemons
-        .start(storages, services, programs, queues, nodeId, cfg, hasherSelector)
+        .start(storages, services, programs, queues, nodeId, cfg, keyPair, eventGossipDaemon)
         .asResource
 
       api <- Resource.eval(
@@ -170,6 +183,7 @@ object Main
       _ <- (method match {
         case m: RunValidator =>
           gossipDaemon.startAsRegularValidator >>
+            eventGossipDaemon.start >>
             storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
             services.restart.setNodeForkedRestartMethod(
               RunValidatorWithJoinAttempt(
@@ -189,6 +203,7 @@ object Main
             )
         case m: RunValidatorWithJoinAttempt =>
           gossipDaemon.startAsRegularValidator >>
+            eventGossipDaemon.start >>
             storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
             programs.joining.joinOneOf(m.peerToJoinPool) >>
             services.restart.setClusterLeaveRestartMethod(
@@ -250,6 +265,7 @@ object Main
               .hasCollateral(nodeShared.nodeId)
               .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
             gossipDaemon.startAsInitialValidator >>
+            eventGossipDaemon.start >>
             services.cluster.createSession >>
             services.session.createSession >>
             storages.node.setNodeState(NodeState.Ready) >>
@@ -359,6 +375,7 @@ object Main
             }
           } >>
             gossipDaemon.startAsInitialValidator >>
+            eventGossipDaemon.start >>
             services.cluster.createSession >>
             services.session.createSession >>
             storages.node.setNodeState(NodeState.Ready) >>

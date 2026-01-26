@@ -39,6 +39,13 @@ trait ConsensusManager[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
   def startFacilitatingAfterDownload(key: Key, lastArtifact: Signed[Artifact], lastContext: Context): F[Unit]
   def startFacilitatingAfterRollback(lastKey: Key, initialOutcome: Outcome): F[Unit]
   def withdrawFromConsensus: F[Unit]
+
+  /** Trigger an event-based consensus round.
+    *
+    * Called when a new event is added to the mempool that should trigger consensus. This offers `FacilitateByEvent` to the command queue,
+    * which will start a new consensus round with `EventTrigger` if the system is idle, or record a pending event trigger if busy.
+    */
+  def triggerEventConsensus: F[Unit]
 }
 
 object ConsensusManager {
@@ -67,6 +74,9 @@ object ConsensusManager {
 
         def withdrawFromConsensus: F[Unit] =
           queue.offer(WithdrawFromConsensus)
+
+        def triggerEventConsensus: F[Unit] =
+          queue.offer(FacilitateByEvent)
       }
     }
 }

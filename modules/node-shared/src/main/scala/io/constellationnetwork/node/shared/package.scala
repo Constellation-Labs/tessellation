@@ -29,7 +29,7 @@ package object shared {
       // classOf[PeerAvailable] -> 503,
       // classOf[PeerUnavailable] -> 504,
       // classOf[PeerUnknown] -> 505,
-      classOf[ConsensusEvent[_]] -> 506,
+      // classOf[ConsensusEvent[_]] -> 506,
       classOf[Facility] -> 507,
       classOf[Proposal] -> 508,
       classOf[MajoritySignature] -> 509,
