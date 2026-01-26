@@ -13,6 +13,7 @@ import better.files._
 import fs2.Stream
 import fs2.io.file.Path
 import io.circe.{Decoder, Encoder}
+import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class SerializableLocalFileSystemStorage[F[_]: JsonSerializer, A: Encoder: Decoder](
@@ -21,8 +22,6 @@ abstract class SerializableLocalFileSystemStorage[F[_]: JsonSerializer, A: Encod
   implicit F: Async[F]
 ) extends LocalFileSystemStorage[F, A](baseDir)
     with SerializableFileSystemStorage[F, A] {
-
-  private val logger = Slf4jLogger.getLoggerFromClass(this.getClass)
 
   def deserializeFallback(bytes: Array[Byte]): Either[Throwable, A]
 
@@ -54,6 +53,8 @@ abstract class LocalFileSystemStorage[F[_], A](baseDir: Path)(
   implicit F: Async[F]
 ) extends FileSystemStorage[F, A]
     with DiskSpace[F] {
+
+  val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
   protected lazy val dir: F[File] = F.blocking {
     baseDir.toNioPath
@@ -114,6 +115,10 @@ abstract class LocalFileSystemStorage[F[_], A](baseDir: Path)(
         F.blocking(a.delete())
       }
       .void
+      .handleErrorWith {
+        case _: NoSuchFileException => logger.info("File does not exist or already removed, skipping")
+        case e                      => F.raiseError(e)
+      }
 
   def getUsableSpace: F[Long] = jDir.flatMap { a =>
     F.blocking(a.getUsableSpace())
