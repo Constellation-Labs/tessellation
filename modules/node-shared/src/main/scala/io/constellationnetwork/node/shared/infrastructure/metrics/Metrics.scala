@@ -97,6 +97,8 @@ object Metrics {
     0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 45.0, 90.0
   )
 
+  val CONTENT_TYPE_OPENMETRICS_100: String = "application/openmetrics-text; version=1.0.0; charset=utf-8"
+
   def sizeInKB(obj: Any): Double =
     GraphLayout.parseInstance(obj).totalSize() / 1024.0
 
@@ -329,7 +331,7 @@ object Metrics {
           genericRecordDistribution(key, value, tagsWithBucket)
         }
         def getAllAsText: F[String] = Async[F].delay {
-          registry.scrape("application/openmetrics-text; version=1.0.0; charset=utf-8")
+          registry.scrape(CONTENT_TYPE_OPENMETRICS_100)
         }
       }
   }
