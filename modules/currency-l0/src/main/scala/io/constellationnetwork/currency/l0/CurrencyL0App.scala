@@ -224,14 +224,16 @@ abstract class CurrencyL0App(
             innerProgram <- other match {
               case rv: RunValidator =>
                 storages.identifier.setInitial(rv.identifier) >>
-                  StateChannel.performGlobalL0SnapshotProcess(
-                    storages,
-                    sharedStorages,
-                    services,
-                    dataApplicationService,
-                    keyPair,
-                    mkCell
-                  ) >>
+                  HasherSelector[IO].withCurrent { implicit hs =>
+                    StateChannel.performGlobalL0SnapshotProcess(
+                      storages,
+                      sharedStorages,
+                      services,
+                      dataApplicationService,
+                      keyPair,
+                      mkCell
+                    )
+                  } >>
                   gossipDaemon.startAsRegularValidator >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
                   storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
@@ -256,14 +258,16 @@ abstract class CurrencyL0App(
               case m: RunValidatorWithJoinAttempt =>
                 storages.identifier.setInitial(m.identifier) >>
                   gossipDaemon.startAsRegularValidator >>
-                  StateChannel.performGlobalL0SnapshotProcess(
-                    storages,
-                    sharedStorages,
-                    services,
-                    dataApplicationService,
-                    keyPair,
-                    mkCell
-                  ) >>
+                  HasherSelector[IO].withCurrent { implicit hs =>
+                    StateChannel.performGlobalL0SnapshotProcess(
+                      storages,
+                      sharedStorages,
+                      services,
+                      dataApplicationService,
+                      keyPair,
+                      mkCell
+                    )
+                  } >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
                   storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
                   programs.joining.joinOneOf(m.majorityForkPeerIds) >>
@@ -303,14 +307,16 @@ abstract class CurrencyL0App(
 
               case rr: RunRollback =>
                 storages.identifier.setInitial(rr.identifier) >>
-                  StateChannel.performGlobalL0SnapshotProcess(
-                    storages,
-                    sharedStorages,
-                    services,
-                    dataApplicationService,
-                    keyPair,
-                    mkCell
-                  ) >>
+                  HasherSelector[IO].withCurrent { implicit hs =>
+                    StateChannel.performGlobalL0SnapshotProcess(
+                      storages,
+                      sharedStorages,
+                      services,
+                      dataApplicationService,
+                      keyPair,
+                      mkCell
+                    )
+                  } >>
                   storages.node.tryModifyState(
                     NodeState.Initial,
                     NodeState.RollbackInProgress,
@@ -479,10 +485,12 @@ abstract class CurrencyL0App(
 
               case _ => IO.unit
             }
-            _ <- StateChannel
-              .run[IO](services, storages, sharedStorages, programs, dataApplicationService, keyPair, mkCell)
-              .compile
-              .drain
+            _ <- HasherSelector[IO].withCurrent { implicit hs =>
+              StateChannel
+                .run[IO](services, storages, sharedStorages, programs, dataApplicationService, keyPair, mkCell)
+                .compile
+                .drain
+            }
           } yield innerProgram
       }).asResource
 

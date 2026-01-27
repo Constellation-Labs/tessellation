@@ -37,7 +37,7 @@ object StateChannel {
 
   private val awakePeriod = 10.seconds
 
-  def run[F[_]: Async: HasherSelector: SecurityProvider: Metrics: Logger: Parallel: JsonSerializer](
+  def run[F[_]: Async: HasherSelector: SecurityProvider: Metrics: Parallel: JsonSerializer: Hasher](
     services: Services[F, Run],
     storages: Storages[F],
     sharedStorages: SharedStorages[F],
@@ -76,7 +76,7 @@ object StateChannel {
     Stream(globalL0SnapshotProcessing, globalL0PeerDiscovery).parJoin(2)
   }
 
-  def performGlobalL0SnapshotProcess[F[_]: Async: HasherSelector: Metrics: SecurityProvider: Logger: Parallel: JsonSerializer](
+  def performGlobalL0SnapshotProcess[F[_]: Async: HasherSelector: Metrics: SecurityProvider: Parallel: JsonSerializer: Hasher](
     storages: Storages[F],
     sharedStorages: SharedStorages[F],
     services: Services[F, Run],
@@ -90,10 +90,10 @@ object StateChannel {
       dataApplicationService.traverse_ { service =>
         service
           .onGlobalSnapshotPull(snapshot, context)
-          .handleErrorWith(error => Logger[F].error(error)("An unexpected error occurred in onGlobalSnapshotPull"))
+          .handleErrorWith(error => logger.error(error)("An unexpected error occurred in onGlobalSnapshotPull"))
       }
 
-    def sendGlobalSnapshotSyncConsensusEvent(snapshot: Hashed[GlobalIncrementalSnapshot])(implicit hasher: Hasher[F]): F[Unit] = {
+    def sendGlobalSnapshotSyncConsensusEvent(snapshot: Hashed[GlobalIncrementalSnapshot]): F[Unit] = {
       val selfPeerId = selfKeyPair.getPublic.toId.toPeerId
 
       val lastSentGlobalSnapshotSync = OptionT(storages.lastGlobalSnapshotSync.get).orElse {
@@ -116,19 +116,17 @@ object StateChannel {
             _ <- storages.lastGlobalSnapshotSync.set(globalSyncEvent.value)
           } yield ()
         case (Some(_), None) =>
-          Logger[F].warn("Couldn't send GlobalSnapshotSyncEvent. Session is missing.")
+          logger.warn("Couldn't send GlobalSnapshotSyncEvent. Session is missing.")
         case (None, Some(_)) =>
-          Logger[F].warn("Couldn't send GlobalSnapshotSyncEvent. Last sent reference is missing")
+          logger.warn("Couldn't send GlobalSnapshotSyncEvent. Last sent reference is missing")
         case _ =>
-          Logger[F].error("Couldn't construct GlobalSnapshotSyncEvent. Last sent reference and session are missing")
+          logger.error("Couldn't construct GlobalSnapshotSyncEvent. Last sent reference and session are missing")
       }
     }
 
     def ensureMptInitialized(ordinal: SnapshotOrdinal, state: GlobalSnapshotInfo): F[Unit] =
       sharedStorages.mptStore.isEmpty.ifM(
-        HasherSelector[F].withCurrent { implicit hasher =>
-          state.allStateEntries[F]
-        }.flatMap { kvPairs =>
+        state.allStateEntries[F].flatMap { kvPairs =>
           logger.info(s"Initializing MPT store with ${kvPairs.size} entries at ordinal=$ordinal") >>
             sharedStorages.mptStore.syncFull[Json](kvPairs, ordinal)
         },
@@ -163,24 +161,20 @@ object StateChannel {
       for {
         _ <- logger.info(s"Processing incremental snapshot ordinal=${snapshot.ordinal}")
         _ <- ensureMptInitialized(lastSnapshot.ordinal, lastState)
-        context <- HasherSelector[F].withCurrent { implicit hasher =>
-          services.globalSnapshotContextFunctions.createContext(
-            lastState,
-            lastSnapshot.signed,
-            snapshot.signed,
-            services.globalL0.pullGlobalSnapshot
-          )
-        }
+        context <- services.globalSnapshotContextFunctions.createContext(
+          lastState,
+          lastSnapshot.signed,
+          snapshot.signed,
+          services.globalL0.pullGlobalSnapshot
+        )
         _ <- storages.lastSyncGlobalSnapshot.set(snapshot, context)
         _ <- sharedStorages.lastNGlobalSnapshot.set(snapshot, context)
         _ <- sharedStorages.lastGlobalSnapshot.set(snapshot, context)
         _ <- persistGlobalSnapshot(snapshot, context)
-        _ <- HasherSelector[F].withCurrent { implicit hasher =>
-          sendGlobalSnapshotSyncConsensusEvent(snapshot)
-        }
+        _ <- sendGlobalSnapshotSyncConsensusEvent(snapshot)
         _ <- triggerOnGlobalSnapshotPullHook(snapshot, context)
         _ <- services.stateChannelBinarySender.confirm(snapshot).handleErrorWith { error =>
-          Logger[F].error(error)("Error when confirming state channel binary") >>
+          logger.error(error)("Error when confirming state channel binary") >>
             updateFailedConfirmingStateChannelBinaryMetrics() >>
             Async[F].unit
         }
