@@ -36,7 +36,7 @@ import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator.Spen
 import io.constellationnetwork.node.shared.domain.swap.block.{AllowSpendBlockAcceptanceManager, AllowSpendBlockAcceptanceResult}
 import io.constellationnetwork.node.shared.domain.tokenlock.block.{TokenLockBlockAcceptanceManager, TokenLockBlockAcceptanceResult}
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
-import io.constellationnetwork.node.shared.logger.DatabaseLogger
+import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -145,8 +145,8 @@ object GlobalSnapshotAcceptanceManager {
     priceStateUpdater: PriceStateUpdater[F],
     collateral: Amount,
     withdrawalTimeLimit: EpochProgress,
-    dbLogger: DatabaseLogger[F],
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    loggerBundle: LoggerBundle[F]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): GlobalSnapshotAcceptanceManager[F] = {
@@ -611,494 +611,496 @@ object GlobalSnapshotAcceptanceManager {
         val fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
           .getOrElse(environment, SnapshotOrdinal.MinValue)
 
-        for {
-          (allowSpendBlockAcceptanceResult, tokenLockBlockAcceptanceResult) <-
-            acceptAllowSpendAndTokenLockBlocks(
-              ordinal,
-              epochProgress,
-              allowSpendBlocksForAcceptance,
-              tokenLockBlocksForAcceptance,
-              lastSnapshotContext,
-              fixingAllowSpendAndTokenLockValidation
-            )
-
-          acceptedGlobalAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
-          acceptedGlobalTokenLocks = tokenLockBlockAcceptanceResult.accepted.flatMap(_.value.tokenLocks.toList)
-
-          initialData <-
-            acceptInitialData(
-              ordinal,
-              epochProgress,
-              blocksForAcceptance,
-              cdsEvents,
-              wdsEvents,
-              unpEvents,
-              lastSnapshotContext,
-              lastActiveTips,
-              lastDeprecatedTips,
-              acceptedGlobalTokenLocks
-            )
-
-          nodeCollateralAcceptanceResult <- acceptNodeCollateral(
-            ordinal,
-            epochProgress,
-            cncEvents,
-            wncEvents,
-            lastSnapshotContext,
-            initialData.delegatedResult
-          )
-
-          updatedUpdateNodeParameters = lastSnapshotContext.updateNodeParameters.getOrElse(
-            SortedMap.empty[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)]
-          ) ++ initialData.nodeParamsResult.view.mapValues(unp => (unp, ordinal))
-
-          acceptedTransactions = initialData.blockResult.accepted.flatMap {
-            case (block, _) => block.value.transactions.toSortedSet
-          }.toSortedSet
-
-          updatedGlobalBalances = lastSnapshotContext.balances ++ initialData.blockResult.contextUpdate.balances
-
-          StateChannelAcceptanceResult(
-            scSnapshots,
-            currencySnapshots,
-            returnedSCEvents,
-            currencyAcceptanceBalanceUpdate,
-            incomingCurrencySnapshots
-          ) <- processStateChannelEvents(
-            ordinal,
-            lastSnapshotContext,
-            updatedGlobalBalances,
-            scEvents,
-            validationType,
-            getGlobalSnapshotByOrdinal
-          )
-
-          (transactionsRefs, transactionsRefsDeltas) = transactionReferenceManager.acceptTransactionRefs(
-            lastSnapshotContext.lastTxRefs,
-            initialData.blockResult.contextUpdate.lastTxRefs,
-            acceptedTransactions
-          )
-
-          currencyBalances = currencySnapshots.toList.map {
-            case (_, Left(_))              => Map.empty[Option[Address], SortedMap[Address, Balance]]
-            case (address, Right((_, si))) => Map(address.some -> si.balances)
-          }.foldLeft(Map.empty[Option[Address], SortedMap[Address, Balance]])(_ ++ _)
-
-          sharedArtifacts = incomingCurrencySnapshots.toList.map {
-            case (address, snapshots) =>
-              val artifacts: List[SharedArtifact] = snapshots.flatMap {
-                case Left(_)       => Nil
-                case Right((s, _)) => s.artifacts.getOrElse(SortedSet.empty[SharedArtifact]).toList
-              }
-              Map(address -> artifacts)
-          }.foldLeft(Map.empty[Address, List[SharedArtifact]])(_ |+| _).view
-
-          sCSnapshotHashes <- scSnapshots.toList.traverse {
-            case (address, nel) => nel.last.toHashed.map(address -> _.hash)
-          }.map(_.toMap)
-
-          DelegatedRewardsResult(
-            delegatorRewardsMap,
-            updatedCreateDelegatedStakes,
-            updatedWithdrawDelegatedStakes,
-            nodeOperatorRewards,
-            reservedAddressRewards,
-            withdrawalRewardTxs,
-            _
-          ) <- calculateRewards(
-            ordinal,
-            epochProgress,
-            tessellation3MigrationStartingOrdinal,
-            acceptedTransactions,
-            initialData.delegatedResult,
-            initialData.existingStakes,
-            calculateRewardsFn
-          )
-
-          (updatedBalancesByRewards, acceptedRewardTxs, rewardBalancesDelta) = rewardAcceptanceManager.acceptRewardTxs(
-            updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
-            withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards
-          )
-
-          globalBalances = Map(none[Address] -> updatedBalancesByRewards)
-
-          spendActions = sharedArtifacts
-            .mapValues(_.collect { case sa: SpendAction => sa })
-            .filter { case (_, actions) => actions.nonEmpty }
-            .toMap
-
-          pricingUpdates = sharedArtifacts
-            .mapValues(_.collect { case pu: PricingUpdate => pu })
-            .filter { case (_, updates) => updates.nonEmpty }
-            .toMap
-
-          globalSnapshotsProcessed = sharedArtifacts.view
-            .mapValues(_.collect { case pu: GlobalSnapshotsProcessed => pu })
-            .filter { case (_, updates) => updates.nonEmpty }
-            .toMap
-
-          lastActiveAllowSpends = lastSnapshotContext.activeAllowSpends.getOrElse(
-            SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
-          )
-
-          ArtifactValidationResult(
-            acceptedSpendActions,
-            rejectedSpendActions,
-            acceptedPricingUpdates,
-            rejectedPricingUpdates
-          ) <- validateArtifacts(
-            epochProgress,
-            spendActions,
-            pricingUpdates,
-            lastActiveAllowSpends,
-            currencyBalances,
-            globalBalances,
-            lastSnapshotContext
-          )
-          acceptedSpendActionsMessage = s"[ORDINAL=$ordinal] Accepted spend actions: ${acceptedSpendActions.show}"
-          rejectedSpendActionMessage = s"[ORDINAL=$ordinal] Rejected spend actions: ${rejectedSpendActions.show}"
-          acceptedPricingUpdatesMessage = s"[ORDINAL=$ordinal] Accepted pricing updates: ${acceptedPricingUpdates.show}"
-          rejectedPricingUpdatesMessage = s"[ORDINAL=$ordinal] Rejected pricing updates: ${rejectedPricingUpdates.show}"
-
-          _ <- logger.debug(acceptedSpendActionsMessage)
-          _ <- logger.debug(rejectedSpendActionMessage)
-          _ <- logger.debug(acceptedPricingUpdatesMessage)
-          _ <- logger.debug(rejectedPricingUpdatesMessage)
-
-          _ <- dbLogger.debug(acceptedSpendActionsMessage)
-          _ <- dbLogger.debug(rejectedSpendActionMessage)
-          _ <- dbLogger.debug(acceptedPricingUpdatesMessage)
-          _ <- dbLogger.debug(rejectedPricingUpdatesMessage)
-
-          updatedLastStateChannelSnapshotHashes = lastSnapshotContext.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
-          updatedLastCurrencySnapshots = lastSnapshotContext.lastCurrencySnapshots ++ currencySnapshots
-
-          activeAllowSpendsFromCurrencySnapshots = currencySnapshots
-            .mapFilter(_.toOption.flatMap { case (_, info) => info.activeAllowSpends })
-
-          globalAllowSpends = acceptedGlobalAllowSpends
-            .groupBy(_.value.source)
-            .view
-            .mapValues(SortedSet.from(_))
-            .to(SortedMap)
-
-          globalTokenLocks = acceptedGlobalTokenLocks
-            .groupBy(_.value.source)
-            .view
-            .mapValues(SortedSet.from(_))
-            .to(SortedMap)
-
-          allAcceptedSpendTxns = acceptedSpendActions.values.flatten
-            .flatMap(spendAction => spendAction.spendTransactions.toList)
-            .toList
-
-          globalActiveAllowSpends = lastSnapshotContext.activeAllowSpends.getOrElse(
-            SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
-          )
-          globalActiveTokenLocks = lastSnapshotContext.activeTokenLocks.getOrElse(
-            SortedMap.empty[Address, SortedSet[Signed[TokenLock]]]
-          )
-
-          allTokenLocks: List[Signed[TokenLock]] = globalActiveTokenLocks.values.toList.flatten
-          globalActiveTokenLocksByRef <-
-            if (allTokenLocks.isEmpty) {
-              Async[F].pure(Map.empty[Hash, Signed[TokenLock]])
-            } else {
-              Stream
-                .emits(allTokenLocks)
-                .covary[F]
-                .chunkN(100)
-                .parEvalMap(10) { chunk =>
-                  Async[F].cede *> chunk.toList.traverse { tokenLock =>
-                    tokenLock.toHashed.map(hashed => hashed.hash -> tokenLock)
-                  } <* Async[F].cede
-                }
-                .compile
-                .toList
-                .flatMap(results => Async[F].cede.as(results.flatten.toMap))
-            }
-
-          globalLastAllowSpendRefs = lastSnapshotContext.lastAllowSpendRefs.getOrElse(
-            SortedMap.empty[Address, AllowSpendReference]
-          )
-          globalLastTokenLockRefs = lastSnapshotContext.lastTokenLockRefs.getOrElse(
-            SortedMap.empty[Address, TokenLockReference]
-          )
-
-          AllowSpendAcceptanceResult(updatedAllowSpends, allowSpendsDeltas) <- allowSpendStateManager.acceptAllowSpends(
-            epochProgress,
-            activeAllowSpendsFromCurrencySnapshots,
-            globalAllowSpends,
-            globalActiveAllowSpends,
-            allAcceptedSpendTxns
-          )
-
-          updatedAllowSpendRefs = allowSpendStateManager.acceptAllowSpendRefs(
-            globalLastAllowSpendRefs,
-            allowSpendBlockAcceptanceResult.contextUpdate.lastTxRefs
-          )
-
-          (updatedBalancesByAllowSpends, updatedBalancesByAllowSpendsDeltas) <- Async[F].fromEither(
-            allowSpendStateManager
-              .updateGlobalBalancesByAllowSpends(
+        loggerBundle.app.withOrdinal(ordinal) {
+          for {
+            (allowSpendBlockAcceptanceResult, tokenLockBlockAcceptanceResult) <-
+              acceptAllowSpendAndTokenLockBlocks(
+                ordinal,
                 epochProgress,
-                updatedBalancesByRewards,
-                globalAllowSpends,
-                globalActiveAllowSpends
+                allowSpendBlocksForAcceptance,
+                tokenLockBlocksForAcceptance,
+                lastSnapshotContext,
+                fixingAllowSpendAndTokenLockValidation
               )
-              .leftMap(ex => new RuntimeException(s"Balance arithmetic error updating balances by allow spends: $ex"))
-          )
 
-          unexpiredNodeCollateralsRaw = nodeCollateralStateManager.acceptNodeCollaterals(
-            lastSnapshotContext,
-            epochProgress,
-            withdrawalTimeLimit
-          )
-          (unexpiredCreate, unexpiredWithdraw, _) = unexpiredNodeCollateralsRaw
+            acceptedGlobalAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
+            acceptedGlobalTokenLocks = tokenLockBlockAcceptanceResult.accepted.flatMap(_.value.tokenLocks.toList)
 
-          updatedCreateNodeCollaterals <- nodeCollateralStateManager.getUpdatedCreateNodeCollaterals(
-            nodeCollateralAcceptanceResult,
-            unexpiredCreate
-          )
+            initialData <-
+              acceptInitialData(
+                ordinal,
+                epochProgress,
+                blocksForAcceptance,
+                cdsEvents,
+                wdsEvents,
+                unpEvents,
+                lastSnapshotContext,
+                lastActiveTips,
+                lastDeprecatedTips,
+                acceptedGlobalTokenLocks
+              )
 
-          updatedWithdrawNodeCollaterals <- nodeCollateralStateManager.getUpdatedWithdrawNodeCollaterals(
-            nodeCollateralAcceptanceResult,
-            unexpiredWithdraw,
-            lastSnapshotContext
-          )
-
-          generatedTokenUnlocks <- tokenLockStateManager
-            .generateTokenUnlocks(
-              initialData.existingStakes.expired,
-              acceptedGlobalTokenLocks,
-              globalActiveTokenLocksByRef
+            nodeCollateralAcceptanceResult <- acceptNodeCollateral(
+              ordinal,
+              epochProgress,
+              cncEvents,
+              wncEvents,
+              lastSnapshotContext,
+              initialData.delegatedResult
             )
-            .leftMap(error => new RuntimeException(s"Error generating token unlocks: $error"))
-            .liftTo[F]
 
-          TokenLockAcceptanceResult(updatedGlobalTokenLocks, tokenLocksDeltas) <- tokenLockStateManager.acceptTokenLocks(
-            epochProgress,
-            globalTokenLocks,
-            globalActiveTokenLocks,
-            generatedTokenUnlocks
-          )
+            updatedUpdateNodeParameters = lastSnapshotContext.updateNodeParameters.getOrElse(
+              SortedMap.empty[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)]
+            ) ++ initialData.nodeParamsResult.view.mapValues(unp => (unp, ordinal))
 
-          updatedTokenLockRefs = tokenLockStateManager.acceptTokenLockRefs(
-            globalLastTokenLockRefs,
-            tokenLockBlockAcceptanceResult.contextUpdate.lastTokenLocksRefs
-          )
+            acceptedTransactions = initialData.blockResult.accepted.flatMap {
+              case (block, _) => block.value.transactions.toSortedSet
+            }.toSortedSet
 
-          TokenLockBalanceResult(updatedTokenLockBalances, tokenLockBalancesDeltas) = tokenLockStateManager.updateTokenLockBalances(
-            currencySnapshots,
-            lastSnapshotContext.tokenLockBalances
-          )
+            updatedGlobalBalances = lastSnapshotContext.balances ++ initialData.blockResult.contextUpdate.balances
 
-          (updatedBalancesByTokenLocks, updatedBalancesByTokenLocksDeltas) = tokenLockStateManager.updateGlobalBalancesByTokenLocks(
-            epochProgress,
-            updatedBalancesByAllowSpends,
-            globalTokenLocks,
-            globalActiveTokenLocks,
-            generatedTokenUnlocks
-          ) match {
-            case Right(balances) => balances
-            case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by token locks: $error")
-          }
+            StateChannelAcceptanceResult(
+              scSnapshots,
+              currencySnapshots,
+              returnedSCEvents,
+              currencyAcceptanceBalanceUpdate,
+              incomingCurrencySnapshots
+            ) <- processStateChannelEvents(
+              ordinal,
+              lastSnapshotContext,
+              updatedGlobalBalances,
+              scEvents,
+              validationType,
+              getGlobalSnapshotByOrdinal
+            )
 
-          lastActiveGlobalAllowSpends = globalActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
+            (transactionsRefs, transactionsRefsDeltas) = transactionReferenceManager.acceptTransactionRefs(
+              lastSnapshotContext.lastTxRefs,
+              initialData.blockResult.contextUpdate.lastTxRefs,
+              acceptedTransactions
+            )
 
-          combined = (globalAllowSpends |+| lastActiveGlobalAllowSpends).toList
-          allGlobalAllowSpends <-
-            if (combined.isEmpty) {
-              Async[F].pure(SortedMap.empty[Address, List[Hashed[AllowSpend]]])
-            } else {
-              Stream
-                .emits(combined)
-                .covary[F]
-                .chunkN(50)
-                .parEvalMap(10) { chunk =>
-                  Async[F].cede *> chunk.toList.traverse {
-                    case (address, allowSpends) =>
-                      val allowSpendsList = allowSpends.toList
-                      if (allowSpendsList.isEmpty) {
-                        Async[F].pure((address, List.empty[Hashed[AllowSpend]]))
-                      } else {
-                        Stream
-                          .emits(allowSpendsList)
-                          .covary[F]
-                          .chunkN(20)
-                          .parEvalMap(5) { innerChunk =>
-                            Async[F].cede *> innerChunk.toList.traverse { (allowSpend: Signed[AllowSpend]) =>
-                              allowSpend.toHashed: F[Hashed[AllowSpend]]
-                            } <* Async[F].cede
-                          }
-                          .compile
-                          .toList
-                          .map { (lists: List[List[Hashed[AllowSpend]]]) =>
-                            (address, lists.flatten)
-                          }
-                      }
-                  }: F[List[(Address, List[Hashed[AllowSpend]])]]
+            currencyBalances = currencySnapshots.toList.map {
+              case (_, Left(_))              => Map.empty[Option[Address], SortedMap[Address, Balance]]
+              case (address, Right((_, si))) => Map(address.some -> si.balances)
+            }.foldLeft(Map.empty[Option[Address], SortedMap[Address, Balance]])(_ ++ _)
+
+            sharedArtifacts = incomingCurrencySnapshots.toList.map {
+              case (address, snapshots) =>
+                val artifacts: List[SharedArtifact] = snapshots.flatMap {
+                  case Left(_)       => Nil
+                  case Right((s, _)) => s.artifacts.getOrElse(SortedSet.empty[SharedArtifact]).toList
                 }
-                .compile
-                .toList
-                .flatMap { (lists: List[List[(Address, List[Hashed[AllowSpend]])]]) =>
-                  Async[F].cede.as(lists.flatten.toSortedMap)
-                }
+                Map(address -> artifacts)
+            }.foldLeft(Map.empty[Address, List[SharedArtifact]])(_ |+| _).view
+
+            sCSnapshotHashes <- scSnapshots.toList.traverse {
+              case (address, nel) => nel.last.toHashed.map(address -> _.hash)
+            }.map(_.toMap)
+
+            DelegatedRewardsResult(
+              delegatorRewardsMap,
+              updatedCreateDelegatedStakes,
+              updatedWithdrawDelegatedStakes,
+              nodeOperatorRewards,
+              reservedAddressRewards,
+              withdrawalRewardTxs,
+              _
+            ) <- calculateRewards(
+              ordinal,
+              epochProgress,
+              tessellation3MigrationStartingOrdinal,
+              acceptedTransactions,
+              initialData.delegatedResult,
+              initialData.existingStakes,
+              calculateRewardsFn
+            )
+
+            (updatedBalancesByRewards, acceptedRewardTxs, rewardBalancesDelta) = rewardAcceptanceManager.acceptRewardTxs(
+              updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
+              withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards
+            )
+
+            globalBalances = Map(none[Address] -> updatedBalancesByRewards)
+
+            spendActions = sharedArtifacts
+              .mapValues(_.collect { case sa: SpendAction => sa })
+              .filter { case (_, actions) => actions.nonEmpty }
+              .toMap
+
+            pricingUpdates = sharedArtifacts
+              .mapValues(_.collect { case pu: PricingUpdate => pu })
+              .filter { case (_, updates) => updates.nonEmpty }
+              .toMap
+
+            globalSnapshotsProcessed = sharedArtifacts.view
+              .mapValues(_.collect { case pu: GlobalSnapshotsProcessed => pu })
+              .filter { case (_, updates) => updates.nonEmpty }
+              .toMap
+
+            lastActiveAllowSpends = lastSnapshotContext.activeAllowSpends.getOrElse(
+              SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+            )
+
+            ArtifactValidationResult(
+              acceptedSpendActions,
+              rejectedSpendActions,
+              acceptedPricingUpdates,
+              rejectedPricingUpdates
+            ) <- validateArtifacts(
+              epochProgress,
+              spendActions,
+              pricingUpdates,
+              lastActiveAllowSpends,
+              currencyBalances,
+              globalBalances,
+              lastSnapshotContext
+            )
+            acceptedSpendActionsMessage = s"[ORDINAL=$ordinal] Accepted spend actions: ${acceptedSpendActions.show}"
+            rejectedSpendActionMessage = s"[ORDINAL=$ordinal] Rejected spend actions: ${rejectedSpendActions.show}"
+            acceptedPricingUpdatesMessage = s"[ORDINAL=$ordinal] Accepted pricing updates: ${acceptedPricingUpdates.show}"
+            rejectedPricingUpdatesMessage = s"[ORDINAL=$ordinal] Rejected pricing updates: ${rejectedPricingUpdates.show}"
+
+            _ <- logger.debug(acceptedSpendActionsMessage)
+            _ <- logger.debug(rejectedSpendActionMessage)
+            _ <- logger.debug(acceptedPricingUpdatesMessage)
+            _ <- logger.debug(rejectedPricingUpdatesMessage)
+
+            _ <- loggerBundle.app.info(acceptedSpendActionsMessage)
+            _ <- loggerBundle.app.info(rejectedSpendActionMessage)
+            _ <- loggerBundle.app.info(acceptedPricingUpdatesMessage)
+            _ <- loggerBundle.app.info(rejectedPricingUpdatesMessage)
+
+            updatedLastStateChannelSnapshotHashes = lastSnapshotContext.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
+            updatedLastCurrencySnapshots = lastSnapshotContext.lastCurrencySnapshots ++ currencySnapshots
+
+            activeAllowSpendsFromCurrencySnapshots = currencySnapshots
+              .mapFilter(_.toOption.flatMap { case (_, info) => info.activeAllowSpends })
+
+            globalAllowSpends = acceptedGlobalAllowSpends
+              .groupBy(_.value.source)
+              .view
+              .mapValues(SortedSet.from(_))
+              .to(SortedMap)
+
+            globalTokenLocks = acceptedGlobalTokenLocks
+              .groupBy(_.value.source)
+              .view
+              .mapValues(SortedSet.from(_))
+              .to(SortedMap)
+
+            allAcceptedSpendTxns = acceptedSpendActions.values.flatten
+              .flatMap(spendAction => spendAction.spendTransactions.toList)
+              .toList
+
+            globalActiveAllowSpends = lastSnapshotContext.activeAllowSpends.getOrElse(
+              SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+            )
+            globalActiveTokenLocks = lastSnapshotContext.activeTokenLocks.getOrElse(
+              SortedMap.empty[Address, SortedSet[Signed[TokenLock]]]
+            )
+
+            allTokenLocks: List[Signed[TokenLock]] = globalActiveTokenLocks.values.toList.flatten
+            globalActiveTokenLocksByRef <-
+              if (allTokenLocks.isEmpty) {
+                Async[F].pure(Map.empty[Hash, Signed[TokenLock]])
+              } else {
+                Stream
+                  .emits(allTokenLocks)
+                  .covary[F]
+                  .chunkN(100)
+                  .parEvalMap(10) { chunk =>
+                    Async[F].cede *> chunk.toList.traverse { tokenLock =>
+                      tokenLock.toHashed.map(hashed => hashed.hash -> tokenLock)
+                    } <* Async[F].cede
+                  }
+                  .compile
+                  .toList
+                  .flatMap(results => Async[F].cede.as(results.flatten.toMap))
+              }
+
+            globalLastAllowSpendRefs = lastSnapshotContext.lastAllowSpendRefs.getOrElse(
+              SortedMap.empty[Address, AllowSpendReference]
+            )
+            globalLastTokenLockRefs = lastSnapshotContext.lastTokenLockRefs.getOrElse(
+              SortedMap.empty[Address, TokenLockReference]
+            )
+
+            AllowSpendAcceptanceResult(updatedAllowSpends, allowSpendsDeltas) <- allowSpendStateManager.acceptAllowSpends(
+              epochProgress,
+              activeAllowSpendsFromCurrencySnapshots,
+              globalAllowSpends,
+              globalActiveAllowSpends,
+              allAcceptedSpendTxns
+            )
+
+            updatedAllowSpendRefs = allowSpendStateManager.acceptAllowSpendRefs(
+              globalLastAllowSpendRefs,
+              allowSpendBlockAcceptanceResult.contextUpdate.lastTxRefs
+            )
+
+            (updatedBalancesByAllowSpends, updatedBalancesByAllowSpendsDeltas) <- Async[F].fromEither(
+              allowSpendStateManager
+                .updateGlobalBalancesByAllowSpends(
+                  epochProgress,
+                  updatedBalancesByRewards,
+                  globalAllowSpends,
+                  globalActiveAllowSpends
+                )
+                .leftMap(ex => new RuntimeException(s"Balance arithmetic error updating balances by allow spends: $ex"))
+            )
+
+            unexpiredNodeCollateralsRaw = nodeCollateralStateManager.acceptNodeCollaterals(
+              lastSnapshotContext,
+              epochProgress,
+              withdrawalTimeLimit
+            )
+            (unexpiredCreate, unexpiredWithdraw, _) = unexpiredNodeCollateralsRaw
+
+            updatedCreateNodeCollaterals <- nodeCollateralStateManager.getUpdatedCreateNodeCollaterals(
+              nodeCollateralAcceptanceResult,
+              unexpiredCreate
+            )
+
+            updatedWithdrawNodeCollaterals <- nodeCollateralStateManager.getUpdatedWithdrawNodeCollaterals(
+              nodeCollateralAcceptanceResult,
+              unexpiredWithdraw,
+              lastSnapshotContext
+            )
+
+            generatedTokenUnlocks <- tokenLockStateManager
+              .generateTokenUnlocks(
+                initialData.existingStakes.expired,
+                acceptedGlobalTokenLocks,
+                globalActiveTokenLocksByRef
+              )
+              .leftMap(error => new RuntimeException(s"Error generating token unlocks: $error"))
+              .liftTo[F]
+
+            TokenLockAcceptanceResult(updatedGlobalTokenLocks, tokenLocksDeltas) <- tokenLockStateManager.acceptTokenLocks(
+              epochProgress,
+              globalTokenLocks,
+              globalActiveTokenLocks,
+              generatedTokenUnlocks
+            )
+
+            updatedTokenLockRefs = tokenLockStateManager.acceptTokenLockRefs(
+              globalLastTokenLockRefs,
+              tokenLockBlockAcceptanceResult.contextUpdate.lastTokenLocksRefs
+            )
+
+            TokenLockBalanceResult(updatedTokenLockBalances, tokenLockBalancesDeltas) = tokenLockStateManager.updateTokenLockBalances(
+              currencySnapshots,
+              lastSnapshotContext.tokenLockBalances
+            )
+
+            (updatedBalancesByTokenLocks, updatedBalancesByTokenLocksDeltas) = tokenLockStateManager.updateGlobalBalancesByTokenLocks(
+              epochProgress,
+              updatedBalancesByAllowSpends,
+              globalTokenLocks,
+              globalActiveTokenLocks,
+              generatedTokenUnlocks
+            ) match {
+              case Right(balances) => balances
+              case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by token locks: $error")
             }
 
-          globalSpendTransactions = acceptedSpendActions.flatMap {
-            case (_, spendActions) =>
-              spendActions
-                .flatMap(_.spendTransactions.toList)
-                .filter(_.currencyId.isEmpty)
-          }.toList
+            lastActiveGlobalAllowSpends = globalActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
 
-          (updatedBalancesBySpendTransactions, updatedBalancesBySpendTransactionsDeltas) = spendTransactionBalanceManager
-            .updateGlobalBalancesBySpendTransactions(
-              updatedBalancesByTokenLocks,
-              allGlobalAllowSpends,
-              globalSpendTransactions
-            ) match {
-            case Right(balances) => balances
-            case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by spend transactions: $error")
-          }
+            combined = (globalAllowSpends |+| lastActiveGlobalAllowSpends).toList
+            allGlobalAllowSpends <-
+              if (combined.isEmpty) {
+                Async[F].pure(SortedMap.empty[Address, List[Hashed[AllowSpend]]])
+              } else {
+                Stream
+                  .emits(combined)
+                  .covary[F]
+                  .chunkN(50)
+                  .parEvalMap(10) { chunk =>
+                    Async[F].cede *> chunk.toList.traverse {
+                      case (address, allowSpends) =>
+                        val allowSpendsList = allowSpends.toList
+                        if (allowSpendsList.isEmpty) {
+                          Async[F].pure((address, List.empty[Hashed[AllowSpend]]))
+                        } else {
+                          Stream
+                            .emits(allowSpendsList)
+                            .covary[F]
+                            .chunkN(20)
+                            .parEvalMap(5) { innerChunk =>
+                              Async[F].cede *> innerChunk.toList.traverse { (allowSpend: Signed[AllowSpend]) =>
+                                allowSpend.toHashed: F[Hashed[AllowSpend]]
+                              } <* Async[F].cede
+                            }
+                            .compile
+                            .toList
+                            .map { (lists: List[List[Hashed[AllowSpend]]]) =>
+                              (address, lists.flatten)
+                            }
+                        }
+                    }: F[List[(Address, List[Hashed[AllowSpend]])]]
+                  }
+                  .compile
+                  .toList
+                  .flatMap { (lists: List[List[(Address, List[Hashed[AllowSpend]])]]) =>
+                    Async[F].cede.as(lists.flatten.toSortedMap)
+                  }
+              }
 
-          MerkleTreeResult(_, updatedLastCurrencySnapshotProofs) <- buildMerkleTreeAndProofs(
-            ordinal,
-            updatedLastCurrencySnapshots
-          )
+            globalSpendTransactions = acceptedSpendActions.flatMap {
+              case (_, spendActions) =>
+                spendActions
+                  .flatMap(_.spendTransactions.toList)
+                  .filter(_.currencyId.isEmpty)
+            }.toList
 
-          (
-            updatedAllowSpendsCleaned,
-            updatedTokenLockBalancesCleaned,
-            updatedGlobalTokenLocksCleaned,
-            updatedCreateDelegatedStakesCleaned,
-            updatedWithdrawDelegatedStakesCleaned,
-            updatedCreateNodeCollateralsCleaned,
-            updatedWithdrawNodeCollateralsCleaned
-          ) = cleanStateMaps(
-            updatedAllowSpends,
-            updatedTokenLockBalances,
-            updatedGlobalTokenLocks,
-            updatedCreateDelegatedStakes,
-            updatedWithdrawDelegatedStakes,
-            updatedCreateNodeCollaterals,
-            updatedWithdrawNodeCollaterals
-          )
+            (updatedBalancesBySpendTransactions, updatedBalancesBySpendTransactionsDeltas) = spendTransactionBalanceManager
+              .updateGlobalBalancesBySpendTransactions(
+                updatedBalancesByTokenLocks,
+                allGlobalAllowSpends,
+                globalSpendTransactions
+              ) match {
+              case Right(balances) => balances
+              case Left(error) => throw new RuntimeException(s"Balance arithmetic error updating balances by spend transactions: $error")
+            }
 
-          updatedPriceState <- priceStateUpdater.updatePriceState(
-            lastSnapshotContext.priceState.getOrElse(SortedMap.empty),
-            acceptedPricingUpdates,
-            epochProgress
-          )
-
-          MetagraphSyncAcceptanceResult(updatedAcceptedMetagraphSyncData, metagraphSyncDataDeltas) <- metagraphSyncManager
-            .acceptMetagraphSyncData(
-              lastSnapshotContext,
-              incomingCurrencySnapshots,
-              globalSnapshotsProcessed,
-              acceptedSpendActions,
+            MerkleTreeResult(_, updatedLastCurrencySnapshotProofs) <- buildMerkleTreeAndProofs(
               ordinal,
+              updatedLastCurrencySnapshots
+            )
+
+            (
+              updatedAllowSpendsCleaned,
+              updatedTokenLockBalancesCleaned,
+              updatedGlobalTokenLocksCleaned,
+              updatedCreateDelegatedStakesCleaned,
+              updatedWithdrawDelegatedStakesCleaned,
+              updatedCreateNodeCollateralsCleaned,
+              updatedWithdrawNodeCollateralsCleaned
+            ) = cleanStateMaps(
+              updatedAllowSpends,
+              updatedTokenLockBalances,
+              updatedGlobalTokenLocks,
+              updatedCreateDelegatedStakes,
+              updatedWithdrawDelegatedStakes,
+              updatedCreateNodeCollaterals,
+              updatedWithdrawNodeCollaterals
+            )
+
+            updatedPriceState <- priceStateUpdater.updatePriceState(
+              lastSnapshotContext.priceState.getOrElse(SortedMap.empty),
+              acceptedPricingUpdates,
               epochProgress
             )
 
-          gsi = buildGlobalSnapshotInfo(
-            ordinal,
-            tessellation3MigrationStartingOrdinal,
-            tessellation301MigrationStartingOrdinal,
-            metagraphSyncDataStartingOrdinal,
-            lastSnapshotContext,
-            initialData.blockResult,
-            updatedLastStateChannelSnapshotHashes,
-            transactionsRefs,
-            updatedBalancesBySpendTransactions,
-            updatedLastCurrencySnapshots,
-            updatedLastCurrencySnapshotProofs,
-            updatedAllowSpendsCleaned,
-            updatedGlobalTokenLocksCleaned,
-            updatedTokenLockBalancesCleaned,
-            updatedAllowSpendRefs,
-            updatedTokenLockRefs,
-            updatedUpdateNodeParameters,
-            updatedCreateDelegatedStakesCleaned,
-            updatedWithdrawDelegatedStakesCleaned,
-            updatedCreateNodeCollateralsCleaned,
-            updatedWithdrawNodeCollateralsCleaned,
-            updatedPriceState,
-            updatedAcceptedMetagraphSyncData
-          )
-
-          balanceChanges: SortedMap[Address, Balance] =
-            initialData.blockResult.contextUpdate.balances.toSortedMap ++
-              currencyAcceptanceBalanceUpdate.toSortedMap ++
-              rewardBalancesDelta ++
-              updatedBalancesByAllowSpendsDeltas ++
-              updatedBalancesByTokenLocksDeltas ++
-              updatedBalancesBySpendTransactionsDeltas
-
-          stateChangesAccumulator = StateChangesAccumulator(
-            lastStateChannelSnapshotHashes = sCSnapshotHashes.toSortedMap,
-            lastTxRefs = transactionsRefsDeltas,
-            balances = balanceChanges,
-            lastCurrencySnapshots = currencySnapshots,
-            lastCurrencySnapshotsProofs = updatedLastCurrencySnapshotProofs,
-            activeAllowSpends = allowSpendsDeltas,
-            activeTokenLocks = tokenLocksDeltas,
-            tokenLockBalances = tokenLockBalancesDeltas,
-            lastAllowSpendRefs = allowSpendBlockAcceptanceResult.contextUpdate.lastTxRefs.toSortedMap,
-            lastTokenLockRefs = tokenLockBlockAcceptanceResult.contextUpdate.lastTokenLocksRefs.toSortedMap,
-            activeDelegatedStakes = updatedCreateDelegatedStakesCleaned,
-            delegatedStakesWithdrawals = updatedWithdrawDelegatedStakesCleaned,
-            activeNodeCollaterals = updatedCreateNodeCollateralsCleaned,
-            nodeCollateralWithdrawals = updatedWithdrawNodeCollateralsCleaned,
-            metagraphSyncData = metagraphSyncDataDeltas
-          )
-
-          _ <- mptStore.syncFromStateChanges(stateChangesAccumulator, ordinal)
-          stateProof <- gsi.stateProof(mptStore.underlying, ordinal)
-
-          (expiredAllowSpends, expiredTokenLocks) = (
-            allowSpendStateManager.filterExpiredAllowSpends(
-              lastActiveGlobalAllowSpends,
-              epochProgress
-            ),
-            tokenLockStateManager.filterExpiredTokenLocks(globalActiveTokenLocks, epochProgress)
-          )
-
-          artifactsFromExpired <- artifactEmissionManager.emitAllExpiredArtifacts(
-            expiredAllowSpends,
-            expiredTokenLocks
-          )
-
-          allowSpendsExpiredEvents = artifactsFromExpired.collect { case a: AllowSpendExpiration => a }
-          tokenUnlocksEvents = artifactsFromExpired.collect { case t: TokenUnlock => t }
-
-          generatedTokenUnlockArtifacts = SortedSet.from[SharedArtifact](
-            generatedTokenUnlocks.view.values.flatten
-              .filterNot(x =>
-                tokenUnlocksEvents.exists {
-                  case t: TokenUnlock => t.tokenLockRef == x.tokenLockRef
-                  case _              => false
-                }
+            MetagraphSyncAcceptanceResult(updatedAcceptedMetagraphSyncData, metagraphSyncDataDeltas) <- metagraphSyncManager
+              .acceptMetagraphSyncData(
+                lastSnapshotContext,
+                incomingCurrencySnapshots,
+                globalSnapshotsProcessed,
+                acceptedSpendActions,
+                ordinal,
+                epochProgress
               )
-          )
-        } yield
-          (
-            initialData.blockResult,
-            allowSpendBlockAcceptanceResult,
-            tokenLockBlockAcceptanceResult,
-            initialData.delegatedResult,
-            nodeCollateralAcceptanceResult,
-            scSnapshots,
-            returnedSCEvents,
-            acceptedRewardTxs,
-            gsi,
-            stateProof,
-            acceptedSpendActions,
-            updatedUpdateNodeParameters.view.mapValues(_._1).toSortedMap,
-            (allowSpendsExpiredEvents ++ tokenUnlocksEvents ++ generatedTokenUnlockArtifacts).toSortedSet,
-            delegatorRewardsMap
-          )
+
+            gsi = buildGlobalSnapshotInfo(
+              ordinal,
+              tessellation3MigrationStartingOrdinal,
+              tessellation301MigrationStartingOrdinal,
+              metagraphSyncDataStartingOrdinal,
+              lastSnapshotContext,
+              initialData.blockResult,
+              updatedLastStateChannelSnapshotHashes,
+              transactionsRefs,
+              updatedBalancesBySpendTransactions,
+              updatedLastCurrencySnapshots,
+              updatedLastCurrencySnapshotProofs,
+              updatedAllowSpendsCleaned,
+              updatedGlobalTokenLocksCleaned,
+              updatedTokenLockBalancesCleaned,
+              updatedAllowSpendRefs,
+              updatedTokenLockRefs,
+              updatedUpdateNodeParameters,
+              updatedCreateDelegatedStakesCleaned,
+              updatedWithdrawDelegatedStakesCleaned,
+              updatedCreateNodeCollateralsCleaned,
+              updatedWithdrawNodeCollateralsCleaned,
+              updatedPriceState,
+              updatedAcceptedMetagraphSyncData
+            )
+
+            balanceChanges: SortedMap[Address, Balance] =
+              initialData.blockResult.contextUpdate.balances.toSortedMap ++
+                currencyAcceptanceBalanceUpdate.toSortedMap ++
+                rewardBalancesDelta ++
+                updatedBalancesByAllowSpendsDeltas ++
+                updatedBalancesByTokenLocksDeltas ++
+                updatedBalancesBySpendTransactionsDeltas
+
+            stateChangesAccumulator = StateChangesAccumulator(
+              lastStateChannelSnapshotHashes = sCSnapshotHashes.toSortedMap,
+              lastTxRefs = transactionsRefsDeltas,
+              balances = balanceChanges,
+              lastCurrencySnapshots = currencySnapshots,
+              lastCurrencySnapshotsProofs = updatedLastCurrencySnapshotProofs,
+              activeAllowSpends = allowSpendsDeltas,
+              activeTokenLocks = tokenLocksDeltas,
+              tokenLockBalances = tokenLockBalancesDeltas,
+              lastAllowSpendRefs = allowSpendBlockAcceptanceResult.contextUpdate.lastTxRefs.toSortedMap,
+              lastTokenLockRefs = tokenLockBlockAcceptanceResult.contextUpdate.lastTokenLocksRefs.toSortedMap,
+              activeDelegatedStakes = updatedCreateDelegatedStakesCleaned,
+              delegatedStakesWithdrawals = updatedWithdrawDelegatedStakesCleaned,
+              activeNodeCollaterals = updatedCreateNodeCollateralsCleaned,
+              nodeCollateralWithdrawals = updatedWithdrawNodeCollateralsCleaned,
+              metagraphSyncData = metagraphSyncDataDeltas
+            )
+
+            _ <- mptStore.syncFromStateChanges(stateChangesAccumulator, ordinal)
+            stateProof <- gsi.stateProof(mptStore.underlying, ordinal)
+
+            (expiredAllowSpends, expiredTokenLocks) = (
+              allowSpendStateManager.filterExpiredAllowSpends(
+                lastActiveGlobalAllowSpends,
+                epochProgress
+              ),
+              tokenLockStateManager.filterExpiredTokenLocks(globalActiveTokenLocks, epochProgress)
+            )
+
+            artifactsFromExpired <- artifactEmissionManager.emitAllExpiredArtifacts(
+              expiredAllowSpends,
+              expiredTokenLocks
+            )
+
+            allowSpendsExpiredEvents = artifactsFromExpired.collect { case a: AllowSpendExpiration => a }
+            tokenUnlocksEvents = artifactsFromExpired.collect { case t: TokenUnlock => t }
+
+            generatedTokenUnlockArtifacts = SortedSet.from[SharedArtifact](
+              generatedTokenUnlocks.view.values.flatten
+                .filterNot(x =>
+                  tokenUnlocksEvents.exists {
+                    case t: TokenUnlock => t.tokenLockRef == x.tokenLockRef
+                    case _              => false
+                  }
+                )
+            )
+          } yield
+            (
+              initialData.blockResult,
+              allowSpendBlockAcceptanceResult,
+              tokenLockBlockAcceptanceResult,
+              initialData.delegatedResult,
+              nodeCollateralAcceptanceResult,
+              scSnapshots,
+              returnedSCEvents,
+              acceptedRewardTxs,
+              gsi,
+              stateProof,
+              acceptedSpendActions,
+              updatedUpdateNodeParameters.view.mapValues(_._1).toSortedMap,
+              (allowSpendsExpiredEvents ++ tokenUnlocksEvents ++ generatedTokenUnlockArtifacts).toSortedSet,
+              delegatorRewardsMap
+            )
+        }
       }
     }
   }

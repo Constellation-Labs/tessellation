@@ -29,6 +29,7 @@ import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.SnapshotConsensusFunctions.gossipForkInfo
+import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.schema.gossip.Ordinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
@@ -78,7 +79,8 @@ object GlobalSnapshotConsensusStateAdvancer {
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    clusterStorageInstance: ClusterStorage[F]
+    clusterStorageInstance: ClusterStorage[F],
+    loggerBundle: LoggerBundle[F]
   ): GlobalSnapshotConsensusStateAdvancer[F] = new GlobalSnapshotConsensusStateAdvancer[F] {
 
     private val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](getClass)
@@ -140,11 +142,17 @@ object GlobalSnapshotConsensusStateAdvancer {
       status: CollectingFacilities,
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind]
     ): F[Option[Transition]] =
-      for {
-        maybeFacilities <- maybeGetAllDeclarations(state, resources)(_.facility)
-        _ <- maybeFacilities.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
-        result <- maybeFacilities.flatTraverse(toProposalsPhase(state, _))
-      } yield result
+      loggerBundle.app.withOrdinal(SnapshotOrdinal.unsafeApply(state.lastOutcome.key.value.value + 1)) {
+        HasherSelector[F].withCurrent { implicit hasher =>
+          for {
+            maybeFacilities <- maybeGetAllDeclarations(state, resources)(_.facility)
+            facilitators = maybeFacilities.map(_.keys.toList).getOrElse(List.empty[PeerId])
+            _ <- loggerBundle.consensus.collectingFacilities(facilitators)
+            _ <- maybeFacilities.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
+            result <- maybeFacilities.flatTraverse(toProposalsPhase(state, _))
+          } yield result
+        }
+      }
 
     private def toProposalsPhase(
       state: GlobalSnapshotConsensusState,
@@ -195,12 +203,16 @@ object GlobalSnapshotConsensusStateAdvancer {
       status: CollectingProposals,
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind]
     ): F[Option[Transition]] =
-      HasherSelector[F].withCurrent { implicit hasher =>
-        for {
-          maybeProposals <- maybeGetAllDeclarations(state, resources)(_.proposal)
-          _ <- maybeProposals.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
-          result <- maybeProposals.flatTraverse(toSignaturesPhase(state, status, resources, _))
-        } yield result
+      loggerBundle.app.withOrdinal(status.proposalArtifactInfo.artifact.ordinal) {
+        HasherSelector[F].withCurrent { implicit hasher =>
+          for {
+            maybeProposals <- maybeGetAllDeclarations(state, resources)(_.proposal)
+            facilitators = maybeProposals.map(_.keys.toList).getOrElse(List.empty[PeerId])
+            _ <- loggerBundle.consensus.collectingProposals(facilitators)
+            _ <- maybeProposals.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
+            result <- maybeProposals.flatTraverse(toSignaturesPhase(state, status, resources, _))
+          } yield result
+        }
       }
 
     private def toSignaturesPhase(
@@ -270,11 +282,17 @@ object GlobalSnapshotConsensusStateAdvancer {
       status: CollectingSignatures,
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind]
     ): F[Option[Transition]] =
-      for {
-        maybeSignatures <- maybeGetAllDeclarations(state, resources)(_.signature)
-        _ <- maybeSignatures.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
-        result <- maybeSignatures.flatTraverse(toFinishedPhase(state, status, _))
-      } yield result
+      loggerBundle.app.withOrdinal(status.majorityArtifactInfo.artifact.ordinal) {
+        HasherSelector[F].withCurrent { implicit hasher =>
+          for {
+            maybeSignatures <- maybeGetAllDeclarations(state, resources)(_.signature)
+            facilitators = maybeSignatures.map(_.keys.toList).getOrElse(List.empty[PeerId])
+            _ <- loggerBundle.consensus.collectingSignatures(facilitators)
+            _ <- maybeSignatures.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
+            result <- maybeSignatures.flatTraverse(toFinishedPhase(state, status, _))
+          } yield result
+        }
+      }
 
     private def toFinishedPhase(
       state: GlobalSnapshotConsensusState,
@@ -295,28 +313,34 @@ object GlobalSnapshotConsensusStateAdvancer {
       status: CollectingSignatures,
       validSignatures: List[SignatureProof]
     ): F[Option[Transition]] =
-      for {
-        facilitatorsHash <- HasherSelector[F].withCurrent(implicit h => state.facilitators.value.hash)
-        result <- NonEmptySet.fromSet(validSignatures.toSortedSet).traverse { signaturesNes =>
-          val signedArtifact = Signed(status.majorityArtifactInfo.artifact, signaturesNes)
+      loggerBundle.app.withOrdinal(status.majorityArtifactInfo.artifact.ordinal) {
+        HasherSelector[F].withCurrent { implicit hasher =>
           for {
-            snapshotHash <- HasherSelector[F].withCurrent(implicit h => signedArtifact.hash)
-            result = Transition(
-              newState = state.copy(status =
-                Finished(
-                  signedArtifact,
-                  status.majorityArtifactInfo.context,
-                  status.majorityTrigger,
-                  status.candidates,
-                  facilitatorsHash,
-                  snapshotHash
+            facilitatorsHash <- state.facilitators.value.hash
+            facilitators = state.facilitators.value
+            _ <- loggerBundle.consensus.roundFinished(facilitators)
+            result <- NonEmptySet.fromSet(validSignatures.toSortedSet).traverse { signaturesNes =>
+              val signedArtifact = Signed(status.majorityArtifactInfo.artifact, signaturesNes)
+              for {
+                snapshotHash <- signedArtifact.hash
+                result = Transition(
+                  newState = state.copy(status =
+                    Finished(
+                      signedArtifact,
+                      status.majorityArtifactInfo.context,
+                      status.majorityTrigger,
+                      status.candidates,
+                      facilitatorsHash,
+                      snapshotHash
+                    )
+                  ),
+                  sideEffect = persistAndGossip(signedArtifact, status.majorityArtifactInfo.context)
                 )
-              ),
-              sideEffect = persistAndGossip(signedArtifact, status.majorityArtifactInfo.context)
-            )
+              } yield result
+            }
           } yield result
         }
-      } yield result
+      }
 
     private def hashFacilitators(state: GlobalSnapshotConsensusState): F[Hash] =
       HasherSelector[F].withCurrent(implicit h => state.facilitators.value.hash)

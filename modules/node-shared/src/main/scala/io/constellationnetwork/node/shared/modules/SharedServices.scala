@@ -40,7 +40,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
   GlobalSnapshotStateChannelAcceptanceManager,
   GlobalSnapshotStateChannelEventsProcessor
 }
-import io.constellationnetwork.node.shared.logger.DatabaseLogger
+import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.epoch.EpochProgress
@@ -74,7 +74,7 @@ object SharedServices {
     txHasher: Hasher[F],
     allowanceList: Option[Set[AllowanceListEntry]],
     metagraphId: Option[Address],
-    dbLogger: DatabaseLogger[F]
+    loggerBundle: LoggerBundle[F]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector,
     currencyStateProofSelector: CurrencyStateProofSelector
@@ -169,8 +169,8 @@ object SharedServices {
         priceStateUpdater,
         collateral.amount,
         cfg.delegatedStaking.withdrawalTimeLimit.getOrElse(cfg.environment, EpochProgress.MinValue),
-        dbLogger,
-        storages.mptStore
+        storages.mptStore,
+        loggerBundle
       )
       globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(
         globalSnapshotAcceptanceManager,

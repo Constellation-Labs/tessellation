@@ -38,7 +38,7 @@ import io.constellationnetwork.node.shared.domain.swap.block._
 import io.constellationnetwork.node.shared.domain.tokenlock.block._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{DelegateRewardsInput, DelegatedRewardsResult, RewardsInput}
-import io.constellationnetwork.node.shared.logger.{DatabaseLogger, NoDbLogger}
+import io.constellationnetwork.node.shared.logger.Slf4jLoggerBundle
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -254,7 +254,7 @@ object Mocks {
     implicit val hasherSelector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(h)
     implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(Long.MaxValue))
     JsonSerializer.forAsync[IO].flatMap { implicit j =>
-      NoDbLogger.makeUnsafe[IO].flatMap { dbLogger =>
+      Slf4jLoggerBundle.makeUnsafe[IO].flatMap { loggerBundle =>
         InMemoryMerklePatriciaProducer.make[IO]().flatMap { mptProducer =>
           MptStore
             .make[IO, GlobalStateKey](
@@ -290,7 +290,7 @@ object Mocks {
                   priceStateUpdater = mockPriceStateUpdater,
                   collateral = Amount.empty,
                   withdrawalTimeLimit = EpochProgress(4L),
-                  dbLogger = dbLogger,
+                  loggerBundle = loggerBundle,
                   mptStore = mptStore
                 )
                 .pure[IO]

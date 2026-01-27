@@ -48,7 +48,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
   GlobalSnapshotStateChannelEventsProcessor
 }
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
-import io.constellationnetwork.node.shared.logger.NoDbLogger
+import io.constellationnetwork.node.shared.logger.Slf4jLoggerBundle
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
@@ -389,7 +389,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         validators.updateNodeCollateralValidator
       )
       priceStateUpdater = PriceStateUpdater.make(Dev, DefaultDelegatedRewardsConfigProvider)
-      dbLogger <- NoDbLogger.makeUnsafe[IO]
+      dbLogger <- Slf4jLoggerBundle.makeUnsafe[IO]
 
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager
         .make[IO](
@@ -408,8 +408,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           priceStateUpdater,
           Amount.empty,
           EpochProgress(NonNegLong(136080L)),
-          dbLogger,
-          mptStore
+          mptStore,
+          dbLogger
         )
       snapshotContextFunctions = GlobalSnapshotContextFunctions.make[IO](
         snapshotAcceptanceManager,
