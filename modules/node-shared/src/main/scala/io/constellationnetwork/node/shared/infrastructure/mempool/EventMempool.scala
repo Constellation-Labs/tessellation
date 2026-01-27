@@ -11,6 +11,7 @@ import io.constellationnetwork.security.signature.Signed._
 import io.constellationnetwork.security.{Hashed, Hasher}
 
 import io.circe.Encoder
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 /** Algebra for the event mempool.
   *
@@ -172,6 +173,7 @@ object EventMempool {
     config: MempoolConfig
   ): EventMempool[F, Event, Key] =
     new EventMempool[F, Event, Key] {
+      private val logger = Slf4jLogger.getLoggerFromName[F]("EventMempool")
 
       def add(event: Signed[Event]): F[Either[MempoolRejectionReason, MempoolEntry[Event, Key]]] =
         for {
@@ -180,7 +182,8 @@ object EventMempool {
             .pure[F]
             .ifM(
               ifTrue = doAdd(event),
-              ifFalse = (MempoolRejectionReason.MempoolFull: MempoolRejectionReason).asLeft[MempoolEntry[Event, Key]].pure[F]
+              ifFalse = logger.debug(s"[Mempool] Rejected: mempool full (size=$currentSize, max=${config.maxSize})") >>
+                (MempoolRejectionReason.MempoolFull: MempoolRejectionReason).asLeft[MempoolEntry[Event, Key]].pure[F]
             )
         } yield result
 
@@ -191,7 +194,8 @@ object EventMempool {
 
           result <- existing match {
             case Some(entry) =>
-              entry.asRight[MempoolRejectionReason].pure[F]
+              logger.debug(s"[Mempool] Event ${hashed.hash.show} already exists, returning existing entry") >>
+                entry.asRight[MempoolRejectionReason].pure[F]
 
             case None =>
               processEvent(hashed)
@@ -210,50 +214,73 @@ object EventMempool {
               insertionOrder = state.insertionOrder :+ hashedEvent.hash
             )
           }
+          newSize <- size
+          _ <- logger.debug(s"[Mempool] Added event ${hashedEvent.hash.show} with ${stateKeys.size} state keys, mempool size: $newSize")
         } yield entry.asRight[MempoolRejectionReason]
 
       def get(hash: Hash): F[Option[Hashed[Event]]] =
-        storage.get.map(_.entries.get(hash).map(_.hashed))
+        for {
+          result <- storage.get.map(_.entries.get(hash).map(_.hashed))
+          _ <- logger.debug(s"[Mempool] Get ${hash.show}: ${if (result.isDefined) "found" else "not found"}")
+        } yield result
 
       def getWithMeta(hash: Hash): F[Option[MempoolEntry[Event, Key]]] =
         storage.get.map(_.entries.get(hash))
 
       def getMultiple(hashes: Set[Hash]): F[Map[Hash, Hashed[Event]]] =
-        storage.get.map { state =>
-          hashes.flatMap(h => state.entries.get(h).map(e => h -> e.hashed)).toMap
-        }
+        for {
+          result <- storage.get.map { state =>
+            hashes.flatMap(h => state.entries.get(h).map(e => h -> e.hashed)).toMap
+          }
+          _ <- logger.debug(s"[Mempool] GetMultiple: requested ${hashes.size}, found ${result.size}")
+        } yield result
 
       def remove(hashes: Set[Hash]): F[Unit] =
-        storage.update { state =>
-          state.copy(
-            entries = state.entries -- hashes,
-            insertionOrder = state.insertionOrder.filterNot(hashes.contains)
-          )
-        }
+        for {
+          _ <- storage.update { state =>
+            state.copy(
+              entries = state.entries -- hashes,
+              insertionOrder = state.insertionOrder.filterNot(hashes.contains)
+            )
+          }
+          newSize <- size
+          _ <- logger.debug(s"[Mempool] Removed ${hashes.size} events, mempool size: $newSize")
+        } yield ()
 
       def contains(hash: Hash): F[Boolean] =
         storage.get.map(_.entries.contains(hash))
 
       def snapshot(limit: Int = 10000): F[MempoolSnapshot[Event, Key]] =
-        storage.get.map { state =>
-          MempoolSnapshot(
-            state.insertionOrder
-              .take(limit)
-              .flatMap(h => state.entries.get(h).map(h -> _))
-              .toMap
-          )
-        }
+        for {
+          result <- storage.get.map { state =>
+            MempoolSnapshot(
+              state.insertionOrder
+                .take(limit)
+                .flatMap(h => state.entries.get(h).map(h -> _))
+                .toMap
+            )
+          }
+          _ <- logger.debug(s"[Mempool] Snapshot taken: ${result.entries.size} events (limit=$limit)")
+        } yield result
 
       def clearIncluded(hashes: Set[Hash]): F[Unit] =
-        remove(hashes)
+        logger.debug(s"[Mempool] Clearing ${hashes.size} included events") >> remove(hashes)
 
       def size: F[Int] =
         storage.get.map(_.entries.size)
 
       def addBatch(events: List[Signed[Event]]): F[List[Either[MempoolRejectionReason, MempoolEntry[Event, Key]]]] =
-        events.traverse(add)
+        for {
+          _ <- logger.debug(s"[Mempool] Adding batch of ${events.size} events")
+          results <- events.traverse(add)
+          successful = results.count(_.isRight)
+          _ <- logger.debug(s"[Mempool] Batch complete: $successful/${events.size} added successfully")
+        } yield results
 
       def getEventHashes: F[Set[Hash]] =
-        storage.get.map(_.entries.keySet)
+        for {
+          hashes <- storage.get.map(_.entries.keySet)
+          _ <- logger.debug(s"[Mempool] GetEventHashes: ${hashes.size} hashes")
+        } yield hashes
     }
 }

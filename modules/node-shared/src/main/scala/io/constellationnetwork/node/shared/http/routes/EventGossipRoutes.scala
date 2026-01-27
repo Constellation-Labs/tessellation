@@ -12,6 +12,7 @@ import io.circe.{Decoder, Encoder}
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec._
 import org.http4s.dsl.Http4sDsl
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 /** HTTP routes for event gossip P2P communication.
   *
@@ -31,13 +32,20 @@ final case class EventGossipRoutes[F[_]: Async, Event: Encoder: Decoder, Key](
 ) extends Http4sDsl[F]
     with P2PRoutes[F] {
 
+  private val logger = Slf4jLogger.getLoggerFromName[F]("EventGossipRoutes")
+
   protected val prefixPath: InternalUrlPrefix = "/events"
 
   protected val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "push" =>
       for {
         push <- req.as[EventPush[Event]]
+        _ <- logger.debug(s"[EventGossip] Received push for event ${push.eventHash.show}")
         result <- handlePush(push)
+        _ <- result.fold(
+          error => logger.debug(s"[EventGossip] Push rejected: $error"),
+          _ => logger.debug(s"[EventGossip] Push accepted for event ${push.eventHash.show}")
+        )
         response <- result.fold(
           error => BadRequest(error),
           _ => Ok(())
@@ -48,13 +56,16 @@ final case class EventGossipRoutes[F[_]: Async, Event: Encoder: Decoder, Key](
       for {
         snapshot <- mempool.snapshot()
         ihave = IHave(snapshot.hashes)
+        _ <- logger.debug(s"[EventGossip] IHAVE request, returning ${ihave.hashes.size} hashes")
         response <- Ok(ihave)
       } yield response
 
     case req @ POST -> Root / "iwant" =>
       for {
         iwant <- req.as[IWantRequest]
+        _ <- logger.debug(s"[EventGossip] IWANT request for ${iwant.hashes.size} hashes")
         events <- mempool.getMultiple(iwant.hashes)
+        _ <- logger.debug(s"[EventGossip] IWANT response: found ${events.size}/${iwant.hashes.size} events")
         batch = events.toList.map { case (hash, hashed) => (hash, hashed.signed) }
         response <- Ok(IWantResponse(batch))
       } yield response
