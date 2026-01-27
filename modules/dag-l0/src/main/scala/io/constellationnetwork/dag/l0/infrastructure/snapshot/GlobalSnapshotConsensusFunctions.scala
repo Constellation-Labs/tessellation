@@ -43,6 +43,7 @@ import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.all.NonNegLong
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
     extends SnapshotConsensusFunctions[
@@ -66,6 +67,8 @@ object GlobalSnapshotConsensusFunctions {
     v3MigrationOrdinal: SnapshotOrdinal,
     setSumFixOrdinal: SnapshotOrdinal
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
+
+    private val logger = Slf4jLogger.getLoggerFromName[F]("GlobalSnapshotConsensusFunctions")
 
     def getRequiredCollateral: Amount = collateral
 
@@ -243,6 +246,11 @@ object GlobalSnapshotConsensusFunctions {
           currentOrdinal
         )
 
+        // Debug logging for StateChannel events
+        _ <- logger.debug(
+          s"[SCEvents] Ordinal=$currentOrdinal inputEvents=${events.size} scEventsBeforeCut=${scEventsBeforeCut.size} scEventsAfterCut=${scEvents.size}"
+        )
+
         unpEventsForAcceptance <- updateNodeParametersCutter.cut(unpEventsBeforeCut.toList, snapshotContext, currentOrdinal)
 
         lastActiveTips <- lastArtifact.activeTips(Async[F], lastArtifactHasher)
@@ -288,6 +296,12 @@ object GlobalSnapshotConsensusFunctions {
               StateChannelValidationType.Full,
               getGlobalSnapshotByOrdinal
             )
+        // Debug logging for StateChannel acceptance results
+        _ <- logger.debug(
+          s"[SCAccepted] Ordinal=$currentOrdinal scSnapshots=${scSnapshots.size} returnedSCEvents=${returnedSCEvents.size} addresses=${scSnapshots.keys
+              .mkString(",")}"
+        )
+
         (deprecated, remainedActive, accepted) = getUpdatedTips(
           lastActiveTips,
           lastDeprecatedTips,

@@ -169,7 +169,14 @@ object GlobalSnapshotConsensusStateAdvancer {
 
       val trigger = pickMajority(triggers).getOrElse(EventTrigger)
 
-      buildProposalTransition(state, commonHashes, candidates, trigger).map(_.some)
+      // Debug logging for hash intersection
+      val hashSetsWithPeers = facilities.map { case (peerId, f) => (peerId.show.take(8), f.eventHashes.size) }
+      logger.debug(
+        s"[HashIntersection] Ordinal=${state.key.value} facilitators=${facilities.size} " +
+          s"hashSets=${hashSetsWithPeers.mkString(",")} " +
+          s"commonHashes=${commonHashes.size}"
+      ) >>
+        buildProposalTransition(state, commonHashes, candidates, trigger).map(_.some)
     }
 
     private def buildProposalTransition(
