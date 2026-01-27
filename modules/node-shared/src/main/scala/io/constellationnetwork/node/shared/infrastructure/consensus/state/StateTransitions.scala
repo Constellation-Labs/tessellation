@@ -151,7 +151,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
     } yield ()
 
   private def fetchOutcomeFromCluster(key: Key, artifact: Signed[Artifact], context: Ctx): F[Option[Outcome]] = {
-    val retryPolicy = limitRetries(10).join(constantDelay(3.seconds))
+    val retryPolicy = limitRetries(20).join(constantDelay(3.seconds))
 
     def selectPeer: F[Peer] =
       ctx.clusterStorage.getResponsivePeers.flatMap { allPeers =>

@@ -1,7 +1,7 @@
 package io.constellationnetwork.schema.mpt
 
 import cats.Parallel
-import cats.effect.Async
+import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
 import io.constellationnetwork.json.JsonSerializer
@@ -27,6 +27,7 @@ trait MptStore[F[_], K] {
   def build: F[Either[MerklePatriciaError, MerklePatriciaTrie]]
   def sync[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit]
   def syncFull[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit]
+  def syncFullIfNeeded[V: Encoder](newState: => F[Map[K, V]], ordinal: SnapshotOrdinal): F[Unit]
   def update[V: Encoder](toUpsert: Map[K, V], toRemove: Set[K]): F[Unit]
   def underlying: StatefulMerklePatriciaProducer[F]
   def deleteAbove(ordinal: SnapshotOrdinal): F[Unit]
@@ -38,11 +39,14 @@ object MptStore {
     producer: StatefulMerklePatriciaProducer[F],
     toHex: K => F[Hex]
   ): F[MptStore[F, K]] =
-    (new Impl[F, K](producer, toHex): MptStore[F, K]).pure[F]
+    Ref.of[F, Option[SnapshotOrdinal]](None).map { lastSyncedOrdinalRef =>
+      new Impl[F, K](producer, toHex, lastSyncedOrdinalRef): MptStore[F, K]
+    }
 
   private final class Impl[F[_]: Async: Parallel: Hasher: JsonSerializer, K](
     producer: StatefulMerklePatriciaProducer[F],
-    toHex: K => F[Hex]
+    toHex: K => F[Hex],
+    lastSyncedOrdinalRef: Ref[F, Option[SnapshotOrdinal]]
   ) extends MptStore[F, K] {
 
     private val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
@@ -184,15 +188,28 @@ object MptStore {
       producer.build
 
     override def syncFull[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit] =
-      if (newState.isEmpty) clear
-      else
+      if (newState.isEmpty) {
+        logger.info("[MptStore] Empty sync, skipping") >>
+          clear >> lastSyncedOrdinalRef.set(Some(ordinal))
+      } else
         for {
           _ <- logger.info(s"[MptStore] Full sync with ${newState.size} entries")
           _ <- clear
           newEntries <- toHexEntries(newState)
           _ <- producer.insertBytes(newEntries).void
           _ <- persistAsync(ordinal)
+          _ <- build
+          _ <- lastSyncedOrdinalRef.set(Some(ordinal))
         } yield ()
+
+    override def syncFullIfNeeded[V: Encoder](newState: => F[Map[K, V]], ordinal: SnapshotOrdinal): F[Unit] =
+      lastSyncedOrdinalRef.get.flatMap { lastOrdinal =>
+        val needsSync = lastOrdinal.forall(_ =!= ordinal)
+        if (needsSync)
+          newState.flatMap(syncFull(_, ordinal))
+        else
+          logger.debug(s"[MptStore] Skipping sync, already synced at ordinal $ordinal")
+      }
 
     override def sync[V: Encoder](updates: Map[K, V], ordinal: SnapshotOrdinal): F[Unit] =
       if (updates.isEmpty) Async[F].unit
