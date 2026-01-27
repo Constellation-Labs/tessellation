@@ -48,7 +48,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
   GlobalSnapshotStateChannelAcceptanceManager,
   GlobalSnapshotStateChannelEventsProcessor
 }
-import io.constellationnetwork.node.shared.logger.DatabaseLogger
+import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedValidators}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -97,8 +97,8 @@ object GlobalSnapshotConsensus {
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    dbLogger: DatabaseLogger[F],
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    loggerBundle: LoggerBundle[F]
   )(implicit supervisor: Supervisor[F], globalStateProofSelector: GlobalStateProofSelector): F[GlobalSnapshotConsensus[F]] =
     for {
       globalStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
@@ -129,8 +129,8 @@ object GlobalSnapshotConsensus {
           collateral,
           sharedCfg.delegatedStaking.withdrawalTimeLimit
             .getOrElse(sharedCfg.environment, EpochProgress.MinValue),
-          dbLogger,
-          mptStore
+          mptStore,
+          loggerBundle
         )
 
       consensusStorage <- ConsensusStorage.make[
@@ -176,7 +176,8 @@ object GlobalSnapshotConsensus {
           lastNGlobalSnapshotStorage,
           lastGlobalSnapshotStorage,
           getGlobalSnapshotByOrdinal,
-          clusterStorage
+          clusterStorage,
+          loggerBundle
         )
 
       facilitatorSelector = FacilitatorSelector.make(

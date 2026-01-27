@@ -101,7 +101,7 @@ object Main
           keyPair,
           cfg,
           Hasher.forKryo[IO],
-          nodeShared.databaseLogger
+          nodeShared.loggerBundle
         )
         .asResource
 

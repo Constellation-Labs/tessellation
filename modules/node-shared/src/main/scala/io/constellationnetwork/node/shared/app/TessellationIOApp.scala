@@ -29,8 +29,7 @@ import io.constellationnetwork.node.shared.infrastructure.logs.LoggerConfigurato
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.seedlist.{Loader => SeedlistLoader}
 import io.constellationnetwork.node.shared.infrastructure.trust.TrustRatingCsvLoader
-import io.constellationnetwork.node.shared.logger.clickhouse.ClickHouseLogger
-import io.constellationnetwork.node.shared.logger.{DatabaseLogger, NoDbLogger}
+import io.constellationnetwork.node.shared.logger.{ClickHouseLoggerBundle, Slf4jLoggerBundle}
 import io.constellationnetwork.node.shared.modules._
 import io.constellationnetwork.node.shared.resources.SharedResources
 import io.constellationnetwork.schema._
@@ -200,33 +199,31 @@ abstract class TessellationIOApp[A <: CliMethod](
                                       p2pClient = SharedP2PClient.make[IO](res.client, session, cfg)
                                       queues <- SharedQueues.make[IO].asResource
 
-                                      _databaseLogger <- {
+                                      _loggerBundle <- {
                                         val useClickHouse = layer == DagL0 || layer == DagL1
 
                                         if (useClickHouse) {
-                                          ClickHouseLogger
+                                          ClickHouseLoggerBundle
                                             .make[IO](selfId, cfg.environment, cfg.clickHouseConfig)
                                             .recoverWith {
-                                              case ClickHouseLogger.NotConfigured =>
+                                              case ClickHouseLoggerBundle.NotConfigured =>
                                                 Resource.eval(logger.info("ClickHouse not configured. Using console logger.")) >>
-                                                  NoDbLogger.make[IO]
-                                              case ClickHouseLogger.ConfigError(e) =>
+                                                  Slf4jLoggerBundle.make[IO]
+                                              case ClickHouseLoggerBundle.ConfigError(e) =>
                                                 Resource.eval(
                                                   logger.warn(s"ClickHouse config invalid: ${e.getMessage}. Using console logger.")
                                                 ) >>
-                                                  NoDbLogger.make[IO]
-                                              case ClickHouseLogger.ConnectionError(e) =>
+                                                  Slf4jLoggerBundle.make[IO]
+                                              case ClickHouseLoggerBundle.ConnectionError(e) =>
                                                 Resource.eval(
                                                   logger.warn(s"ClickHouse connection failed: ${e.getMessage}. Using console logger.")
                                                 ) >>
-                                                  NoDbLogger.make[IO]
+                                                  Slf4jLoggerBundle.make[IO]
                                             }
                                         } else {
-                                          NoDbLogger.make[IO]
+                                          Slf4jLoggerBundle.make[IO]
                                         }
                                       }
-
-                                      _ <- _databaseLogger.createLogsTable().asResource
 
                                       validators = _hasherSelector.withCurrent { implicit hasher =>
                                         SharedValidators.make[IO](
@@ -264,7 +261,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                           Hasher.forKryo[IO],
                                           maybeCustomAllowanceList,
                                           tokenIdentifierOpt,
-                                          _databaseLogger
+                                          _loggerBundle
                                         )
                                         .asResource
 
@@ -315,7 +312,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                         val prioritySeedlist = _prioritySeedlist
                                         val customAllowanceList = maybeCustomAllowanceList
 
-                                        val databaseLogger = _databaseLogger
+                                        val loggerBundle = _loggerBundle
 
                                         def restartSignal = _restartSignal
 
