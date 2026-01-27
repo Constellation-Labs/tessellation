@@ -52,8 +52,8 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
   GlobalSnapshotAcceptanceManager,
   GlobalSnapshotStateChannelEventsProcessor
 }
-import io.constellationnetwork.node.shared.snapshot.global.{GlobalSnapshotEvent, StateChannelEvent}
 import io.constellationnetwork.node.shared.logger.Slf4jLoggerBundle
+import io.constellationnetwork.node.shared.snapshot.global.{GlobalSnapshotEvent, StateChannelEvent}
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
