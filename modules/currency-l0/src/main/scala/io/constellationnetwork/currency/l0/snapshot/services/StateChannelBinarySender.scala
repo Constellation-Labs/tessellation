@@ -162,8 +162,7 @@ object StateChannelBinarySender {
       }
 
     private def processNormalMode(signers: Option[NonEmptySet[PeerId]]): F[Unit] =
-      tracker.getPendingToRetry(10).flatMap { pending =>
-        val unsent = pending.filter(_.sendsSoFar.value === 0L)
+      tracker.getUnsentBinaries(10).flatMap { unsent =>
         if (unsent.nonEmpty) {
           logger.info(s"[Queue] Processing ${unsent.size} unsent binaries") >>
             unsent.traverse_(p => sendBinaryInBackground(p, signers))
