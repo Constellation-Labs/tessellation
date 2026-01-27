@@ -229,8 +229,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
           }
         } else {
           // Process unsent binaries in normal mode
-          tracker.getPendingToRetry(10).flatMap { pending =>
-            val unsent = pending.filter(_.sendsSoFar.value === 0L)
+          tracker.getUnsentBinaries(10).flatMap { unsent =>
             unsent.traverse_(p => poster.post(p.binary, none).void)
           }
         }

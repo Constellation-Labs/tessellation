@@ -71,6 +71,7 @@ trait BinaryTracker[F[_]] {
   def markAsSent(binaryHash: Hash): F[Unit]
   def markAsConfirmed(confirmedHashes: Set[Hash], proof: GlobalSnapshotConfirmationProof): F[Unit]
   def getPendingToRetry(cap: Int): F[List[PendingBinary]]
+  def getUnsentBinaries(cap: Int): F[List[PendingBinary]]
   def getState: F[TrackerState]
   def updateState(f: TrackerState => TrackerState): F[Unit]
   def clear: F[Unit]
@@ -117,6 +118,11 @@ object BinaryTracker {
         def getPendingToRetry(cap: Int): F[List[PendingBinary]] =
           stateRef.get.map { state =>
             state.tracked.collect { case p: PendingBinary => p }.take(cap).toList
+          }
+
+        def getUnsentBinaries(cap: Int): F[List[PendingBinary]] =
+          stateRef.get.map { state =>
+            state.tracked.collect { case p: PendingBinary if p.sendsSoFar.value === 0L => p }.take(cap).toList
           }
 
         def getState: F[TrackerState] = stateRef.get
