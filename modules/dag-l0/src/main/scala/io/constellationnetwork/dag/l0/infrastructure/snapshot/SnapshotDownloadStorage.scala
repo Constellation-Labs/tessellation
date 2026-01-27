@@ -6,22 +6,25 @@ import cats.syntax.all._
 
 import io.constellationnetwork.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
 import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
   CombinedSnapshotCheckpointFileSystemStorage,
   SnapshotInfoLocalFileSystemStorage,
   SnapshotLocalFileSystemStorage
 }
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.validator.StateProofValidator
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object SnapshotDownloadStorage {
-  def make[F[_]: Async: Parallel: HasherSelector: KryoSerializer](
+  def make[F[_]: Async: Parallel: HasherSelector: KryoSerializer: JsonSerializer](
     tmpStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     persistedStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     fullGlobalSnapshotStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
@@ -32,7 +35,8 @@ object SnapshotDownloadStorage {
       GlobalIncrementalSnapshot,
       GlobalSnapshotInfo
     ],
-    hashSelect: HashSelect
+    hashSelect: HashSelect,
+    mptStore: MptStore[F, GlobalStateKey]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): SnapshotDownloadStorage[F] =
@@ -63,8 +67,8 @@ object SnapshotDownloadStorage {
         proof: GlobalSnapshotStateProof
       )(implicit hasher: Hasher[F]): F[Boolean] =
         (hashSelect.select(ordinal) match {
-          case JsonHash => snapshotInfoStorage.read(ordinal).flatMap(_.traverse(_.stateProof(ordinal)))
-          case KryoHash => snapshotInfoKryoStorage.read(ordinal).flatMap(_.traverse(_.stateProof(ordinal)))
+          case JsonHash => snapshotInfoStorage.read(ordinal).flatMap(_.traverse(_.stateProof(mptStore.underlying, ordinal)))
+          case KryoHash => snapshotInfoKryoStorage.read(ordinal).flatMap(_.traverse(_.stateProof(mptStore.underlying, ordinal)))
         }).map {
           case Some(calculatedProof) => calculatedProof === proof
           case _                     => false
@@ -77,7 +81,10 @@ object SnapshotDownloadStorage {
 
       def readCombined(
         ordinal: SnapshotOrdinal
-      )(implicit hasher: Hasher[F]): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = {
+      )(
+        implicit hasher: Hasher[F],
+        stateProofSelector: StateProofSelector
+      ): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = {
         val maybeInfo = hashSelect.select(ordinal) match {
           case JsonHash => snapshotInfoStorage.read(ordinal).map(_.map(_.asRight[GlobalSnapshotInfoV2]))
           case KryoHash => snapshotInfoKryoStorage.read(ordinal).map(_.map(_.asLeft[GlobalSnapshotInfo]))
@@ -85,15 +92,24 @@ object SnapshotDownloadStorage {
 
         (readPersisted(ordinal).flatMap(_.traverse(_.toHashed)), maybeInfo).tupled.map(_.tupled).flatMap {
           case Some((snapshot, info)) =>
-            info
-              .bitraverse(_.stateProof(ordinal), _.stateProof(ordinal))
-              .map(_.fold(identity, identity))
-              .flatMap(stateProof => StateProofValidator.validate(snapshot, stateProof).map(_.isValid))
-              .ifM(
-                (snapshot.signed, info.leftMap(_.toGlobalSnapshotInfo).fold(identity, identity)).some.pure[F],
-                new Exception("Persisted snapshot info does not match the persisted snapshot")
-                  .raiseError[F, Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
-              )
+            for {
+              _ <- info match {
+                case Left(value) => ().pure[F]
+                case Right(value) =>
+                  value.allStateEntries[F].flatMap { kvPairs =>
+                    mptStore.syncFull(kvPairs, ordinal)
+                  }
+              }
+              result <- info
+                .bitraverse(_.stateProof(ordinal), _.stateProof(mptStore.underlying, ordinal))
+                .map(_.fold(identity, identity))
+                .flatMap(stateProof => StateProofValidator.validate(snapshot, stateProof).map(_.isValid))
+                .ifM(
+                  (snapshot.signed, info.leftMap(_.toGlobalSnapshotInfo).fold(identity, identity)).some.pure[F],
+                  new Exception("Persisted snapshot info does not match the persisted snapshot")
+                    .raiseError[F, Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
+                )
+            } yield result
           case _ => none[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F]
         }
       }
@@ -154,7 +170,8 @@ object SnapshotDownloadStorage {
         deleteSnapshotInfo >>
           cleanupAboveOrdinal >>
           verify >>
-          combinedSnapshotCheckpointFileSystemStorage.deleteAbove(ordinal)
+          combinedSnapshotCheckpointFileSystemStorage.deleteAbove(ordinal) >>
+          mptStore.deleteAbove(ordinal)
       }
     }
 }

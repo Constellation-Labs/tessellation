@@ -7,6 +7,7 @@ import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.delegatedStake.DelegatedStakeRecord
@@ -17,6 +18,7 @@ import io.constellationnetwork.schema.tokenLock.TokenLock
 import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.mpt.producer.StatefulMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection._
 
@@ -58,9 +60,17 @@ object snapshot {
     val lastTxRefs: SortedMap[Address, TransactionReference]
     val balances: SortedMap[Address, Balance]
 
-    def stateProof[F[_]: Parallel: Async: Hasher](ordinal: SnapshotOrdinal)(
+    def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](ordinal: SnapshotOrdinal)(
       implicit stateProofSelector: StateProofSelector
     ): F[P]
+
+    def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](
+      statefulMPTProducer: StatefulMerklePatriciaProducer[F],
+      ordinal: SnapshotOrdinal
+    )(
+      implicit stateProofSelector: StateProofSelector
+    ): F[P]
+
     def getActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = SortedMap.empty
     def getActiveDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]] = SortedMap.empty
   }

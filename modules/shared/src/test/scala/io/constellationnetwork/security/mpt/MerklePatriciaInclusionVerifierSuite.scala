@@ -18,21 +18,25 @@ import weaver.{MutableIOSuite, SimpleIOSuite}
 
 object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
 
-  type Res = HasherSelector[IO]
+  type Res = (HasherSelector[IO], JsonSerializer[IO])
 
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { implicit kryo =>
       JsonSerializer.forAsync[IO].asResource.map { implicit json =>
-        HasherSelector.forSync[IO](
-          Hasher.forJson[IO],
-          Hasher.forKryo[IO],
-          hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
+        (
+          HasherSelector.forSync[IO](
+            Hasher.forJson[IO],
+            Hasher.forKryo[IO],
+            hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
+          ),
+          json
         )
       }
     }
 
   test("valid proof verification succeeds") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
@@ -50,7 +54,8 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
   }
 
   test("invalid root hash fails verification") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
@@ -69,7 +74,8 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
   }
 
   test("tampered witness fails verification") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
@@ -89,7 +95,8 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
   }
 
   test("tampered path fails verification") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
@@ -110,9 +117,10 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
   }
 
   test("large trie verification") { implicit res =>
+    implicit val (hs, js) = res
     val numEntries = 1000
 
-    res.withCurrent { implicit hasher =>
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to numEntries).toList.traverse { i =>
           hasher.hash(s"entry_$i").map(hash => Hex(hash.value) -> s"value_$i")
@@ -137,7 +145,8 @@ object MerklePatriciaInclusionVerifierSuite extends MutableIOSuite {
   }
 
   test("all witness types verify correctly") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to 50).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")

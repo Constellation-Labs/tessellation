@@ -18,7 +18,9 @@ trait SnapshotDownloadStorage[F[_]] {
 
   def hasCorrectSnapshotInfo(ordinal: SnapshotOrdinal, proof: GlobalSnapshotStateProof)(implicit hasher: Hasher[F]): F[Boolean]
   def getHighestSnapshotInfoOrdinal(lte: SnapshotOrdinal): F[Option[SnapshotOrdinal]]
-  def readCombined(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
+  def readCombined(
+    ordinal: SnapshotOrdinal
+  )(implicit hasher: Hasher[F], stateProofSelector: StateProofSelector): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
   def persistSnapshotInfoWithCutoff(ordinal: SnapshotOrdinal, info: GlobalSnapshotInfo): F[Unit]
 
   def movePersistedToTmp(hash: Hash, ordinal: SnapshotOrdinal): F[Unit]

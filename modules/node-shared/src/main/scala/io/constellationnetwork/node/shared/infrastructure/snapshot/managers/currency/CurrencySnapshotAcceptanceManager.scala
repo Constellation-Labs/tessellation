@@ -11,6 +11,7 @@ import io.constellationnetwork.currency.dataApplication.FeeTransaction
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.currency.schema.globalSnapshotSync.{GlobalSnapshotSync, GlobalSyncView}
 import io.constellationnetwork.env.AppEnvironment
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.{FieldsAddedOrdinals, LastGlobalSnapshotsSyncConfig}
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
@@ -67,7 +68,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
 }
 
 object CurrencySnapshotAcceptanceManager {
-  def make[F[_]: Async: Parallel](
+  def make[F[_]: Async: Parallel: JsonSerializer](
     fieldsAddedOrdinals: FieldsAddedOrdinals,
     environment: AppEnvironment,
     lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
@@ -138,7 +139,7 @@ object CurrencySnapshotAcceptanceManager {
 
 /** Main implementation with parallelized operations for improved performance
   */
-private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel](
+private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonSerializer](
   fieldsAddedOrdinals: FieldsAddedOrdinals,
   environment: AppEnvironment,
   lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,

@@ -17,21 +17,25 @@ import weaver.MutableIOSuite
 
 object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
 
-  type Res = HasherSelector[IO]
+  type Res = (HasherSelector[IO], JsonSerializer[IO])
 
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { implicit kryo =>
       JsonSerializer.forAsync[IO].asResource.map { implicit json =>
-        HasherSelector.forSync[IO](
-          Hasher.forJson[IO],
-          Hasher.forKryo[IO],
-          hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
+        (
+          HasherSelector.forSync[IO](
+            Hasher.forJson[IO],
+            Hasher.forKryo[IO],
+            hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
+          ),
+          json
         )
       }
     }
 
   test("stateful insert operations change state") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 
@@ -51,7 +55,8 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
   }
 
   test("build trie from accumulated entries") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 
@@ -68,7 +73,8 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
   }
 
   test("update existing key replaces old value") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 
@@ -83,7 +89,8 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
   }
 
   test("clear state resets to empty") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 
@@ -105,7 +112,8 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
   }
 
   test("get prover before build triggers build") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 
@@ -124,7 +132,8 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
   }
 
   test("get prover after build uses cached trie") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 
@@ -140,7 +149,8 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
   }
 
   test("remove operations update state correctly") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 
@@ -163,7 +173,8 @@ object InMemoryMerklePatriciaProducerSuite extends MutableIOSuite {
   }
 
   test("multiple updates in sequence maintain consistency") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 

@@ -94,7 +94,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   def mkSignedArtifacts()(
     implicit sp: SecurityProvider[IO],
-    h: Hasher[IO]
+    h: Hasher[IO],
+    js: JsonSerializer[IO]
   ): IO[(Signed[GlobalSnapshotArtifact], Signed[GlobalSnapshot])] = for {
     keyPair <- KeyPairGenerator.makeKeyPair[IO]
 
@@ -336,7 +337,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     for {
       mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
-      mptStore = MptStore.make[IO, GlobalStateKey](
+      mptStore <- MptStore.make[IO, GlobalStateKey](
         mptProducer,
         GlobalStateKey.toHex[IO]
       )

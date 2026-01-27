@@ -8,6 +8,7 @@ import cats.syntax.functor._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.merkletree.syntax.SortedMapOpsImpl
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
@@ -124,7 +125,7 @@ case class GlobalIncrementalSnapshot(
 ) extends IncrementalSnapshot[GlobalSnapshotStateProof]
 
 object GlobalIncrementalSnapshot {
-  def fromGlobalSnapshot[F[_]: Parallel: Async: Hasher](snapshot: GlobalSnapshot)(
+  def fromGlobalSnapshot[F[_]: Parallel: Async: Hasher: JsonSerializer](snapshot: GlobalSnapshot)(
     implicit stateProofSelector: StateProofSelector
   ): F[GlobalIncrementalSnapshot] = {
     val gsi = snapshot.info.toGlobalSnapshotInfo

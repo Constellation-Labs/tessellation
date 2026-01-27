@@ -22,22 +22,26 @@ import weaver.scalacheck.Checkers
 
 object GlobalSnapshotSchemaMigrationSuite extends MutableIOSuite with Checkers {
 
-  type Res = HasherSelector[IO]
+  type Res = (HasherSelector[IO], JsonSerializer[IO])
 
   override def sharedResource: Resource[IO, Res] =
     for {
       implicit0(kryo: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
       implicit0(json: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].toResource
     } yield
-      HasherSelector.forSync[IO](
-        Hasher.forJson[IO],
-        Hasher.forKryo[IO],
-        hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
+      (
+        HasherSelector.forSync[IO](
+          Hasher.forJson[IO],
+          Hasher.forKryo[IO],
+          hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
+        ),
+        json
       )
 
   test("GlobalSnapshotInfoV1 converts to GlobalSnapshotInfo preserving core fields") { implicit res =>
     forall(addressGen) { address =>
-      res.withCurrent { implicit hasher =>
+      implicit val (hs, js) = res
+      hs.withCurrent { implicit hasher =>
         val v1 = GlobalSnapshotInfoV1(
           lastStateChannelSnapshotHashes = SortedMap(address -> Hash.empty),
           lastTxRefs = SortedMap.empty[Address, TransactionReference],
@@ -62,7 +66,8 @@ object GlobalSnapshotSchemaMigrationSuite extends MutableIOSuite with Checkers {
 
   test("GlobalSnapshotInfoV2 converts to GlobalSnapshotInfo preserving all fields") { implicit res =>
     forall(addressGen) { address =>
-      res.withCurrent { implicit hasher =>
+      implicit val (hs, js) = res
+      hs.withCurrent { implicit hasher =>
         val v2 = GlobalSnapshotInfoV2(
           lastStateChannelSnapshotHashes = SortedMap(address -> Hash.empty),
           lastTxRefs = SortedMap.empty[Address, TransactionReference],
@@ -86,7 +91,8 @@ object GlobalSnapshotSchemaMigrationSuite extends MutableIOSuite with Checkers {
   }
 
   test("GlobalStateProofSelector returns LegacyFormat for ordinal <= boundary") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       val selector = GlobalStateProofSelector(SnapshotOrdinal.unsafeApply(10))
 
       IO.pure(
@@ -101,7 +107,8 @@ object GlobalSnapshotSchemaMigrationSuite extends MutableIOSuite with Checkers {
   }
 
   test("CurrencyStateProofSelector always returns LegacyFormat") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       val selector = CurrencyStateProofSelector.instance
 
       IO.pure(
@@ -116,7 +123,8 @@ object GlobalSnapshotSchemaMigrationSuite extends MutableIOSuite with Checkers {
 
   test("GlobalSnapshotInfo.stateProof uses selector to choose format") { implicit res =>
     forall(addressGen) { address =>
-      res.withCurrent { implicit hasher =>
+      implicit val (hs, js) = res
+      hs.withCurrent { implicit hasher =>
         val info = GlobalSnapshotInfo(
           lastStateChannelSnapshotHashes = SortedMap(address -> Hash.empty),
           lastTxRefs = SortedMap.empty,

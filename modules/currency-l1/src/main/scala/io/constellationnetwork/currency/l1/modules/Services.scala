@@ -13,6 +13,7 @@ import io.constellationnetwork.dag.l1.domain.swap.block.AllowSpendBlockService
 import io.constellationnetwork.dag.l1.domain.tokenlock.block.TokenLockBlockService
 import io.constellationnetwork.dag.l1.domain.transaction.{TransactionFeeEstimator, TransactionService}
 import io.constellationnetwork.dag.l1.modules.{Services => BaseServices, Validators}
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
@@ -31,7 +32,7 @@ import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshot
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
 object Services {
-  def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider, R <: CliMethod](
+  def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider: JsonSerializer, R <: CliMethod](
     storages: Storages[
       F,
       CurrencySnapshotStateProof,
@@ -68,7 +69,14 @@ object Services {
       val gossip = sharedServices.gossip
       val globalL0 =
         GlobalL0Service
-          .make[F](p2PClient.l0GlobalSnapshot, globalL0Cluster, lastGlobalSnapshotStorage, None, maybeMajorityPeerIds)
+          .make[F](
+            p2PClient.l0GlobalSnapshot,
+            globalL0Cluster,
+            lastGlobalSnapshotStorage,
+            None,
+            maybeMajorityPeerIds,
+            sharedStorages.mptStore
+          )
       val session = sharedServices.session
       val transaction = TransactionService.make[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
         storages.transaction,

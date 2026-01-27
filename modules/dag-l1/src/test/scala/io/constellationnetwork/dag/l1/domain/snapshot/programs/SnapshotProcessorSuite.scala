@@ -100,7 +100,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
     Ref[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]],
     Ref[IO, SortedMap[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]],
     Hasher[IO],
-    MptStore[IO, GlobalStateKey]
+    MptStore[IO, GlobalStateKey],
+    JsonSerializer[IO]
   )
 
   def testResources: Resource[IO, TestResources] =
@@ -216,6 +217,14 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               currencySnapshotValidator = CurrencySnapshotValidator
                 .make[IO](SnapshotOrdinal.MinValue, currencySnapshotCreator, validators.signedValidator, None, None)
 
+              mptProducer <- InMemoryMerklePatriciaProducer.make[IO]().asResource
+              mptStore <- MptStore
+                .make[IO, GlobalStateKey](
+                  mptProducer,
+                  GlobalStateKey.toHex[IO]
+                )
+                .asResource
+
               currencySnapshotContextFns = {
                 implicit val testCurrencyStateProofSelector: CurrencyStateProofSelector = CurrencyStateProofSelector.instance
                 CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
@@ -231,10 +240,12 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
               dbLogger <- Slf4jLoggerBundle.make[IO]
               mptProducer <- InMemoryMerklePatriciaProducer.make[IO]().asResource
-              mptStore = MptStore.make[IO, GlobalStateKey](
-                mptProducer,
-                GlobalStateKey.toHex[IO]
-              )
+              mptStore <- MptStore
+                .make[IO, GlobalStateKey](
+                  mptProducer,
+                  GlobalStateKey.toHex[IO]
+                )
+                .asResource
 
               globalSnapshotAcceptanceManager = {
                 implicit val testGlobalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal.MinValue)
@@ -282,7 +293,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   updateDelegatedStakeAcceptanceManager,
                   EpochProgress(NonNegLong.unsafeFrom(1L)),
                   SnapshotOrdinal.MinValue,
-                  SnapshotOrdinal.MinValue
+                  SnapshotOrdinal.MinValue,
+                  mptStore
                 )
               }
               snapshotProcessor = {
@@ -368,7 +380,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 lastNSnapR,
                 incLastNSnapR,
                 k,
-                mptStore
+                mptStore,
+                jhs
               )
           }
         }
@@ -489,11 +502,13 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             lastNSnapR,
             incLastNSnapR,
             k,
-            _
+            _,
+            jhs
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
         implicit val kryo = ks
+        implicit val js = jhs
         implicit val globalStateProofSelector: GlobalStateProofSelector =
           GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
 
@@ -621,11 +636,13 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             lastNSnapR,
             incLastNSnapR,
             k,
-            _
+            _,
+            jhs
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
         implicit val kryo = ks
+        implicit val js = jhs
         implicit val globalStateProofSelector: GlobalStateProofSelector =
           GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
 
@@ -808,11 +825,13 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             lastNSnapR,
             incLastNSnapR,
             k,
-            _
+            _,
+            jhs
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
         implicit val kryo = ks
+        implicit val js = jhs
         implicit val globalStateProofSelector: GlobalStateProofSelector =
           GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
 
@@ -1012,10 +1031,12 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             lastNSnapsR,
             incLastNSnapR,
             k,
-            mptStore
+            mptStore,
+            jhs
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
+        implicit val js = jhs
         implicit val globalStateProofSelector: GlobalStateProofSelector =
           GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
 
@@ -1097,10 +1118,12 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             lastNSnapR,
             incLastNSnapR,
             k,
-            _
+            _,
+            jhs
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val kryo = ks
+        implicit val js = jhs
         val currentHasher = h
         val txHasher = Hasher.forKryo[IO]
 
@@ -1384,11 +1407,13 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             lastNSnapR,
             incLastNSnapR,
             k,
-            _
+            _,
+            jhs
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
         implicit val kryo = ks
+        implicit val js = jhs
 
         val parent1 = BlockReference(Height(6L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(7L), ProofsHash("parent2"))
@@ -1683,9 +1708,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("snapshot should be ignored when a snapshot pushed for processing is not a next one") {
     testResources.use {
-      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, _, _, lastSnapR, _, _, lastNSnapR, incLastNSnapR, k, _) =>
+      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, _, _, lastSnapR, _, _, lastNSnapR, incLastNSnapR, k, _, jhs) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
+        implicit val js = jhs
 
         for {
           hashedLastSnapshot <- forAsyncHasher(
@@ -1727,9 +1753,31 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("error should be thrown when the tips get misaligned") {
     testResources.use {
-      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, _, blocksR, lastSnapR, _, _, lastNSnapR, incLastNSnapR, k, mptStore) =>
+      case (
+            snapshotProcessor,
+            sp,
+            h,
+            _,
+            _,
+            srcKey,
+            _,
+            _,
+            _,
+            peerId,
+            _,
+            blocksR,
+            lastSnapR,
+            _,
+            _,
+            lastNSnapR,
+            incLastNSnapR,
+            k,
+            mptStore,
+            jhs
+          ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
+        implicit val js = jhs
 
         val parent1 = BlockReference(Height(8L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(9L), ProofsHash("parent2"))

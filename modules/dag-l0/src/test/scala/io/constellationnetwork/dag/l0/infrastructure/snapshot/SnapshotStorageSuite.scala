@@ -56,7 +56,8 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
 
   def mkSnapshots(
     implicit H: Hasher[IO],
-    S: SecurityProvider[IO]
+    S: SecurityProvider[IO],
+    j: JsonSerializer[IO]
   ): IO[(Signed[GlobalSnapshot], Signed[GlobalIncrementalSnapshot])] =
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
       Signed.forAsyncHasher[IO, GlobalSnapshot](GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue), keyPair).flatMap { genesis =>

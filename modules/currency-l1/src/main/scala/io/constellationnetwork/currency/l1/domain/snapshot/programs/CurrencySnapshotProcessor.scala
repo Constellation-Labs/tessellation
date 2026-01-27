@@ -35,7 +35,7 @@ import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
 import io.circe.Json
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-sealed abstract class CurrencySnapshotProcessor[F[_]: Async: Parallel: SecurityProvider]
+sealed abstract class CurrencySnapshotProcessor[F[_]: Async: Parallel: SecurityProvider: JsonSerializer]
     extends SnapshotProcessor[
       F,
       CurrencySnapshotStateProof,

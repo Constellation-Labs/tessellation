@@ -3,137 +3,165 @@ package io.constellationnetwork.security.mpt.producer
 import java.util.concurrent.{CountDownLatch, Executors}
 
 import cats.Parallel
-import cats.effect.{Async, Sync}
+import cats.effect.Async
 import cats.syntax.all._
 
-import scala.collection.immutable.ArraySeq
 import scala.collection.mutable
 
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.security.Hasher
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt._
 import io.constellationnetwork.security.mpt.prover.MerklePatriciaSingleInclusionProver
 
-import io.circe.syntax._
-import io.circe.{Encoder, Json}
+import io.circe.Encoder
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-/** Optimized parallel MPT construction.
-  *
-  * Key optimizations over the original implementation:
-  *
-  *   1. PARALLEL JSON ENCODING: Uses Java ExecutorService to parallelize JSON serialization across all CPU cores. Original was sequential
-  *      via .map().
-  *
-  * 2. ARRAY-BASED PROCESSING: Uses primitive arrays with index slicing instead of creating new List/Vector collections at each recursion
-  * level. This eliminates massive intermediate allocations.
-  *
-  * 3. IN-PLACE SORTING: Uses java.util.Arrays.sort with a custom Comparator instead of Scala's sortBy which creates intermediate
-  * collections.
-  *
-  * 4. CONTIGUOUS GROUP DETECTION: Since data is sorted, groups are contiguous. Uses a single linear scan to find group boundaries instead
-  * of groupBy which creates intermediate Maps.
-  *
-  * 5. DIRECT TREE BUILDING: Builds MerklePatriciaNode directly in one recursive pass instead of building an intermediate "pure" tree
-  * structure first.
-  *
-  * 6. SMART PARALLELISM: Uses parTraverse at branch points where multiple children exist, giving natural parallelism that follows the tree
-  * structure.
-  *
-  * 7. STRATEGIC CEDING: Adds Async[F].cede calls based on workload size to prevent CPU starvation of other fibers during heavy computation.
-  *
-  * Performance improvement: ~30s → ~14s for 800K entries (~50% reduction)
+/** Parallel MPT producer - builds trie with hashes computed during construction. Nodes are immutable with pre-computed digests.
   */
-class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel] extends MerklePatriciaProducer[F] {
+class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel: JsonSerializer](
+  maxThreads: Int = Runtime.getRuntime.availableProcessors()
+) extends MerklePatriciaProducer[F] {
+
+  private val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
+  private val ParallelDepthThreshold = 10
 
   def getProver(trie: MerklePatriciaTrie): F[MerklePatriciaSingleInclusionProver[F]] =
     MerklePatriciaSingleInclusionProver.make[F](trie).pure[F]
 
-  def create[A: Encoder](data: Map[Hex, A]): F[MerklePatriciaTrie] =
+  /** Create trie from pre-serialized bytes. Hashes are computed during node construction.
+    */
+  def createFromBytes(data: Map[Hex, Array[Byte]]): F[MerklePatriciaTrie] =
     if (data.isEmpty) {
-      MerklePatriciaNode.Branch[F](Map.empty).map(MerklePatriciaTrie(_))
+      MerklePatriciaNode.Branch.empty[F].map(MerklePatriciaTrie(_))
     } else {
       for {
-        // Phase 1: Prepare and sort in blocking context
-        entries <- Async[F].blocking(prepareAndSort(data))
-        // Phase 2: Build tree with parallel hashing at branch points
-        root <- buildTree(entries, 0, entries.length, 0)
+        _ <- logger.info(s"[MPT] Creating trie from ${data.size} entries")
+        entries <- Async[F].blocking(prepareAndSortBytes(data))
+        dataHashes <- batchComputeDataHashes(entries)
+        root <- buildTree(entries, dataHashes, 0, entries.length, 0)
+        _ <- logger.info(s"[MPT] Created trie")
       } yield MerklePatriciaTrie(root)
+    }
+
+  def create[A: Encoder](data: Map[Hex, A]): F[MerklePatriciaTrie] =
+    if (data.isEmpty) {
+      MerklePatriciaNode.Branch.empty[F].map(MerklePatriciaTrie(_))
+    } else {
+      for {
+        byteData <- data.toList.parTraverse {
+          case (k, v) =>
+            JsonSerializer[F].serialize(v).map(k -> _)
+        }.map(_.toMap)
+        trie <- createFromBytes(byteData)
+      } yield trie
     }
 
   def insert[A: Encoder](
     current: MerklePatriciaTrie,
     data: Map[Hex, A]
   ): F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
-    new StatelessMerklePatriciaProducer[F].insert(current, data)
+    if (data.isEmpty) current.asRight[MerklePatriciaError].pure[F]
+    else {
+      (for {
+        // Convert to bytes and compute hashes
+        entries <- data.toList.parTraverse {
+          case (hex, value) =>
+            for {
+              bytes <- JsonSerializer[F].serialize(value)
+              hash <- Hasher[F].hashBytes(bytes)
+            } yield (hex, hash)
+        }
+        // Apply incremental inserts
+        newRoot <- IncrementalTrieOps.insertMultiple[F](current.rootNode, entries)
+      } yield MerklePatriciaTrie(newRoot).asRight[MerklePatriciaError])
+        .handleError(e => (OperationError(e.getMessage): MerklePatriciaError).asLeft)
+    }
+
+  def insertFromBytes(
+    current: MerklePatriciaTrie,
+    data: Map[Hex, Array[Byte]]
+  ): F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
+    if (data.isEmpty) current.asRight[MerklePatriciaError].pure[F]
+    else {
+      (for {
+        // Compute hashes for byte data
+        entries <- data.toList.parTraverse {
+          case (hex, bytes) =>
+            Hasher[F].hashBytes(bytes).map(hash => (hex, hash))
+        }
+        // Apply incremental inserts
+        newRoot <- IncrementalTrieOps.insertMultiple[F](current.rootNode, entries)
+      } yield MerklePatriciaTrie(newRoot).asRight[MerklePatriciaError])
+        .handleError(e => (OperationError(e.getMessage): MerklePatriciaError).asLeft)
+    }
 
   def remove(
     current: MerklePatriciaTrie,
-    data: List[Hex]
+    keys: List[Hex]
   ): F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
-    new StatelessMerklePatriciaProducer[F].remove(current, data)
+    if (keys.isEmpty) current.asRight[MerklePatriciaError].pure[F]
+    else {
+      IncrementalTrieOps
+        .removeMultiple[F](current.rootNode, keys)
+        .map(newRoot => MerklePatriciaTrie(newRoot).asRight[MerklePatriciaError])
+        .handleError(e => (OperationError(e.getMessage): MerklePatriciaError).asLeft)
+    }
 
-  // ===========================================================================
-  // Phase 1: Parallel JSON encoding + sorting
-  // ===========================================================================
-
-  private def prepareAndSort[A: Encoder](data: Map[Hex, A]): Array[(ArraySeq[Nibble], Json)] = {
-    val numCores = Runtime.getRuntime.availableProcessors()
+  private def prepareAndSortBytes(data: Map[Hex, Array[Byte]]): Array[(CompactNibblePath, Array[Byte])] = {
     val dataArray = data.toArray
-    val results = new Array[(ArraySeq[Nibble], Json)](dataArray.length)
+    val results = new Array[(CompactNibblePath, Array[Byte])](dataArray.length)
+    val numThreads = maxThreads
+    val chunkSize = math.max(1, (dataArray.length + numThreads - 1) / numThreads)
+    val executor = Executors.newFixedThreadPool(numThreads)
+    val latch = new CountDownLatch(numThreads)
 
-    // Parallel JSON encoding using Java threads
-    val chunkSize = math.max(1, (dataArray.length + numCores - 1) / numCores)
-    val executor = Executors.newFixedThreadPool(numCores)
-    val latch = new CountDownLatch(numCores)
-
-    for (i <- 0 until numCores) {
-      val start = i * chunkSize
-      val end = math.min(start + chunkSize, dataArray.length)
+    for (i <- 0 until numThreads) {
+      val startIdx = i * chunkSize
+      val endIdx = math.min(startIdx + chunkSize, dataArray.length)
       executor.submit(new Runnable {
         def run(): Unit =
           try {
-            var j = start
-            while (j < end) {
-              val (hex, value) = dataArray(j)
-              results(j) = (ArraySeq.unsafeWrapArray(Nibble(hex).toArray), value.asJson)
+            var j = startIdx
+            while (j < endIdx) {
+              val (hex, bytes) = dataArray(j)
+              results(j) = (CompactNibblePath.fromHexString(hex.value), bytes)
               j += 1
             }
-          } finally
-            latch.countDown()
+          } finally latch.countDown()
       })
     }
     latch.await()
     executor.shutdown()
-    executor.awaitTermination(60, java.util.concurrent.TimeUnit.SECONDS)
 
-    // In-place sort with custom comparator
-    java.util.Arrays.sort(
+    java.util.Arrays.parallelSort(
       results,
-      new java.util.Comparator[(ArraySeq[Nibble], Json)] {
-        override def compare(a: (ArraySeq[Nibble], Json), b: (ArraySeq[Nibble], Json)): Int = {
-          val pathA = a._1
-          val pathB = b._1
-          val minLen = math.min(pathA.length, pathB.length)
-          var i = 0
-          while (i < minLen) {
-            val cmp = java.lang.Byte.compare(pathA(i).value, pathB(i).value)
-            if (cmp != 0) return cmp
-            i += 1
-          }
-          pathA.length - pathB.length
-        }
-      }
+      (a: (CompactNibblePath, Array[Byte]), b: (CompactNibblePath, Array[Byte])) => CompactNibblePath.ordering.compare(a._1, b._1)
     )
-
     results
   }
 
-  // ===========================================================================
-  // Phase 2: Direct tree building with parallel hashing
-  // ===========================================================================
+  private def batchComputeDataHashes(entries: Array[(CompactNibblePath, Array[Byte])]): F[Array[String]] = {
+    val numEntries = entries.length
+    val batchSize = math.max(100, numEntries / (maxThreads * 4))
+
+    for {
+      results <- Async[F].delay(new Array[String](numEntries))
+      batches = entries.indices.toList.grouped(batchSize).toList
+      _ <- batches.parTraverse_ { batch =>
+        batch.traverse_ { i =>
+          Hasher[F].hashBytes(entries(i)._2).flatMap { hash =>
+            Async[F].delay(results(i) = hash.value)
+          }
+        }
+      }
+    } yield results
+  }
 
   private def buildTree(
-    entries: Array[(ArraySeq[Nibble], Json)],
+    entries: Array[(CompactNibblePath, Array[Byte])],
+    dataHashes: Array[String],
     start: Int,
     end: Int,
     depth: Int
@@ -141,33 +169,67 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel] extends Merk
     val size = end - start
 
     if (size == 0) {
-      MerklePatriciaNode.Branch[F](Map.empty).widen
+      MerklePatriciaNode.Branch.empty[F].widen
     } else if (size == 1) {
-      val (path, data) = entries(start)
-      val remaining = if (depth >= path.length) ArraySeq.empty[Nibble] else path.drop(depth)
-      val leaf: F[MerklePatriciaNode] = MerklePatriciaNode.Leaf[F](remaining, data).widen
-      // Cede periodically during leaf creation
-      if (start % 10000 == 0) Async[F].cede *> leaf else leaf
+      val (path, _) = entries(start)
+      val dataHash = Hash(dataHashes(start))
+      val remaining = if (depth >= path.length) CompactNibblePath.empty else path.drop(depth)
+      MerklePatriciaNode.Leaf.fromCompact[F](remaining, dataHash).widen
     } else {
-      buildWithGroups(entries, start, end, depth)
+      buildWithGroups(entries, dataHashes, start, end, depth)
     }
   }
 
   private def buildWithGroups(
-    entries: Array[(ArraySeq[Nibble], Json)],
+    entries: Array[(CompactNibblePath, Array[Byte])],
+    dataHashes: Array[String],
     start: Int,
     end: Int,
     depth: Int
   ): F[MerklePatriciaNode] = {
-    // Find contiguous group boundaries (data is sorted)
-    val groups = mutable.ArrayBuffer[(Nibble, Int, Int)]()
+    val groups = findGroups(entries, start, end, depth)
+
+    if (groups.length == 1) {
+      val (nibbleValue, gs, ge) = groups(0)
+      buildTree(entries, dataHashes, gs, ge, depth + 1).flatMap { child =>
+        createSingleGroupNode(nibbleValue, child)
+      }
+    } else {
+      val useParallel = depth <= ParallelDepthThreshold || groups.length >= 4
+
+      val buildChildren: F[List[(Nibble, MerklePatriciaNode)]] =
+        if (useParallel) {
+          groups.toList.parTraverse {
+            case (nibbleValue, gs, ge) =>
+              buildTree(entries, dataHashes, gs, ge, depth + 1).map(Nibble.unsafe(nibbleValue) -> _)
+          }
+        } else {
+          groups.toList.traverse {
+            case (nibbleValue, gs, ge) =>
+              buildTree(entries, dataHashes, gs, ge, depth + 1).map(Nibble.unsafe(nibbleValue) -> _)
+          }
+        }
+
+      buildChildren.flatMap { children =>
+        MerklePatriciaNode.Branch(children.toMap).widen
+      }
+    }
+  }
+
+  @inline private def findGroups(
+    entries: Array[(CompactNibblePath, Array[Byte])],
+    start: Int,
+    end: Int,
+    depth: Int
+  ): mutable.ArrayBuffer[(Byte, Int, Int)] = {
+    val groups = mutable.ArrayBuffer[(Byte, Int, Int)]()
     var groupStart = start
-    var currentNibble = getNibbleAt(entries(start)._1, depth)
+    var currentNibble = entries(start)._1.getOrEmpty(depth)
 
     var i = start + 1
     while (i < end) {
-      val nibble = getNibbleAt(entries(i)._1, depth)
-      if (nibble.value != currentNibble.value) {
+      val nibble = entries(i)._1.getOrEmpty(depth)
+      if (nibble != currentNibble) {
         groups += ((currentNibble, groupStart, i))
         groupStart = i
         currentNibble = nibble
@@ -175,46 +237,26 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel] extends Merk
       i += 1
     }
     groups += ((currentNibble, groupStart, end))
-
-    if (groups.length == 1) {
-      // Single group - might become extension
-      val (nibble, gs, ge) = groups(0)
-      buildTree(entries, gs, ge, depth + 1).flatMap(child => createSingleGroupNode(nibble, child))
-    } else {
-      // Multiple groups - build children in parallel
-      val processChildren: F[MerklePatriciaNode] = groups.toList.parTraverse {
-        case (nibble, gs, ge) =>
-          buildTree(entries, gs, ge, depth + 1).map(nibble -> _)
-      }
-        .flatMap(children => MerklePatriciaNode.Branch[F](children.toMap).widen)
-
-      // Strategic ceding based on workload size
-      val entriesInRange = end - start
-      if (depth <= 3 || entriesInRange > 50000) {
-        Async[F].cede *> processChildren <* Async[F].cede
-      } else if (depth <= 6 || entriesInRange > 10000) {
-        Async[F].cede *> processChildren
-      } else {
-        processChildren
-      }
-    }
+    groups
   }
 
-  private def getNibbleAt(path: ArraySeq[Nibble], depth: Int): Nibble =
-    if (depth < path.length) path(depth) else Nibble.empty
-
-  private def createSingleGroupNode(nibble: Nibble, child: MerklePatriciaNode): F[MerklePatriciaNode] =
+  private def createSingleGroupNode(
+    nibbleValue: Byte,
+    child: MerklePatriciaNode
+  ): F[MerklePatriciaNode] =
     child match {
       case branch: MerklePatriciaNode.Branch =>
-        MerklePatriciaNode.Extension[F](ArraySeq(nibble), branch).widen
+        MerklePatriciaNode.Extension.fromCompact(CompactNibblePath.single(nibbleValue), branch).widen
+
       case ext: MerklePatriciaNode.Extension =>
-        MerklePatriciaNode.Extension[F](ArraySeq(nibble) ++ ext.shared, ext.child).widen
+        MerklePatriciaNode.Extension.fromCompact(CompactNibblePath.single(nibbleValue) ++ ext.sharedPath, ext.child).widen
+
       case leaf: MerklePatriciaNode.Leaf =>
-        MerklePatriciaNode.Leaf[F](ArraySeq(nibble) ++ leaf.remaining, leaf.data).widen
+        MerklePatriciaNode.Leaf.fromCompact(CompactNibblePath.single(nibbleValue) ++ leaf.remainingPath, leaf.dataDigest).widen
     }
 }
 
 object ParallelMerklePatriciaProducer {
-  def apply[F[_]: Hasher: Async: Parallel]: ParallelMerklePatriciaProducer[F] =
-    new ParallelMerklePatriciaProducer[F]
+  def apply[F[_]: Hasher: Async: Parallel: JsonSerializer]: ParallelMerklePatriciaProducer[F] =
+    new ParallelMerklePatriciaProducer[F]()
 }

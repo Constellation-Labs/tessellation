@@ -35,14 +35,14 @@ import weaver.scalacheck.Checkers
 object NetworkApiServiceSuite extends MutableIOSuite with Checkers {
   implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal.unsafeApply(Long.MaxValue))
 
-  type Res = (SecurityProvider[IO], Hasher[IO])
+  type Res = (SecurityProvider[IO], Hasher[IO], JsonSerializer[IO])
 
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
     h = Hasher.forJson[IO]
-  } yield (sp, h)
+  } yield (sp, h, j)
 
   private def errorResult[A]: IO[A] = IO.raiseError(new Exception("unexpected call"))
   def makeNetworkApiService(
@@ -94,7 +94,7 @@ object NetworkApiServiceSuite extends MutableIOSuite with Checkers {
   }
 
   test("status returns NetworkStatusResponse when snapshot found") { res =>
-    implicit val (sp, h) = res
+    implicit val (sp, h, j) = res
 
     val gen = for {
       genesisOrdinal <- snapshotOrdinalGen

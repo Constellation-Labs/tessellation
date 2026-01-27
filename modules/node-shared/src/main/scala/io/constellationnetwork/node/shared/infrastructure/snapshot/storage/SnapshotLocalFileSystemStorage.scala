@@ -24,7 +24,6 @@ import fs2.Stream
 import fs2.io.file.Path
 import io.circe.{Decoder, Encoder}
 import io.estatico.newtype.ops._
-import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class SnapshotLocalFileSystemStorage[
@@ -38,6 +37,8 @@ abstract class SnapshotLocalFileSystemStorage[
   val hashPathGenerator = PathGenerator.forHash(Depth(2), PrefixSize(3))
   val ordinalPathGenerator = PathGenerator.forOrdinal(ordinalChunkSize)
   val maxParallelFileOperations = 4
+
+  override val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
   def write(snapshot: Signed[S])(implicit hasher: Hasher[F]): F[Unit] = {
     val ordinalName = toOrdinalName(snapshot.value)

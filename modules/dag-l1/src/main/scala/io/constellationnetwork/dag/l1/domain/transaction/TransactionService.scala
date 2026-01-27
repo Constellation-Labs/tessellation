@@ -8,6 +8,7 @@ import cats.syntax.all._
 
 import io.constellationnetwork.dag.l1.domain.transaction.ContextualTransactionValidator.NonContextualValidationError
 import io.constellationnetwork.ext.cats.syntax.validated.validatedSyntax
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.transaction.TransactionValidator
@@ -34,7 +35,7 @@ trait TransactionService[F[_]] {
 object TransactionService {
 
   def make[
-    F[_]: Async: Parallel,
+    F[_]: Async: Parallel: JsonSerializer,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P]

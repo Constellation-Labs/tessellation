@@ -253,45 +253,49 @@ object Mocks {
     // Create the manager with mock dependencies
     implicit val hasherSelector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(h)
     implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(Long.MaxValue))
-
-    Slf4jLoggerBundle.makeUnsafe[IO].flatMap { loggerBundle =>
-      InMemoryMerklePatriciaProducer.make[IO]().flatMap { mptProducer =>
-        val mptStore = MptStore.make[IO, GlobalStateKey](
-          mptProducer,
-          GlobalStateKey.toHex[IO]
-        )
-        GlobalSnapshotAcceptanceManager
-          .make[IO](
-            FieldsAddedOrdinals(
-              Map.empty,
-              Map.empty,
-              Map.empty,
-              Map.empty,
-              Map.empty,
-              Map.empty,
-              Map.empty,
-              Map.empty,
-              Map.empty,
-              Map.empty
-            ),
-            MetagraphsSyncConfig(PosInt(100)),
-            AppEnvironment.Dev,
-            blockAcceptanceManager = mockBlockAcceptanceManager,
-            allowSpendBlockAcceptanceManager = mockAllowSpendBlockAcceptanceManager,
-            tokenLockBlockAcceptanceManager = mockTokenLockBlockAcceptanceManager,
-            stateChannelEventsProcessor = mockStateChannelEventsProcessor,
-            updateNodeParametersAcceptanceManager = mockUpdateNodeParametersAcceptanceManager,
-            updateDelegatedStakeAcceptanceManager = updateDelegatedStakeAcceptanceManager,
-            updateNodeCollateralAcceptanceManager = mockUpdateNodeCollateralAcceptanceManager,
-            spendActionValidator = mockSpendActionValidator,
-            pricingUpdateValidator = mockPricingUpdateValidator,
-            priceStateUpdater = mockPriceStateUpdater,
-            collateral = Amount.empty,
-            withdrawalTimeLimit = EpochProgress(4L),
-            loggerBundle = loggerBundle,
-            mptStore = mptStore
-          )
-          .pure[IO]
+    JsonSerializer.forAsync[IO].flatMap { implicit j =>
+      Slf4jLoggerBundle.makeUnsafe[IO].flatMap { loggerBundle =>
+        InMemoryMerklePatriciaProducer.make[IO]().flatMap { mptProducer =>
+          MptStore
+            .make[IO, GlobalStateKey](
+              mptProducer,
+              GlobalStateKey.toHex[IO]
+            )
+            .flatMap { mptStore =>
+              GlobalSnapshotAcceptanceManager
+                .make[IO](
+                  FieldsAddedOrdinals(
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty,
+                    Map.empty
+                  ),
+                  MetagraphsSyncConfig(PosInt(100)),
+                  AppEnvironment.Dev,
+                  blockAcceptanceManager = mockBlockAcceptanceManager,
+                  allowSpendBlockAcceptanceManager = mockAllowSpendBlockAcceptanceManager,
+                  tokenLockBlockAcceptanceManager = mockTokenLockBlockAcceptanceManager,
+                  stateChannelEventsProcessor = mockStateChannelEventsProcessor,
+                  updateNodeParametersAcceptanceManager = mockUpdateNodeParametersAcceptanceManager,
+                  updateDelegatedStakeAcceptanceManager = updateDelegatedStakeAcceptanceManager,
+                  updateNodeCollateralAcceptanceManager = mockUpdateNodeCollateralAcceptanceManager,
+                  spendActionValidator = mockSpendActionValidator,
+                  pricingUpdateValidator = mockPricingUpdateValidator,
+                  priceStateUpdater = mockPriceStateUpdater,
+                  collateral = Amount.empty,
+                  withdrawalTimeLimit = EpochProgress(4L),
+                  loggerBundle = loggerBundle,
+                  mptStore = mptStore
+                )
+                .pure[IO]
+            }
+        }
       }
     }
   }

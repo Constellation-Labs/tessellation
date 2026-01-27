@@ -101,7 +101,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     implicit H: Hasher[IO],
     S: SecurityProvider[IO],
     K: KryoSerializer[IO],
-    gsps: GlobalStateProofSelector
+    gsps: GlobalStateProofSelector,
+    js: JsonSerializer[IO]
   ): IO[(Hashed[GlobalSnapshot], NonEmptyList[Hashed[GlobalIncrementalSnapshot]])] =
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
       Signed
@@ -143,7 +144,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   )(
     implicit S: SecurityProvider[IO],
     H: Hasher[IO],
-    gsps: GlobalStateProofSelector
+    gsps: GlobalStateProofSelector,
+    j: JsonSerializer[IO]
   ): IO[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] =
     for {
       activeTips <- lastSnapshot.activeTips
@@ -363,6 +365,12 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       currencySnapshotValidator = CurrencySnapshotValidator
         .make[IO](SnapshotOrdinal.MinValue, currencySnapshotCreator, validators.signedValidator, None, None)
 
+      mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      mptStore <- MptStore.make[IO, GlobalStateKey](
+        mptProducer,
+        GlobalStateKey.toHex[IO]
+      )
+
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
       stateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L))
       feeCalculator = FeeCalculator.make(SortedMap.empty)
@@ -383,11 +391,6 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       priceStateUpdater = PriceStateUpdater.make(Dev, DefaultDelegatedRewardsConfigProvider)
       dbLogger <- Slf4jLoggerBundle.makeUnsafe[IO]
 
-      mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
-      mptStore = MptStore.make[IO, GlobalStateKey](
-        mptProducer,
-        GlobalStateKey.toHex[IO]
-      )
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager
         .make[IO](
           FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
@@ -413,7 +416,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         updateDelegatedStakeAcceptanceManager,
         EpochProgress(NonNegLong.unsafeFrom(1L)),
         SnapshotOrdinal.MinValue,
-        SnapshotOrdinal.MinValue
+        SnapshotOrdinal.MinValue,
+        mptStore
       )
       lastNSnapshotStorage =
         LastNGlobalSnapshotStorage.make[IO](lastGlobalSnapshotsSyncConfig, lastNSnapR, incLastNSnapR)

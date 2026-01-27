@@ -8,7 +8,7 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
-import io.constellationnetwork.merkletree.StateProofValidator
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceManager
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
@@ -20,6 +20,7 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.peer.PeerId
@@ -28,6 +29,7 @@ import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.SignatureProof
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelValidationType}
+import io.constellationnetwork.validator.StateProofValidator
 
 import derevo.cats.{eqv, show}
 import derevo.derive
@@ -37,12 +39,13 @@ abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunct
 
 object GlobalSnapshotContextFunctions {
 
-  def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider](
+  def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider: JsonSerializer](
     snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     updateDelegatedStakeAcceptanceManager: UpdateDelegatedStakeAcceptanceManager[F],
     withdrawalTimeLimit: EpochProgress,
     tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
-    setSumFixOrdinal: SnapshotOrdinal
+    setSumFixOrdinal: SnapshotOrdinal,
+    mptStore: MptStore[F, GlobalStateKey]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ) =
@@ -257,7 +260,7 @@ object GlobalSnapshotContextFunctions {
         hashedArtifact <- HasherSelector[F].withCurrent(implicit hasher => signedArtifact.toHashed)
 
         calculatedStateProof <- HasherSelector[F].withCurrent { implicit hasher =>
-          snapshotInfo.stateProof(signedArtifact.ordinal)
+          snapshotInfo.stateProof(mptStore.underlying, signedArtifact.ordinal)
         }
         validation <- StateProofValidator.validate(hashedArtifact, calculatedStateProof)
         _ = validation match {

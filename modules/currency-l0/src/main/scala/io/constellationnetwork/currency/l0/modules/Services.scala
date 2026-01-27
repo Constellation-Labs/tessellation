@@ -138,7 +138,14 @@ object Services {
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](cfg.shared.addresses, storages.snapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)
       globalL0Service = GlobalL0Service
-        .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastSyncGlobalSnapshot, None, maybeMajorityPeerIds)
+        .make[F](
+          p2PClient.l0GlobalSnapshot,
+          storages.globalL0Cluster,
+          storages.lastSyncGlobalSnapshot,
+          None,
+          maybeMajorityPeerIds,
+          sharedStorages.mptStore
+        )
 
       currencyMessagesService = CurrencyMessagesService.make[F](
         mkCell,

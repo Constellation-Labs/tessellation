@@ -26,16 +26,17 @@ import weaver.MutableIOSuite
 
 object JsonBinarySerializerSuite extends MutableIOSuite {
 
-  type Res = Hasher[IO]
+  type Res = (Hasher[IO], JsonSerializer[IO])
 
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { implicit res =>
       JsonSerializer.forAsync[IO].asResource.map { implicit json =>
-        Hasher.forJson[IO]
+        (Hasher.forJson[IO], json)
       }
     }
 
   test("should deserialize properly serialized object") { implicit res =>
+    implicit val (hasher, json) = res
     currencyIncrementalSnapshot[IO](
       Hash.empty,
       CurrencySnapshotInfo(SortedMap.empty, SortedMap.empty, None, None, None, None, None, None, None)
@@ -47,6 +48,7 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
   }
 
   test("should not deserialize different serialized object") { implicit res =>
+    implicit val (hasher, json) = res
     currencyIncrementalSnapshot[IO](
       Hash.empty,
       CurrencySnapshotInfo(SortedMap.empty, SortedMap.empty, None, None, None, None, None, None, None)
@@ -57,7 +59,7 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
     }
   }
 
-  private[json] def currencyIncrementalSnapshot[F[_]: Parallel: Async: Hasher](
+  private[json] def currencyIncrementalSnapshot[F[_]: Parallel: Async: Hasher: JsonSerializer](
     hash: Hash,
     currencySnapshotInfo: CurrencySnapshotInfo
   ): F[Signed[CurrencyIncrementalSnapshot]] = {

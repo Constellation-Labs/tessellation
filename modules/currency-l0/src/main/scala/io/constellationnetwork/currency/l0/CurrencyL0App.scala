@@ -6,8 +6,7 @@ import cats.syntax.all._
 import scala.collection.immutable.SortedSet
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
-import io.constellationnetwork.currency.l0.StateChannel.performGlobalL0SnapshotProcess
-import io.constellationnetwork.currency.l0.StoragesInitializer.{initializeCurrencySnapshotStorages, initializeGlobalSnapshotStorages}
+import io.constellationnetwork.currency.l0.StoragesInitializer.initializeCurrencySnapshotStorages
 import io.constellationnetwork.currency.l0.cell.{L0Cell, L0CellInput}
 import io.constellationnetwork.currency.l0.cli.method
 import io.constellationnetwork.currency.l0.cli.method._
@@ -210,10 +209,6 @@ abstract class CurrencyL0App(
         services.collateral
       )
 
-      _ <- hasherSelectorAlwaysCurrent.withCurrent { implicit hasher =>
-        initializeGlobalSnapshotStorages[IO, Run](services, storages, sharedStorages)
-      }.asResource
-
       program <- (method match {
         case m: CreateGenesis =>
           hasherSelectorAlwaysCurrent.withCurrent { implicit hasher =>
@@ -229,15 +224,16 @@ abstract class CurrencyL0App(
             innerProgram <- other match {
               case rv: RunValidator =>
                 storages.identifier.setInitial(rv.identifier) >>
-                  performGlobalL0SnapshotProcess(
-                    storages,
-                    sharedStorages,
-                    services,
-                    dataApplicationService,
-                    keyPair,
-                    mkCell,
-                    isStartupCall = true
-                  ) >>
+                  HasherSelector[IO].withCurrent { implicit hs =>
+                    StateChannel.performGlobalL0SnapshotProcess(
+                      storages,
+                      sharedStorages,
+                      services,
+                      dataApplicationService,
+                      keyPair,
+                      mkCell
+                    )
+                  } >>
                   gossipDaemon.startAsRegularValidator >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
                   storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
@@ -262,15 +258,16 @@ abstract class CurrencyL0App(
               case m: RunValidatorWithJoinAttempt =>
                 storages.identifier.setInitial(m.identifier) >>
                   gossipDaemon.startAsRegularValidator >>
-                  performGlobalL0SnapshotProcess(
-                    storages,
-                    sharedStorages,
-                    services,
-                    dataApplicationService,
-                    keyPair,
-                    mkCell,
-                    isStartupCall = true
-                  ) >>
+                  HasherSelector[IO].withCurrent { implicit hs =>
+                    StateChannel.performGlobalL0SnapshotProcess(
+                      storages,
+                      sharedStorages,
+                      services,
+                      dataApplicationService,
+                      keyPair,
+                      mkCell
+                    )
+                  } >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
                   storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
                   programs.joining.joinOneOf(m.majorityForkPeerIds) >>
@@ -310,15 +307,16 @@ abstract class CurrencyL0App(
 
               case rr: RunRollback =>
                 storages.identifier.setInitial(rr.identifier) >>
-                  performGlobalL0SnapshotProcess(
-                    storages,
-                    sharedStorages,
-                    services,
-                    dataApplicationService,
-                    keyPair,
-                    mkCell,
-                    isStartupCall = true
-                  ) >>
+                  HasherSelector[IO].withCurrent { implicit hs =>
+                    StateChannel.performGlobalL0SnapshotProcess(
+                      storages,
+                      sharedStorages,
+                      services,
+                      dataApplicationService,
+                      keyPair,
+                      mkCell
+                    )
+                  } >>
                   storages.node.tryModifyState(
                     NodeState.Initial,
                     NodeState.RollbackInProgress,
@@ -411,14 +409,13 @@ abstract class CurrencyL0App(
                         currencySnapshotInfo.some
                       )
                     }
-                    _ <- performGlobalL0SnapshotProcess(
+                    _ <- StateChannel.performGlobalL0SnapshotProcess(
                       storages,
                       sharedStorages,
                       services,
                       dataApplicationService,
                       keyPair,
-                      mkCell,
-                      isStartupCall = true
+                      mkCell
                     )
                     hashedSnapshot <- currencySnapshot.toHashed[IO]
                     _ <- services.consensus.manager.startFacilitatingAfterRollback(
@@ -488,10 +485,12 @@ abstract class CurrencyL0App(
 
               case _ => IO.unit
             }
-            _ <- StateChannel
-              .run[IO](services, storages, sharedStorages, programs, dataApplicationService, keyPair, mkCell)
-              .compile
-              .drain
+            _ <- HasherSelector[IO].withCurrent { implicit hs =>
+              StateChannel
+                .run[IO](services, storages, sharedStorages, programs, dataApplicationService, keyPair, mkCell)
+                .compile
+                .drain
+            }
           } yield innerProgram
       }).asResource
 

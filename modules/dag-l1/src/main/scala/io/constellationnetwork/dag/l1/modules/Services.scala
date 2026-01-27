@@ -10,6 +10,7 @@ import io.constellationnetwork.dag.l1.domain.swap.block.AllowSpendBlockService
 import io.constellationnetwork.dag.l1.domain.tokenlock.block.TokenLockBlockService
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionService
 import io.constellationnetwork.dag.l1.http.p2p.P2PClient
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.domain.cluster.services.{Cluster, Session}
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
@@ -34,7 +35,7 @@ import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvide
 object Services {
 
   def make[
-    F[_]: Async: Parallel: SecurityProvider: HasherSelector,
+    F[_]: Async: Parallel: SecurityProvider: HasherSelector: JsonSerializer,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P],
@@ -67,7 +68,14 @@ object Services {
       val cluster = sharedServices.cluster
       val gossip = sharedServices.gossip
       val globalL0 = GlobalL0Service
-        .make[F](p2PClient.l0GlobalSnapshot, globalL0Cluster, lastGlobalSnapshotStorage, None, maybeMajorityPeerIds)
+        .make[F](
+          p2PClient.l0GlobalSnapshot,
+          globalL0Cluster,
+          lastGlobalSnapshotStorage,
+          None,
+          maybeMajorityPeerIds,
+          sharedStorages.mptStore
+        )
       val session = sharedServices.session
       val transaction =
         TransactionService.make[F, P, S, SI](

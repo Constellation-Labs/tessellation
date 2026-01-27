@@ -13,8 +13,8 @@ import io.constellationnetwork.dag.l0.http.p2p.P2PClient
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.{GlobalSnapshotConsensus, GlobalSnapshotContext}
 import io.constellationnetwork.ext.cats.kernel.PartialPrevious
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
@@ -32,6 +32,7 @@ import io.constellationnetwork.schema.snapshot.SnapshotMetadata
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.validator.StateProofValidator
 
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -42,7 +43,7 @@ import retry._
 import retry.implicits.retrySyntaxError
 
 object Download {
-  def make[F[_]: Async: Parallel: Random: KryoSerializer](
+  def make[F[_]: Async: Parallel: Random: KryoSerializer: JsonSerializer](
     snapshotStorage: SnapshotDownloadStorage[F],
     p2pClient: P2PClient[F],
     clusterStorage: ClusterStorage[F],
@@ -121,8 +122,6 @@ object Download {
         .flatMap { result =>
           val ((snapshot, context), observationLimit) = result
           for {
-            kvPairs <- hasherSelector.withCurrent(implicit h => context.allStateEntries[F])
-            _ <- mptStore.syncFull(kvPairs, snapshot.ordinal)
             _ <- consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context)
           } yield ()
         }
@@ -146,7 +145,8 @@ object Download {
         Async[F].whenA(result.isEmpty)(
           logger.info(s"[Download] Cleanup for snapshots greater than ${metadata.ordinal}") >>
             snapshotStorage.cleanupAbove(metadata.ordinal) >>
-            combinedSnapshotCheckpointFileSystemStorage.deleteAbove(metadata.ordinal)
+            combinedSnapshotCheckpointFileSystemStorage.deleteAbove(metadata.ordinal) >>
+            mptStore.deleteAbove(metadata.ordinal)
         )
 
       def logDownloadInfo(startingPoint: SnapshotOrdinal, metadata: SnapshotMetadata): F[Unit] =
@@ -351,10 +351,10 @@ object Download {
                         .ifM(
                           ().pure[F],
                           (Hasher[F].getLogic(snapshot.ordinal) match {
-                            case JsonHash => StateProofValidator.validate(snapshot, newContext).map(_.isValid)
+                            case JsonHash => StateProofValidator.validate(snapshot, newContext, mptStore).map(_.isValid)
                             case KryoHash =>
                               StateProofValidator
-                                .validate(snapshot, GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(newContext))
+                                .validate(snapshot, GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(newContext), mptStore)
                                 .map(_.isValid)
                           })
                             .ifM(
@@ -371,8 +371,19 @@ object Download {
               case None => InvalidChain.raiseError[F, Agg]
             }
 
-        persistLastSnapshot >>
-          processNextOrFinish
+        def performInitialSync: F[Unit] =
+          for {
+            _ <- logger.info("Performing initial sync of MPT")
+            kvPairs <- hasherSelector.withCurrent(implicit h => context.allStateEntries[F])
+            _ <- mptStore.syncFull(kvPairs, lastSnapshot.ordinal)
+          } yield ()
+
+        for {
+          mptEntries <- mptStore.underlying.entries
+          _ <- performInitialSync.whenA(mptEntries.isEmpty)
+          _ <- persistLastSnapshot
+          result <- processNextOrFinish
+        } yield result
       }
 
       state

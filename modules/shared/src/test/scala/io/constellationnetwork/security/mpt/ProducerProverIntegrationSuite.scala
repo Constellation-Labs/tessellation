@@ -27,21 +27,25 @@ import weaver.MutableIOSuite
 
 object ProducerProverIntegrationSuite extends MutableIOSuite {
 
-  type Res = HasherSelector[IO]
+  type Res = (HasherSelector[IO], JsonSerializer[IO])
 
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { implicit kryo =>
       JsonSerializer.forAsync[IO].asResource.map { implicit json =>
-        HasherSelector.forSync[IO](
-          Hasher.forJson[IO],
-          Hasher.forKryo[IO],
-          hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
+        (
+          HasherSelector.forSync[IO](
+            Hasher.forJson[IO],
+            Hasher.forKryo[IO],
+            hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
+          ),
+          json
         )
       }
     }
 
   test("create -> prove -> verify flow") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to 20).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
@@ -61,7 +65,8 @@ object ProducerProverIntegrationSuite extends MutableIOSuite {
   }
 
   test("insert -> batch prove -> verify flow") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         initialEntries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"initial_$i").map(hash => Hex(hash.value) -> s"initial_$i")
@@ -87,7 +92,8 @@ object ProducerProverIntegrationSuite extends MutableIOSuite {
   }
 
   test("prefix query integration") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       val commonPrefix = "abcd"
 
       for {
@@ -117,7 +123,8 @@ object ProducerProverIntegrationSuite extends MutableIOSuite {
   }
 
   test("range query integration") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       val start = "3000"
       val end = "7000"
 
@@ -144,7 +151,8 @@ object ProducerProverIntegrationSuite extends MutableIOSuite {
   }
 
   test("stateful producer with all prover types") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         producer <- InMemoryMerklePatriciaProducer.make[IO]()
 

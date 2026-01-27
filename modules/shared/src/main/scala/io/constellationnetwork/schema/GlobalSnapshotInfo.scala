@@ -8,6 +8,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.crypto._
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.json.StreamingJsonCodecs._
 import io.constellationnetwork.merkletree.syntax._
 import io.constellationnetwork.merkletree.{MerkleRoot, MerkleTree, Proof}
@@ -25,6 +26,7 @@ import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockReference}
 import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.mpt.MerklePatriciaTrie
 import io.constellationnetwork.security.mpt.producer.StatefulMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 
@@ -64,12 +66,20 @@ case class GlobalSnapshotInfoV1(
       Some(SortedMap.empty)
     )
 
-  def stateProof[F[_]: Parallel: Async: Hasher](ordinal: SnapshotOrdinal)(
+  def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](ordinal: SnapshotOrdinal)(
     implicit stateProofSelector: StateProofSelector
   ): F[GlobalSnapshotStateProofV1] =
     GlobalSnapshotInfo
       .legacyStateProof[F](toGlobalSnapshotInfo, None)
       .map(GlobalSnapshotStateProofV1.fromGlobalSnapshotStateProof)
+
+  def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](
+    statefulMPTProducer: StatefulMerklePatriciaProducer[F],
+    ordinal: SnapshotOrdinal
+  )(
+    implicit stateProofSelector: StateProofSelector
+  ): F[GlobalSnapshotStateProofV1] =
+    stateProof(ordinal)
 }
 
 @derive(encoder, decoder, eqv, show)
@@ -105,10 +115,18 @@ case class GlobalSnapshotInfoV2(
       None
     )
 
-  def stateProof[F[_]: Parallel: Async: Hasher](ordinal: SnapshotOrdinal)(
+  def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](ordinal: SnapshotOrdinal)(
     implicit stateProofSelector: StateProofSelector
   ): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
+
+  def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](
+    statefulMPTProducer: StatefulMerklePatriciaProducer[F],
+    ordinal: SnapshotOrdinal
+  )(
+    implicit stateProofSelector: StateProofSelector
+  ): F[GlobalSnapshotStateProof] =
+    stateProof(ordinal)
 
   def stateProof[F[_]: Parallel: Async: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
     GlobalSnapshotInfo.legacyStateProof[F](toGlobalSnapshotInfo, lastCurrencySnapshots)
@@ -175,7 +193,7 @@ case class GlobalSnapshotInfo(
       metagraphSyncData
     )
 
-  def stateProof[F[_]: Parallel: Async: Hasher](ordinal: SnapshotOrdinal)(
+  def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](ordinal: SnapshotOrdinal)(
     implicit stateProofSelector: StateProofSelector
   ): F[GlobalSnapshotStateProof] =
     stateProofSelector.select(ordinal) match {
@@ -186,7 +204,7 @@ case class GlobalSnapshotInfo(
   def stateProof[F[_]: Parallel: Async: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
     GlobalSnapshotInfo.legacyStateProof[F](toGlobalSnapshotInfo, lastCurrencySnapshots)
 
-  def stateProof[F[_]: Parallel: Async: Hasher](
+  def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](
     statefulMPTProducer: StatefulMerklePatriciaProducer[F],
     ordinal: SnapshotOrdinal
   )(
@@ -196,8 +214,7 @@ case class GlobalSnapshotInfo(
       case LegacyFormat => lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
       case MerklePatriciaFormat =>
         statefulMPTProducer.build.flatMap {
-          case Left(value) =>
-            (new Throwable(s"Error when building MPT. Message: ${value.getMessage}")).raiseError[F, GlobalSnapshotStateProof]
+          case Left(err) => err.raiseError[F, GlobalSnapshotStateProof]
           case Right(value) =>
             GlobalSnapshotStateProof
               .apply(
@@ -231,7 +248,7 @@ case class GlobalSnapshotInfo(
 
 object GlobalSnapshotInfo {
 
-  def mptStateProof[F[_]: Parallel: Async: Hasher](info: GlobalSnapshotInfo)(
+  def mptStateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](info: GlobalSnapshotInfo)(
     implicit stateProofSelector: StateProofSelector
   ): F[GlobalSnapshotStateProof] =
     info.allStateEntries.buildMpt.map { mptRoot =>

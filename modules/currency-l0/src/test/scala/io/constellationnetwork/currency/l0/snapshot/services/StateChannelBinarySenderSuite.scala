@@ -52,14 +52,16 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   def mkEmptySnapshots(n: Long, keyPair: KeyPair)(
     implicit hs: Hasher[IO],
     sp: SecurityProvider[IO],
-    globalStateProofSelector: GlobalStateProofSelector
+    globalStateProofSelector: GlobalStateProofSelector,
+    jsonSerializer: JsonSerializer[IO]
   ): IO[List[Hashed[GlobalIncrementalSnapshot]]] =
     (1L to n).toList.traverse(ordinal => mkSnapshot(SnapshotOrdinal(NonNegLong.unsafeFrom(ordinal)), keyPair, List.empty))
 
   def mkSnapshot(ordinal: SnapshotOrdinal, keyPair: KeyPair, confirmedBinaries: List[Signed[StateChannelSnapshotBinary]])(
     implicit hs: Hasher[IO],
     sp: SecurityProvider[IO],
-    globalStateProofSelector: GlobalStateProofSelector
+    globalStateProofSelector: GlobalStateProofSelector,
+    js: JsonSerializer[IO]
   ): IO[Hashed[GlobalIncrementalSnapshot]] = {
     val identifier = keyPair.getPublic.toAddress
 
@@ -268,7 +270,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
       Some(SortedMap.empty)
     )
 
-  type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO])
+  type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO], JsonSerializer[IO])
 
   override def sharedResource: Resource[IO, Res] =
     for {
@@ -277,7 +279,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
       h = Hasher.forJson[IO]
       metrics <- Metrics.forAsync[IO](Seq.empty)
-    } yield (ks, h, sp, metrics)
+    } yield (ks, h, sp, metrics, j)
 
   def binaryGen: Gen[Signed[StateChannelSnapshotBinary]] =
     for {
@@ -287,7 +289,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     } yield signedBinary
 
   test("should add confirmation proof for confirmed binaries in the queue") { res =>
-    implicit val (_, hs, sp, metrics) = res
+    implicit val (_, hs, sp, metrics, j) = res
 
     forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
       (for {
@@ -318,7 +320,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("should transition to retry mode when a snapshot is not confirmed for 5 or more ordinals") { res =>
-    implicit val (_, hs, sp, metrics) = res
+    implicit val (_, hs, sp, metrics, j) = res
 
     forall(binaryGen) { binary =>
       (for {
@@ -338,7 +340,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("normal mode - process should enqueue and send a binary right away") { res =>
-    implicit val (_, hs, sp, metrics) = res
+    implicit val (_, hs, sp, metrics, j) = res
 
     forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
       (for {
@@ -367,7 +369,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("retry mode - should switch to normal mode if cap >= enqueued count, all sent and no stalled") { res =>
-    implicit val (_, hs, sp, metrics) = res
+    implicit val (_, hs, sp, metrics, j) = res
 
     forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
       (for {
@@ -424,7 +426,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("retry mode - process should enqueue binary without sending") { res =>
-    implicit val (_, hs, sp, metrics) = res
+    implicit val (_, hs, sp, metrics, j) = res
 
     forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
       (for {
@@ -453,7 +455,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("retry mode - cap should decrement by 1 if no confirmations") { res =>
-    implicit val (_, hs, sp, metrics) = res
+    implicit val (_, hs, sp, metrics, j) = res
 
     val gen = for {
       binary <- binaryGen
@@ -484,7 +486,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("retry mode - cap should increment with every confirmation but no more than 4*confirmedCount") { res =>
-    implicit val (_, hs, sp, metrics) = res
+    implicit val (_, hs, sp, metrics, j) = res
 
     val gen = for {
       nBinaries <- Gen.nonEmptyListOf(binaryGen)
@@ -522,7 +524,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("retry mode - should switch to exponential mode when cap goes to 0") { res =>
-    implicit val (_, hs, sp, metrics) = res
+    implicit val (_, hs, sp, metrics, j) = res
 
     forall(binaryGen) { binary =>
       (for {
@@ -550,7 +552,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("retry mode (exponential) - increments exponent if passed 2^n without confirmations and resets counter") { res =>
-    implicit val (_, hs, sp, metrics) = res
+    implicit val (_, hs, sp, metrics, j) = res
 
     val gen = for {
       binary <- binaryGen
@@ -591,7 +593,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("should reject when not on allowance list") { res =>
-    implicit val (_, hs, sp, metrics) = res
+    implicit val (_, hs, sp, metrics, j) = res
 
     forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
       (for {
@@ -633,7 +635,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("should pick deterministic peer to send snapshots - with allowed peers") { res =>
-    implicit val (_, hs, sp, metrics) = res
+    implicit val (_, hs, sp, metrics, j) = res
     val selfId = PeerId(Hex("123"))
 
     val lastSigners: List[PeerId] = List(PeerId(Hex("123")), PeerId(Hex("456")), PeerId(Hex("789")))
@@ -705,7 +707,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("should pick deterministic peer to send snapshots - without allowed peers") { res =>
-    implicit val (_, hs, sp, metrics) = res
+    implicit val (_, hs, sp, metrics, j) = res
     val selfId = PeerId(Hex("123"))
 
     val lastSigners: List[PeerId] = List(PeerId(Hex("123")), PeerId(Hex("456")), PeerId(Hex("789")))
@@ -776,7 +778,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   test("should pick deterministic peer to send snapshots - without allowed peers - different hash") { res =>
-    implicit val (_, hs, sp, metrics) = res
+    implicit val (_, hs, sp, metrics, j) = res
     val selfId = PeerId(Hex("123"))
 
     val lastSigners: List[PeerId] = List(PeerId(Hex("123")), PeerId(Hex("456")), PeerId(Hex("789")))

@@ -19,21 +19,25 @@ import weaver.{MutableIOSuite, SimpleIOSuite}
 
 object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
 
-  type Res = HasherSelector[IO]
+  type Res = (HasherSelector[IO], JsonSerializer[IO])
 
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { implicit kryo =>
       JsonSerializer.forAsync[IO].asResource.map { implicit json =>
-        HasherSelector.forSync[IO](
-          Hasher.forJson[IO],
-          Hasher.forKryo[IO],
-          hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
+        (
+          HasherSelector.forSync[IO](
+            Hasher.forJson[IO],
+            Hasher.forKryo[IO],
+            hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
+          ),
+          json
         )
       }
     }
 
   test("valid batch proof verification succeeds") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to 20).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
@@ -51,7 +55,8 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
   }
 
   test("partial path validity fails entire batch") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
@@ -78,7 +83,8 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
   }
 
   test("incomplete witness fails verification") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
@@ -98,7 +104,8 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
   }
 
   test("empty batch fails verification") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
@@ -114,7 +121,8 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
   }
 
   test("deduplicated witness verifies correctly") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to 20).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
@@ -136,9 +144,10 @@ object MerklePatriciaBatchInclusionVerifierSuite extends MutableIOSuite {
   }
 
   test("large batch verification") { implicit res =>
+    implicit val (hs, js) = res
     val numEntries = 200
 
-    res.withCurrent { implicit hasher =>
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to numEntries).toList.traverse { i =>
           hasher.hash(s"entry_$i").map(hash => Hex(hash.value) -> s"value_$i")

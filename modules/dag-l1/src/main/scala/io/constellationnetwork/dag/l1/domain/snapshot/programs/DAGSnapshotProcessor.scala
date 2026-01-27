@@ -7,6 +7,7 @@ import cats.syntax.all._
 import io.constellationnetwork.dag.l1.domain.address.storage.AddressStorage
 import io.constellationnetwork.dag.l1.domain.block.BlockStorage
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionStorage
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.globalAlignment.GlobalL0AlignmentStorage
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
@@ -24,7 +25,7 @@ import io.circe.Json
 
 object DAGSnapshotProcessor {
 
-  def make[F[_]: Async: Parallel: SecurityProvider](
+  def make[F[_]: Async: Parallel: SecurityProvider: JsonSerializer](
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],

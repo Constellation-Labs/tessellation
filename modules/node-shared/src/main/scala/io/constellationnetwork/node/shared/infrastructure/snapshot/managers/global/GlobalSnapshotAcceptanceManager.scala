@@ -14,6 +14,7 @@ import scala.util.control.NoStackTrace
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.crypto._
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.merkletree.syntax._
 import io.constellationnetwork.node.shared.config.types.{FieldsAddedOrdinals, MetagraphsSyncConfig}
@@ -128,7 +129,7 @@ object GlobalSnapshotAcceptanceManager {
 
   private case object InvalidMerkleTree extends NoStackTrace
 
-  def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider](
+  def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider: JsonSerializer](
     fieldsAddedOrdinals: FieldsAddedOrdinals,
     metagraphsSyncConfig: MetagraphsSyncConfig,
     environment: AppEnvironment,

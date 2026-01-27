@@ -19,23 +19,27 @@ import weaver.MutableIOSuite
 
 object JsonBrotliBinarySerializerSuite extends MutableIOSuite {
 
-  type Res = (Hasher[IO], JsonBrotliBinarySerializer[IO])
+  type Res = (Hasher[IO], JsonSerializer[IO], JsonBrotliBinarySerializer[IO])
 
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer
       .forAsync[IO](sharedKryoRegistrar)
       .flatMap { implicit res =>
         JsonSerializer.forAsync[IO].asResource.map { implicit json =>
-          Hasher.forJson[IO]
+          (Hasher.forJson[IO], json)
         }
       }
       .flatMap { kp =>
-        JsonBrotliBinarySerializer.forAsync[IO](Printer(dropNullValues = true, indent = "", sortKeys = true)).asResource.map((kp, _))
+        JsonBrotliBinarySerializer
+          .forAsync[IO](Printer(dropNullValues = true, indent = "", sortKeys = true))
+          .asResource
+          .map((kp._1, kp._2, _))
       }
 
   test("should deserialize properly serialized object") {
-    case (hasher, serializer) =>
+    case (hasher, js, serializer) =>
       implicit val h = hasher
+      implicit val j = js
 
       for {
         signedSnapshot <- JsonBinarySerializerSuite
@@ -49,8 +53,9 @@ object JsonBrotliBinarySerializerSuite extends MutableIOSuite {
   }
 
   test("should not deserialize different serialized object") {
-    case (hasher, serializer) =>
+    case (hasher, js, serializer) =>
       implicit val h = hasher
+      implicit val j = js
 
       for {
         signedSnapshot <- JsonBinarySerializerSuite

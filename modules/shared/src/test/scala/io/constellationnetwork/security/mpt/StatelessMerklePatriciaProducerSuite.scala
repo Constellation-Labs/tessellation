@@ -17,21 +17,25 @@ import weaver.{MutableIOSuite, SimpleIOSuite}
 
 object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
 
-  type Res = HasherSelector[IO]
+  type Res = (HasherSelector[IO], JsonSerializer[IO])
 
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { implicit kryo =>
       JsonSerializer.forAsync[IO].asResource.map { implicit json =>
-        HasherSelector.forSync[IO](
-          Hasher.forJson[IO],
-          Hasher.forKryo[IO],
-          hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
+        (
+          HasherSelector.forSync[IO](
+            Hasher.forJson[IO],
+            Hasher.forKryo[IO],
+            hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
+          ),
+          json
         )
       }
     }
 
   test("create trie from non-empty map") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
@@ -44,7 +48,8 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
   }
 
   test("insert single entry into existing trie") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         initialEntries <- (1 to 5).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
@@ -64,7 +69,8 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
   }
 
   test("insert multiple entries") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         initialEntries <- (1 to 5).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
@@ -84,7 +90,8 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
   }
 
   test("insert duplicate key updates value") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         key <- hasher.hash("key").map(hash => Hex(hash.value))
         entries = Map(key -> "initial_value")
@@ -101,7 +108,8 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
   }
 
   test("remove single entry") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
@@ -119,7 +127,8 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
   }
 
   test("remove multiple entries") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
@@ -136,7 +145,8 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
   }
 
   test("remove non-existent key does not fail") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to 5).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
@@ -154,7 +164,8 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
   }
 
   test("get prover returns valid prover") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to 10).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")
@@ -171,7 +182,8 @@ object StatelessMerklePatriciaProducerSuite extends MutableIOSuite {
   }
 
   test("deterministic root hash for same data") { implicit res =>
-    res.withCurrent { implicit hasher =>
+    implicit val (hs, js) = res
+    hs.withCurrent { implicit hasher =>
       for {
         entries <- (1 to 20).toList.traverse { i =>
           hasher.hash(s"value_$i").map(hash => Hex(hash.value) -> s"value_$i")

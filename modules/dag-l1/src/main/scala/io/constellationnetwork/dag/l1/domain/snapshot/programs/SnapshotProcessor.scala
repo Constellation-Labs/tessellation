@@ -13,6 +13,7 @@ import io.constellationnetwork.dag.l1.domain.address.storage.AddressStorage
 import io.constellationnetwork.dag.l1.domain.block.BlockStorage.MajorityReconciliationData
 import io.constellationnetwork.dag.l1.domain.block.{BlockRelations, BlockStorage}
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionStorage
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.globalAlignment.{GlobalL0AlignmentStorage, ShouldRedownload}
 import io.constellationnetwork.node.shared.domain.snapshot.Validator
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
@@ -39,7 +40,7 @@ import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class SnapshotProcessor[
-  F[_]: Async: Parallel: SecurityProvider,
+  F[_]: Async: Parallel: SecurityProvider: JsonSerializer,
   P <: StateProof,
   S <: Snapshot,
   SI <: SnapshotInfo[P]

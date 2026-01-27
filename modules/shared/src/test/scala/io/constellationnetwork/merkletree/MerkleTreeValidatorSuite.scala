@@ -15,13 +15,16 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
+import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 import io.constellationnetwork.shared.sharedKryoRegistrar
+import io.constellationnetwork.validator.StateProofValidator
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -60,8 +63,14 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
       Some(SortedMap.empty)
     )
     for {
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      mptStore <- MptStore.make[IO, GlobalStateKey](
+        mptProducer,
+        GlobalStateKey.toHex[IO]
+      )
       snapshot <- globalIncrementalSnapshot(globalSnapshotInfo)
-      result <- StateProofValidator.validate(snapshot, globalSnapshotInfo)
+      result <- StateProofValidator.validate(snapshot, globalSnapshotInfo, mptStore)
     } yield expect.same(Validated.Valid(()), result)
   }
 
@@ -88,12 +97,18 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
     )
 
     for {
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
       snapshot <- globalIncrementalSnapshot(globalSnapshotInfo)
-      result <- StateProofValidator.validate(snapshot, GlobalSnapshotInfo.empty)
+      mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      mptStore <- MptStore.make[IO, GlobalStateKey](
+        mptProducer,
+        GlobalStateKey.toHex[IO]
+      )
+      result <- StateProofValidator.validate(snapshot, GlobalSnapshotInfo.empty, mptStore)
     } yield expect.same(Validated.Invalid(StateProofValidator.StateBroken(SnapshotOrdinal(NonNegLong(1L)), snapshot.hash)), result)
   }
 
-  private def globalIncrementalSnapshot[F[_]: Async: Parallel: Hasher](
+  private def globalIncrementalSnapshot[F[_]: Async: Parallel: Hasher: JsonSerializer](
     globalSnapshotInfo: GlobalSnapshotInfo
   )(implicit selector: GlobalStateProofSelector): F[Hashed[GlobalIncrementalSnapshot]] =
     globalSnapshotInfo.stateProof[F](SnapshotOrdinal(NonNegLong(1L))).flatMap { sp =>

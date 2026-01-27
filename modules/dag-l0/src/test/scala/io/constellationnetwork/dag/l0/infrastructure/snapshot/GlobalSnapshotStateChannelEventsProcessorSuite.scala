@@ -33,6 +33,7 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.RewardFraction
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalStateProofSelector, _}
@@ -40,6 +41,7 @@ import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.key.ops.PublicKeyOps
+import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.Signed.forAsyncHasher
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
@@ -144,6 +146,12 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         )
       currencySnapshotValidator = CurrencySnapshotValidator
         .make[IO](SnapshotOrdinal.MinValue, creator, validators.signedValidator, None, None)
+      mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      mptStore <- MptStore.make[IO, GlobalStateKey](
+        mptProducer,
+        GlobalStateKey.toHex[IO]
+      )
+
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
       manager = new GlobalSnapshotStateChannelAcceptanceManager[IO] {
         def accept(ordinal: SnapshotOrdinal, lastGlobalSnapshotInfo: GlobalSnapshotInfo, events: List[StateChannelOutput])(
@@ -267,7 +275,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
     signedSC <- forAsyncHasher(binary, keyPair)
   } yield StateChannelOutput(keyPair.getPublic.toAddress, signedSC)
 
-  def mkGlobalIncrementalSnapshot[F[_]: Parallel: Async: Hasher](
+  def mkGlobalIncrementalSnapshot[F[_]: Parallel: Async: Hasher: JsonSerializer](
     globalSnapshotInfo: GlobalSnapshotInfo
   ): F[Hashed[GlobalIncrementalSnapshot]] =
     globalSnapshotInfo.stateProof[F](SnapshotOrdinal(NonNegLong(1L))).flatMap { sp =>

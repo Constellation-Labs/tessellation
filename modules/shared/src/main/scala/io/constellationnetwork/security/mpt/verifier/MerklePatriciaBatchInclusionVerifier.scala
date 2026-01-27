@@ -1,6 +1,6 @@
 package io.constellationnetwork.security.mpt.verifier
 
-import cats.effect.Sync
+import cats.effect.Async
 import cats.syntax.all._
 
 import io.constellationnetwork.security.Hasher
@@ -19,7 +19,7 @@ trait MerklePatriciaBatchInclusionVerifier[F[_]] {
 object MerklePatriciaBatchInclusionVerifier {
   def apply[F[_]](implicit verifier: MerklePatriciaBatchInclusionVerifier[F]): MerklePatriciaBatchInclusionVerifier[F] = verifier
 
-  def make[F[_]: Sync: Hasher](root: Hash): MerklePatriciaBatchInclusionVerifier[F] =
+  def make[F[_]: Async: Hasher](root: Hash): MerklePatriciaBatchInclusionVerifier[F] =
     new MerklePatriciaBatchInclusionVerifier[F] {
 
       def confirm(proof: MerklePatriciaBatchInclusionProof): F[Either[MerklePatriciaVerificationError, Unit]] = {
@@ -74,23 +74,23 @@ object MerklePatriciaBatchInclusionVerifier {
               .map(_.collectFirst { case Some(result) => result })
           }
 
-          Sync[F]
+          Async[F]
             .tailRecM[Continue, Return]((pathNibbles, root, List.empty[MerklePatriciaCommitment])) {
               case (remainingPath, expectedDigest, acc) =>
                 if (remainingPath.isEmpty)
-                  Sync[F].pure(acc.asRight[MerklePatriciaVerificationError].asRight[Continue])
+                  Async[F].pure(acc.asRight[MerklePatriciaVerificationError].asRight[Continue])
                 else
                   findMatchingCommitment(expectedDigest, remainingPath, sharedWitness).flatMap {
                     case Some((commitment, nextDigest, nextPath)) =>
                       commitment match {
                         case _: MerklePatriciaCommitment.Leaf =>
-                          Sync[F].pure((commitment :: acc).asRight[MerklePatriciaVerificationError].asRight[Continue])
+                          Async[F].pure((commitment :: acc).asRight[MerklePatriciaVerificationError].asRight[Continue])
                         case _ =>
-                          Sync[F].pure((nextPath, nextDigest, commitment :: acc).asLeft[Return])
+                          Async[F].pure((nextPath, nextDigest, commitment :: acc).asLeft[Return])
                       }
 
                     case None =>
-                      Sync[F].pure(
+                      Async[F].pure(
                         InvalidWitness(
                           s"No matching commitment found for digest ${expectedDigest.value} at path ${path.value} (position ${pathNibbles.length - remainingPath.length}/${pathNibbles.length})"
                         )
@@ -110,7 +110,7 @@ object MerklePatriciaBatchInclusionVerifier {
                     )
                   )
               case Left(error) =>
-                Sync[F].pure(error.asLeft[Unit])
+                Async[F].pure(error.asLeft[Unit])
             }
         }
 
