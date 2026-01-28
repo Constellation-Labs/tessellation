@@ -277,7 +277,12 @@ private class EventGossipDaemonImpl[F[_]: Async: Parallel, Event, Key](
       _ <- result.grafted.nonEmpty
         .pure[F]
         .ifM(
-          ifTrue = logger.debug(s"Heartbeat: grafted ${result.grafted.size} peers to mesh"),
+          ifTrue = for {
+            _ <- logger.debug(s"Heartbeat: grafted ${result.grafted.size} peers to mesh")
+            // Sync missing events to newly grafted peers using IHAVE comparison
+            graftedPeers = peers.filter(p => result.grafted.contains(p.id)).toList
+            _ <- syncMissingToNewPeers(graftedPeers)
+          } yield (),
           ifFalse = Async[F].unit
         )
       _ <- result.pruned.nonEmpty
@@ -287,6 +292,47 @@ private class EventGossipDaemonImpl[F[_]: Async: Parallel, Event, Key](
           ifFalse = Async[F].unit
         )
     } yield ()
+
+  /** Sync only missing events to newly grafted mesh peers.
+    *
+    * Uses IHAVE comparison to determine what the peer is missing, then pushes only those events. This ensures events published before mesh
+    * formation are propagated without sending duplicates.
+    */
+  private def syncMissingToNewPeers(newPeers: List[Peer]): F[Unit] =
+    newPeers.parTraverse_ { peer =>
+      (for {
+        // Get what the peer already has
+        theirHashes <- client.getIHave.run(Peer.toP2PContext(peer))
+        // Get our current mempool
+        snapshot <- mempool.snapshot()
+        ourHashes = snapshot.hashes
+        // Find what we have that they don't
+        missing = ourHashes.diff(theirHashes.hashes)
+        _ <- missing.nonEmpty
+          .pure[F]
+          .ifM(
+            ifTrue = for {
+              _ <- logger.debug(s"Syncing ${missing.size} missing events to newly grafted peer ${peer.id.show}")
+              missingEntries = snapshot.entries.filter { case (h, _) => missing.contains(h) }
+              _ <- missingEntries.toList.traverse_ {
+                case (hash, entry) =>
+                  val push = EventPush(hash, entry.hashed.signed)
+                  client
+                    .pushEvent(push)
+                    .run(Peer.toP2PContext(peer))
+                    .void
+                    .flatTap(_ => meshState.recordDelivery(peer.id))
+                    .handleErrorWith { err =>
+                      logger.debug(s"Failed to sync event ${hash.show} to ${peer.id.show}: ${err.getMessage}")
+                    }
+              }
+            } yield (),
+            ifFalse = logger.debug(s"Peer ${peer.id.show} already has all ${ourHashes.size} events")
+          )
+      } yield ()).handleErrorWith { err =>
+        logger.debug(s"Failed to sync with newly grafted peer ${peer.id.show}: ${err.getMessage}")
+      }
+    }
 
   /** Start the pull loop for IHAVE/IWANT protocol.
     */
