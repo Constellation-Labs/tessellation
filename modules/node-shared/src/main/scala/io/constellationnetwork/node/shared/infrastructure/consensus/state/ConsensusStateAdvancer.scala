@@ -65,6 +65,17 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
 
   def advanceStatus(resources: ConsensusResources[Artifact, Kind]): StateT[F, ConsensusState[Key, Status, Outcome, Kind], F[Unit]]
 
+  /** Called when consensus is initialized from a downloaded snapshot.
+    *
+    * Clears stale events from the mempool that may have been received via gossip but were already processed by other facilitators. Without
+    * this, a joining node may have old events that are no longer in other nodes' mempools (they were cleared after processing), causing
+    * hash intersection to be empty.
+    *
+    * @return
+    *   Unit effect - implementations should clear their event mempool
+    */
+  def onInitFromDownload: F[Unit]
+
   def logger(implicit async: Async[F]): SelfAwareStructuredLogger[F] =
     Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 

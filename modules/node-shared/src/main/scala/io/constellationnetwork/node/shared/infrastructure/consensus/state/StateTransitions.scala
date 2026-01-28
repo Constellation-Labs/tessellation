@@ -131,6 +131,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
   def initFromDownload(key: Key, artifact: Signed[Artifact], context: Ctx): F[Unit] =
     for {
       _ <- log.info(s"[DownloadInit] Initializing consensus at key=$key")
+      // Clear stale events that may have been received via gossip but were already processed
+      // by other facilitators. Without this, hash intersection will be empty because we have
+      // events that other nodes have already cleared from their mempools.
+      _ <- ctx.advancer.onInitFromDownload
       outcome <- fetchOutcomeFromCluster(key, artifact, context)
         .flatMap(_.liftTo[F](new Throwable(s"[DownloadInit] Could not observe outcome for key=$key")))
       _ <- storage
