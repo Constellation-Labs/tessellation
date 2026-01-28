@@ -3,6 +3,7 @@ package io.constellationnetwork.node.shared.infrastructure.mempool
 import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedSet
 import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.security.hash.Hash
@@ -120,12 +121,13 @@ trait EventMempool[F[_], Event, Key] {
 
   /** Get all event hashes currently in the mempool.
     *
-    * Used for hash-based consensus bounds - each facilitator declares which events they have by hash.
+    * Used for hash-based consensus bounds - each facilitator declares which events they have by hash. Returns a SortedSet for deterministic
+    * ordering in distributed consensus.
     *
     * @return
-    *   Set of all event hashes in the mempool
+    *   SortedSet of all event hashes in the mempool
     */
-  def getEventHashes: F[Set[Hash]]
+  def getEventHashes: F[SortedSet[Hash]]
 }
 
 /** Configuration for the event mempool.
@@ -277,9 +279,9 @@ object EventMempool {
           _ <- logger.debug(s"[Mempool] Batch complete: $successful/${events.size} added successfully")
         } yield results
 
-      def getEventHashes: F[Set[Hash]] =
+      def getEventHashes: F[SortedSet[Hash]] =
         for {
-          hashes <- storage.get.map(_.entries.keySet)
+          hashes <- storage.get.map(state => SortedSet.from(state.entries.keySet))
           _ <- logger.debug(s"[Mempool] GetEventHashes: ${hashes.size} hashes")
         } yield hashes
     }
