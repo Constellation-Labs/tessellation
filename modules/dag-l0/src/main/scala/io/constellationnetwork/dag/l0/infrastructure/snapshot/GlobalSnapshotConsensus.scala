@@ -183,6 +183,8 @@ object GlobalSnapshotConsensus {
             getGlobalSnapshotByOrdinal,
             clusterStorage,
             eventMempool,
+            client,
+            session,
             loggerBundle
           )
 
