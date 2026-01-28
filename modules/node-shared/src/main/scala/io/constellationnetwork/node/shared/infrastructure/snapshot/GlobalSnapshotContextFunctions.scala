@@ -20,6 +20,8 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.peer.PeerId
@@ -32,6 +34,8 @@ import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelVal
 import derevo.cats.{eqv, show}
 import derevo.derive
 import eu.timepit.refined.types.all.NonNegLong
+import io.circe.Json
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
@@ -47,6 +51,8 @@ object GlobalSnapshotContextFunctions {
     implicit globalStateProofSelector: GlobalStateProofSelector
   ) =
     new GlobalSnapshotContextFunctions[F] {
+
+      private val logger = Slf4jLogger.getLoggerFromName[F]("GlobalSnapshotContextFunctions")
 
       // todo - avoid duplication of this function here and in GlobalSnapshotConsensusFunctions
       private def acceptDelegatedStakes(
@@ -260,9 +266,26 @@ object GlobalSnapshotContextFunctions {
           snapshotInfo.stateProof(signedArtifact.ordinal)
         }
         validation <- StateProofValidator.validate(hashedArtifact, calculatedStateProof)
-        _ = validation match {
+        _ <- validation match {
           case Validated.Valid(_)   => Async[F].unit
-          case Validated.Invalid(e) => e.raiseError[F, Unit]
+          case Validated.Invalid(_) =>
+            // Validation failed - MPT has drifted from expected state, resync and retry
+            for {
+              _ <- logger.warn(s"StateProof validation failed at ordinal=${signedArtifact.ordinal}, attempting MPT resync...")
+              kvPairs <- snapshotInfo.allStateEntries[F]
+              _ <- logger.info(s"Resyncing MPT store with ${kvPairs.size} entries")
+              _ <- mptStore.syncFull[Json](kvPairs, signedArtifact.ordinal)
+              recalculatedStateProof <- HasherSelector[F].withCurrent { implicit hasher =>
+                snapshotInfo.stateProof(mptStore.underlying, signedArtifact.ordinal)
+              }
+              retryValidation <- StateProofValidator.validate(hashedArtifact, recalculatedStateProof)
+              _ <- retryValidation match {
+                case Validated.Valid(_) => Async[F].unit
+                case Validated.Invalid(e) =>
+                  logger.error(s"StateProof validation failed after resync at ordinal=${signedArtifact.ordinal}") >>
+                    e.raiseError[F, Unit]
+              }
+            } yield ()
         }
 
       } yield snapshotInfo
