@@ -1,7 +1,5 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
-import scala.collection.immutable.SortedSet
-
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.schema.SnapshotOrdinal
@@ -22,7 +20,7 @@ object declaration {
 
   @derive(eqv, show, encoder, decoder)
   case class Facility(
-    eventHashes: SortedSet[Hash],
+    eventHashes: Set[Hash],
     candidates: Candidates,
     trigger: Option[ConsensusTrigger],
     facilitatorsHash: Hash,
