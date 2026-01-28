@@ -95,6 +95,10 @@ object CurrencySnapshotConsensus {
         DataTransaction.encoder
       }.getOrElse(Encoder.instance(_ => io.circe.Json.Null))
 
+    // Derive CurrencySnapshotEvent encoder/decoder from DataTransaction encoder/decoder
+    implicit val currencyEventEncoder: Encoder[CurrencySnapshotEvent] = CurrencySnapshotEvent.encoder
+    implicit val currencyEventDecoder: Decoder[CurrencySnapshotEvent] = CurrencySnapshotEvent.decoder
+
     hasherSelector.withCurrent { implicit hasher =>
       for {
         consensusStorage <- ConsensusStorage.make[
@@ -131,7 +135,9 @@ object CurrencySnapshotConsensus {
             leavingDelay,
             getGlobalSnapshotByOrdinal,
             clusterStorage,
-            eventMempool
+            eventMempool,
+            client,
+            session
           )
 
         facilitatorSelector = FacilitatorSelector.make(

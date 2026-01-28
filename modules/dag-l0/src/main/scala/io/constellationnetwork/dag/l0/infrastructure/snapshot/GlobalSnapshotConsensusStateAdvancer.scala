@@ -5,7 +5,7 @@ import java.security.KeyPair
 import cats.data.{NonEmptySet, StateT}
 import cats.effect.Async
 import cats.syntax.all._
-import cats.{Applicative, MonadThrow}
+import cats.{Applicative, MonadThrow, Parallel}
 
 import scala.collection.immutable.SortedMap
 import scala.concurrent.duration.FiniteDuration
@@ -14,6 +14,7 @@ import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema._
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
+import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
@@ -25,6 +26,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.state.Consen
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.{EventGossipClient, IWantRequest}
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
@@ -33,7 +35,7 @@ import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.node.shared.snapshot.global.GlobalSnapshotEvent
 import io.constellationnetwork.schema.gossip.Ordinal
 import io.constellationnetwork.schema.mpt.GlobalStateKey
-import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -42,6 +44,7 @@ import io.constellationnetwork.security.signature.signature._
 import io.constellationnetwork.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
+import org.http4s.client.Client
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -68,7 +71,7 @@ abstract class GlobalSnapshotConsensusStateAdvancer[F[_]]
 
 object GlobalSnapshotConsensusStateAdvancer {
 
-  def make[F[_]: Async: SecurityProvider: Metrics: HasherSelector](
+  def make[F[_]: Async: Parallel: SecurityProvider: Metrics: HasherSelector](
     consensusConfig: ConsensusConfig,
     keyPair: KeyPair,
     consensusStorage: GlobalConsensusStorage[F],
@@ -83,11 +86,15 @@ object GlobalSnapshotConsensusStateAdvancer {
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     clusterStorageInstance: ClusterStorage[F],
     eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey],
+    client: Client[F],
+    session: Session[F],
     loggerBundle: LoggerBundle[F]
   ): GlobalSnapshotConsensusStateAdvancer[F] = new GlobalSnapshotConsensusStateAdvancer[F] {
 
     private val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](getClass)
     private val lastSnapshotHashObservationName = "last-snapshot-hash"
+    private val eventGossipClient: EventGossipClient[F, GlobalSnapshotEvent] =
+      EventGossipClient.make[F, GlobalSnapshotEvent](client, session)
 
     protected val clusterStorage: ClusterStorage[F] = clusterStorageInstance
     protected val config: ConsensusConfig = consensusConfig
@@ -163,14 +170,82 @@ object GlobalSnapshotConsensusStateAdvancer {
     ): F[Option[Transition]] = {
       val (candidates, triggers) = facilities.foldMap(f => (f.candidates.value, f.trigger.toList))
 
-      // Compute hash intersection for consensus safety - only include events ALL facilitators have
+      // Compute hash UNION - include events ANY facilitator has, then sync missing
       val allHashSets = facilities.values.map(_.eventHashes).toList
-      val commonHashes = allHashSets.reduceOption(_ intersect _).getOrElse(Set.empty[Hash])
+      val unionHashes = allHashSets.reduceOption(_ union _).getOrElse(Set.empty[Hash])
 
       val trigger = pickMajority(triggers).getOrElse(EventTrigger)
 
-      buildProposalTransition(state, commonHashes, candidates, trigger).map(_.some)
+      // Build map of hash -> peer who has it (for fetching missing events)
+      val hashToPeer: Map[Hash, PeerId] = facilities.toList.flatMap {
+        case (peerId, facility) => facility.eventHashes.map(_ -> peerId)
+      }.toMap
+
+      for {
+        // Get local hashes and identify what we're missing
+        localHashes <- eventMempool.getEventHashes
+        missingHashes = unionHashes -- localHashes
+
+        // Debug logging for hash union and sync
+        hashSetsWithPeers = facilities.map { case (peerId, f) => (peerId.show.take(8), f.eventHashes.size) }
+        _ <- logger.debug(
+          s"[HashUnion] Ordinal=${state.key.value} facilitators=${facilities.size} " +
+            s"hashSets=${hashSetsWithPeers.mkString(",")} " +
+            s"unionHashes=${unionHashes.size} localHashes=${localHashes.size} missing=${missingHashes.size}"
+        )
+
+        // Sync missing events from peers before building proposal
+        _ <- syncMissingEvents(missingHashes, hashToPeer).whenA(missingHashes.nonEmpty)
+
+        result <- buildProposalTransition(state, unionHashes, candidates, trigger)
+      } yield result.some
     }
+
+    /** Sync missing events from peers who have them.
+      *
+      * Groups missing hashes by peer and fetches in parallel using IWANT requests.
+      */
+    private def syncMissingEvents(
+      missingHashes: Set[Hash],
+      hashToPeer: Map[Hash, PeerId]
+    ): F[Unit] = {
+      // Group missing hashes by which peer has them
+      val hashesPerPeer: Map[PeerId, Set[Hash]] = missingHashes
+        .flatMap(h => hashToPeer.get(h).map(peerId => (peerId, h)))
+        .groupMap(_._1)(_._2)
+
+      for {
+        _ <- logger.info(s"[EventSync] Syncing ${missingHashes.size} missing events from ${hashesPerPeer.size} peers")
+
+        // Fetch from each peer in parallel
+        _ <- hashesPerPeer.toList.parTraverse_ {
+          case (peerId, hashes) =>
+            fetchEventsFromPeer(peerId, hashes)
+        }
+
+        _ <- logger.debug(s"[EventSync] Sync complete")
+      } yield ()
+    }
+
+    /** Fetch specific events from a peer using IWANT and add to local mempool. */
+    private def fetchEventsFromPeer(peerId: PeerId, hashes: Set[Hash]): F[Unit] =
+      for {
+        maybePeer <- clusterStorage.getPeer(peerId)
+        _ <- maybePeer.traverse_ { peer =>
+          eventGossipClient
+            .requestEvents(IWantRequest(hashes))
+            .run(Peer.toP2PContext(peer))
+            .flatMap { response =>
+              response.events.traverse_ {
+                case (_, signedEvent) =>
+                  eventMempool.add(signedEvent).void
+              }
+            }
+            .handleErrorWith { err =>
+              logger.warn(s"[EventSync] Failed to fetch events from peer ${peerId.show.take(8)}: ${err.getMessage}")
+            }
+        }
+      } yield ()
 
     private def buildProposalTransition(
       state: GlobalSnapshotConsensusState,
