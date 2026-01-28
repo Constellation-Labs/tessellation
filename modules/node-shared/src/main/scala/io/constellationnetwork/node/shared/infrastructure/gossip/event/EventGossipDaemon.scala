@@ -10,6 +10,7 @@ import scala.concurrent.duration._
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.infrastructure.mempool.{EventMempool, MempoolRejectionReason}
+import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.{Hashed, SecurityProvider}
@@ -145,6 +146,16 @@ private class EventGossipDaemonImpl[F[_]: Async: Parallel, Event, Key](
 
   private val logger = Slf4jLogger.getLogger[F]
 
+  /** Get peers eligible for gossip mesh: both Ready and Observing peers.
+    *
+    * We include Observing peers because they can participate in consensus as facilitators, so they need to receive gossiped events to have
+    * correct hash intersection.
+    */
+  private def getGossipEligiblePeers: F[Set[Peer]] =
+    clusterStorage.getResponsivePeers.map { peers =>
+      peers.filter(p => p.state == NodeState.Ready || p.state == NodeState.Observing)
+    }
+
   override def start: F[Unit] =
     running.set(true) >>
       startHeartbeatLoop >>
@@ -179,8 +190,8 @@ private class EventGossipDaemonImpl[F[_]: Async: Parallel, Event, Key](
   ): F[Unit] =
     for {
       meshPeerIds <- meshState.getMeshPeers
-      allPeers <- clusterStorage.getReadyPeers
-      // Filter to only peers that are both in mesh and currently in Ready state
+      allPeers <- getGossipEligiblePeers
+      // Filter to only peers that are both in mesh and eligible for gossip (Ready or Observing)
       meshPeers = allPeers.filter(p => meshPeerIds.contains(p.id)).toList
       _ <- meshPeers.nonEmpty
         .pure[F]
@@ -270,7 +281,7 @@ private class EventGossipDaemonImpl[F[_]: Async: Parallel, Event, Key](
   private def runHeartbeat: F[Unit] =
     for {
       // Get ready peers from cluster (only peers in Ready state participate in gossip)
-      peers <- clusterStorage.getReadyPeers
+      peers <- getGossipEligiblePeers
       availablePeerIds = peers.map(_.id).toSet
       // Run heartbeat on mesh state
       result <- meshState.heartbeat(availablePeerIds)
@@ -349,7 +360,7 @@ private class EventGossipDaemonImpl[F[_]: Async: Parallel, Event, Key](
 
   private def pullFromPeers: F[Unit] =
     for {
-      peers <- clusterStorage.getReadyPeers
+      peers <- getGossipEligiblePeers
       meshPeerIds <- meshState.getMeshPeers
       // Select non-mesh Ready peers for lazy pull
       lazyPeers = peers.filterNot(p => meshPeerIds.contains(p.id)).take(config.gossipFactor)
