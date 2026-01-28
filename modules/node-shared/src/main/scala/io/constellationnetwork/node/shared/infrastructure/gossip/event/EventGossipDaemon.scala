@@ -203,8 +203,16 @@ private class EventGossipDaemonImpl[F[_]: Async: Parallel, Event, Key](
               client
                 .pushEvent(push)
                 .run(Peer.toP2PContext(peer))
-                .void
-                .flatTap(_ => meshState.recordDelivery(peer.id))
+                .flatMap { success =>
+                  success
+                    .pure[F]
+                    .ifM(
+                      ifTrue = meshState.recordDelivery(peer.id) >>
+                        logger.debug(s"Successfully pushed event ${event.hash.show} to peer ${peer.id.show}"),
+                      ifFalse = meshState.recordFailure(peer.id) >>
+                        logger.warn(s"Push rejected by peer ${peer.id.show} for event ${event.hash.show} (non-2xx response)")
+                    )
+                }
                 .handleErrorWith { err =>
                   meshState.recordFailure(peer.id) >>
                     logger.warn(s"Failed to push event to peer ${peer.id.show}: ${err.getMessage}")
@@ -331,10 +339,19 @@ private class EventGossipDaemonImpl[F[_]: Async: Parallel, Event, Key](
                   client
                     .pushEvent(push)
                     .run(Peer.toP2PContext(peer))
-                    .void
-                    .flatTap(_ => meshState.recordDelivery(peer.id))
+                    .flatMap { success =>
+                      success
+                        .pure[F]
+                        .ifM(
+                          ifTrue = meshState.recordDelivery(peer.id) >>
+                            logger.debug(s"Synced event ${hash.show} to peer ${peer.id.show}"),
+                          ifFalse = meshState.recordFailure(peer.id) >>
+                            logger.warn(s"Sync rejected by peer ${peer.id.show} for event ${hash.show} (non-2xx response)")
+                        )
+                    }
                     .handleErrorWith { err =>
-                      logger.debug(s"Failed to sync event ${hash.show} to ${peer.id.show}: ${err.getMessage}")
+                      meshState.recordFailure(peer.id) >>
+                        logger.debug(s"Failed to sync event ${hash.show} to ${peer.id.show}: ${err.getMessage}")
                     }
               }
             } yield (),
