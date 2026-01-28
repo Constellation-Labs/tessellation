@@ -64,6 +64,15 @@ object GlobalSnapshotContextFunctions {
           SortedMap.empty[Address, SortedSet[DelegatedStakeRecord]]
         )
 
+        val existingDelegatedStakesParsed = existingDelegatedStakes.view.mapValues { records =>
+          records.map { r =>
+            r.copy(
+              currentTokenLockRef = r.currentTokenLockRef.orElse(r.tokenLockRef.some),
+              currentAmount = r.currentAmount.orElse(r.amount.some)
+            )
+          }
+        }.to(SortedMap)
+
         val existingWithdrawals = lastSnapshotContext.delegatedStakesWithdrawals.getOrElse(
           SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]]
         )
@@ -71,24 +80,26 @@ object GlobalSnapshotContextFunctions {
         def isWithdrawalExpired(withdrawalEpoch: EpochProgress): Boolean =
           (withdrawalEpoch |+| withdrawalTimeLimit) <= epochProgress
 
-        val unexpiredWithdrawals = existingWithdrawals.map {
-          case (address, withdrawals) =>
-            address -> withdrawals.filterNot {
+        val (unexpiredWithdrawals, expiredWithdrawals) = existingWithdrawals.foldLeft(
+          (
+            SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
+            SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]]
+          )
+        ) {
+          case ((unexpiredAcc, expiredAcc), (address, withdrawals)) =>
+            val (expired, unexpired) = withdrawals.partition {
               case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch, _, _) =>
                 isWithdrawalExpired(withdrawalEpoch)
             }
-        }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
 
-        val expiredWithdrawals = existingWithdrawals.map {
-          case (address, withdrawals) =>
-            address -> withdrawals.filter {
-              case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch, _, _) =>
-                isWithdrawalExpired(withdrawalEpoch)
-            }
-        }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
+            val newUnexpired = if (unexpired.nonEmpty) unexpiredAcc + (address -> unexpired) else unexpiredAcc
+            val newExpired = if (expired.nonEmpty) expiredAcc + (address -> expired) else expiredAcc
+
+            (newUnexpired, newExpired)
+        }
 
         (
-          existingDelegatedStakes,
+          existingDelegatedStakesParsed,
           unexpiredWithdrawals,
           expiredWithdrawals
         )
