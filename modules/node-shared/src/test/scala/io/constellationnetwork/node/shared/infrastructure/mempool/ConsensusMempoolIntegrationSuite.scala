@@ -7,8 +7,6 @@ import cats.effect.IO
 import cats.effect.kernel.Ref
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedSet
-
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.mpt.GlobalStateFieldId.Balances
@@ -93,8 +91,8 @@ object ConsensusMempoolIntegrationSuite extends SimpleIOSuite {
         def addBatch(events: List[Signed[TestEvent]]): IO[List[Either[MempoolRejectionReason, MempoolEntry[TestEvent, GlobalStateKey]]]] =
           IO.raiseError(new NotImplementedError("Use addEntry for tests"))
 
-        def getEventHashes: IO[SortedSet[Hash]] =
-          storageRef.get.map(state => SortedSet.from(state.keySet))
+        def getEventHashes: IO[Set[Hash]] =
+          storageRef.get.map(_.keySet)
 
         // Test helper to add entries directly
         def addEntry(entry: MempoolEntry[TestEvent, GlobalStateKey]): IO[Unit] =
