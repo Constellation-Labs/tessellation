@@ -93,12 +93,6 @@ object CurrencySnapshotConsensusStateAdvancer {
       protected val clusterStorage: ClusterStorage[F] = clusterStorageInstance
       protected val config: ConsensusConfig = consensusConfig
 
-      def onInitFromDownload: F[Unit] =
-        eventMempool.size.flatMap { size =>
-          logger.info(s"[DownloadInit] Clearing event mempool with $size stale events before joining consensus") >>
-            eventMempool.snapshot().flatMap(snapshot => eventMempool.clearIncluded(snapshot.hashes))
-        }
-
       private case class Transition(newState: CurrencySnapshotConsensusState, sideEffect: F[Unit])
 
       def getConsensusOutcome(
