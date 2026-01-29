@@ -266,26 +266,9 @@ object GlobalSnapshotContextFunctions {
           snapshotInfo.stateProof(signedArtifact.ordinal)
         }
         validation <- StateProofValidator.validate(hashedArtifact, calculatedStateProof)
-        _ <- validation match {
+        _ = validation match {
           case Validated.Valid(_)   => Async[F].unit
-          case Validated.Invalid(_) =>
-            // Validation failed - MPT has drifted from expected state, resync and retry
-            for {
-              _ <- logger.warn(s"StateProof validation failed at ordinal=${signedArtifact.ordinal}, attempting MPT resync...")
-              kvPairs <- snapshotInfo.allStateEntries[F]
-              _ <- logger.info(s"Resyncing MPT store with ${kvPairs.size} entries")
-              _ <- mptStore.syncFull[Json](kvPairs, signedArtifact.ordinal)
-              recalculatedStateProof <- HasherSelector[F].withCurrent { implicit hasher =>
-                snapshotInfo.stateProof(mptStore.underlying, signedArtifact.ordinal)
-              }
-              retryValidation <- StateProofValidator.validate(hashedArtifact, recalculatedStateProof)
-              _ <- retryValidation match {
-                case Validated.Valid(_) => Async[F].unit
-                case Validated.Invalid(e) =>
-                  logger.error(s"StateProof validation failed after resync at ordinal=${signedArtifact.ordinal}") >>
-                    e.raiseError[F, Unit]
-              }
-            } yield ()
+          case Validated.Invalid(e) => e.raiseError[F, Unit]
         }
 
       } yield snapshotInfo
