@@ -4,13 +4,13 @@ import java.security.KeyPair
 
 import cats.Parallel
 import cats.data.NonEmptySet
+import cats.effect._
 import cats.effect.std.{Random, Supervisor}
-import cats.effect.{Async, IO, Resource}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
 
-import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
+import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, FeeTransaction, L0NodeContext}
 import io.constellationnetwork.currency.l0.config.types.AppConfig
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
 import io.constellationnetwork.currency.l0.infrastructure.snapshot.services.CurrencyMessagesService
@@ -49,15 +49,17 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security._
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 
 import org.http4s.client.Client
 
 object Services {
 
-  def make[F[
-    _
-  ]: Async: Parallel: Random: JsonSerializer: KryoSerializer: SecurityProvider: HasherSelector: Metrics: Supervisor, R <: CliMethod](
+  def make[
+    F[_]: Async: Parallel: Random: JsonSerializer: KryoSerializer: SecurityProvider: HasherSelector: Metrics: Supervisor,
+    R <: CliMethod
+  ](
     sharedCfg: SharedConfig,
     p2PClient: P2PClient[F],
     sharedServices: SharedServices[F, R],
@@ -82,10 +84,12 @@ object Services {
     maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
     queues: Queues[F],
     getPeerChainTips: F[Map[PeerId, ChainTip]],
+    snapshotFeeTransactionsRef: Ref[F, Map[Hash, Signed[FeeTransaction]]],
     consensusDispatcher: Option[ConsensusDispatcher[F]] = None
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector,
-    currencyStateProofSelector: CurrencyStateProofSelector
+    currencyStateProofSelector: CurrencyStateProofSelector,
+    nodeContext: L0NodeContext[F]
   ): F[Services[F, R]] =
     for {
       implicit0(hasher: Hasher[F]) <- hasherSelector.getCurrent.pure[F]
@@ -102,12 +106,9 @@ object Services {
         storages.cluster
       )
 
-      l0NodeContext = L0NodeContext
-        .make[F](storages.snapshot, hasherSelector, storages.lastSyncGlobalSnapshot, storages.identifier, seedlist)
-
       dataApplicationAcceptanceManager = (maybeDataApplication, storages.calculatedStateStorage).mapN {
         case (service, storage) =>
-          DataApplicationSnapshotAcceptanceManager.make[F](service, l0NodeContext, storage)
+          DataApplicationSnapshotAcceptanceManager.make[F](service, nodeContext, storage, snapshotFeeTransactionsRef)
       }
 
       feeCalculator = FeeCalculator.make(cfg.shared.feeConfigs)

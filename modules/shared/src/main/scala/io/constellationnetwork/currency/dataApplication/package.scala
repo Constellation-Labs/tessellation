@@ -856,4 +856,5 @@ trait L0NodeContext[F[_]] {
   def securityProvider: SecurityProvider[F]
   def getCurrencyId: F[CurrencyId]
   def getMetagraphL0Seedlist: Option[Set[SeedlistEntry]]
+  def getSnapshotFeeTransactions: F[Map[Hash, Signed[FeeTransaction]]]
 }

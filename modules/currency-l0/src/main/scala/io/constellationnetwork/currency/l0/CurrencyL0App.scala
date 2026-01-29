@@ -5,7 +5,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataTransaction, L0NodeContext}
+import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataTransaction, FeeTransaction, L0NodeContext}
 import io.constellationnetwork.currency.l0.StoragesInitializer.initializeCurrencySnapshotStorages
 import io.constellationnetwork.currency.l0.cell.{L0Cell, L0CellInput}
 import io.constellationnetwork.currency.l0.cli.method
@@ -140,6 +140,17 @@ abstract class CurrencyL0App(
       // dag-l0 setup. Isolates round-timing from HTTP serving load on the default global
       // compute pool. See ConsensusExecutor.
       consensusEc <- ConsensusExecutor.optional[IO](cfg.snapshot.consensus.consensusDispatcherThreads)
+
+      snapshotFeeTransactionsRef <- Ref.of[IO, Map[Hash, Signed[FeeTransaction]]](Map.empty).toResource
+      implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext
+        .make[IO](
+          storages.snapshot,
+          hasherSelectorAlwaysCurrent,
+          storages.lastSyncGlobalSnapshot,
+          storages.identifier,
+          nodeShared.seedlist,
+          snapshotFeeTransactionsRef
+        )
       services <- Services
         .make[IO, Run](
           sharedConfig,
@@ -166,17 +177,10 @@ abstract class CurrencyL0App(
           Some(customArtifacts),
           queues,
           getPeerChainTips,
+          snapshotFeeTransactionsRef,
           consensusEc
         )
         .asResource
-      implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext
-        .make[IO](
-          storages.snapshot,
-          hasherSelectorAlwaysCurrent,
-          storages.lastSyncGlobalSnapshot,
-          storages.identifier,
-          nodeShared.seedlist
-        )
 
       programs = Programs.make[IO, Run](
         keyPair,
