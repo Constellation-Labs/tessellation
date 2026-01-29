@@ -15,6 +15,8 @@ import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
 
+import org.typelevel.log4cats.slf4j.Slf4jLogger
+
 /** Result of allow spend acceptance containing full state and deltas */
 case class AllowSpendAcceptanceResult(
   fullState: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
@@ -51,6 +53,7 @@ trait AllowSpendStateManager[F[_]] {
 object AllowSpendStateManager {
 
   def make[F[_]: Async](): AllowSpendStateManager[F] = new AllowSpendStateManager[F] {
+    private val logger = Slf4jLogger.getLoggerFromName[F]("AllowSpendStateManager")
 
     def acceptAllowSpends(
       epochProgress: EpochProgress,
@@ -65,6 +68,10 @@ object AllowSpendStateManager {
 
       val lastActiveGlobalAllowSpends = lastActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
       val expiredGlobalAllowSpends = filterExpiredAllowSpends(lastActiveGlobalAllowSpends, epochProgress)
+
+      val totalLastActiveCount = lastActiveGlobalAllowSpends.values.map(_.size).sum
+      val totalNewCount = globalAllowSpends.values.map(_.size).sum
+      val totalExpiredCount = expiredGlobalAllowSpends.values.map(_.size).sum
 
       val unexpiredGlobalAllowSpends = (globalAllowSpends |+| expiredGlobalAllowSpends).foldLeft(lastActiveGlobalAllowSpends) {
         case (acc, (address, allowSpends)) =>
@@ -146,30 +153,44 @@ object AllowSpendStateManager {
         }
 
       for {
+        _ <- logger.info(
+          s"[AllowSpendAccept] epochProgress=${epochProgress.value.value} " +
+            s"lastActiveGlobal=$totalLastActiveCount newGlobal=$totalNewCount expired=$totalExpiredCount " +
+            s"currencySnapshots=${activeAllowSpendsFromCurrencySnapshots.size} spendTxns=${allAcceptedSpendTxns.size}"
+        )
         (updatedCurrencyAllowSpends, currencyDeltas) <- processedMetagraphsF
         validGlobalAllowSpends <- unexpiredGlobalWithoutSpendTransactionsF
-      } yield {
-        // Compute global deltas by comparing with previous state
-        val globalDeltas: SortedMap[Address, SortedSet[Signed[AllowSpend]]] =
+        validGlobalCount = validGlobalAllowSpends.values.map(_.size).sum
+        _ <- logger.info(
+          s"[AllowSpendAccept] validGlobalAllowSpends=$validGlobalCount " +
+            s"addresses=${validGlobalAllowSpends.keys.map(_.value).mkString(",")}"
+        )
+
+        globalDeltas: SortedMap[Address, SortedSet[Signed[AllowSpend]]] =
           validGlobalAllowSpends.filter {
             case (address, allowSpends) =>
               !lastActiveGlobalAllowSpends.get(address).contains(allowSpends)
           }
 
-        val fullState = if (validGlobalAllowSpends.nonEmpty) {
-          updatedCurrencyAllowSpends + (None -> validGlobalAllowSpends)
-        } else {
-          updatedCurrencyAllowSpends
-        }
+        fullState =
+          if (validGlobalAllowSpends.nonEmpty) {
+            updatedCurrencyAllowSpends + (None -> validGlobalAllowSpends)
+          } else {
+            updatedCurrencyAllowSpends
+          }
 
-        val deltas = if (globalDeltas.nonEmpty) {
-          currencyDeltas + (None -> globalDeltas)
-        } else {
-          currencyDeltas
-        }
+        deltas =
+          if (globalDeltas.nonEmpty) {
+            currencyDeltas + (None -> globalDeltas)
+          } else {
+            currencyDeltas
+          }
 
-        AllowSpendAcceptanceResult(fullState, deltas)
-      }
+        totalFullStateCount = fullState.values.flatMap(_.values).map(_.size).sum
+        totalDeltasCount = deltas.values.flatMap(_.values).map(_.size).sum
+        _ <- logger.info(s"[AllowSpendAccept] result: fullState=$totalFullStateCount deltas=$totalDeltasCount")
+
+      } yield AllowSpendAcceptanceResult(fullState, deltas)
     }
 
     def acceptAllowSpendRefs(

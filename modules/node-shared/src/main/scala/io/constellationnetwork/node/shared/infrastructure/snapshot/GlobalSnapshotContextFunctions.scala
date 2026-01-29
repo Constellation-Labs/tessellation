@@ -265,12 +265,10 @@ object GlobalSnapshotContextFunctions {
         calculatedStateProof <- HasherSelector[F].withCurrent { implicit hasher =>
           snapshotInfo.stateProof(signedArtifact.ordinal)
         }
-        validation <- StateProofValidator.validate(hashedArtifact, calculatedStateProof)
-        _ = validation match {
+        _ <- StateProofValidator.validate(hashedArtifact, calculatedStateProof).flatMap {
           case Validated.Valid(_)   => Async[F].unit
           case Validated.Invalid(e) => e.raiseError[F, Unit]
         }
-
       } yield snapshotInfo
     }
 
