@@ -45,7 +45,8 @@ object GlobalSnapshotContextFunctions {
     withdrawalTimeLimit: EpochProgress,
     tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
     setSumFixOrdinal: SnapshotOrdinal,
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    incrementalDelegatedStakingStartingOrdinal: SnapshotOrdinal
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ) =
@@ -54,17 +55,18 @@ object GlobalSnapshotContextFunctions {
       // todo - avoid duplication of this function here and in GlobalSnapshotConsensusFunctions
       private def acceptDelegatedStakes(
         lastSnapshotContext: GlobalSnapshotInfo,
-        epochProgress: EpochProgress
+        epochProgress: EpochProgress,
+        ordinal: SnapshotOrdinal
       )(implicit h: Hasher[F]): (
         SortedMap[Address, SortedSet[DelegatedStakeRecord]],
         SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
         SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]]
       ) = {
-        val existingDelegatedStakes = lastSnapshotContext.activeDelegatedStakes.getOrElse(
+        val existingDelegatedStakesRaw = lastSnapshotContext.activeDelegatedStakes.getOrElse(
           SortedMap.empty[Address, SortedSet[DelegatedStakeRecord]]
         )
 
-        val existingDelegatedStakesParsed = existingDelegatedStakes.view.mapValues { records =>
+        val existingDelegatedStakesParsed = existingDelegatedStakesRaw.view.mapValues { records =>
           records.map { r =>
             r.copy(
               currentTokenLockRef = r.currentTokenLockRef.orElse(r.tokenLockRef.some),
@@ -72,6 +74,12 @@ object GlobalSnapshotContextFunctions {
             )
           }
         }.to(SortedMap)
+
+        val existingDelegatedStakes =
+          if (ordinal > incrementalDelegatedStakingStartingOrdinal)
+            existingDelegatedStakesParsed
+          else
+            existingDelegatedStakesRaw
 
         val existingWithdrawals = lastSnapshotContext.delegatedStakesWithdrawals.getOrElse(
           SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]]
@@ -99,7 +107,7 @@ object GlobalSnapshotContextFunctions {
         }
 
         (
-          existingDelegatedStakesParsed,
+          existingDelegatedStakes,
           unexpiredWithdrawals,
           expiredWithdrawals
         )
@@ -165,7 +173,7 @@ object GlobalSnapshotContextFunctions {
           unexpiredCreateDelegatedStakes,
           unexpiredWithdrawalsDelegatedStaking,
           expiredWithdrawalsDelegatedStaking
-        ) = acceptDelegatedStakes(context, signedArtifact.epochProgress)
+        ) = acceptDelegatedStakes(context, signedArtifact.epochProgress, signedArtifact.ordinal)
 
         updatedCreateDelegatedStakes <- DelegatedRewardsDistributor.getUpdatedCreateDelegatedStakes(
           signedArtifact.delegateRewards.getOrElse(SortedMap.empty),
