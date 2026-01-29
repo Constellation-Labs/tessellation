@@ -1054,8 +1054,9 @@ object GlobalSnapshotAcceptanceManager {
               metagraphSyncData = metagraphSyncDataDeltas
             )
 
-            _ <- mptStore.syncFromStateChanges(stateChangesAccumulator, ordinal)
-            stateProof <- gsi.stateProof(mptStore.underlying, ordinal)
+            // DEBUG: Use in-memory MPT computation (same as L1) to isolate event mempool from MPT store issues
+            _ <- gsi.allStateEntries.flatMap(mptStore.syncFull[Json](_, ordinal))
+            stateProof <- gsi.stateProof(ordinal)
 
             (expiredAllowSpends, expiredTokenLocks) = (
               allowSpendStateManager.filterExpiredAllowSpends(

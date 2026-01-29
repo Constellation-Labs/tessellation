@@ -122,7 +122,7 @@ abstract class SnapshotProcessor[
 
         val updateMptStorage: F[Unit] = state match {
           case info: GlobalSnapshotInfo =>
-            info.allStateEntries.flatMap(mptStore.sync[Json](_, snapshot.ordinal))
+            info.allStateEntries.flatMap(mptStore.syncFull[Json](_, snapshot.ordinal))
           case _ => Async[F].unit
         }
 
@@ -169,7 +169,7 @@ abstract class SnapshotProcessor[
 
         val updateMptStorage: F[Unit] = state match {
           case info: GlobalSnapshotInfo =>
-            info.allStateEntries.flatMap(mptStore.sync[Json](_, snapshot.ordinal))
+            info.allStateEntries.flatMap(mptStore.syncFull[Json](_, snapshot.ordinal))
           case _ => Async[F].unit
         }
 
@@ -209,7 +209,7 @@ abstract class SnapshotProcessor[
 
         val updateMptStorage: F[Unit] = state match {
           case info: GlobalSnapshotInfo =>
-            info.allStateEntries.flatMap(mptStore.sync[Json](_, snapshot.ordinal))
+            info.allStateEntries.flatMap(mptStore.syncFull[Json](_, snapshot.ordinal))
           case _ => Async[F].unit
         }
 
@@ -262,7 +262,7 @@ abstract class SnapshotProcessor[
 
         val updateMptStorage: F[Unit] = state match {
           case info: GlobalSnapshotInfo =>
-            info.allStateEntries.flatMap(mptStore.sync[Json](_, snapshot.ordinal))
+            info.allStateEntries.flatMap(mptStore.syncFull[Json](_, snapshot.ordinal))
           case _ => Async[F].unit
         }
 

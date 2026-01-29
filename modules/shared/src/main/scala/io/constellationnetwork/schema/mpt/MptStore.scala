@@ -95,7 +95,7 @@ object MptStore {
       toHex(key).flatMap(hex => producer.remove(List(hex)).void)
 
     override def remove(keys: List[K]): F[Unit] =
-      if (keys.isEmpty) Async[F].unit
+    if (keys.isEmpty) Async[F].unit
       else keys.parTraverse(toHex).flatMap(hexKeys => producer.remove(hexKeys).void)
 
     override def contains(key: K): F[Boolean] =
