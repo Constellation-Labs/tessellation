@@ -36,6 +36,7 @@ import io.circe._
 import io.circe.disjunctionCodecs._
 import io.circe.generic.semiauto.deriveEncoder
 import io.circe.syntax.EncoderOps
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 @derive(encoder, decoder, eqv, show)
 case class GlobalSnapshotInfoV1(
@@ -233,8 +234,18 @@ object GlobalSnapshotInfo {
 
   def mptStateProof[F[_]: Parallel: Async: Hasher](info: GlobalSnapshotInfo)(
     implicit stateProofSelector: StateProofSelector
-  ): F[GlobalSnapshotStateProof] =
-    info.allStateEntries.buildMpt.map { mptRoot =>
+  ): F[GlobalSnapshotStateProof] = {
+    val logger = Slf4jLogger.getLoggerFromName[F]("MptStateProof")
+    for {
+      entries <- info.allStateEntries
+      sortedKeys = entries.keys.toList.map(_.toString).sorted
+      _ <- logger.info(
+        s"[MptStateProof] entries=${entries.size} " +
+          s"keys=${sortedKeys.take(20).mkString(",")}"
+      )
+      mptRoot <- entries.pure[F].buildMpt
+      _ <- logger.info(s"[MptStateProof] mptRoot=${mptRoot.value.value.take(16)}")
+    } yield
       GlobalSnapshotStateProof.apply(
         Hash.empty,
         Hash.empty,
@@ -254,7 +265,7 @@ object GlobalSnapshotInfo {
         None,
         Some(mptRoot.value)
       )
-    }
+  }
 
   def legacyStateProof[F[_]: Parallel: Sync: Hasher](
     info: GlobalSnapshotInfo,
