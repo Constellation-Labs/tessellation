@@ -65,7 +65,8 @@ object GlobalSnapshotConsensusFunctions {
     environment: AppEnvironment,
     delegatedRewardsConfigProvider: DelegatedRewardsConfigProvider,
     v3MigrationOrdinal: SnapshotOrdinal,
-    setSumFixOrdinal: SnapshotOrdinal
+    setSumFixOrdinal: SnapshotOrdinal,
+    incrementalDelegatedStakingStartingOrdinal: SnapshotOrdinal
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
     def getRequiredCollateral: Amount = collateral
@@ -216,8 +217,25 @@ object GlobalSnapshotConsensusFunctions {
               classicRewardsFn(lastArtifact, snapshotContext.balances, txs, trigger, events, None)
 
             case DelegateRewardsInput(udsar, psu, ep) =>
-              if (shouldUseDelegatedRewards(lastArtifact.ordinal.next, ep)) {
-                rewardsService.delegatedRewards.distribute(snapshotContext, trigger, ep, faciltators, udsar, psu)
+              val ordinal = lastArtifact.ordinal.next
+              if (shouldUseDelegatedRewards(ordinal, ep)) {
+                rewardsService.delegatedRewards.distribute(snapshotContext, trigger, ep, faciltators, udsar, psu).map {
+                  delegatedRewardsResult =>
+                    if (ordinal > incrementalDelegatedStakingStartingOrdinal) {
+                      val updatedCreateDelegatedStakes = delegatedRewardsResult.updatedCreateDelegatedStakes.view.mapValues { records =>
+                        records.map { r =>
+                          r.copy(
+                            currentTokenLockRef = r.currentTokenLockRef.orElse(r.tokenLockRef.some),
+                            currentAmount = r.currentAmount.orElse(r.amount.some)
+                          )
+                        }
+                      }.to(SortedMap)
+
+                      delegatedRewardsResult.copy(updatedCreateDelegatedStakes = updatedCreateDelegatedStakes)
+                    } else {
+                      delegatedRewardsResult
+                    }
+                }
               } else {
                 classicRewardsFn(lastArtifact, snapshotContext.balances, SortedSet.empty, trigger, events, None)
               }

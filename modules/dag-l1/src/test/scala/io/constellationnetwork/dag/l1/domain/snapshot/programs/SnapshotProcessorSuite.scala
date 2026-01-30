@@ -294,7 +294,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   EpochProgress(NonNegLong.unsafeFrom(1L)),
                   SnapshotOrdinal.MinValue,
                   SnapshotOrdinal.MinValue,
-                  mptStore
+                  mptStore,
+                  SnapshotOrdinal.MinValue
                 )
               }
               snapshotProcessor = {

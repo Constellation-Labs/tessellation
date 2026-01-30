@@ -386,6 +386,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
           AppEnvironment.Dev,
           delegatedRewardsConfigProvider,
           SnapshotOrdinal.MinValue,
+          SnapshotOrdinal.MinValue,
           SnapshotOrdinal.MinValue
         )
     } yield globalSnapshotConsensusFunction

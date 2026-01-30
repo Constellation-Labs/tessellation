@@ -417,7 +417,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         EpochProgress(NonNegLong.unsafeFrom(1L)),
         SnapshotOrdinal.MinValue,
         SnapshotOrdinal.MinValue,
-        mptStore
+        mptStore,
+        SnapshotOrdinal.MinValue
       )
       lastNSnapshotStorage =
         LastNGlobalSnapshotStorage.make[IO](lastGlobalSnapshotsSyncConfig, lastNSnapR, incLastNSnapR)
