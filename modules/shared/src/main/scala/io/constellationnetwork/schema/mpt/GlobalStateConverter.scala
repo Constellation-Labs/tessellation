@@ -12,6 +12,7 @@ import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, PendingDelegatedStakeWithdrawal}
+import io.constellationnetwork.schema.mpt.GlobalStateKey.toHex
 import io.constellationnetwork.schema.mpt.MptStore
 import io.constellationnetwork.schema.mpt.PartitionNamespace.AddressNamespace
 import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralRecord, PendingNodeCollateralWithdrawal}
@@ -29,6 +30,7 @@ import io.constellationnetwork.security.signature.Signed
 
 import io.circe.syntax.EncoderOps
 import io.circe.{Encoder, Json}
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object GlobalStateConverter {
 
@@ -279,6 +281,7 @@ object GlobalStateConverter {
     implicit class MptStoreGlobalSnapshotOps[F[_]: Async: Parallel: Hasher: JsonSerializer](
       val store: MptStore[F, GlobalStateKey]
     ) {
+
       def syncFromGlobalSnapshotInfo(info: GlobalSnapshotInfo, snapshotOrdinal: SnapshotOrdinal)(
         implicit stateProofSelector: StateProofSelector
       ): F[Unit] =
@@ -288,9 +291,26 @@ object GlobalStateConverter {
         implicit stateProofSelector: StateProofSelector
       ): F[Unit] = {
         val BatchSize = 5000
+        val logger = Slf4jLogger.getLoggerFromName[F]("MptStoreGlobalSnapshotOps")
 
         for {
+          entriesBefore <- store.underlying.entries
           entries <- acc.toStateEntries[F]
+          newKeys <- entries.keySet.toList.traverse(toHex(_)).map(_.toSet)
+          existingKeys = entriesBefore.keySet
+          keysOnlyInNew = newKeys -- existingKeys
+          keysOnlyInExisting = existingKeys -- newKeys
+          _ <- logger.info(
+            s"[DEBUG][ORDINAL=$snapshotOrdinal] syncFromStateChanges: MPT before=${entriesBefore.size}, delta=${entries.size}, newKeys=${keysOnlyInNew.size}, staleKeys=${keysOnlyInExisting.size}"
+          )
+          _ <- logger.info(
+            s"[DEBUG][ORDINAL=$snapshotOrdinal] Keys only in delta (new): " +
+              s"${keysOnlyInNew.take(10).mkString(", ")}${if (keysOnlyInNew.size > 10) "..." else ""}"
+          )
+          _ <- logger.info(
+            s"[DEBUG][ORDINAL=$snapshotOrdinal] Keys only in MPT (potential stale): " +
+              s"${keysOnlyInExisting.take(10).mkString(", ")}${if (keysOnlyInExisting.size > 10) "..." else ""}"
+          )
           _ <-
             if (entries.size <= BatchSize) {
               store.sync[Json](entries, snapshotOrdinal)
@@ -302,6 +322,8 @@ object GlobalStateConverter {
                   store.sync[Json](batch.toMap, snapshotOrdinal) >> Async[F].cede
                 }
             }
+          entriesAfter <- store.underlying.entries
+          _ <- logger.info(s"[DEBUG][ORDINAL=$snapshotOrdinal] syncFromStateChanges: MPT after=${entriesAfter.size}")
         } yield ()
       }
 

@@ -283,9 +283,19 @@ object GlobalSnapshotContextFunctions {
         _ <- CannotApplyRewardsError(diffRewards).raiseError[F, Unit].whenA(diffRewards.nonEmpty)
         hashedArtifact <- HasherSelector[F].withCurrent(implicit hasher => signedArtifact.toHashed)
 
+        mptEntriesBefore <- mptStore.underlying.entries
+        snapshotInfoEntries <- snapshotInfo.allStateEntries[F]
+        expectedStateProof = signedArtifact.stateProof
+        _ <- logger.info(
+          s"[DEBUG][ORDINAL=${signedArtifact.ordinal}] createContext validation: MPT=${mptEntriesBefore.size}, snapshotInfo=${snapshotInfoEntries.size}, expectedMptRoot=${expectedStateProof.mptRoot
+              .map(_.value.take(16))}"
+        )
         calculatedStateProof <- HasherSelector[F].withCurrent { implicit hasher =>
           snapshotInfo.stateProof(mptStore.underlying, signedArtifact.ordinal)
         }
+        _ <- logger.info(
+          s"[DEBUG][ORDINAL=${signedArtifact.ordinal}] calculatedMptRoot=${calculatedStateProof.mptRoot.map(_.value.take(16))}"
+        )
         validation <- StateProofValidator.validate(hashedArtifact, calculatedStateProof)
         _ <- validation match {
           case Validated.Valid(_)   => Async[F].unit
@@ -295,15 +305,26 @@ object GlobalSnapshotContextFunctions {
               _ <- logger.warn(s"StateProof validation failed at ordinal=${signedArtifact.ordinal}, attempting MPT resync...")
               kvPairs <- snapshotInfo.allStateEntries[F]
               _ <- logger.info(s"Resyncing MPT store with ${kvPairs.size} entries")
+              _ <- logger.info(
+                s"[DEBUG][ORDINAL=${signedArtifact.ordinal}] snapshotInfo keys sample: ${kvPairs.keySet.take(5).mkString(", ")}"
+              )
               _ <- mptStore.syncFull[Json](kvPairs, signedArtifact.ordinal)
+              mptEntriesAfterResync <- mptStore.underlying.entries
+              _ <- logger.info(s"[DEBUG][ORDINAL=${signedArtifact.ordinal}] After resync: MPT=${mptEntriesAfterResync.size}")
               recalculatedStateProof <- HasherSelector[F].withCurrent { implicit hasher =>
                 snapshotInfo.stateProof(mptStore.underlying, signedArtifact.ordinal)
               }
+              _ <- logger.info(
+                s"[DEBUG][ORDINAL=${signedArtifact.ordinal}] recalculatedMptRoot=${recalculatedStateProof.mptRoot.map(_.value.take(16))}"
+              )
               retryValidation <- StateProofValidator.validate(hashedArtifact, recalculatedStateProof)
               _ <- retryValidation match {
                 case Validated.Valid(_) => Async[F].unit
                 case Validated.Invalid(e) =>
                   logger.error(s"StateProof validation failed after resync at ordinal=${signedArtifact.ordinal}") >>
+                    logger.error(
+                      s"[DEBUG][ORDINAL=${signedArtifact.ordinal}] Expected mptRoot=${expectedStateProof.mptRoot}, Computed mptRoot=${recalculatedStateProof.mptRoot}"
+                    ) >>
                     e.raiseError[F, Unit]
               }
             } yield ()

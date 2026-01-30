@@ -141,12 +141,22 @@ object StateChannel {
               needsResync = currentEntries.size != expectedEntries.size
               _ <-
                 if (needsResync) {
+                  val expectedKeys = expectedEntries.keySet
+                  val currentKeys = currentEntries.keySet
+                  val keysOnlyInExpected = expectedKeys.size // Can't directly compare GlobalStateKey to Hex
+                  val keysOnlyInCurrent = currentKeys.size
                   logger.warn(
                     s"MPT state mismatch detected: expected=${expectedEntries.size}, actual=${currentEntries.size}. Resyncing at ordinal=$ordinal"
                   ) >>
+                    logger.info(s"[DEBUG][ORDINAL=$ordinal] Expected keys sample: ${expectedKeys.take(5).mkString(", ")}") >>
+                    logger.info(
+                      s"[DEBUG][ORDINAL=$ordinal] Current MPT keys sample: ${currentKeys.take(5).map(_.value.take(40)).mkString(", ")}"
+                    ) >>
                     sharedStorages.mptStore.syncFull[Json](expectedEntries, ordinal)
                 } else {
-                  Applicative[F].unit
+                  logger.info(
+                    s"[DEBUG][ORDINAL=$ordinal] ensureMptInitialized: MPT matches expected state (${currentEntries.size} entries)"
+                  )
                 }
             } yield ()
           }

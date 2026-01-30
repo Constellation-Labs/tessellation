@@ -163,9 +163,9 @@ object GlobalSnapshotConsensus {
               .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
             sharedCfg.fieldsAddedOrdinals.setSumFix
               .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
-          sharedCfg.incrementalDelegatedStakingStartingOrdinal
-            .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue)
-        )
+            sharedCfg.incrementalDelegatedStakingStartingOrdinal
+              .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue)
+          )
 
         stateAdvancer =
           GlobalSnapshotConsensusStateAdvancer.make(

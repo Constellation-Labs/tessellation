@@ -1055,8 +1055,22 @@ object GlobalSnapshotAcceptanceManager {
               metagraphSyncData = metagraphSyncDataDeltas
             )
 
+            mptEntriesBefore <- mptStore.underlying.entries
+            _ <- logger.info(s"[DEBUG][ORDINAL=$ordinal] Before syncFromStateChanges: MPT has ${mptEntriesBefore.size} entries")
             _ <- mptStore.syncFromStateChanges(stateChangesAccumulator, ordinal)
+            mptEntriesAfter <- mptStore.underlying.entries
+            gsiEntries <- gsi.allStateEntries[F]
+            _ <- logger.info(
+              s"[DEBUG][ORDINAL=$ordinal] After syncFromStateChanges: MPT has ${mptEntriesAfter.size} entries, gsi has ${gsiEntries.size} entries"
+            )
+            _ <- (mptEntriesAfter.size =!= gsiEntries.size)
+              .pure[F]
+              .ifM(
+                logger.warn(s"[DEBUG][ORDINAL=$ordinal] MPT/GSI entry count mismatch! MPT=${mptEntriesAfter.size}, GSI=${gsiEntries.size}"),
+                Async[F].unit
+              )
             stateProof <- gsi.stateProof(mptStore.underlying, ordinal)
+            _ <- logger.info(s"[DEBUG][ORDINAL=$ordinal] Computed stateProof mptRoot=${stateProof.mptRoot.map(_.value.take(16))}")
 
             (expiredAllowSpends, expiredTokenLocks) = (
               allowSpendStateManager.filterExpiredAllowSpends(
