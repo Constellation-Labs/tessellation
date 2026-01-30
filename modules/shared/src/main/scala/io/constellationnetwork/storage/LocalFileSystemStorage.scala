@@ -131,10 +131,20 @@ abstract class LocalFileSystemStorage[F[_], A](baseDir: Path)(
   def listFiles: F[Stream[F, File]] =
     dir
       .flatMap(a => F.blocking(a.list(f => !f.isDirectory, maxDepth = 1)))
-      .map(Stream.fromIterator(_, 1))
+      .map { iterator =>
+        Stream.fromIterator(iterator, 1).handleErrorWith {
+          case _: java.io.UncheckedIOException => Stream.empty
+          case e                               => Stream.raiseError(e)
+        }
+      }
 
   def findFiles(condition: File => Boolean): F[Stream[F, File]] =
     dir
       .flatMap(a => F.blocking(a.list(f => !f.isDirectory && condition(f), maxDepth = 1)))
-      .map(Stream.fromIterator(_, 1))
+      .map { iterator =>
+        Stream.fromIterator(iterator, 1).handleErrorWith {
+          case _: java.io.UncheckedIOException => Stream.empty
+          case e                               => Stream.raiseError(e)
+        }
+      }
 }
