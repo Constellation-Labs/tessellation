@@ -174,22 +174,11 @@ object GlobalL0Service {
       private def stateProofValidation(snapshot: Hashed[GlobalIncrementalSnapshot], info: GlobalSnapshotInfo)(
         implicit hasher: Hasher[F]
       ): F[Boolean] =
-        mptStore.isEmpty.flatMap { isEmpty =>
-          val initializeIfNeeded =
-            if (isEmpty)
-              info.allStateEntries[F].flatMap { kvPairs =>
-                logger.info(s"Initializing MPT store for validation with ${kvPairs.size} entries") >>
-                  mptStore.syncFull[Json](kvPairs, snapshot.ordinal)
-              }
-            else
-              Async[F].unit
-
-          initializeIfNeeded >>
-            StateProofValidator
-              .validate(snapshot, info, mptStore)
-              .flatTap(v => logger.debug(s"Failed StateProofValidation: $v").whenA(v.isInvalid))
-              .map(_.isValid)
-        }
+        mptStore.syncFullIfNeeded[Json](info.allStateEntries[F], snapshot.ordinal) >>
+          StateProofValidator
+            .validate(snapshot, info, mptStore)
+            .flatTap(v => logger.debug(s"Failed StateProofValidation: $v").whenA(v.isInvalid))
+            .map(_.isValid)
 
       private def majorityOrdinalValidation(snapshot: Hashed[GlobalIncrementalSnapshot], majorityPeers: NonEmptyList[L0Peer]): F[Boolean] =
         getMajorityOrdinal(majorityPeers).flatMap { maybeMajorityOrdinal =>

@@ -20,17 +20,14 @@ import org.typelevel.log4cats.Logger
 
 object StoragesInitializer {
   def initializeStorages[
-    F[_]: Async: Logger: Hasher: Parallel: JsonSerializer
+    F[_]: Async: Logger: Hasher
   ](
     globalSnapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     download: Download[F, GlobalIncrementalSnapshot],
     hashedGlobalIncrementalSnapshot: Hashed[GlobalIncrementalSnapshot],
-    globalSnapshotInfo: GlobalSnapshotInfo,
-    mptStore: MptStore[F, GlobalStateKey]
-  )(
-    implicit stateProofSelector: GlobalStateProofSelector
+    globalSnapshotInfo: GlobalSnapshotInfo
   ): F[Unit] = {
     val ordinal = hashedGlobalIncrementalSnapshot.ordinal
 
@@ -56,9 +53,6 @@ object StoragesInitializer {
         globalSnapshotInfo
       )
       _ <- Logger[F].info(s"Successfully initialized lastGlobalSnapshot storage")
-
-      kvPairs <- globalSnapshotInfo.allStateEntries[F]
-      _ <- mptStore.syncFull(kvPairs, ordinal)
 
       _ <- Logger[F].info(s"Storage initialization completed successfully with ordinal=$ordinal")
     } yield ()

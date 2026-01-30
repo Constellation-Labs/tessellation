@@ -1,5 +1,6 @@
 package io.constellationnetwork.dag.l0
 
+import cats.Parallel
 import cats.effect._
 import cats.syntax.all._
 
@@ -312,15 +313,24 @@ object Main
                                   .hasCollateral(nodeShared.nodeId)
                                   .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA)
                                 hashedSnapshot <- signedFirstIncrementalSnapshot.toHashed[IO]
+                                globalSnapshotInfo = hashedGenesis.info.toGlobalSnapshotInfo
                                 _ <- initializeStorages[IO](
                                   storages.globalSnapshot,
                                   sharedStorages.lastNGlobalSnapshot,
                                   sharedStorages.lastGlobalSnapshot,
                                   programs.download,
                                   hashedSnapshot,
-                                  hashedGenesis.info.toGlobalSnapshotInfo,
-                                  sharedStorages.mptStore
+                                  globalSnapshotInfo
                                 )
+                                kvPairs <- globalSnapshotInfo.allStateEntries[IO](
+                                  Async[IO],
+                                  Parallel[IO],
+                                  hasher,
+                                  jsonSerializer,
+                                  globalStateProofSelector
+                                )
+                                _ <- sharedStorages.mptStore.syncFull(kvPairs, hashedSnapshot.ordinal)
+
                                 _ <- services.consensus.manager
                                   .startFacilitatingAfterRollback(
                                     signedFirstIncrementalSnapshot.ordinal,

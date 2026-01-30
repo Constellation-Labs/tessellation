@@ -139,8 +139,7 @@ object GlobalSnapshotTraverse {
               lastGlobalSnapshotStorage,
               download,
               hashedFirstInc,
-              firstInfo,
-              mptStore
+              firstInfo
             )
           )
           (info, lastInc) <- incHashesNec.tail.foldLeftM((firstInfo, firstInc)) {
