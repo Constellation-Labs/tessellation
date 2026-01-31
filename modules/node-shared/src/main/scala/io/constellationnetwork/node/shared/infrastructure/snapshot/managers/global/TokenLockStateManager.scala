@@ -20,10 +20,11 @@ import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.types.numeric.NonNegLong
 
-/** Result of token lock acceptance containing full state and deltas */
+/** Result of token lock acceptance containing full state, deltas, and removed keys */
 case class TokenLockAcceptanceResult(
   fullState: SortedMap[Address, SortedSet[Signed[TokenLock]]],
-  deltas: SortedMap[Address, SortedSet[Signed[TokenLock]]]
+  deltas: SortedMap[Address, SortedSet[Signed[TokenLock]]],
+  removedKeys: Set[Address] = Set.empty
 )
 
 /** Result of token lock balance update containing full state and deltas */
@@ -113,7 +114,14 @@ object TokenLockStateManager {
           case (fullState, deltas) =>
             val cleanedFullState = fullState.filterNot(_._2.isEmpty)
             val cleanedDeltas = deltas.filterNot(_._2.isEmpty)
-            TokenLockAcceptanceResult(cleanedFullState, cleanedDeltas)
+
+            // Compute removed keys: addresses that had TokenLocks but now have empty or missing sets
+            val removedKeys: Set[Address] = lastActiveGlobalTokenLocks.collect {
+              case (address, spends) if spends.nonEmpty && !cleanedFullState.get(address).exists(_.nonEmpty) =>
+                address
+            }.toSet
+
+            TokenLockAcceptanceResult(cleanedFullState, cleanedDeltas, removedKeys)
         }
     }
 

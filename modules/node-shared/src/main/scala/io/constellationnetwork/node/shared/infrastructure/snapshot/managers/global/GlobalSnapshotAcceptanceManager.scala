@@ -826,13 +826,14 @@ object GlobalSnapshotAcceptanceManager {
               SortedMap.empty[Address, TokenLockReference]
             )
 
-            AllowSpendAcceptanceResult(updatedAllowSpends, allowSpendsDeltas) <- allowSpendStateManager.acceptAllowSpends(
-              epochProgress,
-              activeAllowSpendsFromCurrencySnapshots,
-              globalAllowSpends,
-              globalActiveAllowSpends,
-              allAcceptedSpendTxns
-            )
+            AllowSpendAcceptanceResult(updatedAllowSpends, allowSpendsDeltas, removedAllowSpendKeys) <- allowSpendStateManager
+              .acceptAllowSpends(
+                epochProgress,
+                activeAllowSpendsFromCurrencySnapshots,
+                globalAllowSpends,
+                globalActiveAllowSpends,
+                allAcceptedSpendTxns
+              )
 
             updatedAllowSpendRefs = allowSpendStateManager.acceptAllowSpendRefs(
               globalLastAllowSpendRefs,
@@ -877,12 +878,13 @@ object GlobalSnapshotAcceptanceManager {
               .leftMap(error => new RuntimeException(s"Error generating token unlocks: $error"))
               .liftTo[F]
 
-            TokenLockAcceptanceResult(updatedGlobalTokenLocks, tokenLocksDeltas) <- tokenLockStateManager.acceptTokenLocks(
-              epochProgress,
-              globalTokenLocks,
-              globalActiveTokenLocks,
-              generatedTokenUnlocks
-            )
+            TokenLockAcceptanceResult(updatedGlobalTokenLocks, tokenLocksDeltas, removedTokenLockKeys) <- tokenLockStateManager
+              .acceptTokenLocks(
+                epochProgress,
+                globalTokenLocks,
+                globalActiveTokenLocks,
+                generatedTokenUnlocks
+              )
 
             updatedTokenLockRefs = tokenLockStateManager.acceptTokenLockRefs(
               globalLastTokenLockRefs,
@@ -1052,7 +1054,9 @@ object GlobalSnapshotAcceptanceManager {
               delegatedStakesWithdrawals = updatedWithdrawDelegatedStakesCleaned,
               activeNodeCollaterals = updatedCreateNodeCollateralsCleaned,
               nodeCollateralWithdrawals = updatedWithdrawNodeCollateralsCleaned,
-              metagraphSyncData = metagraphSyncDataDeltas
+              metagraphSyncData = metagraphSyncDataDeltas,
+              removedAllowSpendKeys = removedAllowSpendKeys,
+              removedTokenLockKeys = removedTokenLockKeys
             )
 
             mptEntriesBefore <- mptStore.underlying.entries

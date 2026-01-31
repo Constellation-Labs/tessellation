@@ -51,7 +51,10 @@ object GlobalStateConverter {
     delegatedStakesWithdrawals: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]] = SortedMap.empty,
     activeNodeCollaterals: SortedMap[Address, SortedSet[NodeCollateralRecord]] = SortedMap.empty,
     nodeCollateralWithdrawals: SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]] = SortedMap.empty,
-    metagraphSyncData: SortedMap[Address, MetagraphSyncDataInfo] = SortedMap.empty
+    metagraphSyncData: SortedMap[Address, MetagraphSyncDataInfo] = SortedMap.empty,
+    // Removal tracking for incremental MPT sync
+    removedAllowSpendKeys: Set[(Option[Address], Address)] = Set.empty,
+    removedTokenLockKeys: Set[Address] = Set.empty
   )
 
   private def convertRequiredHypergraph[F[_]: Sync: Parallel, A: Encoder](
@@ -293,24 +296,35 @@ object GlobalStateConverter {
         val BatchSize = 5000
         val logger = Slf4jLogger.getLoggerFromName[F]("MptStoreGlobalSnapshotOps")
 
+        // Convert removal keys from accumulator to GlobalStateKey
+        def toRemovalGlobalStateKeys: Set[GlobalStateKey] = {
+          val allowSpendKeys = acc.removedAllowSpendKeys.map {
+            case (metagraphIdOpt, address) =>
+              GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveAllowSpends, metagraphIdOpt, address)
+          }
+          val tokenLockKeys = acc.removedTokenLockKeys.map { address =>
+            GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveTokenLocks, address)
+          }
+          allowSpendKeys ++ tokenLockKeys
+        }
+
         for {
           entriesBefore <- store.underlying.entries
           entries <- acc.toStateEntries[F]
-          newKeys <- entries.keySet.toList.traverse(toHex(_)).map(_.toSet)
-          existingKeys = entriesBefore.keySet
-          keysOnlyInNew = newKeys -- existingKeys
-          keysOnlyInExisting = existingKeys -- newKeys
+          keysToRemove = toRemovalGlobalStateKeys
           _ <- logger.info(
-            s"[DEBUG][ORDINAL=$snapshotOrdinal] syncFromStateChanges: MPT before=${entriesBefore.size}, delta=${entries.size}, newKeys=${keysOnlyInNew.size}, staleKeys=${keysOnlyInExisting.size}"
+            s"[DEBUG][ORDINAL=$snapshotOrdinal] syncFromStateChanges: " +
+              s"MPT before=${entriesBefore.size}, inserts=${entries.size}, removals=${keysToRemove.size}"
           )
-          _ <- logger.info(
-            s"[DEBUG][ORDINAL=$snapshotOrdinal] Keys only in delta (new): " +
-              s"${keysOnlyInNew.take(10).mkString(", ")}${if (keysOnlyInNew.size > 10) "..." else ""}"
-          )
-          _ <- logger.info(
-            s"[DEBUG][ORDINAL=$snapshotOrdinal] Keys only in MPT (potential stale): " +
-              s"${keysOnlyInExisting.take(10).mkString(", ")}${if (keysOnlyInExisting.size > 10) "..." else ""}"
-          )
+          _ <- logger
+            .info(
+              s"[DEBUG][ORDINAL=$snapshotOrdinal] Keys to remove: " +
+                s"${keysToRemove.take(5).mkString(", ")}${if (keysToRemove.size > 5) "..." else ""}"
+            )
+            .whenA(keysToRemove.nonEmpty)
+          // Remove stale keys first
+          _ <- store.remove(keysToRemove.toList).whenA(keysToRemove.nonEmpty)
+          // Then insert/update entries
           _ <-
             if (entries.size <= BatchSize) {
               store.sync[Json](entries, snapshotOrdinal)
