@@ -121,8 +121,9 @@ object AllowSpendStateManager {
             }
         }.map { updatedMetagraphAllowSpends =>
           val fullStateMap = SortedMap(updatedMetagraphAllowSpends.map { case (addr, spends, _) => addr -> spends }: _*)
+          // Filter out empty sets - those are removals tracked separately in removedKeys
           val deltasMap = SortedMap(updatedMetagraphAllowSpends.collect {
-            case (addr, spends, true) => addr -> spends
+            case (addr, spends, true) if spends.nonEmpty => addr -> spends
           }: _*)
 
           val updatedFullState = accAllowSpends + (metagraphId.some -> fullStateMap)
@@ -151,10 +152,11 @@ object AllowSpendStateManager {
         validGlobalAllowSpends <- unexpiredGlobalWithoutSpendTransactionsF
       } yield {
         // Compute global deltas by comparing with previous state
+        // Filter out empty sets - those are removals tracked separately in removedKeys
         val globalDeltas: SortedMap[Address, SortedSet[Signed[AllowSpend]]] =
           validGlobalAllowSpends.filter {
             case (address, allowSpends) =>
-              !lastActiveGlobalAllowSpends.get(address).contains(allowSpends)
+              allowSpends.nonEmpty && !lastActiveGlobalAllowSpends.get(address).contains(allowSpends)
           }
 
         val fullState = if (validGlobalAllowSpends.nonEmpty) {
