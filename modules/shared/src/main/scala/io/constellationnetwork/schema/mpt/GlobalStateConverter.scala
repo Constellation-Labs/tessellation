@@ -49,7 +49,10 @@ object GlobalStateConverter {
     delegatedStakesWithdrawals: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]] = SortedMap.empty,
     activeNodeCollaterals: SortedMap[Address, SortedSet[NodeCollateralRecord]] = SortedMap.empty,
     nodeCollateralWithdrawals: SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]] = SortedMap.empty,
-    metagraphSyncData: SortedMap[Address, MetagraphSyncDataInfo] = SortedMap.empty
+    metagraphSyncData: SortedMap[Address, MetagraphSyncDataInfo] = SortedMap.empty,
+    // Removal tracking for incremental MPT sync
+    removedAllowSpendKeys: Set[(Option[Address], Address)] = Set.empty,
+    removedTokenLockKeys: Set[Address] = Set.empty
   )
 
   private def convertRequiredHypergraph[F[_]: Sync: Parallel, A: Encoder](
@@ -289,8 +292,24 @@ object GlobalStateConverter {
       ): F[Unit] = {
         val BatchSize = 5000
 
+        // Convert removal keys from accumulator to GlobalStateKey
+        def toRemovalGlobalStateKeys: Set[GlobalStateKey] = {
+          val allowSpendKeys = acc.removedAllowSpendKeys.map {
+            case (metagraphIdOpt, address) =>
+              GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveAllowSpends, metagraphIdOpt, address)
+          }
+          val tokenLockKeys = acc.removedTokenLockKeys.map { address =>
+            GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveTokenLocks, address)
+          }
+          allowSpendKeys ++ tokenLockKeys
+        }
+
         for {
           entries <- acc.toStateEntries[F]
+          keysToRemove = toRemovalGlobalStateKeys
+          // Remove stale keys first (AllowSpends/TokenLocks that are now empty)
+          _ <- store.remove(keysToRemove.toList).whenA(keysToRemove.nonEmpty)
+          // Then insert/update entries
           _ <-
             if (entries.size <= BatchSize) {
               store.sync[Json](entries, snapshotOrdinal)

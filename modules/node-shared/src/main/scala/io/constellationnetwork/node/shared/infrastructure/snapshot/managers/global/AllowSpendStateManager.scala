@@ -15,10 +15,11 @@ import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
 
-/** Result of allow spend acceptance containing full state and deltas */
+/** Result of allow spend acceptance containing full state, deltas, and removed keys */
 case class AllowSpendAcceptanceResult(
   fullState: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
-  deltas: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+  deltas: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
+  removedKeys: Set[(Option[Address], Address)] = Set.empty
 )
 
 trait AllowSpendStateManager[F[_]] {
@@ -168,7 +169,18 @@ object AllowSpendStateManager {
           currencyDeltas
         }
 
-        AllowSpendAcceptanceResult(fullState, deltas)
+        // Compute removed keys: addresses that had AllowSpends but now have empty or missing sets
+        val removedKeys: Set[(Option[Address], Address)] = lastActiveAllowSpends.flatMap {
+          case (metagraphIdOpt, innerMap) =>
+            innerMap.collect {
+              case (address, spends)
+                  if spends.nonEmpty &&
+                    !fullState.get(metagraphIdOpt).flatMap(_.get(address)).exists(_.nonEmpty) =>
+                (metagraphIdOpt, address)
+            }
+        }.toSet
+
+        AllowSpendAcceptanceResult(fullState, deltas, removedKeys)
       }
     }
 
