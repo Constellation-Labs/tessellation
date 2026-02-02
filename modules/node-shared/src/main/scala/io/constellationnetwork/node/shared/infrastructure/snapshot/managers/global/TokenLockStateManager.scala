@@ -27,10 +27,11 @@ case class TokenLockAcceptanceResult(
   removedKeys: Set[Address] = Set.empty
 )
 
-/** Result of token lock balance update containing full state and deltas */
+/** Result of token lock balance update containing full state, deltas, and removed keys */
 case class TokenLockBalanceResult(
   fullState: SortedMap[Address, SortedMap[Address, Balance]],
-  deltas: SortedMap[Address, SortedMap[Address, Balance]]
+  deltas: SortedMap[Address, SortedMap[Address, Balance]],
+  removedKeys: Set[Address] = Set.empty
 )
 
 trait TokenLockStateManager[F[_]] {
@@ -204,7 +205,17 @@ object TokenLockStateManager {
           (newAccTokenLockBalances, newAccDeltas)
       }
 
-      TokenLockBalanceResult(fullState, deltas)
+      // Clean empty entries from fullState
+      val cleanedFullState = fullState.filter { case (_, balances) => balances.nonEmpty }
+      val cleanedDeltas = deltas.filter { case (_, balances) => balances.nonEmpty }
+
+      // Compute removed keys: metagraph addresses that had balances but now have empty or missing maps
+      val removedKeys: Set[Address] = lastTokenLockBalances.collect {
+        case (metagraphId, balances) if balances.nonEmpty && !cleanedFullState.get(metagraphId).exists(_.nonEmpty) =>
+          metagraphId
+      }.toSet
+
+      TokenLockBalanceResult(cleanedFullState, cleanedDeltas, removedKeys)
     }
 
     def updateGlobalBalancesByTokenLocks(

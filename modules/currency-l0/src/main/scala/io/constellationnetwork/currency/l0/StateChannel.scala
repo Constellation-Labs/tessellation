@@ -125,32 +125,13 @@ object StateChannel {
     }
 
     def ensureMptInitialized(ordinal: SnapshotOrdinal, state: GlobalSnapshotInfo): F[Unit] =
-      for {
-        isEmpty <- sharedStorages.mptStore.isEmpty
-        result <-
-          if (isEmpty) {
-            state.allStateEntries[F].flatMap { kvPairs =>
-              logger.info(s"Initializing MPT store with ${kvPairs.size} entries at ordinal=$ordinal") >>
-                sharedStorages.mptStore.syncFull[Json](kvPairs, ordinal)
-            }
-          } else {
-            // Verify MPT state matches expected state entry count to detect inconsistencies
-            for {
-              expectedEntries <- state.allStateEntries[F]
-              currentEntries <- sharedStorages.mptStore.underlying.entries
-              needsResync = currentEntries.size != expectedEntries.size
-              _ <-
-                if (needsResync) {
-                  logger.warn(
-                    s"MPT state mismatch detected: expected=${expectedEntries.size}, actual=${currentEntries.size}. Resyncing at ordinal=$ordinal"
-                  ) >>
-                    sharedStorages.mptStore.syncFull[Json](expectedEntries, ordinal)
-                } else {
-                  Applicative[F].unit
-                }
-            } yield ()
-          }
-      } yield result
+      sharedStorages.mptStore.isEmpty.ifM(
+        state.allStateEntries[F].flatMap { kvPairs =>
+          logger.info(s"Initializing MPT store with ${kvPairs.size} entries at ordinal=$ordinal") >>
+            sharedStorages.mptStore.syncFull[Json](kvPairs, ordinal)
+        },
+        Applicative[F].unit
+      )
 
     def persistGlobalSnapshot(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] =
       for {
