@@ -134,9 +134,21 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher: JsonSerial
           } yield newTrie.asRight[MerklePatriciaError]
         } else {
           for {
-            insertEntries <- inserts.toList.parTraverse {
-              case (hex, bytes) => Hasher[F].hashBytes(bytes).map(hash => (hex, hash))
-            }
+            // Batch hash computation for better parallelism on large inserts
+            insertEntries <-
+              if (inserts.size <= BatchSize) {
+                inserts.toList.parTraverse {
+                  case (hex, bytes) => Hasher[F].hashBytes(bytes).map(hash => (hex, hash))
+                }
+              } else {
+                // Process in parallel batches and flatten
+                val batches = inserts.toList.grouped(BatchSize).toList
+                batches.parTraverse { batch =>
+                  batch.parTraverse {
+                    case (hex, bytes) => Hasher[F].hashBytes(bytes).map(hash => (hex, hash))
+                  }
+                }.map(_.flatten)
+              }
             finalRoot <- IncrementalTrieOps.insertMultiple[F](afterRemoves, insertEntries)
             newTrie = MerklePatriciaTrie(finalRoot)
             _ <- trieRef.set(Some(newTrie))
@@ -210,22 +222,21 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher: JsonSerial
             bytes <- JsonSerializer[F].serialize(value)
           } yield hex -> bytes
       }.map(_.toMap)
-    else
-      data.toList
-        .grouped(BatchSize)
-        .toList
-        .foldLeftM(Map.empty[Hex, Array[Byte]]) { (acc, batch) =>
-          for {
-            batchResult <- batch.parTraverse {
-              case (key, value) =>
-                for {
-                  hex <- GlobalStateKey.toHex[F](key)
-                  bytes <- JsonSerializer[F].serialize(value)
-                } yield hex -> bytes
-            }
-            _ <- Async[F].cede
-          } yield acc ++ batchResult.toMap
+    else {
+      // Process all batches in parallel and combine at the end
+      // This avoids O(n) map concatenation per batch
+      val batches = data.toList.grouped(BatchSize).toList
+      batches.parTraverse { batch =>
+        batch.parTraverse {
+          case (key, value) =>
+            for {
+              hex <- GlobalStateKey.toHex[F](key)
+              bytes <- JsonSerializer[F].serialize(value)
+            } yield hex -> bytes
         }
+      }
+        .map(_.flatten.toMap)
+    }
 
   override def persist(ordinal: SnapshotOrdinal): F[Unit] =
     for {

@@ -1037,12 +1037,20 @@ object GlobalSnapshotAcceptanceManager {
                 updatedBalancesByTokenLocksDeltas ++
                 updatedBalancesBySpendTransactionsDeltas
 
+            currencySnapshotsDeltas = incomingCurrencySnapshots.collect {
+              case (address, snapshots) if snapshots.nonEmpty => address -> snapshots.last
+            }
+
+            currencySnapshotsProofsDeltas = updatedLastCurrencySnapshotProofs.filter {
+              case (address, _) => currencySnapshotsDeltas.contains(address)
+            }
+
             stateChangesAccumulator = StateChangesAccumulator(
               lastStateChannelSnapshotHashes = sCSnapshotHashes.toSortedMap,
               lastTxRefs = transactionsRefsDeltas,
               balances = balanceChanges,
-              lastCurrencySnapshots = currencySnapshots,
-              lastCurrencySnapshotsProofs = updatedLastCurrencySnapshotProofs,
+              lastCurrencySnapshots = currencySnapshotsDeltas,
+              lastCurrencySnapshotsProofs = currencySnapshotsProofsDeltas,
               activeAllowSpends = allowSpendsDeltas,
               activeTokenLocks = tokenLocksDeltas,
               tokenLockBalances = tokenLockBalancesDeltas,
