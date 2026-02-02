@@ -3,6 +3,9 @@
 export BASH_DEBUG_MODE=${BASH_DEBUG_MODE:-false}
 export DATA_ONLY_METAGRAPH=${DATA_ONLY_METAGRAPH:-false}
 
+# Hypergraph release JAR support
+# When set, downloads pre-built JARs from GitHub releases instead of building from source
+export HYPERGRAPH_RELEASE=${HYPERGRAPH_RELEASE:-""}
 
 export EXTRA_ENV_PATH=${EXTRA_ENV_PATH:-""}
 export EXIT_CODE=${EXIT_CODE:-0}
@@ -127,6 +130,9 @@ for arg in "$@"; do
       ;;
     --metagraph=*)
       export METAGRAPH="${arg#*=}"
+      ;;
+    --hypergraph-release=*)
+      export HYPERGRAPH_RELEASE="${arg#*=}"
       ;;
     --ml0-path=*)
       export METAGRAPH_ML0_RELATIVE_PATH="${arg#*=}"
