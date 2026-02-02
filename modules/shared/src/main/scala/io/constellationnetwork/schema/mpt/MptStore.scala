@@ -71,21 +71,19 @@ object MptStore {
             } yield hex -> bytes
         }.map(_.toMap)
       } else {
-        data.toList
-          .grouped(BatchSize)
-          .toList
-          .foldLeftM(Map.empty[Hex, Array[Byte]]) { (acc, batch) =>
-            for {
-              batchResult <- batch.parTraverse {
-                case (k, v) =>
-                  for {
-                    hex <- toHex(k)
-                    bytes <- JsonSerializer[F].serialize(v)
-                  } yield hex -> bytes
-              }
-              _ <- Async[F].cede
-            } yield acc ++ batchResult.toMap
+        // Process all batches in parallel and combine results at the end
+        // This avoids O(n) map concatenation per batch
+        val batches = data.toList.grouped(BatchSize).toList
+        batches.parTraverse { batch =>
+          batch.parTraverse {
+            case (k, v) =>
+              for {
+                hex <- toHex(k)
+                bytes <- JsonSerializer[F].serialize(v)
+              } yield hex -> bytes
           }
+        }
+          .map(_.flatten.toMap)
       }
 
     private def deserializeBytes[V: Decoder](bytes: Array[Byte]): F[Option[V]] =

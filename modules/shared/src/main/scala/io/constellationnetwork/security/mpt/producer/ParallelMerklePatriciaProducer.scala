@@ -144,13 +144,15 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel: JsonSerializ
 
   private def batchComputeDataHashes(entries: Array[(CompactNibblePath, Array[Byte])]): F[Array[String]] = {
     val numEntries = entries.length
-    val batchSize = math.max(100, numEntries / (maxThreads * 4))
+    // Use smaller batches for better parallelism - aim for ~1000 entries per batch
+    val batchSize = math.max(100, math.min(1000, numEntries / (maxThreads * 2)))
 
     for {
       results <- Async[F].delay(new Array[String](numEntries))
       batches = entries.indices.toList.grouped(batchSize).toList
+      // Process batches in parallel, and within each batch also use parallel traversal
       _ <- batches.parTraverse_ { batch =>
-        batch.traverse_ { i =>
+        batch.parTraverse_ { i =>
           Hasher[F].hashBytes(entries(i)._2).flatMap { hash =>
             Async[F].delay(results(i) = hash.value)
           }
@@ -168,15 +170,20 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel: JsonSerializ
   ): F[MerklePatriciaNode] = {
     val size = end - start
 
-    if (size == 0) {
-      MerklePatriciaNode.Branch.empty[F].widen
-    } else if (size == 1) {
-      val (path, _) = entries(start)
-      val dataHash = Hash(dataHashes(start))
-      val remaining = if (depth >= path.length) CompactNibblePath.empty else path.drop(depth)
-      MerklePatriciaNode.Leaf.fromCompact[F](remaining, dataHash).widen
-    } else {
-      buildWithGroups(entries, dataHashes, start, end, depth)
+    // Add cede point at shallow depths to prevent CPU starvation
+    val maybeCede = if (depth <= 3 && size > 1000) Async[F].cede else Async[F].unit
+
+    maybeCede >> {
+      if (size == 0) {
+        MerklePatriciaNode.Branch.empty[F].widen
+      } else if (size == 1) {
+        val (path, _) = entries(start)
+        val dataHash = Hash(dataHashes(start))
+        val remaining = if (depth >= path.length) CompactNibblePath.empty else path.drop(depth)
+        MerklePatriciaNode.Leaf.fromCompact[F](remaining, dataHash).widen
+      } else {
+        buildWithGroups(entries, dataHashes, start, end, depth)
+      }
     }
   }
 
