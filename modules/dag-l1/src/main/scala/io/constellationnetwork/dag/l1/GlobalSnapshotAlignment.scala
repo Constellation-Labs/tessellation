@@ -8,6 +8,7 @@ import scala.concurrent.duration.DurationInt
 import io.constellationnetwork.dag.l1.domain.snapshot.programs.SnapshotProcessor.SnapshotProcessingResult
 import io.constellationnetwork.dag.l1.modules._
 import io.constellationnetwork.node.shared.cli.CliMethod
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.peer.PeerId
@@ -189,8 +190,13 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
         operationName = "Check alignment"
       )
     }
-    .handleErrorWith { e =>
-      Stream.eval(logger.error(e)("Check alignment stream failed, restarting")) ++ checkAlignment
+    .handleErrorWith {
+      case e @ (GlobalL0Service.NoPeersWithMajorityHash | GlobalL0Service.NoMajoritySnapshotData) =>
+        Stream.eval(
+          logger.error(e)("Check alignment failed with fatal error, terminating process")
+        ) ++ Stream.raiseError[F](e)
+      case e =>
+        Stream.eval(logger.error(e)("Check alignment stream failed, restarting")) ++ checkAlignment
     }
 
   private def l0PeerDiscovery: Stream[F, Unit] = Stream
