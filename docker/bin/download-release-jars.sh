@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Downloads tessellation JARs from a GitHub release
+# Downloads tessellation JARs from a GitHub release with integrity verification
 # Usage: ./download-release-jars.sh <release-tag> <output-dir>
 # Example: ./download-release-jars.sh v3.5.11 ./docker/jars
 #
@@ -14,6 +14,13 @@ if [ -z "$RELEASE_TAG" ]; then
     echo "Error: Release tag required"
     echo "Usage: $0 <release-tag> [output-dir]"
     echo "Example: $0 v3.5.11 ./docker/jars"
+    exit 1
+fi
+
+# Validate release tag format
+if ! [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+    echo "Error: Invalid release tag format: $RELEASE_TAG"
+    echo "Expected format: v3.5.11 or v3.5.11-rc1"
     exit 1
 fi
 
@@ -35,26 +42,39 @@ echo "Downloading tessellation JARs from release ${RELEASE_TAG}..."
 for release_name in "${!JAR_MAP[@]}"; do
     local_name="${JAR_MAP[$release_name]}"
     url="${BASE_URL}/${release_name}"
+    checksum_url="${BASE_URL}/${release_name%.jar}.sha256"
     dest="${OUTPUT_DIR}/${local_name}"
     
     echo "  Downloading ${release_name} -> ${local_name}"
     
+    # Download JAR
     if ! curl -fsSL -o "$dest" "$url"; then
         echo "Error: Failed to download ${url}"
         echo "Check that release ${RELEASE_TAG} exists and contains ${release_name}"
         exit 1
     fi
     
-    # Verify download (basic size check)
-    size=$(stat -f%z "$dest" 2>/dev/null || stat -c%s "$dest" 2>/dev/null)
-    if [ "$size" -lt 1000 ]; then
-        echo "Error: Downloaded file ${local_name} is too small (${size} bytes)"
-        echo "The release may not contain this JAR or download failed"
+    # Download and verify checksum
+    echo "    Verifying checksum..."
+    if ! expected_checksum=$(curl -fsSL "$checksum_url" | awk '{print $1}'); then
+        echo "Error: Failed to download checksum from ${checksum_url}"
         rm -f "$dest"
         exit 1
     fi
     
-    echo "    ✓ ${local_name} (${size} bytes)"
+    actual_checksum=$(sha256sum "$dest" | awk '{print $1}')
+    
+    if [ "$expected_checksum" != "$actual_checksum" ]; then
+        echo "Error: Checksum verification failed for ${local_name}!"
+        echo "  Expected: ${expected_checksum}"
+        echo "  Actual:   ${actual_checksum}"
+        echo "The file may have been tampered with or corrupted during download."
+        rm -f "$dest"
+        exit 1
+    fi
+    
+    size=$(stat -f%z "$dest" 2>/dev/null || stat -c%s "$dest" 2>/dev/null)
+    echo "    ✓ ${local_name} (${size} bytes, checksum verified)"
 done
 
-echo "Successfully downloaded all JARs to ${OUTPUT_DIR}"
+echo "Successfully downloaded and verified all JARs to ${OUTPUT_DIR}"
