@@ -86,6 +86,22 @@ case class ArtifactValidationResult(
   rejectedPricingUpdates: List[(PricingUpdate, List[PricingUpdateValidationError])]
 )
 
+/** Result of cleaning state maps - includes cleaned maps and removed keys for MPT sync */
+case class CleanedStateMapsResult(
+  cleanedAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
+  cleanedTokenLockBalances: SortedMap[Address, SortedMap[Address, Balance]],
+  cleanedGlobalTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
+  cleanedCreateDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
+  cleanedWithdrawDelegatedStakes: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
+  cleanedCreateNodeCollaterals: SortedMap[Address, SortedSet[NodeCollateralRecord]],
+  cleanedWithdrawNodeCollaterals: SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]],
+  // Removed keys for MPT incremental sync
+  removedDelegatedStakeKeys: Set[Address],
+  removedDelegatedStakeWithdrawalKeys: Set[Address],
+  removedNodeCollateralKeys: Set[Address],
+  removedNodeCollateralWithdrawalKeys: Set[Address]
+)
+
 trait GlobalSnapshotAcceptanceManager[F[_]] {
   def accept(
     ordinal: SnapshotOrdinal,
@@ -471,6 +487,11 @@ object GlobalSnapshotAcceptanceManager {
         }
       }
 
+      /** Cleans empty entries from state maps and computes removed keys in a single pass.
+        * For each map type, we:
+        * 1. Filter out entries with empty sets (cleaning)
+        * 2. Identify keys that were non-empty in previous state but empty/missing in new state (removal tracking)
+        */
       private def cleanStateMaps(
         updatedAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
         updatedTokenLockBalances: SortedMap[Address, SortedMap[Address, Balance]],
@@ -478,16 +499,13 @@ object GlobalSnapshotAcceptanceManager {
         updatedCreateDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
         updatedWithdrawDelegatedStakes: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
         updatedCreateNodeCollaterals: SortedMap[Address, SortedSet[NodeCollateralRecord]],
-        updatedWithdrawNodeCollaterals: SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]]
-      ): (
-        SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
-        SortedMap[Address, SortedMap[Address, Balance]],
-        SortedMap[Address, SortedSet[Signed[TokenLock]]],
-        SortedMap[Address, SortedSet[DelegatedStakeRecord]],
-        SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
-        SortedMap[Address, SortedSet[NodeCollateralRecord]],
-        SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]]
-      ) = {
+        updatedWithdrawNodeCollaterals: SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]],
+        // Previous state for computing removed keys
+        lastActiveDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
+        lastDelegatedStakeWithdrawals: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
+        lastActiveNodeCollaterals: SortedMap[Address, SortedSet[NodeCollateralRecord]],
+        lastNodeCollateralWithdrawals: SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]]
+      ): CleanedStateMapsResult = {
         val cleanedAllowSpends = updatedAllowSpends.map {
           case (outerKey, innerMap) =>
             val cleanedInnerMap = innerMap.filter { case (_, allowSpendSet) => allowSpendSet.nonEmpty }
@@ -501,14 +519,41 @@ object GlobalSnapshotAcceptanceManager {
         val cleanedCreateNodeCollaterals = updatedCreateNodeCollaterals.filter { case (_, records) => records.nonEmpty }
         val cleanedWithdrawNodeCollaterals = updatedWithdrawNodeCollaterals.filter { case (_, records) => records.nonEmpty }
 
-        (
+        // Compute removed keys: addresses that had non-empty sets in previous state but are now empty/missing
+        // This is O(m) where m = keys in previous state, with O(1) Set contains checks on cleaned keysets
+        val cleanedDelegatedStakeKeySet = cleanedCreateDelegatedStakes.keySet
+        val cleanedWithdrawDelegatedStakeKeySet = cleanedWithdrawDelegatedStakes.keySet
+        val cleanedNodeCollateralKeySet = cleanedCreateNodeCollaterals.keySet
+        val cleanedWithdrawNodeCollateralKeySet = cleanedWithdrawNodeCollaterals.keySet
+
+        val removedDelegatedStakeKeys = lastActiveDelegatedStakes.collect {
+          case (address, stakes) if stakes.nonEmpty && !cleanedDelegatedStakeKeySet.contains(address) => address
+        }.toSet
+
+        val removedDelegatedStakeWithdrawalKeys = lastDelegatedStakeWithdrawals.collect {
+          case (address, withdrawals) if withdrawals.nonEmpty && !cleanedWithdrawDelegatedStakeKeySet.contains(address) => address
+        }.toSet
+
+        val removedNodeCollateralKeys = lastActiveNodeCollaterals.collect {
+          case (address, collaterals) if collaterals.nonEmpty && !cleanedNodeCollateralKeySet.contains(address) => address
+        }.toSet
+
+        val removedNodeCollateralWithdrawalKeys = lastNodeCollateralWithdrawals.collect {
+          case (address, withdrawals) if withdrawals.nonEmpty && !cleanedWithdrawNodeCollateralKeySet.contains(address) => address
+        }.toSet
+
+        CleanedStateMapsResult(
           cleanedAllowSpends,
           cleanedTokenLockBalances,
           cleanedGlobalTokenLocks,
           cleanedCreateDelegatedStakes,
           cleanedWithdrawDelegatedStakes,
           cleanedCreateNodeCollaterals,
-          cleanedWithdrawNodeCollaterals
+          cleanedWithdrawNodeCollaterals,
+          removedDelegatedStakeKeys,
+          removedDelegatedStakeWithdrawalKeys,
+          removedNodeCollateralKeys,
+          removedNodeCollateralWithdrawalKeys
         )
       }
 
@@ -829,13 +874,14 @@ object GlobalSnapshotAcceptanceManager {
               SortedMap.empty[Address, TokenLockReference]
             )
 
-            AllowSpendAcceptanceResult(updatedAllowSpends, allowSpendsDeltas) <- allowSpendStateManager.acceptAllowSpends(
-              epochProgress,
-              activeAllowSpendsFromCurrencySnapshots,
-              globalAllowSpends,
-              globalActiveAllowSpends,
-              allAcceptedSpendTxns
-            )
+            AllowSpendAcceptanceResult(updatedAllowSpends, allowSpendsDeltas, removedAllowSpendKeys) <- allowSpendStateManager
+              .acceptAllowSpends(
+                epochProgress,
+                activeAllowSpendsFromCurrencySnapshots,
+                globalAllowSpends,
+                globalActiveAllowSpends,
+                allAcceptedSpendTxns
+              )
 
             updatedAllowSpendRefs = allowSpendStateManager.acceptAllowSpendRefs(
               globalLastAllowSpendRefs,
@@ -880,22 +926,24 @@ object GlobalSnapshotAcceptanceManager {
               .leftMap(error => new RuntimeException(s"Error generating token unlocks: $error"))
               .liftTo[F]
 
-            TokenLockAcceptanceResult(updatedGlobalTokenLocks, tokenLocksDeltas) <- tokenLockStateManager.acceptTokenLocks(
-              epochProgress,
-              globalTokenLocks,
-              globalActiveTokenLocks,
-              generatedTokenUnlocks
-            )
+            TokenLockAcceptanceResult(updatedGlobalTokenLocks, tokenLocksDeltas, removedTokenLockKeys) <- tokenLockStateManager
+              .acceptTokenLocks(
+                epochProgress,
+                globalTokenLocks,
+                globalActiveTokenLocks,
+                generatedTokenUnlocks
+              )
 
             updatedTokenLockRefs = tokenLockStateManager.acceptTokenLockRefs(
               globalLastTokenLockRefs,
               tokenLockBlockAcceptanceResult.contextUpdate.lastTokenLocksRefs
             )
 
-            TokenLockBalanceResult(updatedTokenLockBalances, tokenLockBalancesDeltas) = tokenLockStateManager.updateTokenLockBalances(
-              currencySnapshots,
-              lastSnapshotContext.tokenLockBalances
-            )
+            TokenLockBalanceResult(updatedTokenLockBalances, tokenLockBalancesDeltas, removedTokenLockBalanceKeys) = tokenLockStateManager
+              .updateTokenLockBalances(
+                currencySnapshots,
+                lastSnapshotContext.tokenLockBalances
+              )
 
             (updatedBalancesByTokenLocks, updatedBalancesByTokenLocksDeltas) = tokenLockStateManager.updateGlobalBalancesByTokenLocks(
               epochProgress,
@@ -972,23 +1020,33 @@ object GlobalSnapshotAcceptanceManager {
               updatedLastCurrencySnapshots
             )
 
-            (
-              updatedAllowSpendsCleaned,
-              updatedTokenLockBalancesCleaned,
-              updatedGlobalTokenLocksCleaned,
-              updatedCreateDelegatedStakesCleaned,
-              updatedWithdrawDelegatedStakesCleaned,
-              updatedCreateNodeCollateralsCleaned,
-              updatedWithdrawNodeCollateralsCleaned
-            ) = cleanStateMaps(
+            // Clean state maps and compute removed keys in a single pass
+            cleanedMapsResult = cleanStateMaps(
               updatedAllowSpends,
               updatedTokenLockBalances,
               updatedGlobalTokenLocks,
               updatedCreateDelegatedStakes,
               updatedWithdrawDelegatedStakes,
               updatedCreateNodeCollaterals,
-              updatedWithdrawNodeCollaterals
+              updatedWithdrawNodeCollaterals,
+              // Previous state for computing removed keys
+              lastSnapshotContext.activeDelegatedStakes.getOrElse(SortedMap.empty),
+              lastSnapshotContext.delegatedStakesWithdrawals.getOrElse(SortedMap.empty),
+              lastSnapshotContext.activeNodeCollaterals.getOrElse(SortedMap.empty),
+              lastSnapshotContext.nodeCollateralWithdrawals.getOrElse(SortedMap.empty)
             )
+
+            updatedAllowSpendsCleaned = cleanedMapsResult.cleanedAllowSpends
+            updatedTokenLockBalancesCleaned = cleanedMapsResult.cleanedTokenLockBalances
+            updatedGlobalTokenLocksCleaned = cleanedMapsResult.cleanedGlobalTokenLocks
+            updatedCreateDelegatedStakesCleaned = cleanedMapsResult.cleanedCreateDelegatedStakes
+            updatedWithdrawDelegatedStakesCleaned = cleanedMapsResult.cleanedWithdrawDelegatedStakes
+            updatedCreateNodeCollateralsCleaned = cleanedMapsResult.cleanedCreateNodeCollaterals
+            updatedWithdrawNodeCollateralsCleaned = cleanedMapsResult.cleanedWithdrawNodeCollaterals
+            removedDelegatedStakeKeys = cleanedMapsResult.removedDelegatedStakeKeys
+            removedDelegatedStakeWithdrawalKeys = cleanedMapsResult.removedDelegatedStakeWithdrawalKeys
+            removedNodeCollateralKeys = cleanedMapsResult.removedNodeCollateralKeys
+            removedNodeCollateralWithdrawalKeys = cleanedMapsResult.removedNodeCollateralWithdrawalKeys
 
             updatedPriceState <- priceStateUpdater.updatePriceState(
               lastSnapshotContext.priceState.getOrElse(SortedMap.empty),
@@ -1063,7 +1121,14 @@ object GlobalSnapshotAcceptanceManager {
               delegatedStakesWithdrawals = updatedWithdrawDelegatedStakesCleaned,
               activeNodeCollaterals = updatedCreateNodeCollateralsCleaned,
               nodeCollateralWithdrawals = updatedWithdrawNodeCollateralsCleaned,
-              metagraphSyncData = metagraphSyncDataDeltas
+              metagraphSyncData = metagraphSyncDataDeltas,
+              removedAllowSpendKeys = removedAllowSpendKeys,
+              removedTokenLockKeys = removedTokenLockKeys,
+              removedTokenLockBalanceKeys = removedTokenLockBalanceKeys,
+              removedDelegatedStakeKeys = removedDelegatedStakeKeys,
+              removedDelegatedStakeWithdrawalKeys = removedDelegatedStakeWithdrawalKeys,
+              removedNodeCollateralKeys = removedNodeCollateralKeys,
+              removedNodeCollateralWithdrawalKeys = removedNodeCollateralWithdrawalKeys
             )
 
             _ <- mptStore.syncFromStateChanges(stateChangesAccumulator, ordinal)

@@ -15,10 +15,11 @@ import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
 
-/** Result of allow spend acceptance containing full state and deltas */
+/** Result of allow spend acceptance containing full state, deltas, and removed keys */
 case class AllowSpendAcceptanceResult(
   fullState: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
-  deltas: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+  deltas: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
+  removedKeys: Set[(Option[Address], Address)] = Set.empty
 )
 
 trait AllowSpendStateManager[F[_]] {
@@ -120,8 +121,9 @@ object AllowSpendStateManager {
             }
         }.map { updatedMetagraphAllowSpends =>
           val fullStateMap = SortedMap(updatedMetagraphAllowSpends.map { case (addr, spends, _) => addr -> spends }: _*)
+          // Filter out empty sets - those are removals tracked separately in removedKeys
           val deltasMap = SortedMap(updatedMetagraphAllowSpends.collect {
-            case (addr, spends, true) => addr -> spends
+            case (addr, spends, true) if spends.nonEmpty => addr -> spends
           }: _*)
 
           val updatedFullState = accAllowSpends + (metagraphId.some -> fullStateMap)
@@ -150,10 +152,11 @@ object AllowSpendStateManager {
         validGlobalAllowSpends <- unexpiredGlobalWithoutSpendTransactionsF
       } yield {
         // Compute global deltas by comparing with previous state
+        // Filter out empty sets - those are removals tracked separately in removedKeys
         val globalDeltas: SortedMap[Address, SortedSet[Signed[AllowSpend]]] =
           validGlobalAllowSpends.filter {
             case (address, allowSpends) =>
-              !lastActiveGlobalAllowSpends.get(address).contains(allowSpends)
+              allowSpends.nonEmpty && !lastActiveGlobalAllowSpends.get(address).contains(allowSpends)
           }
 
         val fullState = if (validGlobalAllowSpends.nonEmpty) {
@@ -168,7 +171,18 @@ object AllowSpendStateManager {
           currencyDeltas
         }
 
-        AllowSpendAcceptanceResult(fullState, deltas)
+        // Compute removed keys: addresses that had AllowSpends but now have empty or missing sets
+        val removedKeys: Set[(Option[Address], Address)] = lastActiveAllowSpends.flatMap {
+          case (metagraphIdOpt, innerMap) =>
+            innerMap.collect {
+              case (address, spends)
+                  if spends.nonEmpty &&
+                    !fullState.get(metagraphIdOpt).flatMap(_.get(address)).exists(_.nonEmpty) =>
+                (metagraphIdOpt, address)
+            }
+        }.toSet
+
+        AllowSpendAcceptanceResult(fullState, deltas, removedKeys)
       }
     }
 

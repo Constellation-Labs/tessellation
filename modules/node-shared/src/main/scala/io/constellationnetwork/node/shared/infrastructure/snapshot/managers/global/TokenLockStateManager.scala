@@ -20,16 +20,18 @@ import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.types.numeric.NonNegLong
 
-/** Result of token lock acceptance containing full state and deltas */
+/** Result of token lock acceptance containing full state, deltas, and removed keys */
 case class TokenLockAcceptanceResult(
   fullState: SortedMap[Address, SortedSet[Signed[TokenLock]]],
-  deltas: SortedMap[Address, SortedSet[Signed[TokenLock]]]
+  deltas: SortedMap[Address, SortedSet[Signed[TokenLock]]],
+  removedKeys: Set[Address] = Set.empty
 )
 
-/** Result of token lock balance update containing full state and deltas */
+/** Result of token lock balance update containing full state, deltas, and removed keys */
 case class TokenLockBalanceResult(
   fullState: SortedMap[Address, SortedMap[Address, Balance]],
-  deltas: SortedMap[Address, SortedMap[Address, Balance]]
+  deltas: SortedMap[Address, SortedMap[Address, Balance]],
+  removedKeys: Set[Address] = Set.empty
 )
 
 trait TokenLockStateManager[F[_]] {
@@ -113,7 +115,14 @@ object TokenLockStateManager {
           case (fullState, deltas) =>
             val cleanedFullState = fullState.filterNot(_._2.isEmpty)
             val cleanedDeltas = deltas.filterNot(_._2.isEmpty)
-            TokenLockAcceptanceResult(cleanedFullState, cleanedDeltas)
+
+            // Compute removed keys: addresses that had TokenLocks but now have empty or missing sets
+            val removedKeys: Set[Address] = lastActiveGlobalTokenLocks.collect {
+              case (address, spends) if spends.nonEmpty && !cleanedFullState.get(address).exists(_.nonEmpty) =>
+                address
+            }.toSet
+
+            TokenLockAcceptanceResult(cleanedFullState, cleanedDeltas, removedKeys)
         }
     }
 
@@ -196,7 +205,17 @@ object TokenLockStateManager {
           (newAccTokenLockBalances, newAccDeltas)
       }
 
-      TokenLockBalanceResult(fullState, deltas)
+      // Clean empty entries from fullState
+      val cleanedFullState = fullState.filter { case (_, balances) => balances.nonEmpty }
+      val cleanedDeltas = deltas.filter { case (_, balances) => balances.nonEmpty }
+
+      // Compute removed keys: metagraph addresses that had balances but now have empty or missing maps
+      val removedKeys: Set[Address] = lastTokenLockBalances.collect {
+        case (metagraphId, balances) if balances.nonEmpty && !cleanedFullState.get(metagraphId).exists(_.nonEmpty) =>
+          metagraphId
+      }.toSet
+
+      TokenLockBalanceResult(cleanedFullState, cleanedDeltas, removedKeys)
     }
 
     def updateGlobalBalancesByTokenLocks(
