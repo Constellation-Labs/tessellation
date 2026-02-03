@@ -201,6 +201,12 @@ exit_func() {
 echo "BUILD_ONLY: $BUILD_ONLY"
 echo "RELEASE_TAG: $RELEASE_TAG"
 
+# Re-check TESSELLATION_VERSION after args are parsed (in case --hypergraph-release was specified)
+if [ -n "$HYPERGRAPH_RELEASE" ] && [ "$TESSELLATION_VERSION" = "99.99.99-SNAPSHOT" ]; then
+    export TESSELLATION_VERSION="${HYPERGRAPH_RELEASE#v}"
+    echo "Updating TESSELLATION_VERSION=$TESSELLATION_VERSION (from --hypergraph-release)"
+fi
+
 if [ "$DATA_ONLY_METAGRAPH" = "true" ]; then
     export NUM_GL0_NODES=1
     export NUM_GL1_NODES=0
