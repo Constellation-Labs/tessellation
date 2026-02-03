@@ -46,8 +46,8 @@ object SnapshotDownloadStorage {
 
       val cutoffLogic: OrdinalCutoff = LogarithmicOrdinalCutoff.make
 
-      private val validator = StateProofValidator.forGlobal(Some(mptStore.underlying))
-      private val builder = GlobalSnapshotInfo.stateProofBuilder(Some(mptStore.underlying))
+      private val validator = StateProofValidator.forGlobal(mptStore)
+      private val builder = GlobalSnapshotInfo.stateProofBuilderWithStore(mptStore)
 
       def readPersisted(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalIncrementalSnapshot]]] = persistedStorage.read(ordinal)
 

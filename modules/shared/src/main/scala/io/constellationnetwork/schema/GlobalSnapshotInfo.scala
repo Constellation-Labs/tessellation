@@ -17,6 +17,7 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, PendingDelegatedStakeWithdrawal}
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralRecord, PendingNodeCollateralWithdrawal}
 import io.constellationnetwork.schema.priceOracle.{PriceRecord, TokenPair}
@@ -197,23 +198,37 @@ case class GlobalSnapshotInfo(
 
 object GlobalSnapshotInfo {
 
-  /** Creates a StateProofBuilder for GlobalSnapshotInfo (no producer).
+  /** Creates a StateProofBuilder that always rebuilds from info (safe but slow).
     *
-    * Uses legacy Merkle trees for pre-MPT ordinals, rebuilds MPT from state for post-migration ordinals. For efficient proof building with
-    * a pre-built trie, use `stateProofBuilder(Some(producer))`.
+    * Use this when you don't have an MptStore or need guaranteed correctness regardless of store state. For optimistic validation with fast
+    * path when store is synced, use `stateProofBuilder(mptStore)`.
     */
   def stateProofBuilder[F[_]: Async: Parallel: JsonSerializer](
     implicit selector: GlobalStateProofSelector
   ): StateProofBuilder[F, GlobalSnapshotInfo, GlobalSnapshotStateProof] =
-    stateProofBuilder(None)
+    StateProofBuilder.instance { (info, ordinal, hasher) =>
+      implicit val h: Hasher[F] = hasher
+      implicit val s: StateProofSelector = selector
+      selector.select(ordinal) match {
+        case LegacyFormat =>
+          info.lastCurrencySnapshots.merkleTree[F].flatMap { lastCurrencySnapshotsMerkle =>
+            legacyStateProof[F](info, lastCurrencySnapshotsMerkle)
+          }
+        case MerklePatriciaFormat =>
+          mptStateProof[F](info)
+      }
+    }
 
-  /** Creates a StateProofBuilder with optional MPT producer.
+  /** Creates an optimistic StateProofBuilder that uses the MptStore when it's at the correct ordinal.
     *
-    * @param producer
-    *   Optional MPT producer for efficient proof building from pre-built trie. When None, MPT proofs are rebuilt from snapshot state.
+    * Fast path: If the store's currentOrdinal matches the target ordinal, extracts root directly (O(1)). Safe path: Otherwise, rebuilds
+    * from info (O(n log n)).
+    *
+    * Use this for validators that maintain incremental state — they get fast validation when in sync, and correct (if slower) validation
+    * when out of sync or processing historical snapshots.
     */
-  def stateProofBuilder[F[_]: Async: Parallel: JsonSerializer](
-    producer: Option[StatefulMerklePatriciaProducer[F]]
+  def stateProofBuilderWithStore[F[_]: Async: Parallel: JsonSerializer](
+    mptStore: MptStore[F, GlobalStateKey]
   )(implicit selector: GlobalStateProofSelector): StateProofBuilder[F, GlobalSnapshotInfo, GlobalSnapshotStateProof] =
     StateProofBuilder.instance { (info, ordinal, hasher) =>
       implicit val h: Hasher[F] = hasher
@@ -224,38 +239,29 @@ object GlobalSnapshotInfo {
             legacyStateProof[F](info, lastCurrencySnapshotsMerkle)
           }
         case MerklePatriciaFormat =>
-          producer match {
-            case Some(p) =>
-              p.build.flatMap {
-                case Left(err) => err.raiseError[F, GlobalSnapshotStateProof]
-                case Right(trie) =>
-                  GlobalSnapshotStateProof
-                    .apply(
-                      Hash.empty,
-                      Hash.empty,
-                      Hash.empty,
-                      None,
-                      None,
-                      None,
-                      None,
-                      None,
-                      None,
-                      None,
-                      None,
-                      None,
-                      None,
-                      None,
-                      None,
-                      None,
-                      Some(trie.rootHash.value)
-                    )
-                    .pure[F]
-              }
-            case None =>
+          mptStore.currentOrdinal.flatMap {
+            case Some(storeOrdinal) if storeOrdinal === ordinal =>
+              // Store is at correct ordinal — use fast path
+              GlobalSnapshotStateProof.fromProducer(mptStore.underlying)
+            case _ =>
+              // Store is at wrong ordinal — rebuild from info
               mptStateProof[F](info)
           }
       }
     }
+
+  /** Creates a StateProofBuilder for GlobalSnapshotInfo.
+    *
+    * @param producer
+    *   Ignored. This parameter exists only for API compatibility and will be removed in a future version. The builder always reconstructs
+    *   state proofs from the info parameter to ensure correctness. For efficient snapshot creation, use
+    *   `GlobalSnapshotStateProof.fromProducer` directly.
+    */
+  @deprecated("Producer parameter is ignored. Use stateProofBuilder() or stateProofBuilder(mptStore) instead.", "v4.0.0")
+  def stateProofBuilder[F[_]: Async: Parallel: JsonSerializer](
+    producer: Option[StatefulMerklePatriciaProducer[F]]
+  )(implicit selector: GlobalStateProofSelector): StateProofBuilder[F, GlobalSnapshotInfo, GlobalSnapshotStateProof] =
+    stateProofBuilder[F]
 
   def mptStateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](info: GlobalSnapshotInfo)(
     implicit stateProofSelector: StateProofSelector

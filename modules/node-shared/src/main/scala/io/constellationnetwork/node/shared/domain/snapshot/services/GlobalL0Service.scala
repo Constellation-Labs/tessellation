@@ -68,7 +68,7 @@ object GlobalL0Service {
       private val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
       private val maybeMajorityPeerIds = maybeMajorityPeerIdSet.map(_.toNonEmptyList)
       private val ordinalRange = 0L to 3L
-      private val validator = StateProofValidator.forGlobal(Some(mptStore.underlying))
+      private val validator = StateProofValidator.forGlobal(mptStore)
 
       implicit val hashShow: Show[Hash] = Hash.shortShow
       implicit val peerIdShow: Show[PeerId] = PeerId.shortShow

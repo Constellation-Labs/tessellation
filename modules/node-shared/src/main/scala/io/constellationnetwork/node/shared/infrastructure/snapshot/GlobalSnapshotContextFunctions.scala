@@ -52,7 +52,7 @@ object GlobalSnapshotContextFunctions {
   ) =
     new GlobalSnapshotContextFunctions[F] {
 
-      private val validator = StateProofValidator.forGlobal(Some(mptStore.underlying))
+      private val validator = StateProofValidator.forGlobal(mptStore)
 
       // todo - avoid duplication of this function here and in GlobalSnapshotConsensusFunctions
       private def acceptDelegatedStakes(

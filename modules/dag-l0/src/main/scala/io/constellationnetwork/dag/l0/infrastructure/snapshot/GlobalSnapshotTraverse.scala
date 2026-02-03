@@ -47,7 +47,7 @@ object GlobalSnapshotTraverse {
   ): GlobalSnapshotTraverse[F] =
     new GlobalSnapshotTraverse[F] {
       implicit val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
-      private val builder = GlobalSnapshotInfo.stateProofBuilder(Some(mptStore.underlying))
+      private val builder = GlobalSnapshotInfo.stateProofBuilderWithStore(mptStore)
 
       def loadChain(): F[(GlobalSnapshotInfo, Signed[GlobalIncrementalSnapshot])] = {
         def loadIncOrErr(h: Hash) =

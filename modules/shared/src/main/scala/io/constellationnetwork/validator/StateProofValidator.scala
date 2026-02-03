@@ -12,6 +12,7 @@ import scala.util.control.NoStackTrace
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.snapshot.{IncrementalSnapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.stateproof.StateProofBuilder
 import io.constellationnetwork.security._
@@ -43,15 +44,37 @@ trait StateProofValidator[F[_], I <: SnapshotInfo[P], P <: StateProof] {
 
 object StateProofValidator {
 
+  /** Create a StateProofValidator that always rebuilds from info (safe but slow).
+    *
+    * Use this when you don't have an MptStore or need guaranteed correctness regardless of store state.
+    */
+  def forGlobal[F[_]: Async: Parallel: JsonSerializer](
+    implicit selector: GlobalStateProofSelector
+  ): StateProofValidator[F, GlobalSnapshotInfo, GlobalSnapshotStateProof] =
+    make(GlobalSnapshotInfo.stateProofBuilder[F])
+
+  /** Create an optimistic StateProofValidator that uses the MptStore when it's at the correct ordinal.
+    *
+    * Fast path: If the store's currentOrdinal matches the snapshot being validated, extracts root directly (O(1)). Safe path: Otherwise,
+    * rebuilds from info (O(n log n)).
+    *
+    * Use this for validators that maintain incremental state.
+    */
+  def forGlobal[F[_]: Async: Parallel: JsonSerializer](
+    mptStore: MptStore[F, GlobalStateKey]
+  )(implicit selector: GlobalStateProofSelector): StateProofValidator[F, GlobalSnapshotInfo, GlobalSnapshotStateProof] =
+    make(GlobalSnapshotInfo.stateProofBuilderWithStore(mptStore))
+
   /** Create a StateProofValidator for GlobalSnapshotInfo.
     *
     * @param producer
-    *   Optional MPT producer for efficient proof building from pre-built trie
+    *   Ignored. This parameter exists only for API compatibility and will be removed in a future version.
     */
+  @deprecated("Producer parameter is ignored. Use forGlobal() or forGlobal(mptStore) instead.", "v4.0.0")
   def forGlobal[F[_]: Async: Parallel: JsonSerializer](
-    producer: Option[StatefulMerklePatriciaProducer[F]] = None
+    producer: Option[StatefulMerklePatriciaProducer[F]]
   )(implicit selector: GlobalStateProofSelector): StateProofValidator[F, GlobalSnapshotInfo, GlobalSnapshotStateProof] =
-    make(GlobalSnapshotInfo.stateProofBuilder(producer))
+    forGlobal[F]
 
   /** Create a StateProofValidator for CurrencySnapshotInfo. */
   def forCurrency[F[_]: Async: Parallel: JsonSerializer](

@@ -31,6 +31,11 @@ trait MptStore[F[_], K] {
   def update[V: Encoder](toUpsert: Map[K, V], toRemove: Set[K]): F[Unit]
   def underlying: StatefulMerklePatriciaProducer[F]
   def deleteAbove(ordinal: SnapshotOrdinal): F[Unit]
+
+  /** Returns the ordinal at which this store was last synced. Used for optimistic validation — if the store is at the target ordinal, we
+    * can use the producer directly instead of rebuilding from state.
+    */
+  def currentOrdinal: F[Option[SnapshotOrdinal]]
 }
 
 object MptStore {
@@ -233,5 +238,8 @@ object MptStore {
         case _ =>
           Async[F].unit
       }
+
+    override def currentOrdinal: F[Option[SnapshotOrdinal]] =
+      lastSyncedOrdinalRef.get
   }
 }

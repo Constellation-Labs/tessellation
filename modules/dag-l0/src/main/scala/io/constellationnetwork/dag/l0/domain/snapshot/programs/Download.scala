@@ -66,7 +66,7 @@ object Download {
 
     val logger = Slf4jLogger.getLogger[F]
 
-    private val validator = StateProofValidator.forGlobal(Some(mptStore.underlying))
+    private val validator = StateProofValidator.forGlobal(mptStore)
 
     val minBatchSizeToStartObserving: Long = 1L
     val observationOffset = NonNegLong(4L)
