@@ -21,6 +21,7 @@ import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.SnapshotVersion
 import io.constellationnetwork.schema.snapshot._
+import io.constellationnetwork.schema.stateproof.StateProofBuilder
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction._
@@ -112,15 +113,32 @@ object currency {
       ).tupled
         .map(CurrencySnapshotStateProof.apply)
 
-    def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](
-      statefulMPTProducer: StatefulMerklePatriciaProducer[F],
-      ordinal: SnapshotOrdinal
-    )(
-      implicit stateProofSelector: StateProofSelector
-    ): F[CurrencySnapshotStateProof] =
-      stateProof(ordinal)
-
     override def getActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = activeTokenLocks.getOrElse(SortedMap.empty)
+  }
+
+  object CurrencySnapshotInfo {
+
+    /** Creates a StateProofBuilder for CurrencySnapshotInfo.
+      *
+      * Currency snapshots always use legacy Merkle tree format.
+      */
+    def stateProofBuilder[F[_]: Async: Parallel: JsonSerializer](
+      implicit selector: CurrencyStateProofSelector
+    ): StateProofBuilder[F, CurrencySnapshotInfo, CurrencySnapshotStateProof] =
+      StateProofBuilder.instance { (info, _, hasher) =>
+        implicit val h: Hasher[F] = hasher
+        (
+          info.lastTxRefs.hash,
+          info.balances.hash,
+          info.lastMessages.traverse(_.hash),
+          info.lastFeeTxRefs.traverse(_.hash),
+          info.lastAllowSpendRefs.traverse(_.hash),
+          info.activeAllowSpends.traverse(_.hash),
+          info.globalSnapshotSyncView.traverse(_.hash),
+          info.lastTokenLockRefs.traverse(_.hash),
+          info.activeTokenLocks.traverse(_.hash)
+        ).tupled.map(CurrencySnapshotStateProof.apply)
+      }
   }
 
   @derive(encoder, decoder, eqv, show)
@@ -132,14 +150,6 @@ object currency {
       implicit stateProofSelector: StateProofSelector
     ): F[CurrencySnapshotStateProofV1] =
       (lastTxRefs.hash, balances.hash).tupled.map(CurrencySnapshotStateProofV1.apply)
-
-    def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](
-      statefulMPTProducer: StatefulMerklePatriciaProducer[F],
-      ordinal: SnapshotOrdinal
-    )(
-      implicit stateProofSelector: StateProofSelector
-    ): F[CurrencySnapshotStateProofV1] =
-      stateProof(ordinal: SnapshotOrdinal)
 
     def toCurrencySnapshotInfo: CurrencySnapshotInfo =
       CurrencySnapshotInfo(lastTxRefs, balances, None, None, None, None, None, None, None)

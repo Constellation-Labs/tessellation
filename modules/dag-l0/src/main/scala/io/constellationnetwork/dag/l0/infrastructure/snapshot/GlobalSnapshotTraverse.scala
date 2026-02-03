@@ -47,6 +47,7 @@ object GlobalSnapshotTraverse {
   ): GlobalSnapshotTraverse[F] =
     new GlobalSnapshotTraverse[F] {
       implicit val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
+      private val builder = GlobalSnapshotInfo.stateProofBuilder(Some(mptStore.underlying))
 
       def loadChain(): F[(GlobalSnapshotInfo, Signed[GlobalIncrementalSnapshot])] = {
         def loadIncOrErr(h: Hash) =
@@ -120,13 +121,13 @@ object GlobalSnapshotTraverse {
                     if (entries.isEmpty) firstInfo.allStateEntries[F].flatMap(mptStore.syncFull(_, firstInc.ordinal))
                     else Async[F].unit
 
-                  syncIfNeeded >> firstInfo.stateProof(mptStore.underlying, firstInc.ordinal)
+                  syncIfNeeded >> builder.buildProof(firstInfo, firstInc.ordinal)
                 }
             }
           }
 
           hashedFirstInc <- HasherSelector[F].withCurrent(implicit hasher => firstInc.toHashed)
-          stateProofInvalid <- StateProofValidator.validate(hashedFirstInc, firstInfoCalculatedProof).map(_.isInvalid)
+          stateProofInvalid <- StateProofValidator.validateProof(hashedFirstInc, firstInfoCalculatedProof).map(_.isInvalid)
 
           _ <- (new Exception(s"Snapshot info does not match the snapshot at ordinal=${firstInc.ordinal.show}"))
             .raiseError[F, Unit]
