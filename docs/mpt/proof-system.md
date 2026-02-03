@@ -9,7 +9,7 @@ graph TB
     subgraph "Proof Types"
         SINGLE[Single Inclusion<br/>Prove one key exists]
         BATCH[Batch Inclusion<br/>Prove multiple keys]
-        RANGE[Range Proof<br/>Prove keys in [a,b]]
+        RANGE[Range Proof<br/>Prove keys in a..b]
         PREFIX[Prefix Proof<br/>Prove keys with prefix]
     end
     
