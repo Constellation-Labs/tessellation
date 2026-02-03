@@ -15,7 +15,7 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
-import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
+import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -65,12 +65,9 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
     for {
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
       mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
-      mptStore <- MptStore.make[IO, GlobalStateKey](
-        mptProducer,
-        GlobalStateKey.toHex[IO]
-      )
       snapshot <- globalIncrementalSnapshot(globalSnapshotInfo)
-      result <- StateProofValidator.validate(snapshot, globalSnapshotInfo, mptStore)
+      validator = StateProofValidator.forGlobal[IO](Some(mptProducer))
+      result <- validator.validate(snapshot, globalSnapshotInfo)
     } yield expect.same(Validated.Valid(()), result)
   }
 
@@ -100,11 +97,8 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
       snapshot <- globalIncrementalSnapshot(globalSnapshotInfo)
       mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
-      mptStore <- MptStore.make[IO, GlobalStateKey](
-        mptProducer,
-        GlobalStateKey.toHex[IO]
-      )
-      result <- StateProofValidator.validate(snapshot, GlobalSnapshotInfo.empty, mptStore)
+      validator = StateProofValidator.forGlobal[IO](Some(mptProducer))
+      result <- validator.validate(snapshot, GlobalSnapshotInfo.empty)
     } yield expect.same(Validated.Invalid(StateProofValidator.StateBroken(SnapshotOrdinal(NonNegLong(1L)), snapshot.hash)), result)
   }
 

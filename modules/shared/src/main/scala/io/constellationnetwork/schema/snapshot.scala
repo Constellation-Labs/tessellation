@@ -18,7 +18,6 @@ import io.constellationnetwork.schema.tokenLock.TokenLock
 import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
-import io.constellationnetwork.security.mpt.producer.StatefulMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection._
 
@@ -56,20 +55,14 @@ object snapshot {
       }.map(_.toSortedSet.union(tips.remainedActive))
   }
 
+  /** Base trait for snapshot state information.
+    *
+    * State proof construction is decoupled from this trait. Use the `stateProofBuilder` factory methods in the companion objects of
+    * concrete implementations (e.g., `GlobalSnapshotInfo.stateProofBuilder`, `CurrencySnapshotInfo.stateProofBuilder`).
+    */
   trait SnapshotInfo[P <: StateProof] {
     val lastTxRefs: SortedMap[Address, TransactionReference]
     val balances: SortedMap[Address, Balance]
-
-    def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](ordinal: SnapshotOrdinal)(
-      implicit stateProofSelector: StateProofSelector
-    ): F[P]
-
-    def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](
-      statefulMPTProducer: StatefulMerklePatriciaProducer[F],
-      ordinal: SnapshotOrdinal
-    )(
-      implicit stateProofSelector: StateProofSelector
-    ): F[P]
 
     def getActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = SortedMap.empty
     def getActiveDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]] = SortedMap.empty

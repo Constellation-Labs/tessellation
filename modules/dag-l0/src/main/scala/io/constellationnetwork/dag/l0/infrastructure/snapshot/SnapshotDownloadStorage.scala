@@ -46,6 +46,9 @@ object SnapshotDownloadStorage {
 
       val cutoffLogic: OrdinalCutoff = LogarithmicOrdinalCutoff.make
 
+      private val validator = StateProofValidator.forGlobal(Some(mptStore.underlying))
+      private val builder = GlobalSnapshotInfo.stateProofBuilder(Some(mptStore.underlying))
+
       def readPersisted(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalIncrementalSnapshot]]] = persistedStorage.read(ordinal)
 
       def readTmp(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalIncrementalSnapshot]]] = tmpStorage.read(ordinal)
@@ -67,8 +70,9 @@ object SnapshotDownloadStorage {
         proof: GlobalSnapshotStateProof
       )(implicit hasher: Hasher[F]): F[Boolean] =
         (hashSelect.select(ordinal) match {
-          case JsonHash => snapshotInfoStorage.read(ordinal).flatMap(_.traverse(_.stateProof(mptStore.underlying, ordinal)))
-          case KryoHash => snapshotInfoKryoStorage.read(ordinal).flatMap(_.traverse(_.stateProof(mptStore.underlying, ordinal)))
+          case JsonHash => snapshotInfoStorage.read(ordinal).flatMap(_.traverse(builder.buildProof(_, ordinal)))
+          case KryoHash =>
+            snapshotInfoKryoStorage.read(ordinal).flatMap(_.traverse(i => builder.buildProof(i.toGlobalSnapshotInfo, ordinal)))
         }).map {
           case Some(calculatedProof) => calculatedProof === proof
           case _                     => false
@@ -100,15 +104,16 @@ object SnapshotDownloadStorage {
                     mptStore.syncFull(kvPairs, ordinal)
                   }
               }
-              result <- info
-                .bitraverse(_.stateProof(ordinal), _.stateProof(mptStore.underlying, ordinal))
-                .map(_.fold(identity, identity))
-                .flatMap(stateProof => StateProofValidator.validate(snapshot, stateProof).map(_.isValid))
-                .ifM(
-                  (snapshot.signed, info.leftMap(_.toGlobalSnapshotInfo).fold(identity, identity)).some.pure[F],
-                  new Exception("Persisted snapshot info does not match the persisted snapshot")
-                    .raiseError[F, Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
-                )
+              result <- (info match {
+                case Left(infoV2) =>
+                  infoV2.stateProof(ordinal).flatMap(proof => StateProofValidator.validateProof(snapshot, proof).map(_.isValid))
+                case Right(gsi) =>
+                  validator.validate(snapshot, gsi).map(_.isValid)
+              }).ifM(
+                (snapshot.signed, info.leftMap(_.toGlobalSnapshotInfo).fold(identity, identity)).some.pure[F],
+                new Exception("Persisted snapshot info does not match the persisted snapshot")
+                  .raiseError[F, Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
+              )
             } yield result
           case _ => none[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F]
         }

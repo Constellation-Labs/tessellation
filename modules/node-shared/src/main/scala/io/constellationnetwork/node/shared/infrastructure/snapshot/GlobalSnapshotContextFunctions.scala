@@ -52,6 +52,8 @@ object GlobalSnapshotContextFunctions {
   ) =
     new GlobalSnapshotContextFunctions[F] {
 
+      private val validator = StateProofValidator.forGlobal(Some(mptStore.underlying))
+
       // todo - avoid duplication of this function here and in GlobalSnapshotConsensusFunctions
       private def acceptDelegatedStakes(
         lastSnapshotContext: GlobalSnapshotInfo,
@@ -276,12 +278,11 @@ object GlobalSnapshotContextFunctions {
         _ <- CannotApplyStateChannelsError(returnedSCEvents).raiseError[F, Unit].whenA(returnedSCEvents.nonEmpty)
         diffRewards = acceptedRewardTxs -- signedArtifact.rewards
         _ <- CannotApplyRewardsError(diffRewards).raiseError[F, Unit].whenA(diffRewards.nonEmpty)
-        hashedArtifact <- HasherSelector[F].withCurrent(implicit hasher => signedArtifact.toHashed)
-
-        calculatedStateProof <- HasherSelector[F].withCurrent { implicit hasher =>
-          snapshotInfo.stateProof(mptStore.underlying, signedArtifact.ordinal)
+        validation <- HasherSelector[F].withCurrent { implicit hasher =>
+          signedArtifact.toHashed.flatMap { hashedArtifact =>
+            validator.validate(hashedArtifact, snapshotInfo)
+          }
         }
-        validation <- StateProofValidator.validate(hashedArtifact, calculatedStateProof)
         _ = validation match {
           case Validated.Valid(_)   => Async[F].unit
           case Validated.Invalid(e) => e.raiseError[F, Unit]

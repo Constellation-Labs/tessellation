@@ -66,6 +66,8 @@ object Download {
 
     val logger = Slf4jLogger.getLogger[F]
 
+    private val validator = StateProofValidator.forGlobal(Some(mptStore.underlying))
+
     val minBatchSizeToStartObserving: Long = 1L
     val observationOffset = NonNegLong(4L)
     val fetchSnapshotDelayBetweenTrials = 10.seconds
@@ -350,17 +352,12 @@ object Download {
                         .hasCorrectSnapshotInfo(snapshot.ordinal, snapshot.stateProof)
                         .ifM(
                           ().pure[F],
-                          (Hasher[F].getLogic(snapshot.ordinal) match {
-                            case JsonHash => StateProofValidator.validate(snapshot, newContext, mptStore).map(_.isValid)
-                            case KryoHash =>
-                              StateProofValidator
-                                .validate(snapshot, GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(newContext), mptStore)
-                                .map(_.isValid)
-                          })
-                            .ifM(
-                              snapshotStorage.persistSnapshotInfoWithCutoff(snapshot.ordinal, newContext),
-                              InvalidStateProof(snapshot.ordinal).raiseError[F, Unit]
-                            )
+                          snapshot.toHashed.flatMap { hashed =>
+                            validator.validate(hashed, newContext).map(_.isValid)
+                          }.ifM(
+                            snapshotStorage.persistSnapshotInfoWithCutoff(snapshot.ordinal, newContext),
+                            InvalidStateProof(snapshot.ordinal).raiseError[F, Unit]
+                          )
                         )
                     }
                   )

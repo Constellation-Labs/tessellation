@@ -187,6 +187,7 @@ object GlobalSnapshotAcceptanceManager {
 
     new GlobalSnapshotAcceptanceManager[F] {
       val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](this.getClass)
+      private val builder = GlobalSnapshotInfo.stateProofBuilder(Some(mptStore.underlying))
 
       case class InitialData(
         blockResult: BlockAcceptanceResult,
@@ -487,10 +488,9 @@ object GlobalSnapshotAcceptanceManager {
         }
       }
 
-      /** Cleans empty entries from state maps and computes removed keys in a single pass.
-        * For each map type, we:
-        * 1. Filter out entries with empty sets (cleaning)
-        * 2. Identify keys that were non-empty in previous state but empty/missing in new state (removal tracking)
+      /** Cleans empty entries from state maps and computes removed keys in a single pass. For each map type, we:
+        *   1. Filter out entries with empty sets (cleaning) 2. Identify keys that were non-empty in previous state but empty/missing in new
+        *      state (removal tracking)
         */
       private def cleanStateMaps(
         updatedAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
@@ -1132,7 +1132,7 @@ object GlobalSnapshotAcceptanceManager {
             )
 
             _ <- mptStore.syncFromStateChanges(stateChangesAccumulator, ordinal)
-            stateProof <- gsi.stateProof(mptStore.underlying, ordinal)
+            stateProof <- builder.buildProof(gsi, ordinal)
 
             (expiredAllowSpends, expiredTokenLocks) = (
               allowSpendStateManager.filterExpiredAllowSpends(

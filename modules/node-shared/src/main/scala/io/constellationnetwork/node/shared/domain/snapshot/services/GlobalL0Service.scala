@@ -68,6 +68,7 @@ object GlobalL0Service {
       private val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
       private val maybeMajorityPeerIds = maybeMajorityPeerIdSet.map(_.toNonEmptyList)
       private val ordinalRange = 0L to 3L
+      private val validator = StateProofValidator.forGlobal(Some(mptStore.underlying))
 
       implicit val hashShow: Show[Hash] = Hash.shortShow
       implicit val peerIdShow: Show[PeerId] = PeerId.shortShow
@@ -175,8 +176,8 @@ object GlobalL0Service {
         implicit hasher: Hasher[F]
       ): F[Boolean] =
         mptStore.syncFullIfNeeded[Json](info.allStateEntries[F], snapshot.ordinal) >>
-          StateProofValidator
-            .validate(snapshot, info, mptStore)
+          validator
+            .validate(snapshot, info)
             .flatTap(v => logger.debug(s"Failed StateProofValidation: $v").whenA(v.isInvalid))
             .map(_.isValid)
 

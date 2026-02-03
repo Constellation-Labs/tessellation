@@ -21,6 +21,7 @@ import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralRecord, PendingNodeCollateralWithdrawal}
 import io.constellationnetwork.schema.priceOracle.{PriceRecord, TokenPair}
 import io.constellationnetwork.schema.snapshot.{MetagraphSyncDataInfo, SnapshotInfo, StateProof}
+import io.constellationnetwork.schema.stateproof.StateProofBuilder
 import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendReference}
 import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockReference}
 import io.constellationnetwork.schema.transaction.TransactionReference
@@ -72,14 +73,6 @@ case class GlobalSnapshotInfoV1(
     GlobalSnapshotInfo
       .legacyStateProof[F](toGlobalSnapshotInfo, None)
       .map(GlobalSnapshotStateProofV1.fromGlobalSnapshotStateProof)
-
-  def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](
-    statefulMPTProducer: StatefulMerklePatriciaProducer[F],
-    ordinal: SnapshotOrdinal
-  )(
-    implicit stateProofSelector: StateProofSelector
-  ): F[GlobalSnapshotStateProofV1] =
-    stateProof(ordinal)
 }
 
 @derive(encoder, decoder, eqv, show)
@@ -119,14 +112,6 @@ case class GlobalSnapshotInfoV2(
     implicit stateProofSelector: StateProofSelector
   ): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
-
-  def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](
-    statefulMPTProducer: StatefulMerklePatriciaProducer[F],
-    ordinal: SnapshotOrdinal
-  )(
-    implicit stateProofSelector: StateProofSelector
-  ): F[GlobalSnapshotStateProof] =
-    stateProof(ordinal)
 
   def stateProof[F[_]: Parallel: Async: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
     GlobalSnapshotInfo.legacyStateProof[F](toGlobalSnapshotInfo, lastCurrencySnapshots)
@@ -204,42 +189,6 @@ case class GlobalSnapshotInfo(
   def stateProof[F[_]: Parallel: Async: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
     GlobalSnapshotInfo.legacyStateProof[F](toGlobalSnapshotInfo, lastCurrencySnapshots)
 
-  def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](
-    statefulMPTProducer: StatefulMerklePatriciaProducer[F],
-    ordinal: SnapshotOrdinal
-  )(
-    implicit stateProofSelector: StateProofSelector
-  ): F[GlobalSnapshotStateProof] =
-    stateProofSelector.select(ordinal) match {
-      case LegacyFormat => lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
-      case MerklePatriciaFormat =>
-        statefulMPTProducer.build.flatMap {
-          case Left(err) => err.raiseError[F, GlobalSnapshotStateProof]
-          case Right(value) =>
-            GlobalSnapshotStateProof
-              .apply(
-                Hash.empty,
-                Hash.empty,
-                Hash.empty,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(value.rootHash.value)
-              )
-              .pure
-        }
-    }
-
   override def getActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = activeTokenLocks.getOrElse(SortedMap.empty)
 
   override def getActiveDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]] =
@@ -247,6 +196,66 @@ case class GlobalSnapshotInfo(
 }
 
 object GlobalSnapshotInfo {
+
+  /** Creates a StateProofBuilder for GlobalSnapshotInfo (no producer).
+    *
+    * Uses legacy Merkle trees for pre-MPT ordinals, rebuilds MPT from state for post-migration ordinals. For efficient proof building with
+    * a pre-built trie, use `stateProofBuilder(Some(producer))`.
+    */
+  def stateProofBuilder[F[_]: Async: Parallel: JsonSerializer](
+    implicit selector: GlobalStateProofSelector
+  ): StateProofBuilder[F, GlobalSnapshotInfo, GlobalSnapshotStateProof] =
+    stateProofBuilder(None)
+
+  /** Creates a StateProofBuilder with optional MPT producer.
+    *
+    * @param producer
+    *   Optional MPT producer for efficient proof building from pre-built trie. When None, MPT proofs are rebuilt from snapshot state.
+    */
+  def stateProofBuilder[F[_]: Async: Parallel: JsonSerializer](
+    producer: Option[StatefulMerklePatriciaProducer[F]]
+  )(implicit selector: GlobalStateProofSelector): StateProofBuilder[F, GlobalSnapshotInfo, GlobalSnapshotStateProof] =
+    StateProofBuilder.instance { (info, ordinal, hasher) =>
+      implicit val h: Hasher[F] = hasher
+      implicit val s: StateProofSelector = selector
+      selector.select(ordinal) match {
+        case LegacyFormat =>
+          info.lastCurrencySnapshots.merkleTree[F].flatMap { lastCurrencySnapshotsMerkle =>
+            legacyStateProof[F](info, lastCurrencySnapshotsMerkle)
+          }
+        case MerklePatriciaFormat =>
+          producer match {
+            case Some(p) =>
+              p.build.flatMap {
+                case Left(err) => err.raiseError[F, GlobalSnapshotStateProof]
+                case Right(trie) =>
+                  GlobalSnapshotStateProof
+                    .apply(
+                      Hash.empty,
+                      Hash.empty,
+                      Hash.empty,
+                      None,
+                      None,
+                      None,
+                      None,
+                      None,
+                      None,
+                      None,
+                      None,
+                      None,
+                      None,
+                      None,
+                      None,
+                      None,
+                      Some(trie.rootHash.value)
+                    )
+                    .pure[F]
+              }
+            case None =>
+              mptStateProof[F](info)
+          }
+      }
+    }
 
   def mptStateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](info: GlobalSnapshotInfo)(
     implicit stateProofSelector: StateProofSelector
