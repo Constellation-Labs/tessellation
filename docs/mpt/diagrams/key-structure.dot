@@ -1,0 +1,112 @@
+// GlobalStateKey Structure
+// Render with: dot -Tpng key-structure.dot -o key-structure.png
+
+digraph KeyStructure {
+    rankdir=LR;
+    node [shape=record, style=filled, fontname="Helvetica", fontsize=11];
+    edge [fontname="Helvetica"];
+    
+    // Key structure
+    key [
+        label="<ns>Network\nNamespace|<fid>Field ID\n(8 hex)|<cns>Contract\nNamespace|<uns>User\nNamespace",
+        fillcolor="#e3f2fd"
+    ];
+    
+    // Namespace types
+    subgraph cluster_ns_types {
+        label="Namespace Types";
+        style=rounded;
+        fillcolor="#fafafa";
+        
+        hypergraph [label="Hypergraph\n0x00", fillcolor="#c8e6c9"];
+        metagraph [label="Metagraph(addr)\n0x01 + H(addr)", fillcolor="#fff9c4"];
+        address [label="Address(addr)\n0x01 + H(addr)", fillcolor="#ffecb3"];
+        hash_ns [label="Hash(h)\n0x02 + h", fillcolor="#f3e5f5"];
+        empty [label="Empty\n0x00", fillcolor="#eceff1"];
+    }
+    
+    // Field IDs
+    subgraph cluster_fields {
+        label="Field IDs";
+        style=rounded;
+        fillcolor="#fafafa";
+        
+        fields [
+            shape=plaintext,
+            label=<
+                <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+                    <TR><TD BGCOLOR="#e8f5e9">0</TD><TD>LastStateChannelSnapshots</TD></TR>
+                    <TR><TD BGCOLOR="#e8f5e9">1</TD><TD>LastTxRefs</TD></TR>
+                    <TR><TD BGCOLOR="#e8f5e9">2</TD><TD>Balances</TD></TR>
+                    <TR><TD BGCOLOR="#fff3e0">3-6</TD><TD>Currency Snapshots</TD></TR>
+                    <TR><TD BGCOLOR="#e1f5fe">7-11</TD><TD>AllowSpends/TokenLocks</TD></TR>
+                    <TR><TD BGCOLOR="#f3e5f5">12</TD><TD>UpdateNodeParameters</TD></TR>
+                    <TR><TD BGCOLOR="#fce4ec">13-16</TD><TD>Staking/Collateral</TD></TR>
+                    <TR><TD BGCOLOR="#eceff1">17-18</TD><TD>Price/Sync</TD></TR>
+                </TABLE>
+            >
+        ];
+    }
+    
+    // Examples
+    subgraph cluster_examples {
+        label="Example Keys";
+        style=rounded;
+        fillcolor="#fafafa";
+        
+        ex1 [
+            shape=plaintext,
+            label=<
+                <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+                    <TR><TD COLSPAN="4" BGCOLOR="#bbdefb"><B>Balance for DAG address</B></TD></TR>
+                    <TR>
+                        <TD BGCOLOR="#c8e6c9">00</TD>
+                        <TD BGCOLOR="#e8f5e9">00000002</TD>
+                        <TD BGCOLOR="#eceff1">00</TD>
+                        <TD BGCOLOR="#ffecb3">01+H(DAG...)</TD>
+                    </TR>
+                    <TR><TD>Hyper</TD><TD>Balances</TD><TD>Empty</TD><TD>User addr</TD></TR>
+                </TABLE>
+            >
+        ];
+        
+        ex2 [
+            shape=plaintext,
+            label=<
+                <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+                    <TR><TD COLSPAN="4" BGCOLOR="#bbdefb"><B>Metagraph currency snapshot</B></TD></TR>
+                    <TR>
+                        <TD BGCOLOR="#fff9c4">01+H(MG)</TD>
+                        <TD BGCOLOR="#fff3e0">00000005</TD>
+                        <TD BGCOLOR="#eceff1">00</TD>
+                        <TD BGCOLOR="#eceff1">00</TD>
+                    </TR>
+                    <TR><TD>Metagraph</TD><TD>IncSnap</TD><TD>Empty</TD><TD>Empty</TD></TR>
+                </TABLE>
+            >
+        ];
+        
+        ex3 [
+            shape=plaintext,
+            label=<
+                <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+                    <TR><TD COLSPAN="4" BGCOLOR="#bbdefb"><B>AllowSpend for contract+user</B></TD></TR>
+                    <TR>
+                        <TD BGCOLOR="#c8e6c9">00</TD>
+                        <TD BGCOLOR="#e1f5fe">00000007</TD>
+                        <TD BGCOLOR="#fff9c4">01+H(CT)</TD>
+                        <TD BGCOLOR="#ffecb3">01+H(USR)</TD>
+                    </TR>
+                    <TR><TD>Hyper</TD><TD>AllowSpend</TD><TD>Contract</TD><TD>User</TD></TR>
+                </TABLE>
+            >
+        ];
+    }
+    
+    // Connections
+    key:ns -> hypergraph [style=dashed];
+    key:ns -> metagraph [style=dashed];
+    key:cns -> address [style=dashed];
+    key:cns -> empty [style=dashed];
+    key:uns -> address [style=dashed];
+}

@@ -1,0 +1,68 @@
+// Inclusion Proof Verification Flow
+// Render with: dot -Tpng proof-verification.dot -o proof-verification.png
+
+digraph ProofVerification {
+    rankdir=TB;
+    node [shape=box, style="filled,rounded", fontname="Helvetica"];
+    edge [fontname="Helvetica"];
+    
+    // Inputs
+    subgraph cluster_input {
+        label="Inputs";
+        style=dashed;
+        fillcolor="#f5f5f5";
+        
+        proof [label="Inclusion Proof\n(path, witness)", fillcolor="#e3f2fd"];
+        root [label="Known Root Hash\n(from snapshot)", fillcolor="#e8f5e9"];
+    }
+    
+    // Verification steps
+    start [label="Start", shape=ellipse, fillcolor="#c8e6c9"];
+    
+    reverse [label="Reverse witness\n(leaf → root order)", fillcolor="#fff9c4"];
+    
+    init [label="Initialize\nexpected = root\nremaining = full path", fillcolor="#fff9c4"];
+    
+    loop_check [label="Witness\nempty?", shape=diamond, fillcolor="#ffecb3"];
+    
+    get_commit [label="Get next commitment", fillcolor="#fff9c4"];
+    
+    hash_commit [label="Hash commitment\nwith type prefix", fillcolor="#fff9c4"];
+    
+    compare [label="Hash ==\nexpected?", shape=diamond, fillcolor="#ffecb3"];
+    
+    update [label="Update expected\nto child digest", fillcolor="#fff9c4"];
+    
+    advance [label="Advance path\nby consumed nibbles", fillcolor="#fff9c4"];
+    
+    check_leaf [label="Is Leaf?\nPath matches\nremaining?", shape=diamond, fillcolor="#ffecb3"];
+    
+    // Outcomes
+    success [label="Valid ✓", shape=ellipse, fillcolor="#c8e6c9"];
+    fail_hash [label="Invalid ✗\nHash mismatch", shape=ellipse, fillcolor="#ffcdd2"];
+    fail_path [label="Invalid ✗\nPath mismatch", shape=ellipse, fillcolor="#ffcdd2"];
+    fail_struct [label="Invalid ✗\nBad structure", shape=ellipse, fillcolor="#ffcdd2"];
+    
+    // Flow
+    proof -> start;
+    root -> start;
+    start -> reverse;
+    reverse -> init;
+    init -> loop_check;
+    
+    loop_check -> get_commit [label="No"];
+    loop_check -> fail_struct [label="Yes\n(no leaf)"];
+    
+    get_commit -> hash_commit;
+    hash_commit -> compare;
+    
+    compare -> update [label="Yes"];
+    compare -> fail_hash [label="No"];
+    
+    update -> advance;
+    advance -> check_leaf;
+    
+    check_leaf -> success [label="Leaf &\npath matches"];
+    check_leaf -> loop_check [label="Not leaf"];
+    check_leaf -> fail_path [label="Leaf but\npath wrong"];
+}

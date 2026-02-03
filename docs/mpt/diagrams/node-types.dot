@@ -1,0 +1,41 @@
+// MPT Node Type Hierarchy
+// Render with: dot -Tpng node-types.dot -o node-types.png
+
+digraph NodeTypes {
+    rankdir=TB;
+    node [shape=record, style=filled, fontname="Helvetica"];
+    edge [fontname="Helvetica"];
+    
+    // Trait
+    MerklePatriciaNode [
+        label="{MerklePatriciaNode\n(sealed trait)|+ digest: Hash}",
+        fillcolor="#bbdefb"
+    ];
+    
+    // Leaf
+    Leaf [
+        label="{Leaf|+ remainingCompact: CompactNibblePath\l+ dataDigest: Hash\l+ digest: Hash\l|+ remaining: Seq[Nibble]\l+ remainingPath: CompactNibblePath\l}",
+        fillcolor="#c8e6c9"
+    ];
+    
+    // Branch
+    Branch [
+        label="{Branch|+ pathsInternal: Map[Byte, Node]\l+ digest: Hash\l|+ paths: Map[Nibble, Node]\l+ getChild(Byte): Option[Node]\l+ childCount: Int\l}",
+        fillcolor="#e1f5fe"
+    ];
+    
+    // Extension
+    Extension [
+        label="{Extension|+ sharedCompact: CompactNibblePath\l+ child: Branch\l+ digest: Hash\l|+ shared: Seq[Nibble]\l+ sharedPath: CompactNibblePath\l}",
+        fillcolor="#fff3e0"
+    ];
+    
+    // Inheritance
+    MerklePatriciaNode -> Leaf [arrowhead=onormal];
+    MerklePatriciaNode -> Branch [arrowhead=onormal];
+    MerklePatriciaNode -> Extension [arrowhead=onormal];
+    
+    // Composition
+    Extension -> Branch [label="child", style=dashed, arrowhead=diamond];
+    Branch -> MerklePatriciaNode [label="children\n(0-16)", style=dashed, arrowhead=odiamond];
+}
