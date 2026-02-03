@@ -218,7 +218,8 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel: JsonSerializ
         }
 
       buildChildren.flatMap { children =>
-        MerklePatriciaNode.Branch(children.toMap).widen
+        // Sort by nibble value for deterministic branch construction
+        MerklePatriciaNode.Branch(children.sortBy(_._1.value).toMap).widen
       }
     }
   }

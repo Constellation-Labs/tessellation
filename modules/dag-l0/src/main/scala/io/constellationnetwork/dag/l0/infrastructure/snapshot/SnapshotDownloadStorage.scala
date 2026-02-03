@@ -21,6 +21,7 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.validator.StateProofValidator
 
+import io.circe.Json
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object SnapshotDownloadStorage {
@@ -97,12 +98,11 @@ object SnapshotDownloadStorage {
         (readPersisted(ordinal).flatMap(_.traverse(_.toHashed)), maybeInfo).tupled.map(_.tupled).flatMap {
           case Some((snapshot, info)) =>
             for {
+              // Use syncFullIfNeeded for atomic sync - avoids redundant syncs if already at this ordinal
               _ <- info match {
                 case Left(value) => ().pure[F]
                 case Right(value) =>
-                  value.allStateEntries[F].flatMap { kvPairs =>
-                    mptStore.syncFull(kvPairs, ordinal)
-                  }
+                  mptStore.syncFullIfNeeded[Json](value.allStateEntries[F], ordinal)
               }
               result <- (info match {
                 case Left(infoV2) =>

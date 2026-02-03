@@ -25,7 +25,8 @@ class MptStateStorage[F[_]: Async: JsonSerializer](
 
   implicit val stateEncoder: Encoder[Map[Hex, Array[Byte]]] =
     Encoder.instance { map =>
-      Json.obj(map.toList.map { case (hex, bytes) => hex.value -> bytes.asJson }: _*)
+      // Sort by hex value for deterministic JSON serialization
+      Json.obj(map.toList.sortBy(_._1.value).map { case (hex, bytes) => hex.value -> bytes.asJson }: _*)
     }
 
   implicit val stateDecoder: Decoder[Map[Hex, Array[Byte]]] =

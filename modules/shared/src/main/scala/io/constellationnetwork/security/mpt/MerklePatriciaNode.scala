@@ -147,8 +147,13 @@ object MerklePatriciaNode {
 
     implicit val encodeBranchNode: Encoder[Branch] =
       Encoder.instance { node =>
+        // Sort by nibble value for deterministic JSON serialization
+        // Use JsonObject.fromIterable to preserve ordering from sorted List
+        val sortedPaths = node.paths.toList.sortBy(_._1.value).map {
+          case (nibble, child) => Nibble.nibbleKeyEncoder(nibble) -> (child: MerklePatriciaNode).asJson
+        }
         Json.obj(
-          "paths" -> node.paths.toSeq.sortBy(_._1.value).toMap.asJson,
+          "paths" -> Json.fromJsonObject(JsonObject.fromIterable(sortedPaths)),
           "digest" -> node.digest.asJson
         )
       }

@@ -35,8 +35,13 @@ object MerklePatriciaCommitment {
 
     implicit val branchCommitEncoder: Encoder[Branch] =
       Encoder.instance { node =>
+        // Sort by nibble value for deterministic JSON serialization
+        // Use JsonObject.fromIterable to preserve ordering from sorted List
+        val sortedEntries = node.pathsDigest.toList.sortBy(_._1.value).map {
+          case (nibble, hash) => Nibble.nibbleKeyEncoder(nibble) -> hash.asJson
+        }
         Json.obj(
-          "pathsDigest" -> node.pathsDigest.asJson
+          "pathsDigest" -> Json.fromJsonObject(JsonObject.fromIterable(sortedEntries))
         )
       }
 

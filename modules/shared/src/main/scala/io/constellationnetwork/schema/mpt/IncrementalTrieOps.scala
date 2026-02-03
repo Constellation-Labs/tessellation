@@ -309,7 +309,8 @@ object IncrementalTrieOps {
       case 0 =>
         MerklePatriciaNode.Branch.empty[F].widen
       case 1 =>
-        val (nibbleValue, child) = paths.head
+        // Use minBy to get deterministic ordering (smallest nibble value)
+        val (nibbleValue, child) = paths.minBy(_._1)
         child match {
           case leaf: MerklePatriciaNode.Leaf =>
             MerklePatriciaNode.Leaf.fromCompact(CompactNibblePath.single(nibbleValue) ++ leaf.remainingPath, leaf.dataDigest).widen
@@ -326,7 +327,8 @@ object IncrementalTrieOps {
     extPath: CompactNibblePath,
     branch: MerklePatriciaNode.Branch
   ): F[MerklePatriciaNode] = {
-    val (nibbleValue, child) = branch.internalPaths.head
+    // Use minBy to get deterministic ordering (smallest nibble value)
+    val (nibbleValue, child) = branch.internalPaths.minBy(_._1)
     val newPath = extPath ++ CompactNibblePath.single(nibbleValue)
 
     child match {

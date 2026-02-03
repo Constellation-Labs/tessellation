@@ -6,11 +6,12 @@ import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
 import io.constellationnetwork.json.JsonSerializer
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hex.Hex
-import io.constellationnetwork.security.mpt.MerklePatriciaTrie
 import io.constellationnetwork.security.mpt.prover.MerklePatriciaSingleInclusionProver
+import io.constellationnetwork.security.mpt.{MerklePatriciaTrie, MptRoot}
 
 import io.circe.syntax._
 import io.circe.{Encoder, Json}
@@ -19,10 +20,13 @@ class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher: Parallel: JsonSerializ
   stateRef: Ref[F, Map[Hex, Array[Byte]]],
   trieRef: Ref[F, Option[MerklePatriciaTrie]],
   pendingInsertsRef: Ref[F, Map[Hex, Array[Byte]]],
-  pendingRemovesRef: Ref[F, List[Hex]]
+  pendingRemovesRef: Ref[F, List[Hex]],
+  rootHashCacheRef: Ref[F, Map[SnapshotOrdinal, MptRoot]],
+  lastBuiltOrdinalRef: Ref[F, Option[SnapshotOrdinal]]
 ) extends StatefulMerklePatriciaProducer[F] {
 
   private val parallelProducer: ParallelMerklePatriciaProducer[F] = ParallelMerklePatriciaProducer[F]
+  private val MaxCacheSize = 50
 
   override def getProver: F[MerklePatriciaSingleInclusionProver[F]] =
     build.flatMap {
@@ -50,6 +54,36 @@ class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher: Parallel: JsonSerializ
           incrementalUpdate(trie, pendingInserts, pendingRemoves)
       }
     } yield result
+
+  override def buildForOrdinal(ordinal: SnapshotOrdinal): F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
+    build.flatMap {
+      case Right(trie) =>
+        val rootHash = trie.rootHash
+        (cacheRootHash(ordinal, rootHash) >> lastBuiltOrdinalRef.set(Some(ordinal)))
+          .as(trie.asRight[MerklePatriciaError])
+      case Left(err) =>
+        err.asLeft[MerklePatriciaTrie].pure[F]
+    }
+
+  override def getRootHashForOrdinal(ordinal: SnapshotOrdinal): F[Option[MptRoot]] =
+    rootHashCacheRef.get.map(_.get(ordinal))
+
+  override def getCurrentRootHash: F[Option[MptRoot]] =
+    trieRef.get.map(_.map(_.rootHash))
+
+  override def getLastBuiltOrdinal: F[Option[SnapshotOrdinal]] =
+    lastBuiltOrdinalRef.get
+
+  private def cacheRootHash(ordinal: SnapshotOrdinal, rootHash: MptRoot): F[Unit] =
+    rootHashCacheRef.update { cache =>
+      val updated = cache + (ordinal -> rootHash)
+      if (updated.size > MaxCacheSize) {
+        // Keep only the latest 50 by ordinal
+        updated.toList.sortBy(_._1).takeRight(MaxCacheSize).toMap
+      } else {
+        updated
+      }
+    }
 
   private def fullBuild: F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
     for {
@@ -154,7 +188,9 @@ class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher: Parallel: JsonSerializ
     stateRef.set(Map.empty) >>
       trieRef.set(None) >>
       pendingInsertsRef.set(Map.empty) >>
-      pendingRemovesRef.set(List.empty)
+      pendingRemovesRef.set(List.empty) >>
+      rootHashCacheRef.set(Map.empty) >>
+      lastBuiltOrdinalRef.set(None)
 
   override def buildHexMap(data: Map[GlobalStateKey, Json]): F[Map[Hex, Array[Byte]]] = {
     val BatchSize = 5000
@@ -197,5 +233,15 @@ object InMemoryMerklePatriciaProducer {
       trieRef <- Ref.of[F, Option[MerklePatriciaTrie]](None)
       pendingInsertsRef <- Ref.of[F, Map[Hex, Array[Byte]]](Map.empty)
       pendingRemovesRef <- Ref.of[F, List[Hex]](List.empty)
-    } yield new InMemoryMerklePatriciaProducer[F](stateRef, trieRef, pendingInsertsRef, pendingRemovesRef)
+      rootHashCacheRef <- Ref.of[F, Map[SnapshotOrdinal, MptRoot]](Map.empty)
+      lastBuiltOrdinalRef <- Ref.of[F, Option[SnapshotOrdinal]](None)
+    } yield
+      new InMemoryMerklePatriciaProducer[F](
+        stateRef,
+        trieRef,
+        pendingInsertsRef,
+        pendingRemovesRef,
+        rootHashCacheRef,
+        lastBuiltOrdinalRef
+      )
 }

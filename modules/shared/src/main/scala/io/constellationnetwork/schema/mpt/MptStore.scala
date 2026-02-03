@@ -24,7 +24,7 @@ trait MptStore[F[_], K] {
   def contains(key: K): F[Boolean]
   def isEmpty: F[Boolean]
   def clear: F[Unit]
-  def build: F[Either[MerklePatriciaError, MerklePatriciaTrie]]
+  def build(ordinal: SnapshotOrdinal): F[Either[MerklePatriciaError, MerklePatriciaTrie]]
   def sync[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit]
   def syncFull[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit]
   def syncFullIfNeeded[V: Encoder](newState: => F[Map[K, V]], ordinal: SnapshotOrdinal): F[Unit]
@@ -182,8 +182,8 @@ object MptStore {
     override def clear: F[Unit] =
       logger.info("[MptStore] Clearing store") >> producer.clear
 
-    override def build: F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
-      producer.build
+    override def build(snapshotOrdinal: SnapshotOrdinal): F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
+      producer.buildForOrdinal(snapshotOrdinal)
 
     override def syncFull[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit] =
       if (newState.isEmpty) {
@@ -196,13 +196,21 @@ object MptStore {
           newEntries <- toHexEntries(newState)
           _ <- producer.insertBytes(newEntries).void
           _ <- persistAsync(ordinal)
-          _ <- build
+          _ <- build(ordinal)
           _ <- lastSyncedOrdinalRef.set(Some(ordinal))
         } yield ()
 
     override def syncFullIfNeeded[V: Encoder](newState: => F[Map[K, V]], ordinal: SnapshotOrdinal): F[Unit] =
-      lastSyncedOrdinalRef.get.flatMap { lastOrdinal =>
+      // Use atomic modify to prevent race condition where two threads both see needsSync=true
+      lastSyncedOrdinalRef.modify { lastOrdinal =>
         val needsSync = lastOrdinal.forall(_ =!= ordinal)
+        if (needsSync) {
+          // Mark as syncing with this ordinal immediately to prevent concurrent syncs
+          (Some(ordinal), true)
+        } else {
+          (lastOrdinal, false)
+        }
+      }.flatMap { needsSync =>
         if (needsSync)
           newState.flatMap(syncFull(_, ordinal))
         else
@@ -213,9 +221,13 @@ object MptStore {
       if (updates.isEmpty) Async[F].unit
       else
         for {
-          _ <- logger.debug(s"[MptStore] Incremental sync with ${updates.size} entries")
+          _ <- logger.debug(s"[MptStore] Incremental sync with ${updates.size} entries at ordinal=$ordinal")
           _ <- insert(updates)
           _ <- persistAsync(ordinal)
+          // Build the trie and cache root hash for this ordinal
+          // This is critical for validation - without this, getRootHashForOrdinal returns None
+          _ <- build(ordinal).void
+          _ <- lastSyncedOrdinalRef.set(Some(ordinal))
         } yield ()
 
     override def update[V: Encoder](toUpsert: Map[K, V], toRemove: Set[K]): F[Unit] =

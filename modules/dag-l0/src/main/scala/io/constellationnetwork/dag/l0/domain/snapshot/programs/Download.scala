@@ -368,16 +368,17 @@ object Download {
               case None => InvalidChain.raiseError[F, Agg]
             }
 
+        // Use syncFullIfNeeded for atomic initialization - avoids race condition where
+        // two concurrent calls both see mptEntries.isEmpty=true and both try to sync
         def performInitialSync: F[Unit] =
-          for {
-            _ <- logger.info("Performing initial sync of MPT")
-            kvPairs <- hasherSelector.withCurrent(implicit h => context.allStateEntries[F])
-            _ <- mptStore.syncFull(kvPairs, lastSnapshot.ordinal)
-          } yield ()
+          logger.info("Performing initial sync of MPT (if needed)") >>
+            mptStore.syncFullIfNeeded[Json](
+              hasherSelector.withCurrent(implicit h => context.allStateEntries[F]),
+              lastSnapshot.ordinal
+            )
 
         for {
-          mptEntries <- mptStore.underlying.entries
-          _ <- performInitialSync.whenA(mptEntries.isEmpty)
+          _ <- performInitialSync
           _ <- persistLastSnapshot
           result <- processNextOrFinish
         } yield result
