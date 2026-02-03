@@ -206,15 +206,22 @@ object MptStore {
         val needsSync = lastOrdinal.forall(_ =!= ordinal)
         if (needsSync) {
           // Mark as syncing with this ordinal immediately to prevent concurrent syncs
-          (Some(ordinal), true)
+          // Return previous ordinal so we can restore on failure
+          (Some(ordinal), (true, lastOrdinal))
         } else {
-          (lastOrdinal, false)
+          (lastOrdinal, (false, lastOrdinal))
         }
-      }.flatMap { needsSync =>
-        if (needsSync)
-          newState.flatMap(syncFull(_, ordinal))
-        else
-          logger.debug(s"[MptStore] Skipping sync, already synced at ordinal $ordinal")
+      }.flatMap {
+        case (needsSync, previousOrdinal) =>
+          if (needsSync)
+            newState.flatMap(syncFull(_, ordinal)).handleErrorWith { err =>
+              // Reset ordinal on failure to allow retry from another thread
+              logger.warn(s"[MptStore] syncFull failed for ordinal $ordinal, resetting to $previousOrdinal") >>
+                lastSyncedOrdinalRef.set(previousOrdinal) >>
+                err.raiseError[F, Unit]
+            }
+          else
+            logger.debug(s"[MptStore] Skipping sync, already synced at ordinal $ordinal")
       }
 
     override def sync[V: Encoder](updates: Map[K, V], ordinal: SnapshotOrdinal): F[Unit] =

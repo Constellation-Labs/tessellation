@@ -1,9 +1,13 @@
 package io.constellationnetwork.schema
 
+import cats.MonadThrow
+import cats.syntax.all._
+
 import io.constellationnetwork.merkletree.MerkleRoot
 import io.constellationnetwork.schema.snapshot.StateProof
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.mpt.MptRoot
+import io.constellationnetwork.security.mpt.producer.StatefulMerklePatriciaProducer
 
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
@@ -98,4 +102,39 @@ object GlobalSnapshotStateProof {
     case (x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16, x17) =>
       GlobalSnapshotStateProof.apply(x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16, x17)
   }
+
+  /** Create a GlobalSnapshotStateProof directly from a producer that has just been synced.
+    *
+    * This is an optimization for snapshot creation where the caller guarantees the producer is already synced to the correct state. It
+    * avoids the overhead of ordinal-based cache lookups when we know the producer's current state is what we need.
+    *
+    * Use this in GlobalSnapshotAcceptanceManager after syncFromStateChanges.
+    */
+  def fromProducer[F[_]: MonadThrow](producer: StatefulMerklePatriciaProducer[F]): F[GlobalSnapshotStateProof] =
+    producer.getCurrentRootHash.flatMap {
+      case Some(rootHash) =>
+        GlobalSnapshotStateProof(
+          Hash.empty,
+          Hash.empty,
+          Hash.empty,
+          None,
+          None,
+          None,
+          None,
+          None,
+          None,
+          None,
+          None,
+          None,
+          None,
+          None,
+          None,
+          None,
+          Some(rootHash.value)
+        ).pure[F]
+      case None =>
+        MonadThrow[F].raiseError(
+          new RuntimeException("Cannot create GlobalSnapshotStateProof: producer has no current root hash (not built yet)")
+        )
+    }
 }

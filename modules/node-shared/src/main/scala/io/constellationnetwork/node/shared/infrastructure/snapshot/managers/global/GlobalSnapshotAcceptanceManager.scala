@@ -187,7 +187,6 @@ object GlobalSnapshotAcceptanceManager {
 
     new GlobalSnapshotAcceptanceManager[F] {
       val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](this.getClass)
-      private val builder = GlobalSnapshotInfo.stateProofBuilder(Some(mptStore.underlying))
 
       case class InitialData(
         blockResult: BlockAcceptanceResult,
@@ -1132,7 +1131,8 @@ object GlobalSnapshotAcceptanceManager {
             )
 
             _ <- mptStore.syncFromStateChanges(stateChangesAccumulator, ordinal)
-            stateProof <- builder.buildProof(gsi, ordinal)
+            // Use fromProducer directly since we just synced - avoids cache lookup overhead
+            stateProof <- GlobalSnapshotStateProof.fromProducer(mptStore.underlying)
 
             (expiredAllowSpends, expiredTokenLocks) = (
               allowSpendStateManager.filterExpiredAllowSpends(
