@@ -50,12 +50,17 @@ export USE_TEST_METAGRAPH=${USE_TEST_METAGRAPH:-false}
 
 # Explicitly set TESSELLATION_VERSION based on the project's version
 if [ -z "${TESSELLATION_VERSION:-}" ]; then
-    if [ -n "$RELEASE_TAG" ]; then
+    if [ -n "$HYPERGRAPH_RELEASE" ]; then
+        # Use hypergraph release version for SDK resolution
+        export TESSELLATION_VERSION="${HYPERGRAPH_RELEASE#v}"
+        echo "Setting TESSELLATION_VERSION=$TESSELLATION_VERSION (from --hypergraph-release)"
+    elif [ -n "$RELEASE_TAG" ]; then
         export TESSELLATION_VERSION="${RELEASE_TAG#v}"
+        echo "Setting TESSELLATION_VERSION=$TESSELLATION_VERSION"
     else
         export TESSELLATION_VERSION="99.99.99-SNAPSHOT"
+        echo "Setting TESSELLATION_VERSION=$TESSELLATION_VERSION"
     fi
-    echo "Setting TESSELLATION_VERSION=$TESSELLATION_VERSION"
 fi
 
 

@@ -84,8 +84,12 @@ fi
 
 
 if [ "$PUBLISH" == "true" ]; then
-  echo "Publishing local"
-  sbt --error sdk/publishLocal
+  if [ -n "$HYPERGRAPH_RELEASE" ]; then
+    echo "Skipping sdk/publishLocal - using release $HYPERGRAPH_RELEASE (SDK should be available from Maven)"
+  else
+    echo "Publishing local"
+    sbt --error sdk/publishLocal
+  fi
 fi
 
 
