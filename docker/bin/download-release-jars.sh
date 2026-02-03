@@ -51,6 +51,14 @@ for release_name in "${!JAR_MAP[@]}"; do
     if ! curl -fsSL -o "$dest" "$url"; then
         echo "Error: Failed to download ${url}"
         echo "Check that release ${RELEASE_TAG} exists and contains ${release_name}"
+        echo ""
+        echo "Expected assets for release ${RELEASE_TAG}:"
+        for name in "${!JAR_MAP[@]}"; do
+            echo "  - ${name}"
+        done
+        echo ""
+        echo "To check available assets, run:"
+        echo "  gh release view ${RELEASE_TAG} --repo ${REPO} --json assets --jq '.assets[].name'"
         exit 1
     fi
     
