@@ -48,19 +48,10 @@ export DOCKER_PROFILES=${DOCKER_PROFILES:-""}
 export USE_TEST_METAGRAPH=${USE_TEST_METAGRAPH:-false}
 
 
-# Explicitly set TESSELLATION_VERSION based on the project's version
-if [ -z "${TESSELLATION_VERSION:-}" ]; then
-    if [ -n "$HYPERGRAPH_RELEASE" ]; then
-        # Use hypergraph release version for SDK resolution
-        export TESSELLATION_VERSION="${HYPERGRAPH_RELEASE#v}"
-        echo "Setting TESSELLATION_VERSION=$TESSELLATION_VERSION (from --hypergraph-release)"
-    elif [ -n "$RELEASE_TAG" ]; then
-        export TESSELLATION_VERSION="${RELEASE_TAG#v}"
-        echo "Setting TESSELLATION_VERSION=$TESSELLATION_VERSION"
-    else
-        export TESSELLATION_VERSION="99.99.99-SNAPSHOT"
-        echo "Setting TESSELLATION_VERSION=$TESSELLATION_VERSION"
-    fi
+# Store any explicitly-set TESSELLATION_VERSION from environment
+# This will be used for precedence after args are parsed
+if [ -n "${TESSELLATION_VERSION:-}" ]; then
+    export EXPLICIT_TESSELLATION_VERSION="$TESSELLATION_VERSION"
 fi
 
 
@@ -201,10 +192,23 @@ exit_func() {
 echo "BUILD_ONLY: $BUILD_ONLY"
 echo "RELEASE_TAG: $RELEASE_TAG"
 
-# Re-check TESSELLATION_VERSION after args are parsed (in case --hypergraph-release was specified)
-if [ -n "$HYPERGRAPH_RELEASE" ] && [ "$TESSELLATION_VERSION" = "99.99.99-SNAPSHOT" ]; then
+# Set TESSELLATION_VERSION with explicit precedence (after args are parsed):
+# 1. TESSELLATION_VERSION env var (explicit override) - highest priority
+# 2. --hypergraph-release flag
+# 3. --version / RELEASE_TAG
+# 4. 99.99.99-SNAPSHOT (default, build from source)
+if [ -n "${EXPLICIT_TESSELLATION_VERSION:-}" ]; then
+    export TESSELLATION_VERSION="$EXPLICIT_TESSELLATION_VERSION"
+    echo "Setting TESSELLATION_VERSION=$TESSELLATION_VERSION (from environment)"
+elif [ -n "$HYPERGRAPH_RELEASE" ]; then
     export TESSELLATION_VERSION="${HYPERGRAPH_RELEASE#v}"
-    echo "Updating TESSELLATION_VERSION=$TESSELLATION_VERSION (from --hypergraph-release)"
+    echo "Setting TESSELLATION_VERSION=$TESSELLATION_VERSION (from --hypergraph-release)"
+elif [ -n "$RELEASE_TAG" ]; then
+    export TESSELLATION_VERSION="${RELEASE_TAG#v}"
+    echo "Setting TESSELLATION_VERSION=$TESSELLATION_VERSION (from --version/RELEASE_TAG)"
+else
+    export TESSELLATION_VERSION="99.99.99-SNAPSHOT"
+    echo "Setting TESSELLATION_VERSION=$TESSELLATION_VERSION (default snapshot)"
 fi
 
 if [ "$DATA_ONLY_METAGRAPH" = "true" ]; then
