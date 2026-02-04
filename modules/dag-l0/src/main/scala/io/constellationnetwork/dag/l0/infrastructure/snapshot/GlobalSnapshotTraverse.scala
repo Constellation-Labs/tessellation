@@ -21,6 +21,7 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.validator.StateProofValidator
 
+import io.circe.Json
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -116,13 +117,10 @@ object GlobalSnapshotTraverse {
               case KryoHash =>
                 GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(firstInfo).stateProof(firstInc.ordinal)
               case JsonHash =>
-                mptStore.underlying.entries.flatMap { entries =>
-                  val syncIfNeeded =
-                    if (entries.isEmpty) firstInfo.allStateEntries[F].flatMap(mptStore.syncFull(_, firstInc.ordinal))
-                    else Async[F].unit
-
-                  syncIfNeeded >> builder.buildProof(firstInfo, firstInc.ordinal)
-                }
+                // Use syncFullIfNeeded for atomic sync - avoids race condition where
+                // two concurrent calls both see entries.isEmpty=true and both try to sync
+                mptStore.syncFullIfNeeded[Json](firstInfo.allStateEntries[F], firstInc.ordinal) >>
+                  builder.buildProof(firstInfo, firstInc.ordinal)
             }
           }
 

@@ -121,9 +121,11 @@ abstract class SnapshotProcessor[
         val setSnapshot: F[Unit] =
           lastSnapshotStorage.set(snapshot, state)
 
+        // Use syncFullIfNeeded which atomically checks if already synced at this ordinal.
+        // This avoids redundant full syncs since createContext already synced the trie.
         val updateMptStorage: F[Unit] = state match {
           case info: GlobalSnapshotInfo =>
-            info.allStateEntries.flatMap(mptStore.sync[Json](_, snapshot.ordinal))
+            mptStore.syncFullIfNeeded[Json](info.allStateEntries, snapshot.ordinal)
           case _ => Async[F].unit
         }
 
@@ -170,7 +172,7 @@ abstract class SnapshotProcessor[
 
         val updateMptStorage: F[Unit] = state match {
           case info: GlobalSnapshotInfo =>
-            info.allStateEntries.flatMap(mptStore.sync[Json](_, snapshot.ordinal))
+            mptStore.syncFullIfNeeded[Json](info.allStateEntries, snapshot.ordinal)
           case _ => Async[F].unit
         }
 
@@ -210,7 +212,7 @@ abstract class SnapshotProcessor[
 
         val updateMptStorage: F[Unit] = state match {
           case info: GlobalSnapshotInfo =>
-            info.allStateEntries.flatMap(mptStore.sync[Json](_, snapshot.ordinal))
+            mptStore.syncFullIfNeeded[Json](info.allStateEntries, snapshot.ordinal)
           case _ => Async[F].unit
         }
 
@@ -263,7 +265,7 @@ abstract class SnapshotProcessor[
 
         val updateMptStorage: F[Unit] = state match {
           case info: GlobalSnapshotInfo =>
-            info.allStateEntries.flatMap(mptStore.sync[Json](_, snapshot.ordinal))
+            mptStore.syncFullIfNeeded[Json](info.allStateEntries, snapshot.ordinal)
           case _ => Async[F].unit
         }
 

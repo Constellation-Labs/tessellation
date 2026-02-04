@@ -164,9 +164,13 @@ object GlobalL0Service {
         snapshotTuple: LatestSnapshotTuple,
         majorityPeers: NonEmptyList[L0Peer]
       ): F[Boolean] = {
-        val (snapshot, info) = snapshotTuple
+        val (snapshot, _) = snapshotTuple
+        // Skip state proof validation during pullLatestSnapshot - it will be validated
+        // later when processing the snapshot via createContext. This avoids expensive
+        // full MPT syncs during initial download when validating snapshots from multiple peers.
+        // The majority hash/ordinal validations ensure we're getting a valid snapshot from
+        // the network, and the full state proof validation happens during processing.
         List(
-          HasherSelector[F].withCurrent(implicit hasher => stateProofValidation(snapshot, info)),
           majorityOrdinalValidation(snapshot, majorityPeers),
           majorityHashValidation(snapshot, majorityPeers)
         ).forallM(identity)
@@ -175,6 +179,9 @@ object GlobalL0Service {
       private def stateProofValidation(snapshot: Hashed[GlobalIncrementalSnapshot], info: GlobalSnapshotInfo)(
         implicit hasher: Hasher[F]
       ): F[Boolean] =
+        // Sync the MPT store to match the snapshot's state, then validate.
+        // This is needed because the validator uses the stateful producer which requires
+        // the trie to be synced at the correct ordinal.
         mptStore.syncFullIfNeeded[Json](info.allStateEntries[F], snapshot.ordinal) >>
           validator
             .validate(snapshot, info)

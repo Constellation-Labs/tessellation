@@ -9,8 +9,8 @@ import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hex.Hex
-import io.constellationnetwork.security.mpt.MerklePatriciaTrie
 import io.constellationnetwork.security.mpt.prover.MerklePatriciaSingleInclusionProver
+import io.constellationnetwork.security.mpt.{MerklePatriciaTrie, MptRoot}
 
 import fs2.Stream
 import io.circe.{Encoder, Json}
@@ -34,6 +34,25 @@ trait MerklePatriciaProducer[F[_]] {
 trait StatefulMerklePatriciaProducer[F[_]] {
   def entries: F[Map[Hex, Array[Byte]]]
   def build: F[Either[MerklePatriciaError, MerklePatriciaTrie]]
+
+  /** Build the trie and cache the root hash for the given ordinal. This allows retrieval of historical root hashes via
+    * `getRootHashForOrdinal`.
+    */
+  def buildForOrdinal(ordinal: SnapshotOrdinal): F[Either[MerklePatriciaError, MerklePatriciaTrie]]
+
+  /** Retrieve a cached root hash for a specific ordinal. Returns None if the ordinal is not in the cache (either too old or never built).
+    */
+  def getRootHashForOrdinal(ordinal: SnapshotOrdinal): F[Option[MptRoot]]
+
+  /** Get the current root hash without building. Returns None if trie hasn't been built yet. This is useful for quick checks without the
+    * overhead of a full build.
+    */
+  def getCurrentRootHash: F[Option[MptRoot]]
+
+  /** Get the last built ordinal. Returns None if no ordinal has been built yet.
+    */
+  def getLastBuiltOrdinal: F[Option[SnapshotOrdinal]]
+
   def insert[A: Encoder](data: Map[Hex, A]): F[Either[MerklePatriciaError, Unit]]
   def insertBytes(data: Map[Hex, Array[Byte]]): F[Either[MerklePatriciaError, Unit]]
   def update[A: Encoder](key: Hex, value: A): F[Either[MerklePatriciaError, Unit]]

@@ -124,14 +124,10 @@ object StateChannel {
       }
     }
 
+    // Use syncFullIfNeeded for atomic initialization - avoids race condition where
+    // two concurrent calls both see isEmpty=true and both try to sync
     def ensureMptInitialized(ordinal: SnapshotOrdinal, state: GlobalSnapshotInfo): F[Unit] =
-      sharedStorages.mptStore.isEmpty.ifM(
-        state.allStateEntries[F].flatMap { kvPairs =>
-          logger.info(s"Initializing MPT store with ${kvPairs.size} entries at ordinal=$ordinal") >>
-            sharedStorages.mptStore.syncFull[Json](kvPairs, ordinal)
-        },
-        Applicative[F].unit
-      )
+      sharedStorages.mptStore.syncFullIfNeeded[Json](state.allStateEntries[F], ordinal)
 
     def persistGlobalSnapshot(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] =
       for {

@@ -487,7 +487,8 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
                       updateParent(None)
 
                     case 1 =>
-                      val (remainingNibbleValue, onlyChild) = updatedPaths.head
+                      // Use minBy to get deterministic ordering (smallest nibble value)
+                      val (remainingNibbleValue, onlyChild) = updatedPaths.minBy(_._1)
                       onlyChild match {
                         case leafNode: MerklePatriciaNode.Leaf =>
                           val leafPath = leafNode.remainingPath

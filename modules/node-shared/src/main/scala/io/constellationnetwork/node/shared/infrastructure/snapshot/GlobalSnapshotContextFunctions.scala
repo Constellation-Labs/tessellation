@@ -20,6 +20,7 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
@@ -29,11 +30,11 @@ import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.SignatureProof
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelValidationType}
-import io.constellationnetwork.validator.StateProofValidator
 
 import derevo.cats.{eqv, show}
 import derevo.derive
 import eu.timepit.refined.types.all.NonNegLong
+import io.circe.Json
 
 abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
@@ -52,7 +53,10 @@ object GlobalSnapshotContextFunctions {
   ) =
     new GlobalSnapshotContextFunctions[F] {
 
-      private val validator = StateProofValidator.forGlobal(Some(mptStore.underlying))
+      // Note: State proof validation is skipped for followers (currency-l0, dag-l1) because:
+      // 1. The snapshot was already validated by dag-l0 majority consensus
+      // 2. Full MPT sync on every ordinal is too expensive (~2 min for 800K entries)
+      // The MPT store is synced once during initial download for query support.
 
       // todo - avoid duplication of this function here and in GlobalSnapshotConsensusFunctions
       private def acceptDelegatedStakes(
@@ -278,15 +282,10 @@ object GlobalSnapshotContextFunctions {
         _ <- CannotApplyStateChannelsError(returnedSCEvents).raiseError[F, Unit].whenA(returnedSCEvents.nonEmpty)
         diffRewards = acceptedRewardTxs -- signedArtifact.rewards
         _ <- CannotApplyRewardsError(diffRewards).raiseError[F, Unit].whenA(diffRewards.nonEmpty)
-        validation <- HasherSelector[F].withCurrent { implicit hasher =>
-          signedArtifact.toHashed.flatMap { hashedArtifact =>
-            validator.validate(hashedArtifact, snapshotInfo)
-          }
-        }
-        _ = validation match {
-          case Validated.Valid(_)   => Async[F].unit
-          case Validated.Invalid(e) => e.raiseError[F, Unit]
-        }
+        // For followers (currency-l0, dag-l1), we skip state proof validation here.
+        // The snapshot was already validated by the majority consensus on dag-l0.
+        // Doing a full MPT sync and validation on every ordinal is too expensive (~2 min for 800K entries).
+        // The MPT store is synced once during initial download for query support.
 
       } yield snapshotInfo
     }

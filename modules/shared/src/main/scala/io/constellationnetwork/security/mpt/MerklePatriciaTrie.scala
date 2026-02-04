@@ -48,7 +48,8 @@ object MerklePatriciaTrie {
         case (head: MerklePatriciaNode.Leaf) :: tail =>
           traverse(tail, head :: acc)
         case (branch: MerklePatriciaNode.Branch) :: tail =>
-          traverse(branch.internalPaths.values.toList ++ tail, acc)
+          // Sort by nibble value for deterministic traversal order
+          traverse(branch.internalPaths.toList.sortBy(_._1).map(_._2) ++ tail, acc)
         case (ext: MerklePatriciaNode.Extension) :: tail =>
           traverse(ext.child :: tail, acc)
       }
@@ -67,7 +68,8 @@ object MerklePatriciaTrie {
           val fullPath = pathSoFar ++ leaf.remainingPath
           traverse(tail, (fullPath.toHex, leaf) :: acc)
         case NodeWithPath(branch: MerklePatriciaNode.Branch, pathSoFar) :: tail =>
-          val childNodes = branch.internalPaths.toList.map {
+          // Sort by nibble value for deterministic traversal order
+          val childNodes = branch.internalPaths.toList.sortBy(_._1).map {
             case (nibbleValue, child) =>
               NodeWithPath(child, pathSoFar ++ CompactNibblePath.single(nibbleValue))
           }

@@ -1,8 +1,8 @@
 package io.constellationnetwork.schema
 
-import cats.Parallel
 import cats.effect.{Async, Sync}
 import cats.syntax.all._
+import cats.{MonadThrow, Parallel}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
@@ -226,30 +226,34 @@ object GlobalSnapshotInfo {
         case MerklePatriciaFormat =>
           producer match {
             case Some(p) =>
-              p.build.flatMap {
+              p.buildForOrdinal(ordinal).flatMap {
                 case Left(err) => err.raiseError[F, GlobalSnapshotStateProof]
                 case Right(trie) =>
-                  GlobalSnapshotStateProof
-                    .apply(
-                      Hash.empty,
-                      Hash.empty,
-                      Hash.empty,
-                      None,
-                      None,
-                      None,
-                      None,
-                      None,
-                      None,
-                      None,
-                      None,
-                      None,
-                      None,
-                      None,
-                      None,
-                      None,
-                      Some(trie.rootHash.value)
-                    )
-                    .pure[F]
+                  p.getRootHashForOrdinal(ordinal).flatMap {
+                    case Some(value) =>
+                      GlobalSnapshotStateProof
+                        .apply(
+                          Hash.empty,
+                          Hash.empty,
+                          Hash.empty,
+                          None,
+                          None,
+                          None,
+                          None,
+                          None,
+                          None,
+                          None,
+                          None,
+                          None,
+                          None,
+                          None,
+                          None,
+                          None,
+                          Some(value.value)
+                        )
+                        .pure[F]
+                    case None => MonadThrow[F].raiseError(new RuntimeException(s"Could not get mptRootHash for ordinal $ordinal"))
+                  }
               }
             case None =>
               mptStateProof[F](info)
