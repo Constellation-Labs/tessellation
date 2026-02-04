@@ -17,10 +17,10 @@ import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.swap.CurrencyId
 import io.constellationnetwork.schema.tokenLock._
+import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._
@@ -46,7 +46,8 @@ object ContextualTokenLockValidatorSuite extends MutableIOSuite {
       sourceBalance = Balance(10L),
       sourceLastTokenLocksRef = TokenLockReference.empty,
       currentOrdinal = SnapshotOrdinal.MinValue,
-      currentEpochProgress = EpochProgress.MinValue
+      currentEpochProgress = EpochProgress.MinValue,
+      hashedActiveTokenLocks = List.empty[Hashed[TokenLock]]
     )
 
     for {
@@ -66,7 +67,8 @@ object ContextualTokenLockValidatorSuite extends MutableIOSuite {
       sourceBalance = Balance(100L),
       sourceLastTokenLocksRef = TokenLockReference.empty,
       currentOrdinal = SnapshotOrdinal.MinValue,
-      currentEpochProgress = EpochProgress.MinValue
+      currentEpochProgress = EpochProgress.MinValue,
+      hashedActiveTokenLocks = List.empty[Hashed[TokenLock]]
     )
 
     for {
@@ -86,7 +88,8 @@ object ContextualTokenLockValidatorSuite extends MutableIOSuite {
       sourceBalance = Balance(50L),
       sourceLastTokenLocksRef = TokenLockReference.empty,
       currentOrdinal = SnapshotOrdinal.MinValue,
-      currentEpochProgress = EpochProgress.MinValue
+      currentEpochProgress = EpochProgress.MinValue,
+      hashedActiveTokenLocks = List.empty[Hashed[TokenLock]]
     )
 
     for {
@@ -106,7 +109,8 @@ object ContextualTokenLockValidatorSuite extends MutableIOSuite {
       sourceBalance = Balance(60L),
       sourceLastTokenLocksRef = TokenLockReference.empty,
       currentOrdinal = SnapshotOrdinal.MinValue,
-      currentEpochProgress = EpochProgress.MinValue
+      currentEpochProgress = EpochProgress.MinValue,
+      hashedActiveTokenLocks = List.empty[Hashed[TokenLock]]
     )
 
     for {
@@ -138,7 +142,8 @@ object ContextualTokenLockValidatorSuite extends MutableIOSuite {
         sourceBalance = Balance(65L),
         sourceLastTokenLocksRef = TokenLockReference.empty,
         currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
+        currentEpochProgress = EpochProgress.MinValue,
+        hashedActiveTokenLocks = List.empty[Hashed[TokenLock]]
       )
 
       res = validator.validate(newHashedTokenLock, context)
@@ -167,7 +172,8 @@ object ContextualTokenLockValidatorSuite extends MutableIOSuite {
         sourceBalance = Balance(100L),
         sourceLastTokenLocksRef = TokenLockReference.empty,
         currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
+        currentEpochProgress = EpochProgress.MinValue,
+        hashedActiveTokenLocks = List.empty[Hashed[TokenLock]]
       )
 
       res = validator.validate(newHashedTokenLock, context)
@@ -200,11 +206,230 @@ object ContextualTokenLockValidatorSuite extends MutableIOSuite {
         sourceBalance = Balance(100L),
         sourceLastTokenLocksRef = TokenLockReference.empty,
         currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
+        currentEpochProgress = EpochProgress.MinValue,
+        hashedActiveTokenLocks = List(existingHashedTokenLock)
       )
 
       res = validator.validate(newHashedTokenLock, context)
     } yield expect.all(res.isValid)
+  }
+
+  test("validate balances - with replacement token lock reference and exact change") { res =>
+    implicit val (h, sp) = res
+
+    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      existingTokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(50L), TokenLockFee(10L))
+      existingActiveTokenLock <- existingTokenLock.toHashed[IO]
+
+      newTokenLock <- buildSignedLockToken(
+        keyPair,
+        TokenLockAmount(60L),
+        TokenLockFee(10L),
+        replaceTokenLockRef = existingActiveTokenLock.hash.some
+      )
+      newHashedTokenLock <- newTokenLock.toHashed[IO]
+
+      context = TokenLockValidatorContext(
+        sourceTokenLocks = none,
+        sourceBalance = Balance(20L),
+        sourceLastTokenLocksRef = TokenLockReference.empty,
+        currentOrdinal = SnapshotOrdinal.MinValue,
+        currentEpochProgress = EpochProgress.MinValue,
+        hashedActiveTokenLocks = List(existingActiveTokenLock)
+      )
+
+      res = validator.validate(newHashedTokenLock, context)
+    } yield expect.all(res.isValid)
+  }
+
+  // ==================== validateReplaceTokenLockRef tests ====================
+
+  test("validateReplaceTokenLockRef - no replace ref passes") { res =>
+    implicit val (h, sp) = res
+
+    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
+    val context = TokenLockValidatorContext(
+      sourceTokenLocks = none,
+      sourceBalance = Balance(100L),
+      sourceLastTokenLocksRef = TokenLockReference.empty,
+      currentOrdinal = SnapshotOrdinal.MinValue,
+      currentEpochProgress = EpochProgress.MinValue,
+      hashedActiveTokenLocks = List.empty[Hashed[TokenLock]]
+    )
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      tokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(50L), TokenLockFee(10L), replaceTokenLockRef = none)
+      hashedTokenLock <- tokenLock.toHashed[IO]
+      res = validator.validate(hashedTokenLock, context)
+    } yield expect.all(res.isValid)
+  }
+
+  test("validateReplaceTokenLockRef - valid replacement with higher amount passes") { res =>
+    implicit val (h, sp) = res
+
+    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      existingTokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(50L), TokenLockFee(10L))
+      existingHashedTokenLock <- existingTokenLock.toHashed[IO]
+
+      newTokenLock <- buildSignedLockToken(
+        keyPair,
+        TokenLockAmount(100L),
+        TokenLockFee(10L),
+        replaceTokenLockRef = existingHashedTokenLock.hash.some
+      )
+      newHashedTokenLock <- newTokenLock.toHashed[IO]
+
+      context = TokenLockValidatorContext(
+        sourceTokenLocks = none,
+        sourceBalance = Balance(200L),
+        sourceLastTokenLocksRef = TokenLockReference.empty,
+        currentOrdinal = SnapshotOrdinal.MinValue,
+        currentEpochProgress = EpochProgress.MinValue,
+        hashedActiveTokenLocks = List(existingHashedTokenLock)
+      )
+
+      res = validator.validate(newHashedTokenLock, context)
+    } yield expect.all(res.isValid)
+  }
+
+  test("validateReplaceTokenLockRef - NothingToReplace when ref not in hashedActiveTokenLocks") { res =>
+    implicit val (h, sp) = res
+
+    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
+    val nonExistentHash = Hash("0000000000000000000000000000000000000000000000000000000000000000")
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      newTokenLock <- buildSignedLockToken(
+        keyPair,
+        TokenLockAmount(100L),
+        TokenLockFee(10L),
+        replaceTokenLockRef = nonExistentHash.some
+      )
+      newHashedTokenLock <- newTokenLock.toHashed[IO]
+
+      context = TokenLockValidatorContext(
+        sourceTokenLocks = none,
+        sourceBalance = Balance(200L),
+        sourceLastTokenLocksRef = TokenLockReference.empty,
+        currentOrdinal = SnapshotOrdinal.MinValue,
+        currentEpochProgress = EpochProgress.MinValue,
+        hashedActiveTokenLocks = List.empty[Hashed[TokenLock]]
+      )
+
+      res = validator.validate(newHashedTokenLock, context)
+    } yield expect.same(NothingToReplace(nonExistentHash).invalidNec, res)
+  }
+
+  test("validateReplaceTokenLockRef - ReplacementLowerThanCurrentTokenLock when new amount less than existing") { res =>
+    implicit val (h, sp) = res
+
+    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      existingTokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(100L), TokenLockFee(10L))
+      existingHashedTokenLock <- existingTokenLock.toHashed[IO]
+
+      newTokenLock <- buildSignedLockToken(
+        keyPair,
+        TokenLockAmount(50L),
+        TokenLockFee(10L),
+        replaceTokenLockRef = existingHashedTokenLock.hash.some
+      )
+      newHashedTokenLock <- newTokenLock.toHashed[IO]
+
+      context = TokenLockValidatorContext(
+        sourceTokenLocks = none,
+        sourceBalance = Balance(200L),
+        sourceLastTokenLocksRef = TokenLockReference.empty,
+        currentOrdinal = SnapshotOrdinal.MinValue,
+        currentEpochProgress = EpochProgress.MinValue,
+        hashedActiveTokenLocks = List(existingHashedTokenLock)
+      )
+
+      res = validator.validate(newHashedTokenLock, context)
+    } yield
+      expect.same(
+        ReplacementLowerThanCurrentTokenLock(TokenLockAmount(50L), TokenLockAmount(100L)).invalidNec,
+        res
+      )
+  }
+
+  test("validateReplaceTokenLockRef - ReplacementLowerThanCurrentTokenLock when new amount equals existing") { res =>
+    implicit val (h, sp) = res
+
+    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      existingTokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(100L), TokenLockFee(10L))
+      existingHashedTokenLock <- existingTokenLock.toHashed[IO]
+
+      newTokenLock <- buildSignedLockToken(
+        keyPair,
+        TokenLockAmount(100L),
+        TokenLockFee(10L),
+        replaceTokenLockRef = existingHashedTokenLock.hash.some
+      )
+      newHashedTokenLock <- newTokenLock.toHashed[IO]
+
+      context = TokenLockValidatorContext(
+        sourceTokenLocks = none,
+        sourceBalance = Balance(200L),
+        sourceLastTokenLocksRef = TokenLockReference.empty,
+        currentOrdinal = SnapshotOrdinal.MinValue,
+        currentEpochProgress = EpochProgress.MinValue,
+        hashedActiveTokenLocks = List(existingHashedTokenLock)
+      )
+
+      res = validator.validate(newHashedTokenLock, context)
+    } yield
+      expect.same(
+        ReplacementLowerThanCurrentTokenLock(TokenLockAmount(100L), TokenLockAmount(100L)).invalidNec,
+        res
+      )
+  }
+
+  test("validateReplaceTokenLockRef - ReplacementIsNotSupported when currencyId is set") { res =>
+    implicit val (h, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      currencyKeyPair <- KeyPairGenerator.makeKeyPair[IO]
+      currencyId = CurrencyId(currencyKeyPair.getPublic.toAddress).some
+      validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), currencyId)
+
+      existingTokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(50L), TokenLockFee(10L), currencyId = currencyId)
+      existingHashedTokenLock <- existingTokenLock.toHashed[IO]
+
+      newTokenLock <- buildSignedLockToken(
+        keyPair,
+        TokenLockAmount(100L),
+        TokenLockFee(10L),
+        replaceTokenLockRef = existingHashedTokenLock.hash.some,
+        currencyId = currencyId
+      )
+      newHashedTokenLock <- newTokenLock.toHashed[IO]
+
+      context = TokenLockValidatorContext(
+        sourceTokenLocks = none,
+        sourceBalance = Balance(200L),
+        sourceLastTokenLocksRef = TokenLockReference.empty,
+        currentOrdinal = SnapshotOrdinal.MinValue,
+        currentEpochProgress = EpochProgress.MinValue,
+        hashedActiveTokenLocks = List(existingHashedTokenLock)
+      )
+
+      res = validator.validate(newHashedTokenLock, context)
+    } yield expect.same(ReplacementIsNotSupported(currencyId).invalidNec, res)
   }
 
   test("validate balances - arithmetic error with overflow") { res =>
@@ -216,7 +441,8 @@ object ContextualTokenLockValidatorSuite extends MutableIOSuite {
       sourceBalance = Balance(Long.MaxValue),
       sourceLastTokenLocksRef = TokenLockReference.empty,
       currentOrdinal = SnapshotOrdinal.MinValue,
-      currentEpochProgress = EpochProgress.MinValue
+      currentEpochProgress = EpochProgress.MinValue,
+      hashedActiveTokenLocks = List.empty[Hashed[TokenLock]]
     )
 
     for {
@@ -236,7 +462,8 @@ object ContextualTokenLockValidatorSuite extends MutableIOSuite {
       sourceBalance = Balance(0L),
       sourceLastTokenLocksRef = TokenLockReference.empty,
       currentOrdinal = SnapshotOrdinal.MinValue,
-      currentEpochProgress = EpochProgress.MinValue
+      currentEpochProgress = EpochProgress.MinValue,
+      hashedActiveTokenLocks = List.empty[Hashed[TokenLock]]
     )
 
     for {
@@ -275,7 +502,8 @@ object ContextualTokenLockValidatorSuite extends MutableIOSuite {
         sourceBalance = Balance(95L),
         sourceLastTokenLocksRef = TokenLockReference.empty,
         currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
+        currentEpochProgress = EpochProgress.MinValue,
+        hashedActiveTokenLocks = List.empty[Hashed[TokenLock]]
       )
 
       res = validator.validate(newHashedTokenLock, context)
@@ -304,7 +532,8 @@ object ContextualTokenLockValidatorSuite extends MutableIOSuite {
         sourceBalance = Balance(45L),
         sourceLastTokenLocksRef = TokenLockReference.empty,
         currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
+        currentEpochProgress = EpochProgress.MinValue,
+        hashedActiveTokenLocks = List.empty[Hashed[TokenLock]]
       )
 
       res = validator.validate(newHashedTokenLock, context)
@@ -320,7 +549,8 @@ object ContextualTokenLockValidatorSuite extends MutableIOSuite {
       sourceBalance = Balance(Long.MaxValue),
       sourceLastTokenLocksRef = TokenLockReference.empty,
       currentOrdinal = SnapshotOrdinal.MinValue,
-      currentEpochProgress = EpochProgress.MinValue
+      currentEpochProgress = EpochProgress.MinValue,
+      hashedActiveTokenLocks = List.empty[Hashed[TokenLock]]
     )
 
     for {
@@ -340,7 +570,8 @@ object ContextualTokenLockValidatorSuite extends MutableIOSuite {
       sourceBalance = Balance(1L),
       sourceLastTokenLocksRef = TokenLockReference.empty,
       currentOrdinal = SnapshotOrdinal.MinValue,
-      currentEpochProgress = EpochProgress.MinValue
+      currentEpochProgress = EpochProgress.MinValue,
+      hashedActiveTokenLocks = List.empty[Hashed[TokenLock]]
     )
 
     for {
@@ -379,478 +610,12 @@ object ContextualTokenLockValidatorSuite extends MutableIOSuite {
         sourceBalance = Balance(55L),
         sourceLastTokenLocksRef = TokenLockReference.empty,
         currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
+        currentEpochProgress = EpochProgress.MinValue,
+        hashedActiveTokenLocks = List.empty[Hashed[TokenLock]]
       )
 
       res = validator.validate(newHashedTokenLock, context)
     } yield expect.all(res.isValid)
-  }
-
-  test("validate replaceTokenLockRef - no replacement reference") { res =>
-    implicit val (h, sp) = res
-
-    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
-    val context = TokenLockValidatorContext(
-      sourceTokenLocks = none,
-      sourceBalance = Balance(100L),
-      sourceLastTokenLocksRef = TokenLockReference.empty,
-      currentOrdinal = SnapshotOrdinal.MinValue,
-      currentEpochProgress = EpochProgress.MinValue
-    )
-
-    for {
-      keyPair <- KeyPairGenerator.makeKeyPair[IO]
-      tokenLock <- buildSignedLockToken(keyPair, replaceTokenLockRef = none)
-      hashedTokenLock <- tokenLock.toHashed[IO]
-      res = validator.validate(hashedTokenLock, context)
-    } yield expect.all(res.isValid)
-  }
-
-  test("validate replaceTokenLockRef - valid replacement with higher amount") { res =>
-    implicit val (h, sp) = res
-
-    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
-
-    for {
-      keyPair <- KeyPairGenerator.makeKeyPair[IO]
-      existingTokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(20L), TokenLockFee(5L))
-      existingHashedTokenLock <- existingTokenLock.toHashed[IO]
-
-      newTokenLock <- buildSignedLockToken(
-        keyPair,
-        TokenLockAmount(30L),
-        TokenLockFee(10L),
-        replaceTokenLockRef = existingHashedTokenLock.hash.some
-      )
-      newHashedTokenLock <- newTokenLock.toHashed[IO]
-
-      existingStoredTokenLock = WaitingTokenLock(existingHashedTokenLock)
-      sourceTokenLocks = SortedMap(TokenLockOrdinal(2L) -> existingStoredTokenLock)
-
-      context = TokenLockValidatorContext(
-        sourceTokenLocks = sourceTokenLocks.some,
-        sourceBalance = Balance(100L),
-        sourceLastTokenLocksRef = TokenLockReference.empty,
-        currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
-      )
-
-      res = validator.validate(newHashedTokenLock, context)
-    } yield expect.all(res.isValid)
-  }
-
-  test("validate replaceTokenLockRef - replacement amount too low") { res =>
-    implicit val (h, sp) = res
-
-    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
-
-    for {
-      keyPair <- KeyPairGenerator.makeKeyPair[IO]
-      existingTokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(30L), TokenLockFee(10L))
-      existingHashedTokenLock <- existingTokenLock.toHashed[IO]
-
-      newTokenLock <- buildSignedLockToken(
-        keyPair,
-        TokenLockAmount(20L),
-        TokenLockFee(5L),
-        replaceTokenLockRef = existingHashedTokenLock.hash.some
-      )
-      newHashedTokenLock <- newTokenLock.toHashed[IO]
-
-      existingStoredTokenLock = WaitingTokenLock(existingHashedTokenLock)
-      sourceTokenLocks = SortedMap(TokenLockOrdinal(2L) -> existingStoredTokenLock)
-
-      context = TokenLockValidatorContext(
-        sourceTokenLocks = sourceTokenLocks.some,
-        sourceBalance = Balance(100L),
-        sourceLastTokenLocksRef = TokenLockReference.empty,
-        currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
-      )
-
-      res = validator.validate(newHashedTokenLock, context)
-    } yield expect.same(ReplacementLowerThanCurrentTokenLock(TokenLockAmount(20L), TokenLockAmount(30L)).invalidNec, res)
-  }
-
-  test("validate replaceTokenLockRef - replacement amount equal to existing") { res =>
-    implicit val (h, sp) = res
-
-    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
-
-    for {
-      keyPair <- KeyPairGenerator.makeKeyPair[IO]
-      existingTokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(30L), TokenLockFee(10L))
-      existingHashedTokenLock <- existingTokenLock.toHashed[IO]
-
-      newTokenLock <- buildSignedLockToken(
-        keyPair,
-        TokenLockAmount(30L),
-        TokenLockFee(5L),
-        replaceTokenLockRef = existingHashedTokenLock.hash.some
-      )
-      newHashedTokenLock <- newTokenLock.toHashed[IO]
-
-      existingStoredTokenLock = WaitingTokenLock(existingHashedTokenLock)
-      sourceTokenLocks = SortedMap(TokenLockOrdinal(2L) -> existingStoredTokenLock)
-
-      context = TokenLockValidatorContext(
-        sourceTokenLocks = sourceTokenLocks.some,
-        sourceBalance = Balance(100L),
-        sourceLastTokenLocksRef = TokenLockReference.empty,
-        currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
-      )
-
-      res = validator.validate(newHashedTokenLock, context)
-    } yield expect.same(ReplacementLowerThanCurrentTokenLock(TokenLockAmount(30L), TokenLockAmount(30L)).invalidNec, res)
-  }
-
-  test("validate replaceTokenLockRef - replacement reference not found in transactions") { res =>
-    implicit val (h, sp) = res
-
-    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
-
-    for {
-      keyPair <- KeyPairGenerator.makeKeyPair[IO]
-      existingTokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(20L), TokenLockFee(5L))
-      existingHashedTokenLock <- existingTokenLock.toHashed[IO]
-
-      newTokenLock <- buildSignedLockToken(
-        keyPair,
-        TokenLockAmount(30L),
-        TokenLockFee(10L),
-        replaceTokenLockRef = existingHashedTokenLock.hash.some
-      )
-      newHashedTokenLock <- newTokenLock.toHashed[IO]
-
-      // No sourceTokenLocks provided, so replacement reference won't be found
-      context = TokenLockValidatorContext(
-        sourceTokenLocks = none,
-        sourceBalance = Balance(100L),
-        sourceLastTokenLocksRef = TokenLockReference.empty,
-        currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
-      )
-
-      res = validator.validate(newHashedTokenLock, context)
-    } yield expect.same(NothingToReplace(existingHashedTokenLock.hash).invalidNec, res)
-  }
-
-  test("validate replaceTokenLockRef - replacement reference not found in empty transactions") { res =>
-    implicit val (h, sp) = res
-
-    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
-
-    for {
-      keyPair <- KeyPairGenerator.makeKeyPair[IO]
-      existingTokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(20L), TokenLockFee(5L))
-      existingHashedTokenLock <- existingTokenLock.toHashed[IO]
-
-      newTokenLock <- buildSignedLockToken(
-        keyPair,
-        TokenLockAmount(30L),
-        TokenLockFee(10L),
-        replaceTokenLockRef = existingHashedTokenLock.hash.some
-      )
-      newHashedTokenLock <- newTokenLock.toHashed[IO]
-
-      // Empty sourceTokenLocks
-      context = TokenLockValidatorContext(
-        sourceTokenLocks = SortedMap.empty[TokenLockOrdinal, StoredTokenLock].some,
-        sourceBalance = Balance(100L),
-        sourceLastTokenLocksRef = TokenLockReference.empty,
-        currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
-      )
-
-      res = validator.validate(newHashedTokenLock, context)
-    } yield expect.same(NothingToReplace(existingHashedTokenLock.hash).invalidNec, res)
-  }
-
-  test("validate replaceTokenLockRef - replacement reference found in majority transactions only") { res =>
-    implicit val (h, sp) = res
-
-    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
-
-    for {
-      keyPair <- KeyPairGenerator.makeKeyPair[IO]
-      existingTokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(20L), TokenLockFee(5L))
-      existingHashedTokenLock <- existingTokenLock.toHashed[IO]
-
-      newTokenLock <- buildSignedLockToken(
-        keyPair,
-        TokenLockAmount(30L),
-        TokenLockFee(10L),
-        replaceTokenLockRef = existingHashedTokenLock.hash.some
-      )
-      newHashedTokenLock <- newTokenLock.toHashed[IO]
-
-      // Only majority transactions, no non-majority ones
-      existingStoredTokenLock = MajorityTokenLock(TokenLockReference.of(existingHashedTokenLock), SnapshotOrdinal.MinValue)
-      sourceTokenLocks = SortedMap(TokenLockOrdinal(2L) -> existingStoredTokenLock)
-
-      context = TokenLockValidatorContext(
-        sourceTokenLocks = sourceTokenLocks.some,
-        sourceBalance = Balance(100L),
-        sourceLastTokenLocksRef = TokenLockReference.empty,
-        currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
-      )
-
-      res = validator.validate(newHashedTokenLock, context)
-    } yield expect.all(res.isValid)
-  }
-
-  test("validate replaceTokenLockRef - replacement reference found in non-majority transactions") { res =>
-    implicit val (h, sp) = res
-
-    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
-
-    for {
-      keyPair <- KeyPairGenerator.makeKeyPair[IO]
-      existingTokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(20L), TokenLockFee(5L))
-      existingHashedTokenLock <- existingTokenLock.toHashed[IO]
-
-      newTokenLock <- buildSignedLockToken(
-        keyPair,
-        TokenLockAmount(30L),
-        TokenLockFee(10L),
-        replaceTokenLockRef = existingHashedTokenLock.hash.some
-      )
-      newHashedTokenLock <- newTokenLock.toHashed[IO]
-
-      // Mix of majority and non-majority transactions
-      majorityStoredTokenLock = MajorityTokenLock(TokenLockReference.of(existingHashedTokenLock), SnapshotOrdinal.MinValue)
-      nonMajorityStoredTokenLock = WaitingTokenLock(existingHashedTokenLock)
-      sourceTokenLocks = SortedMap(
-        TokenLockOrdinal(2L) -> majorityStoredTokenLock,
-        TokenLockOrdinal(3L) -> nonMajorityStoredTokenLock
-      )
-
-      context = TokenLockValidatorContext(
-        sourceTokenLocks = sourceTokenLocks.some,
-        sourceBalance = Balance(100L),
-        sourceLastTokenLocksRef = TokenLockReference.empty,
-        currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
-      )
-
-      res = validator.validate(newHashedTokenLock, context)
-    } yield expect.all(res.isValid)
-  }
-
-  test("validate replaceTokenLockRef - correct reference but wrong source address") { res =>
-    implicit val (h, sp) = res
-
-    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
-
-    for {
-      originalKeyPair <- KeyPairGenerator.makeKeyPair[IO]
-      differentKeyPair <- KeyPairGenerator.makeKeyPair[IO]
-
-      existingTokenLock <- buildSignedLockToken(originalKeyPair, TokenLockAmount(20L), TokenLockFee(5L))
-      existingHashedTokenLock <- existingTokenLock.toHashed[IO]
-
-      // Try to replace with a different key pair (different source address)
-      newTokenLock <- buildSignedLockToken(
-        differentKeyPair,
-        TokenLockAmount(30L),
-        TokenLockFee(10L),
-        replaceTokenLockRef = existingHashedTokenLock.hash.some
-      )
-      newHashedTokenLock <- newTokenLock.toHashed[IO]
-
-      existingStoredTokenLock = WaitingTokenLock(existingHashedTokenLock)
-      sourceTokenLocks = SortedMap(TokenLockOrdinal(2L) -> existingStoredTokenLock)
-
-      context = TokenLockValidatorContext(
-        sourceTokenLocks = sourceTokenLocks.some,
-        sourceBalance = Balance(100L),
-        sourceLastTokenLocksRef = TokenLockReference.empty,
-        currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
-      )
-
-      res = validator.validate(newHashedTokenLock, context)
-    } yield expect.same(NothingToReplace(existingHashedTokenLock.hash).invalidNec, res)
-  }
-
-  test("validate replaceTokenLockRef - replacement not supported for currency token locks") { res =>
-    implicit val (h, sp) = res
-
-    for {
-      currencyKeyPair <- KeyPairGenerator.makeKeyPair[IO]
-      currencyId = CurrencyId(currencyKeyPair.getPublic.toAddress).some
-      validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), currencyId)
-
-      keyPair <- KeyPairGenerator.makeKeyPair[IO]
-      existingTokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(20L), TokenLockFee(5L), currencyId = currencyId)
-      existingHashedTokenLock <- existingTokenLock.toHashed[IO]
-
-      newTokenLock <- buildSignedLockToken(
-        keyPair,
-        TokenLockAmount(30L),
-        TokenLockFee(10L),
-        currencyId = currencyId,
-        replaceTokenLockRef = existingHashedTokenLock.hash.some
-      )
-      newHashedTokenLock <- newTokenLock.toHashed[IO]
-
-      existingStoredTokenLock = WaitingTokenLock(existingHashedTokenLock)
-      sourceTokenLocks = SortedMap(TokenLockOrdinal(2L) -> existingStoredTokenLock)
-
-      context = TokenLockValidatorContext(
-        sourceTokenLocks = sourceTokenLocks.some,
-        sourceBalance = Balance(100L),
-        sourceLastTokenLocksRef = TokenLockReference.empty,
-        currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
-      )
-
-      res = validator.validate(newHashedTokenLock, context)
-    } yield expect.same(ReplacementIsNotSupported(currencyId).invalidNec, res)
-  }
-
-  test("validate replaceTokenLockRef - replacement reference found in majority transactions") { res =>
-    implicit val (h, sp) = res
-
-    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
-
-    for {
-      keyPair <- KeyPairGenerator.makeKeyPair[IO]
-      existingTokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(20L), TokenLockFee(5L))
-      existingHashedTokenLock <- existingTokenLock.toHashed[IO]
-
-      newTokenLock <- buildSignedLockToken(
-        keyPair,
-        TokenLockAmount(30L),
-        TokenLockFee(10L),
-        replaceTokenLockRef = existingHashedTokenLock.hash.some
-      )
-      newHashedTokenLock <- newTokenLock.toHashed[IO]
-
-      // Create a majority token lock (only has reference, no transaction data)
-      majorityStoredTokenLock = MajorityTokenLock(TokenLockReference.of(existingHashedTokenLock), SnapshotOrdinal.MinValue)
-      sourceTokenLocks = SortedMap(TokenLockOrdinal(2L) -> majorityStoredTokenLock)
-
-      context = TokenLockValidatorContext(
-        sourceTokenLocks = sourceTokenLocks.some,
-        sourceBalance = Balance(100L),
-        sourceLastTokenLocksRef = TokenLockReference.empty,
-        currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
-      )
-
-      res = validator.validate(newHashedTokenLock, context)
-    } yield expect.all(res.isValid)
-  }
-
-  test("validate replaceTokenLockRef - replacement reference found in majority transactions with different source") { res =>
-    implicit val (h, sp) = res
-
-    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
-
-    for {
-      originalKeyPair <- KeyPairGenerator.makeKeyPair[IO]
-      differentKeyPair <- KeyPairGenerator.makeKeyPair[IO]
-
-      existingTokenLock <- buildSignedLockToken(originalKeyPair, TokenLockAmount(20L), TokenLockFee(5L))
-      existingHashedTokenLock <- existingTokenLock.toHashed[IO]
-
-      // Try to replace with a different key pair (different source address)
-      newTokenLock <- buildSignedLockToken(
-        differentKeyPair,
-        TokenLockAmount(30L),
-        TokenLockFee(10L),
-        replaceTokenLockRef = existingHashedTokenLock.hash.some
-      )
-      newHashedTokenLock <- newTokenLock.toHashed[IO]
-
-      // Create a majority token lock (only has reference, no transaction data)
-      majorityStoredTokenLock = MajorityTokenLock(TokenLockReference.of(existingHashedTokenLock), SnapshotOrdinal.MinValue)
-      sourceTokenLocks = SortedMap(TokenLockOrdinal(2L) -> majorityStoredTokenLock)
-
-      context = TokenLockValidatorContext(
-        sourceTokenLocks = sourceTokenLocks.some,
-        sourceBalance = Balance(100L),
-        sourceLastTokenLocksRef = TokenLockReference.empty,
-        currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
-      )
-
-      res = validator.validate(newHashedTokenLock, context)
-    } yield expect.all(res.isValid)
-  }
-
-  test("validate replaceTokenLockRef - replacement reference found in majority transactions with lower amount") { res =>
-    implicit val (h, sp) = res
-
-    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
-
-    for {
-      keyPair <- KeyPairGenerator.makeKeyPair[IO]
-      existingTokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(50L), TokenLockFee(10L))
-      existingHashedTokenLock <- existingTokenLock.toHashed[IO]
-
-      // Try to replace with a lower amount
-      newTokenLock <- buildSignedLockToken(
-        keyPair,
-        TokenLockAmount(30L),
-        TokenLockFee(5L),
-        replaceTokenLockRef = existingHashedTokenLock.hash.some
-      )
-      newHashedTokenLock <- newTokenLock.toHashed[IO]
-
-      // Create a majority token lock (only has reference, no transaction data)
-      majorityStoredTokenLock = MajorityTokenLock(TokenLockReference.of(existingHashedTokenLock), SnapshotOrdinal.MinValue)
-      sourceTokenLocks = SortedMap(TokenLockOrdinal(2L) -> majorityStoredTokenLock)
-
-      context = TokenLockValidatorContext(
-        sourceTokenLocks = sourceTokenLocks.some,
-        sourceBalance = Balance(100L),
-        sourceLastTokenLocksRef = TokenLockReference.empty,
-        currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
-      )
-
-      res = validator.validate(newHashedTokenLock, context)
-    } yield expect.all(res.isValid)
-  }
-
-  test("validate replaceTokenLockRef - replacement reference not found in majority transactions") { res =>
-    implicit val (h, sp) = res
-
-    val validator = ContextualTokenLockValidator.make(none, TokenLocksConfig(0L), none)
-
-    for {
-      keyPair <- KeyPairGenerator.makeKeyPair[IO]
-      existingTokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(20L), TokenLockFee(5L))
-      existingHashedTokenLock <- existingTokenLock.toHashed[IO]
-
-      newTokenLock <- buildSignedLockToken(
-        keyPair,
-        TokenLockAmount(30L),
-        TokenLockFee(10L),
-        replaceTokenLockRef = existingHashedTokenLock.hash.some
-      )
-      newHashedTokenLock <- newTokenLock.toHashed[IO]
-
-      // Create a majority token lock with a different reference
-      differentTokenLock <- buildSignedLockToken(keyPair, TokenLockAmount(40L), TokenLockFee(15L))
-      differentHashedTokenLock <- differentTokenLock.toHashed[IO]
-      majorityStoredTokenLock = MajorityTokenLock(TokenLockReference.of(differentHashedTokenLock), SnapshotOrdinal.MinValue)
-      sourceTokenLocks = SortedMap(TokenLockOrdinal(2L) -> majorityStoredTokenLock)
-
-      context = TokenLockValidatorContext(
-        sourceTokenLocks = sourceTokenLocks.some,
-        sourceBalance = Balance(100L),
-        sourceLastTokenLocksRef = TokenLockReference.empty,
-        currentOrdinal = SnapshotOrdinal.MinValue,
-        currentEpochProgress = EpochProgress.MinValue
-      )
-
-      res = validator.validate(newHashedTokenLock, context)
-    } yield expect.same(NothingToReplace(existingHashedTokenLock.hash).invalidNec, res)
   }
 
   def buildSignedLockToken(

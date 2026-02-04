@@ -20,7 +20,7 @@ import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.tokenLock.{TokenLockBlock, TokenLockReference}
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal, tokenLock}
 import io.constellationnetwork.security.hash.ProofsHash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher}
@@ -89,6 +89,8 @@ object TokenLockBlockService {
           tokenLockStorage.getInitialTx.ref
 
         def getCollateral: Amount = collateral
+
+        def getToBeReplacedHashedTokenLocks: List[Hashed[tokenLock.TokenLock]] = List.empty[Hashed[tokenLock.TokenLock]]
       }
 
       private def processAcceptanceSuccess(

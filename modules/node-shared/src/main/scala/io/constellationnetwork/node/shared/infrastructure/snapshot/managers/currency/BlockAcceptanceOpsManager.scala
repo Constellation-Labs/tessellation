@@ -77,7 +77,8 @@ class BlockAcceptanceOpsManager[F[_]: Async: Parallel](
       lastSnapshotContext.snapshotInfo.balances,
       lastSnapshotContext.snapshotInfo.lastTokenLockRefs.getOrElse(SortedMap.empty),
       collateral,
-      initialTxRef
+      initialTxRef,
+      List.empty
     )
 
     val maybeEpochProgress =

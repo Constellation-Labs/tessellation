@@ -565,6 +565,8 @@ const testIncreaseDelegatedStake = async (urls, account, stakeHash, nodeId) => {
 
   logWorkflow.info('Waiting for stake with non-zero rewards balance')
 
+  await sleep(5000);
+
   const originalStake = await fetchStakeWithRewardsBalance(
     urls,
     account.address,
@@ -580,7 +582,9 @@ const testIncreaseDelegatedStake = async (urls, account, stakeHash, nodeId) => {
     throw new Error('Cannot increase the node')
   }
 
-  const thirdLockAmount = 2000000000000
+  const balance = await dag4.network.getAddressBalance(account.address);
+  // use full balance
+  const thirdLockAmount = balance.balance + originalStake.amount
   const thirdLockHash = await createTokenLock(account, urls, thirdLockAmount, originalStake.tokenLockRef, originalStake.amount)
 
   // get other stake so we can verify it hasn't changed

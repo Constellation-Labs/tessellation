@@ -5,7 +5,8 @@ import cats.syntax.applicative._
 
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
-import io.constellationnetwork.schema.tokenLock.TokenLockReference
+import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockReference}
+import io.constellationnetwork.security.Hashed
 
 trait TokenLockBlockAcceptanceContext[F[_]] {
 
@@ -17,6 +18,7 @@ trait TokenLockBlockAcceptanceContext[F[_]] {
 
   def getCollateral: Amount
 
+  def getToBeReplacedHashedTokenLocks: List[Hashed[TokenLock]]
 }
 
 object TokenLockBlockAcceptanceContext {
@@ -25,7 +27,8 @@ object TokenLockBlockAcceptanceContext {
     balances: Map[Address, Balance],
     lastTxRefs: Map[Address, TokenLockReference],
     collateral: Amount,
-    initialTxRef: TokenLockReference
+    initialTxRef: TokenLockReference,
+    toBeReplacedHashedTokenLocks: List[Hashed[TokenLock]]
   ): TokenLockBlockAcceptanceContext[F] =
     new TokenLockBlockAcceptanceContext[F] {
 
@@ -39,6 +42,8 @@ object TokenLockBlockAcceptanceContext {
         initialTxRef
 
       def getCollateral: Amount = collateral
+
+      def getToBeReplacedHashedTokenLocks: List[Hashed[TokenLock]] = toBeReplacedHashedTokenLocks
     }
 
 }

@@ -152,7 +152,7 @@ object TokenLockRoutesSuite extends HttpSuite {
 
   def mockTokenLockStorage(
     maybeHashedTokenLock: Option[Hashed[TokenLock]]
-  ): IO[TokenLockStorage[IO]] = mockEmptyMapRef(maybeHashedTokenLock).map { emr =>
+  )(implicit hasher: Hasher[IO]): IO[TokenLockStorage[IO]] = mockEmptyMapRef(maybeHashedTokenLock).map { emr =>
     new TokenLockStorage[IO](
       emr,
       TokenLockReference.empty,

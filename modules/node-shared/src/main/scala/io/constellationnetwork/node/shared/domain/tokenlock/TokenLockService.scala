@@ -5,6 +5,8 @@ import cats.data.Validated.{Invalid, Valid}
 import cats.effect.Async
 import cats.syntax.all._
 
+import scala.collection.immutable.{SortedMap, SortedSet}
+
 import io.constellationnetwork.currency.schema.currency.CurrencyIncrementalSnapshot
 import io.constellationnetwork.ext.cats.syntax.validated.validatedSyntax
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
@@ -19,6 +21,7 @@ import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StatePro
 import io.constellationnetwork.schema.tokenLock.TokenLock
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher}
 
 import fs2.Stream
@@ -57,11 +60,16 @@ object TokenLockService {
           .flatMap {
             case Valid(_) =>
               lastSnapshotStorage.getCombinedStream.map {
-                case Some((s, si)) => (s.ordinal, si.balances.getOrElse(tokenLock.source, Balance.empty))
-                case None          => (SnapshotOrdinal.MinValue, Balance.empty)
+                case Some((s, si)) =>
+                  (
+                    s.ordinal,
+                    si.balances.getOrElse(tokenLock.source, Balance.empty),
+                    si.getActiveTokenLocks.getOrElse(tokenLock.source, SortedSet.empty[Signed[TokenLock]])
+                  )
+                case None => (SnapshotOrdinal.MinValue, Balance.empty, SortedSet.empty[Signed[TokenLock]])
               }.changes.switchMap {
-                case (latestOrdinal, balance) =>
-                  Stream.eval(tokenLockStorage.tryPut(tokenLock, latestOrdinal, lastGlobalEpochProgress, balance))
+                case (latestOrdinal, balance, activeTokenLocks) =>
+                  Stream.eval(tokenLockStorage.tryPut(tokenLock, latestOrdinal, lastGlobalEpochProgress, balance, activeTokenLocks))
               }.head.compile.last.flatMap {
                 case Some(value) => value.pure[F]
                 case None =>
