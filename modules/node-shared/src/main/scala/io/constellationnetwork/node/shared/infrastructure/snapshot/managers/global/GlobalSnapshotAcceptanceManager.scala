@@ -57,6 +57,7 @@ import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.mpt.MptFieldDigests
 import io.constellationnetwork.security.mpt.producer.StatefulMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
@@ -1132,6 +1133,14 @@ object GlobalSnapshotAcceptanceManager {
             )
 
             _ <- mptStore.syncFromStateChanges(stateChangesAccumulator, ordinal)
+
+            // Diagnostic logging for field-level MPT debugging
+            // Enable with MPT_FIELD_DIGESTS_LOGGING=true
+            _ <- (for {
+              trieOpt <- mptStore.underlying.build.map(_.toOption)
+              _ <- trieOpt.traverse_(trie => MptFieldDigests.logFieldDigests[F](trie, s"ordinal=$ordinal/consensus"))
+            } yield ()).whenA(sys.env.getOrElse("MPT_FIELD_DIGESTS_LOGGING", "false") == "true")
+
             stateProof <- builder.buildProof(gsi, ordinal)
 
             (expiredAllowSpends, expiredTokenLocks) = (

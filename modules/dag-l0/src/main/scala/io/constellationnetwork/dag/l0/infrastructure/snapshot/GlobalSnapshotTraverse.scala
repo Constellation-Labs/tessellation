@@ -18,6 +18,7 @@ import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.mpt.MptFieldDigests
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.validator.StateProofValidator
 
@@ -126,6 +127,27 @@ object GlobalSnapshotTraverse {
 
           hashedFirstInc <- HasherSelector[F].withCurrent(implicit hasher => firstInc.toHashed)
           stateProofInvalid <- StateProofValidator.validateProof(hashedFirstInc, firstInfoCalculatedProof).map(_.isInvalid)
+
+          // Log field-level diagnostics when state proof validation fails
+          _ <- (for {
+            _ <- logger.error(s"STATE PROOF MISMATCH at ordinal=${firstInc.ordinal.show}")
+            _ <- logger.error(s"Expected mptRoot: ${hashedFirstInc.signed.value.stateProof.mptRoot}")
+            _ <- logger.error(s"Calculated mptRoot: ${firstInfoCalculatedProof.mptRoot}")
+            // Build trie from info to extract field digests
+            rebuiltTrie <- HasherSelector[F].withCurrent { implicit hasher =>
+              import io.constellationnetwork.security.mpt.MerklePatriciaTrie
+              firstInfo
+                .allStateEntries[F]
+                .flatMap(entries =>
+                  entries.toList.traverse {
+                    case (k, v) =>
+                      GlobalStateKey.toHex[F](k).map(_ -> v)
+                  }.map(_.toMap)
+                )
+                .flatMap(hexMap => MerklePatriciaTrie.makeParallel[F, Json](hexMap))
+            }
+            _ <- MptFieldDigests.logFieldDigests[F](rebuiltTrie, s"ordinal=${firstInc.ordinal.show}/retraversal")
+          } yield ()).whenA(stateProofInvalid)
 
           _ <- (new Exception(s"Snapshot info does not match the snapshot at ordinal=${firstInc.ordinal.show}"))
             .raiseError[F, Unit]
