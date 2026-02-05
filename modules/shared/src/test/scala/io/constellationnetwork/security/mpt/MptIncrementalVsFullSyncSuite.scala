@@ -438,4 +438,306 @@ object MptIncrementalVsFullSyncSuite extends MutableIOSuite with Checkers {
         fullRoot == incRoot
       )
   }
+
+  // ========== Serialization round-trip tests ==========
+  // These simulate what happens when state is written to disk and read back
+
+  test("DelegatedStakeRecord survives JSON round-trip with identical encoding") { res =>
+    implicit val (j, h, _) = res
+
+    val nodeId = Id(Hex("1234567890abcdef" * 8)).toPeerId
+    val stake = createSignedStake(addr1, nodeId, 1000L)
+    val record = DelegatedStakeRecord(stake, SnapshotOrdinal(1L), balance.Balance(50L), None, None)
+
+    import io.circe.syntax._
+    import io.circe.parser._
+
+    val json1 = record.asJson
+    val roundTrip = decode[DelegatedStakeRecord](json1.noSpaces)
+    val json2 = roundTrip.map(_.asJson)
+
+    for {
+      _ <- IO.println(s"[DEBUG] Original JSON: ${json1.noSpaces.take(200)}...")
+      _ <- IO.println(s"[DEBUG] Round-trip JSON: ${json2.map(_.noSpaces.take(200))}...")
+    } yield
+      expect.all(
+        roundTrip.isRight,
+        json2.map(_.noSpaces) == Right(json1.noSpaces)
+      )
+  }
+
+  test("SortedSet[DelegatedStakeRecord] survives JSON round-trip with identical encoding") { res =>
+    implicit val (j, h, _) = res
+
+    val nodeId = Id(Hex("1234567890abcdef" * 8)).toPeerId
+    val stake1 = createSignedStake(addr1, nodeId, 1000L)
+    val stake2 = createSignedStake(addr1, nodeId, 2000L, Hash("abc"))
+
+    // Multiple records for same address - ordering matters!
+    val records = SortedSet(
+      DelegatedStakeRecord(stake1, SnapshotOrdinal(1L), balance.Balance(50L), None, None),
+      DelegatedStakeRecord(stake2, SnapshotOrdinal(2L), balance.Balance(100L), None, None)
+    )
+
+    import io.circe.syntax._
+    import io.circe.parser._
+
+    val json1 = records.asJson
+    val roundTrip = decode[SortedSet[DelegatedStakeRecord]](json1.noSpaces)
+    val json2 = roundTrip.map(_.asJson)
+
+    for {
+      _ <- IO.println(s"[DEBUG] Original set size: ${records.size}")
+      _ <- IO.println(s"[DEBUG] Round-trip set size: ${roundTrip.map(_.size)}")
+      _ <- IO.println(s"[DEBUG] JSON match: ${json2.map(_.noSpaces) == Right(json1.noSpaces)}")
+    } yield
+      expect.all(
+        roundTrip.isRight,
+        roundTrip.map(_.size) == Right(records.size),
+        json2.map(_.noSpaces) == Right(json1.noSpaces)
+      )
+  }
+
+  test("GlobalSnapshotInfo with delegated stakes survives JSON round-trip") { res =>
+    implicit val (j, h, _) = res
+
+    val nodeId = Id(Hex("1234567890abcdef" * 8)).toPeerId
+    val stake1 = createSignedStake(addr1, nodeId, 1000L)
+    val stake2 = createSignedStake(addr2, nodeId, 2000L)
+
+    val delegatedStakes = SortedMap(
+      addr1 -> SortedSet(DelegatedStakeRecord(stake1, SnapshotOrdinal(1L), balance.Balance(50L), None, None)),
+      addr2 -> SortedSet(DelegatedStakeRecord(stake2, SnapshotOrdinal(1L), balance.Balance(75L), None, None))
+    )
+
+    val info = GlobalSnapshotInfo.empty.copy(activeDelegatedStakes = Some(delegatedStakes))
+
+    import io.circe.syntax._
+    import io.circe.parser._
+
+    val json1 = info.asJson
+    val roundTrip = decode[GlobalSnapshotInfo](json1.noSpaces)
+
+    for {
+      _ <- IO.println(s"[DEBUG] Original info delegatedStakes: ${info.activeDelegatedStakes.map(_.size)}")
+      _ <- IO.println(s"[DEBUG] Round-trip delegatedStakes: ${roundTrip.map(_.activeDelegatedStakes.map(_.size))}")
+
+      // Now compare state entries from both
+      originalEntries <- info.allStateEntries[IO]
+      roundTripEntries <- roundTrip.fold(
+        err => IO.raiseError(new RuntimeException(s"Decode failed: $err")),
+        rt => rt.allStateEntries[IO]
+      )
+
+      _ <- IO.println(s"[DEBUG] Original entries: ${originalEntries.size}")
+      _ <- IO.println(s"[DEBUG] Round-trip entries: ${roundTripEntries.size}")
+
+      // Check for differences
+      diffKeys = (originalEntries.keySet ++ roundTripEntries.keySet).filter { k =>
+        originalEntries.get(k) != roundTripEntries.get(k)
+      }
+      _ <- diffKeys.toList.traverse_ { k =>
+        IO.println(s"[DEBUG] Entry differs for $k") >>
+          IO.println(s"[DEBUG]   original: ${originalEntries.get(k).map(_.noSpaces.take(100))}") >>
+          IO.println(s"[DEBUG]   roundtrip: ${roundTripEntries.get(k).map(_.noSpaces.take(100))}")
+      }
+    } yield
+      expect.all(
+        roundTrip.isRight,
+        originalEntries.size == roundTripEntries.size,
+        originalEntries == roundTripEntries
+      )
+  }
+
+  test("MPT root hash matches after GlobalSnapshotInfo JSON round-trip") { res =>
+    implicit val (j, h, sp) = res
+
+    val nodeId = Id(Hex("1234567890abcdef" * 8)).toPeerId
+    val stake1 = createSignedStake(addr1, nodeId, 1000L)
+    val stake2 = createSignedStake(addr2, nodeId, 2000L)
+
+    val delegatedStakes = SortedMap(
+      addr1 -> SortedSet(DelegatedStakeRecord(stake1, SnapshotOrdinal(1L), balance.Balance(50L), None, None)),
+      addr2 -> SortedSet(DelegatedStakeRecord(stake2, SnapshotOrdinal(1L), balance.Balance(75L), None, None))
+    )
+
+    val info = GlobalSnapshotInfo.empty.copy(activeDelegatedStakes = Some(delegatedStakes))
+    val ordinal = SnapshotOrdinal(NonNegLong(1000L))
+
+    import io.circe.syntax._
+    import io.circe.parser._
+
+    for {
+      // Build MPT from original
+      originalProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      originalStore <- MptStore.make[IO, GlobalStateKey](originalProducer, GlobalStateKey.toHex[IO])
+      _ <- originalStore.syncFromGlobalSnapshotInfo(info, ordinal)
+      originalTrie <- originalStore.build(ordinal)
+      originalRoot = originalTrie.map(_.rootHash)
+
+      // Serialize and deserialize GlobalSnapshotInfo
+      json = info.asJson
+      roundTripInfo <- IO.fromEither(decode[GlobalSnapshotInfo](json.noSpaces))
+
+      // Build MPT from round-trip info
+      rtProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      rtStore <- MptStore.make[IO, GlobalStateKey](rtProducer, GlobalStateKey.toHex[IO])
+      _ <- rtStore.syncFromGlobalSnapshotInfo(roundTripInfo, ordinal)
+      rtTrie <- rtStore.build(ordinal)
+      rtRoot = rtTrie.map(_.rootHash)
+
+      _ <- IO.println(s"[DEBUG] Original MPT root: $originalRoot")
+      _ <- IO.println(s"[DEBUG] Round-trip MPT root: $rtRoot")
+    } yield
+      expect.all(
+        originalRoot.isRight,
+        rtRoot.isRight,
+        originalRoot == rtRoot
+      )
+  }
+
+  test("MPT entries survive being extracted and rebuilt") { res =>
+    implicit val (j, h, sp) = res
+
+    val nodeId = Id(Hex("1234567890abcdef" * 8)).toPeerId
+    val stake1 = createSignedStake(addr1, nodeId, 1000L)
+
+    val delegatedStakes = SortedMap(
+      addr1 -> SortedSet(DelegatedStakeRecord(stake1, SnapshotOrdinal(1L), balance.Balance(50L), None, None))
+    )
+
+    val info = GlobalSnapshotInfo.empty.copy(activeDelegatedStakes = Some(delegatedStakes))
+    val ordinal = SnapshotOrdinal(NonNegLong(1000L))
+
+    for {
+      // Build first MPT
+      producer1 <- InMemoryMerklePatriciaProducer.make[IO]()
+      store1 <- MptStore.make[IO, GlobalStateKey](producer1, GlobalStateKey.toHex[IO])
+      _ <- store1.syncFromGlobalSnapshotInfo(info, ordinal)
+      trie1 <- store1.build(ordinal)
+      root1 = trie1.map(_.rootHash)
+
+      // Get entries from underlying producer
+      entries1 <- producer1.entries
+
+      // Build second MPT from extracted entries
+      producer2 <- InMemoryMerklePatriciaProducer.make[IO]()
+      _ <- producer2.insertBytes(entries1)
+      trie2 <- producer2.buildForOrdinal(ordinal)
+      root2 = trie2.map(_.rootHash)
+
+      _ <- IO.println(s"[DEBUG] Original MPT root: $root1")
+      _ <- IO.println(s"[DEBUG] Rebuilt from entries MPT root: $root2")
+      _ <- IO.println(s"[DEBUG] Entries count: ${entries1.size}")
+    } yield
+      expect.all(
+        root1.isRight,
+        root2.isRight,
+        root1 == root2
+      )
+  }
+
+  // ========== Simulating consensus->persist->reload->validate flow ==========
+
+  test("simulate: consensus builds incrementally, then validate rebuilds from full state") { res =>
+    implicit val (j, h, sp) = res
+
+    val nodeId = Id(Hex("1234567890abcdef" * 8)).toPeerId
+
+    // Ordinal 1: Initial state with one delegated stake
+    val stake1 = createSignedStake(addr1, nodeId, 1000L)
+    val ordinal1 = SnapshotOrdinal(NonNegLong(1L))
+    val delegatedStakes1 = SortedMap(
+      addr1 -> SortedSet(DelegatedStakeRecord(stake1, ordinal1, balance.Balance(0L), None, None))
+    )
+    val acc1 = StateChangesAccumulator(activeDelegatedStakes = delegatedStakes1)
+
+    // Ordinal 2: Add another delegated stake
+    val stake2 = createSignedStake(addr2, nodeId, 2000L)
+    val ordinal2 = SnapshotOrdinal(NonNegLong(2L))
+    val delegatedStakes2 = SortedMap(
+      addr1 -> SortedSet(DelegatedStakeRecord(stake1, ordinal1, balance.Balance(10L), None, None)),
+      addr2 -> SortedSet(DelegatedStakeRecord(stake2, ordinal2, balance.Balance(0L), None, None))
+    )
+    val acc2Changes = StateChangesAccumulator(
+      activeDelegatedStakes = SortedMap(
+        addr1 -> SortedSet(DelegatedStakeRecord(stake1, ordinal1, balance.Balance(10L), None, None)),
+        addr2 -> SortedSet(DelegatedStakeRecord(stake2, ordinal2, balance.Balance(0L), None, None))
+      )
+    )
+    val info2 = GlobalSnapshotInfo.empty.copy(activeDelegatedStakes = Some(delegatedStakes2))
+
+    for {
+      // CONSENSUS PATH: Build MPT incrementally
+      consensusProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      consensusStore <- MptStore.make[IO, GlobalStateKey](consensusProducer, GlobalStateKey.toHex[IO])
+
+      _ <- consensusStore.syncFromStateChanges(acc1, ordinal1)
+      _ <- consensusStore.syncFromStateChanges(acc2Changes, ordinal2)
+      consensusTrie2 <- consensusStore.build(ordinal2)
+      consensusRoot2 = consensusTrie2.map(_.rootHash)
+
+      // VALIDATION PATH: Build MPT from full state
+      validationProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      validationStore <- MptStore.make[IO, GlobalStateKey](validationProducer, GlobalStateKey.toHex[IO])
+
+      _ <- validationStore.syncFromGlobalSnapshotInfo(info2, ordinal2)
+      validationTrie2 <- validationStore.build(ordinal2)
+      validationRoot2 = validationTrie2.map(_.rootHash)
+
+      _ <- IO.println(s"[DEBUG] Consensus root at ordinal 2: $consensusRoot2")
+      _ <- IO.println(s"[DEBUG] Validation root at ordinal 2: $validationRoot2")
+    } yield
+      expect.all(
+        consensusRoot2.isRight,
+        validationRoot2.isRight,
+        consensusRoot2 == validationRoot2
+      )
+  }
+
+  test("simulate: multiple delegated stakes for same address") { res =>
+    implicit val (j, h, sp) = res
+
+    val nodeId1 = Id(Hex("1111111111111111" * 8)).toPeerId
+    val nodeId2 = Id(Hex("2222222222222222" * 8)).toPeerId
+
+    val stake1 = createSignedStake(addr1, nodeId1, 1000L)
+    val stake2 = createSignedStake(addr1, nodeId2, 2000L, Hash("different"))
+
+    val ordinal = SnapshotOrdinal(NonNegLong(1L))
+    val record1 = DelegatedStakeRecord(stake1, ordinal, balance.Balance(0L), None, None)
+    val record2 = DelegatedStakeRecord(stake2, ordinal, balance.Balance(0L), None, None)
+
+    val delegatedStakes = SortedMap(
+      addr1 -> SortedSet(record1, record2)
+    )
+
+    val accumulator = StateChangesAccumulator(activeDelegatedStakes = delegatedStakes)
+    val info = GlobalSnapshotInfo.empty.copy(activeDelegatedStakes = Some(delegatedStakes))
+
+    for {
+      accEntries <- accumulator.toStateEntries[IO]
+      infoEntries <- info.allStateEntries[IO]
+
+      _ <- IO.println(s"[DEBUG] Multiple stakes - entries match: ${accEntries == infoEntries}")
+
+      accProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      accStore <- MptStore.make[IO, GlobalStateKey](accProducer, GlobalStateKey.toHex[IO])
+      _ <- accStore.syncFromStateChanges(accumulator, ordinal)
+      accTrie <- accStore.build(ordinal)
+      accRoot = accTrie.map(_.rootHash)
+
+      infoProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      infoStore <- MptStore.make[IO, GlobalStateKey](infoProducer, GlobalStateKey.toHex[IO])
+      _ <- infoStore.syncFromGlobalSnapshotInfo(info, ordinal)
+      infoTrie <- infoStore.build(ordinal)
+      infoRoot = infoTrie.map(_.rootHash)
+
+      _ <- IO.println(s"[DEBUG] Multiple stakes - roots match: ${accRoot == infoRoot}")
+    } yield
+      expect.all(
+        accEntries == infoEntries,
+        accRoot == infoRoot
+      )
+  }
 }
