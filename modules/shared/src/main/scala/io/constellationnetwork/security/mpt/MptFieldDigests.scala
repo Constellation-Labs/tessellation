@@ -3,28 +3,29 @@ package io.constellationnetwork.security.mpt
 import cats.effect.Sync
 import cats.syntax.all._
 
-import io.constellationnetwork.schema.mpt.GlobalStateFieldId
+import io.constellationnetwork.schema.mpt.{GlobalStateFieldId, GlobalStateKey}
+import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 
+import io.circe.Json
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 /** Utilities for extracting per-field digests from a Merkle Patricia Trie.
   *
-  * This allows populating individual field hashes in GlobalSnapshotStateProof
-  * even when using MPT format, providing visibility into which state components changed.
+  * This allows populating individual field hashes in GlobalSnapshotStateProof even when using MPT format, providing visibility into which
+  * state components changed.
   *
-  * Use for debugging non-determinism between consensus (incremental sync) and
-  * re-traversal (full sync) by comparing per-field hashes.
+  * Use for debugging non-determinism between consensus (incremental sync) and re-traversal (full sync) by comparing per-field hashes.
   */
 object MptFieldDigests {
 
   /** Get the subtrie root hash for a given prefix.
     *
     * Traverses the trie following the prefix nibbles. Returns the digest of:
-    * - The first node that is fully contained within the prefix
-    * - Or Hash.empty if no data exists under that prefix
+    *   - The first node that is fully contained within the prefix
+    *   - Or Hash.empty if no data exists under that prefix
     */
   def getSubtrieDigest[F[_]: Sync](
     trie: MerklePatriciaTrie,
@@ -67,8 +68,8 @@ object MptFieldDigests {
 
   /** Build field prefix for hypergraph state.
     *
-    * Key format: [networkNamespace][fieldId (8 hex)][contractNamespace][userNamespace]
-    * For hypergraph: 00 (HypergraphNamespace) + fieldId as 8 hex chars
+    * Key format: [networkNamespace][fieldId (8 hex)][contractNamespace][userNamespace] For hypergraph: 00 (HypergraphNamespace) + fieldId
+    * as 8 hex chars
     */
   def hypergraphFieldPrefix(fieldId: GlobalStateFieldId): Hex =
     Hex(f"00${fieldId.toInt}%08x")
@@ -136,10 +137,14 @@ object MptFieldDigests {
     *
     * Useful for debugging non-determinism between consensus and re-traversal.
     *
-    * @param expected Field digests from consensus/original
-    * @param actual Field digests from re-traversal/rebuilt
-    * @param context Additional context for logging (e.g., ordinal)
-    * @return List of (fieldName, expected, actual) for differing fields
+    * @param expected
+    *   Field digests from consensus/original
+    * @param actual
+    *   Field digests from re-traversal/rebuilt
+    * @param context
+    *   Additional context for logging (e.g., ordinal)
+    * @return
+    *   List of (fieldName, expected, actual) for differing fields
     */
   def compareAndLogDifferences[F[_]: Sync](
     expected: Map[GlobalStateFieldId, Hash],
@@ -158,16 +163,19 @@ object MptFieldDigests {
     if (differences.isEmpty) {
       logger.debug(s"[$context] All field digests match").as(differences)
     } else {
-      differences.traverse_ { case (name, exp, act) =>
-        logger.warn(s"[$context] FIELD MISMATCH: $name - expected=${exp.value.take(16)}..., actual=${act.value.take(16)}...")
+      differences.traverse_ {
+        case (name, exp, act) =>
+          logger.warn(s"[$context] FIELD MISMATCH: $name - expected=${exp.value.take(16)}..., actual=${act.value.take(16)}...")
       }.as(differences)
     }
   }
 
   /** Log all field digests for a trie.
     *
-    * @param trie The trie to extract digests from
-    * @param context Additional context for logging (e.g., ordinal, "consensus" or "retraversal")
+    * @param trie
+    *   The trie to extract digests from
+    * @param context
+    *   Additional context for logging (e.g., ordinal, "consensus" or "retraversal")
     */
   def logFieldDigests[F[_]: Sync](
     trie: MerklePatriciaTrie,
@@ -178,11 +186,12 @@ object MptFieldDigests {
     for {
       digests <- extractAllFieldDigests[F](trie)
       _ <- logger.info(s"[$context] MPT root: ${trie.rootHash.value.value.take(16)}...")
-      _ <- digests.toList.sortBy(_._1.toInt).traverse_ { case (fieldId, hash) =>
-        if (hash != Hash.empty)
-          logger.info(s"[$context] Field ${fieldIdToName(fieldId)}: ${hash.value.take(16)}...")
-        else
-          Sync[F].unit
+      _ <- digests.toList.sortBy(_._1.toInt).traverse_ {
+        case (fieldId, hash) =>
+          if (hash != Hash.empty)
+            logger.info(s"[$context] Field ${fieldIdToName(fieldId)}: ${hash.value.take(16)}...")
+          else
+            Sync[F].unit
       }
     } yield digests
   }
@@ -191,25 +200,121 @@ object MptFieldDigests {
   def fieldIdToName(fieldId: GlobalStateFieldId): String = {
     import GlobalStateFieldId._
     fieldId match {
-      case LastStateChannelSnapshotHashes => "LastStateChannelSnapshotHashes"
-      case LastTxRefs                     => "LastTxRefs"
-      case Balances                       => "Balances"
-      case LastCurrencySnapshots          => "LastCurrencySnapshots"
-      case LastCurrencySnapshotsProofs    => "LastCurrencySnapshotsProofs"
+      case LastStateChannelSnapshotHashes   => "LastStateChannelSnapshotHashes"
+      case LastTxRefs                       => "LastTxRefs"
+      case Balances                         => "Balances"
+      case LastCurrencySnapshots            => "LastCurrencySnapshots"
+      case LastCurrencySnapshotsProofs      => "LastCurrencySnapshotsProofs"
       case LastIncrementalCurrencySnapshots => "LastIncrementalCurrencySnapshots"
-      case LastCurrencySnapshotInfo       => "LastCurrencySnapshotInfo"
-      case ActiveAllowSpends              => "ActiveAllowSpends"
-      case ActiveTokenLocks               => "ActiveTokenLocks"
-      case TokenLockBalances              => "TokenLockBalances"
-      case LastAllowSpendRefs             => "LastAllowSpendRefs"
-      case LastTokenLockRefs              => "LastTokenLockRefs"
-      case UpdateNodeParameters           => "UpdateNodeParameters"
-      case ActiveDelegatedStakes          => "ActiveDelegatedStakes"
-      case DelegatedStakesWithdrawals     => "DelegatedStakesWithdrawals"
-      case ActiveNodeCollaterals          => "ActiveNodeCollaterals"
-      case NodeCollateralWithdrawals      => "NodeCollateralWithdrawals"
-      case PriceState                     => "PriceState"
-      case MetagraphSyncData              => "MetagraphSyncData"
+      case LastCurrencySnapshotInfo         => "LastCurrencySnapshotInfo"
+      case ActiveAllowSpends                => "ActiveAllowSpends"
+      case ActiveTokenLocks                 => "ActiveTokenLocks"
+      case TokenLockBalances                => "TokenLockBalances"
+      case LastAllowSpendRefs               => "LastAllowSpendRefs"
+      case LastTokenLockRefs                => "LastTokenLockRefs"
+      case UpdateNodeParameters             => "UpdateNodeParameters"
+      case ActiveDelegatedStakes            => "ActiveDelegatedStakes"
+      case DelegatedStakesWithdrawals       => "DelegatedStakesWithdrawals"
+      case ActiveNodeCollaterals            => "ActiveNodeCollaterals"
+      case NodeCollateralWithdrawals        => "NodeCollateralWithdrawals"
+      case PriceState                       => "PriceState"
+      case MetagraphSyncData                => "MetagraphSyncData"
     }
+  }
+
+  /** Compare two entry sets and log differences.
+    *
+    * This is the key debugging tool for non-determinism between incremental sync (StateChangesAccumulator.toStateEntries) and full sync
+    * (GlobalSnapshotInfo.allStateEntries).
+    *
+    * @param entriesA
+    *   First entry set (e.g., from incremental sync)
+    * @param entriesB
+    *   Second entry set (e.g., from full sync)
+    * @param labelA
+    *   Label for first set
+    * @param labelB
+    *   Label for second set
+    * @param context
+    *   Additional context (e.g., ordinal)
+    */
+  def compareEntrySets[F[_]: Sync: Hasher](
+    entriesA: Map[GlobalStateKey, Json],
+    entriesB: Map[GlobalStateKey, Json],
+    labelA: String,
+    labelB: String,
+    context: String
+  ): F[EntrySetComparison] = {
+    val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F]("MPT.EntryComparison")
+
+    val keysA = entriesA.keySet
+    val keysB = entriesB.keySet
+
+    val onlyInA = keysA -- keysB
+    val onlyInB = keysB -- keysA
+    val common = keysA.intersect(keysB)
+
+    // Find keys with different values
+    val differentValues = common.filter { key =>
+      entriesA(key) != entriesB(key)
+    }
+
+    for {
+      _ <- logger.info(s"[$context] Entry set comparison: $labelA vs $labelB")
+      _ <- logger.info(s"[$context]   $labelA entries: ${entriesA.size}")
+      _ <- logger.info(s"[$context]   $labelB entries: ${entriesB.size}")
+      _ <- logger.info(s"[$context]   Only in $labelA: ${onlyInA.size}")
+      _ <- logger.info(s"[$context]   Only in $labelB: ${onlyInB.size}")
+      _ <- logger.info(s"[$context]   Common keys with different values: ${differentValues.size}")
+
+      // Log details for mismatches (limit to first 10)
+      _ <- onlyInA.take(10).toList.traverse_ { key =>
+        logger.warn(s"[$context] KEY ONLY IN $labelA: field=${fieldIdToName(key.fieldId)}, key=$key")
+      }
+      _ <- if (onlyInA.size > 10) logger.warn(s"[$context]   ... and ${onlyInA.size - 10} more") else Sync[F].unit
+
+      _ <- onlyInB.take(10).toList.traverse_ { key =>
+        logger.warn(s"[$context] KEY ONLY IN $labelB: field=${fieldIdToName(key.fieldId)}, key=$key")
+      }
+      _ <- if (onlyInB.size > 10) logger.warn(s"[$context]   ... and ${onlyInB.size - 10} more") else Sync[F].unit
+
+      _ <- differentValues.take(10).toList.traverse_ { key =>
+        val valA = entriesA(key).noSpaces.take(100)
+        val valB = entriesB(key).noSpaces.take(100)
+        logger.warn(s"[$context] VALUE DIFFERS: field=${fieldIdToName(key.fieldId)}, key=$key") >>
+          logger.warn(s"[$context]   $labelA: $valA...") >>
+          logger.warn(s"[$context]   $labelB: $valB...")
+      }
+      _ <- if (differentValues.size > 10) logger.warn(s"[$context]   ... and ${differentValues.size - 10} more") else Sync[F].unit
+
+      // Group by field for summary
+      _ <- {
+        val fieldSummary = (onlyInA ++ onlyInB ++ differentValues)
+          .groupBy(_.fieldId)
+          .view
+          .mapValues(_.size)
+          .toList
+          .sortBy(-_._2)
+
+        fieldSummary.traverse_ {
+          case (fieldId, count) =>
+            logger.error(s"[$context] FIELD WITH ISSUES: ${fieldIdToName(fieldId)} ($count differences)")
+        }
+      }
+    } yield
+      EntrySetComparison(
+        onlyInA = onlyInA,
+        onlyInB = onlyInB,
+        differentValues = differentValues
+      )
+  }
+
+  /** Result of comparing two entry sets */
+  case class EntrySetComparison(
+    onlyInA: Set[GlobalStateKey],
+    onlyInB: Set[GlobalStateKey],
+    differentValues: Set[GlobalStateKey]
+  ) {
+    def hasDifferences: Boolean = onlyInA.nonEmpty || onlyInB.nonEmpty || differentValues.nonEmpty
   }
 }
