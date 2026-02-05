@@ -1,12 +1,10 @@
 package io.constellationnetwork.security.mpt
 
 import cats.effect.IO
-import cats.syntax.all._
+import cats.effect.kernel.Resource
 
-import scala.collection.immutable.SortedMap
-
+import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
-import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.mpt.GlobalStateFieldId
 import io.constellationnetwork.security.hash.Hash
@@ -16,40 +14,63 @@ import io.constellationnetwork.security.{Hasher, SecurityProvider}
 import eu.timepit.refined.auto._
 import io.circe.Json
 import io.circe.syntax._
-import weaver.SimpleIOSuite
+import weaver.MutableIOSuite
 
-object MptFieldDigestsSuite extends SimpleIOSuite {
+object MptFieldDigestsSuite extends MutableIOSuite {
 
-  implicit val sp: SecurityProvider[IO] = SecurityProvider.forAsync[IO]
-  implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
-  implicit val jsonSerializer: JsonSerializer[IO] = JsonSerializer.forSync[IO]
+  type Res = (JsonSerializer[IO], Hasher[IO], SecurityProvider[IO])
 
-  test("hypergraphFieldPrefix generates correct prefix for Balances field") {
+  override def sharedResource: Resource[IO, Res] = for {
+    sp <- SecurityProvider.forAsync[IO]
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
+    h = Hasher.forJson[IO]
+  } yield (j, h, sp)
+
+  test("hypergraphFieldPrefix generates correct prefix for Balances field") { _ =>
     val prefix = MptFieldDigests.hypergraphFieldPrefix(GlobalStateFieldId.Balances)
     // HypergraphNamespace = 0x00 (2 hex chars), fieldId = 2 (8 hex chars)
-    expect.eql(Hex("0000000002"), prefix)
+    IO.pure(expect.eql(Hex("0000000002"), prefix))
   }
 
-  test("hypergraphFieldPrefix generates correct prefix for ActiveTokenLocks field") {
+  test("hypergraphFieldPrefix generates correct prefix for ActiveTokenLocks field") { _ =>
     val prefix = MptFieldDigests.hypergraphFieldPrefix(GlobalStateFieldId.ActiveTokenLocks)
     // HypergraphNamespace = 0x00, fieldId = 8
-    expect.eql(Hex("0000000008"), prefix)
+    IO.pure(expect.eql(Hex("0000000008"), prefix))
   }
 
-  test("hypergraphFieldPrefix generates correct prefix for ActiveDelegatedStakes field") {
+  test("hypergraphFieldPrefix generates correct prefix for ActiveDelegatedStakes field") { _ =>
     val prefix = MptFieldDigests.hypergraphFieldPrefix(GlobalStateFieldId.ActiveDelegatedStakes)
     // HypergraphNamespace = 0x00, fieldId = 13
-    expect.eql(Hex("000000000d"), prefix)
+    IO.pure(expect.eql(Hex("000000000d"), prefix))
   }
 
-  test("getSubtrieDigest returns Hash.empty for empty trie") {
+  test("getSubtrieDigest returns different digests for different existing fields") { res =>
+    implicit val (j, h, _) = res
+
+    // Create trie with data under multiple prefixes
+    val txRefsKey = Hex("0000000001" + "01" + "a" * 64) // LastTxRefs
+    val balancesKey = Hex("0000000002" + "01" + "b" * 64) // Balances
+
     for {
-      trie <- MerklePatriciaTrie.make[IO, Json](Map.empty)
-      digest <- MptFieldDigests.getSubtrieDigest[IO](trie, Hex("0000000002"))
-    } yield expect.eql(Hash.empty, digest)
+      trie <- MerklePatriciaTrie.make[IO, Json](
+        Map(
+          txRefsKey -> Json.fromString("test-tx-ref"),
+          balancesKey -> Balance(1000L).asJson
+        )
+      )
+      txRefsDigest <- MptFieldDigests.getSubtrieDigest[IO](trie, Hex("0000000001"))
+      balancesDigest <- MptFieldDigests.getSubtrieDigest[IO](trie, Hex("0000000002"))
+    } yield
+      expect.all(
+        txRefsDigest != Hash.empty,
+        balancesDigest != Hash.empty,
+        txRefsDigest != balancesDigest // Different fields should have different digests
+      )
   }
 
-  test("getSubtrieDigest returns non-empty digest when data exists under prefix") {
+  test("getSubtrieDigest returns non-empty digest when data exists under prefix") { res =>
+    implicit val (j, h, _) = res
+
     // Create a simple trie with one key under Balances prefix
     val testKey = Hex("0000000002" + "01" + "a" * 64) // Balances + AddressNamespace + hash
     val testValue = Balance(1000L).asJson
@@ -60,7 +81,9 @@ object MptFieldDigestsSuite extends SimpleIOSuite {
     } yield expect(digest != Hash.empty)
   }
 
-  test("getSubtrieDigest returns different digests for different fields") {
+  test("getSubtrieDigest returns different digests for different fields") { res =>
+    implicit val (j, h, _) = res
+
     // Create trie with data under both Balances and LastTxRefs
     val balancesKey = Hex("0000000002" + "01" + "a" * 64)
     val txRefsKey = Hex("0000000001" + "01" + "b" * 64)
@@ -82,7 +105,9 @@ object MptFieldDigestsSuite extends SimpleIOSuite {
       )
   }
 
-  test("extractAllFieldDigests extracts digests for all populated fields") {
+  test("extractAllFieldDigests extracts digests for all populated fields") { res =>
+    implicit val (j, h, _) = res
+
     // Create trie with data under multiple fields
     val balancesKey = Hex("0000000002" + "01" + "a" * 64)
     val tokenLocksKey = Hex("0000000008" + "01" + "b" * 64)
@@ -104,7 +129,9 @@ object MptFieldDigestsSuite extends SimpleIOSuite {
       )
   }
 
-  test("subtrie digest changes when data under that field changes") {
+  test("subtrie digest changes when data under that field changes") { res =>
+    implicit val (j, h, _) = res
+
     val balancesKey = Hex("0000000002" + "01" + "a" * 64)
 
     for {
@@ -128,7 +155,9 @@ object MptFieldDigestsSuite extends SimpleIOSuite {
       )
   }
 
-  test("subtrie digest remains stable when other fields change") {
+  test("subtrie digest remains stable when other fields change") { res =>
+    implicit val (j, h, _) = res
+
     val balancesKey1 = Hex("0000000002" + "01" + "a" * 64)
     val txRefsKey = Hex("0000000001" + "01" + "b" * 64)
 
