@@ -45,7 +45,8 @@ object RollbackLoader {
       GlobalIncrementalSnapshot,
       GlobalSnapshotInfo
     ],
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    incrementalDelegatedStakingStartingOrdinal: SnapshotOrdinal
   ): RollbackLoader[F] =
     new RollbackLoader[F](
       keyPair,
@@ -59,7 +60,8 @@ object RollbackLoader {
       lastNGlobalSnapshotStorage,
       lastGlobalSnapshotStorage,
       combinedSnapshotCheckpointFileSystemStorage,
-      mptStore
+      mptStore,
+      incrementalDelegatedStakingStartingOrdinal
     ) {}
 }
 
@@ -79,7 +81,8 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
     GlobalIncrementalSnapshot,
     GlobalSnapshotInfo
   ],
-  mptStore: MptStore[F, GlobalStateKey]
+  mptStore: MptStore[F, GlobalStateKey],
+  incrementalDelegatedStakingStartingOrdinal: SnapshotOrdinal
 ) {
 
   private val logger = Slf4jLogger.getLogger[F]
@@ -108,7 +111,8 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
                   lastNGlobalSnapshotStorage,
                   lastGlobalSnapshotStorage,
                   download,
-                  mptStore
+                  mptStore,
+                  incrementalDelegatedStakingStartingOrdinal
                 )
               snapshotTraverse.loadChain()
             }
