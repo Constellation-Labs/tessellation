@@ -43,7 +43,8 @@ object GlobalSnapshotTraverse {
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     download: Download[F, GlobalIncrementalSnapshot],
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    incrementalDelegatedStakingStartingOrdinal: SnapshotOrdinal
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): GlobalSnapshotTraverse[F] =
@@ -108,10 +109,29 @@ object GlobalSnapshotTraverse {
           _ <- logger.info(s"Rollback hash candidate: ${hashCandidate.show}")
           firstInc <- loadIncOrErr(incHashesNec.head)
 
-          firstInfo <- loadFullOrIncOrErr(hashCandidate).flatMap {
+          firstInfoLoaded <- loadFullOrIncOrErr(hashCandidate).flatMap {
             case Left(globalIncrementalSnapshot) => loadInfoOrErr(globalIncrementalSnapshot.ordinal)
             case Right(globalSnapshot)           => globalSnapshot.info.toGlobalSnapshotInfo.pure[F]
           }
+
+          // Apply same transformation as consensus path for ordinals > incrementalDelegatedStakingStartingOrdinal
+          // This ensures DelegatedStakeRecord has currentTokenLockRef and currentAmount set for MPT calculation
+          firstInfo =
+            if (firstInc.ordinal > incrementalDelegatedStakingStartingOrdinal) {
+              firstInfoLoaded.activeDelegatedStakes match {
+                case Some(delegatedStakes) =>
+                  val transformed = delegatedStakes.view.mapValues { records =>
+                    SortedSet.from(records.toList.map { r =>
+                      r.copy(
+                        currentTokenLockRef = r.currentTokenLockRef.orElse(Some(r.tokenLockRef)),
+                        currentAmount = r.currentAmount.orElse(Some(r.amount))
+                      )
+                    })
+                  }.to(SortedMap)
+                  firstInfoLoaded.copy(activeDelegatedStakes = Some(transformed))
+                case None => firstInfoLoaded
+              }
+            } else firstInfoLoaded
 
           // Diagnostic logging for MPT state comparison (enabled via MPT_STATE_DEBUG=true)
           _ <- Async[F].delay(Option(System.getenv("MPT_STATE_DEBUG")).contains("true")).flatMap { debugEnabled =>

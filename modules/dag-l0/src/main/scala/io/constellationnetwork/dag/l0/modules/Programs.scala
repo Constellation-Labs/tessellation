@@ -42,7 +42,8 @@ object Programs {
     globalSnapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    incrementalDelegatedStakingStartingOrdinal: SnapshotOrdinal
   )(implicit globalStateProofSelector: GlobalStateProofSelector): Programs[F] =
     HasherSelector[F].withCurrent { implicit hasher =>
       val trustPush = TrustPush.make(storages.trust, services.gossip)
@@ -78,7 +79,8 @@ object Programs {
         lastNGlobalSnapshotStorage,
         lastGlobalSnapshotStorage,
         storages.combinedGlobalSnapshotCheckpointStorage,
-        mptStore
+        mptStore,
+        incrementalDelegatedStakingStartingOrdinal
       )
 
       new Programs[F](sharedPrograms.peerDiscovery, sharedPrograms.joining, trustPush, download, rollbackLoader) {}
