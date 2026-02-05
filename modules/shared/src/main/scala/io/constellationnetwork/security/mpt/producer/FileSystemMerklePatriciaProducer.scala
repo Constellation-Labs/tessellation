@@ -7,12 +7,13 @@ import cats.syntax.all._
 import io.constellationnetwork.cutoff.OrdinalCutoff
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema.SnapshotOrdinal
-import io.constellationnetwork.schema.mpt.GlobalStateKey
+import io.constellationnetwork.schema.mpt.{GlobalStateFieldId, GlobalStateKey}
 import io.constellationnetwork.security.Hasher
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
+import io.constellationnetwork.security.mpt._
 import io.constellationnetwork.security.mpt.prover.MerklePatriciaSingleInclusionProver
 import io.constellationnetwork.security.mpt.storages.MptStateStorage
-import io.constellationnetwork.security.mpt.{IncrementalTrieOps, MerklePatriciaTrie, MptRoot}
 
 import fs2.Stream
 import fs2.io.file.Path
@@ -34,7 +35,7 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher: JsonSerial
   pendingInsertsRef: Ref[F, Map[Hex, Array[Byte]]],
   pendingRemovesRef: Ref[F, List[Hex]],
   storage: MptStateStorage[F],
-  rootHashCacheRef: Ref[F, Map[SnapshotOrdinal, MptRoot]],
+  ordinalCacheRef: Ref[F, Map[SnapshotOrdinal, MptOrdinalCache]],
   lastBuiltOrdinalRef: Ref[F, Option[SnapshotOrdinal]]
 ) extends StatefulWithPersistenceMerklePatriciaProducer[F] {
 
@@ -101,15 +102,18 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher: JsonSerial
   override def buildForOrdinal(ordinal: SnapshotOrdinal): F[Either[MerklePatriciaError, MerklePatriciaTrie]] =
     build.flatMap {
       case Right(trie) =>
-        val rootHash = trie.rootHash
-        (cacheRootHash(ordinal, rootHash) >> lastBuiltOrdinalRef.set(Some(ordinal)))
-          .as(trie.asRight[MerklePatriciaError])
+        for {
+          fieldDigests <- MptFieldDigests.extractAllFieldDigests[F](trie)
+          cache = MptOrdinalCache(trie.rootHash, fieldDigests)
+          _ <- cacheOrdinalData(ordinal, cache)
+          _ <- lastBuiltOrdinalRef.set(Some(ordinal))
+        } yield trie.asRight[MerklePatriciaError]
       case Left(err) =>
         err.asLeft[MerklePatriciaTrie].pure[F]
     }
 
   override def getRootHashForOrdinal(ordinal: SnapshotOrdinal): F[Option[MptRoot]] =
-    rootHashCacheRef.get.map(_.get(ordinal))
+    ordinalCacheRef.get.map(_.get(ordinal).map(_.rootHash))
 
   override def getCurrentRootHash: F[Option[MptRoot]] =
     trieRef.get.map(_.map(_.rootHash))
@@ -117,9 +121,15 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher: JsonSerial
   override def getLastBuiltOrdinal: F[Option[SnapshotOrdinal]] =
     lastBuiltOrdinalRef.get
 
-  private def cacheRootHash(ordinal: SnapshotOrdinal, rootHash: MptRoot): F[Unit] =
-    rootHashCacheRef.update { cache =>
-      val updated = cache + (ordinal -> rootHash)
+  override def getFieldDigestsForOrdinal(ordinal: SnapshotOrdinal): F[Option[Map[GlobalStateFieldId, Hash]]] =
+    ordinalCacheRef.get.map(_.get(ordinal).map(_.fieldDigests))
+
+  override def getOrdinalCache(ordinal: SnapshotOrdinal): F[Option[MptOrdinalCache]] =
+    ordinalCacheRef.get.map(_.get(ordinal))
+
+  private def cacheOrdinalData(ordinal: SnapshotOrdinal, cache: MptOrdinalCache): F[Unit] =
+    ordinalCacheRef.update { existingCache =>
+      val updated = existingCache + (ordinal -> cache)
       if (updated.size > MaxCacheSize) {
         // Keep only the latest 50 by ordinal
         updated.toList.sortBy(_._1).takeRight(MaxCacheSize).toMap
@@ -245,7 +255,7 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher: JsonSerial
       trieRef.set(None) >>
       pendingInsertsRef.set(Map.empty) >>
       pendingRemovesRef.set(List.empty) >>
-      rootHashCacheRef.set(Map.empty) >>
+      ordinalCacheRef.set(Map.empty) >>
       lastBuiltOrdinalRef.set(None)
 
   override def buildHexMap(data: Map[GlobalStateKey, Json]): F[Map[Hex, Array[Byte]]] =
@@ -341,7 +351,7 @@ object FileSystemMerklePatriciaProducer {
       pendingInsertsRef <- Ref.of[F, Map[Hex, Array[Byte]]](Map.empty)
       pendingRemovesRef <- Ref.of[F, List[Hex]](List.empty)
       storage <- MptStateStorage.make[F](path)
-      rootHashCacheRef <- Ref.of[F, Map[SnapshotOrdinal, MptRoot]](Map.empty)
+      ordinalCacheRef <- Ref.of[F, Map[SnapshotOrdinal, MptOrdinalCache]](Map.empty)
       lastBuiltOrdinalRef <- Ref.of[F, Option[SnapshotOrdinal]](None)
     } yield
       new FileSystemMerklePatriciaProducer[F](
@@ -350,7 +360,7 @@ object FileSystemMerklePatriciaProducer {
         pendingInsertsRef,
         pendingRemovesRef,
         storage,
-        rootHashCacheRef,
+        ordinalCacheRef,
         lastBuiltOrdinalRef
       )
 
@@ -365,7 +375,7 @@ object FileSystemMerklePatriciaProducer {
       pendingInsertsRef <- Ref.of[F, Map[Hex, Array[Byte]]](Map.empty)
       pendingRemovesRef <- Ref.of[F, List[Hex]](List.empty)
       storage <- MptStateStorage.make[F](path, cutoffLogic)
-      rootHashCacheRef <- Ref.of[F, Map[SnapshotOrdinal, MptRoot]](Map.empty)
+      ordinalCacheRef <- Ref.of[F, Map[SnapshotOrdinal, MptOrdinalCache]](Map.empty)
       lastBuiltOrdinalRef <- Ref.of[F, Option[SnapshotOrdinal]](None)
     } yield
       new FileSystemMerklePatriciaProducer[F](
@@ -374,7 +384,7 @@ object FileSystemMerklePatriciaProducer {
         pendingInsertsRef,
         pendingRemovesRef,
         storage,
-        rootHashCacheRef,
+        ordinalCacheRef,
         lastBuiltOrdinalRef
       )
 }

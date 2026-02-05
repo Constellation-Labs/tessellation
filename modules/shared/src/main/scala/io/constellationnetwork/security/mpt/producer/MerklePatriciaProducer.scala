@@ -6,14 +6,21 @@ import cats.syntax.functor._
 
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema.SnapshotOrdinal
-import io.constellationnetwork.schema.mpt.GlobalStateKey
+import io.constellationnetwork.schema.mpt.{GlobalStateFieldId, GlobalStateKey}
 import io.constellationnetwork.security.Hasher
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt.prover.MerklePatriciaSingleInclusionProver
 import io.constellationnetwork.security.mpt.{MerklePatriciaTrie, MptRoot}
 
 import fs2.Stream
 import io.circe.{Encoder, Json}
+
+/** Cached data for an ordinal including root hash and per-field digests */
+case class MptOrdinalCache(
+  rootHash: MptRoot,
+  fieldDigests: Map[GlobalStateFieldId, Hash]
+)
 
 trait MerklePatriciaProducer[F[_]] {
   def create[A: Encoder](data: Map[Hex, A]): F[MerklePatriciaTrie]
@@ -52,6 +59,15 @@ trait StatefulMerklePatriciaProducer[F[_]] {
   /** Get the last built ordinal. Returns None if no ordinal has been built yet.
     */
   def getLastBuiltOrdinal: F[Option[SnapshotOrdinal]]
+
+  /** Retrieve cached per-field digests for a specific ordinal. Returns None if the ordinal is not in the cache. Use for comparing
+    * field-by-field during validation to identify which field diverged.
+    */
+  def getFieldDigestsForOrdinal(ordinal: SnapshotOrdinal): F[Option[Map[GlobalStateFieldId, Hash]]]
+
+  /** Retrieve the full ordinal cache (root hash + field digests) for a specific ordinal. Returns None if the ordinal is not in the cache.
+    */
+  def getOrdinalCache(ordinal: SnapshotOrdinal): F[Option[MptOrdinalCache]]
 
   def insert[A: Encoder](data: Map[Hex, A]): F[Either[MerklePatriciaError, Unit]]
   def insertBytes(data: Map[Hex, Array[Byte]]): F[Either[MerklePatriciaError, Unit]]
