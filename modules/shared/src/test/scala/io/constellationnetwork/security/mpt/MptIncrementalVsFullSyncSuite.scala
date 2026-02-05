@@ -1,20 +1,28 @@
 package io.constellationnetwork.security.mpt
 
+import cats.data.NonEmptySet
 import cats.effect.IO
 import cats.effect.kernel.Resource
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
+import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.generators._
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.StateChangesAccumulator
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
+import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
@@ -327,5 +335,107 @@ object MptIncrementalVsFullSyncSuite extends MutableIOSuite with Checkers {
       _ <- IO.println(s"Total entries: ${entries.size}")
       _ <- IO.println("==============================\n")
     } yield success
+  }
+
+  // Helper to create a mock signed delegated stake
+  private def createSignedStake(
+    source: Address,
+    nodeId: PeerId,
+    amount: Long,
+    tokenLockRef: Hash = Hash.empty
+  ): Signed[UpdateDelegatedStake.Create] =
+    Signed(
+      UpdateDelegatedStake.Create(
+        source = source,
+        nodeId = nodeId,
+        amount = DelegatedStakeAmount(NonNegLong.unsafeFrom(amount)),
+        fee = DelegatedStakeFee(0L),
+        tokenLockRef = tokenLockRef
+      ),
+      NonEmptySet.one[SignatureProof](SignatureProof(nodeId.toId, Signature(Hex(Hash.empty.value))))
+    )
+
+  test("accumulator with delegated stakes produces same entries as GlobalSnapshotInfo") { res =>
+    implicit val (j, h, _) = res
+
+    val nodeId = Id(Hex("1234567890abcdef" * 8)).toPeerId
+    val stake1 = createSignedStake(addr1, nodeId, 1000L)
+    val stake2 = createSignedStake(addr2, nodeId, 2000L)
+
+    val delegatedStakes = SortedMap(
+      addr1 -> SortedSet(DelegatedStakeRecord(stake1, SnapshotOrdinal(1L), balance.Balance(50L), None, None)),
+      addr2 -> SortedSet(DelegatedStakeRecord(stake2, SnapshotOrdinal(1L), balance.Balance(75L), None, None))
+    )
+
+    val accumulator = StateChangesAccumulator(activeDelegatedStakes = delegatedStakes)
+    val info = GlobalSnapshotInfo.empty.copy(activeDelegatedStakes = Some(delegatedStakes))
+
+    for {
+      accEntries <- accumulator.toStateEntries[IO]
+      infoEntries <- info.allStateEntries[IO]
+
+      _ <- IO.println(s"[DEBUG] Delegated stakes test - acc entries: ${accEntries.size}, info entries: ${infoEntries.size}")
+
+      // Check key sets match
+      accKeys = accEntries.keySet
+      infoKeys = infoEntries.keySet
+      _ <- IO.println(s"[DEBUG] Keys only in accumulator: ${(accKeys -- infoKeys).size}")
+      _ <- IO.println(s"[DEBUG] Keys only in info: ${(infoKeys -- accKeys).size}")
+
+      // Check values match
+      differentValues = accKeys.intersect(infoKeys).filter(k => accEntries(k) != infoEntries(k))
+      _ <- differentValues.toList.traverse_ { k =>
+        IO.println(s"[DEBUG] Value differs for key $k") >>
+          IO.println(s"[DEBUG]   acc: ${accEntries(k).noSpaces.take(200)}") >>
+          IO.println(s"[DEBUG]   info: ${infoEntries(k).noSpaces.take(200)}")
+      }
+    } yield
+      expect.all(
+        accEntries.size == 2,
+        infoEntries.size == 2,
+        accEntries == infoEntries
+      )
+  }
+
+  test("MPT root hash matches with delegated stakes") { res =>
+    implicit val (j, h, sp) = res
+
+    val nodeId = Id(Hex("1234567890abcdef" * 8)).toPeerId
+    val stake1 = createSignedStake(addr1, nodeId, 1000L)
+    val stake2 = createSignedStake(addr2, nodeId, 2000L)
+
+    val delegatedStakes = SortedMap(
+      addr1 -> SortedSet(DelegatedStakeRecord(stake1, SnapshotOrdinal(1L), balance.Balance(50L), None, None)),
+      addr2 -> SortedSet(DelegatedStakeRecord(stake2, SnapshotOrdinal(1L), balance.Balance(75L), None, None))
+    )
+
+    val accumulator = StateChangesAccumulator(activeDelegatedStakes = delegatedStakes)
+    val info = GlobalSnapshotInfo.empty.copy(activeDelegatedStakes = Some(delegatedStakes))
+
+    val ordinal = SnapshotOrdinal(NonNegLong(1000L))
+
+    for {
+      // Build MPT via full sync
+      fullProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      fullStore <- MptStore.make[IO, GlobalStateKey](fullProducer, GlobalStateKey.toHex[IO])
+      _ <- fullStore.syncFromGlobalSnapshotInfo(info, ordinal)
+      fullTrie <- fullStore.build(ordinal)
+      fullRoot = fullTrie.map(_.rootHash)
+
+      // Build MPT via incremental sync
+      incProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      incStore <- MptStore.make[IO, GlobalStateKey](incProducer, GlobalStateKey.toHex[IO])
+      _ <- incStore.syncFromStateChanges(accumulator, ordinal)
+      incTrie <- incStore.build(ordinal)
+      incRoot = incTrie.map(_.rootHash)
+
+      _ <- IO.println(s"[DEBUG] Delegated stakes MPT - Full sync root: $fullRoot")
+      _ <- IO.println(s"[DEBUG] Delegated stakes MPT - Incremental sync root: $incRoot")
+    } yield
+      expect.all(
+        fullRoot.isRight,
+        incRoot.isRight,
+        fullRoot == incRoot
+      )
   }
 }
