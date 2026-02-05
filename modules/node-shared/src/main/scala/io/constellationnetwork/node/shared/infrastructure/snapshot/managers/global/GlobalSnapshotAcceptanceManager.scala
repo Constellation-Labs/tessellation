@@ -1135,6 +1135,16 @@ object GlobalSnapshotAcceptanceManager {
             _ <- Sync[F].delay(Option(System.getenv("MPT_STATE_DEBUG")).contains("true")).flatMap { debugEnabled =>
               if (debugEnabled) {
                 logger.info(s"[MPT_DEBUG][CONSENSUS] ordinal=$ordinal") >>
+                  // Balances summary
+                  logger.info(s"[MPT_DEBUG][CONSENSUS] balances entries: ${stateChangesAccumulator.balances.size}") >>
+                  // LastTxRefs summary
+                  logger.info(s"[MPT_DEBUG][CONSENSUS] lastTxRefs entries: ${stateChangesAccumulator.lastTxRefs.size}") >>
+                  // Token locks
+                  logger.info(s"[MPT_DEBUG][CONSENSUS] activeTokenLocks entries: ${stateChangesAccumulator.activeTokenLocks.size}") >>
+                  logger.info(s"[MPT_DEBUG][CONSENSUS] activeTokenLocks keys: ${stateChangesAccumulator.activeTokenLocks.keys.toList}") >>
+                  // Allow spends
+                  logger.info(s"[MPT_DEBUG][CONSENSUS] activeAllowSpends entries: ${stateChangesAccumulator.activeAllowSpends.size}") >>
+                  // Delegated stakes
                   logger.info(s"[MPT_DEBUG][CONSENSUS] delegatedStakes entries: ${stateChangesAccumulator.activeDelegatedStakes.size}") >>
                   logger
                     .info(s"[MPT_DEBUG][CONSENSUS] delegatedStakes keys: ${stateChangesAccumulator.activeDelegatedStakes.keys.toList}") >>

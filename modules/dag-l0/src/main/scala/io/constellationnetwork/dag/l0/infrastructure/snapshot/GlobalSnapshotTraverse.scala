@@ -136,14 +136,39 @@ object GlobalSnapshotTraverse {
           // Diagnostic logging for MPT state comparison (enabled via MPT_STATE_DEBUG=true)
           _ <- Async[F].delay(Option(System.getenv("MPT_STATE_DEBUG")).contains("true")).flatMap { debugEnabled =>
             if (debugEnabled) {
-              val delegatedStakes =
-                firstInfo.activeDelegatedStakes.getOrElse(SortedMap.empty[address.Address, SortedSet[delegatedStake.DelegatedStakeRecord]])
+              val delegatedStakes = firstInfo.getActiveDelegatedStakes
+              val tokenLocks = firstInfo.getActiveTokenLocks
+              val allowSpendsOpt = firstInfo.activeAllowSpends
+              val balances = firstInfo.balances
+              val lastTxRefs = firstInfo.lastTxRefs
+
               logger.info(s"[MPT_DEBUG][RETRAVERSAL] ordinal=${firstInc.ordinal}") >>
+                // Balances summary
+                logger.info(s"[MPT_DEBUG][RETRAVERSAL] balances entries: ${balances.size}") >>
+                // LastTxRefs summary
+                logger.info(s"[MPT_DEBUG][RETRAVERSAL] lastTxRefs entries: ${lastTxRefs.size}") >>
+                // Token locks
+                logger.info(s"[MPT_DEBUG][RETRAVERSAL] activeTokenLocks entries: ${tokenLocks.size}") >>
+                logger.info(s"[MPT_DEBUG][RETRAVERSAL] activeTokenLocks keys: ${tokenLocks.keys.toList}") >>
+                tokenLocks.toList.traverse_ {
+                  case (addr, locks) =>
+                    logger.info(s"[MPT_DEBUG][RETRAVERSAL] activeTokenLocks[$addr]: ${locks.size} locks")
+                } >>
+                // Allow spends
+                logger.info(s"[MPT_DEBUG][RETRAVERSAL] activeAllowSpends present: ${allowSpendsOpt.isDefined}") >>
+                allowSpendsOpt.fold(Async[F].unit) { allowSpends =>
+                  logger.info(s"[MPT_DEBUG][RETRAVERSAL] activeAllowSpends entries: ${allowSpends.size}") >>
+                    allowSpends.toList.traverse_ {
+                      case (key, spends) =>
+                        logger.info(s"[MPT_DEBUG][RETRAVERSAL] activeAllowSpends[$key]: ${spends.size} spends")
+                    }
+                } >>
+                // Delegated stakes
                 logger.info(s"[MPT_DEBUG][RETRAVERSAL] delegatedStakes entries: ${delegatedStakes.size}") >>
                 logger.info(s"[MPT_DEBUG][RETRAVERSAL] delegatedStakes keys: ${delegatedStakes.keys.toList}") >>
                 delegatedStakes.toList.traverse_ {
                   case (addr, records) =>
-                    logger.info(s"[MPT_DEBUG][RETRAVERSAL] delegatedStakes[$addr]: ${records.size} records, hashes=${records
+                    logger.info(s"[MPT_DEBUG][RETRAVERSAL] delegatedStakes[$addr]: ${records.size} records, hashes=${records.toList
                         .map(r => r.event.proofs.head.signature.value.value.take(16))
                         .mkString(",")}")
                 }
