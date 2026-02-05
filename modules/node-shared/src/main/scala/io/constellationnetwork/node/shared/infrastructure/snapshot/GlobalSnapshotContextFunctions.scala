@@ -248,10 +248,23 @@ object GlobalSnapshotContextFunctions {
                         Amount(NonNegLong.unsafeFrom(txs.toList.map(_.amount.value.value).distinct.sum)) // mimic incorrect behaviour
                     )
                   } else if (signedArtifact.ordinal.value < setSumFixOrdinal.value) {
+                    // Apply same transformation as consensus path for ordinals > incrementalDelegatedStakingStartingOrdinal
+                    val transformedCreateDelegatedStakes =
+                      if (signedArtifact.ordinal > incrementalDelegatedStakingStartingOrdinal) {
+                        updatedCreateDelegatedStakes.view.mapValues { records =>
+                          records.map { r =>
+                            r.copy(
+                              currentTokenLockRef = r.currentTokenLockRef.orElse(r.tokenLockRef.some),
+                              currentAmount = r.currentAmount.orElse(r.amount.some)
+                            )
+                          }
+                        }.to(SortedMap)
+                      } else updatedCreateDelegatedStakes
+
                     DelegatedRewardsResult(
                       delegatorRewardsMap = signedArtifact.delegateRewards
                         .getOrElse(SortedMap.empty[PeerId, Map[Address, Amount]]),
-                      updatedCreateDelegatedStakes = updatedCreateDelegatedStakes,
+                      updatedCreateDelegatedStakes = transformedCreateDelegatedStakes,
                       updatedWithdrawDelegatedStakes = updatedWithdrawDelegatedStakes,
                       nodeOperatorRewards = txs,
                       reservedAddressRewards = SortedSet.empty,
@@ -260,10 +273,23 @@ object GlobalSnapshotContextFunctions {
                         Amount(NonNegLong.unsafeFrom(txs.toList.map(_.amount.value.value).distinct.sum)) // mimic incorrect behaviour
                     )
                   } else {
+                    // Apply same transformation as consensus path for ordinals > incrementalDelegatedStakingStartingOrdinal
+                    val transformedCreateDelegatedStakes =
+                      if (signedArtifact.ordinal > incrementalDelegatedStakingStartingOrdinal) {
+                        updatedCreateDelegatedStakes.view.mapValues { records =>
+                          records.map { r =>
+                            r.copy(
+                              currentTokenLockRef = r.currentTokenLockRef.orElse(r.tokenLockRef.some),
+                              currentAmount = r.currentAmount.orElse(r.amount.some)
+                            )
+                          }
+                        }.to(SortedMap)
+                      } else updatedCreateDelegatedStakes
+
                     DelegatedRewardsResult(
                       delegatorRewardsMap = signedArtifact.delegateRewards
                         .getOrElse(SortedMap.empty[PeerId, Map[Address, Amount]]),
-                      updatedCreateDelegatedStakes = updatedCreateDelegatedStakes,
+                      updatedCreateDelegatedStakes = transformedCreateDelegatedStakes,
                       updatedWithdrawDelegatedStakes = updatedWithdrawDelegatedStakes,
                       nodeOperatorRewards = txs,
                       reservedAddressRewards = SortedSet.empty,
