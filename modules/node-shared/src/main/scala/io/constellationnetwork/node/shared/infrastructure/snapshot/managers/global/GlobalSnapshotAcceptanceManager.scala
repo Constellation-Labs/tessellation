@@ -1131,8 +1131,39 @@ object GlobalSnapshotAcceptanceManager {
               removedNodeCollateralWithdrawalKeys = removedNodeCollateralWithdrawalKeys
             )
 
+            // Diagnostic logging for MPT state comparison (enabled via MPT_STATE_DEBUG=true)
+            _ <- Sync[F].delay(Option(System.getenv("MPT_STATE_DEBUG")).contains("true")).flatMap { debugEnabled =>
+              if (debugEnabled) {
+                logger.info(s"[MPT_DEBUG][CONSENSUS] ordinal=$ordinal") >>
+                  logger.info(s"[MPT_DEBUG][CONSENSUS] delegatedStakes entries: ${stateChangesAccumulator.activeDelegatedStakes.size}") >>
+                  logger
+                    .info(s"[MPT_DEBUG][CONSENSUS] delegatedStakes keys: ${stateChangesAccumulator.activeDelegatedStakes.keys.toList}") >>
+                  stateChangesAccumulator.activeDelegatedStakes.toList.traverse_ {
+                    case (addr, records) =>
+                      logger.info(s"[MPT_DEBUG][CONSENSUS] delegatedStakes[$addr]: ${records.size} records, hashes=${records
+                          .map(r => r.event.proofs.head.signature.value.value.take(16))
+                          .mkString(",")}")
+                  } >>
+                  logger.info(s"[MPT_DEBUG][CONSENSUS] removedDelegatedStakeKeys: ${stateChangesAccumulator.removedDelegatedStakeKeys}")
+              } else Sync[F].unit
+            }
+
             _ <- mptStore.syncFromStateChanges(stateChangesAccumulator, ordinal)
             stateProof <- builder.buildProof(gsi, ordinal)
+
+            // Log the computed proof root
+            _ <- Sync[F].delay(Option(System.getenv("MPT_STATE_DEBUG")).contains("true")).flatMap { debugEnabled =>
+              if (debugEnabled) {
+                stateProof match {
+                  case p: GlobalSnapshotStateProof =>
+                    p.mptRoot match {
+                      case Some(root) => logger.info(s"[MPT_DEBUG][CONSENSUS] mptRoot=$root")
+                      case None       => logger.info(s"[MPT_DEBUG][CONSENSUS] mptRoot=None (legacy proof)")
+                    }
+                  case _ => Sync[F].unit
+                }
+              } else Sync[F].unit
+            }
 
             (expiredAllowSpends, expiredTokenLocks) = (
               allowSpendStateManager.filterExpiredAllowSpends(

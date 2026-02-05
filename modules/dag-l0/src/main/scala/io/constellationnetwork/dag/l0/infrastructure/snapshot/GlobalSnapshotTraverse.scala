@@ -5,6 +5,7 @@ import cats.data.NonEmptyChain
 import cats.effect.kernel.Async
 import cats.syntax.all._
 
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.dag.l0.StoragesInitializer.initializeStorages
@@ -13,9 +14,9 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
-import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
+import io.constellationnetwork.schema.{address, delegatedStake, _}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -112,6 +113,23 @@ object GlobalSnapshotTraverse {
             case Right(globalSnapshot)           => globalSnapshot.info.toGlobalSnapshotInfo.pure[F]
           }
 
+          // Diagnostic logging for MPT state comparison (enabled via MPT_STATE_DEBUG=true)
+          _ <- Async[F].delay(Option(System.getenv("MPT_STATE_DEBUG")).contains("true")).flatMap { debugEnabled =>
+            if (debugEnabled) {
+              val delegatedStakes =
+                firstInfo.activeDelegatedStakes.getOrElse(SortedMap.empty[address.Address, SortedSet[delegatedStake.DelegatedStakeRecord]])
+              logger.info(s"[MPT_DEBUG][RETRAVERSAL] ordinal=${firstInc.ordinal}") >>
+                logger.info(s"[MPT_DEBUG][RETRAVERSAL] delegatedStakes entries: ${delegatedStakes.size}") >>
+                logger.info(s"[MPT_DEBUG][RETRAVERSAL] delegatedStakes keys: ${delegatedStakes.keys.toList}") >>
+                delegatedStakes.toList.traverse_ {
+                  case (addr, records) =>
+                    logger.info(s"[MPT_DEBUG][RETRAVERSAL] delegatedStakes[$addr]: ${records.size} records, hashes=${records
+                        .map(r => r.event.proofs.head.signature.value.value.take(16))
+                        .mkString(",")}")
+                }
+            } else Async[F].unit
+          }
+
           firstInfoCalculatedProof <- HasherSelector[F].withCurrent { implicit hasher =>
             hasher.getLogic(firstInc.ordinal) match {
               case KryoHash =>
@@ -122,6 +140,34 @@ object GlobalSnapshotTraverse {
                 mptStore.syncFullIfNeeded[Json](firstInfo.allStateEntries[F], firstInc.ordinal) >>
                   builder.buildProof(firstInfo, firstInc.ordinal)
             }
+          }
+
+          // Log the computed proof root on re-traversal
+          _ <- Async[F].delay(Option(System.getenv("MPT_STATE_DEBUG")).contains("true")).flatMap { debugEnabled =>
+            if (debugEnabled) {
+              firstInfoCalculatedProof match {
+                case p: GlobalSnapshotStateProof =>
+                  p.mptRoot match {
+                    case Some(root) => logger.info(s"[MPT_DEBUG][RETRAVERSAL] calculated mptRoot=$root")
+                    case None       => logger.info(s"[MPT_DEBUG][RETRAVERSAL] calculated mptRoot=None (legacy proof)")
+                  }
+                case _ => Async[F].unit
+              }
+            } else Async[F].unit
+          }
+
+          // Log the expected proof root from snapshot
+          _ <- Async[F].delay(Option(System.getenv("MPT_STATE_DEBUG")).contains("true")).flatMap { debugEnabled =>
+            if (debugEnabled) {
+              firstInc.stateProof match {
+                case p: GlobalSnapshotStateProof =>
+                  p.mptRoot match {
+                    case Some(root) => logger.info(s"[MPT_DEBUG][RETRAVERSAL] expected mptRoot=$root")
+                    case None       => logger.info(s"[MPT_DEBUG][RETRAVERSAL] expected mptRoot=None (legacy proof)")
+                  }
+                case _ => Async[F].unit
+              }
+            } else Async[F].unit
           }
 
           hashedFirstInc <- HasherSelector[F].withCurrent(implicit hasher => firstInc.toHashed)

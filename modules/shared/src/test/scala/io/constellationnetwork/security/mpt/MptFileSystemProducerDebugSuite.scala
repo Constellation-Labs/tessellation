@@ -31,11 +31,9 @@ import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.io.file.{Files, Path}
 import weaver.MutableIOSuite
 
-/**
-  * Debug test suite using FileSystemMerklePatriciaProducer.
-  * 
-  * This tests the ACTUAL production code path with disk persistence
-  * and incremental trie updates.
+/** Debug test suite using FileSystemMerklePatriciaProducer.
+  *
+  * This tests the ACTUAL production code path with disk persistence and incremental trie updates.
   */
 object MptFileSystemProducerDebugSuite extends MutableIOSuite {
 
@@ -211,18 +209,22 @@ object MptFileSystemProducerDebugSuite extends MutableIOSuite {
         _ <- incStore.syncFromStateChanges(acc1, ordinal1)
         _ <- incStore.build(ordinal1)
 
-        acc2 = StateChangesAccumulator(activeDelegatedStakes = SortedMap(
-          addr1 -> SortedSet(record1),
-          addr2 -> SortedSet(record2)
-        ))
+        acc2 = StateChangesAccumulator(activeDelegatedStakes =
+          SortedMap(
+            addr1 -> SortedSet(record1),
+            addr2 -> SortedSet(record2)
+          )
+        )
         _ <- incStore.syncFromStateChanges(acc2, ordinal2)
         _ <- incStore.build(ordinal2)
 
-        acc3 = StateChangesAccumulator(activeDelegatedStakes = SortedMap(
-          addr1 -> SortedSet(record1),
-          addr2 -> SortedSet(record2),
-          addr3 -> SortedSet(record3)
-        ))
+        acc3 = StateChangesAccumulator(activeDelegatedStakes =
+          SortedMap(
+            addr1 -> SortedSet(record1),
+            addr2 -> SortedSet(record2),
+            addr3 -> SortedSet(record3)
+          )
+        )
         _ <- incStore.syncFromStateChanges(acc3, ordinal3)
         incTrie <- incStore.build(ordinal3)
         incRoot = incTrie.map(_.rootHash)
@@ -230,11 +232,15 @@ object MptFileSystemProducerDebugSuite extends MutableIOSuite {
         // FULL
         fullProducer <- FileSystemMerklePatriciaProducer.make[IO](dir / "full")
         fullStore <- MptStore.make[IO, GlobalStateKey](fullProducer, GlobalStateKey.toHex[IO])
-        info = GlobalSnapshotInfo.empty.copy(activeDelegatedStakes = Some(SortedMap(
-          addr1 -> SortedSet(record1),
-          addr2 -> SortedSet(record2),
-          addr3 -> SortedSet(record3)
-        )))
+        info = GlobalSnapshotInfo.empty.copy(activeDelegatedStakes =
+          Some(
+            SortedMap(
+              addr1 -> SortedSet(record1),
+              addr2 -> SortedSet(record2),
+              addr3 -> SortedSet(record3)
+            )
+          )
+        )
         _ <- fullStore.syncFromGlobalSnapshotInfo(info, ordinal3)
         fullTrie <- fullStore.build(ordinal3)
         fullRoot = fullTrie.map(_.rootHash)
@@ -273,10 +279,12 @@ object MptFileSystemProducerDebugSuite extends MutableIOSuite {
         store2 <- MptStore.make[IO, GlobalStateKey](producer2, GlobalStateKey.toHex[IO])
 
         // Add more data at ordinal 2
-        acc2 = StateChangesAccumulator(activeDelegatedStakes = SortedMap(
-          addr1 -> SortedSet(record1),
-          addr2 -> SortedSet(record2)
-        ))
+        acc2 = StateChangesAccumulator(activeDelegatedStakes =
+          SortedMap(
+            addr1 -> SortedSet(record1),
+            addr2 -> SortedSet(record2)
+          )
+        )
         _ <- store2.syncFromStateChanges(acc2, ordinal2)
         incTrie <- store2.build(ordinal2)
         incRoot = incTrie.map(_.rootHash)
@@ -284,19 +292,24 @@ object MptFileSystemProducerDebugSuite extends MutableIOSuite {
         // FULL rebuild for comparison
         fullProducer <- FileSystemMerklePatriciaProducer.make[IO](dir / "full")
         fullStore <- MptStore.make[IO, GlobalStateKey](fullProducer, GlobalStateKey.toHex[IO])
-        info = GlobalSnapshotInfo.empty.copy(activeDelegatedStakes = Some(SortedMap(
-          addr1 -> SortedSet(record1),
-          addr2 -> SortedSet(record2)
-        )))
+        info = GlobalSnapshotInfo.empty.copy(activeDelegatedStakes =
+          Some(
+            SortedMap(
+              addr1 -> SortedSet(record1),
+              addr2 -> SortedSet(record2)
+            )
+          )
+        )
         _ <- fullStore.syncFromGlobalSnapshotInfo(info, ordinal2)
         fullTrie <- fullStore.build(ordinal2)
         fullRoot = fullTrie.map(_.rootHash)
 
         _ <- IO.println(s"[FS PERSIST/RELOAD] Loaded: $loaded, Inc: $incRoot, Full: $fullRoot, Match: ${incRoot == fullRoot}")
-      } yield expect.all(
-        loaded,
-        incRoot == fullRoot
-      )
+      } yield
+        expect.all(
+          loaded,
+          incRoot == fullRoot
+        )
     }
   }
 
@@ -359,10 +372,12 @@ object MptFileSystemProducerDebugSuite extends MutableIOSuite {
         incProducer <- FileSystemMerklePatriciaProducer.make[IO](dir / "incremental")
         incStore <- MptStore.make[IO, GlobalStateKey](incProducer, GlobalStateKey.toHex[IO])
 
-        acc1 = StateChangesAccumulator(activeDelegatedStakes = SortedMap(
-          addr1 -> SortedSet(record1),
-          addr2 -> SortedSet(record2)
-        ))
+        acc1 = StateChangesAccumulator(activeDelegatedStakes =
+          SortedMap(
+            addr1 -> SortedSet(record1),
+            addr2 -> SortedSet(record2)
+          )
+        )
         _ <- incStore.syncFromStateChanges(acc1, ordinal1)
         _ <- incStore.build(ordinal1)
 
