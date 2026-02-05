@@ -130,23 +130,51 @@ object GlobalSnapshotTraverse {
 
           // Log field-level diagnostics when state proof validation fails
           _ <- (for {
-            _ <- logger.error(s"STATE PROOF MISMATCH at ordinal=${firstInc.ordinal.show}")
+            _ <- logger.error(s"========== STATE PROOF MISMATCH DEBUG ==========")
+            _ <- logger.error(s"Ordinal: ${firstInc.ordinal.show}")
             _ <- logger.error(s"Expected mptRoot: ${hashedFirstInc.signed.value.stateProof.mptRoot}")
             _ <- logger.error(s"Calculated mptRoot: ${firstInfoCalculatedProof.mptRoot}")
-            // Build trie from info to extract field digests
-            rebuiltTrie <- HasherSelector[F].withCurrent { implicit hasher =>
+
+            // Get cached field digests from consensus (if available)
+            consensusCache <- mptStore.underlying.getOrdinalCache(firstInc.ordinal)
+            _ <- logger.info(s"Consensus cache available: ${consensusCache.isDefined}")
+
+            // Build trie from GlobalSnapshotInfo and extract field digests
+            (rebuiltTrie, rebuiltDigests) <- HasherSelector[F].withCurrent { implicit hasher =>
               import io.constellationnetwork.security.mpt.MerklePatriciaTrie
-              firstInfo
-                .allStateEntries[F]
-                .flatMap(entries =>
-                  entries.toList.traverse {
-                    case (k, v) =>
-                      GlobalStateKey.toHex[F](k).map(_ -> v)
-                  }.map(_.toMap)
-                )
-                .flatMap(hexMap => MerklePatriciaTrie.makeParallel[F, Json](hexMap))
+              for {
+                entries <- firstInfo.allStateEntries[F]
+                _ <- logger.info(s"Retraversal entry count: ${entries.size}")
+                hexMap <- entries.toList.traverse {
+                  case (k, v) => GlobalStateKey.toHex[F](k).map(_ -> v)
+                }.map(_.toMap)
+                trie <- MerklePatriciaTrie.makeParallel[F, Json](hexMap)
+                digests <- MptFieldDigests.extractAllFieldDigests[F](trie)
+              } yield (trie, digests)
             }
+
+            // Log retraversal field digests
+            _ <- logger.info(s"--- Retraversal Field Digests ---")
             _ <- MptFieldDigests.logFieldDigests[F](rebuiltTrie, s"ordinal=${firstInc.ordinal.show}/retraversal")
+
+            // Compare field-by-field if we have consensus cache
+            _ <- consensusCache.traverse_ { cache =>
+              logger.info(s"--- Consensus Field Digests ---") >>
+                cache.fieldDigests.toList.sortBy(_._1.toInt).traverse_ {
+                  case (fieldId, hash) =>
+                    logger.info(s"[consensus] ${MptFieldDigests.fieldIdToName(fieldId)}: ${hash.value.take(16)}...")
+                } >>
+                logger.info(s"--- Field-by-Field Comparison ---") >>
+                MptFieldDigests
+                  .compareAndLogDifferences[F](
+                    cache.fieldDigests,
+                    rebuiltDigests,
+                    s"ordinal=${firstInc.ordinal.show}"
+                  )
+                  .void
+            }
+
+            _ <- logger.error(s"========== END STATE PROOF MISMATCH DEBUG ==========")
           } yield ()).whenA(stateProofInvalid)
 
           _ <- (new Exception(s"Snapshot info does not match the snapshot at ordinal=${firstInc.ordinal.show}"))
