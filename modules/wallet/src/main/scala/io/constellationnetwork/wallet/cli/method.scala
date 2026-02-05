@@ -83,7 +83,8 @@ object method {
     amount: TransactionAmount,
     parent: Option[Path],
     currencyId: Option[Address],
-    unlockEpoch: Option[Long]
+    unlockEpoch: Option[Long],
+    replaceRef: Option[String]
   ) extends CliMethod
 
   object CreateTokenLock extends WithOpts[CreateTokenLock] {
@@ -115,7 +116,8 @@ object method {
             "c"
           )
           .orNone,
-        Opts.option[Long]("unlockEpoch", "Epoch to unlock, defaults to infinite", "u").orNone
+        Opts.option[Long]("unlockEpoch", "Epoch to unlock, defaults to infinite", "u").orNone,
+        Opts.option[String]("replace", "Hash of token lock to replace", "r").orNone
       ).mapN(CreateTokenLock.apply)
     }
   }
