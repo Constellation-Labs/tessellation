@@ -84,3 +84,10 @@ jobs:
     with:
       tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
     secrets: inherit
+
+  call-test-token-lock-replacement:
+    needs: [calculate-version, call-workflow-setup-environment]
+    uses: ./.github/workflows/test-token-lock-replacement.yml
+    with:
+      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
+    secrets: inherit
