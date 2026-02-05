@@ -372,6 +372,21 @@ object Download {
         // two concurrent calls both see mptEntries.isEmpty=true and both try to sync
         def performInitialSync: F[Unit] =
           logger.info("Performing initial sync of MPT (if needed)") >>
+            Async[F].delay(Option(System.getenv("MPT_STATE_DEBUG")).contains("true")).flatMap { debugEnabled =>
+              if (debugEnabled) {
+                val delegatedStakes = context.activeDelegatedStakes.getOrElse(
+                  scala.collection.immutable.SortedMap
+                    .empty[address.Address, scala.collection.immutable.SortedSet[delegatedStake.DelegatedStakeRecord]]
+                )
+                logger.info(s"[MPT_DEBUG][DOWNLOAD_SYNC] ordinal=${lastSnapshot.ordinal}") >>
+                  logger.info(s"[MPT_DEBUG][DOWNLOAD_SYNC] delegatedStakes entries: ${delegatedStakes.size}") >>
+                  logger.info(s"[MPT_DEBUG][DOWNLOAD_SYNC] delegatedStakes keys: ${delegatedStakes.keys.toList}") >>
+                  delegatedStakes.toList.traverse_ {
+                    case (addr, records) =>
+                      logger.info(s"[MPT_DEBUG][DOWNLOAD_SYNC] delegatedStakes[$addr]: ${records.size} records")
+                  }
+              } else Async[F].unit
+            } >>
             mptStore.syncFullIfNeeded[Json](
               hasherSelector.withCurrent(implicit h => context.allStateEntries[F]),
               lastSnapshot.ordinal

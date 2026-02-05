@@ -8,7 +8,7 @@ sleep 45
 echo "Starting cluster test"
 
 export DAG_L0_URL="http://localhost:9000"
-export DAG_L1_URL="http://localhost:9010"
+export DAG_L1_URL="http://localhost:9100"
 
 # Create node update params for gl0 kp
 cd ./nodes/0/

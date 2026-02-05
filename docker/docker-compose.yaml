@@ -6,6 +6,7 @@ services:
     env_file:
       - .env
     environment:
+      - MPT_STATE_DEBUG=${MPT_STATE_DEBUG:-false}
       - CL_DOCKER_ID=gl0
       - CL_KEYSTORE=/tessellation/key.p12
       - CL_PUBLIC_HTTP_PORT=${CL_DOCKER_INTERNAL_GL0_PUBLIC:-9000}
@@ -88,3 +89,46 @@ services:
       retries: 5
       start_period: 3s
     profiles: ["l1"]
+
+  gl0-stream:
+    image: constellationnetwork/tessellation${CL_DOCKER_CORE_REPO:-}:${TESSELLATION_DOCKER_VERSION:-latest}
+    container_name: gl0-stream${CONTAINER_NAME_SUFFIX:-}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - MPT_STATE_DEBUG=${MPT_STATE_DEBUG:-false}
+      - CL_DOCKER_ID=gl0-stream
+      - CL_KEYSTORE=/tessellation/key.p12
+      - CL_PUBLIC_HTTP_PORT=9030
+      - CL_P2P_HTTP_PORT=9031
+      - CL_CLI_HTTP_PORT=9032
+      - CL_L0_PEER_HTTP_HOST=${CL_DOCKER_GL0_PEER_HTTP_HOST:-gl0}
+      - CL_L0_PEER_HTTP_PORT=${CL_DOCKER_GL0_PEER_HTTP_PORT:-9000}
+      - CL_L0_PEER_ID=${CL_DOCKER_GL0_PEER_ID:-}
+      - CL_DOCKER_JOIN=true
+      - CL_DOCKER_JOIN_IP=${CL_DOCKER_GL0_JOIN_IP:-172.32.0.10}
+      - CL_DOCKER_JOIN_PORT=${CL_DOCKER_GL0_JOIN_PORT:-9001}
+      - CL_DOCKER_JOIN_ID=${CL_DOCKER_GL0_JOIN_ID:-}
+      - CL_DOCKER_JOIN_CLI_PORT=9032
+      - CL_DOCKER_JOIN_INITIAL_DELAY=60
+      - CL_DOCKER_JOIN_RETRIES=20
+      - CL_DOCKER_JOIN_DELAY=10
+      - CL_DOCKER_GENESIS=false
+    ports:
+      - "${CL_DOCKER_BIND_INTERFACE:-}9030:9030"
+      - "${CL_DOCKER_BIND_INTERFACE:-}9031:9031"
+      - "${CL_DOCKER_BIND_INTERFACE:-}9032:9032"
+    volumes:
+      - ${CL_KEYSTORE_MOUNT_PATH:-./key.p12}:/tessellation/key.p12:ro
+      - ${CL_DOCKER_SEEDLIST:-/dev/null}:/tessellation/seedlist:ro
+      - ${CL_DOCKER_PRIORITY_SEEDLIST:-/dev/null}:/tessellation/priority-seedlist:ro
+      - ./gl0-stream-logs:/tessellation/logs
+      - ./gl0-stream-data:/tessellation/data
+    healthcheck:
+      test: ["CMD", "/tessellation/internal-health-check.sh"]
+      interval: 3s
+      timeout: 5s
+      retries: 5
+      start_period: 3s
+    profiles: ["stream"]
