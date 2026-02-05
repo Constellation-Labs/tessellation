@@ -169,17 +169,14 @@ object ContextualTokenLockValidator {
         hashedActiveTokenLocks: List[Hashed[TokenLock]]
       ): Either[ContextualTokenLockValidationError, Hashed[TokenLock]] =
         tokenLock.replaceTokenLockRef match {
-          case None => tokenLock.asRight
+          case None      => tokenLock.asRight
           case Some(ref) =>
-            if (tokenLock.currencyId.nonEmpty) {
-              ReplacementIsNotSupported(tokenLock.currencyId).asLeft
-            } else {
-              hashedActiveTokenLocks.find(_.hash == ref) match {
-                case None => NothingToReplace(ref).asLeft
-                case Some(existing) if tokenLock.amount <= existing.amount =>
-                  ReplacementLowerThanCurrentTokenLock(tokenLock.amount, existing.amount).asLeft
-                case Some(_) => tokenLock.asRight
-              }
+            // Note: Currency token lock replacement is now supported (previously blocked)
+            hashedActiveTokenLocks.find(_.hash == ref) match {
+              case None => NothingToReplace(ref).asLeft
+              case Some(existing) if tokenLock.amount <= existing.amount =>
+                ReplacementLowerThanCurrentTokenLock(tokenLock.amount, existing.amount).asLeft
+              case Some(_) => tokenLock.asRight
             }
         }
 

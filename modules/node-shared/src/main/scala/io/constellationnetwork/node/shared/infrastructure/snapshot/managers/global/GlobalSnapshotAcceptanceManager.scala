@@ -848,7 +848,13 @@ object GlobalSnapshotAcceptanceManager {
               SortedMap.empty[Address, SortedSet[Signed[TokenLock]]]
             )
 
-            allTokenLocks: List[Signed[TokenLock]] = globalActiveTokenLocks.values.toList.flatten
+            // Include both DAG token locks (from global activeTokenLocks) and currency token locks (from currency snapshots)
+            currencyTokenLocks: List[Signed[TokenLock]] = currencySnapshots.values.toList
+              .flatMap(_.toOption)
+              .flatMap {
+                case (_, info) => info.activeTokenLocks.getOrElse(SortedMap.empty[Address, SortedSet[Signed[TokenLock]]]).values.flatten
+              }
+            allTokenLocks: List[Signed[TokenLock]] = globalActiveTokenLocks.values.toList.flatten ++ currencyTokenLocks
             globalActiveTokenLocksByRef <-
               if (allTokenLocks.isEmpty) {
                 Async[F].pure(Map.empty[Hash, Signed[TokenLock]])

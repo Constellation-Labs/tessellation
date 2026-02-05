@@ -45,6 +45,9 @@ object Combiners {
         acc.sharedArtifacts + SpendAction(NonEmptyList.of(spendTransactionA, spendTransactionB))
       case UsageUpdateWithTokenUnlock(address, currencyId, tokenLockRef, unlockAmount, _) =>
         acc.sharedArtifacts + TokenUnlock(tokenLockRef, unlockAmount, currencyId.some, address)
+      case UsageUpdateWithTokenLockReplacement(address, currencyId, originalTokenLockRef, originalAmount, _, _) =>
+        // When a token lock is replaced, unlock the original lock's amount
+        acc.sharedArtifacts + TokenUnlock(originalTokenLockRef, originalAmount, currencyId.some, address)
       case _ => acc.sharedArtifacts
     }
 

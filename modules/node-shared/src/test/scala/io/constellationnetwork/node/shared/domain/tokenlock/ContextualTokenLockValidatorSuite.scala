@@ -398,7 +398,7 @@ object ContextualTokenLockValidatorSuite extends MutableIOSuite {
       )
   }
 
-  test("validateReplaceTokenLockRef - ReplacementIsNotSupported when currencyId is set") { res =>
+  test("validateReplaceTokenLockRef - currency token lock replacement is now supported") { res =>
     implicit val (h, sp) = res
 
     for {
@@ -429,7 +429,7 @@ object ContextualTokenLockValidatorSuite extends MutableIOSuite {
       )
 
       res = validator.validate(newHashedTokenLock, context)
-    } yield expect.same(ReplacementIsNotSupported(currencyId).invalidNec, res)
+    } yield expect.all(res.isValid)
   }
 
   test("validate balances - arithmetic error with overflow") { res =>

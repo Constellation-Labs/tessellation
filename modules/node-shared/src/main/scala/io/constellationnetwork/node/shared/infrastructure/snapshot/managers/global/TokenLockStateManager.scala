@@ -135,17 +135,16 @@ object TokenLockStateManager {
           case ((result, seen), tx) =>
             tx.replaceTokenLockRef match {
               case Some(replaceTokenLockRef) =>
-                if (tx.currencyId.nonEmpty) {
-                  // we can only replace DAG token locks
-                  (result, seen).pure[F]
-                } else if (seen(replaceTokenLockRef)) {
+                if (seen(replaceTokenLockRef)) {
                   (result, seen).pure[F]
                 } else {
+                  // Note: Currency token lock replacement is now supported (previously blocked)
+                  // Filter to matching currency: DAG (None) can only replace DAG, currency can only replace same currency
                   lastSnapshotContext.activeTokenLocks
                     .getOrElse(SortedMap.empty[Address, SortedSet[Signed[TokenLock]]])
                     .getOrElse(tx.source, SortedSet.empty[Signed[TokenLock]])
                     .toList
-                    .filter(_.currencyId.isEmpty) // we can only replace DAG token locks
+                    .filter(_.currencyId == tx.currencyId) // replacement must be same currency type
                     .traverse(existing => TokenLockReference.of(existing).map(ref => (ref, existing)))
                     .map { existingWithRefs =>
                       val shouldInclude = existingWithRefs.exists {

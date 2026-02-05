@@ -29,6 +29,14 @@ object LifecycleSharedFunctions {
             update.currencyId.some,
             update.address
           )
+        case update: UsageUpdateWithTokenLockReplacement =>
+          // When a token lock is replaced, unlock the original lock's amount
+          TokenUnlock(
+            update.originalTokenLockRef,
+            update.originalAmount,
+            update.currencyId.some,
+            update.address
+          )
       }
     )
 

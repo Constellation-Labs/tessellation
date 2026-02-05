@@ -67,6 +67,32 @@ object Types {
     usage: NonNegLong
   ) extends UsageUpdate
 
+  /** Data update that triggers a token lock replacement unlock. When a token lock is replaced, the old lock's amount is unlocked. This
+    * update type produces a TokenUnlock artifact for the replaced lock.
+    *
+    * @param address
+    *   The address that owns the token lock
+    * @param currencyId
+    *   The currency of the token lock being replaced
+    * @param originalTokenLockRef
+    *   Hash of the original token lock being replaced
+    * @param originalAmount
+    *   Amount from the original lock to unlock
+    * @param replacementTokenLockRef
+    *   Hash of the new replacement token lock
+    * @param usage
+    *   Usage counter for testing
+    */
+  @derive(decoder, encoder)
+  case class UsageUpdateWithTokenLockReplacement(
+    address: Address,
+    currencyId: CurrencyId,
+    originalTokenLockRef: Hash,
+    originalAmount: TokenLockAmount,
+    replacementTokenLockRef: Hash,
+    usage: NonNegLong
+  ) extends UsageUpdate
+
   @derive(decoder, encoder)
   case class UsageUpdateState(
     updates: List[UsageUpdate]

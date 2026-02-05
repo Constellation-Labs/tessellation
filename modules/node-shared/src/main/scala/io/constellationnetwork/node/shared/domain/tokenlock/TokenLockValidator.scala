@@ -124,12 +124,10 @@ object TokenLockValidator {
         currentTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]]
       ): TokenLockValidationErrorOr[Signed[TokenLock]] =
         tokenLock.replaceTokenLockRef match {
-          case None => tokenLock.validNec[TokenLockValidationError]
-          case Some(ref) =>
-            if (tokenLock.currencyId.nonEmpty)
-              (ReplacementIsNotSupported(tokenLock.currencyId): TokenLockValidationError).invalidNec[Signed[TokenLock]]
-            else
-              tokenLock.validNec[TokenLockValidationError]
+          case None    => tokenLock.validNec[TokenLockValidationError]
+          case Some(_) =>
+            // Note: Currency token lock replacement is now supported (previously blocked)
+            tokenLock.validNec[TokenLockValidationError]
         }
 
       private val lockedAddresses = cfg.locked

@@ -304,7 +304,7 @@ object TokenLockValidatorSuite extends MutableIOSuite {
 
   // ==================== validateReplaceTokenLockRef tests ====================
 
-  test("validateWithTokenLockLimits - should fail when replacement is not supported for currency token locks") { res =>
+  test("validateWithTokenLockLimits - currency token lock replacement is now supported") { res =>
     implicit val (h, sp) = res
 
     val config = TokenLockLimitsConfig(
@@ -331,7 +331,7 @@ object TokenLockValidatorSuite extends MutableIOSuite {
       )
       validator = mkValidator()
       result <- validator.validateWithTokenLockLimits(newTokenLock, config, currentTokenLocks.some, EpochProgress.MinValue.some)
-    } yield expect.same(ReplacementIsNotSupported(currencyId).invalidNec, result)
+    } yield expect.same(Valid(newTokenLock), result)
   }
 
   // ==================== Combined validation tests ====================
