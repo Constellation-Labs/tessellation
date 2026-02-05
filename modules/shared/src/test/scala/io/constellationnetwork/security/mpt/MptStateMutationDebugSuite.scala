@@ -30,11 +30,9 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import weaver.MutableIOSuite
 
-/**
-  * Debug test suite for state mutation sequences.
-  * 
-  * Tests various sequences of state changes to try to reproduce
-  * non-determinism between incremental sync and full rebuild.
+/** Debug test suite for state mutation sequences.
+  *
+  * Tests various sequences of state changes to try to reproduce non-determinism between incremental sync and full rebuild.
   */
 object MptStateMutationDebugSuite extends MutableIOSuite {
 
@@ -97,7 +95,7 @@ object MptStateMutationDebugSuite extends MutableIOSuite {
   // Helper to build MPT incrementally and get root hash
   private def buildMptRootIncremental(
     states: List[StateSnapshot]
-  )(implicit j: JsonSerializer[IO], h: Hasher[IO], sp: SecurityProvider[IO]): IO[Either[MerklePatriciaError, MptRoot]] = {
+  )(implicit j: JsonSerializer[IO], h: Hasher[IO], sp: SecurityProvider[IO]): IO[Either[MerklePatriciaError, MptRoot]] =
     for {
       producer <- InMemoryMerklePatriciaProducer.make[IO]()
       store <- MptStore.make[IO, GlobalStateKey](producer, GlobalStateKey.toHex[IO])
@@ -111,7 +109,6 @@ object MptStateMutationDebugSuite extends MutableIOSuite {
       finalOrdinal = states.lastOption.map(_.ordinal).getOrElse(SnapshotOrdinal(NonNegLong(1L)))
       trie <- store.build(finalOrdinal)
     } yield trie.map(_.rootHash)
-  }
 
   test("mutation: create single delegated stake") { res =>
     implicit val (j, h, sp) = res
@@ -196,15 +193,21 @@ object MptStateMutationDebugSuite extends MutableIOSuite {
 
     // Incremental states
     val state1 = StateSnapshot(ordinal1, SortedMap(addr1 -> SortedSet(record1)))
-    val state2 = StateSnapshot(ordinal2, SortedMap(
-      addr1 -> SortedSet(record1),
-      addr2 -> SortedSet(record2)
-    ))
-    val state3 = StateSnapshot(ordinal3, SortedMap(
-      addr1 -> SortedSet(record1),
-      addr2 -> SortedSet(record2),
-      addr3 -> SortedSet(record3)
-    ))
+    val state2 = StateSnapshot(
+      ordinal2,
+      SortedMap(
+        addr1 -> SortedSet(record1),
+        addr2 -> SortedSet(record2)
+      )
+    )
+    val state3 = StateSnapshot(
+      ordinal3,
+      SortedMap(
+        addr1 -> SortedSet(record1),
+        addr2 -> SortedSet(record2),
+        addr3 -> SortedSet(record3)
+      )
+    )
 
     for {
       fullRoot <- buildMptRoot(state3)
@@ -287,12 +290,14 @@ object MptStateMutationDebugSuite extends MutableIOSuite {
     )
     val rewards = List(Balance(0L), Balance(10L), Balance(20L), Balance(30L), Balance(40L))
 
-    val states = stakes.zipWithIndex.map { case (_, idx) =>
-      val ordinal = ordinals(idx)
-      val records = stakes.take(idx + 1).zipWithIndex.map { case (s, j) =>
-        DelegatedStakeRecord(s, ordinals(j), rewards(j), None, None)
-      }
-      StateSnapshot(ordinal, SortedMap(addr1 -> SortedSet.from(records)))
+    val states = stakes.zipWithIndex.map {
+      case (_, idx) =>
+        val ordinal = ordinals(idx)
+        val records = stakes.take(idx + 1).zipWithIndex.map {
+          case (s, j) =>
+            DelegatedStakeRecord(s, ordinals(j), rewards(j), None, None)
+        }
+        StateSnapshot(ordinal, SortedMap(addr1 -> SortedSet.from(records)))
     }.toList
 
     val finalState = states.last
@@ -321,10 +326,13 @@ object MptStateMutationDebugSuite extends MutableIOSuite {
     val record2 = DelegatedStakeRecord(stake2, ordinal2, Balance(0L), None, None)
 
     // Full final state
-    val fullState = StateSnapshot(ordinal2, SortedMap(
-      addr1 -> SortedSet(record1),
-      addr2 -> SortedSet(record2)
-    ))
+    val fullState = StateSnapshot(
+      ordinal2,
+      SortedMap(
+        addr1 -> SortedSet(record1),
+        addr2 -> SortedSet(record2)
+      )
+    )
 
     for {
       // Full rebuild
@@ -368,15 +376,21 @@ object MptStateMutationDebugSuite extends MutableIOSuite {
     val record2 = DelegatedStakeRecord(stake2, ordinal1, Balance(0L), None, None)
 
     // Ordinal 1: both addresses have stakes
-    val state1 = StateSnapshot(ordinal1, SortedMap(
-      addr1 -> SortedSet(record1),
-      addr2 -> SortedSet(record2)
-    ))
+    val state1 = StateSnapshot(
+      ordinal1,
+      SortedMap(
+        addr1 -> SortedSet(record1),
+        addr2 -> SortedSet(record2)
+      )
+    )
 
     // Ordinal 2: addr2's stake is removed (withdrawn)
-    val state2 = StateSnapshot(ordinal2, SortedMap(
-      addr1 -> SortedSet(record1)
-    ))
+    val state2 = StateSnapshot(
+      ordinal2,
+      SortedMap(
+        addr1 -> SortedSet(record1)
+      )
+    )
 
     for {
       fullRoot <- buildMptRoot(state2)
