@@ -95,36 +95,32 @@ object IncrementalTrieOps {
     path: CompactNibblePath,
     depth: Int,
     dataDigest: Hash
-  ): F[MerklePatriciaNode] =
-    // Fixed-length keys should never be exhausted at an Extension node
-    if (depth >= path.length)
-      Async[F].raiseError(new IllegalStateException(s"Key exhausted at Extension node (depth=$depth, pathLen=${path.length})"))
-    else {
-      val shared = ext.sharedPath
-      val keyRemaining = path.drop(depth)
-      val commonLen = shared.commonPrefixLength(keyRemaining)
+  ): F[MerklePatriciaNode] = {
+    val shared = ext.sharedPath
+    val keyRemaining = if (depth >= path.length) CompactNibblePath.empty else path.drop(depth)
+    val commonLen = shared.commonPrefixLength(keyRemaining)
 
-      if (commonLen == shared.length) {
-        // Full match - recurse into child
-        insertAt(ext.child, path, depth + shared.length, dataDigest).flatMap {
-          case updatedBranch: MerklePatriciaNode.Branch =>
-            MerklePatriciaNode.Extension.fromCompact(shared, updatedBranch).widen
-          case other =>
-            // Child collapsed to non-branch, merge paths
-            other match {
-              case leaf: MerklePatriciaNode.Leaf =>
-                MerklePatriciaNode.Leaf.fromCompact(shared ++ leaf.remainingPath, leaf.dataDigest).widen
-              case childExt: MerklePatriciaNode.Extension =>
-                MerklePatriciaNode.Extension.fromCompact(shared ++ childExt.sharedPath, childExt.child).widen
-              case b: MerklePatriciaNode.Branch =>
-                MerklePatriciaNode.Extension.fromCompact(shared, b).widen
-            }
-        }
-      } else {
-        // Partial match - need to split
-        splitExtension(shared, ext.child, keyRemaining, dataDigest, commonLen)
+    if (commonLen == shared.length) {
+      // Full match on extension path - recurse into child
+      insertAt(ext.child, path, depth + shared.length, dataDigest).flatMap {
+        case updatedBranch: MerklePatriciaNode.Branch =>
+          MerklePatriciaNode.Extension.fromCompact(shared, updatedBranch).widen
+        case other =>
+          // Child collapsed to non-branch, merge paths
+          other match {
+            case leaf: MerklePatriciaNode.Leaf =>
+              MerklePatriciaNode.Leaf.fromCompact(shared ++ leaf.remainingPath, leaf.dataDigest).widen
+            case childExt: MerklePatriciaNode.Extension =>
+              MerklePatriciaNode.Extension.fromCompact(shared ++ childExt.sharedPath, childExt.child).widen
+            case b: MerklePatriciaNode.Branch =>
+              MerklePatriciaNode.Extension.fromCompact(shared, b).widen
+          }
       }
+    } else {
+      // Partial match - need to split
+      splitExtension(shared, ext.child, keyRemaining, dataDigest, commonLen)
     }
+  }
 
   private def splitExtension[F[_]: Async: Hasher](
     extShared: CompactNibblePath,
@@ -132,7 +128,13 @@ object IncrementalTrieOps {
     keyRemaining: CompactNibblePath,
     dataDigest: Hash,
     commonLen: Int
-  ): F[MerklePatriciaNode] =
+  ): F[MerklePatriciaNode] = {
+    // Use getOrEmpty to handle variable-length keys correctly.
+    // When a key is shorter than extShared at commonLen, getOrEmpty returns 0,
+    // matching the behavior of ParallelMerklePatriciaProducer.findGroups.
+    val existingNibble = extShared.getOrEmpty(commonLen)
+    val newNibble = keyRemaining.getOrEmpty(commonLen)
+
     for {
       // Create new leaf for the inserted key
       newLeafRemaining <- Async[F].pure(
@@ -140,9 +142,6 @@ object IncrementalTrieOps {
         else keyRemaining.drop(commonLen + 1)
       )
       newLeaf <- MerklePatriciaNode.Leaf.fromCompact[F](newLeafRemaining, dataDigest)
-
-      existingNibble = extShared.get(commonLen)
-      newNibble = keyRemaining.get(commonLen)
 
       // Create the existing subtree (extension's remaining path + child)
       existingChildPath = extShared.drop(commonLen + 1)
@@ -167,6 +166,7 @@ object IncrementalTrieOps {
           newBranch.pure[F].widen
         }
     } yield result
+  }
 
   private def insertIntoLeaf[F[_]: Async: Hasher](
     leaf: MerklePatriciaNode.Leaf,
@@ -198,10 +198,11 @@ object IncrementalTrieOps {
           else leafRemaining.drop(commonLen + 1)
         existingLeaf <- MerklePatriciaNode.Leaf.fromCompact[F](existingLeafRemaining, leaf.dataDigest)
 
-        // Fixed-length keys guarantee both paths have a nibble at commonLen
-        // (if they were equal length and matched fully, line 176 would handle it)
-        existingNibble = leafRemaining.get(commonLen)
-        newNibble = keyRemaining.get(commonLen)
+        // Use getOrEmpty to handle variable-length keys correctly.
+        // When a key is shorter at commonLen, getOrEmpty returns 0,
+        // matching the behavior of ParallelMerklePatriciaProducer.findGroups.
+        existingNibble = leafRemaining.getOrEmpty(commonLen)
+        newNibble = keyRemaining.getOrEmpty(commonLen)
 
         branch <- MerklePatriciaNode.Branch.fromByteKeys(
           Map(
