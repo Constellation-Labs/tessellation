@@ -22,10 +22,11 @@ class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher: Parallel: JsonSerializ
   pendingInsertsRef: Ref[F, Map[Hex, Array[Byte]]],
   pendingRemovesRef: Ref[F, List[Hex]],
   rootHashCacheRef: Ref[F, Map[SnapshotOrdinal, MptRoot]],
-  lastBuiltOrdinalRef: Ref[F, Option[SnapshotOrdinal]]
+  lastBuiltOrdinalRef: Ref[F, Option[SnapshotOrdinal]],
+  enableFieldDigests: Boolean = false
 ) extends StatefulMerklePatriciaProducer[F] {
 
-  private val parallelProducer: ParallelMerklePatriciaProducer[F] = ParallelMerklePatriciaProducer[F]
+  private val parallelProducer: ParallelMerklePatriciaProducer[F] = ParallelMerklePatriciaProducer[F](enableFieldDigests = enableFieldDigests)
   private val MaxCacheSize = 50
 
   override def getProver: F[MerklePatriciaSingleInclusionProver[F]] =
@@ -226,7 +227,8 @@ class InMemoryMerklePatriciaProducer[F[_]: Async: Hasher: Parallel: JsonSerializ
 object InMemoryMerklePatriciaProducer {
 
   def make[F[_]: Async: Hasher: Parallel: JsonSerializer](
-    initial: Map[Hex, Array[Byte]] = Map.empty
+    initial: Map[Hex, Array[Byte]] = Map.empty,
+    enableFieldDigests: Boolean = false
   ): F[InMemoryMerklePatriciaProducer[F]] =
     for {
       stateRef <- Ref.of[F, Map[Hex, Array[Byte]]](initial)
@@ -242,6 +244,7 @@ object InMemoryMerklePatriciaProducer {
         pendingInsertsRef,
         pendingRemovesRef,
         rootHashCacheRef,
-        lastBuiltOrdinalRef
+        lastBuiltOrdinalRef,
+        enableFieldDigests
       )
 }

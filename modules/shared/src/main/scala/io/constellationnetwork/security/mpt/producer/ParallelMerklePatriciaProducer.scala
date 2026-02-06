@@ -19,9 +19,16 @@ import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 /** Parallel MPT producer - builds trie with hashes computed during construction. Nodes are immutable with pre-computed digests.
+  * 
+  * @param maxThreads Maximum number of parallel threads for computation
+  * @param enableFieldDigests Whether to compute detailed field digests (default: false)
+  *                          - Set to true for consensus nodes with debugging enabled
+  *                          - Keep false for streaming services to run lean
+  *                          - Significant performance impact when enabled
   */
 class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel: JsonSerializer](
-  maxThreads: Int = Runtime.getRuntime.availableProcessors()
+  maxThreads: Int = Runtime.getRuntime.availableProcessors(),
+  enableFieldDigests: Boolean = false
 ) extends MerklePatriciaProducer[F] {
 
   private val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
@@ -265,6 +272,9 @@ class ParallelMerklePatriciaProducer[F[_]: Hasher: Async: Parallel: JsonSerializ
 }
 
 object ParallelMerklePatriciaProducer {
-  def apply[F[_]: Hasher: Async: Parallel: JsonSerializer]: ParallelMerklePatriciaProducer[F] =
-    new ParallelMerklePatriciaProducer[F]()
+  def apply[F[_]: Hasher: Async: Parallel: JsonSerializer](
+    maxThreads: Int = Runtime.getRuntime.availableProcessors(),
+    enableFieldDigests: Boolean = false
+  ): ParallelMerklePatriciaProducer[F] =
+    new ParallelMerklePatriciaProducer[F](maxThreads, enableFieldDigests)
 }

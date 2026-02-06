@@ -73,18 +73,26 @@ trait StatefulWithPersistenceMerklePatriciaProducer[F[_]] extends StatefulMerkle
 object MerklePatriciaProducer {
   def apply[F[_]](implicit producer: MerklePatriciaProducer[F]): MerklePatriciaProducer[F] = producer
 
-  def make[F[_]: Hasher: Async]: MerklePatriciaProducer[F] = stateless[F]
+  /** Factory methods for MerklePatriciaProducer instances.
+    *
+    * @param enableFieldDigests Controls detailed field digest computation (default: false)
+    *                          Performance optimization:
+    *                          - false: Streaming services run lean
+    *                          - true: Consensus nodes with debugging enabled pay the cost
+    */
+  def make[F[_]: Hasher: Async](enableFieldDigests: Boolean = false): MerklePatriciaProducer[F] = stateless[F](enableFieldDigests)
 
-  def stateless[F[_]: Hasher: Async]: MerklePatriciaProducer[F] =
-    new StatelessMerklePatriciaProducer[F]
+  def stateless[F[_]: Hasher: Async](enableFieldDigests: Boolean = false): MerklePatriciaProducer[F] =
+    new StatelessMerklePatriciaProducer[F](enableFieldDigests)
 
-  def parallel[F[_]: Hasher: Async: Parallel: JsonSerializer]: MerklePatriciaProducer[F] =
-    new ParallelMerklePatriciaProducer[F]
+  def parallel[F[_]: Hasher: Async: Parallel: JsonSerializer](enableFieldDigests: Boolean = false): MerklePatriciaProducer[F] =
+    new ParallelMerklePatriciaProducer[F](enableFieldDigests)
 
   def inMemory[F[_]: Async: Hasher: Parallel: JsonSerializer](
-    initial: Map[Hex, Array[Byte]] = Map.empty
+    initial: Map[Hex, Array[Byte]] = Map.empty,
+    enableFieldDigests: Boolean = false
   ): F[StatefulMerklePatriciaProducer[F]] =
-    InMemoryMerklePatriciaProducer.make[F](initial).widen[StatefulMerklePatriciaProducer[F]]
+    InMemoryMerklePatriciaProducer.make[F](initial, enableFieldDigests).widen[StatefulMerklePatriciaProducer[F]]
 }
 
 sealed trait MerklePatriciaError extends Throwable

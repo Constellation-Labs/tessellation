@@ -26,7 +26,9 @@ case class MerklePatriciaTrieWithData(
   *
   * Data is stored externally in a Map[Hash, Array[Byte]] rather than in leaf nodes.
   */
-class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatriciaProducer[F] {
+class StatelessMerklePatriciaProducer[F[_]: Hasher: Async](
+  enableFieldDigests: Boolean = false
+) extends MerklePatriciaProducer[F] {
 
   def getProver(trie: MerklePatriciaTrie): F[MerklePatriciaSingleInclusionProver[F]] =
     MerklePatriciaSingleInclusionProver.make[F](trie).pure[F]
@@ -553,6 +555,6 @@ class StatelessMerklePatriciaProducer[F[_]: Hasher: Async] extends MerklePatrici
 }
 
 object StatelessMerklePatriciaProducer {
-  def apply[F[_]: Hasher: Async]: StatelessMerklePatriciaProducer[F] =
-    new StatelessMerklePatriciaProducer[F]
+  def apply[F[_]: Hasher: Async](enableFieldDigests: Boolean = false): StatelessMerklePatriciaProducer[F] =
+    new StatelessMerklePatriciaProducer[F](enableFieldDigests)
 }

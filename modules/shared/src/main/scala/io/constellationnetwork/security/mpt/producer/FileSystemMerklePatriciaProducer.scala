@@ -35,11 +35,12 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher: JsonSerial
   pendingRemovesRef: Ref[F, List[Hex]],
   storage: MptStateStorage[F],
   rootHashCacheRef: Ref[F, Map[SnapshotOrdinal, MptRoot]],
-  lastBuiltOrdinalRef: Ref[F, Option[SnapshotOrdinal]]
+  lastBuiltOrdinalRef: Ref[F, Option[SnapshotOrdinal]],
+  enableFieldDigests: Boolean = false
 ) extends StatefulWithPersistenceMerklePatriciaProducer[F] {
 
   private val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
-  private val parallelProducer: ParallelMerklePatriciaProducer[F] = ParallelMerklePatriciaProducer[F]
+  private val parallelProducer: ParallelMerklePatriciaProducer[F] = ParallelMerklePatriciaProducer[F](enableFieldDigests = enableFieldDigests)
   private val BatchSize = 5000
   private val MaxCacheSize = 50
 
@@ -333,7 +334,8 @@ object FileSystemMerklePatriciaProducer {
 
   def make[F[_]: Async: Parallel: Hasher: JsonSerializer](
     path: Path,
-    initial: Map[Hex, Array[Byte]] = Map.empty
+    initial: Map[Hex, Array[Byte]] = Map.empty,
+    enableFieldDigests: Boolean = false
   ): F[FileSystemMerklePatriciaProducer[F]] =
     for {
       stateRef <- Ref.of[F, Map[Hex, Array[Byte]]](initial)
@@ -351,13 +353,15 @@ object FileSystemMerklePatriciaProducer {
         pendingRemovesRef,
         storage,
         rootHashCacheRef,
-        lastBuiltOrdinalRef
+        lastBuiltOrdinalRef,
+        enableFieldDigests
       )
 
   def make[F[_]: Async: Parallel: Hasher: JsonSerializer](
     path: Path,
     cutoffLogic: OrdinalCutoff,
-    initial: Map[Hex, Array[Byte]]
+    initial: Map[Hex, Array[Byte]],
+    enableFieldDigests: Boolean = false
   ): F[FileSystemMerklePatriciaProducer[F]] =
     for {
       stateRef <- Ref.of[F, Map[Hex, Array[Byte]]](initial)
@@ -375,6 +379,7 @@ object FileSystemMerklePatriciaProducer {
         pendingRemovesRef,
         storage,
         rootHashCacheRef,
-        lastBuiltOrdinalRef
+        lastBuiltOrdinalRef,
+        enableFieldDigests
       )
 }
