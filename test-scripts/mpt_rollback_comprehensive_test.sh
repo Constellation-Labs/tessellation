@@ -73,7 +73,14 @@ start_cluster() {
 }
 
 get_ordinal() {
-    curl -s http://localhost:9000/global-snapshots/latest 2>/dev/null | jq -r '.value.ordinal // 0'
+    local result
+    result=$(curl -s http://localhost:9000/global-snapshots/latest 2>/dev/null | jq -r '.value.ordinal // empty' 2>/dev/null)
+    # Return 0 if result is empty or not a number
+    if [[ -z "$result" ]] || ! [[ "$result" =~ ^[0-9]+$ ]]; then
+        echo "0"
+    else
+        echo "$result"
+    fi
 }
 
 get_latest_hash() {
