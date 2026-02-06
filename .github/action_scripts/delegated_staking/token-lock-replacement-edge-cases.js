@@ -89,22 +89,24 @@ const createTokenLockExpectError = async (account, urls, lockAmount, replaceRef,
   } catch (error) {
     if (error.message.includes('Expected error')) throw error
     
-    // Distinguish validation errors (400) from network/server errors
-    const status = error.response?.status
-    if (!status) {
-      throw new Error(`Network error (no response): ${error.message}`)
-    }
-    if (status !== 400) {
-      throw new Error(`Expected 400 Bad Request but got ${status}: ${error.message}`)
-    }
+    // dag4 SDK returns errors as JSON in error.message: {"errors":[{"message":"..."}]}
+    // or as plain text. Extract the actual error content.
+    const errorStr = error.message || ''
     
-    const errorMsg = error.response?.data || error.message
-    const errorStr = typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg)
+    // Check if this looks like an API validation error (contains error message patterns)
+    const isValidationError = errorStr.includes('"errors"') || 
+                              errorStr.includes('TokenLock') ||
+                              errorStr.includes('Replace') ||
+                              errorStr.includes('NothingTo')
+    
+    if (!isValidationError && (errorStr.includes('ECONNREFUSED') || errorStr.includes('ETIMEDOUT'))) {
+      throw new Error(`Network error: ${errorStr}`)
+    }
     
     if (!errorStr.includes(expectedErrorSubstring)) {
       throw new Error(`Expected error containing "${expectedErrorSubstring}" but got: ${errorStr}`)
     }
-    logWorkflow.info(`Got expected error (400): ${expectedErrorSubstring}`)
+    logWorkflow.info(`Got expected error: ${expectedErrorSubstring}`)
     return true
   }
 }
@@ -154,16 +156,45 @@ const testReplaceSameAmount = async (urls, account, nodeIds) => {
       throw new Error('Could not create stake on any node')
     }
 
-    await sleep(5000) // Wait for inclusion
+    // Wait for stake to be included in global snapshot (required for replacement validation)
+    logWorkflow.info('Waiting for stake inclusion in global snapshot...')
+    await withRetry(
+      async () => {
+        const stakeResponse = await getAccountDelegatedStakes(urls, account.address)
+        const stake = stakeResponse.activeDelegatedStakes.find(s => s.hash === stakeHash)
+        if (!stake) throw new Error('Stake not yet in global snapshot')
+        logWorkflow.info(`Stake confirmed in snapshot: ${stake.hash.substring(0, 16)}...`)
+        return true
+      },
+      { name: 'waitForStakeInclusion', maxAttempts: 15, interval: 2000, handleError: () => {} }
+    )
+    
+    // Additional wait for L1 state propagation
+    await sleep(5000)
   }
 
-  // Try to replace with same amount - should fail
-  await createTokenLockExpectError(
-    account,
-    urls,
-    lockAmount, // Same amount
-    lockHash,
-    'ReplacementLowerThanCurrentTokenLock'
+  // Try to replace with same amount - should fail with ReplacementLowerThanCurrentTokenLock
+  // Retry if we get NothingToReplace (lock not yet in L1 stored state)
+  await withRetry(
+    async () => {
+      try {
+        await createTokenLockExpectError(
+          account,
+          urls,
+          lockAmount, // Same amount
+          lockHash,
+          'ReplacementLowerThanCurrentTokenLock'
+        )
+        return true
+      } catch (e) {
+        if (e.message.includes('NothingToReplace')) {
+          logWorkflow.info('Lock not yet in L1 state, retrying...')
+          throw e // Retry
+        }
+        throw e // Other errors propagate
+      }
+    },
+    { name: 'replaceWithSameAmount', maxAttempts: 10, interval: 3000, handleError: () => {} }
   )
 
   // Verify stake unchanged
@@ -191,12 +222,27 @@ const testReplaceLessAmount = async (urls, account, existingLockHash, existingAm
   // Use 5000 DAG (minimum) which is less than 6000 DAG but still valid amount
   const lessAmount = 500000000000 // 5000 DAG - less than existing but above minimum
 
-  await createTokenLockExpectError(
-    account,
-    urls,
-    lessAmount,
-    existingLockHash,
-    'ReplacementLowerThanCurrentTokenLock'
+  // Retry if we get NothingToReplace (lock not yet in L1 stored state)
+  await withRetry(
+    async () => {
+      try {
+        await createTokenLockExpectError(
+          account,
+          urls,
+          lessAmount,
+          existingLockHash,
+          'ReplacementLowerThanCurrentTokenLock'
+        )
+        return true
+      } catch (e) {
+        if (e.message.includes('NothingToReplace')) {
+          logWorkflow.info('Lock not yet in L1 state, retrying...')
+          throw e
+        }
+        throw e
+      }
+    },
+    { name: 'replaceWithLessAmount', maxAttempts: 10, interval: 3000, handleError: () => {} }
   )
 
   logWorkflow.info('---- End testReplaceLessAmount ----')
