@@ -76,7 +76,7 @@ object GlobalSnapshot {
   def mkFirstIncrementalSnapshot[F[_]: Parallel: Async: Hasher: JsonSerializer](
     genesis: Hashed[GlobalSnapshot]
   )(implicit stateProofSelector: GlobalStateProofSelector): F[GlobalIncrementalSnapshot] =
-    genesis.info.toGlobalSnapshotInfo.stateProof[F](genesis.ordinal).map { stateProof =>
+    genesis.info.toGlobalSnapshotInfo.stateProof[F](genesis.ordinal.next).map { stateProof =>
       GlobalIncrementalSnapshot(
         genesis.ordinal.next,
         genesis.height,
