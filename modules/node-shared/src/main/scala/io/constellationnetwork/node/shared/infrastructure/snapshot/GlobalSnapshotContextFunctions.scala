@@ -25,6 +25,7 @@ import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.tokenLock.TokenLock
 import io.constellationnetwork.schema.transaction.RewardTransaction
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
@@ -62,12 +63,15 @@ object GlobalSnapshotContextFunctions {
       private def acceptDelegatedStakes(
         lastSnapshotContext: GlobalSnapshotInfo,
         epochProgress: EpochProgress,
-        ordinal: SnapshotOrdinal
-      )(implicit h: Hasher[F]): (
-        SortedMap[Address, SortedSet[DelegatedStakeRecord]],
-        SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
-        SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]]
-      ) = {
+        ordinal: SnapshotOrdinal,
+        acceptedTokenLocks: List[Signed[TokenLock]]
+      )(implicit h: Hasher[F]): F[
+        (
+          SortedMap[Address, SortedSet[DelegatedStakeRecord]],
+          SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
+          SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]]
+        )
+      ] = {
         val existingDelegatedStakesRaw = lastSnapshotContext.activeDelegatedStakes.getOrElse(
           SortedMap.empty[Address, SortedSet[DelegatedStakeRecord]]
         )
@@ -81,7 +85,7 @@ object GlobalSnapshotContextFunctions {
           }
         }.to(SortedMap)
 
-        val existingDelegatedStakes =
+        val existingDelegatedStakesNormalized =
           if (ordinal > incrementalDelegatedStakingStartingOrdinal)
             existingDelegatedStakesParsed
           else
@@ -94,29 +98,44 @@ object GlobalSnapshotContextFunctions {
         def isWithdrawalExpired(withdrawalEpoch: EpochProgress): Boolean =
           (withdrawalEpoch |+| withdrawalTimeLimit) <= epochProgress
 
-        val (unexpiredWithdrawals, expiredWithdrawals) = existingWithdrawals.foldLeft(
+        for {
+          hashedReplacementTokenLocks <- acceptedTokenLocks.filter(_.replaceTokenLockRef.isDefined).traverse(_.toHashed)
+          replacementTokenLocks = hashedReplacementTokenLocks.mapFilter(tl => tl.replaceTokenLockRef.tupleRight(tl)).toMap
+
+          existingDelegatedStakes = existingDelegatedStakesNormalized.view
+            .mapValues(_.map { record =>
+              replacementTokenLocks.get(record.tokenLockRef).fold(record) { hashedTokenLock =>
+                record.copy(
+                  currentTokenLockRef = hashedTokenLock.hash.some,
+                  currentAmount = DelegatedStakeAmount.fromTokenLockAmount(hashedTokenLock.amount).some
+                )
+              }
+            })
+            .to(SortedMap)
+
+          (unexpiredWithdrawals, expiredWithdrawals) = existingWithdrawals.foldLeft(
+            (
+              SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
+              SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]]
+            )
+          ) {
+            case ((unexpiredAcc, expiredAcc), (address, withdrawals)) =>
+              val (expired, unexpired) = withdrawals.partition {
+                case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch, _, _) =>
+                  isWithdrawalExpired(withdrawalEpoch)
+              }
+
+              val newUnexpired = if (unexpired.nonEmpty) unexpiredAcc + (address -> unexpired) else unexpiredAcc
+              val newExpired = if (expired.nonEmpty) expiredAcc + (address -> expired) else expiredAcc
+
+              (newUnexpired, newExpired)
+          }
+        } yield
           (
-            SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
-            SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]]
+            existingDelegatedStakes,
+            unexpiredWithdrawals,
+            expiredWithdrawals
           )
-        ) {
-          case ((unexpiredAcc, expiredAcc), (address, withdrawals)) =>
-            val (expired, unexpired) = withdrawals.partition {
-              case PendingDelegatedStakeWithdrawal(_, _, _, withdrawalEpoch, _, _) =>
-                isWithdrawalExpired(withdrawalEpoch)
-            }
-
-            val newUnexpired = if (unexpired.nonEmpty) unexpiredAcc + (address -> unexpired) else unexpiredAcc
-            val newExpired = if (expired.nonEmpty) expiredAcc + (address -> expired) else expiredAcc
-
-            (newUnexpired, newExpired)
-        }
-
-        (
-          existingDelegatedStakes,
-          unexpiredWithdrawals,
-          expiredWithdrawals
-        )
       }
 
       def createContext(
@@ -166,20 +185,22 @@ object GlobalSnapshotContextFunctions {
           .toList
           .flatten
 
+        acceptedTokenLocksFromBlocks = tokenLockBlocksForAcceptance.flatMap(_.tokenLocks.toList)
+
         delegatedStakeAcceptanceResult <- updateDelegatedStakeAcceptanceManager.accept(
           cdsEventsForAcceptance,
           wdsEventsForAcceptance,
           context,
           signedArtifact.epochProgress,
           signedArtifact.ordinal,
-          List.empty
+          acceptedTokenLocksFromBlocks
         )
 
         (
           unexpiredCreateDelegatedStakes,
           unexpiredWithdrawalsDelegatedStaking,
           expiredWithdrawalsDelegatedStaking
-        ) = acceptDelegatedStakes(context, signedArtifact.epochProgress, signedArtifact.ordinal)
+        ) <- acceptDelegatedStakes(context, signedArtifact.epochProgress, signedArtifact.ordinal, acceptedTokenLocksFromBlocks)
 
         updatedCreateDelegatedStakes <- DelegatedRewardsDistributor.getUpdatedCreateDelegatedStakes(
           signedArtifact.delegateRewards.getOrElse(SortedMap.empty),
@@ -248,10 +269,23 @@ object GlobalSnapshotContextFunctions {
                         Amount(NonNegLong.unsafeFrom(txs.toList.map(_.amount.value.value).distinct.sum)) // mimic incorrect behaviour
                     )
                   } else if (signedArtifact.ordinal.value < setSumFixOrdinal.value) {
+                    // Apply same transformation as consensus path for ordinals > incrementalDelegatedStakingStartingOrdinal
+                    val transformedCreateDelegatedStakes =
+                      if (signedArtifact.ordinal > incrementalDelegatedStakingStartingOrdinal) {
+                        updatedCreateDelegatedStakes.view.mapValues { records =>
+                          records.map { r =>
+                            r.copy(
+                              currentTokenLockRef = r.currentTokenLockRef.orElse(r.tokenLockRef.some),
+                              currentAmount = r.currentAmount.orElse(r.amount.some)
+                            )
+                          }
+                        }.to(SortedMap)
+                      } else updatedCreateDelegatedStakes
+
                     DelegatedRewardsResult(
                       delegatorRewardsMap = signedArtifact.delegateRewards
                         .getOrElse(SortedMap.empty[PeerId, Map[Address, Amount]]),
-                      updatedCreateDelegatedStakes = updatedCreateDelegatedStakes,
+                      updatedCreateDelegatedStakes = transformedCreateDelegatedStakes,
                       updatedWithdrawDelegatedStakes = updatedWithdrawDelegatedStakes,
                       nodeOperatorRewards = txs,
                       reservedAddressRewards = SortedSet.empty,
@@ -260,10 +294,23 @@ object GlobalSnapshotContextFunctions {
                         Amount(NonNegLong.unsafeFrom(txs.toList.map(_.amount.value.value).distinct.sum)) // mimic incorrect behaviour
                     )
                   } else {
+                    // Apply same transformation as consensus path for ordinals > incrementalDelegatedStakingStartingOrdinal
+                    val transformedCreateDelegatedStakes =
+                      if (signedArtifact.ordinal > incrementalDelegatedStakingStartingOrdinal) {
+                        updatedCreateDelegatedStakes.view.mapValues { records =>
+                          records.map { r =>
+                            r.copy(
+                              currentTokenLockRef = r.currentTokenLockRef.orElse(r.tokenLockRef.some),
+                              currentAmount = r.currentAmount.orElse(r.amount.some)
+                            )
+                          }
+                        }.to(SortedMap)
+                      } else updatedCreateDelegatedStakes
+
                     DelegatedRewardsResult(
                       delegatorRewardsMap = signedArtifact.delegateRewards
                         .getOrElse(SortedMap.empty[PeerId, Map[Address, Amount]]),
-                      updatedCreateDelegatedStakes = updatedCreateDelegatedStakes,
+                      updatedCreateDelegatedStakes = transformedCreateDelegatedStakes,
                       updatedWithdrawDelegatedStakes = updatedWithdrawDelegatedStakes,
                       nodeOperatorRewards = txs,
                       reservedAddressRewards = SortedSet.empty,

@@ -1102,16 +1102,16 @@ object GlobalSnapshotAcceptanceManager {
               case (address, snapshots) if snapshots.nonEmpty => address -> snapshots.last
             }
 
-            currencySnapshotsProofsDeltas = updatedLastCurrencySnapshotProofs.filter {
-              case (address, _) => currencySnapshotsDeltas.contains(address)
-            }
-
             stateChangesAccumulator = StateChangesAccumulator(
               lastStateChannelSnapshotHashes = sCSnapshotHashes.toSortedMap,
               lastTxRefs = transactionsRefsDeltas,
               balances = balanceChanges,
               lastCurrencySnapshots = currencySnapshotsDeltas,
-              lastCurrencySnapshotsProofs = currencySnapshotsProofsDeltas,
+              // Sync ALL proofs, not just deltas: when ANY currency snapshot changes,
+              // the Merkle tree changes and ALL proof paths are recomputed.
+              // Previously only delta proofs were synced, leaving stale proof bytes
+              // in the MPT for unchanged metagraphs, causing StateProof mismatches.
+              lastCurrencySnapshotsProofs = updatedLastCurrencySnapshotProofs,
               activeAllowSpends = allowSpendsDeltas,
               activeTokenLocks = tokenLocksDeltas,
               tokenLockBalances = tokenLockBalancesDeltas,
