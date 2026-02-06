@@ -393,28 +393,18 @@ const testReplaceWhileInWithdrawal = async (urls, account, nodeId) => {
     { name: 'verifyPendingWithdrawal', maxAttempts: 10, interval: 2000, handleError: () => {} }
   )
 
-  // Try to replace token lock while stake is in withdrawal
+  // Try to replace token lock while stake is in withdrawal - should FAIL
+  // Once a stake is withdrawn, the associated token lock cannot be replaced
+  // (validator returns NothingToReplace because the lock is no longer active)
   const newAmount = lockAmount + 100000000000 // +1000 DAG
-  const newLockHash = await createTokenLock(account, urls, newAmount, lockHash, lockAmount)
-  logWorkflow.info(`Replaced token lock while in withdrawal: ${newLockHash}`)
-
-  // Verify the pending withdrawal record reflects the new token lock
-  // Token lock replacement updates both active stakes AND pending withdrawals
-  await withRetry(
-    async () => {
-      const stakeResponse = await getAccountDelegatedStakes(urls, account.address)
-      const pending = stakeResponse.pendingWithdrawals.find(s => s.hash === stakeHash)
-      if (!pending) throw new Error('Stake not in pendingWithdrawals')
-      
-      // Pending withdrawal should be updated with new token lock ref
-      if (pending.tokenLockRef !== newLockHash) {
-        throw new Error(`Expected pending withdrawal tokenLockRef to be updated to ${newLockHash} but got ${pending.tokenLockRef}`)
-      }
-      logWorkflow.info(`Pending withdrawal correctly updated to new tokenLockRef: ${pending.tokenLockRef}`)
-      return true
-    },
-    { name: 'verifyPendingWithdrawalUpdated', maxAttempts: 10, interval: 2000, handleError: () => {} }
+  await createTokenLockExpectError(
+    account,
+    urls,
+    newAmount,
+    lockHash,
+    'NothingToReplace'
   )
+  logWorkflow.info('Correctly rejected replacement of token lock in withdrawal')
 
   logWorkflow.info('---- End testReplaceWhileInWithdrawal ----')
 }
