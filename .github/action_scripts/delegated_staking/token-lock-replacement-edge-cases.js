@@ -89,13 +89,22 @@ const createTokenLockExpectError = async (account, urls, lockAmount, replaceRef,
   } catch (error) {
     if (error.message.includes('Expected error')) throw error
     
+    // Distinguish validation errors (400) from network/server errors
+    const status = error.response?.status
+    if (!status) {
+      throw new Error(`Network error (no response): ${error.message}`)
+    }
+    if (status !== 400) {
+      throw new Error(`Expected 400 Bad Request but got ${status}: ${error.message}`)
+    }
+    
     const errorMsg = error.response?.data || error.message
     const errorStr = typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg)
     
     if (!errorStr.includes(expectedErrorSubstring)) {
       throw new Error(`Expected error containing "${expectedErrorSubstring}" but got: ${errorStr}`)
     }
-    logWorkflow.info(`Got expected error: ${expectedErrorSubstring}`)
+    logWorkflow.info(`Got expected error (400): ${expectedErrorSubstring}`)
     return true
   }
 }
@@ -343,20 +352,22 @@ const testReplaceWhileInWithdrawal = async (urls, account, nodeId) => {
   const newLockHash = await createTokenLock(account, urls, newAmount, lockHash, lockAmount)
   logWorkflow.info(`Replaced token lock while in withdrawal: ${newLockHash}`)
 
-  // Verify the pending withdrawal record was updated
+  // Verify the pending withdrawal record - replacement should NOT affect pending withdrawals
+  // Token lock replacement updates active stakes, but pending withdrawals retain original reference
   await withRetry(
     async () => {
       const stakeResponse = await getAccountDelegatedStakes(urls, account.address)
       const pending = stakeResponse.pendingWithdrawals.find(s => s.hash === stakeHash)
       if (!pending) throw new Error('Stake not in pendingWithdrawals')
       
-      // Check if the pending withdrawal was updated with new token lock ref
-      // (Based on DelegatedStakeStateManager, it should update if the lock is still active)
-      logWorkflow.info(`Pending withdrawal tokenLockRef: ${pending.tokenLockRef}`)
-      logWorkflow.info(`Pending withdrawal amount: ${pending.amount}`)
+      // Pending withdrawal should retain original token lock ref (replacement doesn't affect withdrawals)
+      if (pending.tokenLockRef !== lockHash) {
+        throw new Error(`Expected pending withdrawal tokenLockRef to remain ${lockHash} but got ${pending.tokenLockRef}`)
+      }
+      logWorkflow.info(`Pending withdrawal correctly retained original tokenLockRef: ${pending.tokenLockRef}`)
       return true
     },
-    { name: 'verifyPendingWithdrawalUpdate', maxAttempts: 5, interval: 2000, handleError: () => {} }
+    { name: 'verifyPendingWithdrawalUnchanged', maxAttempts: 5, interval: 2000, handleError: () => {} }
   )
 
   logWorkflow.info('---- End testReplaceWhileInWithdrawal ----')
