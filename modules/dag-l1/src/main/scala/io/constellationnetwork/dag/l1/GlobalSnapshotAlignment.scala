@@ -191,10 +191,6 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
       )
     }
     .handleErrorWith {
-      case e @ (GlobalL0Service.NoPeersWithMajorityHash | GlobalL0Service.NoMajoritySnapshotData) =>
-        Stream.eval(
-          logger.error(e)("Check alignment failed with fatal error, terminating process")
-        ) ++ Stream.raiseError[F](e)
       case e =>
         Stream.eval(logger.error(e)("Check alignment stream failed, restarting")) ++ checkAlignment
     }

@@ -1,5 +1,7 @@
 package io.constellationnetwork.security.mpt.producer
 
+import java.security.MessageDigest
+
 import cats.Parallel
 import cats.effect.{Async, Ref}
 import cats.syntax.all._
@@ -10,9 +12,9 @@ import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hex.Hex
+import io.constellationnetwork.security.mpt._
 import io.constellationnetwork.security.mpt.prover.MerklePatriciaSingleInclusionProver
 import io.constellationnetwork.security.mpt.storages.MptStateStorage
-import io.constellationnetwork.security.mpt.{IncrementalTrieOps, MerklePatriciaTrie, MptRoot}
 
 import fs2.Stream
 import fs2.io.file.Path
@@ -152,9 +154,12 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher: JsonSerial
     for {
       _ <- logger.debug(s"[MPT] Applying incremental updates: ${inserts.size} inserts, ${removes.size} removes")
 
+      // Sort removes by CompactNibblePath ordering for deterministic trie structure
+      sortedRemoves = removes.sortBy(hex => CompactNibblePath.fromHexString(hex.value))
+
       afterRemoves <-
         if (removes.isEmpty) currentTrie.rootNode.pure[F]
-        else IncrementalTrieOps.removeMultiple[F](currentTrie.rootNode, removes)
+        else IncrementalTrieOps.removeMultiple[F](currentTrie.rootNode, sortedRemoves)
 
       result <-
         if (inserts.isEmpty) {
@@ -182,7 +187,9 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher: JsonSerial
                   }
                 }.map(_.flatten)
               }
-            finalRoot <- IncrementalTrieOps.insertMultiple[F](afterRemoves, insertEntries)
+            // Sort by CompactNibblePath ordering to match full-build insertion order (deterministic trie structure)
+            sortedInsertEntries = insertEntries.sortBy { case (hex, _) => CompactNibblePath.fromHexString(hex.value) }
+            finalRoot <- IncrementalTrieOps.insertMultiple[F](afterRemoves, sortedInsertEntries)
             newTrie = MerklePatriciaTrie(finalRoot)
             _ <- trieRef.set(Some(newTrie))
             _ <- pendingInsertsRef.set(Map.empty)
