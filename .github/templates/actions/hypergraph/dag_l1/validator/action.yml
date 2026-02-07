@@ -59,10 +59,44 @@ runs:
         cd $ROOT_DIRECTORY/.github/code/hypergraph/dag-l1/initial-validator
         DAG_L1_INITIAL_VALIDATOR_NODE_ID=$(java -jar $ROOT_DIRECTORY/.github/code/shared_jars/cl-wallet.jar show-id)
 
-        if node $ROOT_DIRECTORY/.github/action_scripts/check_if_node_started.js -url=http://127.0.0.1:${CL_PUBLIC_HTTP_PORT}/node/info -cluster_name=DAG-L1-Validator-${{ inputs.NODE_NUMBER }}; then
-            sleep 5
-            echo "Joining DAG L1 validator node ${{ inputs.NODE_NUMBER }} ..."
-            curl -X POST http://127.0.0.1:${CL_CLI_HTTP_PORT}/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$DAG_L1_INITIAL_VALIDATOR_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": ${CL_L1_INITIAL_VALIDATOR_P2P_PORT} }"
-            echo "Joined"
-            exit 0
+        # Wait for validator node to be responsive
+        node $ROOT_DIRECTORY/.github/action_scripts/check_if_node_started.js \
+          -url=http://127.0.0.1:${CL_PUBLIC_HTTP_PORT}/node/info \
+          -cluster_name=DAG-L1-Validator-${{ inputs.NODE_NUMBER }}
+
+        sleep 5
+
+        # Join cluster with retry logic
+        echo "Joining DAG L1 validator node ${{ inputs.NODE_NUMBER }} ..."
+        JOIN_SUCCESS=false
+        for attempt in 1 2 3 4 5; do
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            http://127.0.0.1:${CL_CLI_HTTP_PORT}/cluster/join \
+            -H "Content-type: application/json" \
+            -d "{ \"id\":\"$DAG_L1_INITIAL_VALIDATOR_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": ${CL_L1_INITIAL_VALIDATOR_P2P_PORT} }")
+          
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "204" ]; then
+            echo "Join request accepted (HTTP $HTTP_CODE)"
+            JOIN_SUCCESS=true
+            break
+          fi
+          
+          echo "Join attempt $attempt failed (HTTP $HTTP_CODE), retrying in 5s..."
+          sleep 5
+        done
+
+        if [ "$JOIN_SUCCESS" = "false" ]; then
+          echo "ERROR: Failed to join cluster after 5 attempts"
+          exit 1
         fi
+
+    - name: Wait for validator to be Ready - ${{ inputs.NODE_NUMBER }}
+      shell: bash
+      env:
+        CL_PUBLIC_HTTP_PORT: ${{ inputs.CL_PUBLIC_HTTP_PORT }}
+      run: |
+        node .github/action_scripts/check_if_node_started.js \
+          -url=http://127.0.0.1:${CL_PUBLIC_HTTP_PORT}/node/info \
+          -cluster_name=DAG-L1-Validator-${{ inputs.NODE_NUMBER }} \
+          -wait_for_ready=true \
+          -max_attempts=30

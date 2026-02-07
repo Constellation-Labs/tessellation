@@ -26,21 +26,27 @@ const sleep = (ms) => {
 const checkIfNodeIsReady = async (url, name) => {
   console.log(`Checking if ${name} is ready`);
   const checkInterval = 10 * 1000;
-  for (let idx = 0; idx < 12; idx++) {
-    const { state } = await fetchData(url);
-    if (state === 'Ready') {
-      console.log(`Node ${name} is ready`);
-      return;
+  const maxAttempts = 24; // 240s total (increased from 120s for CI reliability)
+  for (let idx = 0; idx < maxAttempts; idx++) {
+    try {
+      const { state } = await fetchData(url);
+      if (state === 'Ready') {
+        console.log(`Node ${name} is ready`);
+        return;
+      }
+      console.log(
+        `Node ${name} state: ${state}, waiting ${checkInterval / 1000}s (${idx + 1}/${maxAttempts})`
+      );
+    } catch (e) {
+      console.log(
+        `Node ${name} not reachable: ${e.message}, waiting ${checkInterval / 1000}s (${idx + 1}/${maxAttempts})`
+      );
     }
-    console.log(
-      `Node ${name} is not ready yet, waiting ${checkInterval / 1000}s`
-    );
     await sleep(checkInterval);
   }
 
   throw Error(
-    `Node ${name} is not ready after ${(checkInterval * 12) / 1000
-    }s, check the logs.`
+    `Node ${name} is not ready after ${(checkInterval * maxAttempts) / 1000}s, check the logs.`
   );
 };
 
