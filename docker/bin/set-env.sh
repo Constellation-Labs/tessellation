@@ -199,7 +199,8 @@ echo "RELEASE_TAG: $RELEASE_TAG"
 # 1. TESSELLATION_VERSION env var (explicit override) - highest priority
 # 2. --hypergraph-release flag
 # 3. --version / RELEASE_TAG
-# 4. 99.99.99-SNAPSHOT (default, build from source)
+# 4. Git describe (auto-derive, matches sbt dynver format)
+# 5. 99.99.99-SNAPSHOT (default, build from source)
 if [ -n "${EXPLICIT_TESSELLATION_VERSION:-}" ]; then
     export TESSELLATION_VERSION="$EXPLICIT_TESSELLATION_VERSION"
     echo "Setting TESSELLATION_VERSION=$TESSELLATION_VERSION (from environment)"
@@ -209,6 +210,32 @@ elif [ -n "$HYPERGRAPH_RELEASE" ]; then
 elif [ -n "$RELEASE_TAG" ]; then
     export TESSELLATION_VERSION="${RELEASE_TAG#v}"
     echo "Setting TESSELLATION_VERSION=$TESSELLATION_VERSION (from --version/RELEASE_TAG)"
+elif command -v git &> /dev/null && git rev-parse --git-dir &> /dev/null; then
+    # Get version from git describe (fast, matches dynver format)
+    # Use --match 'v*' to only consider version tags (consistent with dynver)
+    # Output: v4.1.0 (on tag) or v4.1.0-3-gabc1234 (3 commits after tag)
+    GIT_DESC=$(git describe --tags --match 'v*' --abbrev=7 2>/dev/null || echo "")
+    if [ -n "$GIT_DESC" ]; then
+        # Strip leading 'v' and convert to dynver-like format
+        # v4.1.0-3-gabc1234 -> 4.1.0+3.abc1234.local (or .buildN in CI)
+        BASE_VERSION=$(echo "$GIT_DESC" | sed 's/^v//; s/-\([0-9]*\)-g\([a-f0-9]*\)$/+\1.\2/')
+        # Append buildId suffix to match sbt dynver format
+        if [ -n "${GITHUB_RUN_NUMBER:-}" ]; then
+            BUILD_ID="build${GITHUB_RUN_NUMBER}"
+        else
+            BUILD_ID="local"
+        fi
+        # Only append buildId if not on exact tag (version contains +)
+        if [[ "$BASE_VERSION" == *"+"* ]]; then
+            export TESSELLATION_VERSION="${BASE_VERSION}.${BUILD_ID}"
+        else
+            export TESSELLATION_VERSION="$BASE_VERSION"
+        fi
+        echo "Setting TESSELLATION_VERSION=$TESSELLATION_VERSION (from git describe)"
+    else
+        export TESSELLATION_VERSION="99.99.99-SNAPSHOT"
+        echo "Setting TESSELLATION_VERSION=$TESSELLATION_VERSION (fallback - no git tags)"
+    fi
 else
     export TESSELLATION_VERSION="99.99.99-SNAPSHOT"
     echo "Setting TESSELLATION_VERSION=$TESSELLATION_VERSION (default snapshot)"
