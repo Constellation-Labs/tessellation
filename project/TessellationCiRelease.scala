@@ -27,8 +27,33 @@ object TessellationCiRelease extends AutoPlugin {
   override def requires = JvmPlugin && SbtPgp && GitPlugin && Sonatype
 
   def isSecure: Boolean = System.getenv("PGP_SECRET") != null
+  
+  /** 
+   * Determines if the current version is releasable to Sonatype Central.
+   * 
+   * A version is releasable if:
+   * 1. RELEASE_TAG env var is set (explicit release), OR
+   * 2. GITHUB_REF indicates a tag push, OR  
+   * 3. The version string indicates a clean tagged release (no +metadata suffix)
+   *
+   * Non-releasable versions contain: +dirty, +N.hash, -SNAPSHOT
+   */
+  def isReleasableVersion(version: String): Boolean = {
+    val hasExplicitTag = Option(System.getenv("RELEASE_TAG")).exists(_.nonEmpty) ||
+      Option(System.getenv("GITHUB_REF")).exists(_.startsWith("refs/tags"))
+    
+    // Version is releasable if explicitly tagged OR if it's a clean semver without metadata
+    // Clean versions: 4.1.0, 4.1.0-rc.1, 4.1.0-alpha.1
+    // Non-releasable: 4.1.0+3.abc1234.build42, 4.1.0+dirty.local, anything with -SNAPSHOT
+    val isCleanVersion = !version.contains("+") && !version.contains("-SNAPSHOT")
+    
+    hasExplicitTag || isCleanVersion
+  }
+  
+  // Legacy compatibility - checks env vars only
   def isTag: Boolean = Option(System.getenv("RELEASE_TAG")).exists(_.nonEmpty) ||
     Option(System.getenv("GITHUB_REF")).exists(_.startsWith("refs/tags"))
+    
   def currentBranch: String = Option(System.getenv("GITHUB_REF")).getOrElse("<unknown>")
 
   def setupGpg(): Unit = {
@@ -101,12 +126,16 @@ object TessellationCiRelease extends AutoPlugin {
 
         if (isSnapshot) {
           println(s"Sonatype Central does not accept snapshots, only official releases. Aborting release.")
+          println(s"  version=$version")
           currentState
-        } else if (!isTag) {
-          println(s"No tag published. Cannot publish an official release without a tag and Sonatype Central does not accept snapshot releases. Aborting release.")
+        } else if (!isReleasableVersion(version)) {
+          println(s"Version '$version' is not releasable to Sonatype Central.")
+          println(s"  Releasable versions are clean semver tags (e.g., 4.1.0, 4.1.0-rc.1)")
+          println(s"  Current version contains build metadata (+suffix) indicating it's not from a tag.")
+          println(s"  To release: push a git tag (v4.1.0) or set RELEASE_TAG=v4.1.0")
           currentState
         } else {
-          println("Tag push detected, publishing a stable release")
+          println(s"Releasable version detected: $version")
           reloadKeyFiles ::
             sys.env.getOrElse("CI_CLEAN", "; clean ; sonatypeBundleClean") ::
             publishCommand ::
