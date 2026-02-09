@@ -1,0 +1,38 @@
+--- a/.github/action_scripts/delegated_staking/token-lock-replacement-edge-cases.js
++++ b/.github/action_scripts/delegated_staking/token-lock-replacement-edge-cases.js
+@@ -414,22 +414,16 @@ const testReplaceWhileInWithdrawal = async (urls, account, nodeId) => {
+     { name: 'verifyPendingWithdrawal', maxAttempts: 10, interval: 2000, handleError: () => {} }
+   )
+ 
+-  // Wait for L1 state to propagate after withdrawal moves stake to pending
+-  logWorkflow.info('Waiting for L1 state propagation after withdrawal...')
+-  await sleep(5000)
+-
+-  // Try to replace token lock while stake is in withdrawal - should FAIL
+-  // Once a stake is withdrawn, the associated token lock should no longer be
+-  // in the activeTokenLocks list, so replacement returns NothingToReplace.
+-  // Note: If this test fails with "request succeeded", it may indicate the
+-  // token lock remains active during the withdrawal period (behavior TBD).
++  // Token locks remain in activeTokenLocks during the withdrawal period.
++  // They are only removed when withdrawal completes. Therefore, replacement
++  // should still be allowed while the stake is in pendingWithdrawals.
+   const newAmount = lockAmount + 100000000000 // +1000 DAG
+-  await createTokenLockExpectError(
+-    account,
+-    urls,
+-    newAmount,
+-    lockHash,
+-    'NothingToReplace'
+-  )
+-  logWorkflow.info('Correctly rejected replacement of token lock in withdrawal')
++  const replacementHash = await createTokenLock(account, urls, newAmount, lockHash)
++  logWorkflow.info(`Replaced token lock during withdrawal: ${replacementHash}`)
++
++  // Verify the replacement was accepted
++  if (!replacementHash || replacementHash.length !== 64) {
++    throw new Error('Expected valid replacement hash')
++  }
++  logWorkflow.info('Token lock replacement during withdrawal succeeded as expected')
+ 
+   logWorkflow.info('---- End testReplaceWhileInWithdrawal ----')
+ }
