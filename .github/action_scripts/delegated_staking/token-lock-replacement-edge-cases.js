@@ -9,6 +9,13 @@
  * 5. Multiple sequential replacements (3 in a row)
  * 6. Replace while stake is in withdrawal (pendingWithdrawals)
  *
+ * TODO: Add test for ReplacementIsNotSupported error (currency token locks with currencyId set)
+ *       This requires setting up a currency metagraph which is complex in the E2E environment.
+ *
+ * Key Reservation:
+ * - This test suite uses PRIVATE_KEYS.key3 to avoid conflicts with delegated-staking.js (uses key4)
+ * - If adding new test suites, use different keys to prevent cross-test contamination
+ *
  * Usage:
  * - CI: node token-lock-replacement-edge-cases.js 90 91 testTokenLockReplacementEdgeCases
  * - Local: RUN_ENV=local node token-lock-replacement-edge-cases.js 90 91 testTokenLockReplacementEdgeCases
@@ -376,7 +383,19 @@ const testReplaceWhileInWithdrawal = async (urls, account, nodeId) => {
   const stakeHash = await createDelegatedStake(account, lockHash, lockAmount, nodeId)
   logWorkflow.info(`Created delegated stake: ${stakeHash}`)
 
-  await sleep(5000)
+  // Wait for stake to be included in global snapshot before withdrawing
+  // (Using withRetry instead of fixed sleep to handle variable snapshot timing)
+  logWorkflow.info('Waiting for stake inclusion in global snapshot...')
+  await withRetry(
+    async () => {
+      const stakeResponse = await getAccountDelegatedStakes(urls, account.address)
+      const stake = stakeResponse.activeDelegatedStakes.find(s => s.hash === stakeHash)
+      if (!stake) throw new Error('Stake not yet in activeDelegatedStakes')
+      logWorkflow.info(`Stake confirmed in snapshot: ${stake.hash.substring(0, 16)}...`)
+      return true
+    },
+    { name: 'waitForStakeBeforeWithdraw', maxAttempts: 15, interval: 2000, handleError: () => {} }
+  )
 
   // Initiate withdrawal
   await withdrawDelegatedStake(account, stakeHash)
@@ -388,14 +407,21 @@ const testReplaceWhileInWithdrawal = async (urls, account, nodeId) => {
       const stakeResponse = await getAccountDelegatedStakes(urls, account.address)
       const pending = stakeResponse.pendingWithdrawals.find(s => s.hash === stakeHash)
       if (!pending) throw new Error('Stake not in pendingWithdrawals')
+      logWorkflow.info('Stake confirmed in pendingWithdrawals')
       return true
     },
     { name: 'verifyPendingWithdrawal', maxAttempts: 10, interval: 2000, handleError: () => {} }
   )
 
+  // Wait for L1 state to propagate after withdrawal moves stake to pending
+  logWorkflow.info('Waiting for L1 state propagation after withdrawal...')
+  await sleep(5000)
+
   // Try to replace token lock while stake is in withdrawal - should FAIL
-  // Once a stake is withdrawn, the associated token lock cannot be replaced
-  // (validator returns NothingToReplace because the lock is no longer active)
+  // Once a stake is withdrawn, the associated token lock should no longer be
+  // in the activeTokenLocks list, so replacement returns NothingToReplace.
+  // Note: If this test fails with "request succeeded", it may indicate the
+  // token lock remains active during the withdrawal period (behavior TBD).
   const newAmount = lockAmount + 100000000000 // +1000 DAG
   await createTokenLockExpectError(
     account,
@@ -471,7 +497,8 @@ const testTokenLockReplacementEdgeCases = async (urls) => {
   logWorkflow.info('Token Lock Replacement Edge Cases Tests')
   logWorkflow.info('========================================')
 
-  // Setup - use key3 to avoid conflicts with other tests using key4
+  // Setup - use key3 to avoid conflicts with delegated-staking.js tests (which use key4)
+  // See "Key Reservation" comment at top of file for key assignment policy
   const account = setupDag4Account(urls)
   account.loginPrivateKey(PRIVATE_KEYS.key3)
   logWorkflow.info(`Using account: ${account.address}`)
