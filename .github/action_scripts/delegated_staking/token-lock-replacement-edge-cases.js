@@ -413,6 +413,10 @@ const testReplaceWhileInWithdrawal = async (urls, account, nodeId) => {
     { name: 'verifyPendingWithdrawal', maxAttempts: 10, interval: 2000, handleError: () => {} }
   )
 
+  // Wait for DAG L1 to sync state from GL0 after withdrawal
+  logWorkflow.info('Waiting for L1 state sync after withdrawal...')
+  await sleep(5000)
+
   // Token locks remain in activeTokenLocks during the withdrawal period.
   // They are only removed when withdrawal completes. Therefore, replacement
   // should still be allowed while the stake is in pendingWithdrawals.
