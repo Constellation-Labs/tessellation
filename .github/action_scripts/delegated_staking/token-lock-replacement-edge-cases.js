@@ -18,7 +18,7 @@
  *
  * Usage:
  * - CI: node token-lock-replacement-edge-cases.js 90 91 testTokenLockReplacementEdgeCases
- * - Local: RUN_ENV=local node token-lock-replacement-edge-cases.js 90 91 testTokenLockReplacementEdgeCases
+ * - Local: RUN_ENV=local node .github/action_scripts/delegated_staking/token-lock-replacement-edge-cases.js 90 91 testTokenLockReplacementEdgeCases
  */
 
 const { dag4 } = require('@stardust-collective/dag4')
