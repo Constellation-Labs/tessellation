@@ -1,7 +1,7 @@
 const { parseSharedArgs } = require('./validations')
 const { CONSTANTS, PRIVATE_KEYS } = require('./constants')
 const { generateProof, SerializerType, createSerializer, sortedJsonStringify } = require('./signatures')
-const { sleep, withRetry } = require('./operations')
+const { sleep, withRetry, withRetryOrdinal, waitForTxInclusion, getLatestSnapshotInfo } = require('./operations')
 const { getEpochProgress, createAndConnectAccount, createNetworkConfig } = require('./network')
 const { COLORS, logWorkflow } = require('./logging')
 
@@ -20,6 +20,9 @@ module.exports = {
 
   sleep,
   withRetry,
+  withRetryOrdinal,
+  waitForTxInclusion,
+  getLatestSnapshotInfo,
 
   getEpochProgress,
   createAndConnectAccount,
