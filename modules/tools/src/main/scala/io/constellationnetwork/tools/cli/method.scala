@@ -51,6 +51,8 @@ object method {
     networkPort: Port
   ) extends CliMethod
 
+  case class TxSenderCmd(configPath: String) extends CliMethod
+
   sealed trait WalletsOpts
   case class GeneratedWallets(count: IntGreaterEqual2, genesisPath: Path) extends WalletsOpts
   case class LoadedWallets(walletsPath: Path, alias: String, password: String) extends WalletsOpts
@@ -109,7 +111,21 @@ object method {
       }
   }
 
-  val opts: Opts[CliMethod] = SendTransactionsCmd.opts.orElse(SendStateChannelSnapshotCmd.opts).orElse(GetLatestSnapshotInfoCmd.opts)
+  object TxSenderCmd {
+    val opts: Opts[TxSenderCmd] =
+      Opts.subcommand("tx-sender", "Send transactions from a config file to a public network") {
+        Opts
+          .option[String]("config", "Path to config file", "c")
+          .withDefault("tx-sender.conf")
+          .map(TxSenderCmd.apply)
+      }
+  }
+
+  val opts: Opts[CliMethod] =
+    SendTransactionsCmd.opts
+      .orElse(SendStateChannelSnapshotCmd.opts)
+      .orElse(GetLatestSnapshotInfoCmd.opts)
+      .orElse(TxSenderCmd.opts)
 
   private val defaultProtocol = "http://"
 

@@ -1,0 +1,32 @@
+# Transaction Sender configuration
+# Copy to project root as tx-sender.conf and fill in your values.
+# Run: java -jar tessellation-tools.jar tx-sender --config tx-sender.conf
+
+# Hex-encoded secp256k1 private key (64 chars). Sender address is derived on startup.
+privateKeyHex = "YOUR_PRIVATE_KEY_HEX_HERE"
+
+# L1 endpoint to submit transactions to
+l1BaseUrl = "https://l1-lb-testnet.constellationnetwork.io"
+
+# DAG addresses to round-robin through
+recipients = [
+  "DAG45HuBQTTGHiRr5EyWy6NiepYH1x5dpoTzc9vL",
+  "DAG0KpQNqMsED4FC5grhFCBWG8iwU8Gm6aLhB9w5"
+]
+
+# Burst phase: send burstCount txs at burstTps TPS. Set burstCount=0 to skip.
+burstCount = 20
+burstTps = 10
+
+# Steady phase: send steadyCount txs, one every steadyIntervalSeconds. Set steadyCount=0 to skip.
+steadyCount = 10
+steadyIntervalSeconds = 5
+
+# Number of burst+steady cycles. Set 0 for infinite.
+cycles = 1
+
+# Amount per transaction in datum (1 DAG = 100000000 datum)
+amountDatum = 1
+
+# Fee per transaction in datum. 200000 (0.002 DAG) bypasses rate limiting.
+feeDatum = 200000
