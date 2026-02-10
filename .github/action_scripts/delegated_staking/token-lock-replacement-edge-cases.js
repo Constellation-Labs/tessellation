@@ -404,8 +404,9 @@ const testReplaceWhileInWithdrawal = async (urls, account, nodeId) => {
   
   if (isLockActive) {
     // Token lock still present - replacement should succeed
+    // Pass lockAmount as replaceBalance so balance assertion accounts for the refund
     logWorkflow.info('Token lock still active, expecting replacement to succeed...')
-    const replacementHash = await createTokenLock(account, urls, newAmount, lockHash)
+    const replacementHash = await createTokenLock(account, urls, newAmount, lockHash, lockAmount)
     if (!replacementHash || replacementHash.length !== 64) {
       throw new Error('Expected valid replacement hash when token lock is active')
     }
