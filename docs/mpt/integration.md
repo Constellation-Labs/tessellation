@@ -78,13 +78,14 @@ val delta: F[Map[GlobalStateKey, Json]] =
 
 ```scala
 // Stateless: build from scratch
-val trie: F[MerklePatriciaTrie] = entries.flatMap { kv =>
+val trie: F[Either[MerklePatriciaError, MerklePatriciaTrie]] = entries.flatMap { kv =>
+  val hexMap = kv.map { case (key, json) => (key.toHexString, json) }
   MerklePatriciaTrie.makeParallel[F, Json](hexMap)
 }
 
 // Stateful: incremental updates
 mptStore.syncFromStateChanges(accumulator, ordinal)
-val root: F[MptRoot] = producer.build.map(_.rootHash)
+val root: F[Either[MerklePatriciaError, MptRoot]] = producer.build.map(_.map(_.rootHash))
 ```
 
 ### Step 4: Create State Proof
@@ -294,16 +295,21 @@ Contract State (per-contract per-user):
 During migration, both formats are supported:
 
 ```scala
-def stateProof[F[_]](ordinal: SnapshotOrdinal)(
+def stateProof[F[_]: Async](ordinal: SnapshotOrdinal)(
   implicit selector: StateProofSelector
 ): F[GlobalSnapshotStateProof] =
   selector.select(ordinal) match {
     case LegacyFormat =>
       // Compute individual field hashes
-      computeLegacyProof()
+      computeLegacyProof[F]()
     case MerklePatriciaFormat =>
       // Build MPT and use root
-      allStateEntries.buildMpt.map(root => GlobalSnapshotStateProof(..., mptRoot = Some(root)))
+      allStateEntries[F].flatMap { entries =>
+        buildMpt(entries).map {
+          case Right(trie) => GlobalSnapshotStateProof(..., mptRoot = Some(trie.rootHash))
+          case Left(error) => throw new RuntimeException(s"MPT build failed: $error")
+        }
+      }
   }
 ```
 
