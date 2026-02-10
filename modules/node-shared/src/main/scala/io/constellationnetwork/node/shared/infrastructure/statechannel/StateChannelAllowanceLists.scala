@@ -96,7 +96,28 @@ object StateChannelAllowanceLists {
               "73a9257c176e1c5aee4d2d9d576059ac0d5305bcc26da3512e8242a0de6accd1aa8efd3505b1e0b46b12dfd780e9711ba77b21b7ac3fedb60b865dc21087a49f",
               "75d8f472fb2bebfcefbb27a46cb60aeae1a32806c9f3f40a405d4eaf1c44e8041febf5e6eb9e6f525d6142c7df87304b9fe011863c6d8ed121fa6fcae7d5ca66",
               "e47e0ac3ebc393b61e267aa4189f7fdc36c48440b1fc0a6bad375945cabfd41ab3e7800ae1d22d80d2d4a3b0902df6aeb293b803490bf8d777da3894833f42fb"
-            )
+            ),
+           // Valid Vote
+           Address("DAG55nwjLR1JhY4a2Wri6Cni2GWPL7Vupu5znnJi") ->
+             NonEmptySet.of(
+               "98e2c7ee9e4bd8aed3a22a075becbe5cad252e25724e7e14050beb69f80e9ea409777470914d21e0bca625cb3ec065a001378b62668355f60bddfc1a322292e5",
+               "7f509f5b2e4d70e9bd9852af0c064f30d95e83243896b7a5857be247a8212b121a96d913e00fe19568f18c9674ea871a8162e4d2d5d711c140be051df21d9744",
+               "08a360052a6444b55f91fdea97ecbdf251b640736e3fb61d9828be8c1a3159bcca234864a6693ba9cd57630ae90bddc2127d8ebe191243eec38aee9a00adb149"
+             ),
+            // CNS
+            Address("DAG1YTmwkBqCBrW8JLFquAmadozEqSWSxJ2mKKcT") ->
+              NonEmptySet.of(
+                "ac1243131c0b2821876e88e3a50ee30d3fb28d571cb8e4dd3f454383ea398f8859cb1159f3250c4ab9cd72e179ce681eb6c00626de21464839fae1715ee58d18",
+                "568c76f6cd690c516a1014bf1569e5680781dd72abf9d2424c77c5edfa50cc74bc6e940831eabb4872b18fbbe335a7a29f7a5ee3b71f1aad9d2257626ed7f68e",
+                "4728c6ef84521d181ffc58a602fb68a66e88f93d6c1e1e7ae0dbef6ccbade1916474d167ad8902e9dafb79677de34bcccb0dcd9fa39aa97b83958cfdbceb6668"
+              ),
+             // StarVault
+             Address("DAG2LFocye7MvTN3V2bmt4kiJG7SxhMz6sbCaJdn") ->
+               NonEmptySet.of(
+                 "b090ca464abd2d1dbd219ff6c801ec8913d88ccc1b28cb1f1acacd83e040e41e41d8d57127ee8991339dd055844bbc3659e1001e6498a9e174c6b3917b4378d5",
+                 "67060feccf1c407db4d46b156203e4b6eabc6c3dde196af1e64bb4f53d86a72420e701fc069d86635506e34c0d4cdea6089addb62213512e5b4de7fff41319c0",
+                 "1391276cd637be03331ae5914a5a063c549fbcc6515b140d1ccc0af7c67631804991ba0dae4c1d95b84f77dc812dd71ed2a1817e50c92b722e9b8182683366ed"
+               )
         ).some
     }
 
