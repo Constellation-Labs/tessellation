@@ -66,9 +66,58 @@ runs:
         cd $ROOT_DIRECTORY/.github/code/metagraphs/${METAGRAPH_NAME}/metagraph-l0/genesis-node
         CURRENCY_L0_GENESIS_NODE_ID=$(java -jar $ROOT_DIRECTORY/.github/code/shared_jars/cl-wallet.jar show-id)
 
-        if node $ROOT_DIRECTORY/.github/action_scripts/check_if_node_started.js -url=http://127.0.0.1:${CL_PUBLIC_HTTP_PORT}/node/info -cluster_name=Metagraph-L0-Validator-${{ inputs.NODE_NUMBER }}; then
+        # Wait for validator node to be responsive
+        node $ROOT_DIRECTORY/.github/action_scripts/check_if_node_started.js \
+          -url=http://127.0.0.1:${CL_PUBLIC_HTTP_PORT}/node/info \
+          -cluster_name=Metagraph-L0-Validator-${{ inputs.NODE_NUMBER }}
+
+        sleep 5
+
+        # Join cluster with retry logic
+        echo "Joining Metagraph L0 validator node ${{ inputs.NODE_NUMBER }} ..."
+        JOIN_SUCCESS=false
+        for attempt in 1 2 3 4 5; do
+          CURL_RESPONSE=$(mktemp)
+          CURL_STDERR=$(mktemp)
+          HTTP_CODE=$(curl -s -o "$CURL_RESPONSE" -w "%{http_code}" -X POST \
+            http://127.0.0.1:${CL_CLI_HTTP_PORT}/cluster/join \
+            -H "Content-type: application/json" \
+            -d "{ \"id\":\"$CURRENCY_L0_GENESIS_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": ${CL_L0_P2P_HTTP_PORT} }" \
+            2>"$CURL_STDERR")
+          
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "204" ]; then
+            echo "Join request accepted (HTTP $HTTP_CODE)"
+            JOIN_SUCCESS=true
+            rm -f "$CURL_RESPONSE" "$CURL_STDERR"
+            break
+          fi
+          
+          echo "Join attempt $attempt failed (HTTP $HTTP_CODE)"
+          if [ "$HTTP_CODE" = "000" ]; then
+            echo "  curl error: $(cat $CURL_STDERR)"
+          elif [ -s "$CURL_RESPONSE" ]; then
+            echo "  response: $(cat $CURL_RESPONSE)"
+          fi
+          rm -f "$CURL_RESPONSE" "$CURL_STDERR"
+          
+          if [ $attempt -lt 5 ]; then
+            echo "  retrying in 5s..."
             sleep 5
-            echo "Joining Metagraph L0 validator node ${{ inputs.NODE_NUMBER }} ..."
-            curl -X POST http://127.0.0.1:${CL_CLI_HTTP_PORT}/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$CURRENCY_L0_GENESIS_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": ${CL_L0_P2P_HTTP_PORT} }"
-            echo "Joined"
+          fi
+        done
+
+        if [ "$JOIN_SUCCESS" = "false" ]; then
+          echo "ERROR: Failed to join cluster after 5 attempts"
+          exit 1
         fi
+
+    - name: Wait for validator to be Ready - ${{ inputs.NODE_NUMBER }}
+      shell: bash
+      env:
+        CL_PUBLIC_HTTP_PORT: ${{ inputs.CL_PUBLIC_HTTP_PORT }}
+      run: |
+        node .github/action_scripts/check_if_node_started.js \
+          -url=http://127.0.0.1:${CL_PUBLIC_HTTP_PORT}/node/info \
+          -cluster_name=Metagraph-L0-Validator-${{ inputs.NODE_NUMBER }} \
+          -wait_for_ready=true \
+          -max_attempts=30

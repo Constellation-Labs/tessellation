@@ -5,6 +5,8 @@ const fs = require('fs')
 const {
   sleep,
   withRetry,
+  withRetryOrdinal,
+  waitForTxInclusion,
   generateProof,
   SerializerType,
   logWorkflow,
@@ -335,6 +337,107 @@ const assertTokenUnlockInSnapshot = async (
   }
 }
 
+/**
+ * Wait for a delegated stake to appear in activeDelegatedStakes using ordinal-aware retry.
+ * This is more robust than wall-clock retries because it detects dropped transactions.
+ * 
+ * @param {Object} urls - Network URLs including globalL0Url
+ * @param {string} address - Account address
+ * @param {string} stakeHash - Expected stake hash
+ * @param {Object} [options] - Additional options for withRetryOrdinal
+ * @returns {Promise<Object>} - The stake object when found
+ */
+const waitForStakeInclusion = async (urls, address, stakeHash, options = {}) => {
+  return withRetryOrdinal(
+    async () => {
+      const response = await getAccountDelegatedStakes(urls, address)
+      const stake = response.activeDelegatedStakes.find(s => s.hash === stakeHash)
+      if (!stake) {
+        throw new Error(`Stake ${stakeHash.substring(0, 16)}... not in activeDelegatedStakes`)
+      }
+      return stake
+    },
+    {
+      globalL0Url: urls.globalL0Url,
+      name: 'waitForStakeInclusion',
+      maxOrdinalMisses: 5,
+      maxStalledChecks: 15,
+      interval: 2000,
+      ...options
+    }
+  )
+}
+
+/**
+ * Wait for a delegated stake to move to pendingWithdrawals using ordinal-aware retry.
+ * 
+ * @param {Object} urls - Network URLs including globalL0Url
+ * @param {string} address - Account address
+ * @param {string} stakeHash - Expected stake hash
+ * @param {Object} [options] - Additional options for withRetryOrdinal
+ * @returns {Promise<Object>} - The pending withdrawal object when found
+ */
+const waitForStakeWithdrawal = async (urls, address, stakeHash, options = {}) => {
+  return withRetryOrdinal(
+    async () => {
+      const response = await getAccountDelegatedStakes(urls, address)
+      const pending = response.pendingWithdrawals.find(s => s.hash === stakeHash)
+      if (!pending) {
+        throw new Error(`Stake ${stakeHash.substring(0, 16)}... not in pendingWithdrawals`)
+      }
+      return pending
+    },
+    {
+      globalL0Url: urls.globalL0Url,
+      name: 'waitForStakeWithdrawal',
+      maxOrdinalMisses: 5,
+      maxStalledChecks: 15,
+      interval: 2000,
+      ...options
+    }
+  )
+}
+
+/**
+ * Wait for a token lock to appear in account's active token locks using ordinal-aware retry.
+ * 
+ * @param {Object} urls - Network URLs including globalL0Url  
+ * @param {string} address - Account address
+ * @param {string} lockHash - Expected lock hash
+ * @param {Object} [options] - Additional options for withRetryOrdinal
+ * @returns {Promise<Object>} - The token lock object when found
+ */
+const waitForTokenLockInclusion = async (urls, address, lockHash, options = {}) => {
+  return withRetryOrdinal(
+    async () => {
+      const response = await axios.get(
+        `${urls.globalL0Url}/token-locks/${address}?t=${Date.now()}`,
+        {
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            Pragma: 'no-cache',
+            Expires: '0',
+          },
+        }
+      )
+      checkOk(response)
+      const lock = response.data.find(l => l.hash === lockHash)
+      if (!lock) {
+        throw new Error(`Token lock ${lockHash.substring(0, 16)}... not found`)
+      }
+      return lock
+    },
+    {
+      globalL0Url: urls.globalL0Url,
+      name: 'waitForTokenLockInclusion',
+      maxOrdinalMisses: 5,
+      maxStalledChecks: 15,
+      interval: 2000,
+      ...options
+    }
+  )
+}
+
 module.exports = {
   checkOk,
   checkBadRequest,
@@ -352,5 +455,9 @@ module.exports = {
   getNodeParams,
   fetchSnapshot,
   assertRewardTxnInSnapshot,
-  assertTokenUnlockInSnapshot
+  assertTokenUnlockInSnapshot,
+  // Ordinal-aware helpers
+  waitForStakeInclusion,
+  waitForStakeWithdrawal,
+  waitForTokenLockInclusion,
 }

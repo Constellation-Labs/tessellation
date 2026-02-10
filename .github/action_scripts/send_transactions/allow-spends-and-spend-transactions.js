@@ -444,7 +444,7 @@ const sendInvalidTransaction = async (createTransactionFn, sourcePrivateKey, l0U
         };
     } catch (error) {
         if (error.response && error.response.status === 400) {
-            logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${error.response.data}`);
+            logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${JSON.stringify(error.response.data)}`);
             return {
                 address: sourceAccount.address,
                 rejected: true,
@@ -498,8 +498,8 @@ const createInvalidSignatureTransaction = async (sourcePrivateKey, l0Url, l1Url,
         signature: 'INVALID' + validProof.signature.substring(7)
     }
 
-    logWorkflow.info(`Original proof: ${validProof}`);
-    logWorkflow.info(`Tampered proof: ${invalidProof}`);
+    logWorkflow.info(`Original proof: ${JSON.stringify(validProof)}`);
+    logWorkflow.info(`Tampered proof: ${JSON.stringify(invalidProof)}`);
 
     try {
         const body = { value: allowSpend, proofs: [invalidProof] };
@@ -515,7 +515,7 @@ const createInvalidSignatureTransaction = async (sourcePrivateKey, l0Url, l1Url,
         };
     } catch (error) {
         if (error.response && error.response.status === 400) {
-            logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${error.response.data}`);
+            logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${JSON.stringify(error.response.data)}`);
             return {
                 address: sourceAccount.address,
                 rejected: true,
@@ -826,7 +826,7 @@ const createTransactionHandler = (urls) => {
             };
         } catch (error) {
             if (error.response && error.response.status === 400) {
-                logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${error.response.data}`);
+                logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${JSON.stringify(error.response.data)}`);
                 return {
                     address: sourceAccount.address,
                     rejected: true,
@@ -859,7 +859,7 @@ const createTransactionHandler = (urls) => {
             };
         } catch (error) {
             if (error.response && error.response.status === 400) {
-                logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${error.response.data}`);
+                logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${JSON.stringify(error.response.data)}`);
                 return {
                     address: sourceAccount.address,
                     rejected: true,
@@ -892,7 +892,7 @@ const createTransactionHandler = (urls) => {
             };
         } catch (error) {
             if (error.response && error.response.status === 400) {
-                logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${error.response.data}`);
+                logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${JSON.stringify(error.response.data)}`);
                 return {
                     address: sourceAccount.address,
                     rejected: true,
@@ -1695,7 +1695,7 @@ const executeInvalidCurrencyDestinationWorkflow = async () => {
             throw new Error('Transaction with invalid currency destination was accepted when it should have been rejected');
         } catch (error) {
             if (error.response && error.response.status === 400) {
-                logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${error.response.data}`);
+                logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${JSON.stringify(error.response.data)}`);
                 logWorkflow.success('InvalidCurrencyDestinationAllowSpend workflow completed successfully - transaction was correctly rejected');
             } else {
                 logWorkflow.error('Error in InvalidCurrencyDestinationAllowSpend workflow', error);
