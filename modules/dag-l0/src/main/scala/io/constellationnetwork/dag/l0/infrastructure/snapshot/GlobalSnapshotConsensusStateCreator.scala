@@ -7,7 +7,6 @@ import cats.syntax.all._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{CollectingFacilities, GlobalConsensusKind, GlobalConsensusOutcome}
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
-import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Facility
@@ -71,13 +70,19 @@ object GlobalSnapshotConsensusStateCreator {
         filteredCandidates = approvedCandidates
           .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
 
+        // Exclude peers that were removed by unlock consensus in the previous round.
+        // This is deterministic: all nodes agreed on removedFacilitators via majority vote.
+        previouslyRemoved = lastOutcome.removedFacilitators.value
+
         baseFacilitators = (filteredPreviousEligible ++ filteredCandidates).distinct
+          .filterNot(previouslyRemoved.contains)
 
         _ <- logger.debug(
           s"Facilitator selection for key=$key: " +
             s"previousEligible=${filteredPreviousEligible.size}, " +
             s"candidates=${filteredCandidates.size}, " +
-            s"base=${baseFacilitators.size}"
+            s"base=${baseFacilitators.size}" +
+            (if (previouslyRemoved.nonEmpty) s", excludedFromPreviousRound=${previouslyRemoved.size}" else "")
         )
 
         // Full eligible set after collateral filtering
