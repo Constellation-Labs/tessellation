@@ -404,13 +404,24 @@ const testReplaceWhileInWithdrawal = async (urls, account, nodeId) => {
   
   if (isLockActive) {
     // Token lock still present - replacement should succeed
-    // Pass lockAmount as replaceBalance so balance assertion accounts for the refund
+    // However, due to TOCTOU race between GL0 check and L1 processing,
+    // the lock may be removed before our replacement is processed.
+    // Accept either outcome when lock was active at check time.
     logWorkflow.info('Token lock still active, expecting replacement to succeed...')
-    const replacementHash = await createTokenLock(account, urls, newAmount, lockHash, lockAmount)
-    if (!replacementHash || replacementHash.length !== 64) {
-      throw new Error('Expected valid replacement hash when token lock is active')
+    try {
+      const replacementHash = await createTokenLock(account, urls, newAmount, lockHash, lockAmount)
+      if (!replacementHash || replacementHash.length !== 64) {
+        throw new Error('Expected valid replacement hash when token lock is active')
+      }
+      logWorkflow.info(`Replacement succeeded as expected: ${replacementHash}`)
+    } catch (error) {
+      // TOCTOU race: lock was removed between our check and the replacement
+      if (error.message && error.message.includes('NothingToReplace')) {
+        logWorkflow.info('Race condition: lock removed after check but before replacement (acceptable)')
+      } else {
+        throw error // Re-throw unexpected errors
+      }
     }
-    logWorkflow.info(`Replacement succeeded as expected: ${replacementHash}`)
   } else {
     // Token lock removed - replacement should fail with NothingToReplace
     logWorkflow.info('Token lock not active, expecting NothingToReplace...')
