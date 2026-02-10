@@ -18,6 +18,7 @@ const {
   PRIVATE_KEYS,
   sleep,
   withRetry,
+  withRetryOrdinal,
   createNetworkConfig,
   logWorkflow,
 } = require('../shared')
@@ -381,7 +382,7 @@ const testCreateDelegatedStake = async (urls, account, nodeIds) => {
   )
   logWorkflow.info('Stake created')
 
-  await withRetry(
+  await withRetryOrdinal(
     async () => {
       const updatedStakeResponse = await getAccountDelegatedStakes(
         urls,
@@ -415,10 +416,8 @@ const testCreateDelegatedStake = async (urls, account, nodeIds) => {
       )
     },
     {
+      globalL0Url: urls.globalL0Url,
       name: 'assertDelegatedStakeCreated',
-      maxAttempts: 10,
-      interval: 1000,
-      handleError: () => {},
     },
   )
   logWorkflow.info('Stake creation verified')
@@ -435,7 +434,7 @@ const testCreateDelegatedStake = async (urls, account, nodeIds) => {
   )
   logWorkflow.info('Stake 2 created')
 
-  await withRetry(
+  await withRetryOrdinal(
     async () => {
       const updatedStakeResponse = await getAccountDelegatedStakes(
         urls,
@@ -459,15 +458,8 @@ const testCreateDelegatedStake = async (urls, account, nodeIds) => {
       )
     },
     {
+      globalL0Url: urls.globalL0Url,
       name: 'assertDelegatedStake2Created',
-      maxAttempts: 10,
-      interval: 1000,
-      handleError: (err, attempt) => {
-        if (attempt !== 10) return
-
-        console.log(`assertDelegatedStake2Created failed: ${err.message}`)
-        throw err
-      },
     },
   )
 
@@ -514,7 +506,7 @@ const testUpdateDelegatedStake = async (urls, account, stakeHash, nodeId) => {
 
   // new stake in activeDelegatedStakes with updated values, balance transfers
   // old stake removed (not in active or pendingWithdrawal)
-  await withRetry(
+  await withRetryOrdinal(
     async () => {
       const updatedStakeResponse = await getAccountDelegatedStakes(
         urls,
@@ -542,15 +534,8 @@ const testUpdateDelegatedStake = async (urls, account, stakeHash, nodeId) => {
       )
     },
     {
+      globalL0Url: urls.globalL0Url,
       name: 'assertDelegatedStakeUpdated',
-      maxAttempts: 10,
-      interval: 1000,
-      handleError: (err, attempt) => {
-        if (attempt !== 10) return
-
-        console.log(`assertDelegatedStakeUpdated failed: ${err.message}`)
-        throw err
-      },
     },
   )
   logWorkflow.info('Stake update verified with balance change')
@@ -597,7 +582,7 @@ const testIncreaseDelegatedStake = async (urls, account, stakeHash, nodeId) => {
 
   // new stake in activeDelegatedStakes with updated values, balance transfers
   // old stake removed (not in active or pendingWithdrawal)
-  await withRetry(
+  await withRetryOrdinal(
     async () => {
       const updatedStakeResponse = await getAccountDelegatedStakes(
         urls,
@@ -618,15 +603,8 @@ const testIncreaseDelegatedStake = async (urls, account, stakeHash, nodeId) => {
       )
     },
     {
+      globalL0Url: urls.globalL0Url,
       name: 'assertDelegatedStakeUpdated',
-      maxAttempts: 10,
-      interval: 1000,
-      handleError: (err, attempt) => {
-        if (attempt !== 10) return
-
-        console.log(`assertDelegatedStakeUpdated failed: ${err.message}`)
-        throw err
-      },
     },
   )
   logWorkflow.info('Stake increase verified with balance change')
@@ -661,7 +639,7 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
   logWorkflow.info('Stake withdrawal sent')
 
   // stake record moves to pendingWithdrawals, balance same as last active
-  await withRetry(
+  await withRetryOrdinal(
     async () => {
       const updatedStakeResponse = await getAccountDelegatedStakes(
         urls,
@@ -691,15 +669,8 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
       )
     },
     {
+      globalL0Url: urls.globalL0Url,
       name: 'assertDelegatedStakeMovedToPending',
-      maxAttempts: 10,
-      interval: 1000,
-      handleError: (err, attempt) => {
-        if (attempt !== 10) return
-
-        console.log(`assertDelegatedStakeMovedToPending failed: ${err.message}`)
-        throw err
-      },
     },
   )
   logWorkflow.info('Stake withdraw verified pending')
@@ -708,7 +679,7 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
   logWorkflow.info('Waiting for withdrawal delay...')
 
   // stake removed from pendingWithdrawals after withdrawal timeout (21 days on MainNet, 3 min here)
-  await withRetry(
+  await withRetryOrdinal(
     async () => {
       const updatedStakeResponse = await getAccountDelegatedStakes(
         urls,
@@ -728,15 +699,12 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
       )
     },
     {
+      globalL0Url: urls.globalL0Url,
       name: 'assertDelegatedStakeRemovedFromState',
-      maxAttempts: 36,
-      interval: 1000 * 10,
-      handleError: (err, attempt) => {
-        if (attempt !== 36) return
-
-        console.log(`assertDelegatedStakeRemovedFromState failed: ${err.message}`)
-        throw err
-      },
+      // Withdrawal timeout is ~3 min in CI, use generous limits
+      maxOrdinalMisses: 30,
+      maxStalledChecks: 60,
+      interval: 5000,
     },
   )
   logWorkflow.info('Stake removed from pendingWithdrawal')
