@@ -60,8 +60,15 @@ jobs:
               npx commit-and-tag-version --dry-run | grep -oP 'tagging release v\K[0-9]+\.[0-9]+\.[0-9]+'
               echo EOF
             elif [[ "${{ github.ref_name }}" == "release/integrationnet" ]]; then
+              BASE_VERSION=$(npx commit-and-tag-version --dry-run --prerelease rc | grep -oP 'tagging release v\K(.*)')
+              # Extract base (e.g. 4.0.0) and find the next available rc number
+              BASE=$(echo "$BASE_VERSION" | grep -oP '^[0-9]+\.[0-9]+\.[0-9]+')
+              NEXT_RC=0
+              while git tag -l "v${BASE}-rc.${NEXT_RC}" | grep -q .; do
+                NEXT_RC=$((NEXT_RC + 1))
+              done
               echo 'VERSION<<EOF'
-              npx commit-and-tag-version --dry-run --prerelease rc | grep -oP 'tagging release v\K(.*)'
+              echo "${BASE}-rc.${NEXT_RC}"
               echo EOF
             fi
           } >> "$GITHUB_OUTPUT"

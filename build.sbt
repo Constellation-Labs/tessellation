@@ -18,7 +18,7 @@ ThisBuild / developers := List(
 
 ThisBuild / evictionErrorLevel := Level.Warn
 ThisBuild / scalafixDependencies += Libraries.scalafixRules
-
+ThisBuild / version := sys.env.get("RELEASE_TAG").map(_.stripPrefix("v")).getOrElse("99.99.99-SNAPSHOT")
 // ===== Java 21 Migration Configuration =====
 
 // Enforce Java 21 requirement at build time
@@ -37,7 +37,7 @@ ThisBuild / javacOptions ++= Seq("-source", "21", "-target", "21")
 // Configure Scala compiler to generate Java 21 compatible bytecode
 ThisBuild / scalacOptions ++= Seq("-release", "21")
 
-enablePlugins(GitVersioningPlugin, TessellationCiRelease)
+enablePlugins(TessellationCiRelease)
 
 val scalafixCommonSettings = inConfig(IntegrationTest)(scalafixConfigSettings(IntegrationTest))
 
@@ -66,7 +66,6 @@ ThisBuild / assemblyMergeStrategy := {
   case "logback.xml"                                             => MergeStrategy.first
   case x if x.contains("io.netty.versions.properties")           => MergeStrategy.discard
   case x if x.contains("scala.semanticdb")                       => MergeStrategy.discard
-  case x if x.contains("rally-version.properties")               => MergeStrategy.concat
   case PathList("META-INF", "versions", _, "OSGI-INF", _ @_*)    => MergeStrategy.discard
   case PathList(xs @ _*) if xs.last == "module-info.class"       => MergeStrategy.first
   case x =>
@@ -75,7 +74,6 @@ ThisBuild / assemblyMergeStrategy := {
 }
 
 sdk / assemblyMergeStrategy := {
-  case x if x.contains("rally-version.properties")         => MergeStrategy.concat
   case x =>
     val oldStrategy = (assembly / assemblyMergeStrategy).value
     oldStrategy(x)
