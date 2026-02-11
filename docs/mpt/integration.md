@@ -6,17 +6,29 @@ This document explains how the MPT integrates with Tessellation's snapshot syste
 
 | Network | Status | Since | Notes |
 |---------|--------|-------|-------|
-| **TestNet** | ✅ Running | 2026-02-06 | Stable operation |
+| **TestNet** | ✅ Running | 2026-02-06 | Stable, ordinal 3,070,000 |
 | **IntegrationNet** | 🚀 Target | TBD | This release |
 | **MainNet** | 📋 Planned | TBD | After IntegrationNet validation |
 
+### Transition Timeline
+
+The release follows a staged approach to give metagraph developers time to update:
+
+| Event | Timing | Ordinal Setting |
+|-------|--------|-----------------|
+| **Version Release** | Day 0 | `last-legacy-state-proof-ordinal = Long.MaxValue` (inactive) |
+| **Ordinal Announcement** | Switchover - 1 day | Specific ordinal announced |
+| **State Proof Transition** | ~Day 0 + 1 week | MPT activates at announced ordinal |
+
 ### Transition Ordinal
 
-The cutoff ordinal for MPT activation is **TBD**. This ordinal determines when:
+The cutoff ordinal for MPT activation determines when:
 - Nodes switch from legacy per-field hash proofs to MPT root proofs
 - Validators require the new proof format
 
-The ordinal will be announced prior to IntegrationNet deployment to allow metagraph developers time to update their nodes.
+**IntegrationNet:** TBD (will be announced 1 day before transition)  
+**TestNet:** 3,070,000 (active)  
+**MainNet:** Not scheduled
 
 ## Snapshot State Flow
 
