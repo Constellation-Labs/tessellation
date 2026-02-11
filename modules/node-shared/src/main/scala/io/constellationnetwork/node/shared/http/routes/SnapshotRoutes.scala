@@ -7,6 +7,7 @@ import scala.concurrent.duration._
 
 import io.constellationnetwork.ext.http4s.headers.negotiation.resolveEncoder
 import io.constellationnetwork.ext.http4s.{BlockingEntityEncoder, HashVar}
+import io.constellationnetwork.json.StreamingCollectionEncoder
 import io.constellationnetwork.node.shared.config.types.{RouteRateLimiterConfig, SnapshotTimeoutsConfig}
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
@@ -219,7 +220,27 @@ object CachedCombinedResponse {
                 (Some((ord, existing)), existing.get.flatMap(Async[F].fromEither))
               case _ =>
                 val serialize = Async[F].blocking {
-                  printer.print(Encoder[(Signed[S], SI)].apply((snapshot, state))).getBytes("UTF-8")
+                  // Stream directly to ByteArrayOutputStream
+                  val baos = new java.io.ByteArrayOutputStream()
+                  val writer = new java.io.OutputStreamWriter(baos, "UTF-8")
+
+                  writer.append('[')
+                  Encoder[Signed[S]] match {
+                    case sce: StreamingCollectionEncoder[Signed[S]] =>
+                      sce.streamEncode(snapshot, printer, writer)
+                    case enc =>
+                      printer.unsafePrintToAppendable(enc(snapshot), writer)
+                  }
+                  writer.append(',')
+                  Encoder[SI] match {
+                    case sce: StreamingCollectionEncoder[SI] =>
+                      sce.streamEncode(state, printer, writer)
+                    case enc =>
+                      printer.unsafePrintToAppendable(enc(state), writer)
+                  }
+                  writer.append(']')
+                  writer.flush()
+                  baos.toByteArray
                 }
                 (Some((currentOrdinal, newDef)), serialize.attempt.flatTap(newDef.complete).flatMap(Async[F].fromEither))
             }.flatten
