@@ -29,7 +29,7 @@ object io {
 
   def writeToJsonFile[F[_]: Async, A: Encoder](path: Path)(a: A): F[Unit] = {
     // Ensure parent directory exists before writing
-    val ensureParent = Option(path.parent).traverse_(Files.forAsync[F].createDirectories)
+    val ensureParent = path.parent.traverse_(p => Files.forAsync[F].createDirectories(p))
 
     ensureParent >>
       Stream
