@@ -63,7 +63,6 @@ object HttpApi {
           storages.node,
           HasherSelector.alwaysCurrent[F],
           sharedConfig.snapshotTimeoutsConfig,
-          sharedConfig.combinedRouteRateLimiter.getOrElse(environment, RouteRateLimiterConfig.empty()),
           combinedSnapshotCheckpointFileSystemStorage
         )
     } yield
