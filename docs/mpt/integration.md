@@ -2,6 +2,22 @@
 
 This document explains how the MPT integrates with Tessellation's snapshot system.
 
+## Release Status
+
+| Network | Status | Since | Notes |
+|---------|--------|-------|-------|
+| **TestNet** | ✅ Running | 2026-02-06 | Stable operation |
+| **IntegrationNet** | 🚀 Target | TBD | This release |
+| **MainNet** | 📋 Planned | TBD | After IntegrationNet validation |
+
+### Transition Ordinal
+
+The cutoff ordinal for MPT activation is **TBD**. This ordinal determines when:
+- Nodes switch from legacy per-field hash proofs to MPT root proofs
+- Validators require the new proof format
+
+The ordinal will be announced prior to IntegrationNet deployment to allow metagraph developers time to update their nodes.
+
 ## Snapshot State Flow
 
 ```mermaid
@@ -290,6 +306,12 @@ Contract State (per-contract per-user):
 
 ## Migration from Legacy
 
+### Timeline
+
+1. **TestNet** (2026-02-06): MPT activated, dual-mode testing
+2. **IntegrationNet** (this release): Transition ordinal announced, developers update nodes
+3. **MainNet** (TBD): Full network migration after IntegrationNet validation
+
 ### Dual-Mode Operation
 
 During migration, both formats are supported:
@@ -315,10 +337,13 @@ def stateProof[F[_]: Async](ordinal: SnapshotOrdinal)(
 
 ### Cutoff Ordinal
 
-The network coordinates on a cutoff ordinal:
+The network coordinates on a cutoff ordinal (TBD for IntegrationNet):
+
 1. Before cutoff: Legacy proofs required
 2. At/after cutoff: MPT proofs required
 3. Validators reject wrong format for ordinal
+
+> **Note:** The cutoff ordinal will be set after this release is deployed to allow metagraph developers time to update. Monitor official channels for the announcement.
 
 ## Error Handling
 
