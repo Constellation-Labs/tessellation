@@ -68,7 +68,6 @@ object types {
     metagraphsSync: MetagraphsSyncConfig,
     priceOracle: Map[AppEnvironment, PriceOracleConfig],
     snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig,
-    combinedRouteRateLimiter: Map[AppEnvironment, RouteRateLimiterConfig],
     clickHouseConfig: ClickHouseAppConfig
   )
 
@@ -98,7 +97,6 @@ object types {
     priceOracle: PriceOracleConfig,
     snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig,
     snapshotTimeoutsConfig: SnapshotTimeoutsConfig,
-    combinedRouteRateLimiter: Map[AppEnvironment, RouteRateLimiterConfig],
     clickHouseConfig: ClickHouseAppConfig,
     mptSnapshotInfoPath: Path
   )

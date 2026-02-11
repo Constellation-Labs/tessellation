@@ -7,6 +7,7 @@ import scala.concurrent.duration._
 
 import io.constellationnetwork.ext.http4s.headers.negotiation.resolveEncoder
 import io.constellationnetwork.ext.http4s.{BlockingEntityEncoder, HashVar}
+import io.constellationnetwork.json.StreamingCollectionEncoder
 import io.constellationnetwork.node.shared.config.types.{RouteRateLimiterConfig, SnapshotTimeoutsConfig}
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
@@ -16,17 +17,18 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
   SnapshotLocalFileSystemStorage
 }
 import io.constellationnetwork.routes.internal._
-import io.constellationnetwork.schema.GlobalSnapshot
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, SnapshotMetadata}
+import io.constellationnetwork.schema.{GlobalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.signature.Signed
 
-import io.circe.Encoder
 import io.circe.shapes._
+import io.circe.{Encoder, Printer}
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
+import org.http4s.headers.`Content-Type`
 import org.http4s.server.middleware.Timeout
 import shapeless.HNil
 import shapeless.syntax.singleton._
@@ -38,8 +40,7 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
   nodeStorage: NodeStorage[F],
   hasherSelector: HasherSelector[F],
   snapshotTimeoutsConfig: SnapshotTimeoutsConfig,
-  limiterLatestCombined: RateLimiter[F],
-  limiterLatestCombinedStream: RateLimiter[F],
+  cachedCombinedResponse: CachedCombinedResponse[F, S, SI],
   combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, SI]
 ) extends Http4sDsl[F]
     with PublicRoutes[F]
@@ -55,12 +56,6 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
     ServiceUnavailable(("message" ->> "Node is not ready yet") :: HNil)
 
   private def validStateForSnapshotReturn(state: NodeState): Boolean = state === NodeState.Ready
-
-  private def withRateLimit(limiter: RateLimiter[F])(action: F[Response[F]]): F[Response[F]] =
-    limiter.check.ifM(
-      action,
-      TooManyRequests(("message" ->> s"Rate limit: one request every ${limiter.getInterval} seconds") :: HNil)
-    )
 
   private def whenNodeReady(action: F[Response[F]]): F[Response[F]] =
     nodeStorage.getNodeState
@@ -99,25 +94,25 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
             }
           }
 
-        case req @ GET -> Root / "latest" / "combined" =>
-          withRateLimit(limiterLatestCombined) {
-            whenNodeReady {
-              resolveEncoder[F, (Signed[S], SI)](req) { implicit enc =>
-                snapshotStorage.head.flatMap {
-                  case Some(snapshot) => Ok(snapshot)
-                  case _              => NotFound()
+        case GET -> Root / "latest" / "combined" =>
+          whenNodeReady {
+            snapshotStorage.head.flatMap {
+              case Some((snapshot, state)) =>
+                cachedCombinedResponse.get(snapshot.ordinal, snapshot, state).flatMap { bytes =>
+                  Ok(
+                    fs2.Stream.chunk[F, Byte](fs2.Chunk.array(bytes)),
+                    `Content-Type`(MediaType.application.json)
+                  )
                 }
-              }
+              case _ => NotFound()
             }
           }
 
         case GET -> Root / "latest" / "combined" / "stream" =>
-          withRateLimit(limiterLatestCombinedStream) {
-            whenNodeReady {
-              combinedSnapshotCheckpointFileSystemStorage.getLatestAsHttpResponse.flatMap {
-                case Some(resp) => resp.pure[F]
-                case None       => NotFound()
-              }
+          whenNodeReady {
+            combinedSnapshotCheckpointFileSystemStorage.getLatestAsHttpResponse.flatMap {
+              case Some(resp) => resp.pure[F]
+              case None       => NotFound()
             }
           }
 
@@ -191,12 +186,10 @@ object SnapshotRoutes {
     nodeStorage: NodeStorage[F],
     hasherSelector: HasherSelector[F],
     snapshotTimeoutsConfig: SnapshotTimeoutsConfig,
-    combinedRouteLimiter: RouteRateLimiterConfig,
     combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, SI]
   ): F[SnapshotRoutes[F, S, SI]] =
     for {
-      limiterLatestCombined <- RateLimiter.make[F](combinedRouteLimiter.public)
-      limiterLatestCombinedStream <- RateLimiter.make[F](combinedRouteLimiter.peerToPeer)
+      cachedCombined <- CachedCombinedResponse.make[F, S, SI]
     } yield
       new SnapshotRoutes[F, S, SI](
         snapshotStorage,
@@ -205,32 +198,62 @@ object SnapshotRoutes {
         nodeStorage,
         hasherSelector,
         snapshotTimeoutsConfig,
-        limiterLatestCombined,
-        limiterLatestCombinedStream,
+        cachedCombined,
         combinedSnapshotCheckpointFileSystemStorage
       )
 }
 
-trait RateLimiter[F[_]] {
-  def check: F[Boolean]
-  def getInterval: String
+trait CachedCombinedResponse[F[_], S <: Snapshot, SI <: SnapshotInfo[_]] {
+  def get(currentOrdinal: SnapshotOrdinal, snapshot: Signed[S], state: SI): F[Array[Byte]]
 }
 
-object RateLimiter {
-  def make[F[_]: Async](interval: FiniteDuration): F[RateLimiter[F]] =
-    Ref[F].of(Option.empty[Long]).map { ref =>
-      new RateLimiter[F] {
-        def check: F[Boolean] =
-          for {
-            now <- Async[F].realTime.map(_.toMillis)
-            allowed <- ref.modify {
-              case Some(last) if now - last < interval.toMillis => (Some(last), false)
-              case Some(_)                                      => (Some(now), true)
-              case None                                         => (Some(now), true)
-            }
-          } yield allowed
+object CachedCombinedResponse {
+  private val printer: Printer = Printer.noSpaces.copy(dropNullValues = true)
 
-        def getInterval: String = interval.toSeconds.toString
+  def make[F[_]: Async, S <: Snapshot: Encoder, SI <: SnapshotInfo[_]: Encoder]: F[CachedCombinedResponse[F, S, SI]] =
+    Ref[F].of(Option.empty[(SnapshotOrdinal, Deferred[F, Either[Throwable, Array[Byte]]])]).map { ref =>
+      new CachedCombinedResponse[F, S, SI] {
+        private def serialize(snapshot: Signed[S], state: SI): F[Array[Byte]] =
+          Async[F].blocking {
+            val baos = new java.io.ByteArrayOutputStream()
+            val writer = new java.io.OutputStreamWriter(baos, "UTF-8")
+
+            writer.append('[')
+            Encoder[Signed[S]] match {
+              case sce: StreamingCollectionEncoder[Signed[S]] =>
+                sce.streamEncode(snapshot, printer, writer)
+              case enc =>
+                printer.unsafePrintToAppendable(enc(snapshot), writer)
+            }
+            writer.append(',')
+            Encoder[SI] match {
+              case sce: StreamingCollectionEncoder[SI] =>
+                sce.streamEncode(state, printer, writer)
+              case enc =>
+                printer.unsafePrintToAppendable(enc(state), writer)
+            }
+            writer.append(']')
+            writer.flush()
+            baos.toByteArray
+          }
+
+        def get(currentOrdinal: SnapshotOrdinal, snapshot: Signed[S], state: SI): F[Array[Byte]] =
+          ref.get.flatMap {
+            case Some((ord, existing)) if ord === currentOrdinal =>
+              existing.get.flatMap(Async[F].fromEither)
+            case _ =>
+              Deferred[F, Either[Throwable, Array[Byte]]].flatMap { newDef =>
+                ref.modify {
+                  case Some((ord, existing)) if ord === currentOrdinal =>
+                    (Some((ord, existing)), existing.get.flatMap(Async[F].fromEither))
+                  case _ =>
+                    (
+                      Some((currentOrdinal, newDef)),
+                      serialize(snapshot, state).attempt.flatTap(newDef.complete).flatMap(Async[F].fromEither)
+                    )
+                }.flatten
+              }
+          }
       }
     }
 }
