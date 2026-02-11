@@ -62,7 +62,6 @@ object HttpApi {
         storages.node,
         HasherSelector[F],
         sharedConfig.snapshotTimeoutsConfig,
-        sharedConfig.combinedRouteRateLimiter.getOrElse(environment, RouteRateLimiterConfig.empty()),
         combinedSnapshotCheckpointFileSystemStorage
       )
       .map { snapshotRoutes =>
