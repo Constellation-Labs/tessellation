@@ -438,6 +438,28 @@ const waitForTokenLockInclusion = async (urls, address, lockHash, options = {}) 
   )
 }
 
+/**
+ * Get active token locks for an address from GL0.
+ * 
+ * @param {Object} urls - Network URLs including globalL0Url
+ * @param {string} address - Account address
+ * @returns {Promise<Array>} - Array of active token lock objects
+ */
+const getActiveTokenLocks = async (urls, address) => {
+  const response = await axios.get(
+    `${urls.globalL0Url}/token-locks/${address}?t=${Date.now()}`,
+    {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        Pragma: 'no-cache',
+        Expires: '0',
+      },
+    }
+  )
+  checkOk(response)
+  return response.data || []
+}
+
 module.exports = {
   checkOk,
   checkBadRequest,
@@ -460,4 +482,5 @@ module.exports = {
   waitForStakeInclusion,
   waitForStakeWithdrawal,
   waitForTokenLockInclusion,
+  getActiveTokenLocks,
 }

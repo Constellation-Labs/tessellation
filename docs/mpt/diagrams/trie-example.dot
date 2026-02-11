@@ -1,0 +1,56 @@
+// Merkle Patricia Trie Example Structure
+// Render with: dot -Tpng trie-example.dot -o trie-example.png
+// Or: dot -Tsvg trie-example.dot -o trie-example.svg
+
+digraph MPT {
+    rankdir=TB;
+    node [shape=box, style="filled,rounded", fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=10];
+    
+    // Legend
+    subgraph cluster_legend {
+        label="Legend";
+        style=dashed;
+        fontname="Helvetica";
+        
+        leg_branch [label="Branch", fillcolor="#e1f5fe"];
+        leg_ext [label="Extension", fillcolor="#fff3e0"];
+        leg_leaf [label="Leaf", fillcolor="#e8f5e9"];
+    }
+    
+    // Root branch
+    root [label="Branch\n(root)\ndigest=H₀", fillcolor="#e1f5fe"];
+    
+    // Extension for 'a' prefix
+    ext_a [label="Extension\nshared='a'\ndigest=H₁", fillcolor="#fff3e0"];
+    
+    // Branch at position after 'a'
+    branch_a [label="Branch\ndigest=H₂", fillcolor="#e1f5fe"];
+    
+    // Left subtree (a1...)
+    ext_1 [label="Extension\nshared='1b'\ndigest=H₃", fillcolor="#fff3e0"];
+    branch_1b [label="Branch\ndigest=H₄", fillcolor="#e1f5fe"];
+    leaf_alice [label="Leaf\nremaining='2'\ndataDigest=H(alice)\ndigest=H₅", fillcolor="#e8f5e9"];
+    leaf_bob [label="Leaf\nremaining='3'\ndataDigest=H(bob)\ndigest=H₆", fillcolor="#e8f5e9"];
+    
+    // Right subtree (a2...)
+    leaf_carol [label="Leaf\nremaining='2c4'\ndataDigest=H(carol)\ndigest=H₇", fillcolor="#e8f5e9"];
+    
+    // Edges with nibble labels
+    root -> ext_a [label="  'a' (0xa)  ", color="#1976d2"];
+    ext_a -> branch_a [style=dashed, color="#ff9800"];
+    branch_a -> ext_1 [label="  '1' (0x1)  ", color="#1976d2"];
+    branch_a -> leaf_carol [label="  '2' (0x2)  ", color="#1976d2"];
+    ext_1 -> branch_1b [style=dashed, color="#ff9800"];
+    branch_1b -> leaf_alice [label="  '2' (0x2)  ", color="#1976d2"];
+    branch_1b -> leaf_bob [label="  '3' (0x3)  ", color="#1976d2"];
+    
+    // Key annotations
+    key_a1b2 [shape=none, label="Key: a1b2 → 'alice'", fontcolor="#388e3c"];
+    key_a1b3 [shape=none, label="Key: a1b3 → 'bob'", fontcolor="#388e3c"];
+    key_a2c4 [shape=none, label="Key: a2c4 → 'carol'", fontcolor="#388e3c"];
+    
+    leaf_alice -> key_a1b2 [style=dotted, arrowhead=none];
+    leaf_bob -> key_a1b3 [style=dotted, arrowhead=none];
+    leaf_carol -> key_a2c4 [style=dotted, arrowhead=none];
+}

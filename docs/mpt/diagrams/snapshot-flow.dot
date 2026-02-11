@@ -1,0 +1,88 @@
+// Snapshot to MPT Flow
+// Render with: dot -Tpng snapshot-flow.dot -o snapshot-flow.png
+
+digraph SnapshotFlow {
+    rankdir=TB;
+    node [shape=box, style="filled,rounded", fontname="Helvetica"];
+    edge [fontname="Helvetica"];
+    compound=true;
+    
+    // Block processing
+    subgraph cluster_blocks {
+        label="Block Processing";
+        style=rounded;
+        fillcolor="#fafafa";
+        
+        txs [label="Transactions", fillcolor="#e3f2fd"];
+        blocks [label="Blocks", fillcolor="#e3f2fd"];
+        updates [label="State Updates", fillcolor="#e3f2fd"];
+        
+        txs -> blocks -> updates;
+    }
+    
+    // Accumulator
+    acc [label="StateChangesAccumulator\n\n• balances: Map[Address, Balance]\n• txRefs: Map[Address, TxRef]\n• removals: Set[Key]\n• ...", fillcolor="#fff9c4", shape=record];
+    
+    // Converter
+    subgraph cluster_convert {
+        label="GlobalStateConverter";
+        style=rounded;
+        fillcolor="#fafafa";
+        
+        convert [label="toStateKeyValuePairs", fillcolor="#fff3e0"];
+        kv [label="Map[GlobalStateKey, Json]", fillcolor="#fff3e0"];
+        
+        convert -> kv;
+    }
+    
+    // Hex conversion
+    hex [label="Map[Hex, Json]\n(keys serialized)", fillcolor="#ffe0b2"];
+    
+    // Producer
+    subgraph cluster_producer {
+        label="Producer";
+        style=rounded;
+        fillcolor="#fafafa";
+        
+        prod_choice [label="Producer Type?", shape=diamond, fillcolor="#e1f5fe"];
+        stateless [label="Stateless\n(one-shot)", fillcolor="#e1f5fe"];
+        parallel [label="Parallel\n(large data)", fillcolor="#e1f5fe"];
+        inmem [label="InMemory\n(incremental)", fillcolor="#e1f5fe"];
+        
+        prod_choice -> stateless;
+        prod_choice -> parallel;
+        prod_choice -> inmem;
+    }
+    
+    // Trie
+    trie [label="MerklePatriciaTrie\n\nrootNode: Node\nrootHash: MptRoot", fillcolor="#c8e6c9", shape=record];
+    
+    // State Proof
+    subgraph cluster_proof {
+        label="State Proof";
+        style=rounded;
+        fillcolor="#fafafa";
+        
+        selector [label="StateProofSelector", fillcolor="#f3e5f5"];
+        legacy [label="Legacy Format\n(per-field hashes)", fillcolor="#ffcdd2"];
+        mpt_fmt [label="MPT Format\n(single root)", fillcolor="#c8e6c9"];
+        
+        selector -> legacy [label="< cutoff"];
+        selector -> mpt_fmt [label=">= cutoff"];
+    }
+    
+    // Snapshot
+    snapshot [label="GlobalSnapshot\n\nstateProof:\n  mptRoot = Some(H)", fillcolor="#bbdefb", shape=record];
+    
+    // Connections
+    updates -> acc;
+    acc -> convert [lhead=cluster_convert];
+    kv -> hex;
+    hex -> prod_choice [lhead=cluster_producer];
+    stateless -> trie;
+    parallel -> trie;
+    inmem -> trie;
+    trie -> selector [lhead=cluster_proof];
+    mpt_fmt -> snapshot;
+    legacy -> snapshot [style=dashed, color=gray];
+}
