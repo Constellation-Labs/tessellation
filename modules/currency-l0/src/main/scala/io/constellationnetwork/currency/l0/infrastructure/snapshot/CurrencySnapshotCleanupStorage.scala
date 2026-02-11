@@ -1,5 +1,7 @@
 package io.constellationnetwork.currency.l0.infrastructure.snapshot
 
+import java.nio.file.NoSuchFileException
+
 import cats.effect.Async
 import cats.syntax.all._
 
@@ -47,9 +49,13 @@ object CurrencySnapshotCleanupStorage {
 
         val cleanupAboveOrdinal = persistedStorage
           .cleanupAboveOrdinal(ordinal, deletePersisted)
-          .handleErrorWith { err =>
-            logger.error(err)("Error during cleanup snapshot of the metagraph") >>
-              CurrencyCleanupError.raiseError[F, Unit]
+          .handleErrorWith {
+            case _: java.nio.file.NoSuchFileException =>
+              // Files already cleaned up - not an error
+              Async[F].unit
+            case err =>
+              logger.error(s"Error during cleanup snapshot of the metagraph: ${err.getMessage}") >>
+                CurrencyCleanupError.raiseError[F, Unit]
           }
 
         val verify =
