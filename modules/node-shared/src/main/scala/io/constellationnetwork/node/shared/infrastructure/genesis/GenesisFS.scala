@@ -1,9 +1,11 @@
 package io.constellationnetwork.node.shared.infrastructure.genesis
 
+import java.nio.file.NoSuchFileException
+
 import cats.effect.Async
-import cats.syntax.either._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.syntax.all._
+
+import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.ext.json._
 import io.constellationnetwork.json.JsonSerializer
@@ -20,8 +22,15 @@ import io.circe.{Decoder, Encoder}
 
 object GenesisFS {
 
+  case class GenesisFileNotFound(path: Path, fileType: String) extends NoStackTrace {
+    override def getMessage: String = s"Genesis $fileType file not found at $path"
+  }
+
   def make[F[_]: Async: JsonSerializer, S <: FullSnapshot[_, _]: Encoder: Decoder]: GenesisFS[F, S] = new GenesisFS[F, S] {
     def write(genesis: Signed[S], identifier: Address, path: Path): F[Unit] = {
+      // Ensure directory exists before writing
+      val ensureDir = Files.forAsync[F].createDirectories(path)
+
       val writeGenesis = Stream
         .evalSeq(genesis.toBinaryF.map(_.toSeq))
         .through(Files.forAsync[F].writeAll(path / "genesis.snapshot"))
@@ -31,7 +40,7 @@ object GenesisFS {
         .through(text.utf8.encode)
         .through(Files.forAsync[F].writeAll(path / "genesis.address"))
 
-      writeGenesis.merge(writeIdentifier).compile.drain
+      ensureDir >> writeGenesis.merge(writeIdentifier).compile.drain
     }
 
     def loadBalances(path: Path): F[Set[types.GenesisAccount]] =
@@ -48,6 +57,9 @@ object GenesisFS {
         .compile
         .toList
         .map(_.toSet)
+        .adaptError {
+          case _: NoSuchFileException => GenesisFileNotFound(path, "balances")
+        }
 
     def loadSignedGenesis(path: Path): F[Signed[S]] =
       Files
@@ -57,5 +69,8 @@ object GenesisFS {
         .toList
         .map(_.toArray)
         .flatMap(_.fromBinaryF[Signed[S]])
+        .adaptError {
+          case _: NoSuchFileException => GenesisFileNotFound(path, "snapshot")
+        }
   }
 }
