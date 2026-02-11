@@ -2,6 +2,34 @@
 
 This document explains how the MPT integrates with Tessellation's snapshot system.
 
+## Release Status
+
+| Network | Status | Since | Notes |
+|---------|--------|-------|-------|
+| **TestNet** | ✅ Running | 2026-02-06 | Stable, ordinal 3,070,000 |
+| **IntegrationNet** | 🚀 Released | 2026-02-11 | Transition 2026-02-19 |
+| **MainNet** | 📋 Planned | TBD | After IntegrationNet validation |
+
+### Transition Timeline
+
+The release follows a staged approach to give metagraph developers time to update:
+
+| Event | Timing | Ordinal Setting |
+|-------|--------|-----------------|
+| **Version Release** | Day 0 | `last-legacy-state-proof-ordinal = Long.MaxValue` (inactive) |
+| **Ordinal Announcement** | Switchover - 1 day | Specific ordinal announced |
+| **State Proof Transition** | ~Day 0 + 1 week | MPT activates at announced ordinal |
+
+### Transition Ordinal
+
+The cutoff ordinal for MPT activation determines when:
+- Nodes switch from legacy per-field hash proofs to MPT root proofs
+- Validators require the new proof format
+
+**IntegrationNet:** TBD (will be announced 2026-02-18, transition 2026-02-19)  
+**TestNet:** 3,070,000 (active)  
+**MainNet:** Not scheduled
+
 ## Snapshot State Flow
 
 ```mermaid
@@ -290,6 +318,12 @@ Contract State (per-contract per-user):
 
 ## Migration from Legacy
 
+### Timeline
+
+1. **TestNet** (2026-02-06): MPT activated, dual-mode testing
+2. **IntegrationNet** (this release): Transition ordinal announced, developers update nodes
+3. **MainNet** (TBD): Full network migration after IntegrationNet validation
+
 ### Dual-Mode Operation
 
 During migration, both formats are supported:
@@ -315,10 +349,13 @@ def stateProof[F[_]: Async](ordinal: SnapshotOrdinal)(
 
 ### Cutoff Ordinal
 
-The network coordinates on a cutoff ordinal:
+The network coordinates on a cutoff ordinal (TBD for IntegrationNet):
+
 1. Before cutoff: Legacy proofs required
 2. At/after cutoff: MPT proofs required
 3. Validators reject wrong format for ordinal
+
+> **Note:** The cutoff ordinal will be set after this release is deployed to allow metagraph developers time to update. Monitor official channels for the announcement.
 
 ## Error Handling
 

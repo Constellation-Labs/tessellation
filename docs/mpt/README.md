@@ -1,5 +1,8 @@
 # Merkle Patricia Trie (MPT) Documentation
 
+> **Release Target:** IntegrationNet (transition ordinal TBD)  
+> **TestNet Status:** Running since 2026-02-06 · Stable
+
 This directory contains documentation for Tessellation's Merkle Patricia Trie implementation.
 
 ## Contents

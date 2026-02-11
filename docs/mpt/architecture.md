@@ -2,6 +2,8 @@
 
 The Merkle Patricia Trie (MPT) is Tessellation's state commitment structure for the v4.0 release. It replaces the legacy per-field hash approach with a unified trie that enables efficient inclusion proofs.
 
+> **Status:** Targeting IntegrationNet · TestNet stable since 2026-02-06
+
 ## High-Level Architecture
 
 ```mermaid
