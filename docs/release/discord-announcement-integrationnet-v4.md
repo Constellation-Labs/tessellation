@@ -8,8 +8,8 @@
 
 **Environment:** IntegrationNet  
 **Version:** v4.0.0  
-**Release Date:** TBD  
-**State Proof Transition:** TBD (ordinal will be announced separately)
+**Release Date:** 2026-02-11  
+**State Proof Transition:** 2026-02-19 (ordinal announced 2026-02-18)
 
 ### What's Changing
 
@@ -19,12 +19,11 @@ This release introduces **Merkle Patricia Trie (MPT) state proofs** for global s
 
 | Date | Event |
 |------|-------|
-| **Release Day** | v4.0.0 deployed to IntegrationNet (MPT ordinal set to max, feature inactive) |
-| **+1 week** | Expected state proof transition date |
-| **Transition - 1 day** | Ordinal number announced |
-| **Transition Day** | MPT state proofs activate at announced ordinal |
+| **Today (2026-02-11)** | v4.0.0 JAR available — metagraph developers should update now |
+| **Tuesday 2026-02-18** | Transition ordinal announced |
+| **Wednesday 2026-02-19** | MPT state proofs activate at announced ordinal |
 
-> This staged approach gives metagraph developers time to update their nodes after the release before the breaking change activates.
+> ⚠️ **Action Required:** Update your metagraph to v4.0.0 before Wednesday 2026-02-19 to remain compatible.
 
 ### Testnet Status
 

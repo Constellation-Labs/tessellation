@@ -7,7 +7,7 @@ This document explains how the MPT integrates with Tessellation's snapshot syste
 | Network | Status | Since | Notes |
 |---------|--------|-------|-------|
 | **TestNet** | ✅ Running | 2026-02-06 | Stable, ordinal 3,070,000 |
-| **IntegrationNet** | 🚀 Target | TBD | This release |
+| **IntegrationNet** | 🚀 Released | 2026-02-11 | Transition 2026-02-19 |
 | **MainNet** | 📋 Planned | TBD | After IntegrationNet validation |
 
 ### Transition Timeline
@@ -26,7 +26,7 @@ The cutoff ordinal for MPT activation determines when:
 - Nodes switch from legacy per-field hash proofs to MPT root proofs
 - Validators require the new proof format
 
-**IntegrationNet:** TBD (will be announced 1 day before transition)  
+**IntegrationNet:** TBD (will be announced 2026-02-18, transition 2026-02-19)  
 **TestNet:** 3,070,000 (active)  
 **MainNet:** Not scheduled
 
