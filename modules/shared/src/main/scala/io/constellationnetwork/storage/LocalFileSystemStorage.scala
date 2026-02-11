@@ -114,14 +114,17 @@ abstract class LocalFileSystemStorage[F[_], A](baseDir: Path)(
     }
 
   def move(fileName: String, to: File): F[Unit] =
-    dir.map(_ / fileName).flatMap { src =>
-      F.blocking(to.parent.createDirectoryIfNotExists(createParents = true)) >>
-        F.blocking(src.moveTo(to)(File.CopyOptions(overwrite = true))).void
-    }.handleErrorWith {
-      case _: NoSuchFileException =>
-        logger.warn(s"Cannot move $fileName: source file does not exist or was removed")
-      case e => F.raiseError(e)
-    }
+    dir
+      .map(_ / fileName)
+      .flatMap { src =>
+        F.blocking(to.parent.createDirectoryIfNotExists(createParents = true)) >>
+          F.blocking(src.moveTo(to)(File.CopyOptions(overwrite = true))).void
+      }
+      .handleErrorWith {
+        case _: NoSuchFileException =>
+          logger.warn(s"Cannot move $fileName: source file does not exist or was removed")
+        case e => F.raiseError(e)
+      }
 
   def getPath(fileName: String): F[File] =
     dir.map(_ / fileName)
