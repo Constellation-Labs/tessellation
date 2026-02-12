@@ -7,24 +7,18 @@ import scala.collection.immutable.SortedMap
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 
 import io.constellationnetwork.env.AppEnvironment
-import io.constellationnetwork.node.shared.config.types.DelegatedRewardsConfig
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculatorConfig
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.{NodeState, RewardFraction}
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.priceOracle.TokenPair
 import io.constellationnetwork.schema.transaction.TransactionAmount
 import io.constellationnetwork.schema.{NonNegFraction, SnapshotOrdinal}
 
 import com.comcast.ip4s.{Host, Port}
-import derevo.cats.eqv
-import derevo.derive
 import eu.timepit.refined.types.numeric._
 import fs2.io.file.Path
-import pureconfig.generic.ProductHint
-import pureconfig.{CamelCase, ConfigFieldMapping, KebabCase}
 
 object types {
 
@@ -192,7 +186,8 @@ object types {
     host: Option[String],
     user: Option[String],
     password: Option[String],
-    tableName: Option[String],
+    logsTableName: Option[String],
+    metricsTableName: Option[String],
     port: Option[Int],
     database: Option[String]
   )

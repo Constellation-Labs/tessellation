@@ -20,7 +20,7 @@ object ClickHouseSink {
 
   private case class QueuedEntry(entry: LogEntry, retryCount: Int = 0, retryAfter: Long = 0L)
 
-  val createTableDDL: String => String = tableName => s"""CREATE TABLE IF NOT EXISTS $tableName (
+  val createTableDDL: (String, Int) => String = (tableName, retentionPeriodInDays) => s"""CREATE TABLE IF NOT EXISTS $tableName (
        |    timestamp DateTime64(3),
        |    node_id LowCardinality(String),
        |    network_id LowCardinality(String),
@@ -29,7 +29,7 @@ object ClickHouseSink {
        |) ENGINE = MergeTree()
        |PARTITION BY (network_id, toYYYYMM(timestamp))
        |ORDER BY (node_id, timestamp)
-       |TTL toDateTime(timestamp) + INTERVAL 90 DAY""".stripMargin
+       |TTL toDateTime(timestamp) + INTERVAL $retentionPeriodInDays DAY""".stripMargin
 
   def make[F[_]: Async](
     config: ClickHouseConfig,
@@ -39,7 +39,7 @@ object ClickHouseSink {
     for {
       logger <- Resource.eval(Slf4jLogger.create[F])
       ds <- makeDataSource[F](config)
-      _ <- Resource.eval(initTable(ds, config.tableName))
+      _ <- Resource.eval(initTable(ds, config.tableName, config.retentionPeriodInDays))
       queue <- Resource.eval(Queue.bounded[F, QueuedEntry](config.maxQueueSize))
       pausedUntil <- Resource.eval(Ref.of[F, Long](0L))
       writer = new BatchWriter[F](ds, config, nodeId, networkId, logger, queue, pausedUntil)
@@ -76,12 +76,12 @@ object ClickHouseSink {
       new HikariDataSource(hc)
     })(ds => Async[F].blocking(ds.close()).handleError(_ => ()))
 
-  private def initTable[F[_]: Async](ds: HikariDataSource, tableName: String): F[Unit] =
+  private def initTable[F[_]: Async](ds: HikariDataSource, tableName: String, retentionPeriodInDays: Int): F[Unit] =
     Async[F].blocking {
       val conn = ds.getConnection
       try {
         val stmt = conn.createStatement()
-        try stmt.execute(createTableDDL(tableName))
+        try stmt.execute(createTableDDL(tableName, retentionPeriodInDays))
         finally stmt.close()
       } finally conn.close()
     }.void
