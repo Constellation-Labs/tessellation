@@ -474,8 +474,118 @@ object CurrencySnapshotConsensusStateAdvancer {
           state.lastOutcome.facilitators.value,
           context
         ) >>
+          recordMetrics(signedArtifact, hashedBinary, context) >>
           gossipForkInfo(gossip, signedArtifact) >>
           notifyDataApplication(signedArtifact)
+
+      private def recordMetrics(
+        signed: Signed[CurrencySnapshotArtifact],
+        hashedBinary: Hashed[StateChannelSnapshotBinary],
+        context: CurrencySnapshotContext
+      ): F[Unit] = {
+        val metagraphTag: Metrics.TagSeq =
+          Seq((Metrics.unsafeLabelName("metagraph_address"), context.address.show))
+
+        // Blocks & transactions
+        val allTransactions = signed.blocks.toList.flatMap(_.block.transactions.toList)
+        val txCount = allTransactions.size
+        val txAmountTotal = allTransactions.map(_.amount.value.value).sum
+        val txFeeTotal = allTransactions.map(_.fee.value.value).sum
+
+        // Rewards
+        val rewardsCount = signed.rewards.size
+        val rewardsAmountTotal = signed.rewards.toList.map(_.amount.value.value).sum
+
+        // Tips
+        val activeTips = signed.tips.remainedActive.size + signed.blocks.size
+        val deprecatedTips = signed.tips.deprecated.size
+
+        // Extended fields
+        val messagesCount = signed.messages.map(_.size).getOrElse(0)
+        val globalSnapshotSyncsCount = signed.globalSnapshotSyncs.map(_.size).getOrElse(0)
+        val artifactsCount = signed.artifacts.map(_.size).getOrElse(0)
+
+        // Fee transactions
+        val feeTxList = signed.feeTransactions.map(_.toList).getOrElse(List.empty)
+        val feeTransactionsCount = feeTxList.size
+        val feeTransactionsAmountTotal = feeTxList.map(_.amount.value.value).sum
+
+        // AllowSpend
+        val allowSpendBlocks = signed.allowSpendBlocks.map(_.toList).getOrElse(List.empty)
+        val allowSpendBlocksCount = allowSpendBlocks.size
+        val allAllowSpends = allowSpendBlocks.flatMap(_.transactions.toList)
+        val allowSpendTxCount = allAllowSpends.size
+        val allowSpendAmountTotal = allAllowSpends.map(_.amount.value.value).sum
+        val allowSpendFeeTotal = allAllowSpends.map(_.fee.value.value).sum
+
+        // TokenLock
+        val tokenLockBlocks = signed.tokenLockBlocks.map(_.toList).getOrElse(List.empty)
+        val tokenLockBlocksCount = tokenLockBlocks.size
+        val allTokenLocks = tokenLockBlocks.flatMap(_.tokenLocks.toList)
+        val tokenLockTxCount = allTokenLocks.size
+        val tokenLockAmountTotal = allTokenLocks.map(_.amount.value.value).sum
+        val tokenLockFeeTotal = allTokenLocks.map(_.fee.value.value).sum
+
+        // Data application
+        val dataAppOnChainStateBytes = signed.dataApplication.map(_.onChainState.length.toLong).getOrElse(0L)
+        val dataAppBlocksCount = signed.dataApplication.map(_.blocks.size).getOrElse(0)
+        val dataAppBlocksTotalBytes = signed.dataApplication.map(_.blocks.map(_.length.toLong).sum).getOrElse(0L)
+
+        // Binary
+        val binaryContentBytes = hashedBinary.content.length.toLong
+        val binaryFee = hashedBinary.fee.value.value
+
+        Metrics[F].updateGauge("dag_currency_snapshot_ordinal", signed.ordinal.value) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_height", signed.height.value) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_signature_count", signed.proofs.size) >>
+          // Cumulative counters for value metrics (survive across scrapes unlike gauges)
+          Metrics[F].incrementCounterBy("dag_currency_snapshot_blocks_total", signed.blocks.size) >>
+          Metrics[F].incrementCounterBy("dag_currency_snapshot_transactions_total", txCount) >>
+          Metrics[F].incrementCounterBy("dag_currency_snapshot_transaction_amount_cumulative", txAmountTotal) >>
+          Metrics[F].incrementCounterBy("dag_currency_snapshot_transaction_fee_cumulative", txFeeTotal) >>
+          Metrics[F].incrementCounterBy("dag_currency_snapshot_rewards_amount_cumulative", rewardsAmountTotal) >>
+          Metrics[F].incrementCounterBy("dag_currency_snapshot_fee_transactions_amount_cumulative", feeTransactionsAmountTotal) >>
+          Metrics[F].incrementCounterBy("dag_currency_snapshot_allow_spend_amount_cumulative", allowSpendAmountTotal) >>
+          Metrics[F].incrementCounterBy("dag_currency_snapshot_allow_spend_fee_cumulative", allowSpendFeeTotal) >>
+          Metrics[F].incrementCounterBy("dag_currency_snapshot_token_lock_amount_cumulative", tokenLockAmountTotal) >>
+          Metrics[F].incrementCounterBy("dag_currency_snapshot_token_lock_fee_cumulative", tokenLockFeeTotal) >>
+          Metrics[F].incrementCounterBy("dag_currency_snapshot_binary_fee_cumulative", binaryFee) >>
+          // Blocks & transactions - counts and values
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_blocks_count", signed.blocks.size) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_transactions_count", txCount) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_transaction_amount_total", txAmountTotal) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_transaction_fee_total", txFeeTotal) >>
+          // Rewards - counts and values
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_rewards_count", rewardsCount) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_rewards_amount_total", rewardsAmountTotal) >>
+          // Tips
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_tips_count", activeTips, Seq(("tip_type", "active"))) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_tips_count", deprecatedTips, Seq(("tip_type", "deprecated"))) >>
+          // Extended fields
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_messages_count", messagesCount) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_global_snapshot_syncs_count", globalSnapshotSyncsCount) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_artifacts_count", artifactsCount) >>
+          // Fee transactions - counts and values
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_fee_transactions_count", feeTransactionsCount) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_fee_transactions_amount_total", feeTransactionsAmountTotal) >>
+          // AllowSpend - counts, amounts, fees
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_allow_spend_blocks_count", allowSpendBlocksCount) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_allow_spend_tx_count", allowSpendTxCount) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_allow_spend_amount_total", allowSpendAmountTotal) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_allow_spend_fee_total", allowSpendFeeTotal) >>
+          // TokenLock - counts, amounts, fees
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_token_lock_blocks_count", tokenLockBlocksCount) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_token_lock_tx_count", tokenLockTxCount) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_token_lock_amount_total", tokenLockAmountTotal) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_token_lock_fee_total", tokenLockFeeTotal) >>
+          // Data application sizes
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_data_app_onchain_state_bytes", dataAppOnChainStateBytes) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_data_app_blocks_count", dataAppBlocksCount) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_incremental_data_app_blocks_total_bytes", dataAppBlocksTotalBytes) >>
+          // Binary size and fee
+          Metrics[F].updateGauge("dag_currency_snapshot_binary_content_bytes", binaryContentBytes) >>
+          Metrics[F].updateGauge("dag_currency_snapshot_binary_fee", binaryFee)
+      }
 
       private def notifyDataApplication(signedArtifact: Signed[CurrencySnapshotArtifact]): F[Unit] =
         maybeDataApplication.traverse_ { da =>
