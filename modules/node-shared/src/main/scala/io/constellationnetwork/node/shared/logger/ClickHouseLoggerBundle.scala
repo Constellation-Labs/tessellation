@@ -25,7 +25,7 @@ object ClickHouseLoggerBundle {
   ): Resource[F, LoggerBundle[F]] =
     for {
       maybeConfig <- Resource.eval(
-        Async[F].fromEither(ClickHouseConfig.fromAppConfig(appConfig).leftMap(ConfigError))
+        Async[F].fromEither(ClickHouseConfig.makeLogConfig(appConfig).leftMap(ConfigError))
       )
       config <- maybeConfig match {
         case Some(c) => Resource.pure[F, ClickHouseConfig](c)
@@ -71,7 +71,7 @@ object ClickHouseLoggerBundle {
       try {
         val stmt = conn.createStatement()
         try {
-          stmt.execute(ClickHouseSink.createTableDDL(config.tableName))
+          stmt.execute(ClickHouseSink.createTableDDL(config.tableName, config.retentionPeriodInDays))
           stmt.execute(ClickHouseConsensusLogger.createTableDDL(s"${config.tableName}_consensus"))
           ()
         } finally stmt.close()

@@ -108,7 +108,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
     SecurityProvider.forAsync[IO].flatMap { implicit sp =>
       KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar).flatMap { implicit kp =>
         Random.scalaUtilRandom[IO].asResource.flatMap { implicit random =>
-          Metrics.forAsync[IO](Seq(("application", name))).flatMap { implicit _metrics =>
+          Metrics.forAsync[IO](Seq((Metrics.unsafeLabelName("application"), name))).flatMap { implicit _metrics =>
             for {
               implicit0(jhs: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
               implicit0(h: Hasher[IO]) = Hasher.forJson[IO]

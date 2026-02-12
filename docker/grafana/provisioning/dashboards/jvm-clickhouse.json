@@ -1,0 +1,488 @@
+{
+  "uid": "jvm-clickhouse",
+  "title": "JVM Metrics (ClickHouse)",
+  "tags": ["jvm", "clickhouse"],
+  "timezone": "utc",
+  "refresh": "30s",
+  "time": { "from": "now-15m", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "node_id",
+        "type": "query",
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+        "query": "SELECT DISTINCT node_id FROM tessellation_metrics WHERE metric_name LIKE 'jvm_%' AND timestamp >= now() - INTERVAL 1 DAY ORDER BY node_id",
+        "multi": true,
+        "includeAll": true,
+        "current": { "text": "All", "value": "$__all" },
+        "refresh": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 100,
+      "title": "Quick Facts",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 1,
+      "title": "Uptime",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'process_uptime' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 0 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 2,
+      "title": "Process CPU Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 1 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'process_cpu_usage' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "mean"] } }
+    },
+    {
+      "id": 3,
+      "title": "System CPU Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 1 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'system_cpu_usage' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "mean"] } }
+    },
+    {
+      "id": 4,
+      "title": "System Load Average (1m)",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 1 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'system_load_average_1m' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+          "format": 1, "refId": "load"
+        },
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'system_cpu_count' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+          "format": 1, "refId": "cpus"
+        }
+      ],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 0 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "id": 101,
+      "title": "JVM Memory",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 }
+    },
+    {
+      "id": 10,
+      "title": "Heap Memory",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' used') AS series, sum(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_memory_used' AND tags['area'] = 'heap' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "used"
+        },
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' committed') AS series, sum(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_memory_committed' AND tags['area'] = 'heap' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "committed"
+        },
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' max') AS series, sum(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_memory_max' AND tags['area'] = 'heap' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "max"
+        }
+      ],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["series"] } }],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } }
+    },
+    {
+      "id": 11,
+      "title": "Non-Heap Memory",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' used') AS series, sum(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_memory_used' AND tags['area'] = 'nonheap' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "used"
+        },
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' committed') AS series, sum(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_memory_committed' AND tags['area'] = 'nonheap' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "committed"
+        },
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' max') AS series, sum(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_memory_max' AND tags['area'] = 'nonheap' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "max"
+        }
+      ],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["series"] } }],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } }
+    },
+    {
+      "id": 12,
+      "title": "Total Memory",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' used') AS series, sum(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_memory_used' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "used"
+        },
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' committed') AS series, sum(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_memory_committed' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "committed"
+        },
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' max') AS series, sum(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_memory_max' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "max"
+        }
+      ],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["series"] } }],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } }
+    },
+
+    {
+      "id": 102,
+      "title": "Memory Pools",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 }
+    },
+    {
+      "id": 13,
+      "title": "Heap Memory Pools",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' / ', tags['id']) AS series, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_memory_used' AND tags['area'] = 'heap' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["series"] } }],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 5 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 14,
+      "title": "Non-Heap Memory Pools",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' / ', tags['id']) AS series, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_memory_used' AND tags['area'] = 'nonheap' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["series"] } }],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 5 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "id": 103,
+      "title": "Garbage Collection",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 }
+    },
+    {
+      "id": 20,
+      "title": "GC Pause Count",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 26 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' / ', tags['action']) AS series, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_gc_pause_count' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["series"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 0 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 21,
+      "title": "GC Pause Total Time",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 26 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' / ', tags['action']) AS series, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_gc_pause_total_time' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["series"] } }],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 0 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 22,
+      "title": "GC Pause Max",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 26 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' / ', tags['action']) AS series, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_gc_pause_max' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["series"] } }],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 0 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 23,
+      "title": "GC Live Data / Max Data Size",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' live') AS series, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_gc_live_data_size' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "live"
+        },
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' max') AS series, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_gc_max_data_size' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "max"
+        }
+      ],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["series"] } }],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 5 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 24,
+      "title": "GC Allocated / Promoted",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 34 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' allocated') AS series, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_gc_memory_allocated' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "alloc"
+        },
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' promoted') AS series, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_gc_memory_promoted' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "promo"
+        }
+      ],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["series"] } }],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 5 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "id": 104,
+      "title": "Threads",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 }
+    },
+    {
+      "id": 30,
+      "title": "Live Threads",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 43 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_threads_live' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 31,
+      "title": "Daemon Threads",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 43 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_threads_daemon' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 32,
+      "title": "Peak Threads",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 43 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_threads_peak' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 33,
+      "title": "Thread States",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 51 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' / ', tags['state']) AS series, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_threads_states' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["series"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "stacking": { "group": "A", "mode": "normal" } } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "id": 105,
+      "title": "System",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 59 }
+    },
+    {
+      "id": 40,
+      "title": "Disk Space",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 60 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' free') AS series, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'disk_free' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "free"
+        },
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' total') AS series, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'disk_total' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "total"
+        }
+      ],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["series"] } }],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 5 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 41,
+      "title": "Classes Loaded",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 60 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_classes_loaded' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 0 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 42,
+      "title": "File Descriptors",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 60 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' open') AS series, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'process_files_open' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "open"
+        },
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' max') AS series, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'process_files_max' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "max"
+        }
+      ],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["series"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 0 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "id": 106,
+      "title": "Logging & Buffers",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 68 }
+    },
+    {
+      "id": 50,
+      "title": "Log Events (per 15s scrape)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 69 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' / ', tags['level']) AS series, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'logback_events' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["series"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 5 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 51,
+      "title": "Buffer Pool Memory",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 69 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' / ', tags['id'], ' used') AS series, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_buffer_memory_used' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "used"
+        },
+        {
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' / ', tags['id'], ' capacity') AS series, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_buffer_total_capacity' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+          "format": 1, "refId": "cap"
+        }
+      ],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["series"] } }],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 5 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 52,
+      "title": "Buffer Pool Count",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 77 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, concat(substring(node_id, 1, 8), ' / ', tags['id']) AS series, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'jvm_buffer_count' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, series ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["series"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 0 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 53,
+      "title": "Available Processors",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 77 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'system_cpu_count' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "decimals": 0, "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 0 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    }
+  ]
+}

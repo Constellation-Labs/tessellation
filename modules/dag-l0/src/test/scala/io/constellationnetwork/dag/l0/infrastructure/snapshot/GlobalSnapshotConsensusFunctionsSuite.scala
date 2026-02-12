@@ -111,7 +111,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     sp <- SecurityProvider.forAsync[IO]
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
     h = Hasher.forJson[IO]
-    m <- Metrics.forAsync[IO](Seq(("application", name)))
+    m <- Metrics.forAsync[IO](Seq((Metrics.unsafeLabelName("application"), name)))
 
   } yield (supervisor, j, h, sp, m)
 
