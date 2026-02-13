@@ -47,7 +47,8 @@ sealed abstract class L0PeerDiscovery[F[_]: Sync: Random] private (
         case Some(facilitatorPeer) =>
           getPeersFrom(facilitatorPeer)
             .map(_.filter(peer => lastFacilitators.contains(peer.id)))
-            .flatMap(l0ClusterStorage.addPeers)
+            .map(NonEmptySet.fromSet(_))
+            .flatMap(_.traverse_(l0ClusterStorage.setPeers))
         case None =>
           logger.warn("No known peers found among last facilitators, falling back to random peer") >>
             l0ClusterStorage.getPeers
@@ -56,7 +57,7 @@ sealed abstract class L0PeerDiscovery[F[_]: Sync: Random] private (
               .flatMap(peers => tryDiscoverFromPeers(peers.take(2)))
       }
       .handleErrorWith { error =>
-        logger.warn(error)(s"An error occured during L0 peer discovery")
+        logger.warn(error)(s"An error occurred during L0 peer discovery")
       }
 
   private def tryDiscoverFromPeers(peers: List[L0Peer]): F[Unit] =
