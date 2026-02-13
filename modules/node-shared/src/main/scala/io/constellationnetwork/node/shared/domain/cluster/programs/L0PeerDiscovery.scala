@@ -14,7 +14,6 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStora
 import io.constellationnetwork.node.shared.http.p2p.clients.L0ClusterClient
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{L0Peer, P2PContext, PeerId}
-import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -43,16 +42,37 @@ sealed abstract class L0PeerDiscovery[F[_]: Sync: Random] private (
       .map(_.map(_.id).intersect(lastFacilitators))
       .map(_.toList)
       .flatMap(Random[F].shuffleList)
-      .map(_.head)
-      .flatMap(l0ClusterStorage.getPeer)
-      .flatMap(_.fold(Applicative[F].unit) { p =>
-        getPeersFrom(p)
-          .map(_.filter(peer => lastFacilitators.contains(peer.id)).toSortedSet.toNes)
-          .flatMap(_.traverse_(l0ClusterStorage.setPeers))
-      })
-      .handleErrorWith { error =>
-        logger.warn(error)(s"An error occured during L0 peer discovery")
+      .flatMap(_.headOption.flatTraverse(l0ClusterStorage.getPeer))
+      .flatMap {
+        case Some(facilitatorPeer) =>
+          getPeersFrom(facilitatorPeer)
+            .map(_.filter(peer => lastFacilitators.contains(peer.id)))
+            .map(NonEmptySet.fromSet(_))
+            .flatMap(_.traverse_(l0ClusterStorage.setPeers))
+        case None =>
+          logger.warn("No known peers found among last facilitators, falling back to random peer") >>
+            l0ClusterStorage.getPeers
+              .map(_.toNonEmptyList.toList)
+              .flatMap(Random[F].shuffleList)
+              .flatMap(peers => tryDiscoverFromPeers(peers.take(2)))
       }
+      .handleErrorWith { error =>
+        logger.warn(error)(s"An error occurred during L0 peer discovery")
+      }
+
+  private def tryDiscoverFromPeers(peers: List[L0Peer]): F[Unit] =
+    peers match {
+      case peer :: rest =>
+        getPeersFrom(peer)
+          .map(_.toSortedSet)
+          .flatMap(l0ClusterStorage.addPeers)
+          .handleErrorWith { error =>
+            logger.warn(error)(s"Failed to discover L0 peers from ${peer.id}, ${rest.size} attempts remaining") >>
+              tryDiscoverFromPeers(rest)
+          }
+      case Nil =>
+        logger.warn("All L0 peer discovery attempts exhausted")
+    }
 
   private def getPeersFrom(peer: P2PContext): F[NonEmptySet[L0Peer]] =
     l0ClusterClient.getPeers
