@@ -1,6 +1,7 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
 import java.security.KeyPair
+import java.time.Instant
 
 import cats.data.{NonEmptySet, StateT}
 import cats.effect.Async
@@ -497,7 +498,12 @@ object GlobalSnapshotConsensusStateAdvancer {
             Metrics[F].updateGauge("dag_global_snapshot_incremental_sc_address_binary_bytes", totalBytes, addrTag) >>
             Metrics[F].updateGauge("dag_global_snapshot_incremental_sc_address_fee", totalFee, addrTag) >>
             Metrics[F].incrementCounterBy("dag_global_snapshot_sc_address_fee_cumulative", totalFee, addrTag) >>
-            Metrics[F].incrementCounterBy("dag_global_snapshot_sc_address_bytes_cumulative", totalBytes, addrTag)
+            Metrics[F].incrementCounterBy("dag_global_snapshot_sc_address_bytes_cumulative", totalBytes, addrTag) >>
+            // Per-metagraph last activity timestamp and submission count
+            Async[F].realTimeInstant.map(_.getEpochSecond.toDouble).flatMap { nowEpochSecond =>
+              Metrics[F].updateGauge("dag_global_snapshot_sc_address_last_activity_epoch", nowEpochSecond, addrTag) >>
+                Metrics[F].incrementCounterBy("dag_global_snapshot_sc_address_submissions_count", binariesCount, addrTag)
+            }
       }
 
       Metrics[F].updateGauge("dag_global_snapshot_ordinal", signed.ordinal.value) >>
