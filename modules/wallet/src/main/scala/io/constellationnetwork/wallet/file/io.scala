@@ -1,7 +1,5 @@
 package io.constellationnetwork.wallet.file
 
-import java.nio.file.NoSuchFileException
-
 import cats.effect.Async
 import cats.syntax.all._
 
@@ -13,6 +11,8 @@ import fs2.{Stream, text}
 
 object io {
 
+  // Note: This intentionally propagates NoSuchFileException for clear error messages.
+  // Callers use .get or .handleErrorWith patterns that expect exceptions.
   def readFromJsonFile[F[_]: Async, A: Decoder](path: Path): F[Option[A]] =
     Files
       .forAsync[F]
@@ -22,10 +22,6 @@ object io {
       .through(decoder[F, A])
       .compile
       .last
-      .handleErrorWith {
-        case _: NoSuchFileException => none[A].pure[F]
-        case e                      => Async[F].raiseError(e)
-      }
 
   def writeToJsonFile[F[_]: Async, A: Encoder](path: Path)(a: A): F[Unit] = {
     // Ensure parent directory exists before writing
