@@ -1,6 +1,7 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
 import java.security.KeyPair
+import java.time.Instant
 
 import cats.data.{NonEmptySet, StateT}
 import cats.effect.Async
@@ -440,8 +441,70 @@ object GlobalSnapshotConsensusStateAdvancer {
     private def recordMetrics(signed: Signed[GlobalIncrementalSnapshot]): F[Unit] = {
       val activeTips = signed.tips.remainedActive.size + signed.blocks.size
       val deprecatedTips = signed.tips.deprecated.size
-      val txCount = signed.blocks.toList.map(_.block.transactions.size).sum
+
+      // DAG L1 block/transaction data
+      val allTransactions = signed.blocks.toList.flatMap(_.block.transactions.toList)
+      val txCount = allTransactions.size
+      val txAmountTotal = allTransactions.map(_.amount.value.value).sum
+      val txFeeTotal = allTransactions.map(_.fee.value.value).sum
+
+      // State channel data
       val scCount = signed.stateChannelSnapshots.values.map(_.size).sum
+      val scAddressCount = signed.stateChannelSnapshots.size
+      val allScBinaries = signed.stateChannelSnapshots.values.flatMap(_.toList)
+      val scBinaryTotalBytes = allScBinaries.map(_.value.content.length.toLong).sum
+      val scFeeTotal = allScBinaries.map(_.value.fee.value.value).sum
+
+      // Rewards
+      val rewardsCount = signed.rewards.size
+      val rewardsAmountTotal = signed.rewards.toList.map(_.amount.value.value).sum
+      val delegateRewardsCount = signed.delegateRewards.map(_.values.map(_.size).sum).getOrElse(0)
+
+      // AllowSpend (swaps)
+      val allowSpendBlocks = signed.allowSpendBlocks.map(_.toList).getOrElse(List.empty)
+      val allowSpendBlocksCount = allowSpendBlocks.size
+      val allAllowSpends = allowSpendBlocks.flatMap(_.transactions.toList)
+      val allowSpendTxCount = allAllowSpends.size
+      val allowSpendAmountTotal = allAllowSpends.map(_.amount.value.value).sum
+      val allowSpendFeeTotal = allAllowSpends.map(_.fee.value.value).sum
+
+      // TokenLock
+      val tokenLockBlocks = signed.tokenLockBlocks.map(_.toList).getOrElse(List.empty)
+      val tokenLockBlocksCount = tokenLockBlocks.size
+      val allTokenLocks = tokenLockBlocks.flatMap(_.tokenLocks.toList)
+      val tokenLockTxCount = allTokenLocks.size
+      val tokenLockAmountTotal = allTokenLocks.map(_.amount.value.value).sum
+      val tokenLockFeeTotal = allTokenLocks.map(_.fee.value.value).sum
+
+      // Other fields
+      val spendActionsCount = signed.spendActions.map(_.values.map(_.size).sum).getOrElse(0)
+      val updateNodeParamsCount = signed.updateNodeParameters.map(_.size).getOrElse(0)
+      val artifactsCount = signed.artifacts.map(_.size).getOrElse(0)
+      val activeDelegatedStakesCount = signed.activeDelegatedStakes.map(_.values.map(_.size).sum).getOrElse(0)
+      val delegatedStakesWithdrawalsCount = signed.delegatedStakesWithdrawals.map(_.values.map(_.size).sum).getOrElse(0)
+      val activeNodeCollateralsCount = signed.activeNodeCollaterals.map(_.values.map(_.size).sum).getOrElse(0)
+      val nodeCollateralWithdrawalsCount = signed.nodeCollateralWithdrawals.map(_.values.map(_.size).sum).getOrElse(0)
+
+      val addressLabel: Metrics.LabelName = Metrics.unsafeLabelName("metagraph_address")
+
+      val perAddressMetrics = signed.stateChannelSnapshots.toList.traverse_ {
+        case (address, binaries) =>
+          val addrTag: Metrics.TagSeq = Seq((addressLabel, address.show))
+          val binariesCount = binaries.size
+          val totalBytes = binaries.toList.map(_.value.content.length.toLong).sum
+          val totalFee = binaries.toList.map(_.value.fee.value.value).sum
+
+          Metrics[F].updateGauge("dag_global_snapshot_incremental_sc_address_binaries_count", binariesCount, addrTag) >>
+            Metrics[F].updateGauge("dag_global_snapshot_incremental_sc_address_binary_bytes", totalBytes, addrTag) >>
+            Metrics[F].updateGauge("dag_global_snapshot_incremental_sc_address_fee", totalFee, addrTag) >>
+            Metrics[F].incrementCounterBy("dag_global_snapshot_sc_address_fee_cumulative", totalFee, addrTag) >>
+            Metrics[F].incrementCounterBy("dag_global_snapshot_sc_address_bytes_cumulative", totalBytes, addrTag) >>
+            // Per-metagraph last activity timestamp and submission count
+            Async[F].realTimeInstant.map(_.getEpochSecond.toDouble).flatMap { nowEpochSecond =>
+              Metrics[F].updateGauge("dag_global_snapshot_sc_address_last_activity_epoch", nowEpochSecond, addrTag) >>
+                Metrics[F].incrementCounterBy("dag_global_snapshot_sc_address_submissions_count", binariesCount, addrTag)
+            }
+      }
 
       Metrics[F].updateGauge("dag_global_snapshot_ordinal", signed.ordinal.value) >>
         Metrics[F].updateGauge("dag_global_snapshot_height", signed.height.value) >>
@@ -450,7 +513,51 @@ object GlobalSnapshotConsensusStateAdvancer {
         Metrics[F].updateGauge("dag_global_snapshot_tips_count", activeTips, Seq(("tip_type", "active"))) >>
         Metrics[F].incrementCounterBy("dag_global_snapshot_blocks_total", signed.blocks.size) >>
         Metrics[F].incrementCounterBy("dag_global_snapshot_transactions_total", txCount) >>
-        Metrics[F].incrementCounterBy("dag_global_snapshot_state_channel_snapshots_total", scCount)
+        Metrics[F].incrementCounterBy("dag_global_snapshot_state_channel_snapshots_total", scCount) >>
+        // Cumulative counters for value metrics (survive across scrapes unlike gauges)
+        Metrics[F].incrementCounterBy("dag_global_snapshot_transaction_amount_cumulative", txAmountTotal) >>
+        Metrics[F].incrementCounterBy("dag_global_snapshot_transaction_fee_cumulative", txFeeTotal) >>
+        Metrics[F].incrementCounterBy("dag_global_snapshot_sc_fee_cumulative", scFeeTotal) >>
+        Metrics[F].incrementCounterBy("dag_global_snapshot_sc_binary_bytes_cumulative", scBinaryTotalBytes) >>
+        Metrics[F].incrementCounterBy("dag_global_snapshot_rewards_amount_cumulative", rewardsAmountTotal) >>
+        Metrics[F].incrementCounterBy("dag_global_snapshot_allow_spend_amount_cumulative", allowSpendAmountTotal) >>
+        Metrics[F].incrementCounterBy("dag_global_snapshot_allow_spend_fee_cumulative", allowSpendFeeTotal) >>
+        Metrics[F].incrementCounterBy("dag_global_snapshot_token_lock_amount_cumulative", tokenLockAmountTotal) >>
+        Metrics[F].incrementCounterBy("dag_global_snapshot_token_lock_fee_cumulative", tokenLockFeeTotal) >>
+        // DAG L1 - blocks, transactions, amounts, fees
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_blocks_count", signed.blocks.size) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_transactions_count", txCount) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_transaction_amount_total", txAmountTotal) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_transaction_fee_total", txFeeTotal) >>
+        // State channel - counts, sizes, fees
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_sc_addresses_count", scAddressCount) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_sc_binaries_count", scCount) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_sc_binary_total_bytes", scBinaryTotalBytes) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_sc_fee_total", scFeeTotal) >>
+        // Rewards
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_rewards_count", rewardsCount) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_rewards_amount_total", rewardsAmountTotal) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_delegate_rewards_count", delegateRewardsCount) >>
+        // AllowSpend (swaps)
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_allow_spend_blocks_count", allowSpendBlocksCount) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_allow_spend_tx_count", allowSpendTxCount) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_allow_spend_amount_total", allowSpendAmountTotal) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_allow_spend_fee_total", allowSpendFeeTotal) >>
+        // TokenLock
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_token_lock_blocks_count", tokenLockBlocksCount) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_token_lock_tx_count", tokenLockTxCount) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_token_lock_amount_total", tokenLockAmountTotal) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_token_lock_fee_total", tokenLockFeeTotal) >>
+        // Other fields
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_spend_actions_count", spendActionsCount) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_update_node_params_count", updateNodeParamsCount) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_artifacts_count", artifactsCount) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_active_delegated_stakes_count", activeDelegatedStakesCount) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_delegated_stakes_withdrawals_count", delegatedStakesWithdrawalsCount) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_active_node_collaterals_count", activeNodeCollateralsCount) >>
+        Metrics[F].updateGauge("dag_global_snapshot_incremental_node_collateral_withdrawals_count", nodeCollateralWithdrawalsCount) >>
+        // Per-metagraph-address breakdown
+        perAddressMetrics
     }
   }
 }
