@@ -71,6 +71,15 @@ object TransactionSender {
         )
       }
       _ <- IO.raiseWhen(recipients.isEmpty)(new Exception("No recipient addresses configured"))
+      _ <- IO.raiseWhen(config.amountDatum <= 0)(
+        new Exception(s"amountDatum must be > 0, got ${config.amountDatum}")
+      )
+      _ <- IO.raiseWhen(config.feeDatum < 0)(
+        new Exception(s"feeDatum must be >= 0, got ${config.feeDatum}")
+      )
+      _ <- IO.raiseWhen(config.burstCount <= 0 && config.steadyCount <= 0)(
+        new Exception("Both burstCount and steadyCount are <= 0 — nothing to send. Check your config.")
+      )
       _ <- EmberClientBuilder
         .default[IO]
         .withTimeout(30.seconds)
@@ -79,9 +88,8 @@ object TransactionSender {
         .use { client =>
           for {
             _ <- IO.println("Fetching last transaction reference...")
-            lastRef <- getLastReference(client, config.l1BaseUrl, senderAddress).handleErrorWith { e =>
-              IO.println(s"  Warning: Could not fetch last reference (${e.getMessage}), using empty") *>
-                IO.pure(TransactionReference.empty)
+            lastRef <- getLastReference(client, config.l1BaseUrl, senderAddress).adaptError { e =>
+              new Exception(s"Failed to fetch last reference for ${senderAddress.value.value}: ${e.getMessage}", e)
             }
             _ <- IO.println(s"  Last ref ordinal: ${lastRef.ordinal.value}")
             _ <- IO.println(s"\nStarting transaction stream...")
@@ -140,11 +148,11 @@ object TransactionSender {
                   signedTx <- Signed.forAsyncHasher[IO, Transaction](tx, keyPair)
                   txHash <- signedTx.value.hash
                   newRef = TransactionReference(parentRef.ordinal.next, txHash)
-                  _ <- refRef.set(newRef)
                   result <- submitTransaction(client, config.l1BaseUrl, signedTx).attempt
                   continue <- result match {
                     case Right(Right(hash)) =>
-                      counterRef.update(_ + 1) *>
+                      refRef.set(newRef) *>
+                        counterRef.update(_ + 1) *>
                         IO.println(
                           s"  [tx] ord=${newRef.ordinal.value} -> ${destination.value.value.take(12)}... hash=${hash.take(16)}..."
                         ).as(true)
