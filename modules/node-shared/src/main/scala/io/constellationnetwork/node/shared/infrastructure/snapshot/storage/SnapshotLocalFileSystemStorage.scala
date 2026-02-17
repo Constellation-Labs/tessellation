@@ -127,7 +127,7 @@ abstract class SnapshotLocalFileSystemStorage[
               // Directory doesn't exist or was removed - not an error
               Async[F].pure(Iterator.empty)
             case ex =>
-              logger.warn(s"Error listing files in directory ${baseDir.pathAsString}: ${ex.getMessage}") >>
+              logger.warn(ex)(s"Error listing files in directory ${baseDir.pathAsString}") >>
                 Async[F].pure(Iterator.empty)
           }
         }
@@ -190,7 +190,7 @@ abstract class SnapshotLocalFileSystemStorage[
             // File was deleted between listing and processing - expected during cleanup
             Async[F].unit
           case err =>
-            logger.warn(s"Failed to process file with ordinal $fileOrdinal: ${err.getMessage}") >>
+            logger.warn(err)(s"Failed to process file with ordinal $fileOrdinal") >>
               Async[F].unit
         }
       }
@@ -230,7 +230,7 @@ abstract class SnapshotLocalFileSystemStorage[
                   // Directory was removed - not an error during cleanup
                   Async[F].pure(List.empty)
                 case ex =>
-                  logger.warn(s"Error listing files in directory ${baseDir.pathAsString}: ${ex.getMessage}") >>
+                  logger.warn(ex)(s"Error listing files in directory ${baseDir.pathAsString}") >>
                     Async[F].pure(List.empty)
               }.map(Stream.emits(_))
 
