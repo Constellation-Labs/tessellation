@@ -66,7 +66,10 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
     val openFile: Resource[F, (FileOutputStream, OutputStreamWriter)] =
       Resource.make(
         Concurrent[F].blocking {
-          val fos = new FileOutputStream(filePath.toString)
+          // Ensure parent directory exists before creating file
+          val file = new java.io.File(filePath.toString)
+          Option(file.getParentFile).foreach(_.mkdirs())
+          val fos = new FileOutputStream(file)
           val writer = new OutputStreamWriter(fos, "UTF-8")
           (fos, writer)
         }

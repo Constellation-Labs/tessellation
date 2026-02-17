@@ -1,5 +1,7 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
+import java.nio.file.NoSuchFileException
+
 import cats.Parallel
 import cats.effect.Async
 import cats.syntax.all._
@@ -149,11 +151,15 @@ object SnapshotDownloadStorage {
           _ <- logger.info(s"Starting cleanup above ordinal ${ordinal.show}")
           _ <- snapshotInfoStorage
             .deleteAbove(ordinal)
-            .handleErrorWith(err =>
-              logger.error(err)(s"Error while deleting snapshot_info files above ${ordinal.show}") >>
-                Async[F].raiseError(err)
-            )
-          _ <- logger.info(s"Successfully deleted snapshot_info files above ordinal ${ordinal.show}")
+            .handleErrorWith {
+              case _: java.nio.file.NoSuchFileException =>
+                // Files already deleted - not an error
+                logger.debug(s"Snapshot_info files above ${ordinal.show} already deleted or do not exist")
+              case err =>
+                logger.error(err)(s"Error while deleting snapshot_info files above ${ordinal.show}") >>
+                  Async[F].raiseError(err)
+            }
+          _ <- logger.debug(s"Completed snapshot_info cleanup above ordinal ${ordinal.show}")
         } yield ()
 
         val cleanupAboveOrdinal = persistedStorage.cleanupAboveOrdinal(ordinal, movePersistedToTmp)

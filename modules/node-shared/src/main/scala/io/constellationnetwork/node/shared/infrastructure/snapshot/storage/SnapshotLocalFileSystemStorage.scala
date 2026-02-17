@@ -122,9 +122,13 @@ abstract class SnapshotLocalFileSystemStorage[
               baseDir.list(f => !f.isDirectory && isAbove(f), maxDepth = 1)
             else
               baseDir.list(f => !f.isDirectory, maxDepth = 1)
-          }.handleErrorWith { ex =>
-            logger.warn(ex)(s"Error listing files in directory ${baseDir.pathAsString}") >>
+          }.handleErrorWith {
+            case _: java.nio.file.NoSuchFileException =>
+              // Directory doesn't exist or was removed - not an error
               Async[F].pure(Iterator.empty)
+            case ex =>
+              logger.warn(ex)(s"Error listing files in directory ${baseDir.pathAsString}") >>
+                Async[F].pure(Iterator.empty)
           }
         }
         .map(_.toList)
@@ -164,9 +168,15 @@ abstract class SnapshotLocalFileSystemStorage[
               HasherSelector[F].withCurrent { implicit hasher =>
                 for {
                   hashed <- snapshot.toHashed
-                  _ <- movePersistedToTmp(hashed.hash, hashed.ordinal).handleErrorWith { err =>
-                    logger.warn(err)(s"Failed to move persisted to tmp for ordinal=${snapshot.ordinal}, hash=${hashed.hash}")
-                    Async[F].raiseError(err)
+                  _ <- movePersistedToTmp(hashed.hash, hashed.ordinal).handleErrorWith {
+                    case _: java.nio.file.NoSuchFileException =>
+                      // File already moved/deleted - this is expected during concurrent cleanup
+                      logger.debug(s"File already removed during cleanup for ordinal=${snapshot.ordinal}")
+                    case err =>
+                      logger.warn(err)(
+                        s"Failed to move persisted to tmp for ordinal=${snapshot.ordinal}, hash=${hashed.hash}"
+                      ) >>
+                        Async[F].raiseError(err)
                   }
                 } yield ()
               }
@@ -175,9 +185,13 @@ abstract class SnapshotLocalFileSystemStorage[
           }
         } yield ()
 
-        operation.handleErrorWith { err =>
-          logger.error(err)(s"Failed to process file with ordinal $fileOrdinal") >>
+        operation.handleErrorWith {
+          case _: java.nio.file.NoSuchFileException =>
+            // File was deleted between listing and processing - expected during cleanup
             Async[F].unit
+          case err =>
+            logger.warn(err)(s"Failed to process file with ordinal $fileOrdinal") >>
+              Async[F].unit
         }
       }
       .compile
@@ -187,7 +201,7 @@ abstract class SnapshotLocalFileSystemStorage[
     ordinal: SnapshotOrdinal,
     movePersistedToTmp: (Hash, SnapshotOrdinal) => F[Unit]
   )(implicit hs: HasherSelector[F], kryoSerializer: KryoSerializer[F]): F[Unit] = for {
-    _ <- logger.info(s"Searching for persisted files above ordinal ${ordinal.show}")
+    _ <- logger.debug(s"Searching for persisted files above ordinal ${ordinal.show}")
     baseDirectory = (ordinal.value.value / ordinalChunkSize.value) * ordinalChunkSize.value
 
     _ <- baseDirectory.tailRecM { currentBase =>
@@ -199,7 +213,7 @@ abstract class SnapshotLocalFileSystemStorage[
             ().asRight[Long].pure
           } else {
             for {
-              _ <- logger.info(s"Processing directory for base $currentBase")
+              _ <- logger.debug(s"Processing directory for base $currentBase")
 
               files <- Async[F].blocking {
                 if (currentBase == baseDirectory)
@@ -211,9 +225,13 @@ abstract class SnapshotLocalFileSystemStorage[
                     .toList
                 else
                   baseDir.list(f => !f.isDirectory, maxDepth = 1).toList
-              }.handleErrorWith { ex =>
-                logger.warn(ex)(s"Error listing files in directory ${baseDir.pathAsString}") >>
+              }.handleErrorWith {
+                case _: java.nio.file.NoSuchFileException =>
+                  // Directory was removed - not an error during cleanup
                   Async[F].pure(List.empty)
+                case ex =>
+                  logger.warn(ex)(s"Error listing files in directory ${baseDir.pathAsString}") >>
+                    Async[F].pure(List.empty)
               }.map(Stream.emits(_))
 
               _ <- processFileChunk(files, movePersistedToTmp)

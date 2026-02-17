@@ -1,7 +1,7 @@
 package io.constellationnetwork.storage
 
 import java.io.{File => JFile}
-import java.nio.file.NoSuchFileException
+import java.nio.file.{FileAlreadyExistsException, NoSuchFileException}
 
 import cats.data.EitherT
 import cats.effect.Async
@@ -76,6 +76,9 @@ abstract class LocalFileSystemStorage[F[_], A](baseDir: Path)(
 
   def exists(fileName: String): F[Boolean] = dir.flatMap { a =>
     F.blocking((a / fileName).exists)
+  }.handleErrorWith {
+    case _: NoSuchFileException => false.pure[F]
+    case e                      => F.raiseError(e)
   }
 
   def readBytes(fileName: String): F[Option[Array[Byte]]] =
@@ -102,13 +105,26 @@ abstract class LocalFileSystemStorage[F[_], A](baseDir: Path)(
       case (src, dst) =>
         F.blocking(dst.parent.createDirectoryIfNotExists(createParents = true)) >>
           F.blocking(src.linkTo(dst)).void
-    }.flatten
+    }.flatten.handleErrorWith {
+      case _: NoSuchFileException =>
+        logger.warn(s"Cannot link $fileName to $to: source file does not exist or was removed")
+      case _: FileAlreadyExistsException =>
+        logger.debug(s"Link $to already exists, skipping")
+      case e => F.raiseError(e)
+    }
 
   def move(fileName: String, to: File): F[Unit] =
-    dir.map(_ / fileName).flatMap { src =>
-      F.blocking(to.parent.createDirectoryIfNotExists(createParents = true)) >>
-        F.blocking(src.moveTo(to)(File.CopyOptions(overwrite = true))).void
-    }
+    dir
+      .map(_ / fileName)
+      .flatMap { src =>
+        F.blocking(to.parent.createDirectoryIfNotExists(createParents = true)) >>
+          F.blocking(src.moveTo(to)(File.CopyOptions(overwrite = true))).void
+      }
+      .handleErrorWith {
+        case _: NoSuchFileException =>
+          logger.warn(s"Cannot move $fileName: source file does not exist or was removed")
+        case e => F.raiseError(e)
+      }
 
   def getPath(fileName: String): F[File] =
     dir.map(_ / fileName)

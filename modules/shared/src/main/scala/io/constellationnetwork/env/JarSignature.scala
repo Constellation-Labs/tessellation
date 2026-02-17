@@ -1,9 +1,12 @@
 package io.constellationnetwork.env
 
+import java.nio.file.NoSuchFileException
 import java.security.MessageDigest
 
 import cats.effect.Async
 import cats.syntax.all._
+
+import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
@@ -13,9 +16,15 @@ import fs2.{Chunk, Stream}
 
 object JarSignature {
 
+  case class JarNotFound(path: Path) extends NoStackTrace {
+    override def getMessage: String = s"JAR file not found at $path - cannot compute signature"
+  }
+
   def jarHash[F[_]: Async: Files]: F[Hash] = {
     val jarPath = Path(JarSignature.getClass.getProtectionDomain.getCodeSource.getLocation.toURI.getPath)
-    digestOf(Files[F].readAll(jarPath))
+    digestOf(Files[F].readAll(jarPath)).adaptError {
+      case _: NoSuchFileException => JarNotFound(jarPath)
+    }
   }
 
   def digestOf[F[_]: Async](bytes: Stream[F, Byte]): F[Hash] = {

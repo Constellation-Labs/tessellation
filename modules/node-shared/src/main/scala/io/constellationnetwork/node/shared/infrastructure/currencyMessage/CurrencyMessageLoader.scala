@@ -1,7 +1,11 @@
 package io.constellationnetwork.node.shared.infrastructure.currencyMessage
 
+import java.nio.file.NoSuchFileException
+
 import cats.effect.Async
 import cats.syntax.all._
+
+import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.currency.cli.MetagraphOwnerMessageOpts.MetagraphOwnerMessagePath
 import io.constellationnetwork.schema.currencyMessage.CurrencyMessage
@@ -18,6 +22,10 @@ trait CurrencyMessageLoader[F[_]] {
 
 object CurrencyMessageLoader {
 
+  case class CurrencyMessageFileNotFound(path: String) extends NoStackTrace {
+    override def getMessage: String = s"Currency message file not found at $path"
+  }
+
   def make[F[_]: Async]: CurrencyMessageLoader[F] =
     (path: MetagraphOwnerMessagePath) =>
       Files
@@ -30,5 +38,8 @@ object CurrencyMessageLoader {
           decode[Signed[CurrencyMessage]](body)
             .leftMap(err => new RuntimeException(s"Failed to parse owner message JSON: ${err.getMessage}"))
             .liftTo[F]
+        }
+        .adaptError {
+          case _: NoSuchFileException => CurrencyMessageFileNotFound(path.coerce.toString)
         }
 }

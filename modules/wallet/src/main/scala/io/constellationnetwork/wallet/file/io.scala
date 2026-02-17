@@ -1,6 +1,7 @@
 package io.constellationnetwork.wallet.file
 
 import cats.effect.Async
+import cats.syntax.all._
 
 import _root_.io.circe.fs2._
 import _root_.io.circe.syntax._
@@ -10,6 +11,8 @@ import fs2.{Stream, text}
 
 object io {
 
+  // Note: This intentionally propagates NoSuchFileException for clear error messages.
+  // Callers use .get or .handleErrorWith patterns that expect exceptions.
   def readFromJsonFile[F[_]: Async, A: Decoder](path: Path): F[Option[A]] =
     Files
       .forAsync[F]
@@ -20,13 +23,18 @@ object io {
       .compile
       .last
 
-  def writeToJsonFile[F[_]: Async, A: Encoder](path: Path)(a: A): F[Unit] =
-    Stream
-      .emit(a)
-      .covary[F]
-      .map(_.asJson.noSpaces)
-      .through(text.utf8.encode[F])
-      .through(Files.forAsync[F].writeAll(path, Flags.Write))
-      .compile
-      .drain
+  def writeToJsonFile[F[_]: Async, A: Encoder](path: Path)(a: A): F[Unit] = {
+    // Ensure parent directory exists before writing
+    val ensureParent = path.parent.traverse_(p => Files.forAsync[F].createDirectories(p))
+
+    ensureParent >>
+      Stream
+        .emit(a)
+        .covary[F]
+        .map(_.asJson.noSpaces)
+        .through(text.utf8.encode[F])
+        .through(Files.forAsync[F].writeAll(path, Flags.Write))
+        .compile
+        .drain
+  }
 }
