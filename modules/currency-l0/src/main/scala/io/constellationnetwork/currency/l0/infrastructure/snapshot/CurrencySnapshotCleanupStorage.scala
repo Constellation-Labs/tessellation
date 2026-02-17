@@ -54,7 +54,7 @@ object CurrencySnapshotCleanupStorage {
               // Files already cleaned up - not an error
               Async[F].unit
             case err =>
-              logger.error(s"Error during cleanup snapshot of the metagraph: ${err.getMessage}") >>
+              logger.error(err)("Error during cleanup snapshot of the metagraph") >>
                 CurrencyCleanupError.raiseError[F, Unit]
           }
 

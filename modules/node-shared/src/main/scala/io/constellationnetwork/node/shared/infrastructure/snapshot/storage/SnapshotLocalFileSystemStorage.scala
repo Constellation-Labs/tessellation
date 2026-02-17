@@ -173,10 +173,10 @@ abstract class SnapshotLocalFileSystemStorage[
                       // File already moved/deleted - this is expected during concurrent cleanup
                       logger.debug(s"File already removed during cleanup for ordinal=${snapshot.ordinal}")
                     case err =>
-                      logger.warn(
-                        s"Failed to move persisted to tmp for ordinal=${snapshot.ordinal}, hash=${hashed.hash}: ${err.getMessage}"
-                      )
-                      Async[F].raiseError(err)
+                      logger.warn(err)(
+                        s"Failed to move persisted to tmp for ordinal=${snapshot.ordinal}, hash=${hashed.hash}"
+                      ) >>
+                        Async[F].raiseError(err)
                   }
                 } yield ()
               }

@@ -154,12 +154,12 @@ object SnapshotDownloadStorage {
             .handleErrorWith {
               case _: java.nio.file.NoSuchFileException =>
                 // Files already deleted - not an error
-                Async[F].unit
+                logger.debug(s"Snapshot_info files above ${ordinal.show} already deleted or do not exist")
               case err =>
-                logger.error(s"Error while deleting snapshot_info files above ${ordinal.show}: ${err.getMessage}") >>
+                logger.error(err)(s"Error while deleting snapshot_info files above ${ordinal.show}") >>
                   Async[F].raiseError(err)
             }
-          _ <- logger.info(s"Successfully deleted snapshot_info files above ordinal ${ordinal.show}")
+          _ <- logger.debug(s"Completed snapshot_info cleanup above ordinal ${ordinal.show}")
         } yield ()
 
         val cleanupAboveOrdinal = persistedStorage.cleanupAboveOrdinal(ordinal, movePersistedToTmp)
