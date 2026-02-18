@@ -365,8 +365,22 @@ const testReplaceWhileInWithdrawal = async (urls, account, nodeId) => {
   logWorkflow.info('---- Start testReplaceWhileInWithdrawal ----')
 
   // Create a fresh token lock and stake for this test
+  // Retry on Conflict errors which can happen when L1 hasn't yet synced the latest GL0 state
   const lockAmount = 600000000000 // 6000 DAG
-  const lockHash = await createTokenLock(account, urls, lockAmount)
+  let lockHash
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      lockHash = await createTokenLock(account, urls, lockAmount)
+      break
+    } catch (err) {
+      if (err.message && err.message.includes('Conflict') && attempt < 5) {
+        logWorkflow.info(`Token lock creation hit Conflict (attempt ${attempt}/5), waiting for L1 sync...`)
+        await sleep(5000)
+      } else {
+        throw err
+      }
+    }
+  }
   logWorkflow.info(`Created token lock for withdrawal test: ${lockHash}`)
 
   const stakeHash = await createDelegatedStake(account, lockHash, lockAmount, nodeId)
@@ -528,6 +542,10 @@ const testTokenLockReplacementEdgeCases = async (urls) => {
 
   // Test 5: Multiple sequential replacements
   await testMultipleSequentialReplacements(urls, account, newLockHash, newAmount, stakeHash)
+
+  // Wait for L1 to sync latest global snapshots before next test to avoid ordinal conflicts
+  logWorkflow.info('Waiting for L1 sync before withdrawal test...')
+  await sleep(10000)
 
   // Test 6: Replace while stake is in withdrawal
   await testReplaceWhileInWithdrawal(urls, account, nodeId2)

@@ -23,6 +23,7 @@ import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage._
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.trust.PeerObservationAdjustmentUpdateBatch
 import io.constellationnetwork.security.{HashSelect, HasherSelector}
 
@@ -96,7 +97,8 @@ object Storages {
         snapshotDownload = snapshotDownloadStorage,
         globalSnapshotInfoLocalFileSystemStorage = incrementalGlobalSnapshotInfoLocalFileSystemStorage,
         globalSnapshotInfoLocalFileSystemKryoStorage = incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage,
-        combinedGlobalSnapshotCheckpointStorage = combinedGlobalSnapshotCheckpointStorage
+        combinedGlobalSnapshotCheckpointStorage = combinedGlobalSnapshotCheckpointStorage,
+        mptStore = sharedStorages.mptStore
       ) {}
 }
 
@@ -112,5 +114,10 @@ sealed abstract class Storages[F[_]] private (
   val snapshotDownload: SnapshotDownloadStorage[F],
   val globalSnapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
   val globalSnapshotInfoLocalFileSystemKryoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2],
-  val combinedGlobalSnapshotCheckpointStorage: CombinedSnapshotCheckpointFileSystemStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
+  val combinedGlobalSnapshotCheckpointStorage: CombinedSnapshotCheckpointFileSystemStorage[
+    F,
+    GlobalIncrementalSnapshot,
+    GlobalSnapshotInfo
+  ],
+  val mptStore: MptStore[F, GlobalStateKey]
 )

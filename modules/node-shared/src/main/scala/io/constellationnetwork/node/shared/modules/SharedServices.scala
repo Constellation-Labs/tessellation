@@ -159,7 +159,8 @@ object SharedServices {
             validators.stateChannelValidator,
             globalSnapshotStateChannelManager,
             currencySnapshotContextFns,
-            feeCalculator
+            feeCalculator,
+            storages.mptStore
           ),
         updateNodeParametersAcceptanceManager,
         updateDelegatedStakeAcceptanceManager,

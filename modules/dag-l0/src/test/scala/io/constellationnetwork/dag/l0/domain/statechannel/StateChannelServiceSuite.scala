@@ -19,12 +19,14 @@ import io.constellationnetwork.node.shared.domain.statechannel.{SnapshotFeesInfo
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.key.ops.PublicKeyOps
+import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.Signed.forAsyncHasher
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
@@ -37,21 +39,23 @@ import weaver.MutableIOSuite
 
 object StateChannelServiceSuite extends MutableIOSuite {
 
-  type Res = (Hasher[IO], SecurityProvider[IO])
+  type Res = (Hasher[IO], SecurityProvider[IO], MptStore[IO, GlobalStateKey])
 
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
-    h = Hasher.forJson[IO]
-  } yield (h, sp)
+    implicit0(h: Hasher[IO]) = Hasher.forJson[IO]
+    mptProducer <- InMemoryMerklePatriciaProducer.make[IO]().asResource
+    mptStore <- MptStore.make[IO, GlobalStateKey](mptProducer, GlobalStateKey.toHex[IO]).asResource
+  } yield (h, sp, mptStore)
 
   test("state channel output processed successfully") { res =>
-    implicit val (h, sp) = res
+    implicit val (h, sp, mptStore) = res
 
     for {
       output <- mkStateChannelOutput()
-      service <- mkService()
+      service <- mkService(mptStore)
       snapshotAndInfo = mkEmptyGlobalSnapshotAndState()
       result <- service.process(output, snapshotAndInfo)
     } yield expect.same(Right(()), result)
@@ -59,19 +63,19 @@ object StateChannelServiceSuite extends MutableIOSuite {
   }
 
   test("state channel output failed on validation") { res =>
-    implicit val (h, sp) = res
+    implicit val (h, sp, mptStore) = res
 
     for {
       output <- mkStateChannelOutput()
       expected = StateChannelValidator.NotSignedExclusivelyByStateChannelOwner
-      service <- mkService(Some(expected))
+      service <- mkService(mptStore, Some(expected))
       snapshotAndInfo = mkEmptyGlobalSnapshotAndState()
       result <- service.process(output, snapshotAndInfo)
     } yield expect.same(Left(NonEmptyList.of(expected)), result)
 
   }
 
-  def mkService(failed: Option[StateChannelValidator.StateChannelValidationError] = None) = {
+  def mkService(mptStore: MptStore[IO, GlobalStateKey], failed: Option[StateChannelValidator.StateChannelValidationError] = None) = {
     val validator = new StateChannelValidator[IO] {
       def validate(
         output: StateChannelOutput,
@@ -92,7 +96,7 @@ object StateChannelServiceSuite extends MutableIOSuite {
       unpQueue <- Queue.unbounded[IO, Signed[UpdateNodeParameters]]
       dsQueue <- Queue.unbounded[IO, DelegatedStakeOutput]
       ncQueue <- Queue.unbounded[IO, NodeCollateralOutput]
-    } yield StateChannelService.make[IO](L0Cell.mkL0Cell[IO](dagQueue, scQueue, unpQueue, dsQueue, ncQueue), validator)
+    } yield StateChannelService.make[IO](L0Cell.mkL0Cell[IO](dagQueue, scQueue, unpQueue, dsQueue, ncQueue), validator, mptStore)
   }
 
   def mkStateChannelOutput()(implicit S: SecurityProvider[IO], H: Hasher[IO]) = for {

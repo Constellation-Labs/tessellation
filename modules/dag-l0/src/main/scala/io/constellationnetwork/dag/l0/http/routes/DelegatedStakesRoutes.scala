@@ -20,6 +20,8 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
@@ -40,7 +42,8 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
   snapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   nodeStorage: NodeStorage[F],
   withdrawalTimeLimit: EpochProgress,
-  rewardsInfoStorage: RewardsInfoStorage[F]
+  rewardsInfoStorage: RewardsInfoStorage[F],
+  mptStore: MptStore[F, GlobalStateKey]
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {
 
@@ -50,17 +53,10 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
 
   protected val prefixPath: InternalUrlPrefix = "/delegated-stakes"
 
-  private def getDelegatedStakesInfo(address: Address, info: GlobalSnapshotInfo): F[DelegatedStakesInfo] = {
-    val lastStakes: SortedSet[DelegatedStakeRecord] =
-      info.activeDelegatedStakes
-        .getOrElse(SortedMap.empty[Address, SortedSet[DelegatedStakeRecord]])
-        .getOrElse(address, SortedSet.empty)
-    val lastWithdrawals: SortedSet[PendingDelegatedStakeWithdrawal] =
-      info.delegatedStakesWithdrawals
-        .getOrElse(SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]])
-        .getOrElse(address, SortedSet.empty)
-
+  private def getDelegatedStakesInfo(address: Address): F[DelegatedStakesInfo] =
     for {
+      lastStakes <- mptStore.getDelegatedStakes(address).map(_.getOrElse(SortedSet.empty[DelegatedStakeRecord]))
+      lastWithdrawals <- mptStore.getDelegatedStakeWithdrawals(address).map(_.getOrElse(SortedSet.empty[PendingDelegatedStakeWithdrawal]))
       stakes <- lastStakes.toList.traverse {
         case record: DelegatedStakeRecord =>
           DelegatedStakeReference
@@ -128,18 +124,19 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
         activeDelegatedStakes = active,
         pendingWithdrawals = pending
       )
-  }
 
   private def getLastReference(
-    address: Address,
-    info: GlobalSnapshotInfo
+    address: Address
   ): F[DelegatedStakeReference] =
-    info.activeDelegatedStakes
-      .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
-      .get(address)
-      .flatMap(stakes => Option.when(stakes.nonEmpty)(stakes.maxBy(_.event.ordinal)))
-      .traverse(record => DelegatedStakeReference.of(record.event))
-      .map(_.getOrElse(DelegatedStakeReference.empty))
+    mptStore.getDelegatedStakes(address).flatMap { maybeDelegatedStakes =>
+      maybeDelegatedStakes
+        .getOrElse(SortedSet.empty[DelegatedStakeRecord])
+        .toList
+        .sortBy(_.event.ordinal)
+        .lastOption
+        .traverse(record => DelegatedStakeReference.of(record.event))
+        .map(_.getOrElse(DelegatedStakeReference.empty))
+    }
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root =>
@@ -190,15 +187,15 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
 
     case GET -> Root / AddressVar(address) / "info" =>
       snapshotStorage.head.flatMap {
-        case Some((_, info)) =>
-          Ok(getDelegatedStakesInfo(address, info))
+        case Some(_) =>
+          Ok(getDelegatedStakesInfo(address))
         case None => ServiceUnavailable()
       }
 
     case GET -> Root / "last-reference" / AddressVar(address) =>
       snapshotStorage.head.flatMap {
-        case Some((_, info)) =>
-          Ok(getLastReference(address, info))
+        case Some(_) =>
+          Ok(getLastReference(address))
         case None => ServiceUnavailable()
       }
 

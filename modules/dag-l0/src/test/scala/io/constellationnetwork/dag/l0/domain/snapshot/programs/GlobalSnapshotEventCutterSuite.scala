@@ -154,7 +154,6 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
   val feeCalculator = new SnapshotBinaryFeeCalculator[IO] {
     override def calculateFee(
       event: StateChannelEvent,
-      info: GlobalSnapshotContext,
       ordinal: SnapshotOrdinal
     ): IO[NonNegLong] =
       event.value.snapshotBinary.value.fee.value.pure[IO]

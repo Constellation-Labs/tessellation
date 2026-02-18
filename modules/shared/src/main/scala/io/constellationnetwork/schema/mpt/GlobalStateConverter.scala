@@ -283,68 +283,7 @@ object GlobalStateConverter {
       }
     }
 
-    implicit class MptStoreGlobalSnapshotOps[F[_]: Async: Parallel: Hasher: JsonSerializer](
-      val store: MptStore[F, GlobalStateKey]
-    ) {
-      def syncFromGlobalSnapshotInfo(info: GlobalSnapshotInfo, snapshotOrdinal: SnapshotOrdinal)(
-        implicit stateProofSelector: StateProofSelector
-      ): F[Unit] =
-        info.allStateEntries[F].flatMap(store.syncFull[Json](_, snapshotOrdinal))
-
-      def syncFromStateChanges(acc: StateChangesAccumulator, snapshotOrdinal: SnapshotOrdinal)(
-        implicit stateProofSelector: StateProofSelector
-      ): F[Unit] = {
-        val BatchSize = 5000
-
-        // Convert removal keys from accumulator to GlobalStateKey
-        def toRemovalGlobalStateKeys: Set[GlobalStateKey] = {
-          val allowSpendKeys = acc.removedAllowSpendKeys.map {
-            case (metagraphIdOpt, address) =>
-              GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveAllowSpends, metagraphIdOpt, address)
-          }
-          val tokenLockKeys = acc.removedTokenLockKeys.map { address =>
-            GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveTokenLocks, address)
-          }
-          val tokenLockBalanceKeys = acc.removedTokenLockBalanceKeys.map { metagraphAddress =>
-            GlobalStateKey.hypergraph(GlobalStateFieldId.TokenLockBalances, metagraphAddress)
-          }
-          val delegatedStakeKeys = acc.removedDelegatedStakeKeys.map { address =>
-            GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveDelegatedStakes, address)
-          }
-          val delegatedStakeWithdrawalKeys = acc.removedDelegatedStakeWithdrawalKeys.map { address =>
-            GlobalStateKey.hypergraph(GlobalStateFieldId.DelegatedStakesWithdrawals, address)
-          }
-          val nodeCollateralKeys = acc.removedNodeCollateralKeys.map { address =>
-            GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveNodeCollaterals, address)
-          }
-          val nodeCollateralWithdrawalKeys = acc.removedNodeCollateralWithdrawalKeys.map { address =>
-            GlobalStateKey.hypergraph(GlobalStateFieldId.NodeCollateralWithdrawals, address)
-          }
-          allowSpendKeys ++ tokenLockKeys ++ tokenLockBalanceKeys ++
-            delegatedStakeKeys ++ delegatedStakeWithdrawalKeys ++
-            nodeCollateralKeys ++ nodeCollateralWithdrawalKeys
-        }
-
-        for {
-          entries <- acc.toStateEntries[F]
-          keysToRemove = toRemovalGlobalStateKeys
-          // Remove stale keys first (entries that are now empty: AllowSpends, TokenLocks,
-          // TokenLockBalances, DelegatedStakes, DelegatedStakeWithdrawals, NodeCollaterals, NodeCollateralWithdrawals)
-          _ <- store.remove(keysToRemove.toList).whenA(keysToRemove.nonEmpty)
-          // Then insert/update entries
-          _ <-
-            if (entries.size <= BatchSize) {
-              store.sync[Json](entries, snapshotOrdinal)
-            } else {
-              entries.toList
-                .grouped(BatchSize)
-                .toList
-                .traverse_ { batch =>
-                  store.sync[Json](batch.toMap, snapshotOrdinal) >> Async[F].cede
-                }
-            }
-        } yield ()
-      }
+    implicit class MptStoreReadOps[F[_]: Async](val store: MptStore[F, GlobalStateKey]) {
 
       def getBalance(address: Address): F[Option[Balance]] =
         store
@@ -430,6 +369,70 @@ object GlobalStateConverter {
       def getMetagraphSyncData(metagraphAddress: Address): F[Option[MetagraphSyncDataInfo]] =
         store
           .get[MetagraphSyncDataInfo](GlobalStateKey.hypergraph(GlobalStateFieldId.MetagraphSyncData, metagraphAddress))
+    }
+
+    implicit class MptStoreGlobalSnapshotOps[F[_]: Async: Parallel: Hasher: JsonSerializer](
+      val store: MptStore[F, GlobalStateKey]
+    ) {
+      def syncFromGlobalSnapshotInfo(info: GlobalSnapshotInfo, snapshotOrdinal: SnapshotOrdinal)(
+        implicit stateProofSelector: StateProofSelector
+      ): F[Unit] =
+        info.allStateEntries[F].flatMap(store.syncFull[Json](_, snapshotOrdinal))
+
+      def syncFromStateChanges(acc: StateChangesAccumulator, snapshotOrdinal: SnapshotOrdinal)(
+        implicit stateProofSelector: StateProofSelector
+      ): F[Unit] = {
+        val BatchSize = 5000
+
+        // Convert removal keys from accumulator to GlobalStateKey
+        def toRemovalGlobalStateKeys: Set[GlobalStateKey] = {
+          val allowSpendKeys = acc.removedAllowSpendKeys.map {
+            case (metagraphIdOpt, address) =>
+              GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveAllowSpends, metagraphIdOpt, address)
+          }
+          val tokenLockKeys = acc.removedTokenLockKeys.map { address =>
+            GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveTokenLocks, address)
+          }
+          val tokenLockBalanceKeys = acc.removedTokenLockBalanceKeys.map { metagraphAddress =>
+            GlobalStateKey.hypergraph(GlobalStateFieldId.TokenLockBalances, metagraphAddress)
+          }
+          val delegatedStakeKeys = acc.removedDelegatedStakeKeys.map { address =>
+            GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveDelegatedStakes, address)
+          }
+          val delegatedStakeWithdrawalKeys = acc.removedDelegatedStakeWithdrawalKeys.map { address =>
+            GlobalStateKey.hypergraph(GlobalStateFieldId.DelegatedStakesWithdrawals, address)
+          }
+          val nodeCollateralKeys = acc.removedNodeCollateralKeys.map { address =>
+            GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveNodeCollaterals, address)
+          }
+          val nodeCollateralWithdrawalKeys = acc.removedNodeCollateralWithdrawalKeys.map { address =>
+            GlobalStateKey.hypergraph(GlobalStateFieldId.NodeCollateralWithdrawals, address)
+          }
+          allowSpendKeys ++ tokenLockKeys ++ tokenLockBalanceKeys ++
+            delegatedStakeKeys ++ delegatedStakeWithdrawalKeys ++
+            nodeCollateralKeys ++ nodeCollateralWithdrawalKeys
+        }
+
+        for {
+          entries <- acc.toStateEntries[F]
+          keysToRemove = toRemovalGlobalStateKeys
+          // Remove stale keys first (entries that are now empty: AllowSpends, TokenLocks,
+          // TokenLockBalances, DelegatedStakes, DelegatedStakeWithdrawals, NodeCollaterals, NodeCollateralWithdrawals)
+          _ <- store.remove(keysToRemove.toList).whenA(keysToRemove.nonEmpty)
+          // Then insert/update entries
+          _ <-
+            if (entries.size <= BatchSize) {
+              store.sync[Json](entries, snapshotOrdinal)
+            } else {
+              entries.toList
+                .grouped(BatchSize)
+                .toList
+                .traverse_ { batch =>
+                  store.sync[Json](batch.toMap, snapshotOrdinal) >> Async[F].cede
+                }
+            }
+        } yield ()
+      }
     }
   }
 }

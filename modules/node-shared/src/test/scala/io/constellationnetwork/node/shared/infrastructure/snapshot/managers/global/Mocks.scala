@@ -8,6 +8,7 @@ import cats.effect.{Async, IO}
 import cats.syntax.applicative._
 import cats.syntax.either._
 import cats.syntax.flatMap._
+import cats.syntax.foldable._
 import cats.syntax.option._
 import cats.syntax.traverse._
 import cats.syntax.validated._
@@ -46,6 +47,7 @@ import io.constellationnetwork.schema.artifact.{PricingUpdate, SpendAction, Toke
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
@@ -68,7 +70,9 @@ import io.circe.Json
 
 object Mocks {
 
-  private[snapshot] def mkManager()(implicit h: Hasher[IO], sp: SecurityProvider[IO]): IO[GlobalSnapshotAcceptanceManager[IO]] = {
+  private[snapshot] def mkManager(
+    initialSnapshotInfo: Option[GlobalSnapshotInfo] = None
+  )(implicit h: Hasher[IO], sp: SecurityProvider[IO]): IO[GlobalSnapshotAcceptanceManager[IO]] = {
     // Create mock dependencies for testing
     val mockBlockAcceptanceManager = new BlockAcceptanceManager[IO] {
       override def acceptBlocksIteratively(
@@ -262,38 +266,39 @@ object Mocks {
               GlobalStateKey.toHex[IO]
             )
             .flatMap { mptStore =>
-              GlobalSnapshotAcceptanceManager
-                .make[IO](
-                  FieldsAddedOrdinals(
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty
-                  ),
-                  MetagraphsSyncConfig(PosInt(100)),
-                  AppEnvironment.Dev,
-                  blockAcceptanceManager = mockBlockAcceptanceManager,
-                  allowSpendBlockAcceptanceManager = mockAllowSpendBlockAcceptanceManager,
-                  tokenLockBlockAcceptanceManager = mockTokenLockBlockAcceptanceManager,
-                  stateChannelEventsProcessor = mockStateChannelEventsProcessor,
-                  updateNodeParametersAcceptanceManager = mockUpdateNodeParametersAcceptanceManager,
-                  updateDelegatedStakeAcceptanceManager = updateDelegatedStakeAcceptanceManager,
-                  updateNodeCollateralAcceptanceManager = mockUpdateNodeCollateralAcceptanceManager,
-                  spendActionValidator = mockSpendActionValidator,
-                  pricingUpdateValidator = mockPricingUpdateValidator,
-                  priceStateUpdater = mockPriceStateUpdater,
-                  collateral = Amount.empty,
-                  withdrawalTimeLimit = EpochProgress(4L),
-                  loggerBundle = loggerBundle,
-                  mptStore = mptStore
-                )
-                .pure[IO]
+              initialSnapshotInfo.traverse_(info => mptStore.syncFromGlobalSnapshotInfo(info, SnapshotOrdinal.MinValue)) >>
+                GlobalSnapshotAcceptanceManager
+                  .make[IO](
+                    FieldsAddedOrdinals(
+                      Map.empty,
+                      Map.empty,
+                      Map.empty,
+                      Map.empty,
+                      Map.empty,
+                      Map.empty,
+                      Map.empty,
+                      Map.empty,
+                      Map.empty,
+                      Map.empty
+                    ),
+                    MetagraphsSyncConfig(PosInt(100)),
+                    AppEnvironment.Dev,
+                    blockAcceptanceManager = mockBlockAcceptanceManager,
+                    allowSpendBlockAcceptanceManager = mockAllowSpendBlockAcceptanceManager,
+                    tokenLockBlockAcceptanceManager = mockTokenLockBlockAcceptanceManager,
+                    stateChannelEventsProcessor = mockStateChannelEventsProcessor,
+                    updateNodeParametersAcceptanceManager = mockUpdateNodeParametersAcceptanceManager,
+                    updateDelegatedStakeAcceptanceManager = updateDelegatedStakeAcceptanceManager,
+                    updateNodeCollateralAcceptanceManager = mockUpdateNodeCollateralAcceptanceManager,
+                    spendActionValidator = mockSpendActionValidator,
+                    pricingUpdateValidator = mockPricingUpdateValidator,
+                    priceStateUpdater = mockPriceStateUpdater,
+                    collateral = Amount.empty,
+                    withdrawalTimeLimit = EpochProgress(4L),
+                    loggerBundle = loggerBundle,
+                    mptStore = mptStore
+                  )
+                  .pure[IO]
             }
         }
       }

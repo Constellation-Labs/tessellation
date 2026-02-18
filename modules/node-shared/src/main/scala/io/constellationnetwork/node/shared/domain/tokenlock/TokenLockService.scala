@@ -17,6 +17,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock.ContextualTokenLockV
 }
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.tokenLock.TokenLock
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
@@ -34,8 +35,28 @@ object TokenLockService {
   def make[F[_]: Async, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]](
     tokenLockStorage: TokenLockStorage[F],
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI] with LatestBalances[F],
-    tokenLockValidator: TokenLockValidator[F]
+    tokenLockValidator: TokenLockValidator[F],
+    maybeMptStore: Option[MptStore[F, GlobalStateKey]] = None
   ): TokenLockService[F] = new TokenLockService[F] {
+
+    import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+
+    private def getBalanceAndTokenLocks(
+      si: SI,
+      address: io.constellationnetwork.schema.address.Address
+    ): F[(Balance, SortedSet[Signed[TokenLock]])] =
+      maybeMptStore match {
+        case Some(mptStore) =>
+          for {
+            balance <- mptStore.getBalance(address).map(_.getOrElse(Balance.empty))
+            tokenLocks <- mptStore.getActiveTokenLocks(address).map(_.getOrElse(SortedSet.empty[Signed[TokenLock]]))
+          } yield (balance, tokenLocks)
+        case None =>
+          (
+            si.balances.getOrElse(address, Balance.empty),
+            si.getActiveTokenLocks.getOrElse(address, SortedSet.empty[Signed[TokenLock]])
+          ).pure[F]
+      }
 
     def offer(
       tokenLock: Hashed[TokenLock]
@@ -59,14 +80,12 @@ object TokenLockService {
           .map(_.errorMap(NonContextualValidationError))
           .flatMap {
             case Valid(_) =>
-              lastSnapshotStorage.getCombinedStream.map {
+              lastSnapshotStorage.getCombinedStream.evalMap {
                 case Some((s, si)) =>
-                  (
-                    s.ordinal,
-                    si.balances.getOrElse(tokenLock.source, Balance.empty),
-                    si.getActiveTokenLocks.getOrElse(tokenLock.source, SortedSet.empty[Signed[TokenLock]])
-                  )
-                case None => (SnapshotOrdinal.MinValue, Balance.empty, SortedSet.empty[Signed[TokenLock]])
+                  getBalanceAndTokenLocks(si, tokenLock.source).map {
+                    case (balance, activeTokenLocks) => (s.ordinal, balance, activeTokenLocks)
+                  }
+                case None => (SnapshotOrdinal.MinValue, Balance.empty, SortedSet.empty[Signed[TokenLock]]).pure[F]
               }.changes.switchMap {
                 case (latestOrdinal, balance, activeTokenLocks) =>
                   Stream.eval(tokenLockStorage.tryPut(tokenLock, latestOrdinal, lastGlobalEpochProgress, balance, activeTokenLocks))

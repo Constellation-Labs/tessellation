@@ -28,7 +28,7 @@ import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.services.AddressService
-import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
+import io.constellationnetwork.node.shared.infrastructure.collateral.MptStoreCollateral
 import io.constellationnetwork.node.shared.infrastructure.delegatedStake.{RewardsInfoCalculator, RewardsInfoStorage}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
@@ -126,8 +126,12 @@ object Services {
             loggerBundle
           )
       }
-      addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](cfg.shared.addresses, storages.globalSnapshot)
-      collateralService = Collateral.make[F](cfg.collateral, storages.globalSnapshot)
+      addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+        cfg.shared.addresses,
+        storages.globalSnapshot,
+        Some(sharedStorages.mptStore)
+      )
+      collateralService = MptStoreCollateral.make[F](cfg.collateral, sharedStorages.mptStore)
       stateChannelService = StateChannelService
         .make[F](
           L0Cell.mkL0Cell(
@@ -137,7 +141,8 @@ object Services {
             queues.delegatedStakeOutput,
             queues.nodeCollateralOutput
           ),
-          validators.stateChannelValidator
+          validators.stateChannelValidator,
+          sharedStorages.mptStore
         )
       getOrdinal = storages.globalSnapshot.headSnapshot.map(_.map(_.ordinal))
       trustUpdaterService = TrustStorageUpdater.make(getOrdinal, sharedServices.gossip, storages.trust)

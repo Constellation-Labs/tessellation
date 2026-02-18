@@ -18,7 +18,7 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.GlobalSnapshotStateChannelAcceptanceManager
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
+import io.constellationnetwork.schema.{GlobalSnapshotInfo, GlobalStateProofSelector, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -33,26 +33,27 @@ import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
 object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite with Checkers {
+  implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
 
-  type Res = (Hasher[IO], SecurityProvider[IO])
+  type Res = (Hasher[IO], SecurityProvider[IO], JsonSerializer[IO])
 
-  override def sharedResource: Resource[IO, GlobalSnapshotStateChannelAcceptanceManagerSuite.Res] = for {
+  override def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
-    h = Hasher.forJson[IO]
-  } yield (h, sp)
+    implicit0(h: Hasher[IO]) = Hasher.forJson[IO]
+  } yield (h, sp, j)
 
   val address = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
 
   test("valid state channels should be returned when ordinal doesn't exceed delay") { res =>
-    implicit val (h, sp) = res
+    implicit val (h, sp, js) = res
 
     for {
       stateChannelOutput1 <- mkStateChannelOutput(1, address, Hash("someHash").some)
       stateChannelOutput2 <- mkStateChannelOutput(2, address, Hash("someHash").some)
       snapshotInfo = mkGlobalSnapshotInfo(SortedMap(address -> Hash("someHash")))
-      manager <- mkManager()
+      manager <- mkManager(snapshotInfo)
       result1 <- manager.accept(SnapshotOrdinal(1L), snapshotInfo, List(stateChannelOutput1))
       result2 <- manager.accept(SnapshotOrdinal(10L), snapshotInfo, List(stateChannelOutput1, stateChannelOutput2))
       expected1 = (SortedMap.empty[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set(stateChannelOutput1))
@@ -65,12 +66,12 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("valid state channel should be accepted when ordinal exceeds delay") { res =>
-    implicit val (h, sp) = res
+    implicit val (h, sp, js) = res
 
     for {
       stateChannelOutput <- mkStateChannelOutput(1, address, Hash("someHash").some)
       snapshotInfo = mkGlobalSnapshotInfo(SortedMap(address -> Hash("someHash")))
-      manager <- mkManager()
+      manager <- mkManager(snapshotInfo)
       _ <- manager.accept(SnapshotOrdinal(1L), snapshotInfo, List(stateChannelOutput))
       result <- manager.accept(SnapshotOrdinal(11L), snapshotInfo, List(stateChannelOutput))
     } yield expect.same((SortedMap(address -> NonEmptyList.one(stateChannelOutput.snapshotBinary)), Set.empty), result)
@@ -78,12 +79,12 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("invalid state channel should be returned if purge delay is not exceeded") { res =>
-    implicit val (h, sp) = res
+    implicit val (h, sp, js) = res
 
     for {
       stateChannelOutput <- mkStateChannelOutput(1, address, Some(Hash("unknown")))
       snapshotInfo = mkGlobalSnapshotInfo(SortedMap.empty)
-      manager <- mkManager()
+      manager <- mkManager(snapshotInfo)
       _ <- manager.accept(SnapshotOrdinal(1L), snapshotInfo, List(stateChannelOutput))
       result <- manager.accept(SnapshotOrdinal(11L), snapshotInfo, List(stateChannelOutput))
       expected = (SortedMap.empty[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set(stateChannelOutput))
@@ -92,12 +93,12 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("invalid or yet un-processable state channel should be purged after purge delay is exceeded") { res =>
-    implicit val (h, sp) = res
+    implicit val (h, sp, js) = res
 
     for {
       stateChannelOutput <- mkStateChannelOutput(1, address, Some(Hash("unknown")))
       snapshotInfo = mkGlobalSnapshotInfo(SortedMap.empty)
-      manager <- mkManager(NonNegLong.MinValue, NonNegLong(4L))
+      manager <- mkManager(snapshotInfo, NonNegLong.MinValue, NonNegLong(4L))
       _ <- manager.accept(SnapshotOrdinal(1L), snapshotInfo, List(stateChannelOutput))
       resultAt4 <- manager.accept(SnapshotOrdinal(4L), snapshotInfo, List(stateChannelOutput))
       expectedAt4 = (SortedMap.empty[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set(stateChannelOutput))
@@ -110,13 +111,13 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("valid state channel with more signatures should be preferred") { res =>
-    implicit val (h, sp) = res
+    implicit val (h, sp, js) = res
 
     for {
       stateChannelOutput1 <- mkStateChannelOutput(1, address, None)
       stateChannelOutput2 <- mkStateChannelOutput(2, address, None)
       snapshotInfo = mkGlobalSnapshotInfo(SortedMap.empty)
-      manager <- mkManager()
+      manager <- mkManager(snapshotInfo)
       _ <- manager.accept(SnapshotOrdinal(1L), snapshotInfo, List(stateChannelOutput1))
       _ <- manager.accept(SnapshotOrdinal(10L), snapshotInfo, List(stateChannelOutput1, stateChannelOutput2))
       result <- manager.accept(SnapshotOrdinal(11L), snapshotInfo, List(stateChannelOutput1, stateChannelOutput2))
@@ -126,14 +127,14 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("valid state channel with more occurrences should be preferred") { res =>
-    implicit val (h, sp) = res
+    implicit val (h, sp, js) = res
 
     for {
       stateChannelOutput1 <- mkStateChannelOutput(1, address, None)
       stateChannelOutput2 <- mkStateChannelOutput(1, address, None, stateChannelOutput1.snapshotBinary.value.some)
       stateChannelOutput3 <- mkStateChannelOutput(1, address, None)
       snapshotInfo = mkGlobalSnapshotInfo(SortedMap.empty)
-      manager <- mkManager()
+      manager <- mkManager(snapshotInfo)
       _ <- manager.accept(SnapshotOrdinal(1L), snapshotInfo, List(stateChannelOutput1, stateChannelOutput2, stateChannelOutput3))
       result <- manager.accept(SnapshotOrdinal(11L), snapshotInfo, List(stateChannelOutput1, stateChannelOutput2, stateChannelOutput3))
       expected1 = (SortedMap(address -> NonEmptyList.one(stateChannelOutput2.snapshotBinary)), Set.empty)
@@ -143,7 +144,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("acceptance should return deterministic result given concurring proposals and reruns") { res =>
-    implicit val (h, sp) = res
+    implicit val (h, sp, js) = res
 
     def gen = for {
       numberOfBinaries <- Gen.chooseNum(2, 10)
@@ -161,7 +162,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
           snapshotInfo = mkGlobalSnapshotInfo(SortedMap.empty)
           results <- (1 to numberOfCalls).toList.traverse { _ =>
             for {
-              manager <- mkManager()
+              manager <- mkManager(snapshotInfo)
               _ <- manager.accept(SnapshotOrdinal(1L), snapshotInfo, stateChannelOutputs)
               shuffledOutputs <- Random.scalaUtilRandom[IO].flatMap(_.shuffleList(stateChannelOutputs))
               result <- manager.accept(SnapshotOrdinal(11L), snapshotInfo, shuffledOutputs)
@@ -176,14 +177,14 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("valid state channel with more signatures should be preferred over more occurrences") { res =>
-    implicit val (h, sp) = res
+    implicit val (h, sp, js) = res
 
     for {
       stateChannelOutput1 <- mkStateChannelOutput(1, address, None)
       stateChannelOutput2 <- mkStateChannelOutput(1, address, None, stateChannelOutput1.snapshotBinary.value.some)
       stateChannelOutput3 <- mkStateChannelOutput(2, address, None)
       snapshotInfo = mkGlobalSnapshotInfo(SortedMap.empty)
-      manager <- mkManager()
+      manager <- mkManager(snapshotInfo)
       _ <- manager.accept(SnapshotOrdinal(1L), snapshotInfo, List(stateChannelOutput1, stateChannelOutput2, stateChannelOutput3))
       result <- manager.accept(SnapshotOrdinal(11L), snapshotInfo, List(stateChannelOutput1, stateChannelOutput2, stateChannelOutput3))
       expected = (SortedMap(address -> NonEmptyList.one(stateChannelOutput3.snapshotBinary)), Set.empty)
@@ -192,7 +193,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("valid state channels which form a chain should be accepted") { res =>
-    implicit val (h, sp) = res
+    implicit val (h, sp, js) = res
 
     for {
       output1 <- mkStateChannelOutput(1, address, None)
@@ -203,7 +204,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
       output2Following1 <- mkStateChannelOutput(5, address, output2Hash.some)
       output2Following2 <- mkStateChannelOutput(2, address, output2Hash.some)
       snapshotInfo = mkGlobalSnapshotInfo(SortedMap.empty)
-      manager <- mkManager()
+      manager <- mkManager(snapshotInfo)
       _ <- manager.accept(
         SnapshotOrdinal(1L),
         snapshotInfo,
@@ -219,7 +220,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("valid state channels should be accepted right away when pull delay is set to 0") { res =>
-    implicit val (h, sp) = res
+    implicit val (h, sp, js) = res
 
     for {
       output1 <- mkStateChannelOutput(1, address, None)
@@ -230,7 +231,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
       output2Following1 <- mkStateChannelOutput(5, address, output2Hash.some)
       output2Following2 <- mkStateChannelOutput(2, address, output2Hash.some)
       snapshotInfo = mkGlobalSnapshotInfo(SortedMap.empty)
-      manager <- mkManager(pullDelay = NonNegLong.MinValue)
+      manager <- mkManager(snapshotInfo, pullDelay = NonNegLong.MinValue)
       result <- manager.accept(
         SnapshotOrdinal(1L),
         snapshotInfo,
@@ -241,25 +242,25 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("valid state channel should be processed with purge delay set to 0") { res =>
-    implicit val (h, sp) = res
+    implicit val (h, sp, js) = res
 
     for {
       stateChannelOutput <- mkStateChannelOutput(1, address, Hash("someHash").some)
       snapshotInfo = mkGlobalSnapshotInfo(SortedMap(address -> Hash("someHash")))
-      manager <- mkManager(NonNegLong.MinValue, NonNegLong.MinValue)
+      manager <- mkManager(snapshotInfo, NonNegLong.MinValue, NonNegLong.MinValue)
       result <- manager.accept(SnapshotOrdinal(1L), snapshotInfo, List(stateChannelOutput))
     } yield expect.same((SortedMap(address -> NonEmptyList.one(stateChannelOutput.snapshotBinary)), Set.empty), result)
 
   }
 
   test("state channel events that don't form a chain should be returned") { res =>
-    implicit val (h, sp) = res
+    implicit val (h, sp, js) = res
 
     for {
       correctChain <- mkChainOfStateChannelOutputs(1, address, 3L)
       (first, third) = (correctChain.head, correctChain.last)
       snapshotInfo = mkGlobalSnapshotInfo(SortedMap.empty)
-      manager <- mkManager(pullDelay = NonNegLong.MinValue)
+      manager <- mkManager(snapshotInfo, pullDelay = NonNegLong.MinValue)
       result <- manager.accept(
         SnapshotOrdinal(1L),
         snapshotInfo,
@@ -269,8 +270,13 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
     } yield expect.eql(expected, result)
   }
 
-  private def mkManager(pullDelay: NonNegLong = NonNegLong(10L), purgeDelay: NonNegLong = NonNegLong(4L))(
-    implicit h: Hasher[IO]
+  private def mkManager(
+    snapshotInfo: GlobalSnapshotInfo,
+    pullDelay: NonNegLong = NonNegLong(10L),
+    purgeDelay: NonNegLong = NonNegLong(4L)
+  )(
+    implicit h: Hasher[IO],
+    js: JsonSerializer[IO]
   ) =
     GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, pullDelay = pullDelay, purgeDelay = purgeDelay)
 

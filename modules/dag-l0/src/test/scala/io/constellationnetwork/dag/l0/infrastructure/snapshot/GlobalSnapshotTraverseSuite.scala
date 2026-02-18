@@ -379,7 +379,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           validators.stateChannelValidator,
           stateChannelManager,
           currencySnapshotContextFns,
-          feeCalculator
+          feeCalculator,
+          mptStore
         )
       updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
       updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make(
