@@ -18,7 +18,7 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
-import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, PeerAvailability}
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
 import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
@@ -59,7 +59,8 @@ object Download {
       GlobalIncrementalSnapshot,
       GlobalSnapshotInfo
     ],
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    peerAvailability: PeerAvailability[F]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): Download[F, GlobalIncrementalSnapshot] = new Download[F, GlobalIncrementalSnapshot] {
@@ -434,7 +435,7 @@ object Download {
         .map(NodeState.ready)
         .flatTap(peers => ExitOnFork.exitOnCheck("CL_EXIT_ON_FOLLOWER_DOWNLOAD", () => peers.map(_.id)))
         .map(_.toList)
-        .flatMap(Random[F].shuffleList)
+        .flatMap(peerAvailability.sortByAvailability)
         .flatTap { _ =>
           logger.info(s"Downloading snapshot hash=${hash.show}, ordinal=${ordinal.show}")
         }
@@ -452,13 +453,15 @@ object Download {
                 .flatMap(snapshot => snapshot.toHashed[F])
                 .map(_.some)
                 .handleErrorWith(e =>
-                  logger
-                    .warn(e)(s"Unable to retrieve snapshot at ordinal ${ordinal.show} from peer ${peer.show}")
-                    .as(none[Hashed[GlobalIncrementalSnapshot]])
+                  peerAvailability.recordFailure(peer) >>
+                    logger
+                      .warn(e)(s"Unable to retrieve snapshot at ordinal ${ordinal.show} from peer ${peer.show}")
+                      .as(none[Hashed[GlobalIncrementalSnapshot]])
                 )
-                .map {
-                  case Some(snapshot) if hash.forall(_ === snapshot.hash) => snapshot.signed.some.asRight[Agg]
-                  case _                                                  => (tail, none[Success]).asLeft[Result]
+                .flatMap {
+                  case Some(snapshot) if hash.forall(_ === snapshot.hash) =>
+                    peerAvailability.recordSuccess(peer).as(snapshot.signed.some.asRight[Agg])
+                  case _ => (tail, none[Success]).asLeft[Result].pure[F]
                 }
           }
         }
@@ -471,7 +474,7 @@ object Download {
       clusterStorage.getResponsivePeers
         .map(NodeState.ready)
         .map(_.toList)
-        .flatMap(Random[F].shuffleList)
+        .flatMap(peerAvailability.sortByAvailability)
         .flatTap { _ =>
           logger.info(s"Downloading genesis snapshot ordinal=${ordinal}")
         }
@@ -488,10 +491,11 @@ object Download {
                 .run(peer)
                 .flatMap(_.toHashed[F])
                 .map(_.some)
-                .handleError(_ => none[Hashed[GlobalSnapshot]])
-                .map {
-                  case Some(snapshot) => snapshot.signed.some.asRight[Agg]
-                  case _              => (tail, none[Success]).asLeft[Result]
+                .handleErrorWith(e => peerAvailability.recordFailure(peer).as(none[Hashed[GlobalSnapshot]]))
+                .flatMap {
+                  case Some(snapshot) =>
+                    peerAvailability.recordSuccess(peer).as(snapshot.signed.some.asRight[Agg])
+                  case _ => (tail, none[Success]).asLeft[Result].pure[F]
                 }
           }
         }

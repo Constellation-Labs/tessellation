@@ -27,7 +27,7 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
-import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{PeerAvailability, SnapshotStorage}
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotContextFunctions
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{CombinedSnapshotCheckpointFileSystemStorage, IdentifierStorage}
@@ -62,7 +62,8 @@ object Download {
       F,
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
-    ]
+    ],
+    peerAvailability: PeerAvailability[F]
   )(implicit l0NodeContext: L0NodeContext[F]): Download[F, CurrencyIncrementalSnapshot] = new Download[F, CurrencyIncrementalSnapshot] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -187,7 +188,7 @@ object Download {
       clusterStorage.getResponsivePeers
         .map(NodeState.ready)
         .map(_.toList)
-        .flatMap(Random[F].shuffleList)
+        .flatMap(peerAvailability.sortByAvailability)
         .flatTap { _ =>
           logger.info(s"Download currency snapshot hash=${hash.show}, ordinal=${ordinal.show}")
         }
@@ -204,10 +205,11 @@ object Download {
                 .run(peer)
                 .flatMap(_.toHashed[F])
                 .map(_.some)
-                .handleError(_ => none[Hashed[CurrencyIncrementalSnapshot]])
-                .map {
-                  case Some(snapshot) if hash.forall(_ === snapshot.hash) => snapshot.signed.some.asRight[Agg]
-                  case _                                                  => (tail, none[Success]).asLeft[Result]
+                .handleErrorWith(e => peerAvailability.recordFailure(peer).as(none[Hashed[CurrencyIncrementalSnapshot]]))
+                .flatMap {
+                  case Some(snapshot) if hash.forall(_ === snapshot.hash) =>
+                    peerAvailability.recordSuccess(peer).as(snapshot.signed.some.asRight[Agg])
+                  case _ => (tail, none[Success]).asLeft[Result].pure[F]
                 }
           }
         }

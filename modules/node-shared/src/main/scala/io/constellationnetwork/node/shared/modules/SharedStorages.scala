@@ -2,6 +2,7 @@ package io.constellationnetwork.node.shared.modules
 
 import cats.Parallel
 import cats.effect.kernel.Async
+import cats.effect.std.Random
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
@@ -12,13 +13,17 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorag
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.fork.ForkInfoStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, PeerAvailability}
 import io.constellationnetwork.node.shared.infrastructure.cluster.storage.{ClusterStorage, SessionStorage}
 import io.constellationnetwork.node.shared.infrastructure.consensus.{CurrencySnapshotEventValidationErrorStorage, ValidationErrorStorage}
 import io.constellationnetwork.node.shared.infrastructure.fork.ForkInfoStorage
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage
 import io.constellationnetwork.node.shared.infrastructure.node.NodeStorage
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
+  LastNGlobalSnapshotStorage,
+  LastSnapshotStorage,
+  PeerAvailability => PeerAvailabilityImpl
+}
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
@@ -30,7 +35,7 @@ import io.circe.Json
 
 object SharedStorages {
 
-  def make[F[_]: Parallel: JsonSerializer: Async: Hasher](
+  def make[F[_]: Parallel: JsonSerializer: Async: Random: Hasher](
     clusterId: ClusterId,
     cfg: SharedConfig
   ): F[SharedStorages[F]] =
@@ -48,6 +53,7 @@ object SharedStorages {
         mptProducer,
         GlobalStateKey.toHex[F]
       )
+      peerAvailabilityStorage <- PeerAvailabilityImpl.make[F]
     } yield
       new SharedStorages[F](
         cluster = clusterStorage,
@@ -58,7 +64,8 @@ object SharedStorages {
         currencySnapshotEventValidationError = currencySnapshotEventValidationErrorStorage,
         lastNGlobalSnapshot = lastNGlobalSnapshotStorage,
         lastGlobalSnapshot = lastGlobalSnapshotStorage,
-        mptStore = mptStore
+        mptStore = mptStore,
+        peerAvailability = peerAvailabilityStorage
       ) {}
 }
 
@@ -71,5 +78,6 @@ sealed abstract class SharedStorages[F[_]] private (
   val currencySnapshotEventValidationError: ValidationErrorStorage[F, CurrencySnapshotEvent, BlockRejectionReason],
   val lastNGlobalSnapshot: LastNGlobalSnapshotStorage[F],
   val lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LatestBalances[F],
-  val mptStore: MptStore[F, GlobalStateKey]
+  val mptStore: MptStore[F, GlobalStateKey],
+  val peerAvailability: PeerAvailability[F]
 )

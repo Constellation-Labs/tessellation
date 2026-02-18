@@ -118,7 +118,8 @@ object Main
         storages.globalSnapshot,
         sharedStorages.lastNGlobalSnapshot,
         sharedStorages.lastGlobalSnapshot,
-        sharedStorages.mptStore
+        sharedStorages.mptStore,
+        sharedStorages.peerAvailability
       )
 
       rumorHandler = RumorHandlers
