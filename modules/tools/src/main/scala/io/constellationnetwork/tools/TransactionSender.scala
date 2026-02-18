@@ -136,7 +136,7 @@ object TransactionSender {
                 }
 
               def nextRecipient: IO[Address] =
-                recipientIdxRef.getAndUpdate(_ + 1).map(i => recipients(i % recipients.size))
+                recipientIdxRef.getAndUpdate(_ + 1).map(i => recipients(Math.floorMod(i, recipients.size)))
 
               def sendOne: IO[Unit] =
                 for {
