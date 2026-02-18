@@ -109,14 +109,12 @@ object TransactionSender {
   )(implicit hasher: Hasher[IO], sp: SecurityProvider[IO]): IO[Unit] = {
     val burstInterval = (1000.0 / config.burstTps.max(1)).millis
     val steadyInterval = config.steadyIntervalSeconds.max(1).seconds
-    val recipientIterator: Iterator[Address] =
-      Iterator.from(0).map(i => recipients(i % recipients.size))
 
     Clock[IO].monotonic.flatMap { startTime =>
       Ref.of[IO, TransactionReference](initialRef).flatMap { refRef =>
         Ref.of[IO, Long](0L).flatMap { counterRef =>
           Ref.of[IO, Long](0L).flatMap { errorRef =>
-            Ref.of[IO, Iterator[Address]](recipientIterator).flatMap { iterRef =>
+            Ref.of[IO, Int](0).flatMap { recipientIdxRef =>
               val progressPrinter = Stream
                 .awakeEvery[IO](5.seconds)
                 .evalMap { _ =>
@@ -130,7 +128,8 @@ object TransactionSender {
                   }
                 }
 
-              def nextRecipient: IO[Address] = iterRef.modify(it => (it, it.next()))
+              def nextRecipient: IO[Address] =
+                recipientIdxRef.getAndUpdate(_ + 1).map(i => recipients(i % recipients.size))
 
               def sendOne: IO[Unit] =
                 for {
