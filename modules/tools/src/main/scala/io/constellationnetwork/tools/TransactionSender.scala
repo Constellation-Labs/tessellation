@@ -92,6 +92,13 @@ object TransactionSender {
               new Exception(s"Failed to fetch last reference for ${senderAddress.value.value}: ${e.getMessage}", e)
             }
             _ <- IO.println(s"  Last ref ordinal: ${lastRef.ordinal.value}")
+            // Warn about silent clamping of interval values
+            _ <- IO.whenA(config.burstTps <= 0 && config.burstCount > 0)(
+              IO.println("  Warning: burstTps=0 clamped to 1 TPS (set burstCount=0 to skip burst phase)")
+            )
+            _ <- IO.whenA(config.steadyIntervalSeconds <= 0 && config.steadyCount > 0)(
+              IO.println("  Warning: steadyIntervalSeconds=0 clamped to 1s (set steadyCount=0 to skip steady phase)")
+            )
             _ <- IO.println(s"\nStarting transaction stream...")
             _ <- IO.println("Press Ctrl+C to stop.\n")
             _ <- runStream(client, config, keyPair, senderAddress, recipients, lastRef)
