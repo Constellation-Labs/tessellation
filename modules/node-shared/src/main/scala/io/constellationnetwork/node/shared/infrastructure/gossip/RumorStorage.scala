@@ -119,15 +119,10 @@ object RumorStorage {
       peersR <- Ref.of(Set.empty[PeerId])
       peerRumorsR <- MapRef.ofConcurrentHashMap[F, PeerId, NonEmptyChainWrapper[Signed[PeerRumorRaw]]]()
       commonRumorsR <- Ref.of(CommonRumors.empty)
+      lastOrdinalsR <- Ref.of(Map.empty[PeerId, Ordinal])
     } yield
       new RumorStorage[F] {
-        def getLastPeerOrdinals: F[Map[PeerId, Ordinal]] = peerRumorsR.keys.flatMap { peerIds =>
-          peerIds.flatTraverse { peerId =>
-            peerRumorsR(peerId).get.map { maybeWrapper =>
-              maybeWrapper.map(peerId -> _.chain.head.ordinal).toList
-            }
-          }.map(_.toMap)
-        }
+        def getLastPeerOrdinals: F[Map[PeerId, Ordinal]] = lastOrdinalsR.get
 
         def getLastPeerRumors: F[Chain[Signed[PeerRumorRaw]]] = peerRumorsR.keys.flatMap { peerIds =>
           peerIds.flatTraverse { peerId =>
@@ -174,14 +169,17 @@ object RumorStorage {
 
               if (headGen === rumorGen)
                 if (headCounter.next === rumorCounter)
-                  (wrapper.prependInit(rumor, cfg.peerRumorsCapacity), (AddSuccess, unit))
+                  (
+                    wrapper.prependInit(rumor, cfg.peerRumorsCapacity),
+                    (AddSuccess, lastOrdinalsR.update(_.updated(rumor.origin, rumor.ordinal)))
+                  )
                 else if (headCounter.next > rumorCounter)
                   (wrapper, (CounterTooLow, unit))
                 else
                   (wrapper, (CounterTooHigh, unit))
               else if (headGen < rumorGen)
                 if (rumorCounter === Counter.MinValue)
-                  (NonEmptyChainWrapper.one(rumor), (AddSuccess, unit))
+                  (NonEmptyChainWrapper.one(rumor), (AddSuccess, lastOrdinalsR.update(_.updated(rumor.origin, rumor.ordinal))))
                 else
                   (wrapper, (CounterTooHigh, unit))
               else
@@ -190,7 +188,10 @@ object RumorStorage {
               case (wrapper, resultAndEffect) => (wrapper.some, resultAndEffect)
             }.getOrElse {
               if (rumorCounter === Counter.MinValue)
-                (NonEmptyChainWrapper.one(rumor).some, (AddSuccess, peersR.update(_.incl(rumor.origin))))
+                (
+                  NonEmptyChainWrapper.one(rumor).some,
+                  (AddSuccess, peersR.update(_.incl(rumor.origin)) >> lastOrdinalsR.update(_.updated(rumor.origin, rumor.ordinal)))
+                )
               else
                 (none, (CounterTooHigh, unit))
             }
@@ -199,7 +200,9 @@ object RumorStorage {
           }
 
         def setInitialPeerRumor(rumor: Signed[PeerRumorRaw]): F[Unit] =
-          peerRumorsR(rumor.origin).set(NonEmptyChainWrapper.one(rumor).some) >> peersR.update(_.incl(rumor.origin))
+          peerRumorsR(rumor.origin).set(NonEmptyChainWrapper.one(rumor).some) >>
+            peersR.update(_.incl(rumor.origin)) >>
+            lastOrdinalsR.update(_.updated(rumor.origin, rumor.ordinal))
 
         def getCommonRumorActiveHashes: F[Set[Hash]] =
           commonRumorsR.get.map(_.activeSet)

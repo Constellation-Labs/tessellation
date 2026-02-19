@@ -130,7 +130,8 @@ object types {
   case class GossipRoundConfig(
     fanout: PosInt,
     interval: FiniteDuration,
-    maxConcurrentRounds: PosInt
+    maxConcurrentRounds: PosInt,
+    maxOrdinalsPerRequest: Option[PosInt] = None
   )
 
   case class GossipTimeoutsConfig(
