@@ -45,7 +45,6 @@ import org.http4s._
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.client.Client
 import org.http4s.ember.client.EmberClientBuilder
-
 object Main
     extends CommandIOApp(
       name = "",
@@ -70,24 +69,30 @@ object Main
     cli.method.opts.map { method =>
       SecurityProvider.forAsync[IO].use { implicit sp =>
         KryoSerializer.forAsync[IO](sharedKryoRegistrar).use { implicit kryo =>
-          JsonSerializer.forAsync[IO].asResource.use { implicit jsonSerializer =>
-            implicit val hasher = Hasher.forJson[IO]
-            EmberClientBuilder.default[IO].build.use { client =>
-              Random.scalaUtilRandom[IO].flatMap { implicit random =>
-                (method match {
-                  case SendTransactionsCmd(basicOpts, walletsOpts) =>
-                    walletsOpts match {
-                      case w: GeneratedWallets => sendTxsUsingGeneratedWallets(client, basicOpts, w)
-                      case l: LoadedWallets    => sendTxsUsingLoadedWallets(client, basicOpts, l)
-                    }
-                  case SendStateChannelSnapshotCmd(baseUrl) =>
-                    sendStateChannelSnapshot(client, baseUrl)
-                  case GetLatestSnapshotInfoCmd(networkHost, networkPort) =>
-                    getLatestSnapshotInfo(client, networkHost, networkPort)
-                  case _ => IO.raiseError(new Throwable("Not implemented"))
-                }).as(ExitCode.Success)
+          method match {
+            case TxSenderCmd(configPath) =>
+              val hasher: Hasher[IO] = Hasher.forKryo[IO]
+              TransactionSender.run(configPath)(hasher, sp).as(ExitCode.Success)
+            case _ =>
+              JsonSerializer.forAsync[IO].asResource.use { implicit jsonSerializer =>
+                implicit val hasher = Hasher.forJson[IO]
+                EmberClientBuilder.default[IO].build.use { client =>
+                  Random.scalaUtilRandom[IO].flatMap { implicit random =>
+                    (method match {
+                      case SendTransactionsCmd(basicOpts, walletsOpts) =>
+                        walletsOpts match {
+                          case w: GeneratedWallets => sendTxsUsingGeneratedWallets(client, basicOpts, w)
+                          case l: LoadedWallets    => sendTxsUsingLoadedWallets(client, basicOpts, l)
+                        }
+                      case SendStateChannelSnapshotCmd(baseUrl) =>
+                        sendStateChannelSnapshot(client, baseUrl)
+                      case GetLatestSnapshotInfoCmd(networkHost, networkPort) =>
+                        getLatestSnapshotInfo(client, networkHost, networkPort)
+                      case _ => IO.raiseError(new Throwable("Not implemented"))
+                    }).as(ExitCode.Success)
+                  }
+                }
               }
-            }
           }
         }
       }

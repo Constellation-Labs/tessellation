@@ -42,3 +42,4 @@ docker/jars/
 .github/code/
 .workspace/
 .claude/*.local.*
+tx-sender.conf
