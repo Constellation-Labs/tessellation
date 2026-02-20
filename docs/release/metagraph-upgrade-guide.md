@@ -25,7 +25,7 @@ BouncyCastle JARs in newer versions include OSGI-INF metadata that conflicts dur
 assembly / assemblyMergeStrategy := {
   case "META-INF/io.netty.versions.properties" => MergeStrategy.first
   case "META-INF/versions/9/module-info.class" => MergeStrategy.first
-  case PathList("OSGI-INF", "bundle.info")     => MergeStrategy.first
+  case PathList("META-INF", "versions", _, "OSGI-INF", _ @_*)    => MergeStrategy.discard
   case PathList(xs@_*) if xs.last == "module-info.class" => MergeStrategy.first
   case x if x.endsWith("/module-info.class") => MergeStrategy.first
   case x =>
