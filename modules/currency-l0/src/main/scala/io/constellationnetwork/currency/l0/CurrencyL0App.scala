@@ -16,6 +16,7 @@ import io.constellationnetwork.currency.l0.modules._
 import io.constellationnetwork.currency.l0.node.L0NodeContext
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
 import io.constellationnetwork.currency.schema.currency._
+import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.kryo._
 import io.constellationnetwork.node.shared.app._
@@ -31,6 +32,7 @@ import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEve
 import io.constellationnetwork.node.shared.{NodeSharedOrSharedRegistrationIdRange, nodeSharedKryoRegistrar}
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.cluster.ClusterId
+import io.constellationnetwork.schema.gossip.{Ordinal => GossipOrdinal}
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
 import io.constellationnetwork.security._
@@ -417,6 +419,19 @@ abstract class CurrencyL0App(
                       keyPair,
                       mkCell
                     )
+                    _ <-
+                      if (cfg.environment =!= AppEnvironment.Dev) {
+                        for {
+                          _ <- logger.info(s"Setting owner address filled on path: ${m.metagraphOwnerMessagePath}")
+                          maybeOwnerEvent <- services.currencyMessages.setInitialCurrencyOwner(m.metagraphOwnerMessagePath)
+                          _ <- logger.info(s"Owner address set")
+                          _ <- maybeOwnerEvent.traverse_ { event =>
+                            services.consensus.storage.addEvents(
+                              Map(nodeId -> List((GossipOrdinal.MinValue, event)))
+                            )
+                          }
+                        } yield ()
+                      } else IO.unit
                     hashedSnapshot <- currencySnapshot.toHashed[IO]
                     _ <- services.consensus.manager.startFacilitatingAfterRollback(
                       currencySnapshot.ordinal,
@@ -443,9 +458,11 @@ abstract class CurrencyL0App(
                   services.cluster.createSession >>
                   services.session.createSession >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
-                  logger.info(s"Setting owner address filled on path: ${m.metagraphOwnerMessagePath}") >>
-                  services.currencyMessages.setInitialCurrencyOwner(m.metagraphOwnerMessagePath) >>
-                  logger.info(s"Owner address set") >>
+                  (
+                    logger.info(s"Setting owner address filled on path: ${m.metagraphOwnerMessagePath}") >>
+                      services.currencyMessages.setInitialCurrencyOwner(m.metagraphOwnerMessagePath).void >>
+                      logger.info(s"Owner address set")
+                  ).whenA(cfg.environment === AppEnvironment.Dev) >>
                   storages.node.setNodeState(NodeState.Ready) >>
                   storages.identifier.get.flatMap { identifier =>
                     services.restart.setClusterLeaveRestartMethod(
