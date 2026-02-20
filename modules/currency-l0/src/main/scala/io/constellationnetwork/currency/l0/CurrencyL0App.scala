@@ -423,7 +423,7 @@ abstract class CurrencyL0App(
                       if (cfg.environment =!= AppEnvironment.Dev) {
                         for {
                           _ <- logger.info(s"Setting owner address filled on path: ${m.metagraphOwnerMessagePath}")
-                          maybeOwnerEvent <- services.currencyMessages.setInitialCurrencyOwner(m.metagraphOwnerMessagePath)
+                          maybeOwnerEvent <- services.currencyMessages.validateInitialCurrencyOwner(m.metagraphOwnerMessagePath)
                           _ <- logger.info(s"Owner address set")
                           _ <- maybeOwnerEvent.traverse_ { event =>
                             services.consensus.storage.addEvents(
@@ -460,7 +460,9 @@ abstract class CurrencyL0App(
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
                   (
                     logger.info(s"Setting owner address filled on path: ${m.metagraphOwnerMessagePath}") >>
-                      services.currencyMessages.setInitialCurrencyOwner(m.metagraphOwnerMessagePath).void >>
+                      services.currencyMessages
+                        .validateInitialCurrencyOwner(m.metagraphOwnerMessagePath)
+                        .flatMap(_.traverse_(mkCell(_).run())) >>
                       logger.info(s"Owner address set")
                   ).whenA(cfg.environment === AppEnvironment.Dev) >>
                   storages.node.setNodeState(NodeState.Ready) >>

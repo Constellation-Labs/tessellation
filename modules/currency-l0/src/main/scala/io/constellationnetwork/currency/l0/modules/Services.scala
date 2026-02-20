@@ -148,7 +148,6 @@ object Services {
         )
 
       currencyMessagesService = CurrencyMessagesService.make[F](
-        mkCell,
         sharedValidators.currencyMessageValidator,
         storages.identifier,
         sharedStorages.lastGlobalSnapshot

@@ -8,7 +8,6 @@ import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.currency.cli.MetagraphOwnerMessageOpts.MetagraphOwnerMessagePath
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
-import io.constellationnetwork.kernel._
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.getFeeAddresses
 import io.constellationnetwork.node.shared.infrastructure.currencyMessage.CurrencyMessageLoader
@@ -26,12 +25,11 @@ import io.constellationnetwork.security.signature.Signed
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait CurrencyMessagesService[F[_]] {
-  def setInitialCurrencyOwner(ownerMessagePath: Option[MetagraphOwnerMessagePath]): F[Option[CurrencySnapshotEvent]]
+  def validateInitialCurrencyOwner(ownerMessagePath: Option[MetagraphOwnerMessagePath]): F[Option[CurrencySnapshotEvent]]
 }
 
 object CurrencyMessagesService {
   def make[F[_]: Async: Hasher](
-    mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
     validator: CurrencyMessageValidator[F],
     identifierStorage: IdentifierStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
@@ -42,7 +40,7 @@ object CurrencyMessagesService {
       def currencyMessageLoader(ownerMessagePath: MetagraphOwnerMessagePath): F[Signed[CurrencyMessage]] =
         CurrencyMessageLoader.make[F].load(ownerMessagePath)
 
-      override def setInitialCurrencyOwner(
+      override def validateInitialCurrencyOwner(
         maybeOwnerMessagePath: Option[MetagraphOwnerMessagePath]
       ): F[Option[CurrencySnapshotEvent]] =
         maybeOwnerMessagePath match {
@@ -69,8 +67,7 @@ object CurrencyMessagesService {
                     Async[F].raiseError[CurrencySnapshotEvent](new RuntimeException(s"Invalid message: $msg"))
 
                 case Valid(message) =>
-                  val event: CurrencySnapshotEvent = CurrencyMessageEvent(message)
-                  mkCell(event).run().as(event)
+                  (CurrencyMessageEvent(message): CurrencySnapshotEvent).pure[F]
               }
             } yield event.some
           case None => none[CurrencySnapshotEvent].pure[F]
