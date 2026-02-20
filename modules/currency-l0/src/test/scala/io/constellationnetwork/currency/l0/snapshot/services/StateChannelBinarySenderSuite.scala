@@ -113,6 +113,8 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         def addPeers(l0Peers: Set[L0Peer]): IO[Unit] = ???
 
         def setPeers(l0Peers: NonEmptySet[L0Peer]): IO[Unit] = ???
+
+        def removePeer(id: PeerId): IO[Unit] = IO.unit
       }
 
       lastSnapshotStorage = new LastSnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {

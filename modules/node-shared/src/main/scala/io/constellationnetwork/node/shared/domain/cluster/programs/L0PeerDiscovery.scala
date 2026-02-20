@@ -46,9 +46,7 @@ sealed abstract class L0PeerDiscovery[F[_]: Sync: Random] private (
       .flatMap {
         case Some(facilitatorPeer) =>
           getPeersFrom(facilitatorPeer)
-            .map(_.filter(peer => lastFacilitators.contains(peer.id)))
-            .map(NonEmptySet.fromSet(_))
-            .flatMap(_.traverse_(l0ClusterStorage.setPeers))
+            .flatMap(l0ClusterStorage.setPeers)
         case None =>
           logger.warn("No known peers found among last facilitators, falling back to random peer") >>
             l0ClusterStorage.getPeers

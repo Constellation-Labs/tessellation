@@ -148,6 +148,8 @@ object DataApplicationRoutesSuite extends HttpSuite {
       override def setPeers(l0Peers: NonEmptySet[L0Peer]): IO[Unit] = ???
 
       override def getRandomPeerExistentOnList(peers: List[peer.PeerId]): IO[Option[L0Peer]] = ???
+
+      override def removePeer(id: peer.PeerId): IO[Unit] = IO.unit
     }
   )
 
