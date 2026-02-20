@@ -26,7 +26,7 @@ import io.constellationnetwork.security.signature.Signed
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait CurrencyMessagesService[F[_]] {
-  def setInitialCurrencyOwner(ownerMessagePath: Option[MetagraphOwnerMessagePath]): F[Unit]
+  def setInitialCurrencyOwner(ownerMessagePath: Option[MetagraphOwnerMessagePath]): F[Option[CurrencySnapshotEvent]]
 }
 
 object CurrencyMessagesService {
@@ -42,7 +42,9 @@ object CurrencyMessagesService {
       def currencyMessageLoader(ownerMessagePath: MetagraphOwnerMessagePath): F[Signed[CurrencyMessage]] =
         CurrencyMessageLoader.make[F].load(ownerMessagePath)
 
-      override def setInitialCurrencyOwner(maybeOwnerMessagePath: Option[MetagraphOwnerMessagePath]): F[Unit] =
+      override def setInitialCurrencyOwner(
+        maybeOwnerMessagePath: Option[MetagraphOwnerMessagePath]
+      ): F[Option[CurrencySnapshotEvent]] =
         maybeOwnerMessagePath match {
           case Some(ownerMessagePath) =>
             for {
@@ -60,17 +62,18 @@ object CurrencyMessagesService {
                 shouldPerformMetagraphSpecificValidations = false
               )
 
-              _ <- validation match {
+              event <- validation match {
                 case Invalid(errors) =>
                   val msg = errors.toNonEmptyList.toList.map(_.show).mkString(", ")
                   logger.warn(s"Message is invalid, reason: ${errors.show}") *>
-                    Async[F].raiseError[Unit](new RuntimeException(s"Invalid message: $msg"))
+                    Async[F].raiseError[CurrencySnapshotEvent](new RuntimeException(s"Invalid message: $msg"))
 
                 case Valid(message) =>
-                  mkCell(CurrencyMessageEvent(message)).run()
+                  val event: CurrencySnapshotEvent = CurrencyMessageEvent(message)
+                  mkCell(event).run().as(event)
               }
-            } yield ()
-          case None => ().pure[F]
+            } yield event.some
+          case None => none[CurrencySnapshotEvent].pure[F]
         }
 
     }
