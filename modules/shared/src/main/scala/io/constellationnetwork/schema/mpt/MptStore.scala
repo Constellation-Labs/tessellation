@@ -55,7 +55,16 @@ object MptStore {
     private def persistAsync(ordinal: SnapshotOrdinal): F[Unit] =
       producer match {
         case p: StatefulWithPersistenceMerklePatriciaProducer[F] =>
-          Async[F].start(p.persist(ordinal)).void
+          Async[F]
+            .start(
+              p.persist(ordinal).handleErrorWith { err =>
+                logger.error(err)(s"[MptStore] Background persist failed for ordinal=$ordinal") >>
+                  p.applyCutoff(ordinal).handleErrorWith { cutoffErr =>
+                    logger.error(cutoffErr)(s"[MptStore] Cutoff after failed persist also failed for ordinal=$ordinal")
+                  }
+              }
+            )
+            .void
         case _ =>
           Async[F].unit
       }
