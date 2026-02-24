@@ -10,7 +10,7 @@ import cats.syntax.option._
 import cats.syntax.order._
 import cats.{Applicative, MonadThrow}
 
-import scala.collection.immutable.{SortedMap, SortedSet}
+import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.ext.cats.syntax.next._
@@ -52,13 +52,13 @@ abstract class SnapshotConsensusFunctions[
 
   def getRequiredCollateral: Amount
 
-  def getBalances(context: Context): SortedMap[Address, Balance]
+  def getBalance(context: Context, address: Address): F[Balance]
 
   def triggerPredicate(event: Event): Boolean = true
 
   def facilitatorFilter(lastSignedArtifact: Signed[Artifact], lastContext: Context, peerId: peer.PeerId): F[Boolean] =
-    peerId.toAddress[F].map { address =>
-      getBalances(lastContext).getOrElse(address, Balance.empty).satisfiesCollateral(getRequiredCollateral)
+    peerId.toAddress[F].flatMap { address =>
+      getBalance(lastContext, address).map(_.satisfiesCollateral(getRequiredCollateral))
     }
 
   def validateArtifact(

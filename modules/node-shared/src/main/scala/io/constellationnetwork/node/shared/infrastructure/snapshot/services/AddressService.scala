@@ -1,6 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot.services
 
-import cats.Applicative
+import cats.effect.Async
+import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import io.constellationnetwork.node.shared.config.types.AddressesConfig
@@ -10,6 +11,8 @@ import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.delegatedStake.DelegatedStakeRecord
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo}
 import io.constellationnetwork.schema.tokenLock.TokenLock
 import io.constellationnetwork.security.signature.Signed
@@ -17,20 +20,36 @@ import io.constellationnetwork.security.signature.Signed
 import io.estatico.newtype.ops._
 
 object AddressService {
-  def make[F[_]: Applicative, S <: Snapshot, C <: SnapshotInfo[_]](
+
+  /** Only `getBalance` is migrated to MptStore for per-address O(log n) lookup. Aggregate methods (`getTotalSupply`, `getWalletCount`,
+    * `getFilteredOutTotalSupply`, `getCirculatedSupply`, `getFilteredOutCirculatedSupply`) intentionally remain on `SnapshotInfo` because
+    * they iterate all balances/token-locks/delegated-stakes and cannot benefit from key-based MptStore access.
+    */
+  def make[F[_]: Async, S <: Snapshot, C <: SnapshotInfo[_]](
     addressCfg: AddressesConfig,
-    snapshotStorage: SnapshotStorage[F, S, C]
+    snapshotStorage: SnapshotStorage[F, S, C],
+    maybeMptStore: Option[MptStore[F, GlobalStateKey]] = None
   ): AddressService[F, S] =
     new AddressService[F, S] {
 
       def getBalance(address: Address): F[Option[(Balance, SnapshotOrdinal)]] =
-        snapshotStorage.head.map(_.map {
-          case (snapshot, state) =>
-            val balance = state.balances.getOrElse(address, Balance.empty)
-            val ordinal = snapshot.value.ordinal
-
-            (balance, ordinal)
-        })
+        maybeMptStore match {
+          case Some(mptStore) =>
+            snapshotStorage.head.flatMap {
+              case Some((snapshot, _)) =>
+                mptStore.getBalance(address).map { maybeBalance =>
+                  Some((maybeBalance.getOrElse(Balance.empty), snapshot.value.ordinal))
+                }
+              case None => Async[F].pure(None)
+            }
+          case None =>
+            snapshotStorage.head.map(_.map {
+              case (snapshot, state) =>
+                val balance = state.balances.getOrElse(address, Balance.empty)
+                val ordinal = snapshot.value.ordinal
+                (balance, ordinal)
+            })
+        }
 
       def getTotalSupply: F[Option[(BigInt, SnapshotOrdinal)]] =
         snapshotStorage.head.map(_.map {

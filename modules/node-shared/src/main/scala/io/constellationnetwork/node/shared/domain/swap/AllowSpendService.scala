@@ -15,6 +15,7 @@ import io.constellationnetwork.node.shared.domain.swap.ContextualAllowSpendValid
 }
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.swap.AllowSpend
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
@@ -31,8 +32,18 @@ object AllowSpendService {
   def make[F[_]: Async, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]](
     allowSpendStorage: AllowSpendStorage[F],
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI] with LatestBalances[F],
-    allowSpendValidator: AllowSpendValidator[F]
+    allowSpendValidator: AllowSpendValidator[F],
+    maybeMptStore: Option[MptStore[F, GlobalStateKey]] = None
   ): AllowSpendService[F] = new AllowSpendService[F] {
+
+    import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+
+    private def getBalance(si: SI, address: io.constellationnetwork.schema.address.Address): F[Balance] =
+      maybeMptStore match {
+        case Some(mptStore) => mptStore.getBalance(address).map(_.getOrElse(Balance.empty))
+        case None           => si.balances.getOrElse(address, Balance.empty).pure[F]
+      }
+
     def offer(
       allowSpend: Hashed[AllowSpend]
     )(implicit hasher: Hasher[F]): F[Either[NonEmptyList[ContextualAllowSpendValidationError], Hash]] =
@@ -55,9 +66,10 @@ object AllowSpendService {
           .map(_.errorMap(NonContextualValidationError))
           .flatMap {
             case Valid(_) =>
-              lastSnapshotStorage.getCombinedStream.map {
-                case Some((s, si)) => (s.ordinal, si.balances.getOrElse(allowSpend.source, Balance.empty))
-                case None          => (SnapshotOrdinal.MinValue, Balance.empty)
+              lastSnapshotStorage.getCombinedStream.evalMap {
+                case Some((s, si)) =>
+                  getBalance(si, allowSpend.source).map(balance => (s.ordinal, balance))
+                case None => (SnapshotOrdinal.MinValue, Balance.empty).pure[F]
               }.changes.switchMap {
                 case (latestOrdinal, balance) =>
                   Stream.eval(allowSpendStorage.tryPut(allowSpend, latestOrdinal, lastGlobalEpochProgress, balance))

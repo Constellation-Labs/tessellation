@@ -9,7 +9,7 @@ import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.cats.syntax.validated.validatedSyntax
-import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.{StateChannelValidationError, getFeeAddresses}
 import io.constellationnetwork.node.shared.domain.statechannel._
@@ -18,6 +18,8 @@ import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.currencyMessage._
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
@@ -57,7 +59,8 @@ object GlobalSnapshotStateChannelEventsProcessor {
     stateChannelValidator: StateChannelValidator[F],
     stateChannelManager: GlobalSnapshotStateChannelAcceptanceManager[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
-    feeCalculator: FeeCalculator[F]
+    feeCalculator: FeeCalculator[F],
+    mptStore: MptStore[F, GlobalStateKey]
   ) =
     new GlobalSnapshotStateChannelEventsProcessor[F] {
       private val logger = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotStateChannelEventsProcessor.getClass)
@@ -65,8 +68,12 @@ object GlobalSnapshotStateChannelEventsProcessor {
       def deserialize[A: Decoder](binary: Signed[StateChannelSnapshotBinary]): F[Option[A]] =
         JsonSerializer[F].deserialize[A](binary.value.content).map(_.toOption)
 
+      // Staking balance behavioral equivalence: for metagraphs with only a full snapshot
+      // (Left case), the old fetchStakingBalance returned Balance.empty. With MptStore,
+      // getCurrencySnapshotInfo returns a CurrencySnapshotInfo created via toCurrencySnapshotInfo
+      // which sets lastMessages = None, so fetchStakingAddress returns None and we still get
+      // Balance.empty — preserving the same behavior.
       def buildSnapshotFeesInfo(
-        lastGlobalSnapshotInfo: GlobalSnapshotInfo,
         event: StateChannelOutput,
         allFeesAddresses: Map[Address, Set[Address]]
       ): F[SnapshotFeesInfo] =
@@ -78,13 +85,16 @@ object GlobalSnapshotStateChannelEventsProcessor {
                 logger.warn(s"Could not get snapshot fee info after deserializing event $event, using empty snapshot fees") >>
                   SnapshotFeesInfo.empty.pure
               case Some(snapshot) =>
-                Async[F].delay {
-                  val stakingBalance = fetchStakingBalance(event.address, lastGlobalSnapshotInfo)
-                  val sortedMessagesDesc = snapshot.value.messages.map(_.toList.sortBy(-_.ordinal.value.value))
-                  val maybeOwnerAddress = sortedMessagesDesc.flatMap(_.find(_.messageType === MessageType.Owner)).map(_.address)
-                  val maybeStakingAddress = sortedMessagesDesc.flatMap(_.find(_.messageType === MessageType.Staking)).map(_.address)
-                  SnapshotFeesInfo(allFeesAddresses, stakingBalance, maybeOwnerAddress, maybeStakingAddress)
-                }
+                for {
+                  maybeCurrencyInfo <- mptStore.getCurrencySnapshotInfo(event.address)
+                  stakingAddr = maybeCurrencyInfo.flatMap(fetchStakingAddress)
+                  stakingBalance <- stakingAddr.fold(Balance.empty.pure[F]) { addr =>
+                    mptStore.getBalance(addr).map(_.getOrElse(Balance.empty))
+                  }
+                  sortedMessagesDesc = snapshot.value.messages.map(_.toList.sortBy(-_.ordinal.value.value))
+                  maybeOwnerAddress = sortedMessagesDesc.flatMap(_.find(_.messageType === MessageType.Owner)).map(_.address)
+                  maybeStakingAddress = sortedMessagesDesc.flatMap(_.find(_.messageType === MessageType.Staking)).map(_.address)
+                } yield SnapshotFeesInfo(allFeesAddresses, stakingBalance, maybeOwnerAddress, maybeStakingAddress)
             }
         }
 
@@ -95,13 +105,16 @@ object GlobalSnapshotStateChannelEventsProcessor {
         validationType: StateChannelValidationType,
         getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[StateChannelAcceptanceResult] = {
+        // Note: getFeeAddresses still reads from lastGlobalSnapshotInfo directly because it
+        // iterates all lastCurrencySnapshots to collect fee addresses — a bulk operation not suited
+        // for per-key MptStore lookups. The staking balance lookups in buildSnapshotFeesInfo use MptStore.
         val allFeesAddresses: Map[Address, Set[Address]] = getFeeAddresses(lastGlobalSnapshotInfo)
         type Acc = (Map[Address, Set[Address]], List[ValidatedNec[(Address, StateChannelValidationError), StateChannelOutput]])
 
         events
           .foldLeftM[F, Acc]((allFeesAddresses, List.empty)) {
             case ((prevAllFeeAddresses, alreadyProcessed), event) =>
-              buildSnapshotFeesInfo(lastGlobalSnapshotInfo, event, prevAllFeeAddresses).flatMap { snapshotFeesInfo =>
+              buildSnapshotFeesInfo(event, prevAllFeeAddresses).flatMap { snapshotFeesInfo =>
                 val validationV = validationType match {
                   case StateChannelValidationType.Full =>
                     stateChannelValidator.validate(event, snapshotOrdinal, snapshotFeesInfo)
@@ -181,6 +194,15 @@ object GlobalSnapshotStateChannelEventsProcessor {
           )
           .map(_.snapshotInfo)
 
+      /** Processes currency snapshots for each metagraph address, applying fee deduction logic.
+        *
+        * Fee deduction follows three cases per binary:
+        *   1. Fee not required (pre-fee-ordinal or fee waived): accept the binary unconditionally. 2. Fee required but no fee address
+        *      (owner address missing from currency messages): reject the binary — we cannot deduct fees without a destination address. 3.
+        *      Fee required with fee address: look up the metagraph owner's balance first in the local accumulator (tracks balance changes
+        *      within this batch), then fall back to MptStore. If the balance covers the fee, deduct it and accept; otherwise reject
+        *      remaining binaries.
+        */
       def processCurrencySnapshots(
         snapshotOrdinal: SnapshotOrdinal,
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
@@ -201,6 +223,11 @@ object GlobalSnapshotStateChannelEventsProcessor {
 
             val emptyBalanceUpdate = Map.empty[Address, Balance]
 
+            // initialState reads from lastGlobalSnapshotInfo.lastCurrencySnapshots (not MptStore)
+            // because the Left(fullSnapshot) vs Right(incremental, info) distinction matters:
+            // the Left branch handles the first-incremental-over-full transition without calling
+            // applyCurrencySnapshot, while MptStore normalizes Left to Right (via fromCurrencySnapshot),
+            // which would route into the applyCurrencySnapshot path and fail due to hash mismatches.
             val initialState =
               lastGlobalSnapshotInfo.lastCurrencySnapshots
                 .get(address)
@@ -223,7 +250,8 @@ object GlobalSnapshotStateChannelEventsProcessor {
                       else ((NonEmptyList.one((head, none)), emptyBalanceUpdate).some, tail).asLeft
                   }
 
-                case (current @ Some((nel, balanceUpdate)), head :: tail) =>
+                case (Some((nel, balanceUpdate)), head :: tail) =>
+                  val current: Result = (nel, balanceUpdate).some
                   nel.head match {
                     case (_, None) =>
                       deserialize[Signed[CurrencySnapshot]](head).map {
@@ -261,25 +289,35 @@ object GlobalSnapshotStateChannelEventsProcessor {
                             lastIncremental,
                             snapshot,
                             getGlobalSnapshotByOrdinal
-                          ).map { state =>
+                          ).flatMap { state =>
                             val maybeFeeAddress = state.lastMessages.flatMap(_.get(MessageType.Owner)).map(_.address)
 
-                            val maybeBalanceUpdate = maybeFeeAddress.filter(_ => isFeeRequired).flatMap { feeAddress =>
-                              val balance = balanceUpdate
-                                .get(feeAddress)
-                                .orElse(lastGlobalSnapshotInfo.balances.get(feeAddress))
-                                .getOrElse(Balance.empty)
-                              balance.minus(head.fee).toOption.map(uBalance => balanceUpdate + (feeAddress -> uBalance))
-                            }
-
-                            maybeBalanceUpdate match {
-                              case Some(newBalanceUpdate) =>
-                                ((nel.prepend((head, (snapshot, state).asRight.some)), newBalanceUpdate).some, tail).asLeft
-                              case None if !isFeeRequired =>
-                                ((nel.prepend((head, (snapshot, state).asRight.some)), balanceUpdate).some, tail).asLeft[Result]
-                              case None => // balance update unsuccessful or impossible? we can't accept any more snapshots
-                                current.asRight
-                            }
+                            // Fee deduction: if fee is required, we need a fee address (owner address from
+                            // currency messages). Without one we reject. With one, we check the local balance
+                            // accumulator first (to account for fees already deducted earlier in this batch),
+                            // falling back to MptStore for the initial balance lookup.
+                            maybeFeeAddress
+                              .filter(_ => isFeeRequired)
+                              .fold(
+                                if (!isFeeRequired)
+                                  ((nel.prepend((head, (snapshot, state).asRight.some)), balanceUpdate).some, tail).asLeft[Result].pure[F]
+                                else
+                                  current.asRight[Agg].pure[F]
+                              ) { feeAddress =>
+                                val localBalance = balanceUpdate.get(feeAddress)
+                                localBalance.fold(mptStore.getBalance(feeAddress).map(_.getOrElse(Balance.empty)))(_.pure[F]).map {
+                                  balance =>
+                                    // We're inside the Some(feeAddress) handler, so isFeeRequired is always true here.
+                                    // If fee deduction succeeds, continue processing; otherwise reject remaining binaries.
+                                    (balance.minus(head.fee).toOption.map(uBalance => balanceUpdate + (feeAddress -> uBalance)) match {
+                                      case Some(newBalanceUpdate) =>
+                                        ((nel.prepend((head, (snapshot, state).asRight.some)), newBalanceUpdate).some, tail)
+                                          .asLeft[Result]
+                                      case None => // insufficient balance to cover fee — reject remaining binaries
+                                        current.asRight[Agg]
+                                    }): Either[Agg, Result]
+                                }
+                              }
                           }.handleErrorWith { e => // we don't accept neither binary nor incremental
                             logger.warn(e)(
                               s"Currency snapshot of ordinal ${snapshot.value.ordinal.show} for address ${address.show} couldn't be applied"

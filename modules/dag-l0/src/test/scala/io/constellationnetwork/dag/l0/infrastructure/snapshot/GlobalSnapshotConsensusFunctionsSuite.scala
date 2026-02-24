@@ -329,7 +329,6 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     val feeCalculator = new SnapshotBinaryFeeCalculator[IO] {
       override def calculateFee(
         event: StateChannelEvent,
-        info: GlobalSnapshotContext,
         ordinal: SnapshotOrdinal
       ): IO[NonNegLong] =
         event.value.snapshotBinary.value.fee.value.pure[IO]
@@ -387,7 +386,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
           delegatedRewardsConfigProvider,
           SnapshotOrdinal.MinValue,
           SnapshotOrdinal.MinValue,
-          SnapshotOrdinal.MinValue
+          SnapshotOrdinal.MinValue,
+          mptStore
         )
     } yield globalSnapshotConsensusFunction
   }

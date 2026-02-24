@@ -176,7 +176,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
         storages.globalSnapshot,
         storages.node,
         delegatedStakingWithdrawalTimeLimit,
-        services.rewards.rewardsInfoStorage
+        services.rewards.rewardsInfoStorage,
+        storages.mptStore
       )
     }
   private val nodeCollateralsRoutes = HasherSelector[F].withCurrent { implicit hasher =>
@@ -185,7 +186,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
       sharedValidators.updateNodeCollateralValidator,
       storages.globalSnapshot,
       storages.node,
-      delegatedStakingWithdrawalTimeLimit
+      delegatedStakingWithdrawalTimeLimit,
+      storages.mptStore
     )
   }
   private val tokenLockRoutes = GL0TokenLockRoutes(storages.globalSnapshot)

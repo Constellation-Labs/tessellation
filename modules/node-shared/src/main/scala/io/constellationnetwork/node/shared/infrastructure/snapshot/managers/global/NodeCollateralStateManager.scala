@@ -9,6 +9,8 @@ import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeColla
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.nodeCollateral._
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
@@ -38,7 +40,7 @@ trait NodeCollateralStateManager[F[_]] {
 
 object NodeCollateralStateManager {
 
-  def make[F[_]: Async](): NodeCollateralStateManager[F] = new NodeCollateralStateManager[F] {
+  def make[F[_]: Async](mptStore: MptStore[F, GlobalStateKey]): NodeCollateralStateManager[F] = new NodeCollateralStateManager[F] {
 
     def acceptNodeCollaterals(
       lastSnapshotContext: GlobalSnapshotInfo,
@@ -114,12 +116,15 @@ object NodeCollateralStateManager {
         case (addr, acceptedWithdrawls) =>
           acceptedWithdrawls.traverse {
             case (ev, ep) =>
-              lastSnapshotContext.activeNodeCollaterals
-                .flatTraverse(_.get(addr).flatTraverse {
-                  _.findM { s =>
-                    NodeCollateralReference.of(s.event).map(_.hash === ev.collateralRef)
-                  }.map(_.map(rec => PendingNodeCollateralWithdrawal(rec.event, rec.createdAt, ep)))
-                })
+              mptStore
+                .getNodeCollaterals(addr)
+                .flatMap { maybeCollaterals =>
+                  maybeCollaterals.flatTraverse {
+                    _.findM { s =>
+                      NodeCollateralReference.of(s.event).map(_.hash === ev.collateralRef)
+                    }.map(_.map(rec => PendingNodeCollateralWithdrawal(rec.event, rec.createdAt, ep)))
+                  }
+                }
                 .flatMap(Async[F].fromOption(_, new RuntimeException("Unexpected None when processing node collaterals")))
           }.map(pending => addr -> pending.toSortedSet)
       }.map(SortedMap.from(_))

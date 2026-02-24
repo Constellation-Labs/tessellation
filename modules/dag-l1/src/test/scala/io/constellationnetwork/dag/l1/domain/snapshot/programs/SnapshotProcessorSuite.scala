@@ -229,7 +229,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 implicit val testCurrencyStateProofSelector: CurrencyStateProofSelector = CurrencyStateProofSelector.instance
                 CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
               }
-              globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L)).asResource
+              globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
+                .make[IO](None, NonNegLong(10L))
+                .asResource
               feeCalculator = FeeCalculator.make(SortedMap.empty)
               updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
               updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager
@@ -272,7 +274,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                       validators.stateChannelValidator,
                       globalSnapshotStateChannelManager,
                       currencySnapshotContextFns,
-                      feeCalculator
+                      feeCalculator,
+                      mptStore
                     ),
                   updateNodeParametersAcceptanceManager,
                   updateDelegatedStakeAcceptanceManager,
