@@ -6,67 +6,92 @@ assemble_all() {
 
 show_time "Starting assembly"
 
-if [[ "$INCLUDE_L0" == "false" && "$INCLUDE_L1" == "false" && "$SKIP_ASSEMBLY" == "false" ]]; then
-  assemble_all
+# If HYPERGRAPH_RELEASE is set, download pre-built JARs instead of building from source
+if [ -n "$HYPERGRAPH_RELEASE" ]; then
+  echo "Using pre-built hypergraph JARs from release: ${HYPERGRAPH_RELEASE}"
+  rm -rf ./docker/jars/ > /dev/null 2>&1 || true
+  mkdir -p ./docker/jars/
+  
+  ./docker/bin/download-release-jars.sh "$HYPERGRAPH_RELEASE" ./docker/jars/
+  
+  show_time "Downloaded release JARs"
+  
+  # Skip the rest of hypergraph assembly, jump to metagraph handling
+  SKIP_HYPERGRAPH_BUILD=true
 else
-  missing=false
-
-  for module in dag-l0 dag-l1 keytool wallet; do
-    set +e
-    jar_path=$(ls -1t modules/"$module"/target/scala-2.13/tessellation-"$module"-assembly*.jar 2>/dev/null | head -n1)
-    set -e
-    if [ -z "$jar_path" ]; then
-      echo "⚠️  Missing JAR for module: $module"
-      missing=true
-      break
-    fi
-  done
-
-  if [ "$missing" = true ]; then
-    echo "▶️  One or more modules is missing. Cannot skip assembly. Running full assembly"
-    assemble_all
-  else
-    if [ "$SKIP_ASSEMBLY" == "false" ]; then
-      override_set=false
-      if [ "$INCLUDE_L0" == "true" ]; then
-        echo "Assembling L0"
-        sbt dagL0/assembly
-        override_set=true
-      fi
-      if [ "$INCLUDE_L1" == "true" ]; then
-        echo "Assembling L1"
-        sbt dagL1/assembly
-        override_set=true
-      fi
-      if [ "$override_set" == "false" ]; then
-        echo "Assembling L0 according to default behavior"
-        sbt dagL0/assembly
-      fi
-    else
-      echo "Found existing assemblies, and skip assembly was set to true"
-    fi
-  fi
+  SKIP_HYPERGRAPH_BUILD=false
 fi
 
-show_time "SBT Assembly"
+if [ "$SKIP_HYPERGRAPH_BUILD" != "true" ]; then
+  # Build hypergraph JARs from source
+  if [[ "$INCLUDE_L0" == "false" && "$INCLUDE_L1" == "false" && "$SKIP_ASSEMBLY" == "false" ]]; then
+    assemble_all
+  else
+    missing=false
 
-rm -rf ./docker/jars/ > /dev/null 2>&1 || true;
-mkdir -p ./docker/jars/
+    for module in dag-l0 dag-l1 keytool wallet; do
+      set +e
+      jar_path=$(ls -1t modules/"$module"/target/scala-2.13/tessellation-"$module"-assembly*.jar 2>/dev/null | head -n1)
+      set -e
+      if [ -z "$jar_path" ]; then
+        echo "⚠️  Missing JAR for module: $module"
+        missing=true
+        break
+      fi
+    done
 
-for module in "dag-l0" "dag-l1" "keytool" "wallet"
-do
-  path=$(ls -1t modules/${module}/target/scala-2.13/tessellation-${module}-assembly*.jar | head -n1)
-  dest="$PROJECT_ROOT/docker/jars/${module}.jar"
-  cp $path $dest
-done
+    if [ "$missing" = true ]; then
+      echo "▶️  One or more modules is missing. Cannot skip assembly. Running full assembly"
+      assemble_all
+    else
+      if [ "$SKIP_ASSEMBLY" == "false" ]; then
+        override_set=false
+        if [ "$INCLUDE_L0" == "true" ]; then
+          echo "Assembling L0"
+          sbt dagL0/assembly
+          override_set=true
+        fi
+        if [ "$INCLUDE_L1" == "true" ]; then
+          echo "Assembling L1"
+          sbt dagL1/assembly
+          override_set=true
+        fi
+        if [ "$override_set" == "false" ]; then
+          echo "Assembling L0 according to default behavior"
+          sbt dagL0/assembly
+        fi
+      else
+        echo "Found existing assemblies, and skip assembly was set to true"
+      fi
+    fi
+  fi
 
-mv ./docker/jars/dag-l0.jar ./docker/jars/gl0.jar
-mv ./docker/jars/dag-l1.jar ./docker/jars/gl1.jar
+  show_time "SBT Assembly"
+
+  rm -rf ./docker/jars/ > /dev/null 2>&1 || true;
+  mkdir -p ./docker/jars/
+
+  for module in "dag-l0" "dag-l1" "keytool" "wallet"
+  do
+    path=$(ls -1t modules/${module}/target/scala-2.13/tessellation-${module}-assembly*.jar | head -n1)
+    dest="$PROJECT_ROOT/docker/jars/${module}.jar"
+    cp "$path" "$dest"
+  done
+
+  mv ./docker/jars/dag-l0.jar ./docker/jars/gl0.jar
+  mv ./docker/jars/dag-l1.jar ./docker/jars/gl1.jar
+fi
 
 
 if [ "$PUBLISH" == "true" ]; then
-  echo "Publishing local"
-  sbt --error sdk/publishLocal
+  if [ -n "$HYPERGRAPH_RELEASE" ]; then
+    echo "Skipping sdk/publishLocal - using release ${HYPERGRAPH_RELEASE}"
+    echo "  Note: Metagraph builds require tessellation-sdk ${HYPERGRAPH_RELEASE#v} from Maven Central."
+    echo "  SNAPSHOT versions are not published - use a tagged release."
+  else
+    echo "Publishing local"
+    sbt --error sdk/publishLocal
+  fi
 fi
 
 
@@ -87,7 +112,7 @@ move_metagraph_jar() {
   local destination=$2
   path=$(ls -1t modules/${module}/target/scala-2.13/*-assembly*.jar | head -n1)
   dest="$PROJECT_ROOT/docker/jars/${destination}.jar"
-  cp $path $dest
+  cp "$path" "$dest"
 }
 
 

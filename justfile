@@ -15,6 +15,8 @@ test *extra_args:
 	@bash docker/bin/compose-runner.sh {{ extra_args }}
 
 # Bring up the default test environment, starting docker images but without running any tests or checks
+# Use --hypergraph-release=<tag> to use pre-built JARs from a release (e.g., --hypergraph-release=v3.5.11)
+# This is useful for metagraph development against a stable tessellation version
 up *extra_args:
 	@just _check_deps
 	@bash docker/bin/compose-runner.sh --up {{ extra_args }}
