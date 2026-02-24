@@ -6,11 +6,14 @@ import cats.effect.{Ref, Sync}
 import cats.syntax.contravariant._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
-import cats.{Monad, Order}
+import cats.syntax.show._
+import cats.{Order, Show}
 
 import io.constellationnetwork.ext.cats.data.NonEmptyMapOps
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
 import io.constellationnetwork.schema.peer.{L0Peer, PeerId}
+
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object L0ClusterStorage {
 
@@ -22,8 +25,11 @@ object L0ClusterStorage {
       .of[F, NonEmptyMap[PeerId, L0Peer]](NonEmptyMap.one(l0Peer.id, l0Peer))
       .map(make(_))
 
-  def make[F[_]: Monad: Random](peers: Ref[F, NonEmptyMap[PeerId, L0Peer]]): L0ClusterStorage[F] =
+  def make[F[_]: Sync: Random](peers: Ref[F, NonEmptyMap[PeerId, L0Peer]]): L0ClusterStorage[F] =
     new L0ClusterStorage[F] {
+
+      private val logger = Slf4jLogger.getLogger[F]
+      private implicit val peerIdShow: Show[PeerId] = PeerId.shortShow
 
       def getPeers: F[NonEmptySet[L0Peer]] =
         peers.get.map(_.values)
@@ -59,5 +65,16 @@ object L0ClusterStorage {
           NonEmptyMap.of((head.id, head), l0Peers.tail.map(p => p.id -> p).toSeq: _*)
         }
       }
+
+      def removePeer(id: PeerId): F[Unit] =
+        peers.modify { current =>
+          NonEmptyMap.fromMap(current.toSortedMap - id) match {
+            case Some(remaining) => (remaining, true)
+            case None            => (current, false)
+          }
+        }.flatMap {
+          case true  => logger.info(s"Removed unresponsive peer ${id.show} from L0 cluster storage")
+          case false => logger.warn(s"Cannot remove peer ${id.show}, it is the last peer in L0 cluster storage")
+        }
     }
 }

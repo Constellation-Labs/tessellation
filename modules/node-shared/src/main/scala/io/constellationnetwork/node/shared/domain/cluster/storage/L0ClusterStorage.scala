@@ -11,4 +11,5 @@ trait L0ClusterStorage[F[_]] {
   def getRandomPeerExistentOnList(peers: List[PeerId]): F[Option[L0Peer]]
   def addPeers(l0Peers: Set[L0Peer]): F[Unit]
   def setPeers(l0Peers: NonEmptySet[L0Peer]): F[Unit]
+  def removePeer(id: PeerId): F[Unit]
 }

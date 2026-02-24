@@ -9,6 +9,7 @@ import cats.syntax.all._
 import cats.{Applicative, Parallel, Show}
 
 import scala.collection.immutable.SortedSet
+import scala.concurrent.duration._
 import scala.util.Random
 import scala.util.control.NoStackTrace
 
@@ -332,13 +333,23 @@ object GlobalL0Service {
         }
       }
 
+      private val peerQueryRetries = 3
+
+      private def withPeerRetry[A](peer: L0Peer, fa: F[A], remaining: Int = peerQueryRetries): F[A] =
+        fa.handleErrorWith { err =>
+          if (remaining <= 1)
+            logger.warn(err)(s"Peer ${peer.show} unreachable after $peerQueryRetries attempts, removing from storage") >>
+              globalL0ClusterStorage.removePeer(peer.id) >>
+              Async[F].raiseError(err)
+          else
+            Async[F].sleep(200.millis) >> withPeerRetry(peer, fa, remaining - 1)
+        }
+
       private def getMajorityHash(peers: NonEmptyList[L0Peer], ordinal: SnapshotOrdinal): F[Option[Hash]] =
         peers.toList
           .parTraverseN(numConcurrentQueries) { p =>
-            l0GlobalSnapshotClient
-              .getHash(ordinal)
-              .run(p)
-              .handleErrorWith(logger.warn(_)(s"Unable to obtain hash for majority peer ${p.show}").as(none[Hash]))
+            withPeerRetry(p, l0GlobalSnapshotClient.getHash(ordinal).run(p))
+              .handleErrorWith(_ => none[Hash].pure[F])
           }
           .map(_.flatten)
           .flatTap(hashes => logger.debug(s"Majority Hashes ${hashes.map(_.show)}"))
@@ -389,10 +400,9 @@ object GlobalL0Service {
       private def getMajorityOrdinal(peers: NonEmptyList[L0Peer]): F[Option[SnapshotOrdinal]] =
         peers.toList
           .parTraverseN(numConcurrentQueries) { p =>
-            l0GlobalSnapshotClient.getLatestOrdinal
-              .run(p)
+            withPeerRetry(p, l0GlobalSnapshotClient.getLatestOrdinal.run(p))
               .map(_.some)
-              .handleErrorWith(logger.warn(_)(s"Unable to retrieve ordinal for majority peer ${p.show}").as(none[SnapshotOrdinal]))
+              .handleErrorWith(_ => none[SnapshotOrdinal].pure[F])
           }
           .map(_.flatten)
           .map(pickMajority[List, SnapshotOrdinal])
