@@ -16,6 +16,8 @@ import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.nodeCollateral._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.Hasher
@@ -36,7 +38,8 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
   validator: UpdateNodeCollateralValidator[F],
   snapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   nodeStorage: NodeStorage[F],
-  withdrawalTimeLimit: EpochProgress
+  withdrawalTimeLimit: EpochProgress,
+  mptStore: MptStore[F, GlobalStateKey]
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {
 
@@ -46,57 +49,54 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
 
   protected val prefixPath: InternalUrlPrefix = "/node-collateral"
 
-  private def getNodeCollateralInfo(address: Address, info: GlobalSnapshotInfo): NodeCollateralsInfo = {
-    val lastCollaterals: SortedSet[NodeCollateralRecord] =
-      info.activeNodeCollaterals
-        .getOrElse(SortedMap.empty[Address, SortedSet[NodeCollateralRecord]])
-        .getOrElse(address, SortedSet.empty[NodeCollateralRecord])
-    val lastWithdrawals: SortedSet[PendingNodeCollateralWithdrawal] =
-      info.nodeCollateralWithdrawals
-        .getOrElse(SortedMap.empty[Address, SortedSet[PendingNodeCollateralWithdrawal]])
-        .getOrElse(address, SortedSet.empty[PendingNodeCollateralWithdrawal])
-
-    val active = lastCollaterals.toList.map {
-      case NodeCollateralRecord(collateral, acceptedOrdinal) =>
-        NodeCollateralInfo(
-          nodeId = collateral.nodeId,
-          acceptedOrdinal = acceptedOrdinal,
-          tokenLockRef = collateral.tokenLockRef,
-          amount = collateral.amount,
-          fee = collateral.fee,
-          withdrawalStartEpoch = None,
-          withdrawalEndEpoch = None
-        )
+  private def getNodeCollateralInfo(address: Address): F[NodeCollateralsInfo] =
+    for {
+      lastCollaterals <- mptStore.getNodeCollaterals(address).map(_.getOrElse(SortedSet.empty[NodeCollateralRecord]))
+      lastWithdrawals <- mptStore.getNodeCollateralWithdrawals(address).map(_.getOrElse(SortedSet.empty[PendingNodeCollateralWithdrawal]))
+    } yield {
+      val active = lastCollaterals.toList.map {
+        case NodeCollateralRecord(collateral, acceptedOrdinal) =>
+          NodeCollateralInfo(
+            nodeId = collateral.nodeId,
+            acceptedOrdinal = acceptedOrdinal,
+            tokenLockRef = collateral.tokenLockRef,
+            amount = collateral.amount,
+            fee = collateral.fee,
+            withdrawalStartEpoch = None,
+            withdrawalEndEpoch = None
+          )
+      }
+      val pending = lastWithdrawals.toList.map {
+        case PendingNodeCollateralWithdrawal(collateral, acceptedOrdinal, createdAt) =>
+          NodeCollateralInfo(
+            nodeId = collateral.nodeId,
+            acceptedOrdinal = acceptedOrdinal,
+            tokenLockRef = collateral.tokenLockRef,
+            amount = collateral.amount,
+            fee = collateral.fee,
+            withdrawalStartEpoch = createdAt.some,
+            withdrawalEndEpoch = (createdAt |+| withdrawalTimeLimit).some
+          )
+      }
+      NodeCollateralsInfo(
+        address = address,
+        activeNodeCollaterals = active,
+        pendingWithdrawals = pending
+      )
     }
-    val pending = lastWithdrawals.toList.map {
-      case PendingNodeCollateralWithdrawal(collateral, acceptedOrdinal, createdAt) =>
-        NodeCollateralInfo(
-          nodeId = collateral.nodeId,
-          acceptedOrdinal = acceptedOrdinal,
-          tokenLockRef = collateral.tokenLockRef,
-          amount = collateral.amount,
-          fee = collateral.fee,
-          withdrawalStartEpoch = createdAt.some,
-          withdrawalEndEpoch = (createdAt |+| withdrawalTimeLimit).some
-        )
-    }
-    NodeCollateralsInfo(
-      address = address,
-      activeNodeCollaterals = active,
-      pendingWithdrawals = pending
-    )
-  }
 
   private def getLastReference(
-    address: Address,
-    info: GlobalSnapshotInfo
+    address: Address
   ): F[NodeCollateralReference] =
-    info.activeNodeCollaterals
-      .getOrElse(SortedMap.empty[Address, List[NodeCollateralRecord]])
-      .get(address)
-      .flatMap(collaterals => Option.when(collaterals.nonEmpty)(collaterals.maxBy(_.event.ordinal)))
-      .traverse(collateral => NodeCollateralReference.of(collateral.event))
-      .map(_.getOrElse(NodeCollateralReference.empty))
+    mptStore.getNodeCollaterals(address).flatMap { maybeCollaterals =>
+      maybeCollaterals
+        .getOrElse(SortedSet.empty[NodeCollateralRecord])
+        .toList
+        .sortBy(_.event.ordinal)
+        .lastOption
+        .traverse(collateral => NodeCollateralReference.of(collateral.event))
+        .map(_.getOrElse(NodeCollateralReference.empty))
+    }
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root =>
@@ -149,15 +149,15 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
 
     case GET -> Root / AddressVar(address) / "info" =>
       snapshotStorage.head.flatMap {
-        case Some((_, info)) =>
-          Ok(getNodeCollateralInfo(address, info))
+        case Some(_) =>
+          getNodeCollateralInfo(address).flatMap(Ok(_))
         case None => ServiceUnavailable()
       }
 
     case GET -> Root / "last-reference" / AddressVar(address) =>
       snapshotStorage.head.flatMap {
-        case Some((_, info)) =>
-          Ok(getLastReference(address, info))
+        case Some(_) =>
+          Ok(getLastReference(address))
         case None => ServiceUnavailable()
       }
   }

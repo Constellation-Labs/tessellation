@@ -13,6 +13,8 @@ import io.constellationnetwork.schema.artifact.TokenUnlock
 import io.constellationnetwork.schema.balance.{Amount, Balance, BalanceArithmeticError}
 import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeError, MissingTokenLock, PendingDelegatedStakeWithdrawal}
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
@@ -79,7 +81,7 @@ trait TokenLockStateManager[F[_]] {
 
 object TokenLockStateManager {
 
-  def make[F[_]: Async](): TokenLockStateManager[F] = new TokenLockStateManager[F] {
+  def make[F[_]: Async](mptStore: MptStore[F, GlobalStateKey]): TokenLockStateManager[F] = new TokenLockStateManager[F] {
 
     def acceptTokenLocks(
       epochProgress: EpochProgress,
@@ -141,23 +143,22 @@ object TokenLockStateManager {
                 } else if (seen(replaceTokenLockRef)) {
                   (result, seen).pure[F]
                 } else {
-                  lastSnapshotContext.activeTokenLocks
-                    .getOrElse(SortedMap.empty[Address, SortedSet[Signed[TokenLock]]])
-                    .getOrElse(tx.source, SortedSet.empty[Signed[TokenLock]])
-                    .toList
-                    .filter(_.currencyId.isEmpty) // we can only replace DAG token locks
-                    .traverse(existing => TokenLockReference.of(existing).map(ref => (ref, existing)))
-                    .map { existingWithRefs =>
-                      val shouldInclude = existingWithRefs.exists {
-                        case (ref, existing) =>
-                          val balance = lastSnapshotContext.balances.getOrElse(tx.source, Balance.empty)
-                          ref.hash === replaceTokenLockRef &&
-                          existing.source == tx.source &&
-                          existing.amount < tx.amount &&
-                          balance.value.value + existing.amount.value.value >= tx.amount.value.value + tx.fee.value.value
-                      }
-                      if (shouldInclude) (result :+ tx, seen + replaceTokenLockRef) else (result, seen)
+                  for {
+                    activeTokenLocks <- mptStore.getActiveTokenLocks(tx.source).map(_.getOrElse(SortedSet.empty[Signed[TokenLock]]))
+                    balance <- mptStore.getBalance(tx.source).map(_.getOrElse(Balance.empty))
+                    existingWithRefs <- activeTokenLocks.toList
+                      .filter(_.currencyId.isEmpty) // we can only replace DAG token locks
+                      .traverse(existing => TokenLockReference.of(existing).map(ref => (ref, existing)))
+                  } yield {
+                    val shouldInclude = existingWithRefs.exists {
+                      case (ref, existing) =>
+                        ref.hash === replaceTokenLockRef &&
+                        existing.source == tx.source &&
+                        existing.amount < tx.amount &&
+                        balance.value.value + existing.amount.value.value >= tx.amount.value.value + tx.fee.value.value
                     }
+                    if (shouldInclude) (result :+ tx, seen + replaceTokenLockRef) else (result, seen)
+                  }
                 }
               case None => (result :+ tx, seen).pure[F]
             }

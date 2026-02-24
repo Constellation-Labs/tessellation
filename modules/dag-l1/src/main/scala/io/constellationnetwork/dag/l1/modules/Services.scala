@@ -86,7 +86,8 @@ object Services {
           shouldUseMptStore = true
         )
       val allowSpend =
-        AllowSpendService.make[F, P, S, SI](storages.allowSpend, storages.lastSnapshot, validators.allowSpend)
+        AllowSpendService
+          .make[F, P, S, SI](storages.allowSpend, storages.lastSnapshot, validators.allowSpend, Some(sharedStorages.mptStore))
       val allowSpendBlock = AllowSpendBlockService.make[F, P, S, SI](
         AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlock),
         storages.address,
@@ -96,7 +97,8 @@ object Services {
         storages.lastSnapshot
       )
       val tokenLock =
-        TokenLockService.make[F, P, S, SI](storages.tokenLock, storages.lastSnapshot, validators.tokenLock)
+        TokenLockService
+          .make[F, P, S, SI](storages.tokenLock, storages.lastSnapshot, validators.tokenLock, Some(sharedStorages.mptStore))
       val tokenLockBlock = TokenLockBlockService.make[F, P, S, SI](
         TokenLockBlockAcceptanceManager.make[F](validators.tokenLockBlock),
         storages.address,

@@ -1,7 +1,7 @@
 package io.constellationnetwork.dag.l0.domain.snapshot.programs
 
 import cats.Show
-import cats.effect.IO
+import cats.effect.{IO, Resource}
 import cats.syntax.either._
 import cats.syntax.option._
 
@@ -9,7 +9,10 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.StateChannelEvent
+import io.constellationnetwork.ext.cats.effect.ResourceIO
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculatorConfig
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.{Address, DAGAddressRefined}
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.currencyMessage.MessageType.Staking
@@ -17,8 +20,11 @@ import io.constellationnetwork.schema.currencyMessage.{CurrencyMessage, MessageO
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.generators._
 import io.constellationnetwork.schema.height.{Height, SubHeight}
-import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal, SnapshotTips}
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
+import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
@@ -26,13 +32,22 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.refineV
 import eu.timepit.refined.types.numeric._
 import org.scalacheck.Gen
-import weaver.SimpleMutableIOSuite
+import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
-object SnapshotBinaryFeeCalculatorSuite extends SimpleMutableIOSuite with Checkers {
+object SnapshotBinaryFeeCalculatorSuite extends MutableIOSuite with Checkers {
+  implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
+
   val eventAddress = Address(refineV[DAGAddressRefined].unsafeFrom("DAGSTARDUSTCOLLECTIVEHZOIPHXZUBFGNXWJETZVSPAPAHMLXS"))
   val stakingAddress = Address(refineV[DAGAddressRefined].unsafeFrom("DAG7coCMRPJah33MMcfAEZVeB1vYn3vDRe6WqeGU"))
   val metagraphId = Address(refineV[DAGAddressRefined].unsafeFrom("DAG7coCMRPJah33MMcfAEZVeB1vYn3vDRe6WqeGU"))
+
+  type Res = (Hasher[IO], JsonSerializer[IO])
+
+  def sharedResource: Resource[IO, Res] = for {
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
+    h = Hasher.forJson[IO]
+  } yield (h, j)
 
   val configs: SortedMap[SnapshotOrdinal, FeeCalculatorConfig] =
     SortedMap(
@@ -187,56 +202,75 @@ object SnapshotBinaryFeeCalculatorSuite extends SimpleMutableIOSuite with Checke
     )
   ] = Show.show(_.toString)
 
-  test("when snapshot for event address is not found") { _ =>
-    val calculator = SnapshotBinaryFeeCalculator.make[IO](configs)
+  private def mkMptStore(info: GlobalSnapshotInfo)(implicit h: Hasher[IO], j: JsonSerializer[IO]): IO[MptStore[IO, GlobalStateKey]] =
+    for {
+      mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      mptStore <- MptStore.make[IO, GlobalStateKey](mptProducer, GlobalStateKey.toHex[IO])
+      _ <- mptStore.syncFromGlobalSnapshotInfo(info, SnapshotOrdinal.MinValue)
+    } yield mptStore
+
+  test("when snapshot for event address is not found") { res =>
+    implicit val (h, j) = res
     forall(testDataGen(None, None)) {
       case (input, stateChannelEvent, _) =>
         val info = GlobalSnapshotInfo.empty.copy(balances = SortedMap(stakingAddress -> input.balance))
-        calculator
-          .calculateFee(stateChannelEvent, info, SnapshotOrdinal.MinValue)
-          .map(actual => expect.same(input.expectedFeeWithoutBalance, actual))
+        mkMptStore(info).flatMap { mptStore =>
+          val calculator = SnapshotBinaryFeeCalculator.make[IO](configs, mptStore)
+          calculator
+            .calculateFee(stateChannelEvent, SnapshotOrdinal.MinValue)
+            .map(actual => expect.same(input.expectedFeeWithoutBalance, actual))
+        }
     }
   }
 
-  test("when message for staking address is not found") { _ =>
-    val calculator = SnapshotBinaryFeeCalculator.make[IO](configs)
+  test("when message for staking address is not found") { res =>
+    implicit val (h, j) = res
     forall(testDataGen(None, None)) {
       case (input, stateChannelEvent, lastCurrencySnapshots) =>
         val info = GlobalSnapshotInfo.empty.copy(
           balances = SortedMap(stakingAddress -> input.balance),
           lastCurrencySnapshots = lastCurrencySnapshots
         )
-        calculator
-          .calculateFee(stateChannelEvent, info, SnapshotOrdinal.MinValue)
-          .map(actual => expect.same(input.expectedFeeWithoutBalance, actual))
+        mkMptStore(info).flatMap { mptStore =>
+          val calculator = SnapshotBinaryFeeCalculator.make[IO](configs, mptStore)
+          calculator
+            .calculateFee(stateChannelEvent, SnapshotOrdinal.MinValue)
+            .map(actual => expect.same(input.expectedFeeWithoutBalance, actual))
+        }
     }
   }
 
-  test("when balance is not unavailable") { _ =>
-    val calculator = SnapshotBinaryFeeCalculator.make[IO](configs)
+  test("when balance is not unavailable") { res =>
+    implicit val (h, j) = res
     forall(testDataGen(stakingAddress.some, metagraphId.some)) {
       case (input, stateChannelEvent, lastCurrencySnapshots) =>
         val info = GlobalSnapshotInfo.empty.copy(
           balances = SortedMap.empty,
           lastCurrencySnapshots = lastCurrencySnapshots
         )
-        calculator
-          .calculateFee(stateChannelEvent, info, SnapshotOrdinal.MinValue)
-          .map(actual => expect.same(input.expectedFeeWithoutBalance, actual))
+        mkMptStore(info).flatMap { mptStore =>
+          val calculator = SnapshotBinaryFeeCalculator.make[IO](configs, mptStore)
+          calculator
+            .calculateFee(stateChannelEvent, SnapshotOrdinal.MinValue)
+            .map(actual => expect.same(input.expectedFeeWithoutBalance, actual))
+        }
     }
   }
 
-  test("when balance is available") { _ =>
-    val calculator = SnapshotBinaryFeeCalculator.make[IO](configs)
+  test("when balance is available") { res =>
+    implicit val (h, j) = res
     forall(testDataGen(stakingAddress.some, metagraphId.some)) {
       case (input, stateChannelEvent, lastCurrencySnapshots) =>
         val info = GlobalSnapshotInfo.empty.copy(
           balances = SortedMap(stakingAddress -> input.balance),
           lastCurrencySnapshots = lastCurrencySnapshots
         )
-        calculator
-          .calculateFee(stateChannelEvent, info, SnapshotOrdinal.MinValue)
-          .map(actual => expect.same(input.expectedFeeWithBalance, actual))
+        mkMptStore(info).flatMap { mptStore =>
+          val calculator = SnapshotBinaryFeeCalculator.make[IO](configs, mptStore)
+          calculator
+            .calculateFee(stateChannelEvent, SnapshotOrdinal.MinValue)
+            .map(actual => expect.same(input.expectedFeeWithBalance, actual))
+        }
     }
   }
 }

@@ -89,7 +89,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       // Create token lock block with replacement token lock
       tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock))
 
-      manager <- mkManager()
+      manager <- mkManager(lastSnapshotInfo.some)
       result <- manager.accept(
         ordinal = SnapshotOrdinal(2L),
         epochProgress = EpochProgress(10L),
@@ -179,7 +179,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
         activeTokenLocks = existingTokenLocks.some
       )
 
-      manager <- mkManager()
+      manager <- mkManager(lastSnapshotContext.some)
       result <- manager.accept(
         ordinal = SnapshotOrdinal(2L),
         epochProgress = EpochProgress(10L),
@@ -254,7 +254,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
         activeDelegatedStakes = existingDelegatedStakes.some
       )
 
-      manager <- mkManager()
+      manager <- mkManager(lastSnapshotContext.some)
       result <- manager.accept(
         ordinal = SnapshotOrdinal(3L),
         epochProgress = EpochProgress(10L),
@@ -318,7 +318,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
         activeDelegatedStakes = existingDelegatedStakes.some
       )
 
-      manager <- mkManager()
+      manager <- mkManager(lastSnapshotContext.some)
       result <- manager.accept(
         ordinal = SnapshotOrdinal(2L),
         epochProgress = EpochProgress(10L),
@@ -400,7 +400,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       // Create delegated stake event for the original token lock
       delegatedStakeEvent <- mkDelegatedStakeCreate(keyPair, nodeId, originalHashedTokenLock)
 
-      manager <- mkManager()
+      manager <- mkManager(lastSnapshotInfo.some)
       result <- manager.accept(
         ordinal = SnapshotOrdinal(2L),
         epochProgress = EpochProgress(10L),
@@ -484,7 +484,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       // Create delegated stake event for the replacement token lock
       delegatedStakeEvent <- mkDelegatedStakeCreate(keyPair, nodeId, replacementHashedTokenLock)
 
-      manager <- mkManager()
+      manager <- mkManager(lastSnapshotInfo.some)
       result <- manager.accept(
         ordinal = SnapshotOrdinal(2L),
         epochProgress = EpochProgress(10L),
@@ -564,7 +564,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       // Create withdrawal event
       withdrawalEvent <- mkDelegatedStakeWithdraw(keyPair, hashedDelegatedStakeEvent)
 
-      manager <- mkManager()
+      manager <- mkManager(lastSnapshotInfo.some)
       result <- manager.accept(
         ordinal = SnapshotOrdinal(2L),
         epochProgress = EpochProgress(10L),
@@ -646,7 +646,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       delegatedStakeEvent <- mkDelegatedStakeCreate(keyPair, nodeId, hashedTokenLock)
       hashedDelegatedStakeEvent <- delegatedStakeEvent.toHashed
 
-      manager1 <- mkManager()
+      manager1 <- mkManager(initialSnapshotInfo.some)
       result1 <- manager1.accept(
         ordinal = SnapshotOrdinal(1L),
         epochProgress = EpochProgress(5L),
@@ -672,7 +672,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       // Second snapshot: create the withdrawal
       withdrawalEvent <- mkDelegatedStakeWithdraw(keyPair, hashedDelegatedStakeEvent)
 
-      manager2 <- mkManager()
+      manager2 <- mkManager(snapshotWithDelegatedStake.some)
       result2 <- manager2.accept(
         ordinal = SnapshotOrdinal(2L),
         epochProgress = EpochProgress(10L),
@@ -788,7 +788,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       // Create token lock block for the replacement
       tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock))
 
-      manager <- mkManager()
+      manager <- mkManager(lastSnapshotInfo.some)
       result <- manager.accept(
         ordinal = SnapshotOrdinal(2L),
         epochProgress = EpochProgress(10L),
@@ -882,7 +882,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       // Create token lock block for the replacement
       tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock))
 
-      manager <- mkManager()
+      manager <- mkManager(lastSnapshotInfo.some)
       result <- manager.accept(
         ordinal = SnapshotOrdinal(2L),
         epochProgress = EpochProgress(10L),
@@ -963,7 +963,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       delegatedStakeEvent <- mkDelegatedStakeCreate(keyPair, nodeId, hashedOriginalTokenLock)
       hashedDelegatedStakeEvent <- delegatedStakeEvent.toHashed
 
-      manager <- mkManager()
+      manager <- mkManager(initialSnapshotInfo.some)
       result1 <- manager.accept(
         ordinal = SnapshotOrdinal(1L),
         epochProgress = EpochProgress(5L),
@@ -1127,7 +1127,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       delegatedStakeEvent <- mkDelegatedStakeCreate(keyPair, nodeId, hashedOriginalTokenLock)
       hashedDelegatedStakeEvent <- delegatedStakeEvent.toHashed
 
-      manager <- mkManager()
+      manager <- mkManager(initialSnapshotInfo.some)
       result1 <- manager.accept(
         ordinal = SnapshotOrdinal(1L),
         epochProgress = EpochProgress(5L),
@@ -1317,7 +1317,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       // Create token lock block with replacement token lock
       tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock))
 
-      manager <- mkManager()
+      manager <- mkManager(lastSnapshotInfo.some)
       result <- manager.accept(
         ordinal = SnapshotOrdinal(2L),
         epochProgress = EpochProgress(10L),
@@ -1385,7 +1385,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       // Create token lock block with replacement token lock
       tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock))
 
-      manager <- mkManager()
+      manager <- mkManager(lastSnapshotInfo.some)
       result <- manager.accept(
         ordinal = SnapshotOrdinal(2L),
         epochProgress = EpochProgress(10L),
@@ -1458,7 +1458,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       // Create token lock block with replacement token lock
       tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock))
 
-      manager <- mkManager()
+      manager <- mkManager(lastSnapshotInfo.some)
       result <- manager.accept(
         ordinal = SnapshotOrdinal(2L),
         epochProgress = EpochProgress(10L),
@@ -1523,7 +1523,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       // Create token lock block with replacement token lock
       tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock))
 
-      manager <- mkManager()
+      manager <- mkManager(lastSnapshotInfo.some)
       result <- manager.accept(
         ordinal = SnapshotOrdinal(2L),
         epochProgress = EpochProgress(10L),
@@ -1592,7 +1592,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       // Create token lock block with replacement token lock
       tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock))
 
-      manager <- mkManager()
+      manager <- mkManager(lastSnapshotInfo.some)
       result <- manager.accept(
         ordinal = SnapshotOrdinal(2L),
         epochProgress = EpochProgress(10L),
@@ -1673,7 +1673,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       tokenLockBlock2 <- mkTokenLockBlock(List(replacementTokenLock2))
       tokenLockBlock3 <- mkTokenLockBlock(List(replacementTokenLock3))
 
-      manager <- mkManager()
+      manager <- mkManager(lastSnapshotInfo.some)
       result <- manager.accept(
         ordinal = SnapshotOrdinal(2L),
         epochProgress = EpochProgress(10L),
@@ -1768,7 +1768,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       // Create token lock blocks with all replacement token locks
       tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock1, replacementTokenLock2, replacementTokenLock3))
 
-      manager <- mkManager()
+      manager <- mkManager(lastSnapshotInfo.some)
       result <- manager.accept(
         ordinal = SnapshotOrdinal(2L),
         epochProgress = EpochProgress(10L),
@@ -1857,7 +1857,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       // Create token lock block with replacement token lock
       tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock))
 
-      manager <- mkManager()
+      manager <- mkManager(lastSnapshotInfo.some)
       result <- manager.accept(
         ordinal = SnapshotOrdinal(2L),
         epochProgress = EpochProgress(10L),
@@ -1928,7 +1928,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       // Create token lock block with replacement token lock
       tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock))
 
-      manager <- mkManager()
+      manager <- mkManager(lastSnapshotInfo.some)
       result <- manager.accept(
         ordinal = SnapshotOrdinal(2L),
         epochProgress = EpochProgress(10L),

@@ -50,7 +50,8 @@ object CurrencySnapshotConsensusFunctions {
 
     def getRequiredCollateral: Amount = collateral
 
-    def getBalances(context: CurrencySnapshotContext): SortedMap[Address, Balance] = context.snapshotInfo.balances
+    def getBalance(context: CurrencySnapshotContext, address: Address): F[Balance] =
+      context.snapshotInfo.balances.getOrElse(address, Balance.empty).pure[F]
 
     def validateArtifact(
       lastSignedArtifact: Signed[CurrencySnapshotArtifact],

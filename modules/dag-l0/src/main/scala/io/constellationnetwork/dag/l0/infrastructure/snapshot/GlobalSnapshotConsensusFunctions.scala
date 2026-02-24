@@ -31,6 +31,8 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.peer.PeerId
@@ -66,12 +68,14 @@ object GlobalSnapshotConsensusFunctions {
     delegatedRewardsConfigProvider: DelegatedRewardsConfigProvider,
     v3MigrationOrdinal: SnapshotOrdinal,
     setSumFixOrdinal: SnapshotOrdinal,
-    incrementalDelegatedStakingStartingOrdinal: SnapshotOrdinal
+    incrementalDelegatedStakingStartingOrdinal: SnapshotOrdinal,
+    mptStore: MptStore[F, GlobalStateKey]
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
     def getRequiredCollateral: Amount = collateral
 
-    def getBalances(context: GlobalSnapshotContext): SortedMap[Address, Balance] = context.balances
+    def getBalance(context: GlobalSnapshotContext, address: Address): F[Balance] =
+      mptStore.getBalance(address).map(_.getOrElse(Balance.empty))
 
     override def validateArtifact(
       lastSignedArtifact: Signed[GlobalSnapshotArtifact],

@@ -118,7 +118,8 @@ object GlobalSnapshotConsensus {
             validators.stateChannelValidator,
             globalStateChannelManager,
             sharedServices.currencySnapshotContextFns,
-            feeCalculator
+            feeCalculator,
+            mptStore
           ),
           sharedServices.updateNodeParametersAcceptanceManager,
           sharedServices.updateDelegatedStakeAcceptanceManager,
@@ -151,7 +152,7 @@ object GlobalSnapshotConsensus {
           rewardsService,
           GlobalSnapshotEventCutter.make(
             appConfig.snapshot.consensus.eventCutter.maxBinarySizeBytes,
-            SnapshotBinaryFeeCalculator.make(appConfig.shared.feeConfigs)
+            SnapshotBinaryFeeCalculator.make(appConfig.shared.feeConfigs, mptStore)
           ),
           UpdateNodeParametersCutter.make(appConfig.snapshot.consensus.eventCutter.maxUpdateNodeParametersSize),
           appConfig.environment,
@@ -161,7 +162,8 @@ object GlobalSnapshotConsensus {
           sharedCfg.fieldsAddedOrdinals.setSumFix
             .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
           sharedCfg.incrementalDelegatedStakingStartingOrdinal
-            .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue)
+            .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
+          mptStore
         )
 
       stateAdvancer =

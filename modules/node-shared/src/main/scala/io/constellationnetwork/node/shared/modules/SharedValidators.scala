@@ -25,6 +25,7 @@ import io.constellationnetwork.node.shared.infrastructure.gossip.RumorValidator
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencyMessageValidator, GlobalSnapshotSyncValidator}
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.SignedValidator
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
@@ -43,7 +44,8 @@ object SharedValidators {
     maxBinarySizeInBytes: PosLong,
     txHasher: Hasher[F],
     delegatedStaking: DelegatedStakingConfig,
-    priceOracleConfig: PriceOracleConfig
+    priceOracleConfig: PriceOracleConfig,
+    maybeMptStore: Option[MptStore[F, GlobalStateKey]] = None
   ): SharedValidators[F] = {
     val signedValidator = SignedValidator.make[F]
     val transactionChainValidator = TransactionChainValidator.make[F](txHasher)
@@ -75,10 +77,14 @@ object SharedValidators {
       delegatedStaking.maxMetadataFieldsChars,
       l0Seedlist
     )
-    val updateDelegatedStakeValidator =
-      UpdateDelegatedStakeValidator.make[F](signedValidator, l0Seedlist)
-    val updateNodeCollateralValidator =
-      UpdateNodeCollateralValidator.rejectAll[F]
+    val updateDelegatedStakeValidator = maybeMptStore match {
+      case Some(mptStore) => UpdateDelegatedStakeValidator.make[F](signedValidator, l0Seedlist, mptStore)
+      case None           => UpdateDelegatedStakeValidator.make[F](signedValidator, l0Seedlist)
+    }
+    val updateNodeCollateralValidator = maybeMptStore match {
+      case Some(mptStore) => UpdateNodeCollateralValidator.make[F](signedValidator, l0Seedlist, mptStore)
+      case None           => UpdateNodeCollateralValidator.rejectAll[F]
+    }
 
     val spendActionValidator = SpendActionValidator.make[F]
 

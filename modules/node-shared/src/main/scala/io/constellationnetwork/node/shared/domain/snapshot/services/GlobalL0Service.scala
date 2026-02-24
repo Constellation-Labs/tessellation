@@ -67,7 +67,7 @@ object GlobalL0Service {
       private val numConcurrentQueries = 10
       private val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
       private val maybeMajorityPeerIds = maybeMajorityPeerIdSet.map(_.toNonEmptyList)
-      private val ordinalRange = 0L to 3L
+      private val ordinalRange = 0L to 20L
       private val validator = StateProofValidator.forGlobal(Some(mptStore.underlying))
 
       implicit val hashShow: Show[Hash] = Hash.shortShow
@@ -138,12 +138,13 @@ object GlobalL0Service {
           _ <- logger.trace(s"${peers.map(_.id.show)}")
 
           majorityPeers <- getL0Peers(majorityPeerIds)
+          cachedMajorityOrdinal <- getMajorityOrdinal(majorityPeers)
           result <- peers.tailRecM[F, Result] { l0Peers =>
             l0Peers.headOption.fold {
               NoPeersWithMajorityHash.raiseError[F, Either[Agg, Result]]
             } { l0Peer =>
               pullLatestSnapshotFromPeer(l0Peer).flatMap { latest =>
-                Applicative[F].ifF(verifyLatestSnapshot(latest, majorityPeers))(
+                Applicative[F].ifF(verifyLatestSnapshot(latest, majorityPeers, cachedMajorityOrdinal))(
                   latest.asRight[Agg],
                   l0Peers.tail.asLeft[Result]
                 )
@@ -162,7 +163,8 @@ object GlobalL0Service {
 
       private def verifyLatestSnapshot(
         snapshotTuple: LatestSnapshotTuple,
-        majorityPeers: NonEmptyList[L0Peer]
+        majorityPeers: NonEmptyList[L0Peer],
+        cachedMajorityOrdinal: Option[SnapshotOrdinal]
       ): F[Boolean] = {
         val (snapshot, _) = snapshotTuple
         // Skip state proof validation during pullLatestSnapshot - it will be validated
@@ -171,7 +173,7 @@ object GlobalL0Service {
         // The majority hash/ordinal validations ensure we're getting a valid snapshot from
         // the network, and the full state proof validation happens during processing.
         List(
-          majorityOrdinalValidation(snapshot, majorityPeers),
+          majorityOrdinalValidation(snapshot, cachedMajorityOrdinal),
           majorityHashValidation(snapshot, majorityPeers)
         ).forallM(identity)
       }
@@ -188,15 +190,17 @@ object GlobalL0Service {
             .flatTap(v => logger.debug(s"Failed StateProofValidation: $v").whenA(v.isInvalid))
             .map(_.isValid)
 
-      private def majorityOrdinalValidation(snapshot: Hashed[GlobalIncrementalSnapshot], majorityPeers: NonEmptyList[L0Peer]): F[Boolean] =
-        getMajorityOrdinal(majorityPeers).flatMap { maybeMajorityOrdinal =>
-          val isInRange = maybeMajorityOrdinal.exists(o => ordinalRange.contains(o.value - snapshot.ordinal.value))
+      private def majorityOrdinalValidation(
+        snapshot: Hashed[GlobalIncrementalSnapshot],
+        maybeMajorityOrdinal: Option[SnapshotOrdinal]
+      ): F[Boolean] = {
+        val isInRange = maybeMajorityOrdinal.exists(o => ordinalRange.contains(o.value - snapshot.ordinal.value))
 
-          logger
-            .debug(s"Majority ordinal ${maybeMajorityOrdinal.show} missing or not in $ordinalRange, ${snapshot.ordinal.show}")
-            .unlessA(isInRange)
-            .as(isInRange)
-        }
+        logger
+          .debug(s"Majority ordinal ${maybeMajorityOrdinal.show} missing or not in $ordinalRange, ${snapshot.ordinal.show}")
+          .unlessA(isInRange)
+          .as(isInRange)
+      }
 
       private def majorityHashValidation(snapshot: Hashed[GlobalIncrementalSnapshot], majorityPeers: NonEmptyList[L0Peer]): F[Boolean] =
         getMajorityHash(majorityPeers, snapshot.ordinal).flatMap { maybeMajorityHash =>

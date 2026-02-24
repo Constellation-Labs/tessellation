@@ -107,7 +107,7 @@ object GlobalSnapshotEventCutter {
         ): F[StateChannelEventWithFee] =
           for {
             hashed <- event.value.snapshotBinary.toHashed
-            fee <- snapshotFeeCalculator.calculateFee(event, info, ordinal)
+            fee <- snapshotFeeCalculator.calculateFee(event, ordinal)
           } yield StateChannelEventWithFee(event, hashed.hash, fee.value)
       }
 
