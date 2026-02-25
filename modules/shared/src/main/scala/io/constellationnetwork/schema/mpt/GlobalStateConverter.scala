@@ -419,17 +419,18 @@ object GlobalStateConverter {
           // Remove stale keys first (entries that are now empty: AllowSpends, TokenLocks,
           // TokenLockBalances, DelegatedStakes, DelegatedStakeWithdrawals, NodeCollaterals, NodeCollateralWithdrawals)
           _ <- store.remove(keysToRemove.toList).whenA(keysToRemove.nonEmpty)
-          // Then insert/update entries
+          // Insert entries in batches, then sync (persist + build) once at the end.
+          // Using store.insert for batches avoids firing N background persists that race with each other.
           _ <-
             if (entries.size <= BatchSize) {
               store.sync[Json](entries, snapshotOrdinal)
             } else {
-              entries.toList
-                .grouped(BatchSize)
-                .toList
-                .traverse_ { batch =>
-                  store.sync[Json](batch.toMap, snapshotOrdinal) >> Async[F].cede
-                }
+              val batches = entries.toList.grouped(BatchSize).toList
+              if (batches.isEmpty) Async[F].unit
+              else
+                batches.init.traverse_ { batch =>
+                  store.insert[Json](batch.toMap) >> Async[F].cede
+                } >> store.sync[Json](batches.last.toMap, snapshotOrdinal)
             }
         } yield ()
       }

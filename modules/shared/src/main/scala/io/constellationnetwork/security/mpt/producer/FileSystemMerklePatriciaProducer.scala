@@ -284,7 +284,13 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher: JsonSerial
     for {
       state <- stateRef.get
       _ <-
-        if (state.nonEmpty) storage.writeState(ordinal, state)
+        if (state.nonEmpty)
+          storage.writeState(ordinal, state).attempt.flatMap {
+            case Right(_) => applyCutoff(ordinal)
+            case Left(err) =>
+              logger.error(err)(s"[MPT] Failed to write state for ordinal=$ordinal, applying cutoff anyway") >>
+                applyCutoff(ordinal)
+          }
         else logger.warn(s"[MPT] Cannot persist: no state")
     } yield ()
 
