@@ -37,7 +37,7 @@ ThisBuild / version := {
   sys.env.get("RELEASE_TAG").map(_.stripPrefix("v")).getOrElse {
     // Priority 2 & 3: Derive from git via sbt-dynver
     val dynverOutput = dynverGitDescribeOutput.value
-    val buildId = sys.env.getOrElse("GITHUB_RUN_NUMBER", "local")
+    val buildId = sys.env.get("GITHUB_RUN_NUMBER").map(n => s"build$n").getOrElse("local")
     
     dynverOutput match {
       case Some(out) if out.hasNoTags =>
@@ -70,8 +70,8 @@ ThisBuild / version := {
   }
 }
 
-// Enable Sonatype snapshot mode for dynver (appends -SNAPSHOT when appropriate)
-ThisBuild / dynverSonatypeSnapshots := false // We handle snapshot logic ourselves
+// Disable dynver's Sonatype snapshot suffix (we use +metadata format for dev versions)
+ThisBuild / dynverSonatypeSnapshots := false
 
 // ===== Java 21 Migration Configuration =====
 

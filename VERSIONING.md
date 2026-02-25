@@ -43,6 +43,7 @@ When not on an exact tag, metadata is appended:
 | Development | 3 commits after `v4.1.0`, CI build #42 | `4.1.0+3.abc1234.build42` |
 | Local dev | 3 commits after `v4.1.0`, local machine | `4.1.0+3.abc1234.local` |
 | Dirty working dir | On tag but uncommitted changes | `4.1.0+dirty.local` |
+| Dirty + commits | 3 commits after tag, uncommitted changes | `4.1.0+3.abc1234.local` |
 | No tags in repo | Fresh clone or no version tags | `0.0.0+notags.abc1234.local` |
 | Manual override | `RELEASE_TAG=v5.0.0` set | `5.0.0` |
 
