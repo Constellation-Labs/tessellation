@@ -7,7 +7,8 @@ addSbtPlugin("ch.epfl.scala" % "sbt-bloop" % "1.5.3")
 addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "1.2.0")
 addSbtPlugin("com.eed3si9n" % "sbt-buildinfo" % "0.11.0")
 addSbtPlugin("com.timushev.sbt" % "sbt-updates" % "0.6.3")
-addSbtPlugin("com.github.sbt" % "sbt-git" % "2.1.0")
-addSbtPlugin("com.github.sbt" % "sbt-pgp" % "2.3.1")
+// sbt-ci-release brings: sbt-dynver, sbt-pgp, sbt-git
+addSbtPlugin("com.github.sbt" % "sbt-ci-release" % "1.11.2")
+// Explicit sbt-sonatype for Sonatype Central support (sonatypeCredentialHost)
 addSbtPlugin("org.xerial.sbt" % "sbt-sonatype" % "3.12.2")
 addDependencyTreePlugin

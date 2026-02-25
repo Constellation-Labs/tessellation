@@ -18,7 +18,61 @@ ThisBuild / developers := List(
 
 ThisBuild / evictionErrorLevel := Level.Warn
 ThisBuild / scalafixDependencies += Libraries.scalafixRules
-ThisBuild / version := sys.env.get("RELEASE_TAG").map(_.stripPrefix("v")).getOrElse("99.99.99-SNAPSHOT")
+
+// ===== Unified Versioning System =====
+// See VERSIONING.md for complete documentation
+//
+// Version priority:
+// 1. RELEASE_TAG env var (explicit override for releases)
+// 2. Git tag (if HEAD is tagged)
+// 3. Auto-generated from git state with metadata
+//
+// Examples:
+//   Tagged v4.1.0           → 4.1.0
+//   Tagged v4.1.0-rc.1      → 4.1.0-rc.1
+//   3 commits after tag     → 4.1.0+3.abc1234.build42
+//   Local dev               → 4.1.0+3.abc1234.local
+ThisBuild / version := {
+  // Priority 1: Explicit RELEASE_TAG override
+  sys.env.get("RELEASE_TAG").map(_.stripPrefix("v")).getOrElse {
+    // Priority 2 & 3: Derive from git via sbt-dynver
+    val dynverOutput = dynverGitDescribeOutput.value
+    val buildId = sys.env.get("GITHUB_RUN_NUMBER").map(n => s"build$n").getOrElse("local")
+    
+    dynverOutput match {
+      case Some(out) if out.hasNoTags =>
+        // Repository has no version tags - use fallback
+        val sha = out.commitSuffix.sha
+        s"0.0.0+notags.$sha.$buildId"
+        
+      case Some(out) =>
+        val baseVersion = out.ref.dropPrefix
+        val distance = out.commitSuffix.distance
+        val sha = out.commitSuffix.sha
+        val isDirty = out.isDirty()
+        
+        if (distance == 0 && !isDirty) {
+          // Exactly on a tag with clean working directory
+          baseVersion
+        } else if (distance == 0 && isDirty) {
+          // On a tag but with local changes
+          s"$baseVersion+dirty.$buildId"
+        } else {
+          // Commits after tag (most common dev scenario)
+          s"$baseVersion+$distance.$sha.$buildId"
+        }
+        
+      case None =>
+        // No git info available (shallow clone, no tags, etc.)
+        val fallbackBase = "0.0.0"
+        s"$fallbackBase+unknown.$buildId"
+    }
+  }
+}
+
+// Disable dynver's Sonatype snapshot suffix (we use +metadata format for dev versions)
+ThisBuild / dynverSonatypeSnapshots := false
+
 // ===== Java 21 Migration Configuration =====
 
 // Enforce Java 21 requirement at build time
@@ -37,7 +91,7 @@ ThisBuild / javacOptions ++= Seq("-source", "21", "-target", "21")
 // Configure Scala compiler to generate Java 21 compatible bytecode
 ThisBuild / scalacOptions ++= Seq("-release", "21")
 
-enablePlugins(TessellationCiRelease)
+// sbt-ci-release auto-enables via AutoPlugin
 
 val scalafixCommonSettings = inConfig(IntegrationTest)(scalafixConfigSettings(IntegrationTest))
 

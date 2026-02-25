@@ -172,13 +172,19 @@ jobs:
 
       - name: Publish SDK module to Sonatype Central
         run: |
-          RELEASE_TAG="${{ needs.build.outputs.release_tag }}"
           echo "Publishing with tag: $RELEASE_TAG"
-          sbt tessellation-ci-release
+          sbt ci-release
         env:
+          # RELEASE_TAG for version calculation in build.sbt
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+          # Override GITHUB_REF so ci-release takes the tag (release) code path
+          # (workflow triggers on branch push, not tag push, so GITHUB_REF is refs/heads/...)
+          GITHUB_REF: refs/tags/${{ needs.build.outputs.release_tag }}
+          # Use sonatypeCentralRelease (sbt-sonatype) instead of sonaRelease (sbt 1.11.0+)
+          # Required because project is on sbt 1.9.8
+          CI_SONATYPE_RELEASE: sonatypeCentralRelease
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
           SONATYPE_PASSWORD: ${{ secrets.MVN_PASSWORD }}
           SONATYPE_USERNAME: ${{ secrets.MVN_USERNAME }}
-          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
