@@ -177,13 +177,24 @@ object GossipDaemon {
             .mapValues(o => Ordinal(o.generation, o.counter.next))
             .toMap
 
-          gossipClient
-            .queryPeerRumors(PeerRumorInquiryRequest(nextOrdinals))
-            .run(peer)
-            .evalMap(rumor => hasherSelector.withCurrent(implicit hasher => rumor.toHashed))
-            .enqueueUnterminated(rumorQueue)
-            .compile
-            .drain
+          limitOrdinals(nextOrdinals).flatMap {
+            case (ordinals, wasLimited) =>
+              val request = PeerRumorInquiryRequest(ordinals, Option.when(wasLimited)(true))
+              gossipClient
+                .queryPeerRumors(request)
+                .run(peer)
+                .evalMap(rumor => hasherSelector.withCurrent(implicit hasher => rumor.toHashed))
+                .enqueueUnterminated(rumorQueue)
+                .compile
+                .drain
+          }
+        }
+
+      private def limitOrdinals(ordinals: Map[PeerId, Ordinal]): F[(Map[PeerId, Ordinal], Boolean)] =
+        cfg.peerRound.maxOrdinalsPerRequest match {
+          case Some(max) if ordinals.size > max.value =>
+            Random[F].shuffleList(ordinals.toList).map(_.take(max.value).toMap -> true)
+          case _ => (ordinals -> false).pure[F]
         }
 
       private def commonRound(peer: Peer): F[Unit] =

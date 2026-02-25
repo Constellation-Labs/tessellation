@@ -117,7 +117,8 @@ object gossip {
 
   @derive(encoder, decoder)
   case class PeerRumorInquiryRequest(
-    ordinals: Map[PeerId, Ordinal]
+    ordinals: Map[PeerId, Ordinal],
+    skipAdditionalPeers: Option[Boolean] = None
   )
 
   @derive(encoder, decoder)

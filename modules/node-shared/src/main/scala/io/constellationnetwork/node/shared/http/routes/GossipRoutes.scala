@@ -37,9 +37,12 @@ final case class GossipRoutes[F[_]: Async](
       for {
         inquiryRequest <- req.as[PeerRumorInquiryRequest]
         inquiryOrdinals = inquiryRequest.ordinals
+        skipAdditional = inquiryRequest.skipAdditionalPeers.getOrElse(false)
         localPeerIds <- rumorStorage.getPeerIds
         rumors <- peerRumorChain(inquiryOrdinals.toList)
-        additionalOrdinals = localPeerIds.diff(inquiryOrdinals.keySet).toList.map(_ -> Ordinal.MinValue)
+        additionalOrdinals =
+          if (skipAdditional) List.empty
+          else localPeerIds.diff(inquiryOrdinals.keySet).toList.map(_ -> Ordinal.MinValue)
         additionalRumors <- peerRumorChain(additionalOrdinals)
         result <- Ok(streamFromChain(rumors ++ additionalRumors))
       } yield result
