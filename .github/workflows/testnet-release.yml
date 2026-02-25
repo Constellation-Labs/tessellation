@@ -19,6 +19,24 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Check if the commit already has a tag starting with "v"
+        id: check_tag
+        run: |
+          TAG=$(git tag --contains HEAD | grep -E '^v' || true)
+          if [ -n "$TAG" ]; then
+            echo "This commit has a tag starting with 'v': $TAG"
+            echo "TAG_EXISTS=true" >> "$GITHUB_ENV"
+          else
+            echo "This commit does not have a tag starting with 'v'."
+            echo "TAG_EXISTS=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Check branch and abort if necessary
+        if: env.TAG_EXISTS == 'true'
+        run: |
+          echo "Aborting the action because the release should already exist."
+          exit 1
+
       - name: Setup Java and scala
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -34,15 +52,30 @@ jobs:
       - name: Get the pre-release version
         id: get_version
         run: |
-          sbt "writeVersion ./version"
-          echo "VERSION=$(cat ./version)" >> "$GITHUB_OUTPUT"
-          echo "Release-As: $(cat ./version)" >> $GITHUB_STEP_SUMMARY
-          rm ./version
+          VERSION=$(npx commit-and-tag-version --dry-run --prerelease alpha | grep -oP 'tagging release v\K(.*)')
+          [ -n "$VERSION" ] || { echo "ERROR: Failed to extract version from commit-and-tag-version"; exit 1; }
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Set Git config
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+
+      - name: Create release tag
+        id: create_tag
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+        run: |
+          echo "Release-As: $VERSION" >> $GITHUB_STEP_SUMMARY
+          git tag -a v$VERSION -m "Release $VERSION"
+          git push origin v$VERSION
+          echo "release_tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Assembly 🚀
         run: sbt 'keytool/assembly;wallet/assembly;dagL0/assembly;dagL1/assembly'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: v${{ steps.get_version.outputs.VERSION }}
 
       - name: Copy dependencies
         env:
@@ -60,12 +93,12 @@ jobs:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
         run: |
           umask 007
-          mkdir ./ramdisk 
+          mkdir ./ramdisk
           sudo mount -t tmpfs -o size=1M tmpfs ./ramdisk
           export KEY_NAME="$(uuidgen)"
           touch ./ramdisk/$KEY_NAME
           chmod 600 ./ramdisk/$KEY_NAME
-          echo "$RELEASE_SIGNING_KEY" >  ./ramdisk/$KEY_NAME        
+          echo "$RELEASE_SIGNING_KEY" >  ./ramdisk/$KEY_NAME
           for jar in cl-keytool cl-wallet cl-node cl-dag-l1; do
             echo "$(sha256sum ./$VERSION/$jar.jar | sed 's/ .*//')" > ./$VERSION/$jar.sha256
             openssl dgst -sha256 -sign ./ramdisk/$KEY_NAME -out /dev/stdout ./$VERSION/$jar.sha256 | base64 > ./$VERSION/$jar.sig
@@ -75,7 +108,7 @@ jobs:
         if: always()
         run: |
           sudo umount ./ramdisk
-          rm -rf ./ramdisk 
+          rm -rf ./ramdisk
 
       - name: Send artifacts to S3
         env:
