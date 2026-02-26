@@ -8,6 +8,8 @@ export DATA_ONLY_METAGRAPH=${DATA_ONLY_METAGRAPH:-false}
 export HYPERGRAPH_RELEASE=${HYPERGRAPH_RELEASE:-""}
 
 # Release tag (set via --version flag or RELEASE_TAG env var)
+# Note: only export if non-empty, as sbt's sys.env.get treats "" as Some("")
+# which bypasses dynver version resolution
 export RELEASE_TAG=${RELEASE_TAG:-""}
 
 export EXTRA_ENV_PATH=${EXTRA_ENV_PATH:-""}
