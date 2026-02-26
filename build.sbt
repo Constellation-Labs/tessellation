@@ -73,6 +73,14 @@ ThisBuild / version := {
 // Disable dynver's Sonatype snapshot suffix (we use +metadata format for dev versions)
 ThisBuild / dynverSonatypeSnapshots := false
 
+// Explicitly derive isSnapshot from git state so ci-release behaves correctly
+// in any context (tag push, branch push, or local invocation)
+ThisBuild / isSnapshot := {
+  dynverGitDescribeOutput.value.forall(out =>
+    out.commitSuffix.distance > 0 || out.isDirty()
+  )
+}
+
 // ===== Java 21 Migration Configuration =====
 
 // Enforce Java 21 requirement at build time

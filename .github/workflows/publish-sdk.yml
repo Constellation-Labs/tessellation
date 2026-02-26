@@ -1,0 +1,38 @@
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"       # stable: v4.1.0
+      - "v[0-9]+.[0-9]+.[0-9]+-rc.*"  # release candidates: v4.1.0-rc.1
+
+name: Publish SDK
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish SDK to Sonatype Central
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java and scala
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          JAVA_VERSION: 21
+        uses: "./.github/templates/actions/setup_java_and_scala"
+
+      - name: Publish SDK module to Sonatype Central
+        run: sbt ci-release
+        env:
+          # Use sonatypeCentralRelease (sbt-sonatype) instead of sonaRelease (sbt 1.11.0+)
+          # Required because project is on sbt 1.9.8
+          CI_SONATYPE_RELEASE: sonatypeCentralRelease
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
+          PGP_SECRET: ${{ secrets.PGP_SECRET }}
+          SONATYPE_PASSWORD: ${{ secrets.MVN_PASSWORD }}
+          SONATYPE_USERNAME: ${{ secrets.MVN_USERNAME }}
