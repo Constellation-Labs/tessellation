@@ -13,8 +13,6 @@ permissions:
 jobs:
   build:
     name: Release
-    outputs:
-      release_tag: ${{ steps.create_tag.outputs.release_tag }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -34,7 +32,7 @@ jobs:
           fi
 
       - name: Check branch and abort if necessary
-        if: env.TAG_EXISTS == 'true' && github.ref_name == 'release/integrationnet'
+        if: env.TAG_EXISTS == 'true'
         run: |
           echo "Aborting the action because the release should already exist."
           exit 1
@@ -54,17 +52,13 @@ jobs:
       - name: Get the release version
         id: get_version
         run: |
-          {
-            if [[ "${{ github.ref_name }}" == "release/mainnet" ]]; then
-              echo 'VERSION<<EOF'
-              npx commit-and-tag-version --dry-run | grep -oP 'tagging release v\K[0-9]+\.[0-9]+\.[0-9]+'
-              echo EOF
-            elif [[ "${{ github.ref_name }}" == "release/integrationnet" ]]; then
-              echo 'VERSION<<EOF'
-              npx commit-and-tag-version --dry-run --prerelease rc | grep -oP 'tagging release v\K(.*)'
-              echo EOF
-            fi
-          } >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.ref_name }}" == "release/mainnet" ]]; then
+            VERSION=$(npx commit-and-tag-version --dry-run | grep -oP 'tagging release v\K[0-9]+\.[0-9]+\.[0-9]+')
+          elif [[ "${{ github.ref_name }}" == "release/integrationnet" ]]; then
+            VERSION=$(npx commit-and-tag-version --dry-run --prerelease rc | grep -oP 'tagging release v\K(.*)')
+          fi
+          [ -n "$VERSION" ] || { echo "ERROR: Failed to extract version from commit-and-tag-version"; exit 1; }
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build Changelog
         id: get_changelog
@@ -87,9 +81,8 @@ jobs:
         run: |
           echo "Release-As: $VERSION" >> $GITHUB_STEP_SUMMARY
           git tag -a v$VERSION -m "Release $VERSION"
-          git push origin v$VERSION -f
+          git push origin v$VERSION
           echo "release_tag=v$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Debug: Setting release_tag output to v$VERSION"
 
       - name: Assembly 🚀
         run: sbt 'keytool/assembly;wallet/assembly;dagL0/assembly;dagL1/assembly'
@@ -150,41 +143,3 @@ jobs:
             ./cl-dag-l1.sha256
             ./mainnet/mainnet-seedlist
 
-  sonatype-publish:
-    name: Publish SDK artifact to Sonatype Central
-    runs-on: ubuntu-22.04
-    needs: build
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Java and scala
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          JAVA_VERSION: 21
-        uses: "./.github/templates/actions/setup_java_and_scala"
-
-      - name: Debug job outputs
-        run: |
-          echo "Received release_tag as '${{ needs.build.outputs.release_tag }}'"
-
-      - name: Publish SDK module to Sonatype Central
-        run: |
-          echo "Publishing with tag: $RELEASE_TAG"
-          sbt ci-release
-        env:
-          # RELEASE_TAG for version calculation in build.sbt
-          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
-          # Override GITHUB_REF so ci-release takes the tag (release) code path
-          # (workflow triggers on branch push, not tag push, so GITHUB_REF is refs/heads/...)
-          GITHUB_REF: refs/tags/${{ needs.build.outputs.release_tag }}
-          # Use sonatypeCentralRelease (sbt-sonatype) instead of sonaRelease (sbt 1.11.0+)
-          # Required because project is on sbt 1.9.8
-          CI_SONATYPE_RELEASE: sonatypeCentralRelease
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
-          PGP_SECRET: ${{ secrets.PGP_SECRET }}
-          SONATYPE_PASSWORD: ${{ secrets.MVN_PASSWORD }}
-          SONATYPE_USERNAME: ${{ secrets.MVN_USERNAME }}

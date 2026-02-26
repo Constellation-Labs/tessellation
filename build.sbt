@@ -34,7 +34,7 @@ ThisBuild / scalafixDependencies += Libraries.scalafixRules
 //   Local dev               → 4.1.0+3.abc1234.local
 ThisBuild / version := {
   // Priority 1: Explicit RELEASE_TAG override
-  sys.env.get("RELEASE_TAG").map(_.stripPrefix("v")).getOrElse {
+  sys.env.get("RELEASE_TAG").filter(_.nonEmpty).map(_.stripPrefix("v")).getOrElse {
     // Priority 2 & 3: Derive from git via sbt-dynver
     val dynverOutput = dynverGitDescribeOutput.value
     val buildId = sys.env.get("GITHUB_RUN_NUMBER").map(n => s"build$n").getOrElse("local")
@@ -72,6 +72,14 @@ ThisBuild / version := {
 
 // Disable dynver's Sonatype snapshot suffix (we use +metadata format for dev versions)
 ThisBuild / dynverSonatypeSnapshots := false
+
+// Explicitly derive isSnapshot from git state so ci-release behaves correctly
+// in any context (tag push, branch push, or local invocation)
+ThisBuild / isSnapshot := {
+  dynverGitDescribeOutput.value.forall(out =>
+    out.commitSuffix.distance > 0 || out.isDirty()
+  )
+}
 
 // ===== Java 21 Migration Configuration =====
 

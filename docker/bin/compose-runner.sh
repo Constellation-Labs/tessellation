@@ -91,18 +91,11 @@ docker network create \
   --subnet=${NET_PREFIX}.0/24 \
   tessellation_common
 
+# Phase 1: Start GL0 nodes first so they are ready before GL1 starts.
+# GL1 nodes crash if GL0 isn't ready for L0PeerDiscovery, and the join state
+# machine does not recover (state gets stuck at SessionStarted).
 for i in 0 1 2; do
   cd ./nodes/$i/
-
-  export PROFILE_GL0_ARG=""
-  if [ "$i" -lt "$NUM_GL0_NODES" ]; then
-    export PROFILE_GL0_ARG="--profile l0"
-  fi
-
-  export PROFILE_GL1_ARG=""
-  if [ "$i" -lt "$NUM_GL1_NODES" ]; then
-    export PROFILE_GL1_ARG="--profile l1"
-  fi
 
   docker compose -f docker-compose.test.yaml \
   -f docker-compose.yaml \
@@ -116,15 +109,46 @@ for i in 0 1 2; do
   cp ../../docker/docker-compose.metagraph-test.yaml . ;
   cp ../../docker/docker-compose.metagraph-genesis.yaml . ;
 
-  docker_additional_args="$PROFILE_GL0_ARG $PROFILE_GL1_ARG"
-  echo "docker_additional_args: $docker_additional_args"
-  docker_additional_args=$(echo $docker_additional_args | xargs)
-
-  if [ -n "$docker_additional_args" ]; then
+  if [ "$i" -lt "$NUM_GL0_NODES" ]; then
+    echo "Starting GL0 node $i"
     docker compose -f docker-compose.test.yaml \
     -f docker-compose.yaml \
     -f docker-compose.volumes.yaml \
-    $docker_additional_args \
+    --profile l0 \
+    up -d
+  fi
+
+  cd ../../
+done
+
+# Wait for GL0 cluster to become ready before starting GL1
+echo "Waiting for GL0 nodes to become ready..."
+GL0_READY_RETRIES=60
+for attempt in $(seq 1 $GL0_READY_RETRIES); do
+  GL0_CLUSTER=$(curl -s http://localhost:${DAG_L0_PORT_PREFIX}00/cluster/info 2>/dev/null || echo "")
+  if [ -n "$GL0_CLUSTER" ] && [ "$GL0_CLUSTER" != "null" ]; then
+    GL0_COUNT=$(echo "$GL0_CLUSTER" | jq 'length' 2>/dev/null || echo "0")
+    if [ "$GL0_COUNT" = "$NUM_GL0_NODES" ]; then
+      echo "GL0 cluster ready with $GL0_COUNT nodes"
+      break
+    fi
+  fi
+  if [ "$attempt" -eq "$GL0_READY_RETRIES" ]; then
+    echo "WARNING: GL0 cluster not fully ready after $GL0_READY_RETRIES attempts, proceeding anyway"
+  fi
+  sleep 3
+done
+
+# Phase 2: Start GL1 nodes now that GL0 is ready
+for i in 0 1 2; do
+  cd ./nodes/$i/
+
+  if [ "$i" -lt "$NUM_GL1_NODES" ]; then
+    echo "Starting GL1 node $i"
+    docker compose -f docker-compose.test.yaml \
+    -f docker-compose.yaml \
+    -f docker-compose.volumes.yaml \
+    --profile l1 \
     up -d
   fi
 
