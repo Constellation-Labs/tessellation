@@ -715,12 +715,9 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
   )
   logWorkflow.info('Wallet balance updated')
 
-  let ordinal
-  await withRetry(
-    async () => {
-      const snapshot = await fetchSnapshot(urls, ordinal ? ordinal : 'latest')
-
-      ordinal = snapshot.value.ordinal
+  await withRetryOrdinal(
+    async ({ ordinal }) => {
+      const snapshot = await fetchSnapshot(urls, ordinal)
 
       await assertRewardTxnInSnapshot(
         snapshot,
@@ -735,12 +732,11 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
       )
     },
     {
-      maxAttempts: 5,
-      interval: 1,
-      handleError: () => {
-        // iterate backwards from latest to find snapshot w/rewards
-        ordinal--
-      },
+      globalL0Url: urls.globalL0Url,
+      name: 'assertRewardAndTokenUnlock',
+      maxOrdinalMisses: 5,
+      maxStalledChecks: 10,
+      interval: 3000,
     },
   )
 
