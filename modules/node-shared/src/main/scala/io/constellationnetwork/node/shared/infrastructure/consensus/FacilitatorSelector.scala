@@ -17,8 +17,8 @@ import io.constellationnetwork.security.hash.Hash
   *   1. Computing a per-peer score as `SHA-256(entropy ++ peerId)` 2. Ordering peers by this score (ascending) 3. Taking the first M peers
   *      (where M = maxFacilitatorCount)
   *
-  * This is a '''rendezvous hashing''' (Highest Random Weight) scheme. Each peer's score is independently derived from the entropy, producing
-  * IID uniform selection probabilities.
+  * This is a '''rendezvous hashing''' (Highest Random Weight) scheme. Each peer's score is independently derived from the entropy,
+  * producing IID uniform selection probabilities.
   *
   * ==Properties==
   *

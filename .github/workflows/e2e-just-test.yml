@@ -1,0 +1,112 @@
+name: E2E Test (Just)
+
+on:
+  pull_request:
+    branches: [develop]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      debug_enabled:
+        type: boolean
+        description: 'Enable debug logging (sets BASH_DEBUG_MODE=true)'
+        required: false
+        default: false
+
+jobs:
+  e2e-just-test:
+    runs-on: ubuntu-latest-m
+    timeout-minutes: 40
+
+    env:
+      BASH_DEBUG_MODE: ${{ github.event.inputs.debug_enabled || 'false' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Installing node dependencies
+        shell: bash
+        run: |
+          npm i @stardust-collective/dag4@v2.8.0 
+          npm i js-sha256
+          npm i axios
+          npm i brotli
+          npm i zod
+          npm i elliptic
+
+      - name: Cache SBT dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.coursier
+            ~/.cache/coursier
+          key: ${{ runner.os }}-sbt-${{ hashFiles('build.sbt', 'project/*.scala', 'project/*.sbt', 'project/build.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-sbt-
+
+      - name: Install just
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+          echo "/usr/local/bin" >> $GITHUB_PATH
+
+      - name: Install sbt
+        run: |
+          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo gpg --dearmor -o /usr/share/keyrings/sbt-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/sbt-archive-keyring.gpg] https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+          sudo apt-get update
+          sudo apt-get install -y sbt
+
+      - name: Create runner-logs directory
+        run: mkdir -p runner-logs
+
+      - name: Run E2E tests
+        run: just test
+
+      - name: Collect Docker container logs
+        if: always()
+        run: |
+          echo "=== Collecting Docker Container Logs ==="
+
+          # Container status
+          docker ps -a > runner-logs/container-status.txt 2>&1
+
+          # GL0 node logs
+          for i in 0 1 2; do
+            docker logs "gl0-$i" > "runner-logs/gl0-$i.log" 2>&1 || echo "No gl0-$i container"
+          done
+
+          # GL1 node logs
+          for i in 0 1 2; do
+            docker logs "gl1-$i" > "runner-logs/gl1-$i.log" 2>&1 || echo "No gl1-$i container"
+          done
+
+          # Collect node log directories (mounted volumes)
+          for i in 0 1 2; do
+            cp -r "nodes/$i/gl0-logs" "runner-logs/node-$i-gl0-logs" 2>/dev/null || true
+            cp -r "nodes/$i/gl1-logs" "runner-logs/node-$i-gl1-logs" 2>/dev/null || true
+          done
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-just-test-logs-${{ github.run_number }}
+          path: runner-logs/
+          if-no-files-found: warn
+          retention-days: 7
