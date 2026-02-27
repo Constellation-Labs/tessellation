@@ -16,21 +16,21 @@ const createConfig = () => {
 
 const checkCurrencyL1Node = async (config) => {
     const { currencyL1PortPrefix } = config
-    const infos = [
-        {
-            name: 'Currency L1 - 1',
-            baseUrl: `http://localhost:${currencyL1PortPrefix}00`
-        },
-        {
-            name: 'Currency L1 - 2',
-            baseUrl: `http://localhost:${currencyL1PortPrefix}10`
-        },
-        {
-            name: 'Currency L1 - 3',
-            baseUrl: `http://localhost:${currencyL1PortPrefix}20`
-        }
-    ];
-    await clusterCheck( infos, false, 'Currency L1', 3, false );
+    const host = process.env.TEST_HOST || 'http://localhost';
+    const isRemote = host && host !== 'http://localhost';
+    const cl1Url = process.env.CL1_URL || `${host}:${currencyL1PortPrefix}00`;
+
+    if (isRemote) {
+        const infos = [{ name: 'Currency L1', baseUrl: cl1Url }];
+        await clusterCheck( infos, false, 'Currency L1', 1, false );
+    } else {
+        const infos = [
+            { name: 'Currency L1 - 1', baseUrl: `${host}:${currencyL1PortPrefix}00` },
+            { name: 'Currency L1 - 2', baseUrl: `${host}:${currencyL1PortPrefix}10` },
+            { name: 'Currency L1 - 3', baseUrl: `${host}:${currencyL1PortPrefix}20` },
+        ];
+        await clusterCheck( infos, false, 'Currency L1', 3, false );
+    }
 };
 
 const main = async () => {

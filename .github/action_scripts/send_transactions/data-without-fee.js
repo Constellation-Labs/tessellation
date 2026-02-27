@@ -97,9 +97,10 @@ const sendDataTransactionsUsingUrls = async (
 const sendDataTransaction = async () => {
     const {dagL0PortPrefix, metagraphL0PortPrefix, dataL1PortPrefix, privateKey} = createConfig()
 
-    const globalL0Url = `http://localhost:${dagL0PortPrefix}00`;
-    const metagraphL0Url = `http://localhost:${metagraphL0PortPrefix}00`;
-    const metagraphL1DataUrl = `http://localhost:${dataL1PortPrefix}00`;
+    const host = process.env.TEST_HOST || 'http://localhost';
+    const globalL0Url = process.env.GL0_URL || `${host}:${dagL0PortPrefix}00`;
+    const metagraphL0Url = process.env.ML0_URL || `${host}:${metagraphL0PortPrefix}00`;
+    const metagraphL1DataUrl = process.env.DL1_URL || `${host}:${dataL1PortPrefix}00`;
 
     const address = await sendDataTransactionsUsingUrls(globalL0Url, metagraphL1DataUrl, privateKey);
 

@@ -3,6 +3,20 @@ assemble_all() {
   sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
 }
 
+# Fast path: skip all assembly when docker/jars/ is pre-populated (e.g., from CI artifact cache)
+if [ "$SKIP_ASSEMBLY" = "true" ] && [ -f "$PROJECT_ROOT/docker/jars/gl0.jar" ] && [ -s "$PROJECT_ROOT/docker/jars/gl0.jar" ]; then
+  if [ -z "$METAGRAPH" ] || { [ -f "$PROJECT_ROOT/docker/jars/ml0.jar" ] && [ -s "$PROJECT_ROOT/docker/jars/ml0.jar" ]; }; then
+    echo "Pre-built JARs found in docker/jars/, skipping assembly"
+    if [ -z "$METAGRAPH" ]; then
+      touch "$PROJECT_ROOT/docker/jars/ml0.jar"
+      touch "$PROJECT_ROOT/docker/jars/cl1.jar"
+      touch "$PROJECT_ROOT/docker/jars/dl1.jar"
+    fi
+    show_time "Assembly (skipped - using pre-built JARs)"
+    cd $PROJECT_ROOT
+    return 0 2>/dev/null || true
+  fi
+fi
 
 show_time "Starting assembly"
 
@@ -89,8 +103,8 @@ if [ "$PUBLISH" == "true" ]; then
     echo "  Note: Metagraph builds require tessellation-sdk ${HYPERGRAPH_RELEASE#v} from Maven Central."
     echo "  SNAPSHOT versions are not published - use a tagged release."
   else
-    echo "Publishing local"
-    sbt --error sdk/publishLocal
+    echo "Publishing local with version: $TESSELLATION_VERSION"
+    sbt --error "set ThisBuild / version := \"$TESSELLATION_VERSION\"" sdk/publishLocal
   fi
 fi
 

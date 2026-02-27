@@ -13,12 +13,10 @@ on:
         default: false
 
 jobs:
-  e2e-just-test:
+  build:
+    name: Build JARs
     runs-on: ubuntu-latest-m
-    timeout-minutes: 40
-
-    env:
-      BASH_DEBUG_MODE: ${{ github.event.inputs.debug_enabled || 'false' }}
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
@@ -31,21 +29,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-
-      - name: Setup Node.js 18
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-
-      - name: Installing node dependencies
-        shell: bash
-        run: |
-          npm i @stardust-collective/dag4@v2.8.0 
-          npm i js-sha256
-          npm i axios
-          npm i brotli
-          npm i zod
-          npm i elliptic
 
       - name: Cache SBT dependencies
         uses: actions/cache@v4
@@ -72,11 +55,89 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y sbt
 
+      - name: Build all JARs
+        run: just build --use-test-metagraph --num-gl0=3
+
+      - name: Upload JARs
+        uses: actions/upload-artifact@v4
+        with:
+          name: tessellation-jars
+          path: docker/jars/
+          retention-days: 1
+
+  e2e-test:
+    name: E2E - ${{ matrix.test-group.name }}
+    needs: build
+    runs-on: ubuntu-latest-m
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        test-group:
+          - { name: dag-cluster,            tests: "dag-cluster" }
+          - { name: delegated-staking,      tests: "delegated-staking" }
+          - { name: token-lock-replacement, tests: "token-lock-replacement" }
+          - { name: currency,               tests: "currency" }
+          - { name: rewards,                tests: "rewards" }
+          - { name: token-locks,            tests: "token-locks" }
+          - { name: allow-spends,           tests: "allow-spends" }
+          - { name: spend,                  tests: "spend" }
+
+    env:
+      BASH_DEBUG_MODE: ${{ github.event.inputs.debug_enabled || 'false' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Installing node dependencies
+        shell: bash
+        run: |
+          npm i @stardust-collective/dag4@v2.8.0
+          npm i js-sha256
+          npm i axios
+          npm i brotli
+          npm i zod
+          npm i elliptic
+
+      - name: Install just
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+          echo "/usr/local/bin" >> $GITHUB_PATH
+
+      - name: Install sbt
+        run: |
+          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo gpg --dearmor -o /usr/share/keyrings/sbt-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/sbt-archive-keyring.gpg] https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+          sudo apt-get update
+          sudo apt-get install -y sbt
+
+      - name: Download pre-built JARs
+        uses: actions/download-artifact@v4
+        with:
+          name: tessellation-jars
+          path: docker/jars/
+
       - name: Create runner-logs directory
         run: mkdir -p runner-logs
 
       - name: Run E2E tests
-        run: just test
+        run: just test --skip-assembly --test=${{ matrix.test-group.tests }}
 
       - name: Collect Docker container logs
         if: always()
@@ -96,6 +157,21 @@ jobs:
             docker logs "gl1-$i" > "runner-logs/gl1-$i.log" 2>&1 || echo "No gl1-$i container"
           done
 
+          # ML0 node logs
+          for i in 0 1 2; do
+            docker logs "ml0-$i" > "runner-logs/ml0-$i.log" 2>&1 || echo "No ml0-$i container"
+          done
+
+          # CL1 node logs
+          for i in 0 1 2; do
+            docker logs "cl1-$i" > "runner-logs/cl1-$i.log" 2>&1 || echo "No cl1-$i container"
+          done
+
+          # DL1 node logs
+          for i in 0 1 2; do
+            docker logs "dl1-$i" > "runner-logs/dl1-$i.log" 2>&1 || echo "No dl1-$i container"
+          done
+
           # Collect node log directories (mounted volumes)
           for i in 0 1 2; do
             cp -r "nodes/$i/gl0-logs" "runner-logs/node-$i-gl0-logs" 2>/dev/null || true
@@ -106,7 +182,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-just-test-logs-${{ github.run_number }}
+          name: e2e-${{ matrix.test-group.name }}-logs-${{ github.run_number }}
           path: runner-logs/
           if-no-files-found: warn
           retention-days: 7

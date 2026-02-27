@@ -431,10 +431,10 @@ const sendTransactions = async () => {
 
   const networkOptions = {
     metagraphId: 'custom_id',
-    l0GlobalUrl: `http://localhost:${dagL0PortPrefix}00`,
-    dagL1UrlFirstNode: `http://localhost:${dagL1PortPrefix}00`,
-    l0MetagraphUrl: `http://localhost:${metagraphL0PortPrefix}00`,
-    l1MetagraphUrl: `http://localhost:${currencyL1PortPrefix}00`,
+    l0GlobalUrl: process.env.GL0_URL || `${process.env.TEST_HOST || 'http://localhost'}:${dagL0PortPrefix}00`,
+    dagL1UrlFirstNode: process.env.GL1_URL || `${process.env.TEST_HOST || 'http://localhost'}:${dagL1PortPrefix}00`,
+    l0MetagraphUrl: process.env.ML0_URL || `${process.env.TEST_HOST || 'http://localhost'}:${metagraphL0PortPrefix}00`,
+    l1MetagraphUrl: process.env.CL1_URL || `${process.env.TEST_HOST || 'http://localhost'}:${currencyL1PortPrefix}00`,
   }
 
   await sendTransactionsUsingUrls(networkOptions)

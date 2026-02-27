@@ -9,10 +9,10 @@ default:
 _check_deps:
 	@bash docker/bin/install_dependencies.sh
 
-# Main test command recompile GL0 & setup docker environment `just test --skip-assembly` to restart without assembling.
+# Main test command: recompile, setup docker environment, run all e2e tests (including metagraph). Use --test=<name> to run specific tests, --list-tests to see available tests, --skip-assembly to reuse JARs.
 test *extra_args:
 	@just _check_deps
-	@bash docker/bin/compose-runner.sh {{ extra_args }}
+	@bash docker/bin/compose-runner.sh --use-test-metagraph --num-gl0=3 {{ extra_args }}
 
 # Bring up the default test environment, starting docker images but without running any tests or checks
 # Use --hypergraph-release=<tag> to use pre-built JARs from a release (e.g., --hypergraph-release=v3.5.11)
