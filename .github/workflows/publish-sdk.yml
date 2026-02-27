@@ -1,4 +1,11 @@
 on:
+  # Triggered by release.yml after creating a tag (via repository_dispatch)
+  # GITHUB_TOKEN can trigger repository_dispatch without needing a PAT
+  # https://github.blog/changelog/2022-09-08-github-actions-use-github_token-with-workflow_dispatch-and-repository_dispatch/
+  repository_dispatch:
+    types: [publish-sdk]
+
+  # Also supports direct tag push triggers (e.g., manual tag push with a PAT)
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"       # stable: v4.1.0
@@ -14,8 +21,22 @@ jobs:
     name: Publish SDK to Sonatype Central
     runs-on: ubuntu-22.04
     steps:
+      - name: Resolve tag ref
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            TAG="${{ github.event.client_payload.tag }}"
+          else
+            TAG="${{ github.ref }}"
+            TAG="${TAG#refs/tags/}"
+          fi
+          [ -n "$TAG" ] || { echo "ERROR: No tag resolved"; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Publishing SDK for tag: $TAG"
+
       - uses: actions/checkout@v4
         with:
+          ref: ${{ steps.resolve.outputs.tag }}
           fetch-depth: 0
 
       - name: Setup Java and scala
@@ -26,8 +47,14 @@ jobs:
         uses: "./.github/templates/actions/setup_java_and_scala"
 
       - name: Publish SDK module to Sonatype Central
-        run: sbt ci-release
+        run: |
+          # ci-release checks GITHUB_REF to detect tag context.
+          # For repository_dispatch, GITHUB_REF points to the default branch,
+          # so we override it in the shell environment for the sbt child process.
+          export GITHUB_REF="refs/tags/$TAG"
+          sbt ci-release
         env:
+          TAG: ${{ steps.resolve.outputs.tag }}
           # Use sonatypeCentralRelease (sbt-sonatype) instead of sonaRelease (sbt 1.11.0+)
           # Required because project is on sbt 1.9.8
           CI_SONATYPE_RELEASE: sonatypeCentralRelease

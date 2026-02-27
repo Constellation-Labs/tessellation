@@ -81,6 +81,10 @@ ThisBuild / isSnapshot := {
   )
 }
 
+// Sonatype Central publishing — required by sbt-ci-release (+publishSigned)
+// Modules with `publish / skip := true` are unaffected; only `sdk` publishes
+ThisBuild / publishTo := sonatypePublishToBundle.value
+
 // ===== Java 21 Migration Configuration =====
 
 // Enforce Java 21 requirement at build time
