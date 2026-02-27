@@ -143,3 +143,22 @@ jobs:
             ./cl-dag-l1.sha256
             ./mainnet/mainnet-seedlist
 
+      - name: Trigger SDK publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ steps.get_version.outputs.VERSION }}
+        run: |
+          # GITHUB_TOKEN events are suppressed for most triggers, but
+          # repository_dispatch is explicitly exempted from this restriction.
+          # https://github.blog/changelog/2022-09-08-github-actions-use-github_token-with-workflow_dispatch-and-repository_dispatch/
+          HTTP_CODE=$(curl -s -o /dev/stderr -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/dispatches" \
+            -d "{\"event_type\":\"publish-sdk\",\"client_payload\":{\"tag\":\"$TAG\"}}")
+          if [ "$HTTP_CODE" -ne 204 ]; then
+            echo "ERROR: SDK publish dispatch returned HTTP $HTTP_CODE (expected 204)"
+            exit 1
+          fi
+          echo "Dispatched publish-sdk for $TAG"
+
