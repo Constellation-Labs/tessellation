@@ -104,13 +104,13 @@ const assertClusterSize = async (clusterUrl, expectedSize, name) => {
   const clusterInfo = await fetchData(clusterUrl);
   const clusterSize = clusterInfo.length;
 
-  if (clusterSize !== expectedSize) {
+  if (clusterSize < expectedSize) {
     throw Error(
-      `Cluster ${name} size is different than expected. Actual: ${clusterSize}. Expected: ${expectedSize}`
+      `Cluster ${name} size is less than expected. Actual: ${clusterSize}. Expected: >= ${expectedSize}`
     );
   }
 
-  console.log(`Cluster ${name} with expected size of ${expectedSize}`);
+  console.log(`Cluster ${name} with size ${clusterSize} (>= ${expectedSize} expected)`);
 };
 
 const clusterCheck = async (
@@ -156,42 +156,45 @@ const clusterCheck = async (
   }
 };
 
+const isRemoteHost = () => {
+  const host = process.env.TEST_HOST;
+  return host && host !== 'http://localhost';
+};
+
 const checkGlobalL0Node = async (config) => {
   const { dagL0PortPrefix } = config
-  const infos = [
-    {
-      name: 'Global L0 Genesis',
-      baseUrl: `http://localhost:${dagL0PortPrefix}00`
-    },
-    {
-      name: 'Global L0 Validator 1',
-      baseUrl: `http://localhost:${dagL0PortPrefix}10`
-    },
-    {
-      name: 'Global L0 Validator 2',
-      baseUrl: `http://localhost:${dagL0PortPrefix}20`
-    }
-  ];
-  await clusterCheck(infos, true, 'Global L0', 3, true);
+  const host = process.env.TEST_HOST || 'http://localhost';
+  const gl0Url = process.env.GL0_URL || `${host}:${dagL0PortPrefix}00`;
+
+  if (isRemoteHost()) {
+    const infos = [{ name: 'Global L0', baseUrl: gl0Url }];
+    await clusterCheck(infos, true, 'Global L0', 1, true);
+  } else {
+    const infos = [
+      { name: 'Global L0 Genesis', baseUrl: `${host}:${dagL0PortPrefix}00` },
+      { name: 'Global L0 Validator 1', baseUrl: `${host}:${dagL0PortPrefix}10` },
+      { name: 'Global L0 Validator 2', baseUrl: `${host}:${dagL0PortPrefix}20` },
+    ];
+    await clusterCheck(infos, true, 'Global L0', 3, true);
+  }
 };
 
 const checkCurrencyL0Node = async (config) => {
   const { metagraphL0PortPrefix } = config
-  const infos = [
-    {
-      name: 'Currency L0 - 1',
-      baseUrl: `http://localhost:${metagraphL0PortPrefix}00`
-    },
-    {
-      name: 'Currency L0 - 2',
-      baseUrl: `http://localhost:${metagraphL0PortPrefix}10`
-    },
-    {
-      name: 'Currency L0 - 3',
-      baseUrl: `http://localhost:${metagraphL0PortPrefix}20`
-    }
-  ];
-  await clusterCheck(infos, true, 'Currency L0', 3, false);
+  const host = process.env.TEST_HOST || 'http://localhost';
+  const ml0Url = process.env.ML0_URL || `${host}:${metagraphL0PortPrefix}00`;
+
+  if (isRemoteHost()) {
+    const infos = [{ name: 'Currency L0', baseUrl: ml0Url }];
+    await clusterCheck(infos, true, 'Currency L0', 1, false);
+  } else {
+    const infos = [
+      { name: 'Currency L0 - 1', baseUrl: `${host}:${metagraphL0PortPrefix}00` },
+      { name: 'Currency L0 - 2', baseUrl: `${host}:${metagraphL0PortPrefix}10` },
+      { name: 'Currency L0 - 3', baseUrl: `${host}:${metagraphL0PortPrefix}20` },
+    ];
+    await clusterCheck(infos, true, 'Currency L0', 3, false);
+  }
 };
 
 module.exports = {

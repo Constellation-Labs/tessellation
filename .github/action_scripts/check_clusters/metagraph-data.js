@@ -17,36 +17,27 @@ const createConfig = () => {
 
 const checkDataL1Node = async (config) => {
     const { dataL1PortPrefix } = config
-    const baseNodes = [
-        {
-            name: 'Data L1 - 1',
-            baseUrl: `http://localhost:${dataL1PortPrefix}00`
-        },
-        {
-            name: 'Data L1 - 2',
-            baseUrl: `http://localhost:${dataL1PortPrefix}10`
-        },
-        {
-            name: 'Data L1 - 3',
-            baseUrl: `http://localhost:${dataL1PortPrefix}20`
-        }
-    ];
-    const extendedNodes = [
-        {
-            name: 'Data L1 - 4',
-            baseUrl: `http://localhost:${dataL1PortPrefix}30`
-        },
-        {
-            name: 'Data L1 - 5',
-            baseUrl: `http://localhost:${dataL1PortPrefix}40`
-        },
-        {
-            name: 'Data L1 - 6',
-            baseUrl: `http://localhost:${dataL1PortPrefix}50`
-        }
-    ];
-    const infos = config.extendedDataL1 ? [...baseNodes, ...extendedNodes] : baseNodes;
-    await clusterCheck( infos, false, 'Data L1', config.extendedDataL1 ? 6 : 3, false );
+    const host = process.env.TEST_HOST || 'http://localhost';
+    const isRemote = host && host !== 'http://localhost';
+    const dl1Url = process.env.DL1_URL || `${host}:${dataL1PortPrefix}00`;
+
+    if (isRemote) {
+        const infos = [{ name: 'Data L1', baseUrl: dl1Url }];
+        await clusterCheck( infos, false, 'Data L1', 1, false );
+    } else {
+        const baseNodes = [
+            { name: 'Data L1 - 1', baseUrl: `${host}:${dataL1PortPrefix}00` },
+            { name: 'Data L1 - 2', baseUrl: `${host}:${dataL1PortPrefix}10` },
+            { name: 'Data L1 - 3', baseUrl: `${host}:${dataL1PortPrefix}20` },
+        ];
+        const extendedNodes = [
+            { name: 'Data L1 - 4', baseUrl: `${host}:${dataL1PortPrefix}30` },
+            { name: 'Data L1 - 5', baseUrl: `${host}:${dataL1PortPrefix}40` },
+            { name: 'Data L1 - 6', baseUrl: `${host}:${dataL1PortPrefix}50` },
+        ];
+        const infos = config.extendedDataL1 ? [...baseNodes, ...extendedNodes] : baseNodes;
+        await clusterCheck( infos, false, 'Data L1', config.extendedDataL1 ? 6 : 3, false );
+    }
 };
 
 const main = async () => {

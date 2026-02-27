@@ -37,6 +37,9 @@ export ML0_PORT_PREFIX=${ML0_PORT_PREFIX:-92}
 export CL1_PORT_PREFIX=${CL1_PORT_PREFIX:-93}
 export DL1_PORT_PREFIX=${DL1_PORT_PREFIX:-94}
 
+# Configurable base host for test URLs (used with port prefixes)
+export TEST_HOST=${TEST_HOST:-"http://localhost"}
+
 # Metagraph specific settings
 export METAGRAPH_ML0=${METAGRAPH_ML0:-true}
 export METAGRAPH_CL1=${METAGRAPH_CL1:-false}
@@ -51,6 +54,8 @@ export DOCKER_PROFILES=${DOCKER_PROFILES:-""}
 
 # Test specific settings
 export USE_TEST_METAGRAPH=${USE_TEST_METAGRAPH:-false}
+export SELECTED_TESTS=${SELECTED_TESTS:-""}
+export LIST_TESTS=${LIST_TESTS:-false}
 
 
 # Store any explicitly-set TESSELLATION_VERSION from environment
@@ -155,18 +160,23 @@ for arg in "$@"; do
       ;;  
     --num-gl0=*)
       export NUM_GL0_NODES="${arg#*=}"
+      export NUM_GL0_NODES_EXPLICIT="${arg#*=}"
       ;;
     --num-gl1=*)
       export NUM_GL1_NODES="${arg#*=}"
+      export NUM_GL1_NODES_EXPLICIT="${arg#*=}"
       ;;
     --num-ml0=*)
       export NUM_ML0_NODES="${arg#*=}"
+      export NUM_ML0_NODES_EXPLICIT="${arg#*=}"
       ;;
     --num-cl1=*)
       export NUM_CL1_NODES="${arg#*=}"
+      export NUM_CL1_NODES_EXPLICIT="${arg#*=}"
       ;;
     --num-dl1=*)
       export NUM_DL1_NODES="${arg#*=}"
+      export NUM_DL1_NODES_EXPLICIT="${arg#*=}"
       ;;
     --skip-metagraph-assembly)
       export SKIP_METAGRAPH_ASSEMBLY=true
@@ -179,6 +189,35 @@ for arg in "$@"; do
       ;;
     --up)
       export DOCKER_UP=true
+      ;;
+    --gl0-url=*)
+      export GL0_URL="${arg#*=}"
+      ;;
+    --gl1-url=*)
+      export GL1_URL="${arg#*=}"
+      ;;
+    --ml0-url=*)
+      export ML0_URL="${arg#*=}"
+      ;;
+    --cl1-url=*)
+      export CL1_URL="${arg#*=}"
+      ;;
+    --dl1-url=*)
+      export DL1_URL="${arg#*=}"
+      ;;
+    --host=*)
+      export TEST_HOST="${arg#*=}"
+      ;;
+    --test=*)
+      test_val="${arg#*=}"
+      if [ -n "$SELECTED_TESTS" ]; then
+        export SELECTED_TESTS="$SELECTED_TESTS,$test_val"
+      else
+        export SELECTED_TESTS="$test_val"
+      fi
+      ;;
+    --list-tests)
+      export LIST_TESTS=true
       ;;
     *)
       echo "Unknown argument: $arg"
@@ -321,8 +360,31 @@ if [ -z "$METAGRAPH" ]; then
     export NUM_DL1_NODES="0"
 fi
 
+# Remote host: default to 1 gl0 node, 1 gl1 node, 0 metagraph nodes for health check
+# unless explicitly overridden via --num-* args
+if [ "$TEST_HOST" != "http://localhost" ]; then
+    export NUM_GL0_NODES=${NUM_GL0_NODES_EXPLICIT:-1}
+    export NUM_GL1_NODES=${NUM_GL1_NODES_EXPLICIT:-1}
+    export NUM_ML0_NODES=${NUM_ML0_NODES_EXPLICIT:-0}
+    export NUM_CL1_NODES=${NUM_CL1_NODES_EXPLICIT:-0}
+    export NUM_DL1_NODES=${NUM_DL1_NODES_EXPLICIT:-0}
+fi
+
 if [ -n "$METAGRAPH" ]; then
     if [ -z "$PUBLISH" ]; then
         export PUBLISH=true
     fi
 fi
+
+# Layer URLs: explicit overrides take priority, otherwise built from TEST_HOST + port prefix
+# When using a remote host, GL1 defaults to port 9010 instead of 9100
+if [ "$TEST_HOST" != "http://localhost" ]; then
+  GL1_DEFAULT_PORT=9010
+else
+  GL1_DEFAULT_PORT="${DAG_L1_PORT_PREFIX}00"
+fi
+export GL0_URL=${GL0_URL:-"${TEST_HOST}:${DAG_L0_PORT_PREFIX}00"}
+export GL1_URL=${GL1_URL:-"${TEST_HOST}:${GL1_DEFAULT_PORT}"}
+export ML0_URL=${ML0_URL:-"${TEST_HOST}:${ML0_PORT_PREFIX}00"}
+export CL1_URL=${CL1_URL:-"${TEST_HOST}:${CL1_PORT_PREFIX}00"}
+export DL1_URL=${DL1_URL:-"${TEST_HOST}:${DL1_PORT_PREFIX}00"}
