@@ -26,8 +26,8 @@ Validated on Testnet (since 2026-02-06) and IntegrationNet (since 2026-02-19) wi
 
 ### Metagraph Operators — Action Required
 
-Update to v4.0.0 **before 2026-03-11** to remain compatible. Key changes: Java 21 runtime, OSGI-INF merge strategy in `build.sbt`, replace `new URL()` with `URI.create().toURL`. No code changes needed for MPT.
+Update your Tessellation dependency to **v4.0.0-rc.10** before 2026-03-11 to remain compatible. This is the version with the correct schema changes for the mainnet migration. Key changes: Java 21 runtime, OSGI-INF merge strategy in `build.sbt`, replace `new URL()` with `URI.create().toURL`. No code changes needed for MPT.
 
 Upgrade guide: https://github.com/Constellation-Labs/tessellation/blob/develop/docs/release/metagraph-upgrade-guide.md
 Release notes: https://github.com/Constellation-Labs/tessellation/blob/develop/docs/release/v4.0.0-mainnet.md
-Release: https://github.com/Constellation-Labs/tessellation/releases
+Release: https://github.com/Constellation-Labs/tessellation/releases/tag/v4.0.0-rc.10
