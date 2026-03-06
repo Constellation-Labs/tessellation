@@ -195,7 +195,7 @@ const testReplaceSameAmount = async (urls, account, nodeIds) => {
         throw e // Other errors propagate
       }
     },
-    { globalL0Url: urls.globalL0Url, name: 'replaceWithSameAmount', maxOrdinalMisses: 5 }
+    { globalL0Url: urls.globalL0Url, name: 'replaceWithSameAmount', maxOrdinalMisses: 10 }
   )
 
   // Verify stake unchanged using ordinal-aware retry
@@ -206,7 +206,7 @@ const testReplaceSameAmount = async (urls, account, nodeIds) => {
       if (!stake) throw new Error('Stake not found')
       return true
     },
-    { globalL0Url: urls.globalL0Url, name: 'verifyStakeExists', maxOrdinalMisses: 3 }
+    { globalL0Url: urls.globalL0Url, name: 'verifyStakeExists', maxOrdinalMisses: 6 }
   )
 
   logWorkflow.info('---- End testReplaceSameAmount ----')
@@ -242,7 +242,7 @@ const testReplaceLessAmount = async (urls, account, existingLockHash, existingAm
         throw e
       }
     },
-    { globalL0Url: urls.globalL0Url, name: 'replaceWithLessAmount', maxOrdinalMisses: 5 }
+    { globalL0Url: urls.globalL0Url, name: 'replaceWithLessAmount', maxOrdinalMisses: 10 }
   )
 
   logWorkflow.info('---- End testReplaceLessAmount ----')
@@ -294,7 +294,7 @@ const testReplaceMinimumIncrease = async (urls, account, existingLockHash, exist
       }
       return true
     },
-    { globalL0Url: urls.globalL0Url, name: 'verifyMinIncreaseUpdate', maxOrdinalMisses: 5, maxStalledChecks: 15 }
+    { globalL0Url: urls.globalL0Url, name: 'verifyMinIncreaseUpdate', maxOrdinalMisses: 10, maxStalledChecks: 30 }
   )
   
   // Brief wait for L1 sync after ordinal progression confirmed
@@ -339,7 +339,7 @@ const testMultipleSequentialReplacements = async (urls, account, currentLockHash
         }
         return true
       },
-      { globalL0Url: urls.globalL0Url, name: `verifySequentialReplacement${i}`, maxOrdinalMisses: 5 }
+      { globalL0Url: urls.globalL0Url, name: `verifySequentialReplacement${i}`, maxOrdinalMisses: 10 }
     )
 
     // IMPORTANT: Update lockHash to the NEW lock for the next iteration
@@ -368,12 +368,12 @@ const testReplaceWhileInWithdrawal = async (urls, account, nodeId) => {
   // Retry on Conflict errors which can happen when L1 hasn't yet synced the latest GL0 state
   const lockAmount = 600000000000 // 6000 DAG
   let lockHash
-  for (let attempt = 1; attempt <= 5; attempt++) {
+  for (let attempt = 1; attempt <= 10; attempt++) {
     try {
       lockHash = await createTokenLock(account, urls, lockAmount)
       break
     } catch (err) {
-      if (err.message && err.message.includes('Conflict') && attempt < 5) {
+      if (err.message && err.message.includes('Conflict') && attempt < 10) {
         logWorkflow.info(`Token lock creation hit Conflict (attempt ${attempt}/5), waiting for L1 sync...`)
         await sleep(5000)
       } else {

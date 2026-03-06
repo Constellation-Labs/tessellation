@@ -227,7 +227,7 @@ const fetchStakeWithRewardsBalance = async (
     },
     {
       name: 'FetchStakeWithRewardsBalance',
-      maxAttempts: 20,
+      maxAttempts: 40,
       interval: 5 * 1000,
       handleError: () => {},
     },
@@ -255,7 +255,7 @@ const createTokenLock = async (account, urls, lockAmount, replaceRef = null, rep
     async () => assertBalanceChange(account, initialBalance - lockAmount + replaceBalance),
     {
       name: 'assertBalanceChangeAfterTokenLock',
-      maxAttempts: 10,
+      maxAttempts: 20,
       interval: 1000,
       handleError: () => {},
     },
@@ -360,8 +360,8 @@ const waitForStakeInclusion = async (urls, address, stakeHash, options = {}) => 
     {
       globalL0Url: urls.globalL0Url,
       name: 'waitForStakeInclusion',
-      maxOrdinalMisses: 5,
-      maxStalledChecks: 15,
+      maxOrdinalMisses: 10,
+      maxStalledChecks: 30,
       interval: 2000,
       ...options
     }
@@ -390,8 +390,8 @@ const waitForStakeWithdrawal = async (urls, address, stakeHash, options = {}) =>
     {
       globalL0Url: urls.globalL0Url,
       name: 'waitForStakeWithdrawal',
-      maxOrdinalMisses: 5,
-      maxStalledChecks: 15,
+      maxOrdinalMisses: 10,
+      maxStalledChecks: 30,
       interval: 2000,
       ...options
     }
@@ -430,8 +430,8 @@ const waitForTokenLockInclusion = async (urls, address, lockHash, options = {}) 
     {
       globalL0Url: urls.globalL0Url,
       name: 'waitForTokenLockInclusion',
-      maxOrdinalMisses: 5,
-      maxStalledChecks: 15,
+      maxOrdinalMisses: 10,
+      maxStalledChecks: 30,
       interval: 2000,
       ...options
     }

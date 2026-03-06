@@ -43,3 +43,8 @@ docker/jars/
 .workspace/
 .claude/*.local.*
 tx-sender.conf
+docker/snapshot-streaming/*.jar
+docker/snapshot-streaming/*.conf
+docker/snapshot-streaming/data/
+docker/snapshot-streaming/.build/
+docker/snapshot-streaming/block-explorer/

@@ -593,7 +593,7 @@ const verifyDoubleSpendInL0 = async (address, hash, l0Url) => {
                 return false;
             }
         },
-        { name: 'L0 double spend verification', maxRetries: 10, interval: 5000 }
+        { name: 'L0 double spend verification', maxRetries: 20, interval: 5000 }
     );
 };
 
@@ -730,7 +730,7 @@ const executeExpiredAllowSpendWorkflow = async () => {
                 {
                     name: 'Expired allow spend verification',
                     interval: 5000,
-                    maxRetries: 10
+                    maxRetries: 20
                 }
             );
 
@@ -1599,7 +1599,7 @@ const waitForAllAllowSpendsToExpire = async (l0Url) => {
     try {
         logWorkflow.info('Waiting for all allow spends to expire...');
 
-        const maxAttempts = 120;
+        const maxAttempts = 240;
         const checkInterval = CONSTANTS.EXPIRATION_VERIFICATION_INTERVAL_MS;
 
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {

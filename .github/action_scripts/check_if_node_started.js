@@ -27,7 +27,7 @@ const main = async () => {
   const url = args.url;
   const clusterName = args.cluster_name || 'Node';
   const waitForReady = args.wait_for_ready === 'true';
-  const maxAttempts = parseInt(args.max_attempts || '30', 10);
+  const maxAttempts = parseInt(args.max_attempts || '60', 10);
   const intervalSeconds = parseInt(args.interval || '10', 10);
 
   console.log(`Starting to check if url: ${url} is started`);

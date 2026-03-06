@@ -11,12 +11,22 @@ on:
         description: 'Enable debug logging (sets BASH_DEBUG_MODE=true)'
         required: false
         default: false
+      snapshot_streaming_branch:
+        type: string
+        description: 'snapshot-streaming branch to build from'
+        required: false
+        default: 'release/mainnet'
+      block_explorer_branch:
+        type: string
+        description: 'block_explorer branch for DB migrations'
+        required: false
+        default: 'increase_delegated_stakes'
 
 jobs:
   build:
     name: Build JARs
-    runs-on: ubuntu-latest-m
-    timeout-minutes: 30
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
 
     steps:
       - name: Checkout code
@@ -56,7 +66,9 @@ jobs:
           sudo apt-get install -y sbt
 
       - name: Build all JARs
-        run: just build --use-test-metagraph --num-gl0=3
+        run: just build --use-test-metagraph --num-gl0=3 --snapshot-streaming-branch=${{ inputs.snapshot_streaming_branch || 'testing' }} --block-explorer-branch=${{ inputs.block_explorer_branch || 'increase_delegated_stakes' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload JARs
         uses: actions/upload-artifact@v4
@@ -65,10 +77,17 @@ jobs:
           path: docker/jars/
           retention-days: 1
 
+      - name: Upload snapshot-streaming JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-streaming-jar
+          path: docker/snapshot-streaming/snapshot-streaming.jar
+          retention-days: 1
+
   e2e-test:
     name: E2E - ${{ matrix.test-group.name }}
     needs: build
-    runs-on: ubuntu-latest-m
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
 
     strategy:
@@ -83,9 +102,11 @@ jobs:
           - { name: token-locks,            tests: "token-locks" }
           - { name: allow-spends,           tests: "allow-spends" }
           - { name: spend,                  tests: "spend" }
+          - { name: snapshot-streaming,    tests: "snapshot-streaming" }
 
     env:
       BASH_DEBUG_MODE: ${{ github.event.inputs.debug_enabled || 'false' }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout code
@@ -133,16 +154,24 @@ jobs:
           name: tessellation-jars
           path: docker/jars/
 
+      - name: Download snapshot-streaming JAR
+        if: matrix.test-group.name == 'snapshot-streaming'
+        uses: actions/download-artifact@v4
+        with:
+          name: snapshot-streaming-jar
+          path: docker/snapshot-streaming/
+
       - name: Create runner-logs directory
         run: mkdir -p runner-logs
 
       - name: Run E2E tests
-        run: just test --skip-assembly --test=${{ matrix.test-group.tests }}
+        run: just test --skip-assembly --test=${{ matrix.test-group.tests }} ${{ matrix.test-group.extra-args || '' }} ${{ matrix.test-group.name == 'snapshot-streaming' && format('--snapshot-streaming-branch={0} --block-explorer-branch={1}', inputs.snapshot_streaming_branch || 'testing', inputs.block_explorer_branch || 'increase_delegated_stakes') || '' }}
 
       - name: Collect Docker container logs
         if: always()
         run: |
           echo "=== Collecting Docker Container Logs ==="
+          mkdir -p runner-logs
 
           # Container status
           docker ps -a > runner-logs/container-status.txt 2>&1
@@ -171,6 +200,10 @@ jobs:
           for i in 0 1 2; do
             docker logs "dl1-$i" > "runner-logs/dl1-$i.log" 2>&1 || echo "No dl1-$i container"
           done
+
+          # Snapshot-streaming logs
+          docker logs "snapshot-streaming" > "runner-logs/snapshot-streaming.log" 2>&1 || echo "No snapshot-streaming container"
+          docker logs "snapshot-streaming-postgres" > "runner-logs/snapshot-streaming-postgres.log" 2>&1 || echo "No snapshot-streaming-postgres container"
 
           # Collect node log directories (mounted volumes)
           for i in 0 1 2; do

@@ -104,8 +104,8 @@ const getLatestSnapshotInfo = async (globalL0Url) => {
 const withRetryOrdinal = async (checkFn, {
     globalL0Url,
     name = 'operation',
-    maxOrdinalMisses = 5,
-    maxStalledChecks = 10,
+    maxOrdinalMisses = 10,
+    maxStalledChecks = 20,
     interval = 3000,
     onOrdinalMiss = null,
     onStalled = null,
