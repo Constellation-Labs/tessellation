@@ -14,6 +14,9 @@ export RELEASE_TAG=${RELEASE_TAG:-""}
 
 export EXTRA_ENV_PATH=${EXTRA_ENV_PATH:-""}
 export EXIT_CODE=${EXIT_CODE:-0}
+export SNAPSHOT_STREAMING_JAR=${SNAPSHOT_STREAMING_JAR:-""}
+export SNAPSHOT_STREAMING_BRANCH=${SNAPSHOT_STREAMING_BRANCH:-"develop"}
+export BLOCK_EXPLORER_BRANCH=${BLOCK_EXPLORER_BRANCH:-"develop"}
 export CL_DOCKER_BIND_INTERFACE=${CL_DOCKER_BIND_INTERFACE:-""}
 export CLEAN_ASSEMBLY=${CLEAN_ASSEMBLY:-false}
 export DO_EXIT=${DO_EXIT:-false}
@@ -139,6 +142,15 @@ for arg in "$@"; do
       ;;
     --hypergraph-release=*)
       export HYPERGRAPH_RELEASE="${arg#*=}"
+      ;;
+    --snapshot-streaming-jar=*)
+      export SNAPSHOT_STREAMING_JAR="${arg#*=}"
+      ;;
+    --snapshot-streaming-branch=*)
+      export SNAPSHOT_STREAMING_BRANCH="${arg#*=}"
+      ;;
+    --block-explorer-branch=*)
+      export BLOCK_EXPLORER_BRANCH="${arg#*=}"
       ;;
     --ml0-path=*)
       export METAGRAPH_ML0_RELATIVE_PATH="${arg#*=}"

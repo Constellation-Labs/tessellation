@@ -50,6 +50,7 @@ if [ "$LIST_TESTS" = "true" ]; then
   echo "  dag-cluster              DAG cluster check"
   echo "  delegated-staking        Delegated staking tests"
   echo "  token-lock-replacement   Token lock replacement edge case tests"
+  echo "  snapshot-streaming       Snapshot streaming indexer E2E test"
   echo ""
   echo "Metagraph tests (require --use-test-metagraph):"
   echo "  currency                 Metagraph currency transaction tests"
@@ -82,6 +83,11 @@ if [ -n "$SELECTED_TESTS" ] && [ -n "$METAGRAPH" ]; then
     export NUM_CL1_NODES=0
     export NUM_DL1_NODES=0
   fi
+fi
+
+# snapshot-streaming build-from-source needs sdk/publishLocal
+if [ -z "$SELECTED_TESTS" ] || echo "$SELECTED_TESTS" | tr ',' '\n' | grep -qx "snapshot-streaming"; then
+  export PUBLISH=${PUBLISH:-true}
 fi
 
 REMOTE_HOST=${TEST_HOST:-}
@@ -130,6 +136,13 @@ else
   echo "------------------------------------------------"
 
 
+  # Build snapshot-streaming JAR (needed before BUILD_ONLY exit so `just build` produces it)
+  if [ -z "$SELECTED_TESTS" ] || echo "$SELECTED_TESTS" | tr ',' '\n' | grep -qx "snapshot-streaming"; then
+    SS_DIR="$PROJECT_ROOT/docker/snapshot-streaming"
+    source "$SS_DIR/build-snapshot-streaming.sh"
+    cd "$PROJECT_ROOT"
+  fi
+
   if [ "$BUILD_ONLY" = "true" ]; then
     echo "Build only mode, skipping container startup and end-to-end tests"
     exit 0
@@ -175,7 +188,7 @@ else
     echo "Waiting for GL0 cluster to be ready before starting GL1..."
     gl0_url="${TEST_HOST:-http://localhost}:${DAG_L0_PORT_PREFIX}00"
     gl0_ready=false
-    for attempt in $(seq 1 60); do
+    for attempt in $(seq 1 120); do
       cluster_info=$(curl -s "${gl0_url}/cluster/info" 2>/dev/null || echo "")
       if [ -n "$cluster_info" ] && echo "$cluster_info" | jq 'length' >/dev/null 2>&1; then
         node_count=$(echo "$cluster_info" | jq 'length')
@@ -185,7 +198,7 @@ else
           break
         fi
       fi
-      echo "GL0 not ready yet (attempt $attempt/60), waiting..."
+      echo "GL0 not ready yet (attempt $attempt/120), waiting..."
       sleep 5
     done
     if [ "$gl0_ready" = "false" ]; then
@@ -270,7 +283,7 @@ else
       echo "Waiting for ML0 to be ready before starting metagraph L1 layers..."
       ml0_url="${TEST_HOST:-http://localhost}:${ML0_PORT_PREFIX}00"
       ml0_ready=false
-      for attempt in $(seq 1 60); do
+      for attempt in $(seq 1 120); do
         cluster_info=$(curl -s "${ml0_url}/cluster/info" 2>/dev/null || echo "")
         if [ -n "$cluster_info" ] && echo "$cluster_info" | jq 'length' >/dev/null 2>&1; then
           node_count=$(echo "$cluster_info" | jq 'length')
@@ -280,7 +293,7 @@ else
             break
           fi
         fi
-        echo "ML0 not ready yet (attempt $attempt/60), waiting..."
+        echo "ML0 not ready yet (attempt $attempt/120), waiting..."
         sleep 5
       done
       if [ "$ml0_ready" = "false" ]; then
@@ -312,6 +325,119 @@ else
     done
   fi
 
+
+  # --- Snapshot-streaming infrastructure ---
+  if [ -z "$SELECTED_TESTS" ] || echo "$SELECTED_TESTS" | tr ',' '\n' | grep -qx "snapshot-streaming"; then
+    echo "================================================"
+    echo "Setting up snapshot-streaming infrastructure"
+    echo "================================================"
+
+    SS_DIR="$PROJECT_ROOT/docker/snapshot-streaming"
+
+    # Build/obtain JAR + SQL
+    source "$SS_DIR/build-snapshot-streaming.sh"
+
+    # Generate application.conf
+    source "$SS_DIR/generate-config.sh"
+
+    export SS_JAR_PATH="$SS_DIR/snapshot-streaming.jar"
+    export SS_CONFIG_PATH="$SS_DIR/application.conf"
+    export SS_DATA_PATH="$SS_DIR/data"
+    mkdir -p "$SS_DATA_PATH"
+
+    # Start postgres
+    echo "Starting snapshot-streaming-postgres..."
+    docker compose -f "$SS_DIR/docker-compose.yaml" up -d snapshot-streaming-postgres
+
+    # Wait for postgres healthy
+    echo "Waiting for snapshot-streaming-postgres to be healthy..."
+    for attempt in $(seq 1 60); do
+      if docker exec snapshot-streaming-postgres pg_isready -U snapshot_streaming >/dev/null 2>&1; then
+        echo "snapshot-streaming-postgres is ready"
+        break
+      fi
+      if [ "$attempt" -eq 60 ]; then
+        echo "ERROR: snapshot-streaming-postgres did not become ready"
+        docker logs snapshot-streaming-postgres || true
+        exit 1
+      fi
+      sleep 2
+    done
+
+    # Apply database schema via block_explorer prisma migrations
+    echo "Applying database schema via block_explorer prisma..."
+    BE_DIR="$SS_DIR/block-explorer"
+    SS_PG_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' snapshot-streaming-postgres)
+    DATABASE_URL="postgresql://snapshot_streaming:snapshot_streaming@${SS_PG_IP}:5432/snapshot_streaming"
+    # Reset schema to ensure clean state
+    docker exec snapshot-streaming-postgres psql -U snapshot_streaming -d snapshot_streaming \
+      -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+    docker run --rm \
+      --network tessellation_common \
+      -v "$BE_DIR/prisma:/app/prisma" \
+      -w /app \
+      -e DATABASE_URL="$DATABASE_URL" \
+      node:20-alpine \
+      sh -c "npx prisma@6.2.1 db push --accept-data-loss --force-reset"
+    echo "Database schema applied"
+
+    # Seed snapshot-streaming with initial snapshot from GL0
+    echo "Seeding snapshot-streaming with initial snapshot from GL0..."
+    gl0_seed_url="${TEST_HOST:-http://localhost}:${DAG_L0_PORT_PREFIX}00"
+
+    # Wait for GL0 to have a few snapshots
+    for attempt in $(seq 1 120); do
+      ordinal_resp=$(curl -sf "$gl0_seed_url/global-snapshots/latest/ordinal" 2>/dev/null || echo "")
+      if [ -n "$ordinal_resp" ]; then
+        latest_ord=$(echo "$ordinal_resp" | jq -r 'if type == "object" then .value else . end' 2>/dev/null || echo "0")
+        if [ "$latest_ord" -ge 2 ] 2>/dev/null; then
+          echo "GL0 has snapshots up to ordinal $latest_ord"
+          break
+        fi
+      fi
+      if [ "$attempt" -eq 120 ]; then
+        echo "ERROR: GL0 did not produce enough snapshots for seeding"
+        exit 1
+      fi
+      sleep 3
+    done
+
+    # Fetch latest combined snapshot + state
+    combined_json=$(curl -sf "$gl0_seed_url/global-snapshots/latest/combined")
+    seed_ordinal=$(echo "$combined_json" | jq '.[0].value.ordinal')
+    echo "Fetched combined snapshot at ordinal $seed_ordinal"
+
+    # Fetch the correct hash for this ordinal
+    hash_resp=$(curl -sf "$gl0_seed_url/global-snapshots/$seed_ordinal/hash")
+    snapshot_hash=$(echo "$hash_resp" | jq -r 'if type == "string" then . else .value // . end' 2>/dev/null || echo "$hash_resp")
+    # Strip any surrounding quotes
+    snapshot_hash=$(echo "$snapshot_hash" | tr -d '"')
+    echo "Snapshot hash: ${snapshot_hash:0:16}..."
+
+    # Compute proofsHash: SHA256 of the sorted proofs JSON (compact, sorted keys, no nulls).
+    # Note: The node uses Brotli-compressed JSON for hashing, which we cannot replicate here.
+    # This simplified hash is sufficient for the E2E test since snapshot-streaming does not
+    # cryptographically verify the seed proofsHash.
+    proofs_hash=$(echo "$combined_json" | jq -cS '.[0].proofs' | shasum -a 256 | awk '{print $1}')
+    echo "Proofs hash: ${proofs_hash:0:16}..."
+
+    # Create SnapshotWithState seed file (gzipped JSON)
+    echo "$combined_json" | jq --arg h "$snapshot_hash" --arg ph "$proofs_hash" '{
+      snapshot: {
+        signed: .[0],
+        hash: $h,
+        proofsHash: $ph
+      },
+      state: .[1]
+    }' | gzip > "$SS_DATA_PATH/seed-snapshot.json.gz"
+    echo "Seed file created at $SS_DATA_PATH/seed-snapshot.json.gz"
+
+    # Start snapshot-streaming
+    echo "Starting snapshot-streaming..."
+    docker compose -f "$SS_DIR/docker-compose.yaml" up -d snapshot-streaming
+
+    show_time "Snapshot-streaming infrastructure started"
+  fi
 
   show_time "Started docker compose"
 
@@ -389,6 +515,50 @@ if should_run_test "token-lock-replacement"; then
   cd $PROJECT_ROOT/.github/action_scripts/delegated_staking
   node token-lock-replacement-edge-cases.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX testTokenLockReplacementEdgeCases
   show_time "Token lock replacement edge case tests completed"
+fi
+
+if should_run_test "snapshot-streaming"; then
+  echo "================================================"
+  echo "Running snapshot-streaming E2E test"
+  echo "================================================"
+  cd $PROJECT_ROOT
+
+  ss_test_passed=false
+  echo "Waiting for snapshot-streaming to index snapshots..."
+  for attempt in $(seq 1 120); do
+    count=$(docker exec snapshot-streaming-postgres psql -U snapshot_streaming -d snapshot_streaming -t -A -c \
+      "SELECT COUNT(*) FROM global_snapshots;" 2>/dev/null || echo "0")
+    count=$(echo "$count" | tr -d '[:space:]')
+
+    if [ "$count" -ge 3 ]; then
+      echo "snapshot-streaming indexed $count global snapshots"
+      max_ordinal=$(docker exec snapshot-streaming-postgres psql -U snapshot_streaming -d snapshot_streaming -t -A -c \
+        "SELECT MAX(ordinal) FROM global_snapshots;" 2>/dev/null || echo "0")
+      max_ordinal=$(echo "$max_ordinal" | tr -d '[:space:]')
+      echo "Max ordinal: $max_ordinal"
+      if [ "$max_ordinal" -gt 0 ]; then
+        ss_test_passed=true
+        break
+      fi
+    fi
+
+    if [ "$((attempt % 10))" -eq 0 ]; then
+      echo "  snapshot count: ${count:-0} (attempt $attempt/120)"
+    fi
+    sleep 5
+  done
+
+  if [ "$ss_test_passed" = "true" ]; then
+    echo "snapshot-streaming E2E test PASSED"
+  else
+    echo "snapshot-streaming E2E test FAILED"
+    echo "--- snapshot-streaming logs ---"
+    docker logs snapshot-streaming 2>&1 | tail -100 || true
+    echo "--- postgres tables ---"
+    docker exec snapshot-streaming-postgres psql -U snapshot_streaming -d snapshot_streaming -c '\dt' || true
+    exit 1
+  fi
+  show_time "Snapshot-streaming E2E test completed"
 fi
 
 # ------------------------------------------------
