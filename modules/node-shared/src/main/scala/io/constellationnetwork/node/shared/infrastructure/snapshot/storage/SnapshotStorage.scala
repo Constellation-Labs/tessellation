@@ -164,7 +164,9 @@ object SnapshotStorage {
                 notPersistedCache.update(current => current + snapshot.ordinal)
             )
           } >>
-          snapshotInfoLocalFileSystemStorage.write(snapshot.ordinal, snapshotInfo) >>
+          snapshotInfoLocalFileSystemStorage.write(snapshot.ordinal, snapshotInfo).handleErrorWith { e =>
+            logger.error(e)(s"Failed writing snapshot info to disk! ordinal=${snapshot.ordinal}")
+          } >>
           snapshotInfoCutoffQueue.offer(snapshot.ordinal) >>
           snapshot.ordinal
             .partialPreviousN(inMemoryCapacity)

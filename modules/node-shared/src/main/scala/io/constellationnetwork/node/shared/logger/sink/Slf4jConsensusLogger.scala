@@ -21,7 +21,7 @@ object Slf4jConsensusLogger {
       private def log(event: String, facilitators: List[PeerId]): F[Unit] =
         ctxRef.get.flatMap { ctx =>
           val ordStr = ctx.ordinal.fold("unknown")(_.value.value.toString)
-          logger.info(s"[CONSENSUS] $event ordinal=$ordStr facilitators=${facilitators.size}")
+          logger.debug(s"[CONSENSUS] $event ordinal=$ordStr facilitators=${facilitators.size}")
         }
 
       def collectingFacilities(fs: List[PeerId]): F[Unit] = log("Collecting facilities", fs)

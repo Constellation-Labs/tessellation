@@ -13,6 +13,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 
+import eu.timepit.refined.auto._
 import monocle.Lens
 
 /** Handles consensus round facilitation, post-consensus scheduling, and stall detection.
@@ -147,25 +148,29 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
       lastResourcesHash: Int,
       lastStatus: Option[Status],
       statusStartTime: FiniteDuration,
-      lockedForStatus: Boolean
+      lockedForStatus: Boolean,
+      noChangeCount: Int,
+      stallCycleCount: Int
     )
 
-    val pollInterval = 100.millis
+    val basePollInterval = 100L
+    val maxPollInterval = 1000L
 
     def getResourcesHash(
       state: ConsensusState[Key, Status, Outcome, Kind],
       resources: ConsensusResources[Artifact, Kind]
     ): Int = {
       val active = state.facilitators.value.toSet -- state.withdrawnFacilitators.value
+      val acksHash = resources.acksMap.size
       ops.maybeCollectingKind(state.status) match {
         case Some(kind) =>
           val getter = ops.kindGetter(kind)
           val respondedPeers = resources.peerDeclarationsMap.collect {
             case (pid, decls) if active.contains(pid) && getter(decls).isDefined => pid
           }
-          respondedPeers.toSet.hashCode()
+          (respondedPeers.toSet, acksHash).hashCode()
         case None =>
-          resources.peerDeclarationsMap.keySet.hashCode()
+          (resources.peerDeclarationsMap.keySet, acksHash).hashCode()
       }
     }
 
@@ -189,24 +194,47 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
                 currentHash = getResourcesHash(state, resources)
                 statusChanged = !ms.lastStatus.contains(state.status)
                 resourcesChanged = currentHash != ms.lastResourcesHash
+                isLocked = state.lockStatus === LockStatus.Closed
+                reopened = state.lockStatus === LockStatus.Reopened && ms.lockedForStatus
 
-                newStatusStartTime = if (statusChanged) now else ms.statusStartTime
+                newStatusStartTime =
+                  if (statusChanged) now
+                  else if (reopened) now // Reset timer after unlock so re-stall waits reStallTimeout
+                  else ms.statusStartTime
                 statusDuration = now - newStatusStartTime
+                newLockedForStatus =
+                  if (statusChanged) false
+                  else if (reopened) false
+                  else ms.lockedForStatus
+                newStallCycleCount =
+                  if (statusChanged) 0
+                  else if (reopened) ms.stallCycleCount
+                  else ms.stallCycleCount
 
-                newLockedForStatus = if (statusChanged) false else ms.lockedForStatus
-
-                _ <- queue.offer(ConsensusCommand.CheckUpdate(key)).whenA(resourcesChanged || statusChanged)
+                _ <- queue.offer(ConsensusCommand.CheckUpdate(key)).whenA(resourcesChanged || statusChanged || isLocked)
 
                 declarationTimeout <- getCurrentDeclarationTimeout
+                effectiveTimeout =
+                  if (ms.stallCycleCount > 0)
+                    config.reStallTimeout.getOrElse(declarationTimeout)
+                  else
+                    declarationTimeout
+                withinStallBudget = ms.stallCycleCount < config.maxStallCycles
+
                 didLock <- handleStall(
                   key = key,
                   state = state,
-                  declarationTimeout = declarationTimeout,
+                  declarationTimeout = effectiveTimeout,
                   statusDuration = statusDuration,
-                  alreadyLocked = newLockedForStatus
+                  alreadyLocked = newLockedForStatus || !withinStallBudget
                 )
 
-                _ <- Temporal[F].sleep(pollInterval)
+                finalStallCycleCount = if (didLock && !ms.lockedForStatus) newStallCycleCount + 1 else newStallCycleCount
+
+                changed = resourcesChanged || statusChanged
+                newNoChangeCount = if (changed) 0 else ms.noChangeCount + 1
+                sleepMs = if (changed) basePollInterval else math.min(basePollInterval * (newNoChangeCount + 1), maxPollInterval)
+                _ <- Temporal[F].sleep(sleepMs.millis)
 
               } yield
                 Left(
@@ -214,7 +242,9 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
                     lastResourcesHash = currentHash,
                     lastStatus = Some(state.status),
                     statusStartTime = newStatusStartTime,
-                    lockedForStatus = didLock
+                    lockedForStatus = didLock,
+                    noChangeCount = newNoChangeCount,
+                    stallCycleCount = finalStallCycleCount
                   )
                 )
           }
@@ -222,7 +252,7 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
 
     for {
       now <- Async[F].monotonic
-      _ <- Async[F].tailRecM(MonitorState(0, None, now, lockedForStatus = false))(monitorStep)
+      _ <- Async[F].tailRecM(MonitorState(0, None, now, lockedForStatus = false, noChangeCount = 0, stallCycleCount = 0))(monitorStep)
     } yield ()
   }
 
@@ -237,6 +267,7 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
 
     if (shouldLock) {
       logger.debug(s"Stall detected at key=$key after ${statusDuration.toSeconds}s, locking and spreading ack") >>
+        Metrics[F].incrementCounter("dag_consensus_stall_detected") >>
         tryLockAndSpreadAck(key, state).as(true)
     } else {
       alreadyLocked.pure[F]
@@ -265,14 +296,10 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
   ): F[Unit] =
     ops.maybeCollectingKind(state.status) match {
       case Some(ackKind) =>
-        if (!state.spreadAckKinds.contains(ackKind)) {
-          logger.debug(s"Spreading ack for key=$key, kind=$ackKind") >>
-            storage.getResources(key).flatMap { resources =>
-              updater.trySpreadAck(key, ackKind, resources).void
-            }
-        } else {
-          Async[F].unit
-        }
+        logger.debug(s"Spreading ack for key=$key, kind=$ackKind") >>
+          storage.getResources(key).flatMap { resources =>
+            updater.trySpreadAck(key, ackKind, resources).void
+          }
       case None =>
         Async[F].unit
     }
