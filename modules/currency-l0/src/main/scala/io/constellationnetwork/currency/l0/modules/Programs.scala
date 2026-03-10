@@ -89,7 +89,8 @@ object Programs {
       storages.globalSnapshotsWithStateFileStorage,
       storages.globalSnapshotsWithStateDeltasFileStorage,
       services.globalSnapshotContextFunctions,
-      storages.combinedCurrencySnapshotCheckpointStorage
+      storages.combinedCurrencySnapshotCheckpointStorage,
+      storages.snapshot
     )
 
     new Programs[F](sharedPrograms.peerDiscovery, globalL0PeerDiscovery, sharedPrograms.joining, download, genesis, rollback) {}

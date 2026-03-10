@@ -36,6 +36,8 @@ import derevo.cats.{eqv, show}
 import derevo.derive
 import eu.timepit.refined.types.all.NonNegLong
 import io.circe.Json
+import org.typelevel.log4cats.SelfAwareStructuredLogger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
@@ -53,6 +55,7 @@ object GlobalSnapshotContextFunctions {
     implicit globalStateProofSelector: GlobalStateProofSelector
   ) =
     new GlobalSnapshotContextFunctions[F] {
+      private val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLogger[F]
 
       // Note: State proof validation is skipped for followers (currency-l0, dag-l1) because:
       // 1. The snapshot was already validated by dag-l0 majority consensus
@@ -323,13 +326,33 @@ object GlobalSnapshotContextFunctions {
             getGlobalSnapshotByOrdinal
           )
 
-        _ <- CannotApplyBlocksError(acceptanceResult.notAccepted.map { case (_, reason) => reason })
-          .raiseError[F, Unit]
+        // For followers (currency-l0, dag-l1, currency-l1), we log warnings instead of raising errors
+        // for blocks, state channels, and rewards validation divergences.
+        // The snapshot was already validated by dag-l0 majority consensus, so local acceptance
+        // divergences on followers should not cause permanent stalls. The same rationale applies
+        // as for skipping state proof validation below.
+        _ <- logger
+          .warn(
+            s"Follower: ${acceptanceResult.notAccepted.size} blocks not accepted at ordinal=${signedArtifact.ordinal.show}. " +
+              s"Reasons: ${acceptanceResult.notAccepted.map { case (_, reason) => reason }.mkString(", ")}. " +
+              s"Continuing since snapshot was already validated by L0 majority consensus."
+          )
           .whenA(acceptanceResult.notAccepted.nonEmpty)
-        _ <- CannotApplyStateChannelsError(returnedSCEvents).raiseError[F, Unit].whenA(returnedSCEvents.nonEmpty)
+        _ <- logger
+          .warn(
+            s"Follower: ${returnedSCEvents.size} state channels returned at ordinal=${signedArtifact.ordinal.show} " +
+              s"for addresses: ${returnedSCEvents.toList.map(_.address).mkString(", ")}. " +
+              s"Continuing since snapshot was already validated by L0 majority consensus."
+          )
+          .whenA(returnedSCEvents.nonEmpty)
         diffRewards = acceptedRewardTxs -- signedArtifact.rewards
-        _ <- CannotApplyRewardsError(diffRewards).raiseError[F, Unit].whenA(diffRewards.nonEmpty)
-        // For followers (currency-l0, dag-l1), we skip state proof validation here.
+        _ <- logger
+          .warn(
+            s"Follower: ${diffRewards.size} rewards not accepted at ordinal=${signedArtifact.ordinal.show}. " +
+              s"Continuing since snapshot was already validated by L0 majority consensus."
+          )
+          .whenA(diffRewards.nonEmpty)
+        // State proof validation is also skipped for followers.
         // The snapshot was already validated by the majority consensus on dag-l0.
         // Doing a full MPT sync and validation on every ordinal is too expensive (~2 min for 800K entries).
         // The MPT store is synced once during initial download for query support.

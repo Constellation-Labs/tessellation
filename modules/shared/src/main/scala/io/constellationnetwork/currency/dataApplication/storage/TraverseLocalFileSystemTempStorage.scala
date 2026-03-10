@@ -35,11 +35,10 @@ final class TraverseLocalFileSystemTempStorage[F[_]: Async: KryoSerializer: Json
   def write(ordinal: SnapshotOrdinal, snapshot: CurrencyIncrementalSnapshot): F[Unit] = {
     val name = toOrdinalName(ordinal)
 
-    exists(name)
-      .flatMap(SnapshotAlreadyExistsInTempStorage(ordinal).raiseError[F, Unit].whenA)
-      .flatMap { _ =>
-        write(name, snapshot)
-      }
+    exists(name).flatMap {
+      case true  => Async[F].unit
+      case false => write(name, snapshot)
+    }
   }
 
   def listStoredOrdinals: F[Stream[F, SnapshotOrdinal]] =
