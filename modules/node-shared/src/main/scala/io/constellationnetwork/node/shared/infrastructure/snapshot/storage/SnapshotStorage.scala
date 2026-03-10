@@ -164,12 +164,19 @@ object SnapshotStorage {
                 notPersistedCache.update(current => current + snapshot.ordinal)
             )
           } >>
-          snapshotInfoLocalFileSystemStorage.write(snapshot.ordinal, snapshotInfo) >>
-          snapshotInfoCutoffQueue.offer(snapshot.ordinal) >>
-          snapshot.ordinal
-            .partialPreviousN(inMemoryCapacity)
-            .fold(Applicative[F].unit)(offloadQueue.offer) >>
-          combinedSnapshotCheckpointFileSystemStorage.tryWrite(snapshot.ordinal, snapshot, snapshotInfo, hash)
+          snapshotInfoLocalFileSystemStorage
+            .write(snapshot.ordinal, snapshotInfo)
+            .attempt
+            .flatMap {
+              case Right(_) =>
+                snapshotInfoCutoffQueue.offer(snapshot.ordinal) >>
+                  snapshot.ordinal
+                    .partialPreviousN(inMemoryCapacity)
+                    .fold(Applicative[F].unit)(offloadQueue.offer) >>
+                  combinedSnapshotCheckpointFileSystemStorage.tryWrite(snapshot.ordinal, snapshot, snapshotInfo, hash)
+              case Left(e) =>
+                logger.error(e)(s"Failed writing snapshot info to disk! ordinal=${snapshot.ordinal}. Skipping cutoff and checkpoint.")
+            }
       }
 
     def snapshotExists(snapshot: Signed[S])(implicit hasher: Hasher[F]): F[Boolean] =

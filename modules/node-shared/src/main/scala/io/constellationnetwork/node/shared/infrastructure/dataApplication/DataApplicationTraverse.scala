@@ -102,6 +102,10 @@ object DataApplicationTraverse {
               }
             }
           } yield ()
+        } else if (targetOrdinal > latestStoredOrdinal) {
+          logger.warn(
+            s"Backfill gap too large (${targetOrdinal.value.value - latestStoredOrdinal.value.value} > $maxBackwardFetch), skipping backfill from ${latestStoredOrdinal.show} to ${targetOrdinal.show}"
+          )
         } else {
           Async[F].unit
         }
@@ -149,6 +153,13 @@ object DataApplicationTraverse {
               .flatMap(_.flatTraverse { calculatedState =>
                 dataApplication
                   .hashCalculatedState(calculatedState)
+                  .flatTap { hash =>
+                    logger
+                      .warn(
+                        s"Calculated state proof mismatch at ordinal=${snapshot.ordinal.show}: computed=${hash.show} expected=${da.calculatedStateProof.show}"
+                      )
+                      .whenA(hash =!= da.calculatedStateProof)
+                  }
                   .map(hash => Option.when(hash === da.calculatedStateProof)(calculatedState))
               })
           }
@@ -174,24 +185,28 @@ object DataApplicationTraverse {
                 .foldLeftM((startingState, startingOrdinal)) {
                   case ((state, _), currentOrdinal) =>
                     storage.read(currentOrdinal).flatMap { snapshot =>
-                      snapshot.dataApplication
-                        .map(_.blocks)
-                        .traverse {
-                          _.traverse { blockBytes =>
-                            dataApplication.deserializeBlock(blockBytes).flatMap(_.liftTo[F])
+                      if (snapshot.dataApplication.isEmpty) {
+                        logger.debug(s"Skipping ordinal=${currentOrdinal.show} with no data application section") >>
+                          (state, currentOrdinal).pure[F]
+                      } else
+                        snapshot.dataApplication
+                          .map(_.blocks)
+                          .traverse {
+                            _.traverse { blockBytes =>
+                              dataApplication.deserializeBlock(blockBytes).flatMap(_.liftTo[F])
+                            }
                           }
-                        }
-                        .map(_.toList.flatten)
-                        .map(_.flatMap(_.dataTransactions.toList))
-                        .map(getDataUpdates)
-                        .flatMap(dataApplication.combine(state, _))
-                        .flatTap {
-                          case DataState(_, calculatedState, _) =>
-                            logger.info(s"Persisting calculated state for ordinal=${currentOrdinal.show}") >>
-                              calculatedStateStorage.write(currentOrdinal, calculatedState)(dataApplication.serializeCalculatedState) >>
-                              cutoffPersistedCalculatedStates(currentOrdinal)
-                        }
-                        .map((_, currentOrdinal))
+                          .map(_.toList.flatten)
+                          .map(_.flatMap(_.dataTransactions.toList))
+                          .map(getDataUpdates)
+                          .flatMap(dataApplication.combine(state, _))
+                          .flatTap {
+                            case DataState(_, calculatedState, _) =>
+                              logger.info(s"Persisting calculated state for ordinal=${currentOrdinal.show}") >>
+                                calculatedStateStorage.write(currentOrdinal, calculatedState)(dataApplication.serializeCalculatedState) >>
+                                cutoffPersistedCalculatedStates(currentOrdinal)
+                          }
+                          .map((_, currentOrdinal))
                     }
                 }
           }
@@ -254,30 +269,36 @@ object DataApplicationTraverse {
           }
 
           lastGlobalSnapshot.tailRecM { globalSnapshot =>
-            fetchCurrencySnapshots(globalSnapshot)
-              .flatMap(_.traverse {
-                case Validated.Invalid(_) =>
-                  (new Exception(
-                    s"Metagraph snapshots are invalid in global snapshot ordinal=${globalSnapshot.ordinal.show}. Check chain integrity."
-                  )).raiseError[F, Either[Acc, Output]]
-                case Validated.Valid(snapshots) =>
-                  logger.info(
-                    s"Found ${snapshots.size.show} snapshots at global snapshot ordinal=${globalSnapshot.ordinal.show}, ordinals=${snapshots.map(_.ordinal).show}. Performing nested recursion."
-                  ) >> nestedRecursion(snapshots, globalSnapshot.ordinal).flatMap {
-                    case Right(Some((state, ordinal, globalOrdinal))) => (state, ordinal, globalOrdinal).some.asRight[Acc].pure[F]
-                    case _ =>
-                      fetchSnapshotOrErr(globalSnapshot.lastSnapshotHash).map(_.asLeft[Output])
-                  }
-              })
-              .flatMap {
-                _.map(_.pure[F]).getOrElse(
-                  logger
-                    .debug(s"Metagraph snapshots are not found in global snapshot ordinal=${globalSnapshot.ordinal.show}, continuing.") >>
-                    fetchSnapshotOrErr(globalSnapshot.lastSnapshotHash).map {
-                      _.asLeft[Output]
+            if (globalSnapshot.ordinal === SnapshotOrdinal.MinValue) {
+              logger.warn(
+                s"Reached global genesis (ordinal=${globalSnapshot.ordinal.show}) without finding a valid metagraph starting state"
+              ) >>
+                none[(DataState.Base, CurrencyIncrementalSnapshot, SnapshotOrdinal)].asRight[Acc].pure[F]
+            } else
+              fetchCurrencySnapshots(globalSnapshot)
+                .flatMap(_.traverse {
+                  case Validated.Invalid(_) =>
+                    (new Exception(
+                      s"Metagraph snapshots are invalid in global snapshot ordinal=${globalSnapshot.ordinal.show}. Check chain integrity."
+                    )).raiseError[F, Either[Acc, Output]]
+                  case Validated.Valid(snapshots) =>
+                    logger.info(
+                      s"Found ${snapshots.size.show} snapshots at global snapshot ordinal=${globalSnapshot.ordinal.show}, ordinals=${snapshots.map(_.ordinal).show}. Performing nested recursion."
+                    ) >> nestedRecursion(snapshots, globalSnapshot.ordinal).flatMap {
+                      case Right(Some((state, ordinal, globalOrdinal))) => (state, ordinal, globalOrdinal).some.asRight[Acc].pure[F]
+                      case _ =>
+                        fetchSnapshotOrErr(globalSnapshot.lastSnapshotHash).map(_.asLeft[Output])
                     }
-                )
-              }
+                })
+                .flatMap {
+                  _.map(_.pure[F]).getOrElse(
+                    logger
+                      .debug(s"Metagraph snapshots are not found in global snapshot ordinal=${globalSnapshot.ordinal.show}, continuing.") >>
+                      fetchSnapshotOrErr(globalSnapshot.lastSnapshotHash).map {
+                        _.asLeft[Output]
+                      }
+                  )
+                }
           }
         }
 
@@ -294,12 +315,18 @@ object DataApplicationTraverse {
               }
               result <- applyCache(state, currencyIncrementalSnapshot.ordinal) >>= {
                 case (latestState, latestOrdinal) =>
-                  dataApplication.setCalculatedState(latestOrdinal, latestState.calculated) >>
-                    globalSnapshotsWithStateLocalFileSystemStorage.deleteAbove(globalOrdinal) >>
-                    globalSnapshotsWithStateDeltasLocalFileSystemStorage.deleteAbove(globalOrdinal) >>
-                    calculatedStateStorage.deleteAbove(latestOrdinal).as {
-                      (state, currencyIncrementalSnapshot.ordinal).some
-                    }
+                  dataApplication.setCalculatedState(latestOrdinal, latestState.calculated).flatMap {
+                    case true =>
+                      globalSnapshotsWithStateLocalFileSystemStorage.deleteAbove(globalOrdinal) >>
+                        globalSnapshotsWithStateDeltasLocalFileSystemStorage.deleteAbove(globalOrdinal) >>
+                        calculatedStateStorage.deleteAbove(latestOrdinal).as {
+                          (latestState, latestOrdinal).some
+                        }
+                    case false =>
+                      (new Exception(
+                        s"setCalculatedState returned false for ordinal=${latestOrdinal.show}, aborting traversal to avoid inconsistency"
+                      )).raiseError[F, Option[(DataState.Base, SnapshotOrdinal)]]
+                  }
               }
             } yield result
 
