@@ -25,6 +25,11 @@ import monocle.Lens
   */
 object UnlockConsensusUpdate {
 
+  /** Minimum number of facilitators that must survive an unlock. If the voting result would leave fewer than this many peers, the unlock is
+    * aborted and deferred to the stall detector (which will either retry ACKs or abandon the round after maxStallCycles).
+    */
+  val MinFacilitatorCount: Int = 2
+
   def tryUnlock[F[_]: Monad, S, K](acksMap: Map[(PeerId, K), Set[PeerId]])(maybeCollectingKind: S => Option[K])(
     implicit _lockStatus: Lens[S, LockStatus],
     _facilitators: Lens[S, Facilitators],
@@ -72,6 +77,8 @@ object UnlockConsensusUpdate {
             _.partitionMap {
               case (peerId, decision) => Either.cond(decision, peerId, peerId)
             }
+          }.filter {
+            case (_, keptFacilitators) => keptFacilitators.size >= MinFacilitatorCount
           }.map {
             case (removedFacilitators, keptFacilitators) =>
               val updateState =
