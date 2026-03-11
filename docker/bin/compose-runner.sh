@@ -117,7 +117,7 @@ else
     echo "removed config, $PROJECT_ROOT/nodes"
   fi
 
-  for i in 0 1 2; do
+  for i in $(seq 0 $((MAX_NODES - 1))); do
     mkdir -p ./nodes/$i
   done
 
@@ -142,7 +142,7 @@ else
     tessellation_common
 
   # Phase 1: Setup compose files and start GL0 nodes
-  for i in 0 1 2; do
+  for i in $(seq 0 $((MAX_NODES - 1))); do
     cd ./nodes/$i/
 
     docker compose -f docker-compose.test.yaml \
@@ -196,7 +196,7 @@ else
   fi
 
   # Phase 2: Start GL1 nodes (GL0 is now ready for peer discovery)
-  for i in 0 1 2; do
+  for i in $(seq 0 $((MAX_NODES - 1))); do
     cd ./nodes/$i/
 
     if [ "$i" -lt "$NUM_GL1_NODES" ]; then
@@ -239,7 +239,7 @@ else
     metagraph_args="-f docker-compose.metagraph.yaml -f docker-compose.metagraph-test.yaml"
 
     # Phase 1: Genesis creation, set METAGRAPH_ID, and start ML0
-    for i in 0 1 2; do
+    for i in $(seq 0 $((MAX_NODES - 1))); do
       cd ./nodes/$i/
 
       if [ ! -f "./genesis.snapshot" ] && [ "$i" -eq 0 ]; then
@@ -291,7 +291,7 @@ else
     fi
 
     # Phase 2: Start CL1/DL1 services (ML0 is now ready)
-    for i in 0 1 2; do
+    for i in $(seq 0 $((MAX_NODES - 1))); do
       cd ./nodes/$i/
 
       l1_profile_args=""

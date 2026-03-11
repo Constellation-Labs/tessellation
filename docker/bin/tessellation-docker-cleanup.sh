@@ -16,7 +16,7 @@ cleanup_container() {
 }
 
 cleanup() {
-    for i in 0 1 2; do
+    for i in $(seq 0 9); do
         cleanup_container gl0-$i gl0-data-$i &
         cleanup_container gl1-$i gl1-data-$i &
         cleanup_container dl1-$i dl1-data-$i &

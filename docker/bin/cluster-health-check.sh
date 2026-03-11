@@ -61,7 +61,7 @@ verify_healthy() {
     fi
   else
     # Local docker: check each node using port prefix pattern
-    for i in "0" "1" "2"; do
+    for i in $(seq 0 $((MAX_NODES - 1))); do
         l0_url="${host}:${DAG_L0_PORT_PREFIX}${i}0"
         l1_url="${host}:${DAG_L1_PORT_PREFIX}${i}0"
         ml0_url="${host}:${ML0_PORT_PREFIX}${i}0"
