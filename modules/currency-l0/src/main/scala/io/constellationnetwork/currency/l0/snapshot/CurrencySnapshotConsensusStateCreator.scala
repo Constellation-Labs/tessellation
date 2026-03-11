@@ -76,23 +76,24 @@ object CurrencySnapshotConsensusStateCreator {
         filteredCandidates = approvedCandidates
           .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
 
-        // Exclude peers that were removed by unlock consensus in the previous round.
-        // This is deterministic: all nodes agreed on removedFacilitators via majority vote.
+        // Peers removed by unlock consensus in the previous round.
+        // Deterministic: all nodes agreed on removedFacilitators via majority vote.
         previouslyRemoved = lastOutcome.removedFacilitators.value
 
-        baseFacilitators = (filteredPreviousEligible ++ filteredCandidates).distinct
-          .filterNot(previouslyRemoved.contains)
+        // Full base WITHOUT removal filter — so removed peers can re-enter in future rounds.
+        // The removal filter is only applied for active selection THIS round (see eligibleThisRound below).
+        fullBase = (filteredPreviousEligible ++ filteredCandidates :+ selfId).distinct
 
         _ <- logger.debug(
           s"Facilitator selection for key=$key: " +
             s"previousEligible=${filteredPreviousEligible.size}, " +
             s"candidates=${filteredCandidates.size}, " +
-            s"base=${baseFacilitators.size}" +
+            s"fullBase=${fullBase.size}" +
             (if (previouslyRemoved.nonEmpty) s", excludedFromPreviousRound=${previouslyRemoved.size}" else "")
         )
 
-        // Full eligible set after collateral filtering
-        eligible <- (baseFacilitators :+ selfId).distinct
+        // All eligible after collateral filtering (includes previously removed peers so they can re-enter)
+        allEligible <- fullBase
           .filterA(
             consensusFns.facilitatorFilter(
               lastOutcome.finished.signedMajorityArtifact,
@@ -104,22 +105,43 @@ object CurrencySnapshotConsensusStateCreator {
             if (list.isEmpty) List(selfId) else list
           }
 
-        filteredOutByCollateral = baseFacilitators.filterNot(eligible.contains)
+        filteredOutByCollateral = fullBase.filterNot(allEligible.contains)
         _ <- filteredOutByCollateral.traverse_ { peerId =>
           logger.debug(s"Facilitator ${peerId.show} removed by facilitatorFilter for key=$key")
+        }
+
+        // Multi-round removal penalty: peers removed in prior rounds stay excluded
+        // for removalPenaltyRounds rounds. Deterministic: derived from agreed-upon lastOutcome.
+        penalizedPeers = lastOutcome.removalPenalties.filter(_._2 > 0).keySet
+
+        _ <- logger
+          .debug(
+            s"Removal penalties for key=$key: ${penalizedPeers.size} penalized peers" +
+              (if (penalizedPeers.nonEmpty)
+                 s" [${lastOutcome.removalPenalties.filter(_._2 > 0).map(kv => s"${kv._1.value.value.take(8)}:${kv._2}").mkString(",")}]"
+               else "")
+          )
+          .whenA(penalizedPeers.nonEmpty)
+
+        // For THIS round only: exclude recently removed AND penalized peers from active selection.
+        // They remain in allEligible so they can be re-selected in future rounds.
+        eligibleThisRound = {
+          val excluded = previouslyRemoved ++ penalizedPeers
+          val filtered = allEligible.filterNot(excluded.contains)
+          if (filtered.isEmpty) List(selfId) else filtered
         }
 
         // Apply deterministic subset selection using hash-distance ordering
         // Uses the previous round's snapshot hash as entropy for randomization
         entropy = lastOutcome.finished.snapshotHash
-        activeFacilitators = facilitatorSelector.select(eligible, entropy)
+        activeFacilitators = facilitatorSelector.select(eligibleThisRound, entropy)
 
         _ <- logger
           .info(
             s"Facilitator subsetting for key=$key: " +
-              s"eligible=${eligible.size}, selected=${activeFacilitators.size}"
+              s"allEligible=${allEligible.size}, eligibleThisRound=${eligibleThisRound.size}, selected=${activeFacilitators.size}"
           )
-          .whenA(activeFacilitators.size < eligible.size)
+          .whenA(activeFacilitators.size < allEligible.size)
 
         (withdrawn, active) = activeFacilitators.partition { peerId =>
           resources.withdrawalsMap.get(peerId).contains(CurrencyConsensusKind.Facility)
@@ -158,12 +180,12 @@ object CurrencySnapshotConsensusStateCreator {
           time,
           withdrawnFacilitators = WithdrawnFacilitators(withdrawn.toSet),
           spreadAckKinds = Set.empty,
-          eligibleFacilitators = EligibleFacilitators(eligible)
+          eligibleFacilitators = EligibleFacilitators(allEligible)
         )
 
         _ <- logger.info(
           s"Created consensus state for key=$key with ${active.size} active facilitators" +
-            s" (${eligible.size} eligible)" +
+            s" (${allEligible.size} eligible, ${eligibleThisRound.size} this round)" +
             withdrawn.headOption.fold("")(_ => s", ${withdrawn.size} withdrawn")
         )
 

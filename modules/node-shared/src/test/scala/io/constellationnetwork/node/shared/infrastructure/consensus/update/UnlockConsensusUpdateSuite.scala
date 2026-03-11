@@ -130,4 +130,106 @@ object UnlockConsensusUpdateSuite extends SimpleIOSuite with Checkers {
     Gen.listOfN(facilitators.size, Gen.someOf(facilitators).map(_.toSet)).map { acksSet =>
       facilitators.map(peerId => (peerId, ())).zip(acksSet).toMap
     }
+
+  // === Adaptive tiered threshold tests ===
+
+  /** Simulates threshold tier selection logic from UnlockConsensusUpdate */
+  def computeThresholds(n: Int, voterCount: Int): Option[(Int, Int)] = {
+    val degradedQuorum = math.ceil(n.toDouble / 5).toInt.max(2)
+    val standardQuorum = math.ceil(n.toDouble / 3).toInt.max(2)
+    val normalKeepThreshold = (n + 1) / 2
+
+    val superThreshold = math.ceil(voterCount.toDouble * 2 / 3).toInt.max(1)
+    if (voterCount < degradedQuorum) none
+    else if (voterCount < standardQuorum) (superThreshold, superThreshold).some
+    else if (voterCount < normalKeepThreshold) ((voterCount + 1) / 2, voterCount / 2 + 1).some
+    else (normalKeepThreshold, n / 2 + 1).some
+  }
+
+  test("DEFER: no thresholds when voterCount < degradedQuorum") {
+    cats.effect.IO {
+      val n = 20
+      val voterCount = 3
+      val result = computeThresholds(n, voterCount)
+      // degradedQuorum = ceil(20/5) = 4, voterCount = 3 < 4 → DEFER
+      expect(result.isEmpty)
+    }
+  }
+
+  test("DEGRADED: 2/3 supermajority of voters required") {
+    cats.effect.IO {
+      val n = 20
+      val voterCount = 5
+      val result = computeThresholds(n, voterCount)
+      // degradedQuorum = 4, standardQuorum = 7, 4 <= 5 < 7 → DEGRADED
+      // superThreshold = ceil(5 * 2/3) = ceil(3.33) = 4
+      expect(result.isDefined) &&
+      expect.same((4, 4), result.get)
+    }
+  }
+
+  test("FALLBACK: simple majority of voters suffices") {
+    cats.effect.IO {
+      val n = 20
+      val voterCount = 8
+      val result = computeThresholds(n, voterCount)
+      // standardQuorum = 7, normalKeepThreshold = 10, 7 <= 8 < 10 → FALLBACK
+      // keepThreshold = (8+1)/2 = 4, removeThreshold = 8/2 + 1 = 5
+      expect(result.isDefined) &&
+      expect.same((4, 5), result.get)
+    }
+  }
+
+  test("NORMAL: standard thresholds based on total facilitator count") {
+    cats.effect.IO {
+      val n = 20
+      val voterCount = 15
+      val result = computeThresholds(n, voterCount)
+      // normalKeepThreshold = 10, 15 >= 10 → NORMAL
+      // keepThreshold = 10, removeThreshold = 11
+      expect(result.isDefined) &&
+      expect.same((10, 11), result.get)
+    }
+  }
+
+  test("tier transitions are deterministic for same inputs") {
+    forall(Gen.choose(5, 100)) { n =>
+      forall(Gen.choose(0, n)) { voterCount =>
+        cats.effect.IO {
+          val t1 = computeThresholds(n, voterCount)
+          val t2 = computeThresholds(n, voterCount)
+          expect.same(t1, t2)
+        }
+      }
+    }
+  }
+
+  test("DEFER prevents unlock when too few facilitators voted") {
+    forall(facilitatorsGen) { facilitators =>
+      val n = facilitators.size
+      val degradedQuorum = math.ceil(n.toDouble / 5).toInt.max(2)
+      val tooFewVoters = math.max(1, degradedQuorum - 1)
+
+      val voters = facilitators.take(tooFewVoters)
+      val acksMap: Map[(PeerId, Kind), Set[PeerId]] =
+        voters.map(peerId => ((peerId, ()), facilitators.toSet)).toMap
+
+      val stateGen = lockedStateGen(facilitators)
+      forall(stateGen) { state =>
+        val resources = ConsensusResources(
+          peerDeclarationsMap = Map.empty,
+          acksMap = acksMap,
+          withdrawalsMap = Map.empty,
+          ackKinds = Set.empty,
+          artifacts = Map.empty[Hash, Artifact],
+          updatedAt = FiniteDuration(10, "seconds")
+        )
+
+        unlockConsensusFn(resources).run(state).map {
+          case (resultState, _) =>
+            expect(resultState.lockStatus === LockStatus.Closed)
+        }
+      }
+    }
+  }
 }

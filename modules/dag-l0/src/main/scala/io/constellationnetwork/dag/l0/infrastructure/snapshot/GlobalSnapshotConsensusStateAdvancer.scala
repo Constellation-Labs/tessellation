@@ -86,6 +86,7 @@ object GlobalSnapshotConsensusStateAdvancer {
 
     private val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](getClass)
     private val lastSnapshotHashObservationName = "last-snapshot-hash"
+    private val facilitatorsHashObservationName = "facilitators-hash"
 
     protected val clusterStorage: ClusterStorage[F] = clusterStorageInstance
     protected val config: ConsensusConfig = consensusConfig
@@ -97,13 +98,20 @@ object GlobalSnapshotConsensusStateAdvancer {
     ): Option[(Previous[GlobalSnapshotKey], GlobalConsensusOutcome)] =
       state.status match {
         case f: Finished =>
+          // Compute removal penalties: decrement previous, add new removals
+          val previousPenalties = state.lastOutcome.removalPenalties
+          val decrementedPenalties = previousPenalties.view.mapValues(_ - 1).filter(_._2 > 0).toMap
+          val newPenalties = state.removedFacilitators.value.foldLeft(decrementedPenalties) { (acc, pid) =>
+            acc.updated(pid, config.removalPenaltyRounds)
+          }
           val outcome = GlobalConsensusOutcome(
             state.key,
             state.facilitators,
             state.removedFacilitators,
             state.withdrawnFacilitators,
             state.eligibleFacilitators,
-            Finished(f.signedMajorityArtifact, f.context, f.majorityTrigger, f.candidates, f.facilitatorsHash, f.snapshotHash)
+            Finished(f.signedMajorityArtifact, f.context, f.majorityTrigger, f.candidates, f.facilitatorsHash, f.snapshotHash),
+            removalPenalties = if (config.removalPenaltyRounds > 0) newPenalties else Map.empty
           )
           (Previous(state.lastOutcome.key), outcome).some
         case _ =>
@@ -146,9 +154,10 @@ object GlobalSnapshotConsensusStateAdvancer {
       loggerBundle.app.withOrdinal(SnapshotOrdinal.unsafeApply(state.lastOutcome.key.value.value + 1)) {
         HasherSelector[F].withCurrent { implicit hasher =>
           for {
-            maybeFacilities <- maybeGetAllDeclarations(state, resources)(_.facility)
+            maybeFacilities <- maybeGetQuorumDeclarations(state, resources)(_.facility)(_.trigger)
             facilitators = maybeFacilities.map(_.keys.toList).getOrElse(List.empty[PeerId])
             _ <- loggerBundle.consensus.collectingFacilities(facilitators)
+            _ <- maybeFacilities.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
             _ <- maybeFacilities.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
             result <- maybeFacilities.flatTraverse(toProposalsPhase(state, _))
           } yield result
@@ -207,9 +216,10 @@ object GlobalSnapshotConsensusStateAdvancer {
       loggerBundle.app.withOrdinal(status.proposalArtifactInfo.artifact.ordinal) {
         HasherSelector[F].withCurrent { implicit hasher =>
           for {
-            maybeProposals <- maybeGetAllDeclarations(state, resources)(_.proposal)
+            maybeProposals <- maybeGetQuorumDeclarations(state, resources)(_.proposal)(_.hash)
             facilitators = maybeProposals.map(_.keys.toList).getOrElse(List.empty[PeerId])
             _ <- loggerBundle.consensus.collectingProposals(facilitators)
+            _ <- maybeProposals.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
             _ <- maybeProposals.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
             result <- maybeProposals.flatTraverse(toSignaturesPhase(state, status, resources, _))
           } yield result
@@ -286,9 +296,10 @@ object GlobalSnapshotConsensusStateAdvancer {
       loggerBundle.app.withOrdinal(status.majorityArtifactInfo.artifact.ordinal) {
         HasherSelector[F].withCurrent { implicit hasher =>
           for {
-            maybeSignatures <- maybeGetAllDeclarations(state, resources)(_.signature)
+            maybeSignatures <- maybeGetQuorumDeclarations(state, resources)(_.signature)(_.facilitatorsHash)
             facilitators = maybeSignatures.map(_.keys.toList).getOrElse(List.empty[PeerId])
             _ <- loggerBundle.consensus.collectingSignatures(facilitators)
+            _ <- maybeSignatures.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
             _ <- maybeSignatures.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
             result <- maybeSignatures.flatTraverse(toFinishedPhase(state, status, _))
           } yield result
@@ -418,6 +429,14 @@ object GlobalSnapshotConsensusStateAdvancer {
     ): F[Unit] =
       recoverIfForking[F](ownHash, lastSnapshotHashObservationName, restartService, nodeStorage, leavingDelay)(
         declarations.map { case (pid, decl) => (pid, extract(decl)) }
+      )
+
+    private def checkForkByFacilitatorsHash[A](
+      declarations: SortedMap[PeerId, A],
+      ownHash: Hash
+    )(extractHash: A => Hash): F[Unit] =
+      recoverIfForking[F](ownHash, facilitatorsHashObservationName, restartService, nodeStorage, leavingDelay)(
+        declarations.map { case (pid, decl) => (pid, extractHash(decl)) }
       )
 
     private implicit val extractFacilityHash: Facility => Hash = _.lastSnapshotHash

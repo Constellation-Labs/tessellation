@@ -15,10 +15,14 @@ import monocle.Lens
   * contains the set of peer IDs that the sender considers "present" (responsive). This module tallies ACK votes to decide which peers to
   * keep and which to remove.
   *
-  * '''Threshold semantics:''' Thresholds are based on the total facilitator count — keepThreshold = majority, removeThreshold = strict
-  * majority. All facilitators in the voting result must receive a clear keep or remove decision for the unlock to proceed. If any peer's
-  * vote tally is indeterminate (not enough votes to reach either threshold), the unlock is deferred (`traverse` returns `None`) and the
-  * state remains `Closed`. The re-stall mechanism will retry with fresh ACKs after the re-stall timeout.
+  * '''Adaptive tiered thresholds:''' Thresholds adapt based on how many facilitators actually voted (sent ACKs), allowing progress even
+  * when many peers are unresponsive:
+  *
+  *   - '''DEFER''' (voterCount < ceil(N/5)): Too few voters for a safe decision. The unlock is deferred and the re-stall mechanism will
+  *     retry with fresh ACKs.
+  *   - '''DEGRADED''' (voterCount < ceil(N/3)): Requires 2/3 supermajority of voters for both keep and remove decisions.
+  *   - '''FALLBACK''' (voterCount < (N+1)/2): Simple majority of voters suffices for keep/remove decisions.
+  *   - '''NORMAL''' (voterCount >= (N+1)/2): Standard thresholds based on total facilitator count.
   *
   * After unlock transitions `Closed → Reopened` and removes unresponsive peers, `advanceStatus` can run again with the reduced facilitator
   * list, allowing the round to proceed.
@@ -55,19 +59,34 @@ object UnlockConsensusUpdate {
                 .getOrElse(acc)
             }
 
-          val keepThreshold = (facilitators.size + 1) / 2
-          val removeThreshold = facilitators.size / 2 + 1
+          val n = facilitators.size
+          val voterCount = facilitators.count(f => acksMap.contains((f, collectingKind)))
 
-          facilitators.traverse { peerId =>
-            votingResult.get(peerId).flatMap {
-              case (votesKeep, votesRemove) =>
-                if (votesKeep >= keepThreshold)
-                  (peerId, true).some
-                else if (votesRemove >= removeThreshold)
-                  (peerId, false).some
-                else
-                  none
-            }
+          val degradedQuorum = math.ceil(n.toDouble / 5).toInt.max(2)
+          val standardQuorum = math.ceil(n.toDouble / 3).toInt.max(2)
+          val normalKeepThreshold = (n + 1) / 2
+
+          val maybeThresholds: Option[(Int, Int)] = {
+            val superThreshold = math.ceil(voterCount.toDouble * 2 / 3).toInt.max(1)
+            if (voterCount < degradedQuorum) none
+            else if (voterCount < standardQuorum) (superThreshold, superThreshold).some
+            else if (voterCount < normalKeepThreshold) ((voterCount + 1) / 2, voterCount / 2 + 1).some
+            else (normalKeepThreshold, n / 2 + 1).some
+          }
+
+          maybeThresholds.flatMap {
+            case (keepThreshold, removeThreshold) =>
+              facilitators.traverse { peerId =>
+                votingResult.get(peerId).flatMap {
+                  case (votesKeep, votesRemove) =>
+                    if (votesKeep >= keepThreshold)
+                      (peerId, true).some
+                    else if (votesRemove >= removeThreshold)
+                      (peerId, false).some
+                    else
+                      none
+                }
+              }
           }.map {
             _.partitionMap {
               case (peerId, decision) => Either.cond(decision, peerId, peerId)

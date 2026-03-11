@@ -173,6 +173,7 @@ object ConsensusStateUpdater {
       ): F[(ConsensusState[Key, Status, Outcome, Kind], F[Unit])] = {
         val stateAndEffect = for {
           _ <- unlockConsensusFn(resources)
+          _ <- logUnlockIfHappened(state)
           _ <- updateFacilitators(resources)
           effect1 <- spreadHistoricalAck(resources)
           effect2 <- consensusStateAdvancer.advanceStatus(resources)
@@ -181,6 +182,20 @@ object ConsensusStateUpdater {
         stateAndEffect
           .run(state)
       }
+
+      private def logUnlockIfHappened(
+        originalState: ConsensusState[Key, Status, Outcome, Kind]
+      ): StateT[F, ConsensusState[Key, Status, Outcome, Kind], Unit] =
+        StateT.inspectF { currentState =>
+          val newlyRemoved = currentState.removedFacilitators.value.diff(originalState.removedFacilitators.value)
+          if (currentState.lockStatus === LockStatus.Reopened && originalState.lockStatus === LockStatus.Closed) {
+            logger.warn(
+              s"Unlock transition: Closed -> Reopened for key=${currentState.key.show}. " +
+                s"Removed ${newlyRemoved.size} peers: ${newlyRemoved.map(_.show).mkString(", ")}. " +
+                s"Remaining facilitators: ${currentState.facilitators.value.size}"
+            )
+          } else Applicative[F].unit
+        }
 
       private def updateFacilitators(
         resources: ConsensusResources[Artifact, Kind]
@@ -264,6 +279,10 @@ object ConsensusStateUpdater {
           ExitOnFork.exitOnFeature("CL_EXIT_ON_FORK") >>
           restartService.signalNodeForkedRestart(majorityForkPeers)
 
+        // Note: fire-and-forget fiber for fork recovery. This is acceptable because fork recovery
+        // is a one-shot operation (node transitions to Leaving → Offline → restart) and only fires
+        // on fork detection, which is rare. Using .start rather than Supervisor because the advancers
+        // don't have Supervisor in scope, and fork recovery should outlive any single round.
         Temporal[F].start(forkRecovery).void
 
       } else Applicative[F].unit

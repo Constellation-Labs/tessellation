@@ -102,6 +102,7 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
   private def completeRound(preAction: F[Unit]): F[Unit] =
     for {
       _ <- preAction
+      _ <- roundRunner.cleanupRound
       _ <- isRunning.set(false)
       next <- pending.pullNext
       _ <- next.traverse_ {

@@ -1,7 +1,8 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
 import cats.Show
-import cats.effect.kernel.Async
+import cats.effect.Fiber
+import cats.effect.kernel.{Async, Deferred, Ref}
 import cats.effect.std.{Queue, Random, Supervisor}
 import cats.kernel.{Eq, Next}
 import cats.syntax.all._
@@ -19,6 +20,7 @@ import io.constellationnetwork.schema.peer.Peer
 import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.signature.Signed
 
+import eu.timepit.refined.auto._
 import fs2.Stream
 
 /** Builds and wires together all consensus engine components.
@@ -68,7 +70,7 @@ object ConsensusEventLoop {
     Key: Eq: Show: Next,
     Artifact: Eq,
     Ctx: Eq,
-    Status: Eq,
+    Status,
     Outcome,
     Kind
   ](
@@ -108,7 +110,15 @@ object ConsensusEventLoop {
         consensusFunctions,
         consensusClient
       )
-      roundRunner = new ConsensusRoundRunner[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](ctx)
+      stallDetector = new StallDetector[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](ctx)
+      roundFibersRef <- Ref.of[F, List[Fiber[F, Throwable, Unit]]](Nil)
+      cancelSignalRef <- Ref.of[F, Option[Deferred[F, Unit]]](None)
+      roundRunner = new ConsensusRoundRunner[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
+        ctx,
+        stallDetector,
+        roundFibersRef,
+        cancelSignalRef
+      )
       fsm = new ConsensusFSM[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](ctx, roundRunner)
       manager <- ConsensusManager.make[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
         queue,
@@ -118,7 +128,20 @@ object ConsensusEventLoop {
     } yield {
 
       val commandStream: Stream[F, Unit] =
-        Stream.repeatEval(queue.take).evalMap(fsm.handle)
+        Stream.repeatEval(queue.take).evalMap { cmd =>
+          fsm.handle(cmd).handleErrorWith { err =>
+            ctx.logger.error(err)(s"Unhandled error processing ${cmd.getClass.getSimpleName}, recovering") >>
+              Metrics[F].incrementCounter("dag_consensus_command_error") >>
+              (cmd match {
+                case _: ConsensusCommand.ConsensusFinished | ConsensusCommand.RoundCompleted =>
+                  // Critical: if round-completion commands fail, FSM stays stuck in BUSY forever.
+                  // Force round completion so the next round can start.
+                  ctx.logger.warn("Forcing round completion after failed ConsensusFinished/RoundCompleted") >>
+                    queue.offer(ConsensusCommand.RoundCompleted)
+                case _ => Async[F].unit
+              })
+          }
+        }
 
       val peerRegistrationStream: Stream[F, Unit] =
         clusterStorage.peerChanges.mapFilter {

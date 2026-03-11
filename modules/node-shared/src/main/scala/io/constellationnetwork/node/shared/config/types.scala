@@ -148,7 +148,10 @@ object types {
     maxFacilitatorCount: Option[PosInt] = None,
     reStallTimeout: Option[FiniteDuration] = None,
     noProgressTimeout: Option[FiniteDuration] = None,
-    maxStallCycles: Int = 3
+    maxStallCycles: Int = 3,
+    maxRoundDuration: Option[FiniteDuration] = None,
+    quorumThreshold: Option[Double] = None,
+    removalPenaltyRounds: Int = 0
   )
 
   case class EventCutterConfig(
