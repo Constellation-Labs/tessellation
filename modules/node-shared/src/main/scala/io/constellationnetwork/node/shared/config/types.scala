@@ -145,7 +145,9 @@ object types {
     declarationRangeLimit: NonNegLong,
     lockDuration: FiniteDuration,
     eventCutter: EventCutterConfig,
-    maxFacilitatorCount: Option[PosInt] = None
+    maxFacilitatorCount: Option[PosInt] = None,
+    reStallTimeout: Option[FiniteDuration] = None,
+    maxStallCycles: Int = 3
   )
 
   case class EventCutterConfig(

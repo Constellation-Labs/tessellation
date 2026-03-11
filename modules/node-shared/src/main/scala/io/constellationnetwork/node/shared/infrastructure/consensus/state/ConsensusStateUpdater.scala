@@ -136,18 +136,32 @@ object ConsensusStateUpdater {
       private def lockConsensus(
         referenceState: ConsensusState[Key, Status, Outcome, Kind]
       )(state: ConsensusState[Key, Status, Outcome, Kind]): F[(ConsensusState[Key, Status, Outcome, Kind], F[Unit])] =
-        if (state.status === referenceState.status && state.lockStatus === LockStatus.Open)
-          (state.copy(lockStatus = LockStatus.Closed), Applicative[F].unit).pure[F]
-        else
+        if (state.status === referenceState.status && state.lockStatus =!= LockStatus.Closed) {
+          val currentKind = statusOps.maybeCollectingKind(state.status)
+          // When re-locking from Reopened, clear the current collecting kind from spreadAckKinds
+          // so a fresh ACK reflecting the updated facilitator set can be spread
+          val clearedAckKinds =
+            if (state.lockStatus === LockStatus.Reopened)
+              currentKind.fold(state.spreadAckKinds)(state.spreadAckKinds.excl)
+            else
+              state.spreadAckKinds
+          (state.copy(lockStatus = LockStatus.Closed, spreadAckKinds = clearedAckKinds), Applicative[F].unit).pure[F]
+        } else
           (state, Applicative[F].unit).pure[F]
 
       private def spreadAck(
         ackKind: Kind,
         resources: ConsensusResources[Artifact, Kind]
       )(state: ConsensusState[Key, Status, Outcome, Kind]): F[(ConsensusState[Key, Status, Outcome, Kind], F[Unit])] =
-        if (state.spreadAckKinds.contains(ackKind))
-          (state, Applicative[F].unit).pure[F]
-        else {
+        if (state.spreadAckKinds.contains(ackKind)) {
+          if (state.lockStatus === LockStatus.Closed) {
+            // Re-gossip ACK for propagation while locked; state unchanged so effect runs directly
+            val ack = getAck(ackKind, resources)
+            val effect = gossip.spread(ConsensusPeerDeclarationAck(state.key, ackKind, ack))
+            effect.as((state, Applicative[F].unit))
+          } else
+            (state, Applicative[F].unit).pure[F]
+        } else {
           val ack = getAck(ackKind, resources)
           val newState = state.copy(spreadAckKinds = state.spreadAckKinds.incl(ackKind))
           val effect = gossip.spread(ConsensusPeerDeclarationAck(state.key, ackKind, ack))
