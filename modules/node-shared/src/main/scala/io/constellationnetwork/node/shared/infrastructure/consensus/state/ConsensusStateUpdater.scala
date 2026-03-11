@@ -19,6 +19,8 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.consensus.update.UnlockConsensusUpdate
 import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
@@ -27,6 +29,7 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher}
 
+import eu.timepit.refined.auto._
 import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -76,7 +79,7 @@ object ConsensusStateUpdater {
 
   def make[F[
     _
-  ]: Async, Event, Key: Show: Order: TypeTag: Encoder, Artifact <: AnyRef, Context <: AnyRef, Status: Eq: Show, Outcome: Eq, Kind: Encoder: Eq: Show: TypeTag](
+  ]: Async: Metrics, Event, Key: Show: Order: TypeTag: Encoder, Artifact <: AnyRef, Context <: AnyRef, Status: Eq: Show, Outcome: Eq, Kind: Encoder: Eq: Show: TypeTag](
     consensusStateAdvancer: ConsensusStateAdvancer[F, Key, Artifact, Context, Status, Outcome, Kind],
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind],
     gossip: Gossip[F],
@@ -189,33 +192,44 @@ object ConsensusStateUpdater {
         StateT.inspectF { currentState =>
           val newlyRemoved = currentState.removedFacilitators.value.diff(originalState.removedFacilitators.value)
           if (currentState.lockStatus === LockStatus.Reopened && originalState.lockStatus === LockStatus.Closed) {
-            logger.warn(
-              s"Unlock transition: Closed -> Reopened for key=${currentState.key.show}. " +
-                s"Removed ${newlyRemoved.size} peers: ${newlyRemoved.map(_.show).mkString(", ")}. " +
-                s"Remaining facilitators: ${currentState.facilitators.value.size}"
-            )
+            Metrics[F].incrementCounter("dag_consensus_unlock_transition") >>
+              Metrics[F].updateGauge("dag_consensus_unlock_peers_removed", newlyRemoved.size) >>
+              logger.warn(
+                s"Unlock transition: Closed -> Reopened for key=${currentState.key.show}. " +
+                  s"Removed ${newlyRemoved.size} peers: ${newlyRemoved.map(_.show).mkString(", ")}. " +
+                  s"Remaining facilitators: ${currentState.facilitators.value.size}"
+              )
           } else Applicative[F].unit
         }
 
       private def updateFacilitators(
         resources: ConsensusResources[Artifact, Kind]
       ): StateT[F, ConsensusState[Key, Status, Outcome, Kind], Unit] =
-        StateT.modify { state =>
-          if (state.lockStatus === LockStatus.Closed || resources.withdrawalsMap.isEmpty)
-            state
-          else
-            statusOps
-              .maybeCollectingKind(state.status)
-              .map { collectingKind =>
-                val (withdrawn, remained) = state.facilitators.value.partition { peerId =>
-                  resources.withdrawalsMap.get(peerId).contains(collectingKind)
+        StateT { state =>
+          val newState =
+            if (state.lockStatus === LockStatus.Closed || resources.withdrawalsMap.isEmpty)
+              state
+            else
+              statusOps
+                .maybeCollectingKind(state.status)
+                .map { collectingKind =>
+                  val (withdrawn, remained) = state.facilitators.value.partition { peerId =>
+                    resources.withdrawalsMap.get(peerId).contains(collectingKind)
+                  }
+                  state.copy(
+                    facilitators = Facilitators(remained),
+                    withdrawnFacilitators = WithdrawnFacilitators(state.withdrawnFacilitators.value.union(withdrawn.toSet))
+                  )
                 }
-                state.copy(
-                  facilitators = Facilitators(remained),
-                  withdrawnFacilitators = WithdrawnFacilitators(state.withdrawnFacilitators.value.union(withdrawn.toSet))
-                )
-              }
-              .getOrElse(state)
+                .getOrElse(state)
+
+          val withdrawnCount = newState.withdrawnFacilitators.value.size - state.withdrawnFacilitators.value.size
+          val effect =
+            if (withdrawnCount > 0)
+              Metrics[F].incrementCounterBy("dag_consensus_facilitator_withdrawal", withdrawnCount)
+            else Applicative[F].unit
+
+          effect.as((newState, ()))
         }
 
       private def spreadHistoricalAck(
@@ -260,7 +274,7 @@ object ConsensusStateUpdater {
     leavingDelay: FiniteDuration
   )(
     observations: SortedMap[PeerId, Hash]
-  ): F[Unit] =
+  )(implicit metrics: Metrics[F]): F[Unit] =
     pickMajority(observations.values.toList).traverse { majorityObservationHash =>
       val isForked = majorityObservationHash =!= ownObservationHash
 
@@ -269,9 +283,13 @@ object ConsensusStateUpdater {
           case (peerId, observationHash) if observationHash === majorityObservationHash => peerId
         }.toList
 
-        val forkRecovery = Slf4jLogger
-          .getLogger[F]
-          .warn(s"Different hash observations [$observationName]. This node is in fork") >>
+        val forkRecovery = metrics.incrementCounter(
+          "dag_consensus_fork_detected",
+          Seq(unsafeLabelName("observation_type") -> observationName)
+        ) >>
+          Slf4jLogger
+            .getLogger[F]
+            .warn(s"Different hash observations [$observationName]. This node is in fork") >>
           nodeStorage.setNodeState(NodeState.Leaving) >>
           Temporal[F].sleep(leavingDelay) >>
           nodeStorage.setNodeState(NodeState.Offline) >>
@@ -298,7 +316,7 @@ object ConsensusStateUpdater {
     facilitators: Set[PeerId],
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact, Context],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
-  )(implicit hasher: Hasher[F]): F[Option[ArtifactInfo[Artifact, Context]]] = {
+  )(implicit hasher: Hasher[F], metrics: Metrics[F]): F[Option[ArtifactInfo[Artifact, Context]]] = {
     val totalProposals = proposals.size
     val majorityThreshold = totalProposals / 2
 
@@ -335,16 +353,18 @@ object ConsensusStateUpdater {
                         // The clear majority hash failed validation on this node.
                         // Falling back to a less popular hash would diverge from the majority of nodes.
                         // Abandon the round instead — the stall detector will recover.
-                        Slf4jLogger
-                          .getLogger[F]
-                          .error(cause)(
-                            s"Majority artifact validation failed hash=${majorityHash.show} with $occurrences/$totalProposals proposals. " +
-                              s"Abandoning round to prevent fork (would diverge from ${occurrences} nodes)."
-                          ) >> none[ArtifactInfo[Artifact, Context]].pure[F]
+                        metrics.incrementCounter("dag_consensus_majority_artifact_abandoned") >>
+                          Slf4jLogger
+                            .getLogger[F]
+                            .error(cause)(
+                              s"Majority artifact validation failed hash=${majorityHash.show} with $occurrences/$totalProposals proposals. " +
+                                s"Abandoning round to prevent fork (would diverge from ${occurrences} nodes)."
+                            ) >> none[ArtifactInfo[Artifact, Context]].pure[F]
                       else
-                        Slf4jLogger
-                          .getLogger[F]
-                          .warn(cause)(s"Found invalid majority hash=${majorityHash.show} with occurrences=$occurrences") >>
+                        metrics.incrementCounter("dag_consensus_majority_artifact_fallback") >>
+                          Slf4jLogger
+                            .getLogger[F]
+                            .warn(cause)(s"Found invalid majority hash=${majorityHash.show} with occurrences=$occurrences") >>
                           go(tail, isFirst = false),
                     ai => ai.some.pure[F]
                   )

@@ -102,7 +102,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key, Artifact, Ctx, Status, Out
                 if (statusChanged) false
                 else if (reopened) false
                 else ms.lockedForStatus
-              newStallCycleCount = if (statusChanged || reopened) 0 else ms.stallCycleCount
+              newStallCycleCount = if (statusChanged) 0 else ms.stallCycleCount
 
               _ <- queue.offer(ConsensusCommand.CheckUpdate(key)).whenA(resourcesChanged || statusChanged || isLocked)
               _ <- Metrics[F].incrementCounter("dag_consensus_unlock_success").whenA(reopened)
@@ -148,9 +148,14 @@ class StallDetector[F[_]: Async: Metrics, Event, Key, Artifact, Ctx, Status, Out
                 else newStallCycleCount
               newRoundHadStall = ms.roundHadStall || didLock
 
+              _ <- Metrics[F].updateGauge("dag_consensus_stall_cycle", finalStallCycleCount)
+              _ <- Metrics[F].updateGauge("dag_consensus_stall_declaration_progress", declarationProgress)
+              _ <- Metrics[F].incrementCounter("dag_consensus_stall_restall").whenA(failedStallCycle)
+
               roundElapsed = now - ms.roundStartTime
+              _ <- Metrics[F].updateGauge("dag_consensus_round_elapsed_seconds", roundElapsed.toSeconds.toInt)
               roundTimedOut = config.maxRoundDuration.exists(roundElapsed >= _)
-              shouldAbandon = (finalStallCycleCount >= config.maxStallCycles && isLocked) || roundTimedOut
+              shouldAbandon = finalStallCycleCount >= config.maxStallCycles || roundTimedOut
 
               abandonReason =
                 if (roundTimedOut)
@@ -263,6 +268,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key, Artifact, Ctx, Status, Out
           s"(timeout=${declarationTimeout.toSeconds}s), declared=$declaredCount/$activeCount$missingInfo, locking"
       ) >>
         Metrics[F].incrementCounter("dag_consensus_stall_detected") >>
+        Metrics[F].updateGauge("dag_consensus_stall_missing_peers", missingPeerIds.size) >>
         tryLockAndSpreadAck(key, state).as(true)
     } else {
       (alreadyLocked && state.lockStatus === LockStatus.Closed).pure[F]

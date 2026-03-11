@@ -129,18 +129,20 @@ object ConsensusEventLoop {
 
       val commandStream: Stream[F, Unit] =
         Stream.repeatEval(queue.take).evalMap { cmd =>
-          fsm.handle(cmd).handleErrorWith { err =>
-            ctx.logger.error(err)(s"Unhandled error processing ${cmd.getClass.getSimpleName}, recovering") >>
-              Metrics[F].incrementCounter("dag_consensus_command_error") >>
-              (cmd match {
-                case _: ConsensusCommand.ConsensusFinished | ConsensusCommand.RoundCompleted =>
-                  // Critical: if round-completion commands fail, FSM stays stuck in BUSY forever.
-                  // Force round completion so the next round can start.
-                  ctx.logger.warn("Forcing round completion after failed ConsensusFinished/RoundCompleted") >>
-                    queue.offer(ConsensusCommand.RoundCompleted)
-                case _ => Async[F].unit
-              })
-          }
+          queue.size.flatMap(sz => Metrics[F].updateGauge("dag_consensus_command_queue_size", sz)) >>
+            fsm.handle(cmd).handleErrorWith { err =>
+              ctx.logger.error(err)(s"Unhandled error processing ${cmd.getClass.getSimpleName}, recovering") >>
+                Metrics[F].incrementCounter("dag_consensus_command_error") >>
+                (cmd match {
+                  case _: ConsensusCommand.ConsensusFinished | ConsensusCommand.RoundCompleted =>
+                    // Critical: if round-completion commands fail, FSM stays stuck in BUSY forever.
+                    // Force round completion so the next round can start.
+                    ctx.logger.warn("Forcing round completion after failed ConsensusFinished/RoundCompleted") >>
+                      Metrics[F].incrementCounter("dag_consensus_forced_round_completion") >>
+                      queue.offer(ConsensusCommand.RoundCompleted)
+                  case _ => Async[F].unit
+                })
+            }
         }
 
       val peerRegistrationStream: Stream[F, Unit] =
@@ -165,11 +167,14 @@ object ConsensusEventLoop {
       BuiltConsensusLoop(run, manager, queue)
     }
 
-  private def collectRegistration[F[_]: Async, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
+  private def collectRegistration[F[_]: Async: Metrics, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
     consensusClient: ConsensusClient[F, Key, Outcome],
     storage: ConsensusStorage[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]
   )(peer: Peer): F[Unit] =
     consensusClient.getRegistration.run(peer).flatMap { reg =>
-      reg.maybeKey.traverse_(key => storage.registerPeer(peer.id, key))
+      reg.maybeKey.traverse_(key =>
+        storage.registerPeer(peer.id, key) >>
+          Metrics[F].incrementCounter("dag_consensus_peer_registered")
+      )
     }
 }

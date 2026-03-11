@@ -11,6 +11,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.engine.Conse
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.GetConsensusOutcomeRequest
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.Peer
 import io.constellationnetwork.security.signature.Signed
@@ -93,7 +94,9 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
   ): F[Unit] =
     for {
       now <- Async[F].monotonic
-      _ <- Metrics[F].recordTime("dag_consensus_duration", now - newState.createdAt)
+      duration = now - newState.createdAt
+      _ <- Metrics[F].recordTime("dag_consensus_duration", duration)
+      _ <- Metrics[F].recordTimeHistogram("dag_consensus_duration", duration)
 
       updated <- storage.tryUpdateLastConsensusOutcomeWithCleanup(prevKey, outcome)
       _ <- ctx.nodeStorage.clearJoiningGracePeriod
@@ -102,11 +105,16 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
           val key = outcomeKey.get(outcome)
           val trigger = outcomeTrigger.get(outcome)
 
-          log.info(s"Consensus reached outcome at key=$key") >>
+          Metrics[F].incrementCounter(
+            "dag_consensus_outcome_finalized",
+            Seq(unsafeLabelName("trigger_type") -> trigger.toString)
+          ) >>
+            log.info(s"Consensus reached outcome at key=$key") >>
             ctx.nodeStorage.tryModifyStateGetResult(NodeState.WaitingForReady, NodeState.Ready).void >>
             queue.offer(ConsensusFinished(key, outcome, trigger))
         } else {
-          log.warn("Could not update last outcome; another thread may have finalized.")
+          Metrics[F].incrementCounter("dag_consensus_outcome_conflict") >>
+            log.warn("Could not update last outcome; another thread may have finalized.")
         }
     } yield ()
 

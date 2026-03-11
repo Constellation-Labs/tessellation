@@ -9,7 +9,10 @@ import cats.syntax.all._
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
 
+import eu.timepit.refined.auto._
 import monocle.Lens
 
 /** Handles consensus round facilitation and post-consensus scheduling.
@@ -23,7 +26,7 @@ import monocle.Lens
   * @see
   *   ConsensusFSM for command routing
   */
-class ConsensusRoundRunner[F[_]: Async, Event, Key: Next, Artifact, Ctx, Status, Outcome, Kind](
+class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx, Status, Outcome, Kind](
   ctx: ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   stallDetector: StallDetector[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   roundFibersRef: Ref[F, List[Fiber[F, Throwable, Unit]]],
@@ -51,6 +54,7 @@ class ConsensusRoundRunner[F[_]: Async, Event, Key: Next, Artifact, Ctx, Status,
     storage.getLastConsensusOutcome.flatMap {
       case None =>
         logger.warn("No previous outcome; cannot start round.") >>
+          Metrics[F].incrementCounter("dag_consensus_round_no_outcome") >>
           queue.offer(ConsensusCommand.RoundCompleted)
 
       case Some(outcome) =>
@@ -66,7 +70,11 @@ class ConsensusRoundRunner[F[_]: Async, Event, Key: Next, Artifact, Ctx, Status,
 
       _ <- facilitated match {
         case Some(_) =>
-          logger.info(s"Facilitated consensus at key=$key") >>
+          Metrics[F].incrementCounter(
+            "dag_consensus_round_facilitated",
+            Seq(unsafeLabelName("outcome") -> "success")
+          ) >>
+            logger.info(s"Facilitated consensus at key=$key") >>
             startRoundMonitor(key) >>
             doInitialCheck(key)
 
@@ -78,12 +86,20 @@ class ConsensusRoundRunner[F[_]: Async, Event, Key: Next, Artifact, Ctx, Status,
   private def handleExistingOrMissingState(key: Key): F[Unit] =
     storage.getState(key).flatMap {
       case Some(_) =>
-        logger.debug(s"State already exists for key=$key, checking progress") >>
+        Metrics[F].incrementCounter(
+          "dag_consensus_round_facilitated",
+          Seq(unsafeLabelName("outcome") -> "existing")
+        ) >>
+          logger.debug(s"State already exists for key=$key, checking progress") >>
           startRoundMonitor(key) >>
           doInitialCheck(key)
 
       case None =>
-        logger.warn(s"Could not facilitate and no existing state for key=$key") >>
+        Metrics[F].incrementCounter(
+          "dag_consensus_round_facilitated",
+          Seq(unsafeLabelName("outcome") -> "no_state")
+        ) >>
+          logger.warn(s"Could not facilitate and no existing state for key=$key") >>
           queue.offer(ConsensusCommand.RoundCompleted)
     }
 

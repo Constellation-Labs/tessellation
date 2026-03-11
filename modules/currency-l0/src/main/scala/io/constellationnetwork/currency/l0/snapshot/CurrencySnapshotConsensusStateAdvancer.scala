@@ -157,7 +157,7 @@ object CurrencySnapshotConsensusStateAdvancer {
         resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind]
       ): F[Option[Transition]] =
         for {
-          maybeFacilities <- maybeGetQuorumDeclarations(state, resources)(_.facility)(_.trigger)
+          maybeFacilities <- maybeGetQuorumDeclarations(state, resources)(_.facility)(_.facilitatorsHash)
           _ <- maybeFacilities.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
           _ <- maybeFacilities.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
           _ <- maybeFacilities.traverse_(checkForkByConsensusConfigHash)
