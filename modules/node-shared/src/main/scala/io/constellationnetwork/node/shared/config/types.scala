@@ -147,6 +147,7 @@ object types {
     eventCutter: EventCutterConfig,
     maxFacilitatorCount: Option[PosInt] = None,
     reStallTimeout: Option[FiniteDuration] = None,
+    noProgressTimeout: Option[FiniteDuration] = None,
     maxStallCycles: Int = 3
   )
 

@@ -150,16 +150,20 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
       statusStartTime: FiniteDuration,
       lockedForStatus: Boolean,
       noChangeCount: Int,
-      stallCycleCount: Int
+      stallCycleCount: Int,
+      roundHadStall: Boolean,
+      lastSummaryTime: FiniteDuration
     )
 
     val basePollInterval = 100L
     val maxPollInterval = 1000L
 
-    def getResourcesHash(
+    case class ResourcesInfo(hash: Int, declaredCount: Int, activeCount: Int, missingPeerIds: Set[String])
+
+    def getResourcesInfo(
       state: ConsensusState[Key, Status, Outcome, Kind],
       resources: ConsensusResources[Artifact, Kind]
-    ): Int = {
+    ): ResourcesInfo = {
       val active = state.facilitators.value.toSet -- state.withdrawnFacilitators.value
       val acksHash = resources.acksMap.size
       ops.maybeCollectingKind(state.status) match {
@@ -167,10 +171,21 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
           val getter = ops.kindGetter(kind)
           val respondedPeers = resources.peerDeclarationsMap.collect {
             case (pid, decls) if active.contains(pid) && getter(decls).isDefined => pid
-          }
-          (respondedPeers.toSet, acksHash).hashCode()
+          }.toSet
+          val missingPeers = active -- respondedPeers
+          ResourcesInfo(
+            hash = (respondedPeers, acksHash).hashCode(),
+            declaredCount = respondedPeers.size,
+            activeCount = active.size,
+            missingPeerIds = missingPeers.toList.map(_.value.value.take(8)).toSet
+          )
         case None =>
-          (resources.peerDeclarationsMap.keySet, acksHash).hashCode()
+          ResourcesInfo(
+            hash = (resources.peerDeclarationsMap.keySet, acksHash).hashCode(),
+            declaredCount = resources.peerDeclarationsMap.size,
+            activeCount = active.size,
+            missingPeerIds = Set.empty
+          )
       }
     }
 
@@ -191,7 +206,8 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
                 now <- Async[F].monotonic
                 resources <- storage.getResources(key)
 
-                currentHash = getResourcesHash(state, resources)
+                info = getResourcesInfo(state, resources)
+                currentHash = info.hash
                 statusChanged = !ms.lastStatus.contains(state.status)
                 resourcesChanged = currentHash != ms.lastResourcesHash
                 isLocked = state.lockStatus === LockStatus.Closed
@@ -211,9 +227,13 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
                 _ <- queue.offer(ConsensusCommand.CheckUpdate(key)).whenA(resourcesChanged || statusChanged || isLocked)
 
                 declarationTimeout <- getCurrentDeclarationTimeout
+                // Use shorter re-stall timeout only for repeated stalls within the SAME status.
+                // stallCycleCount resets on status change, so a new phase always gets the full declarationTimeout.
                 effectiveTimeout =
                   if (ms.stallCycleCount > 0)
                     config.reStallTimeout.getOrElse(declarationTimeout)
+                  else if (info.declaredCount == 0)
+                    config.noProgressTimeout.getOrElse(declarationTimeout)
                   else
                     declarationTimeout
                 withinStallBudget = ms.stallCycleCount < config.maxStallCycles
@@ -223,33 +243,106 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
                   state = state,
                   declarationTimeout = effectiveTimeout,
                   statusDuration = statusDuration,
-                  alreadyLocked = newLockedForStatus || !withinStallBudget
+                  alreadyLocked = newLockedForStatus || !withinStallBudget,
+                  declaredCount = info.declaredCount,
+                  activeCount = info.activeCount,
+                  missingPeerIds = info.missingPeerIds
                 )
 
-                finalStallCycleCount = if (didLock && !ms.lockedForStatus) newStallCycleCount + 1 else newStallCycleCount
+                // Detect failed stall cycle: locked, still Closed (unlock hasn't succeeded),
+                // re-stall timeout elapsed, within budget. Re-spread ACKs for another propagation attempt.
+                failedStallCycle = ms.lockedForStatus && isLocked && statusDuration >= effectiveTimeout &&
+                  withinStallBudget && !statusChanged
+                _ <- (spreadAckIfCollecting(key, state) >>
+                  queue.offer(ConsensusCommand.CheckUpdate(key))).whenA(failedStallCycle)
+
+                // Reset timer when: (a) a failed stall cycle is counted, or (b) a fresh lock just happened.
+                // Without (b), failedStallCycle fires immediately after the first lock because statusDuration
+                // already exceeds effectiveTimeout from the initial wait.
+                freshLock = didLock && !ms.lockedForStatus
+                adjustedStatusStartTime = if (failedStallCycle || freshLock) now else newStatusStartTime
+
+                // Count cycles: fresh locks (after status change or Reopened reset) AND failed re-stall attempts
+                finalStallCycleCount =
+                  if (didLock && !ms.lockedForStatus) newStallCycleCount + 1
+                  else if (failedStallCycle) newStallCycleCount + 1
+                  else newStallCycleCount
+                newRoundHadStall = ms.roundHadStall || didLock
+
+                // Abandon round if stall budget exhausted and still locked (unlock never succeeded)
+                shouldAbandon = finalStallCycleCount >= config.maxStallCycles && isLocked
+
+                _ <- (
+                  logger.error(
+                    s"Round key=$key stuck after $finalStallCycleCount stall cycles in Closed state, abandoning round"
+                  ) >>
+                    Metrics[F].incrementCounter("dag_consensus_round_abandoned") >>
+                    // Remove stale Closed state so the next round can start fresh with the same key.
+                    // Only removes if still Closed — if another fiber unlocked it in the meantime, leave it.
+                    storage
+                      .condModifyState[Unit](key) {
+                        case Some(s) if s.lockStatus === LockStatus.Closed =>
+                          (none[ConsensusState[Key, Status, Outcome, Kind]], ()).some.pure[F]
+                        case _ =>
+                          none.pure[F]
+                      }
+                      .void >>
+                    queue.offer(ConsensusCommand.RoundCompleted)
+                ).whenA(shouldAbandon)
+
+                // Periodic summary log every ~10s (avoids spam, provides useful state visibility)
+                summaryInterval = 10.seconds
+                timeSinceLastSummary = now - ms.lastSummaryTime
+                shouldLogSummary = statusChanged || (timeSinceLastSummary >= summaryInterval && info.declaredCount < info.activeCount)
+                newSummaryTime = if (shouldLogSummary) now else ms.lastSummaryTime
+                statusName = state.status.getClass.getSimpleName.stripSuffix("$")
+                lockInfo = if (isLocked) " LOCKED" else if (reopened) " REOPENED" else ""
+                missingInfo = if (info.missingPeerIds.nonEmpty) s" missing=[${info.missingPeerIds.mkString(",")}]" else ""
+                _ <- logger
+                  .info(
+                    s"Round key=$key status=$statusName declared=${info.declaredCount}/${info.activeCount} " +
+                      s"elapsed=${statusDuration.toSeconds}s stallCycle=${finalStallCycleCount}$lockInfo$missingInfo"
+                  )
+                  .whenA(shouldLogSummary && !shouldAbandon)
 
                 changed = resourcesChanged || statusChanged
                 newNoChangeCount = if (changed) 0 else ms.noChangeCount + 1
                 sleepMs = if (changed) basePollInterval else math.min(basePollInterval * (newNoChangeCount + 1), maxPollInterval)
-                _ <- Temporal[F].sleep(sleepMs.millis)
+                _ <- Temporal[F].sleep(sleepMs.millis).unlessA(shouldAbandon)
 
               } yield
-                Left(
-                  MonitorState(
-                    lastResourcesHash = currentHash,
-                    lastStatus = Some(state.status),
-                    statusStartTime = newStatusStartTime,
-                    lockedForStatus = didLock,
-                    noChangeCount = newNoChangeCount,
-                    stallCycleCount = finalStallCycleCount
+                if (shouldAbandon)
+                  Right(())
+                else
+                  Left(
+                    MonitorState(
+                      lastResourcesHash = currentHash,
+                      lastStatus = Some(state.status),
+                      statusStartTime = adjustedStatusStartTime,
+                      lockedForStatus = didLock,
+                      noChangeCount = newNoChangeCount,
+                      stallCycleCount = finalStallCycleCount,
+                      roundHadStall = newRoundHadStall,
+                      lastSummaryTime = newSummaryTime
+                    )
                   )
-                )
           }
       }
 
     for {
       now <- Async[F].monotonic
-      _ <- Async[F].tailRecM(MonitorState(0, None, now, lockedForStatus = false, noChangeCount = 0, stallCycleCount = 0))(monitorStep)
+      _ <- Async[F].tailRecM(
+        MonitorState(
+          0,
+          None,
+          now,
+          lockedForStatus = false,
+          noChangeCount = 0,
+          stallCycleCount = 0,
+          roundHadStall = false,
+          lastSummaryTime = now
+        )
+      )(monitorStep)
     } yield ()
   }
 
@@ -258,12 +351,22 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
     state: ConsensusState[Key, Status, Outcome, Kind],
     declarationTimeout: FiniteDuration,
     statusDuration: FiniteDuration,
-    alreadyLocked: Boolean
+    alreadyLocked: Boolean,
+    declaredCount: Int,
+    activeCount: Int,
+    missingPeerIds: Set[String]
   ): F[Boolean] = {
     val shouldLock = statusDuration >= declarationTimeout && !alreadyLocked
 
     if (shouldLock) {
-      logger.debug(s"Stall detected at key=$key after ${statusDuration.toSeconds}s, locking and spreading ack") >>
+      val statusName = state.status.getClass.getSimpleName.stripSuffix("$")
+      val missingInfo =
+        if (missingPeerIds.nonEmpty) s", missing=${missingPeerIds.mkString(",")}"
+        else ""
+      logger.warn(
+        s"Stall detected at key=$key status=$statusName after ${statusDuration.toSeconds}s " +
+          s"(timeout=${declarationTimeout.toSeconds}s), declared=$declaredCount/$activeCount$missingInfo, locking"
+      ) >>
         Metrics[F].incrementCounter("dag_consensus_stall_detected") >>
         tryLockAndSpreadAck(key, state).as(true)
     } else {

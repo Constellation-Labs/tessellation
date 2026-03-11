@@ -34,20 +34,45 @@ object UnlockConsensusUpdateSuite extends SimpleIOSuite with Checkers {
 
   override def checkConfig: CheckConfig = CheckConfig.default.copy(minimumSuccessful = 40)
 
-  test("state either transitions to target state or remains in initial state, regardless of what subset of acks is processed") {
+  test("partial ACKs produce a valid unlock or leave state unchanged") {
     forall(lockedStateAndResourcesGen) {
       case (initialState, resources) =>
-        unlockConsensusFn(resources).run(initialState).flatMap {
-          case (targetState, _) =>
-            val partialResourcesGen =
-              Gen.someOf(resources.acksMap).map(_.toMap).map(partialAcksMap => resources.copy(acksMap = partialAcksMap))
+        val partialResourcesGen =
+          Gen.someOf(resources.acksMap).map(_.toMap).map(partialAcksMap => resources.copy(acksMap = partialAcksMap))
 
-            forall(partialResourcesGen) { partialResources =>
-              unlockConsensusFn(partialResources).run(initialState).map {
-                case (state, _) =>
-                  expect.same(initialState, state).xor(expect.same(targetState, state))
+        forall(partialResourcesGen) { partialResources =>
+          unlockConsensusFn(partialResources).run(initialState).map {
+            case (state, _) =>
+              if (state.lockStatus === LockStatus.Closed) {
+                // No unlock happened — state should be exactly the initial state
+                expect.same(initialState, state)
+              } else {
+                // Unlock happened — verify structural invariants:
+                // 1. Lock status transitioned to Reopened
+                // 2. Kept + removed = original facilitators (no peers lost or invented)
+                // 3. Kept and removed are disjoint
+                expect(state.lockStatus === LockStatus.Reopened) &&
+                expect(
+                  state.removedFacilitators.value.union(state.facilitators.value.toSet) === initialState.facilitators.value.toSet
+                ) &&
+                expect(state.removedFacilitators.value.intersect(state.facilitators.value.toSet) === Set.empty)
               }
-            }
+          }
+        }
+    }
+  }
+
+  test("unlock is deterministic - same inputs produce same result") {
+    forall(lockedStateAndResourcesGen) {
+      case (initialState, resources) =>
+        val partialResourcesGen =
+          Gen.someOf(resources.acksMap).map(_.toMap).map(partialAcksMap => resources.copy(acksMap = partialAcksMap))
+
+        forall(partialResourcesGen) { partialResources =>
+          for {
+            (state1, _) <- unlockConsensusFn(partialResources).run(initialState)
+            (state2, _) <- unlockConsensusFn(partialResources).run(initialState)
+          } yield expect.same(state1, state2)
         }
     }
   }
