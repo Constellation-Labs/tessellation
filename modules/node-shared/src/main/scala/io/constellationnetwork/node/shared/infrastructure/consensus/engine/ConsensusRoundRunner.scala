@@ -255,11 +255,12 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
                 timeSinceLastSummary = now - ms.lastSummaryTime
                 shouldLogSummary = statusChanged || (timeSinceLastSummary >= summaryInterval && info.declaredCount < info.activeCount)
                 newSummaryTime = if (shouldLogSummary) now else ms.lastSummaryTime
+                statusName = state.status.getClass.getSimpleName.stripSuffix("$")
                 lockInfo = if (isLocked) " LOCKED" else if (reopened) " REOPENED" else ""
                 missingInfo = if (info.missingPeerIds.nonEmpty) s" missing=[${info.missingPeerIds.mkString(",")}]" else ""
                 _ <- logger
                   .info(
-                    s"Round key=$key status=${state.status} declared=${info.declaredCount}/${info.activeCount} " +
+                    s"Round key=$key status=$statusName declared=${info.declaredCount}/${info.activeCount} " +
                       s"elapsed=${statusDuration.toSeconds}s stallCycle=${finalStallCycleCount}$lockInfo$missingInfo"
                   )
                   .whenA(shouldLogSummary)
@@ -315,11 +316,12 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
     val shouldLock = statusDuration >= declarationTimeout && !alreadyLocked
 
     if (shouldLock) {
+      val statusName = state.status.getClass.getSimpleName.stripSuffix("$")
       val missingInfo =
         if (missingPeerIds.nonEmpty) s", missing=${missingPeerIds.mkString(",")}"
         else ""
       logger.warn(
-        s"Stall detected at key=$key status=${state.status} after ${statusDuration.toSeconds}s " +
+        s"Stall detected at key=$key status=$statusName after ${statusDuration.toSeconds}s " +
           s"(timeout=${declarationTimeout.toSeconds}s), declared=$declaredCount/$activeCount$missingInfo, locking"
       ) >>
         Metrics[F].incrementCounter("dag_consensus_stall_detected") >>
