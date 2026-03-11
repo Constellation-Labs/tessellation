@@ -193,7 +193,7 @@ object ConsensusStateUpdater {
           val newlyRemoved = currentState.removedFacilitators.value.diff(originalState.removedFacilitators.value)
           if (currentState.lockStatus === LockStatus.Reopened && originalState.lockStatus === LockStatus.Closed) {
             Metrics[F].incrementCounter("dag_consensus_unlock_transition") >>
-              Metrics[F].updateGauge("dag_consensus_unlock_peers_removed", newlyRemoved.size) >>
+              Metrics[F].incrementCounterBy("dag_consensus_unlock_peers_removed", newlyRemoved.size) >>
               logger.warn(
                 s"Unlock transition: Closed -> Reopened for key=${currentState.key.show}. " +
                   s"Removed ${newlyRemoved.size} peers: ${newlyRemoved.map(_.show).mkString(", ")}. " +

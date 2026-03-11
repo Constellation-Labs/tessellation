@@ -80,7 +80,9 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     * If quorum is reached but no value has sufficient support (split vote), returns `None` and defers to the stall detector, which will
     * lock the round and remove unresponsive peers.
     *
-    * Falls back to 100% if quorumThreshold is not configured.
+    * When `quorumSize == totalRequired` (either because `quorumThreshold` is `None`, or because `ceil(N * threshold) == N` for small
+    * clusters), the safe majority gate is skipped — all facilitators must declare, so there is no subset ambiguity. `pickMajority`
+    * downstream handles any disagreement.
     */
   protected def maybeGetQuorumDeclarations[A, V](
     state: State,
@@ -94,6 +96,10 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
       case Some(threshold) => math.ceil(totalRequired * threshold).toInt.max(1)
       case None            => totalRequired
     }
+    // True subset quorum: quorumSize < totalRequired means different nodes may see different quorum subsets,
+    // so we need the safe majority gate to ensure deterministic pickMajority. When quorumSize == totalRequired
+    // (either None/100% mode or small cluster where ceil(N*threshold) = N), there's no subset ambiguity.
+    val isSubsetQuorum = quorumSize < totalRequired
 
     val declarations = activeFacilitators.flatMap { peerId =>
       resources.peerDeclarationsMap
@@ -106,19 +112,28 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     val receivedCount = declarationsMap.size
 
     if (receivedCount >= quorumSize) {
-      val values = declarationsMap.values.toList.map(valueExtractor)
-      val maxSupport = values.groupBy(identity).values.map(_.size).maxOption.getOrElse(0)
-
-      if (maxSupport >= quorumSize) {
+      if (!isSubsetQuorum) {
+        // 100% mode: all facilitators declared, no subset ambiguity — pickMajority handles disagreements downstream
         logger.debug(
-          s"Quorum reached: $receivedCount/$totalRequired (need $quorumSize, max_support=$maxSupport) for key=${state.key}"
+          s"All declarations received: $receivedCount/$totalRequired for key=${state.key}"
         ) >>
           declarationsMap.some.pure[F]
       } else {
-        logger.debug(
-          s"Quorum met ($receivedCount/$totalRequired) but no safe majority (max_support=$maxSupport < quorum=$quorumSize) for key=${state.key}"
-        ) >>
-          none[SortedMap[PeerId, A]].pure[F]
+        // Subset quorum mode: need safe majority to ensure deterministic pickMajority across different views
+        val values = declarationsMap.values.toList.map(valueExtractor)
+        val maxSupport = values.groupBy(identity).values.map(_.size).maxOption.getOrElse(0)
+
+        if (maxSupport >= quorumSize) {
+          logger.debug(
+            s"Quorum reached: $receivedCount/$totalRequired (need $quorumSize, max_support=$maxSupport) for key=${state.key}"
+          ) >>
+            declarationsMap.some.pure[F]
+        } else {
+          logger.debug(
+            s"Quorum met ($receivedCount/$totalRequired) but no safe majority (max_support=$maxSupport < quorum=$quorumSize) for key=${state.key}"
+          ) >>
+            none[SortedMap[PeerId, A]].pure[F]
+        }
       }
     } else {
       none[SortedMap[PeerId, A]].pure[F]

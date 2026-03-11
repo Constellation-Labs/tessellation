@@ -155,7 +155,7 @@ object GlobalSnapshotConsensusStateAdvancer {
       loggerBundle.app.withOrdinal(SnapshotOrdinal.unsafeApply(state.lastOutcome.key.value.value + 1)) {
         HasherSelector[F].withCurrent { implicit hasher =>
           for {
-            maybeFacilities <- maybeGetQuorumDeclarations(state, resources)(_.facility)(_.facilitatorsHash)
+            maybeFacilities <- maybeGetQuorumDeclarations(state, resources)(_.facility)(_.lastSnapshotHash)
             facilitators = maybeFacilities.map(_.keys.toList).getOrElse(List.empty[PeerId])
             _ <- loggerBundle.consensus.collectingFacilities(facilitators)
             _ <- maybeFacilities.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
@@ -443,8 +443,8 @@ object GlobalSnapshotConsensusStateAdvancer {
 
     private def checkForkByConsensusConfigHash(facilities: SortedMap[PeerId, Facility]): F[Unit] = {
       val ownConfigHash = config.deterministicConfigHash
-      val peerConfigHashes = facilities.collect {
-        case (pid, f) if f.consensusConfigHash.isDefined => (pid, f.consensusConfigHash.get)
+      val peerConfigHashes = facilities.flatMap {
+        case (pid, f) => f.consensusConfigHash.map(pid -> _)
       }
       if (peerConfigHashes.nonEmpty)
         recoverIfForking[F](ownConfigHash, consensusConfigHashObservationName, restartService, nodeStorage, leavingDelay)(

@@ -137,9 +137,14 @@ object ConsensusEventLoop {
                   case _: ConsensusCommand.ConsensusFinished | ConsensusCommand.RoundCompleted =>
                     // Critical: if round-completion commands fail, FSM stays stuck in BUSY forever.
                     // Force round completion so the next round can start.
+                    // Also offer TimeTick: the forced RoundCompleted calls completeRound without
+                    // afterConsensusFinish, so no timer is scheduled for the next round. On solo nodes
+                    // with no external events, this would deadlock consensus. The TimeTick fires once
+                    // RoundCompleted sets isRunning=false, starting a new round from IDLE.
                     ctx.logger.warn("Forcing round completion after failed ConsensusFinished/RoundCompleted") >>
                       Metrics[F].incrementCounter("dag_consensus_forced_round_completion") >>
-                      queue.offer(ConsensusCommand.RoundCompleted)
+                      queue.offer(ConsensusCommand.RoundCompleted) >>
+                      queue.offer(ConsensusCommand.TimeTick)
                   case _ => Async[F].unit
                 })
             }

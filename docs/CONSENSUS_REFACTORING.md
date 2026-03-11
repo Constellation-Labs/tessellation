@@ -65,7 +65,7 @@ snapshot.consensus {
 
 ---
 
-## Adaptive Tiered Unlock Thresholds
+## Deterministic N-Based Unlock Thresholds
 
 ### Problem
 
@@ -75,28 +75,29 @@ The old unlock logic used flat thresholds based on total facilitator count. When
 
 ### Solution
 
-Replaced flat thresholds with **adaptive tiers** in `UnlockConsensusUpdate.scala` based on how many facilitators actually voted (sent ACKs):
+Replaced flat thresholds with **deterministic N-based thresholds** in `UnlockConsensusUpdate.scala`, with a minimum voter gate and a safety floor:
 
-| Tier | Condition | Keep Threshold | Remove Threshold | Rationale |
-|------|-----------|----------------|------------------|-----------|
-| **DEFER** | `voterCount < ceil(N/5)` | — | — | Too few voters; defer to re-stall cycle |
-| **DEGRADED** | `voterCount < ceil(N/3)` | 2/3 supermajority of voters | 2/3 supermajority of voters | Conservative: high bar prevents bad decisions |
-| **FALLBACK** | `voterCount < (N+1)/2` | Simple majority of voters | Simple majority of voters | Moderate: enough voters for reasonable decision |
-| **NORMAL** | `voterCount >= (N+1)/2` | `(N+1)/2` of total | `N/2 + 1` of total | Standard: based on total facilitator count |
+| Phase | Condition | Keep Threshold | Remove Threshold | Rationale |
+|-------|-----------|----------------|------------------|-----------|
+| **DEFER** | `voterCount < ceil(N/3)` | — | — | Too few voters for a safe decision; defer to re-stall cycle |
+| **DECIDE** | `voterCount >= ceil(N/3)` | `(N+1)/2` | `N/2 + 1` | N-based thresholds ensure all nodes make identical decisions |
 
-Where `N` is the total facilitator count and `voterCount` is how many facilitators actually sent ACKs for the current collecting kind.
+Where `N` is the total facilitator count and `voterCount` is how many facilitators actually sent ACKs for the current collecting kind. The minimum voter requirement is `ceil(N/3).max(2)`.
 
-**Key behavior:**
-- DEFER tier means no unlock happens — the re-stall mechanism retries with fresh ACKs, giving more time for ACKs to arrive
-- DEGRADED requires supermajority agreement among actual voters before removing anyone
-- As more voters participate, thresholds relax toward the standard case
+**Key properties:**
+- `keepThreshold + removeThreshold = N + 1 > N`, guaranteeing mutual exclusivity (no peer can be both kept and removed)
+- Thresholds depend only on `N` (total facilitator count), which all nodes agree on — making the decision deterministic across the network
+- DEFER uses `ceil(N/3)` as its minimum voter requirement — a lower bar than `keepThreshold` (`(N+1)/2`), allowing unlock decisions with fewer voters while still requiring meaningful participation. For N=20 this means 7 voters needed (vs 11 with keepThreshold)
+- The stall detector's `maxStallCycles` and `maxRoundDuration` handle liveness: after exhausting stall cycles, the round is abandoned and a new one starts
 - After unlock: `Closed → Reopened`, removed peers are dropped from facilitator list, `advanceStatus` runs again with reduced list
+
+**Safety floor (`MinFacilitatorCount = 2`):** After computing keep/remove decisions, if the number of kept facilitators would fall below 2, the unlock is aborted — the state remains `Closed` and the round is deferred to the stall detector. This prevents a catastrophic scenario where stale ACKs (e.g., from a global latency spike where no declarations arrived before lock) cause all facilitators to be voted out, leaving `facilitatorCount=0` and an irrecoverable cluster.
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `consensus/update/UnlockConsensusUpdate.scala` | Rewritten with 4-tier adaptive thresholds |
+| `consensus/update/UnlockConsensusUpdate.scala` | Rewritten with deterministic N-based thresholds, DEFER gate, and MinFacilitatorCount safety floor |
 
 ---
 
@@ -248,7 +249,7 @@ Wait declarationTimeout
 **Adaptive timeout features:**
 - **Near-completion grace:** When >=75% of declarations received and on first stall cycle, timeout extended by 50% to allow stragglers
 - **Re-stall timeout:** After first lock, subsequent stall cycles use `reStallTimeout` (shorter) instead of `declarationTimeout`
-- **Round abandonment:** Cleans up state and enqueues `RoundCompleted` so the FSM transitions back to IDLE
+- **Round abandonment:** `shouldAbandon = finalStallCycleCount >= maxStallCycles || roundTimedOut`. When triggered, state is removed unconditionally (`case Some(_) =>`) and `RoundCompleted` is enqueued so the FSM transitions back to IDLE. Note: the stall-cycle-exhaustion path does not require `isLocked` — once the budget is spent, the round is abandoned regardless of lock status. This is a deliberate trade-off: after N failed lock/unlock cycles, cutting losses is faster than hoping N+1 works
 
 **Monitoring improvements:**
 - Periodic summary logging (every 10s) showing status, declaration counts, missing peers
@@ -458,15 +459,21 @@ fsm.handle(cmd).handleErrorWith { err =>
     Metrics[F].incrementCounter("dag_consensus_command_error") >>
     (cmd match {
       case _: ConsensusCommand.ConsensusFinished | ConsensusCommand.RoundCompleted =>
-        // Critical: force round completion so FSM doesn't stay stuck in BUSY
+        // Critical: force round completion so FSM doesn't stay stuck in BUSY.
+        // Also offer TimeTick: the forced RoundCompleted calls completeRound without
+        // afterConsensusFinish, so no timer is scheduled for the next round. On solo nodes
+        // with no external events, this would deadlock consensus.
         logger.warn("Forcing round completion after failed ConsensusFinished/RoundCompleted") >>
-          queue.offer(ConsensusCommand.RoundCompleted)
+          queue.offer(ConsensusCommand.RoundCompleted) >>
+          queue.offer(ConsensusCommand.TimeTick)
       case _ => Async[F].unit
     })
 }
 ```
 
 For non-critical commands (rumor processing, peer registration, etc.), the error is logged and the stream continues — same as before.
+
+**Solo-node stall prevention:** The forced `RoundCompleted` calls `completeRound` without `afterConsensusFinish`, so no timer is scheduled for the next round. On solo nodes with no external events (no gossip, no peer messages), consensus would permanently stall. The follow-up `TimeTick` fires once `RoundCompleted` sets `isRunning=false`, starting a new round from IDLE.
 
 ### Files Changed
 
@@ -502,11 +509,11 @@ These files had unused imports, parameters, or methods that were never caught be
 ## Test Results
 
 ```
-Total: 71 tests, 0 failures
-  - StallDetectorSuite:            24 tests  (stall detection, lock/unlock, re-stall cycles, abandonment)
-  - QuorumDeclarationsSuite:       12 tests  (quorum threshold, supermajority gate, split vote deferral)
+Total: 83 tests, 0 failures (430 total project-wide)
+  - StallDetectorSuite:            27 tests  (stall detection, lock/unlock, re-stall cycles, abandonment, abandon guard)
+  - QuorumDeclarationsSuite:       21 tests  (quorum threshold, supermajority gate, split vote deferral, config validation, small cluster)
   - RemovalPenaltySuite:           12 tests  (penalty lifecycle, decrement, expiry, filtering, determinism)
-  - UnlockConsensusUpdateSuite:     9 tests  (adaptive tiers: DEFER, DEGRADED, FALLBACK, NORMAL)
+  - UnlockConsensusUpdateSuite:    10 tests  (N-based thresholds, DEFER gate, mutual exclusivity, determinism, MinFacilitatorCount safety floor)
   - PendingTriggersSuite:           7 tests  (atomic state, priority ordering, concurrency safety)
   - EligibleFacilitatorsSuite:      5 tests  (re-entry after removal, collateral filtering)
 ```

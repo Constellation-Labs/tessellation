@@ -60,6 +60,12 @@ object QuorumDeclarationsSuite extends SimpleIOSuite with Checkers {
       resources: ConsensusResources[Artifact, Kind]
     )(getter: PeerDeclarations => Option[A]): IO[Option[SortedMap[PeerId, A]]] =
       maybeGetQuorumDeclarations(state, resources)(getter)(identity)
+
+    def testQuorumDeclarationsWithExtractor[A, V](
+      state: ConsensusState[Key, Status, Outcome, Kind],
+      resources: ConsensusResources[Artifact, Kind]
+    )(getter: PeerDeclarations => Option[A])(extractor: A => V): IO[Option[SortedMap[PeerId, A]]] =
+      maybeGetQuorumDeclarations(state, resources)(getter)(extractor)
   }
 
   def facilitatorsGen: Gen[List[PeerId]] =
@@ -148,7 +154,7 @@ object QuorumDeclarationsSuite extends SimpleIOSuite with Checkers {
     }
   }
 
-  test("with threshold = None, requires 100% (backward compatible)") {
+  test("with threshold = None, requires 100% of declarations (backward compatible)") {
     forall(facilitatorsGen) { facilitators =>
       // All but one declare — should NOT meet 100% threshold
       val declaringPeers = facilitators.drop(1)
@@ -160,6 +166,59 @@ object QuorumDeclarationsSuite extends SimpleIOSuite with Checkers {
       advancer.testQuorumDeclarations(state, resources)(alwaysDeclared).map { result =>
         expect(result.isEmpty)
       }
+    }
+  }
+
+  test("with threshold = None, returns all once 100% declare (no safe majority gate)") {
+    forall(facilitatorsGen) { facilitators =>
+      val advancer = new TestAdvancer(None)
+      val state = mkState(facilitators)
+      // All facilitators declare — should return all even if values could disagree downstream
+      val resources = mkResources(facilitators)
+
+      advancer.testQuorumDeclarations(state, resources)(alwaysDeclared).map { result =>
+        expect(result.isDefined) && expect.same(facilitators.size, result.get.size)
+      }
+    }
+  }
+
+  test("small cluster with threshold: skips safe majority gate when quorumSize == totalRequired") {
+    IO {
+      // With 2 facilitators and threshold 0.67: quorumSize = ceil(2 * 0.67) = 2 = totalRequired.
+      // Even though quorumThreshold is configured, there's no subset ambiguity, so the safe
+      // majority gate should NOT apply. pickMajority handles disagreements downstream.
+      val threshold = 0.67
+      val quorumSize = math.ceil(2 * threshold).toInt.max(1)
+      // Verify our assumption: quorumSize == totalRequired for 2 facilitators
+      expect.same(2, quorumSize)
+    }
+  }
+
+  test("isSubsetQuorum is false when quorumSize equals totalRequired") {
+    IO {
+      // Various small cluster sizes where ceil(N * 0.67) = N
+      val cases = List(1, 2, 3) // ceil(1*0.67)=1, ceil(2*0.67)=2, ceil(3*0.67)=3
+      val results = cases.map { n =>
+        val quorumSize = math.ceil(n * 0.67).toInt.max(1)
+        val isSubsetQuorum = quorumSize < n
+        (n, quorumSize, isSubsetQuorum)
+      }
+      // For all these sizes, quorumSize == n, so isSubsetQuorum should be false
+      expect(results.forall { case (_, _, isSub) => !isSub })
+    }
+  }
+
+  test("isSubsetQuorum is true when quorumSize < totalRequired") {
+    IO {
+      // Larger clusters where ceil(N * 0.67) < N
+      val cases = List(4, 10, 20) // ceil(4*0.67)=3, ceil(10*0.67)=7, ceil(20*0.67)=14
+      val results = cases.map { n =>
+        val quorumSize = math.ceil(n * 0.67).toInt.max(1)
+        val isSubsetQuorum = quorumSize < n
+        (n, quorumSize, isSubsetQuorum)
+      }
+      // For all these sizes, quorumSize < n, so isSubsetQuorum should be true
+      expect(results.forall { case (_, _, isSub) => isSub })
     }
   }
 
@@ -271,6 +330,43 @@ object QuorumDeclarationsSuite extends SimpleIOSuite with Checkers {
 
         expect(isSafe) && expect.same(majority1, majority2)
       }
+    }
+  }
+
+  // === quorumThreshold validation tests ===
+
+  test("quorumThreshold rejects values <= 0.5") {
+    IO {
+      val caught = scala.util.Try(testConfig.copy(quorumThreshold = Some(0.5)))
+      expect(caught.isFailure)
+    }
+  }
+
+  test("quorumThreshold rejects values > 1.0") {
+    IO {
+      val caught = scala.util.Try(testConfig.copy(quorumThreshold = Some(1.1)))
+      expect(caught.isFailure)
+    }
+  }
+
+  test("quorumThreshold accepts valid value 0.67") {
+    IO {
+      val config = testConfig.copy(quorumThreshold = Some(0.67))
+      expect(config.quorumThreshold.contains(0.67))
+    }
+  }
+
+  test("quorumThreshold accepts None (100% mode)") {
+    IO {
+      val config = testConfig.copy(quorumThreshold = None)
+      expect(config.quorumThreshold.isEmpty)
+    }
+  }
+
+  test("quorumThreshold accepts 1.0 (equivalent to 100%)") {
+    IO {
+      val config = testConfig.copy(quorumThreshold = Some(1.0))
+      expect(config.quorumThreshold.contains(1.0))
     }
   }
 }

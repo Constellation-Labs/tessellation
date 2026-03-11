@@ -15,19 +15,32 @@ import monocle.Lens
   * contains the set of peer IDs that the sender considers "present" (responsive). This module tallies ACK votes to decide which peers to
   * keep and which to remove.
   *
-  * '''Adaptive tiered thresholds:''' Thresholds adapt based on how many facilitators actually voted (sent ACKs), allowing progress even
-  * when many peers are unresponsive:
+  * '''Deterministic N-based thresholds:''' Thresholds are computed solely from N (the total facilitator count), which all nodes agree on.
+  * This ensures that given the same set of ACK votes, all nodes make identical keep/remove decisions — preventing divergent facilitator
+  * lists that would trigger unnecessary fork recovery.
   *
-  *   - '''DEFER''' (voterCount < ceil(N/5)): Too few voters for a safe decision. The unlock is deferred and the re-stall mechanism will
-  *     retry with fresh ACKs.
-  *   - '''DEGRADED''' (voterCount < ceil(N/3)): Requires 2/3 supermajority of voters for both keep and remove decisions.
-  *   - '''FALLBACK''' (voterCount < (N+1)/2): Simple majority of voters suffices for keep/remove decisions.
-  *   - '''NORMAL''' (voterCount >= (N+1)/2): Standard thresholds based on total facilitator count.
+  *   - keepThreshold = (N + 1) / 2 — a peer is kept if at least half the facilitators vouch for it
+  *   - removeThreshold = N / 2 + 1 — a peer is removed if a strict majority votes against it
+  *   - keepThreshold + removeThreshold = N + 1 > N, guaranteeing mutual exclusivity (no peer can be both kept and removed)
+  *
+  * If fewer than ceil(N/3) facilitators have sent ACKs, the unlock is '''deferred''' (too few voters for any decision). The stall
+  * detector's re-stall mechanism will spread ACKs again. If the unlock never succeeds after maxStallCycles, the round is abandoned and a
+  * new round begins.
+  *
+  * '''Safety floor:''' After computing keep/remove decisions, if the number of kept facilitators would fall below `MinFacilitatorCount`
+  * (currently 2), the unlock is aborted — the state remains `Closed` and the round is deferred to the stall detector. This prevents a
+  * catastrophic scenario where stale ACKs (e.g., from a global latency spike where no declarations arrived before lock) cause all
+  * facilitators to be voted out, leaving `facilitatorCount=0` and an irrecoverable cluster.
   *
   * After unlock transitions `Closed → Reopened` and removes unresponsive peers, `advanceStatus` can run again with the reduced facilitator
   * list, allowing the round to proceed.
   */
 object UnlockConsensusUpdate {
+
+  /** Minimum number of facilitators that must survive an unlock. If the voting result would leave fewer than this many peers, the unlock is
+    * aborted and deferred to the stall detector (which will either retry ACKs or abandon the round after maxStallCycles).
+    */
+  val MinFacilitatorCount: Int = 2
 
   def tryUnlock[F[_]: Monad, S, K](acksMap: Map[(PeerId, K), Set[PeerId]])(maybeCollectingKind: S => Option[K])(
     implicit _lockStatus: Lens[S, LockStatus],
@@ -62,17 +75,15 @@ object UnlockConsensusUpdate {
           val n = facilitators.size
           val voterCount = facilitators.count(f => acksMap.contains((f, collectingKind)))
 
-          val degradedQuorum = math.ceil(n.toDouble / 5).toInt.max(2)
-          val standardQuorum = math.ceil(n.toDouble / 3).toInt.max(2)
-          val normalKeepThreshold = (n + 1) / 2
+          val minVotersRequired = math.ceil(n.toDouble / 3).toInt.max(2)
+          val keepThreshold = (n + 1) / 2
+          val removeThreshold = n / 2 + 1
 
-          val maybeThresholds: Option[(Int, Int)] = {
-            val superThreshold = math.ceil(voterCount.toDouble * 2 / 3).toInt.max(1)
-            if (voterCount < degradedQuorum) none
-            else if (voterCount < standardQuorum) (superThreshold, superThreshold).some
-            else if (voterCount < normalKeepThreshold) ((voterCount + 1) / 2, voterCount / 2 + 1).some
-            else (normalKeepThreshold, n / 2 + 1).some
-          }
+          // DEFER when fewer voters than minVotersRequired — too few voters for any safe decision.
+          // The stall detector will re-spread ACKs.
+          val maybeThresholds: Option[(Int, Int)] =
+            if (voterCount < minVotersRequired) none
+            else (keepThreshold, removeThreshold).some
 
           maybeThresholds.flatMap {
             case (keepThreshold, removeThreshold) =>
@@ -91,6 +102,8 @@ object UnlockConsensusUpdate {
             _.partitionMap {
               case (peerId, decision) => Either.cond(decision, peerId, peerId)
             }
+          }.filter {
+            case (_, keptFacilitators) => keptFacilitators.size >= MinFacilitatorCount
           }.map {
             case (removedFacilitators, keptFacilitators) =>
               val updateState =

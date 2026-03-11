@@ -157,7 +157,7 @@ object CurrencySnapshotConsensusStateAdvancer {
         resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind]
       ): F[Option[Transition]] =
         for {
-          maybeFacilities <- maybeGetQuorumDeclarations(state, resources)(_.facility)(_.facilitatorsHash)
+          maybeFacilities <- maybeGetQuorumDeclarations(state, resources)(_.facility)(_.lastSnapshotHash)
           _ <- maybeFacilities.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
           _ <- maybeFacilities.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
           _ <- maybeFacilities.traverse_(checkForkByConsensusConfigHash)
@@ -623,8 +623,8 @@ object CurrencySnapshotConsensusStateAdvancer {
 
       private def checkForkByConsensusConfigHash(facilities: SortedMap[PeerId, Facility]): F[Unit] = {
         val ownConfigHash = config.deterministicConfigHash
-        val peerConfigHashes = facilities.collect {
-          case (pid, f) if f.consensusConfigHash.isDefined => (pid, f.consensusConfigHash.get)
+        val peerConfigHashes = facilities.flatMap {
+          case (pid, f) => f.consensusConfigHash.map(pid -> _)
         }
         if (peerConfigHashes.nonEmpty)
           recoverIfForking[F](ownConfigHash, consensusConfigHashObservationName, restartService, nodeStorage, leavingDelay)(
