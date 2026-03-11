@@ -189,6 +189,75 @@ object UnlockConsensusUpdateSuite extends SimpleIOSuite with Checkers {
     }
   }
 
+  test("MinFacilitatorCount: unlock aborted when all facilitators would be removed") {
+    // Simulates a global latency spike where every node's ACK contains an empty set
+    // (no declarations arrived before lock). All peers get max removeVotes → keptFacilitators=0.
+    // The MinFacilitatorCount guard must prevent this from producing facilitatorCount=0.
+    forall(Gen.choose(3, 20)) { n =>
+      val facilitators = (1 to n).map(i => PeerId(cats.kernel.Hash.fromInt(i).toHexString)).toList.sorted
+      // Every voter ACKs with empty set (nobody declared)
+      val acksMap: Map[(PeerId, Kind), Set[PeerId]] =
+        facilitators.map(peerId => ((peerId, ()), Set.empty[PeerId])).toMap
+
+      val stateGen = lockedStateGen(facilitators)
+      forall(stateGen) { state =>
+        val resources = ConsensusResources(
+          peerDeclarationsMap = Map.empty,
+          acksMap = acksMap,
+          withdrawalsMap = Map.empty,
+          ackKinds = Set.empty,
+          artifacts = Map.empty[Hash, Artifact],
+          updatedAt = FiniteDuration(10, "seconds")
+        )
+
+        unlockConsensusFn(resources).run(state).map {
+          case (resultState, _) =>
+            // Must stay Closed — unlock aborted because keptFacilitators < MinFacilitatorCount
+            expect(resultState.lockStatus === LockStatus.Closed) &&
+            expect(resultState.facilitators.value.size === n)
+        }
+      }
+    }
+  }
+
+  test("MinFacilitatorCount: unlock proceeds when enough facilitators survive") {
+    // Half the facilitators are vouched for, half aren't. keptFacilitators > MinFacilitatorCount.
+    cats.effect.IO {
+      val n = 8
+      val facilitators = (1 to n).map(i => PeerId(cats.kernel.Hash.fromInt(i).toHexString)).toList.sorted
+      val keptSet = facilitators.take(n / 2).toSet // 4 peers vouched for by everyone
+      // Every voter ACKs with the kept set
+      val acksMap: Map[(PeerId, Kind), Set[PeerId]] =
+        facilitators.map(peerId => ((peerId, ()), keptSet)).toMap
+
+      val state = ConsensusState(
+        key = 1,
+        lastOutcome = (),
+        facilitators = Facilitators(facilitators),
+        status = ().asLeft,
+        createdAt = FiniteDuration(10, "seconds"),
+        lockStatus = LockStatus.Closed,
+        spreadAckKinds = Set.empty
+      )
+
+      val resources = ConsensusResources(
+        peerDeclarationsMap = Map.empty,
+        acksMap = acksMap,
+        withdrawalsMap = Map.empty,
+        ackKinds = Set.empty,
+        artifacts = Map.empty[Hash, Artifact],
+        updatedAt = FiniteDuration(10, "seconds")
+      )
+
+      unlockConsensusFn(resources).run(state).map {
+        case (resultState, _) =>
+          expect(resultState.lockStatus === LockStatus.Reopened) &&
+          expect(resultState.facilitators.value.size === n / 2) &&
+          expect(resultState.facilitators.value.size >= UnlockConsensusUpdate.MinFacilitatorCount)
+      }
+    }
+  }
+
   test("DEFER prevents unlock when too few facilitators voted") {
     forall(facilitatorsGen) { facilitators =>
       val n = facilitators.size

@@ -27,10 +27,20 @@ import monocle.Lens
   * detector's re-stall mechanism will spread ACKs again. If the unlock never succeeds after maxStallCycles, the round is abandoned and a
   * new round begins.
   *
+  * '''Safety floor:''' After computing keep/remove decisions, if the number of kept facilitators would fall below `MinFacilitatorCount`
+  * (currently 2), the unlock is aborted — the state remains `Closed` and the round is deferred to the stall detector. This prevents a
+  * catastrophic scenario where stale ACKs (e.g., from a global latency spike where no declarations arrived before lock) cause all
+  * facilitators to be voted out, leaving `facilitatorCount=0` and an irrecoverable cluster.
+  *
   * After unlock transitions `Closed → Reopened` and removes unresponsive peers, `advanceStatus` can run again with the reduced facilitator
   * list, allowing the round to proceed.
   */
 object UnlockConsensusUpdate {
+
+  /** Minimum number of facilitators that must survive an unlock. If the voting result would leave fewer than this many peers, the unlock is
+    * aborted and deferred to the stall detector (which will either retry ACKs or abandon the round after maxStallCycles).
+    */
+  val MinFacilitatorCount: Int = 2
 
   def tryUnlock[F[_]: Monad, S, K](acksMap: Map[(PeerId, K), Set[PeerId]])(maybeCollectingKind: S => Option[K])(
     implicit _lockStatus: Lens[S, LockStatus],
@@ -90,6 +100,8 @@ object UnlockConsensusUpdate {
             _.partitionMap {
               case (peerId, decision) => Either.cond(decision, peerId, peerId)
             }
+          }.filter {
+            case (_, keptFacilitators) => keptFacilitators.size >= MinFacilitatorCount
           }.map {
             case (removedFacilitators, keptFacilitators) =>
               val updateState =
