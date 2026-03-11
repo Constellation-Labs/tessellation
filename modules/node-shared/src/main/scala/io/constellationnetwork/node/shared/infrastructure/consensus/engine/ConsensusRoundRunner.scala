@@ -227,8 +227,10 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
                 _ <- queue.offer(ConsensusCommand.CheckUpdate(key)).whenA(resourcesChanged || statusChanged || isLocked)
 
                 declarationTimeout <- getCurrentDeclarationTimeout
+                // Use shorter re-stall timeout only for repeated stalls within the SAME status.
+                // stallCycleCount resets on status change, so a new phase always gets the full declarationTimeout.
                 effectiveTimeout =
-                  if (ms.stallCycleCount > 0 || ms.roundHadStall)
+                  if (ms.stallCycleCount > 0)
                     config.reStallTimeout.getOrElse(declarationTimeout)
                   else if (info.declaredCount == 0)
                     config.noProgressTimeout.getOrElse(declarationTimeout)
@@ -254,8 +256,11 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
                 _ <- (spreadAckIfCollecting(key, state) >>
                   queue.offer(ConsensusCommand.CheckUpdate(key))).whenA(failedStallCycle)
 
-                // Reset timer for next cycle when a failed stall cycle is counted
-                adjustedStatusStartTime = if (failedStallCycle) now else newStatusStartTime
+                // Reset timer when: (a) a failed stall cycle is counted, or (b) a fresh lock just happened.
+                // Without (b), failedStallCycle fires immediately after the first lock because statusDuration
+                // already exceeds effectiveTimeout from the initial wait.
+                freshLock = didLock && !ms.lockedForStatus
+                adjustedStatusStartTime = if (failedStallCycle || freshLock) now else newStatusStartTime
 
                 // Count cycles: fresh locks (after status change or Reopened reset) AND failed re-stall attempts
                 finalStallCycleCount =
