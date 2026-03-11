@@ -195,7 +195,8 @@ object GlobalSnapshotConsensus {
           gossip,
           selfId,
           seedlist,
-          facilitatorSelector
+          facilitatorSelector,
+          appConfig.snapshot.consensus.deterministicConfigHash
         )
 
       stateRemover =

@@ -131,7 +131,8 @@ object CurrencySnapshotConsensus {
           gossip,
           selfId,
           seedlist,
-          facilitatorSelector
+          facilitatorSelector,
+          snapshotConfig.consensus.deterministicConfigHash
         )
 
       consensusStateRemover =

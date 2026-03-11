@@ -299,7 +299,10 @@ object ConsensusStateUpdater {
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact, Context],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[Option[ArtifactInfo[Artifact, Context]]] = {
-    def go(proposals: List[(Int, Hash)]): F[Option[ArtifactInfo[Artifact, Context]]] =
+    val totalProposals = proposals.size
+    val majorityThreshold = totalProposals / 2
+
+    def go(proposals: List[(Int, Hash)], isFirst: Boolean): F[Option[ArtifactInfo[Artifact, Context]]] =
       proposals match {
         case (occurrences, majorityHash) :: tail =>
           if (majorityHash === ownProposalInfo.hash)
@@ -328,9 +331,21 @@ object ConsensusStateUpdater {
                 maybeArtifactInfoOrErr.flatTraverse { artifactInfoOrErr =>
                   artifactInfoOrErr.fold(
                     cause =>
-                      Slf4jLogger
-                        .getLogger[F]
-                        .warn(cause)(s"Found invalid majority hash=${majorityHash.show} with occurrences=$occurrences") >> go(tail),
+                      if (isFirst && occurrences > majorityThreshold)
+                        // The clear majority hash failed validation on this node.
+                        // Falling back to a less popular hash would diverge from the majority of nodes.
+                        // Abandon the round instead — the stall detector will recover.
+                        Slf4jLogger
+                          .getLogger[F]
+                          .error(cause)(
+                            s"Majority artifact validation failed hash=${majorityHash.show} with $occurrences/$totalProposals proposals. " +
+                              s"Abandoning round to prevent fork (would diverge from ${occurrences} nodes)."
+                          ) >> none[ArtifactInfo[Artifact, Context]].pure[F]
+                      else
+                        Slf4jLogger
+                          .getLogger[F]
+                          .warn(cause)(s"Found invalid majority hash=${majorityHash.show} with occurrences=$occurrences") >>
+                          go(tail, isFirst = false),
                     ai => ai.some.pure[F]
                   )
                 }
@@ -339,7 +354,7 @@ object ConsensusStateUpdater {
       }
 
     val sortedProposals = proposals.foldMap(a => Map(a -> 1)).toList.map(_.swap).sorted.reverse
-    go(sortedProposals)
+    go(sortedProposals, isFirst = true)
   }
 
   def proposalAffinity[A: Order](proposals: List[A], proposal: A): Double =

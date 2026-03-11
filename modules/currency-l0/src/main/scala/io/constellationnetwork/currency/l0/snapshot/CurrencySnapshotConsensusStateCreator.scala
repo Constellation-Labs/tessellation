@@ -18,6 +18,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.Cons
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
+import io.constellationnetwork.security.hash.Hash
 
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -42,7 +43,8 @@ object CurrencySnapshotConsensusStateCreator {
     gossip: Gossip[F],
     selfId: PeerId,
     seedlist: Option[Set[SeedlistEntry]],
-    facilitatorSelector: FacilitatorSelector
+    facilitatorSelector: FacilitatorSelector,
+    consensusConfigHash: Hash
   ): CurrencySnapshotConsensusStateCreator[F] = new CurrencySnapshotConsensusStateCreator[F] {
 
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
@@ -162,7 +164,8 @@ object CurrencySnapshotConsensusStateCreator {
                 maybeTrigger,
                 lastOutcome.finished.facilitatorsHash,
                 lastGlobalSnapshotOrdinal,
-                lastOutcome.finished.snapshotHash
+                lastOutcome.finished.snapshotHash,
+                consensusConfigHash = consensusConfigHash.some
               )
             )
           )

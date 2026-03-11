@@ -88,6 +88,7 @@ object CurrencySnapshotConsensusStateAdvancer {
       private val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](getClass)
       private val lastSnapshotHashObservationName = "last-snapshot-hash"
       private val facilitatorsHashObservationName = "facilitators-hash"
+      private val consensusConfigHashObservationName = "consensus-config-hash"
 
       protected val clusterStorage: ClusterStorage[F] = clusterStorageInstance
       protected val config: ConsensusConfig = consensusConfig
@@ -159,6 +160,7 @@ object CurrencySnapshotConsensusStateAdvancer {
           maybeFacilities <- maybeGetQuorumDeclarations(state, resources)(_.facility)(_.trigger)
           _ <- maybeFacilities.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
           _ <- maybeFacilities.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
+          _ <- maybeFacilities.traverse_(checkForkByConsensusConfigHash)
           result <- maybeFacilities.flatTraverse(toProposalsPhase(state, _))
         } yield result
 
@@ -618,6 +620,18 @@ object CurrencySnapshotConsensusStateAdvancer {
         recoverIfForking[F](ownHash, facilitatorsHashObservationName, restartService, nodeStorage, leavingDelay)(
           declarations.map { case (pid, decl) => (pid, extractHash(decl)) }
         )
+
+      private def checkForkByConsensusConfigHash(facilities: SortedMap[PeerId, Facility]): F[Unit] = {
+        val ownConfigHash = config.deterministicConfigHash
+        val peerConfigHashes = facilities.collect {
+          case (pid, f) if f.consensusConfigHash.isDefined => (pid, f.consensusConfigHash.get)
+        }
+        if (peerConfigHashes.nonEmpty)
+          recoverIfForking[F](ownConfigHash, consensusConfigHashObservationName, restartService, nodeStorage, leavingDelay)(
+            SortedMap.from(peerConfigHashes)
+          )
+        else Applicative[F].unit
+      }
 
       private implicit val extractFacilityHash: Facility => Hash = _.lastSnapshotHash
       private implicit val extractProposalHash: Proposal => Hash = _.lastSnapshotHash

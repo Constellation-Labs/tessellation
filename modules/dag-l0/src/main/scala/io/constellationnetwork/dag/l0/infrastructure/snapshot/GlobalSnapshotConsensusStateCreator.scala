@@ -14,6 +14,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.message.Cons
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.security.hash.Hash
 
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -36,7 +37,8 @@ object GlobalSnapshotConsensusStateCreator {
     gossip: Gossip[F],
     selfId: PeerId,
     seedlist: Option[Set[SeedlistEntry]],
-    facilitatorSelector: FacilitatorSelector
+    facilitatorSelector: FacilitatorSelector,
+    consensusConfigHash: Hash
   ): GlobalSnapshotConsensusStateCreator[F] = new GlobalSnapshotConsensusStateCreator[F] {
 
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
@@ -157,7 +159,8 @@ object GlobalSnapshotConsensusStateCreator {
                 maybeTrigger,
                 lastOutcome.finished.facilitatorsHash,
                 lastOutcome.key,
-                lastOutcome.finished.snapshotHash
+                lastOutcome.finished.snapshotHash,
+                consensusConfigHash = consensusConfigHash.some
               )
             )
           )

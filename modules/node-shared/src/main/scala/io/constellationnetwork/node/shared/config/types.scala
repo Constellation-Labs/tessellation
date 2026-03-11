@@ -152,7 +152,23 @@ object types {
     maxRoundDuration: Option[FiniteDuration] = None,
     quorumThreshold: Option[Double] = None,
     removalPenaltyRounds: Int = 0
-  )
+  ) {
+
+    /** Deterministic hash of consensus-critical config values.
+      *
+      * All nodes in a consensus round MUST have the same config to produce the same results. This hash is included in Facility declarations
+      * so that config divergence is detected immediately during the CollectingFacilities phase, rather than causing mysterious forks
+      * downstream.
+      */
+    lazy val deterministicConfigHash: io.constellationnetwork.security.hash.Hash = {
+      val configString =
+        s"maxFacilitatorCount=${maxFacilitatorCount.map(_.value)}," +
+          s"maxStallCycles=$maxStallCycles," +
+          s"quorumThreshold=$quorumThreshold," +
+          s"removalPenaltyRounds=$removalPenaltyRounds"
+      io.constellationnetwork.security.hash.Hash.fromBytes(configString.getBytes("UTF-8"))
+    }
+  }
 
   case class EventCutterConfig(
     maxBinarySizeBytes: PosInt,
