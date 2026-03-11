@@ -15,10 +15,10 @@ import monocle.Lens
   * contains the set of peer IDs that the sender considers "present" (responsive). This module tallies ACK votes to decide which peers to
   * keep and which to remove.
   *
-  * '''Voter-based threshold fallback:''' When fewer peers respond with ACKs than the normal majority threshold (which is based on total
-  * facilitator count), the normal thresholds become mathematically unreachable — e.g., with 44 facilitators but only 19 ACKs,
-  * keepThreshold=22 can never be met. In this case, we fall back to majority-of-voters thresholds so the unlock can succeed and the round
-  * can make progress with the responsive subset.
+  * '''Threshold semantics:''' Thresholds are based on the total facilitator count — keepThreshold = majority, removeThreshold = strict
+  * majority. All facilitators in the voting result must receive a clear keep or remove decision for the unlock to proceed. If any peer's
+  * vote tally is indeterminate (not enough votes to reach either threshold), the unlock is deferred (`traverse` returns `None`) and the
+  * state remains `Closed`. The re-stall mechanism will retry with fresh ACKs after the re-stall timeout.
   *
   * After unlock transitions `Closed → Reopened` and removes unresponsive peers, `advanceStatus` can run again with the reduced facilitator
   * list, allowing the round to proceed.
@@ -55,20 +55,8 @@ object UnlockConsensusUpdate {
                 .getOrElse(acc)
             }
 
-          val normalKeepThreshold = (facilitators.size + 1) / 2
-          val normalRemoveThreshold = facilitators.size / 2 + 1
-
-          // Count how many facilitators actually submitted ACKs
-          val voterCount = facilitators.count(f => acksMap.contains((f, collectingKind)))
-
-          // When fewer peers responded with ACKs than the normal majority threshold,
-          // normal thresholds are mathematically unreachable (max possible votes = voterCount < threshold).
-          // Fall back to majority-of-voters thresholds to prevent permanent round deadlock.
-          val (keepThreshold, removeThreshold) =
-            if (voterCount > 0 && voterCount < normalKeepThreshold)
-              ((voterCount + 1) / 2, voterCount / 2 + 1)
-            else
-              (normalKeepThreshold, normalRemoveThreshold)
+          val keepThreshold = (facilitators.size + 1) / 2
+          val removeThreshold = facilitators.size / 2 + 1
 
           facilitators.traverse { peerId =>
             votingResult.get(peerId).flatMap {

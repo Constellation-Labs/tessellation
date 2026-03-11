@@ -247,8 +247,43 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
                   missingPeerIds = info.missingPeerIds
                 )
 
-                finalStallCycleCount = if (didLock && !ms.lockedForStatus) newStallCycleCount + 1 else newStallCycleCount
+                // Detect failed stall cycle: locked, still Closed (unlock hasn't succeeded),
+                // re-stall timeout elapsed, within budget. Re-spread ACKs for another propagation attempt.
+                failedStallCycle = ms.lockedForStatus && isLocked && statusDuration >= effectiveTimeout &&
+                  withinStallBudget && !statusChanged
+                _ <- (spreadAckIfCollecting(key, state) >>
+                  queue.offer(ConsensusCommand.CheckUpdate(key))).whenA(failedStallCycle)
+
+                // Reset timer for next cycle when a failed stall cycle is counted
+                adjustedStatusStartTime = if (failedStallCycle) now else newStatusStartTime
+
+                // Count cycles: fresh locks (after status change or Reopened reset) AND failed re-stall attempts
+                finalStallCycleCount =
+                  if (didLock && !ms.lockedForStatus) newStallCycleCount + 1
+                  else if (failedStallCycle) newStallCycleCount + 1
+                  else newStallCycleCount
                 newRoundHadStall = ms.roundHadStall || didLock
+
+                // Abandon round if stall budget exhausted and still locked (unlock never succeeded)
+                shouldAbandon = finalStallCycleCount >= config.maxStallCycles && isLocked
+
+                _ <- (
+                  logger.error(
+                    s"Round key=$key stuck after $finalStallCycleCount stall cycles in Closed state, abandoning round"
+                  ) >>
+                    Metrics[F].incrementCounter("dag_consensus_round_abandoned") >>
+                    // Remove stale Closed state so the next round can start fresh with the same key.
+                    // Only removes if still Closed — if another fiber unlocked it in the meantime, leave it.
+                    storage
+                      .condModifyState[Unit](key) {
+                        case Some(s) if s.lockStatus === LockStatus.Closed =>
+                          (none[ConsensusState[Key, Status, Outcome, Kind]], ()).some.pure[F]
+                        case _ =>
+                          none.pure[F]
+                      }
+                      .void >>
+                    queue.offer(ConsensusCommand.RoundCompleted)
+                ).whenA(shouldAbandon)
 
                 // Periodic summary log every ~10s (avoids spam, provides useful state visibility)
                 summaryInterval = 10.seconds
@@ -263,26 +298,29 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
                     s"Round key=$key status=$statusName declared=${info.declaredCount}/${info.activeCount} " +
                       s"elapsed=${statusDuration.toSeconds}s stallCycle=${finalStallCycleCount}$lockInfo$missingInfo"
                   )
-                  .whenA(shouldLogSummary)
+                  .whenA(shouldLogSummary && !shouldAbandon)
 
                 changed = resourcesChanged || statusChanged
                 newNoChangeCount = if (changed) 0 else ms.noChangeCount + 1
                 sleepMs = if (changed) basePollInterval else math.min(basePollInterval * (newNoChangeCount + 1), maxPollInterval)
-                _ <- Temporal[F].sleep(sleepMs.millis)
+                _ <- Temporal[F].sleep(sleepMs.millis).unlessA(shouldAbandon)
 
               } yield
-                Left(
-                  MonitorState(
-                    lastResourcesHash = currentHash,
-                    lastStatus = Some(state.status),
-                    statusStartTime = newStatusStartTime,
-                    lockedForStatus = didLock,
-                    noChangeCount = newNoChangeCount,
-                    stallCycleCount = finalStallCycleCount,
-                    roundHadStall = newRoundHadStall,
-                    lastSummaryTime = newSummaryTime
+                if (shouldAbandon)
+                  Right(())
+                else
+                  Left(
+                    MonitorState(
+                      lastResourcesHash = currentHash,
+                      lastStatus = Some(state.status),
+                      statusStartTime = adjustedStatusStartTime,
+                      lockedForStatus = didLock,
+                      noChangeCount = newNoChangeCount,
+                      stallCycleCount = finalStallCycleCount,
+                      roundHadStall = newRoundHadStall,
+                      lastSummaryTime = newSummaryTime
+                    )
                   )
-                )
           }
       }
 
