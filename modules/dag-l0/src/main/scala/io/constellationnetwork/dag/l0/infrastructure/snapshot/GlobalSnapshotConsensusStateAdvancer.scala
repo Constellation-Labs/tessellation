@@ -155,7 +155,7 @@ object GlobalSnapshotConsensusStateAdvancer {
       loggerBundle.app.withOrdinal(SnapshotOrdinal.unsafeApply(state.lastOutcome.key.value.value + 1)) {
         HasherSelector[F].withCurrent { implicit hasher =>
           for {
-            maybeFacilities <- maybeGetQuorumDeclarations(state, resources)(_.facility)(_.facilitatorsHash)
+            maybeFacilities <- maybeGetQuorumDeclarations(state, resources)(_.facility)(_.lastSnapshotHash)
             facilitators = maybeFacilities.map(_.keys.toList).getOrElse(List.empty[PeerId])
             _ <- loggerBundle.consensus.collectingFacilities(facilitators)
             _ <- maybeFacilities.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))

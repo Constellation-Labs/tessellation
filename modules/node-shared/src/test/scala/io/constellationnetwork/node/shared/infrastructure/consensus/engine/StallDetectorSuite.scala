@@ -241,42 +241,39 @@ object StallDetectorSuite extends SimpleIOSuite with Checkers {
       val roundElapsed = 6.minutes
       val stallCycleCount = 0
       val maxStallCycles = 5
-      val isLocked = false
 
       val roundTimedOut = maxRoundDuration.exists(roundElapsed >= _)
-      val shouldAbandon = (stallCycleCount >= maxStallCycles && isLocked) || roundTimedOut
+      val shouldAbandon = stallCycleCount >= maxStallCycles || roundTimedOut
 
       expect(roundTimedOut) && expect(shouldAbandon)
     }
   }
 
-  test("shouldAbandon when maxStallCycles exceeded and locked") {
+  test("shouldAbandon when maxStallCycles exceeded") {
     IO {
       val maxRoundDuration = Some(5.minutes)
       val roundElapsed = 2.minutes
       val stallCycleCount = 5
       val maxStallCycles = 5
-      val isLocked = true
 
       val roundTimedOut = maxRoundDuration.exists(roundElapsed >= _)
-      val shouldAbandon = (stallCycleCount >= maxStallCycles && isLocked) || roundTimedOut
+      val shouldAbandon = stallCycleCount >= maxStallCycles || roundTimedOut
 
       expect(!roundTimedOut) && expect(shouldAbandon)
     }
   }
 
-  test("should NOT abandon when stallCycles exceeded but NOT locked") {
+  test("shouldAbandon when maxStallCycles exceeded even if not locked") {
     IO {
       val maxRoundDuration = Some(5.minutes)
       val roundElapsed = 2.minutes
       val stallCycleCount = 5
       val maxStallCycles = 5
-      val isLocked = false
 
       val roundTimedOut = maxRoundDuration.exists(roundElapsed >= _)
-      val shouldAbandon = (stallCycleCount >= maxStallCycles && isLocked) || roundTimedOut
+      val shouldAbandon = stallCycleCount >= maxStallCycles || roundTimedOut
 
-      expect(!shouldAbandon)
+      expect(shouldAbandon)
     }
   }
 
@@ -286,10 +283,9 @@ object StallDetectorSuite extends SimpleIOSuite with Checkers {
       val roundElapsed = 2.minutes
       val stallCycleCount = 2
       val maxStallCycles = 5
-      val isLocked = true
 
       val roundTimedOut = maxRoundDuration.exists(roundElapsed >= _)
-      val shouldAbandon = (stallCycleCount >= maxStallCycles && isLocked) || roundTimedOut
+      val shouldAbandon = stallCycleCount >= maxStallCycles || roundTimedOut
 
       expect(!shouldAbandon)
     }
@@ -391,26 +387,24 @@ object StallDetectorSuite extends SimpleIOSuite with Checkers {
     }
   }
 
-  // === Stall cycle reset on Reopened ===
+  // === Stall cycle accumulation across unlock cycles ===
 
-  test("stallCycleCount resets on Reopened") {
+  test("stallCycleCount preserved on Reopened (accumulates across unproductive unlocks)") {
     IO {
       val statusChanged = false
-      val reopened = true
       val previousCycleCount = 3
 
-      val newStallCycleCount = if (statusChanged || reopened) 0 else previousCycleCount
-      expect.same(0, newStallCycleCount)
+      val newStallCycleCount = if (statusChanged) 0 else previousCycleCount
+      expect.same(3, newStallCycleCount)
     }
   }
 
   test("stallCycleCount preserved when neither status changed nor reopened") {
     IO {
       val statusChanged = false
-      val reopened = false
       val previousCycleCount = 3
 
-      val newStallCycleCount = if (statusChanged || reopened) 0 else previousCycleCount
+      val newStallCycleCount = if (statusChanged) 0 else previousCycleCount
       expect.same(3, newStallCycleCount)
     }
   }

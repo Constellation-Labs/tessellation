@@ -31,7 +31,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key, Artifact, Ctx, Status, Out
 
   import ctx.{config, logger, ops, queue, storage, updater}
 
-  case class MonitorState(
+  private case class MonitorState(
     lastResourcesHash: Int,
     lastStatus: Option[Status],
     statusStartTime: FiniteDuration,
@@ -46,7 +46,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key, Artifact, Ctx, Status, Out
   private val basePollInterval = 100L
   private val maxPollInterval = 1000L
 
-  case class ResourcesInfo(hash: Int, declaredCount: Int, activeCount: Int, missingPeerIds: Set[String])
+  private case class ResourcesInfo(hash: Int, declaredCount: Int, activeCount: Int, missingPeerIds: Set[String])
 
   def monitor(key: Key, cancelSignal: Deferred[F, Unit]): F[Unit] =
     for {
@@ -69,7 +69,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key, Artifact, Ctx, Status, Out
       )
     } yield ()
 
-  def monitorStep(key: Key, ms: MonitorState): F[Either[MonitorState, Unit]] =
+  private def monitorStep(key: Key, ms: MonitorState): F[Either[MonitorState, Unit]] =
     storage.getState(key).flatMap {
       case None =>
         logger.debug(s"Round monitor: state gone for key=$key, stopping") >>
@@ -160,7 +160,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key, Artifact, Ctx, Status, Out
               abandonReason =
                 if (roundTimedOut)
                   s"round timed out after ${roundElapsed.toSeconds}s (max=${config.maxRoundDuration.map(_.toSeconds)}s)"
-                else s"stuck after $finalStallCycleCount stall cycles in Closed state"
+                else s"stuck after $finalStallCycleCount stall cycles"
 
               _ <- (
                 logger.error(
@@ -169,7 +169,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key, Artifact, Ctx, Status, Out
                   Metrics[F].incrementCounter("dag_consensus_round_abandoned") >>
                   storage
                     .condModifyState[Unit](key) {
-                      case Some(s) if s.lockStatus === LockStatus.Closed =>
+                      case Some(_) =>
                         (none[ConsensusState[Key, Status, Outcome, Kind]], ()).some.pure[F]
                       case _ =>
                         none.pure[F]
@@ -217,7 +217,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key, Artifact, Ctx, Status, Out
         }
     }
 
-  def getResourcesInfo(
+  private def getResourcesInfo(
     state: ConsensusState[Key, Status, Outcome, Kind],
     resources: ConsensusResources[Artifact, Kind]
   ): ResourcesInfo = {
@@ -246,7 +246,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key, Artifact, Ctx, Status, Out
     }
   }
 
-  def handleStall(
+  private def handleStall(
     key: Key,
     state: ConsensusState[Key, Status, Outcome, Kind],
     declarationTimeout: FiniteDuration,
@@ -275,7 +275,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key, Artifact, Ctx, Status, Out
     }
   }
 
-  def tryLockAndSpreadAck(
+  private def tryLockAndSpreadAck(
     key: Key,
     state: ConsensusState[Key, Status, Outcome, Kind]
   ): F[Unit] =
@@ -291,7 +291,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key, Artifact, Ctx, Status, Out
           queue.offer(ConsensusCommand.CheckUpdate(key))
     }
 
-  def spreadAckIfCollecting(
+  private def spreadAckIfCollecting(
     key: Key,
     state: ConsensusState[Key, Status, Outcome, Kind]
   ): F[Unit] =
