@@ -117,9 +117,12 @@ object Rollback {
         if (prepended)
           logger.info(s"Prepended last currency snapshot ordinal=${lastIncremental.ordinal.show} to snapshot storage before loadChain")
         else
-          logger.warn(
-            s"Could not prepend last currency snapshot ordinal=${lastIncremental.ordinal.show} to snapshot storage (already at different head); loadChain may diverge"
-          )
+          // Fail rollback rather than proceeding against wrong storage state.
+          // If prepend fails, the storage head is at a different ordinal and loadChain
+          // would operate against inconsistent initial state, causing silent divergence.
+          (new Exception(
+            s"Failed to prepend currency snapshot ordinal=${lastIncremental.ordinal.show} to storage during rollback (storage at different head)"
+          )).raiseError[F, Unit]
       }
 
       _ <- dataApplication.map {

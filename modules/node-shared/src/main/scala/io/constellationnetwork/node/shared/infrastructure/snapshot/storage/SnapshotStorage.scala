@@ -166,17 +166,24 @@ object SnapshotStorage {
           } >>
           snapshotInfoLocalFileSystemStorage
             .write(snapshot.ordinal, snapshotInfo)
-            .attempt
-            .flatMap {
-              case Right(_) =>
-                snapshotInfoCutoffQueue.offer(snapshot.ordinal) >>
-                  snapshot.ordinal
-                    .partialPreviousN(inMemoryCapacity)
-                    .fold(Applicative[F].unit)(offloadQueue.offer) >>
-                  combinedSnapshotCheckpointFileSystemStorage.tryWrite(snapshot.ordinal, snapshot, snapshotInfo, hash)
-              case Left(e) =>
-                logger.error(e)(s"Failed writing snapshot info to disk! ordinal=${snapshot.ordinal}. Skipping cutoff and checkpoint.")
-            }
+            .handleErrorWith { e =>
+              // Check if info already exists (idempotent retry case)
+              snapshotInfoLocalFileSystemStorage.exists(snapshot.ordinal).flatMap { exists =>
+                if (exists)
+                  logger.info(s"Snapshot info already exists on disk for ordinal=${snapshot.ordinal}")
+                else
+                  // Re-raise error so caller can retry the entire operation.
+                  // On retry, snapshotExists check will pass (snapshot already written),
+                  // and we'll attempt the info write again. This prevents snapshot/info inconsistency.
+                  logger.error(e)(s"Failed writing snapshot info to disk! ordinal=${snapshot.ordinal}") >>
+                    MonadThrow[F].raiseError[Unit](e)
+              }
+            } >>
+            snapshotInfoCutoffQueue.offer(snapshot.ordinal) >>
+            snapshot.ordinal
+              .partialPreviousN(inMemoryCapacity)
+              .fold(Applicative[F].unit)(offloadQueue.offer) >>
+            combinedSnapshotCheckpointFileSystemStorage.tryWrite(snapshot.ordinal, snapshot, snapshotInfo, hash)
       }
 
     def snapshotExists(snapshot: Signed[S])(implicit hasher: Hasher[F]): F[Boolean] =

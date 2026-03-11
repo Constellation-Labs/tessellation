@@ -222,16 +222,32 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
                   if (statusChanged) false
                   else if (reopened) false
                   else ms.lockedForStatus
-                newStallCycleCount = if (statusChanged) 0 else ms.stallCycleCount
+                // Reset stall cycles on status change OR successful unlock (reopened)
+                // A successful unlock means the adaptive thresholds worked and we should
+                // give the round a fresh stall budget to complete with the reduced facilitator set
+                newStallCycleCount = if (statusChanged || reopened) 0 else ms.stallCycleCount
+
+                // Track successful unlocks for observability
+                _ <- Metrics[F].incrementCounter("dag_consensus_unlock_succeeded").whenA(reopened)
 
                 _ <- queue.offer(ConsensusCommand.CheckUpdate(key)).whenA(resourcesChanged || statusChanged || isLocked)
 
                 declarationTimeout <- getCurrentDeclarationTimeout
+                // Graduated timeout based on declaration progress:
+                // - Re-stall: short timeout after previous stall (we're in recovery mode)
+                // - No progress: short timeout when no declarations received at all
+                // - Near completion: extend timeout when >75% declared (wait for slow peers)
+                // - Normal: standard timeout otherwise
+                declarationProgress = if (info.activeCount > 0) info.declaredCount.toDouble / info.activeCount else 0.0
+                nearCompletion = declarationProgress >= 0.75 && info.declaredCount < info.activeCount
                 effectiveTimeout =
                   if (ms.stallCycleCount > 0 || ms.roundHadStall)
                     config.reStallTimeout.getOrElse(declarationTimeout)
                   else if (info.declaredCount == 0)
                     config.noProgressTimeout.getOrElse(declarationTimeout)
+                  else if (nearCompletion)
+                    // Give 50% more time when we're close - high latency peers might just be slow
+                    declarationTimeout + (declarationTimeout / 2)
                   else
                     declarationTimeout
                 withinStallBudget = ms.stallCycleCount < config.maxStallCycles
