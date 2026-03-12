@@ -123,7 +123,8 @@ object Services {
             sharedStorages.lastGlobalSnapshot,
             storages.globalSnapshot.getHashed,
             sharedStorages.mptStore,
-            loggerBundle
+            loggerBundle,
+            queues.rumor
           )
       }
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](

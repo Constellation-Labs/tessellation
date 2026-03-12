@@ -65,8 +65,6 @@ import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedS
 import fs2.Stream
 import io.circe.Json
 import io.circe.disjunctionCodecs._
-import org.typelevel.log4cats.SelfAwareStructuredLogger
-import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 case class PartitionedRecords[A, B](
   existing: SortedMap[Address, A],
@@ -186,7 +184,6 @@ object GlobalSnapshotAcceptanceManager {
     )
 
     new GlobalSnapshotAcceptanceManager[F] {
-      val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](this.getClass)
       private val builder = GlobalSnapshotInfo.stateProofBuilder(Some(mptStore.underlying))
 
       case class InitialData(
@@ -804,15 +801,12 @@ object GlobalSnapshotAcceptanceManager {
               globalBalances,
               lastSnapshotContext
             )
-            acceptedSpendActionsMessage = s"[ORDINAL=$ordinal] Accepted spend actions: ${acceptedSpendActions.show}"
-            rejectedSpendActionMessage = s"[ORDINAL=$ordinal] Rejected spend actions: ${rejectedSpendActions.show}"
-            acceptedPricingUpdatesMessage = s"[ORDINAL=$ordinal] Accepted pricing updates: ${acceptedPricingUpdates.show}"
-            rejectedPricingUpdatesMessage = s"[ORDINAL=$ordinal] Rejected pricing updates: ${rejectedPricingUpdates.show}"
-
-            _ <- logger.debug(acceptedSpendActionsMessage)
-            _ <- logger.debug(rejectedSpendActionMessage)
-            _ <- logger.debug(acceptedPricingUpdatesMessage)
-            _ <- logger.debug(rejectedPricingUpdatesMessage)
+            acceptedSpendActionsMessage = s"[CONSENSUS:PROPOSAL] [ORDINAL=$ordinal] Accepted spend actions: ${acceptedSpendActions.show}"
+            rejectedSpendActionMessage = s"[CONSENSUS:PROPOSAL] [ORDINAL=$ordinal] Rejected spend actions: ${rejectedSpendActions.show}"
+            acceptedPricingUpdatesMessage =
+              s"[CONSENSUS:PROPOSAL] [ORDINAL=$ordinal] Accepted pricing updates: ${acceptedPricingUpdates.show}"
+            rejectedPricingUpdatesMessage =
+              s"[CONSENSUS:PROPOSAL] [ORDINAL=$ordinal] Rejected pricing updates: ${rejectedPricingUpdates.show}"
 
             _ <- loggerBundle.app.info(acceptedSpendActionsMessage)
             _ <- loggerBundle.app.info(rejectedSpendActionMessage)

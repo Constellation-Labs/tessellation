@@ -9,9 +9,11 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.engine.Conse
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
 import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.signature.Signed
 
+import eu.timepit.refined.auto._
 import monocle.Lens
 
 /** Finite State Machine that routes consensus commands to appropriate handlers.
@@ -51,18 +53,22 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
   import ctx.{isRoundRunning => isRunning, logger => log, pending}
 
   def handle(cmd: ConsensusCommand): F[Unit] =
-    isRunning.get.flatMap { running =>
-      cmd match {
-        case RumorReceived(r)         => rumorHandler.process(r)
-        case CheckUpdate(key)         => transitions.checkUpdate(key.asInstanceOf[Key])
-        case InternalScheduled(inner) => handle(inner)
-        case PeerObserved(peer)       => transitions.registerPeer(peer)
-        case IgnoreUnexpectedRumor(r) => log.warn(s"Ignoring unexpected rumor: $r")
+    Metrics[F].incrementCounter(
+      "dag_consensus_fsm_command_processed",
+      Seq(unsafeLabelName("command_type") -> cmd.getClass.getSimpleName.stripSuffix("$"))
+    ) >>
+      isRunning.get.flatMap { running =>
+        cmd match {
+          case RumorReceived(r)         => rumorHandler.process(r)
+          case CheckUpdate(key)         => transitions.checkUpdate(key.asInstanceOf[Key])
+          case InternalScheduled(inner) => handle(inner)
+          case PeerObserved(peer)       => transitions.registerPeer(peer)
+          case IgnoreUnexpectedRumor(r) => log.warn(s"Ignoring unexpected rumor: $r")
 
-        case _ if running => handleWhileBusy(cmd)
-        case _            => handleWhileIdle(cmd)
+          case _ if running => handleWhileBusy(cmd)
+          case _            => handleWhileIdle(cmd)
+        }
       }
-    }
 
   private def handleWhileIdle(cmd: ConsensusCommand): F[Unit] =
     cmd match {
@@ -80,11 +86,19 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
 
   private def handleWhileBusy(cmd: ConsensusCommand): F[Unit] =
     cmd match {
-      case FacilitateByEvent             => pending.setEvent()
-      case TimeTick                      => pending.setTime()
-      case StartRound(Some(TimeTrigger)) => pending.setTime()
-      case StartRound(_)                 => pending.setEvent()
-      case RoundCompleted                => completeRound(log.debug("Round completed without outcome"))
+      case FacilitateByEvent =>
+        Metrics[F].incrementCounter("dag_consensus_fsm_pending_deferred", Seq(unsafeLabelName("trigger_type") -> "event")) >>
+          pending.setEvent()
+      case TimeTick =>
+        Metrics[F].incrementCounter("dag_consensus_fsm_pending_deferred", Seq(unsafeLabelName("trigger_type") -> "time")) >>
+          pending.setTime()
+      case StartRound(Some(TimeTrigger)) =>
+        Metrics[F].incrementCounter("dag_consensus_fsm_pending_deferred", Seq(unsafeLabelName("trigger_type") -> "time")) >>
+          pending.setTime()
+      case StartRound(_) =>
+        Metrics[F].incrementCounter("dag_consensus_fsm_pending_deferred", Seq(unsafeLabelName("trigger_type") -> "event")) >>
+          pending.setEvent()
+      case RoundCompleted => completeRound(log.debug("Round completed without outcome"))
       case ConsensusFinished(key, _, trigger) =>
         completeRound(log.info(s"Consensus finished at key=$key") >> roundRunner.afterConsensusFinish(trigger))
       case WithdrawFromConsensus => pending.setEvent()
@@ -95,13 +109,24 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
     isRunning.get.ifM(
       ifTrue = log.debug(s"Ignoring StartRound($trigger) — round already running"),
       ifFalse = log.info(s"Starting consensus round with trigger=$trigger") >>
+        Metrics[F].incrementCounter(
+          "dag_consensus_fsm_round_started",
+          Seq(unsafeLabelName("trigger_type") -> trigger.map(_.toString).getOrElse("none"))
+        ) >>
+        Metrics[F].updateGauge("dag_consensus_fsm_round_running", 1) >>
         isRunning.set(true) >>
         roundRunner.runRound(trigger)
     )
 
   private def completeRound(preAction: F[Unit]): F[Unit] =
     for {
+      // Clean up BEFORE post-consensus scheduling: afterConsensusFinish spawns a timer
+      // fiber via spawnTracked for the NEXT round. If cleanup runs after, it cancels that
+      // fiber and no TimeTick ever fires — deadlocking consensus when running solo.
+      _ <- roundRunner.cleanupRound
       _ <- preAction
+      _ <- Metrics[F].incrementCounter("dag_consensus_fsm_round_completed")
+      _ <- Metrics[F].updateGauge("dag_consensus_fsm_round_running", 0)
       _ <- isRunning.set(false)
       next <- pending.pullNext
       _ <- next.traverse_ {

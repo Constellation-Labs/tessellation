@@ -90,6 +90,10 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
       override def spreadCommon[A: TypeTag: Encoder](rumorContent: A): IO[Unit] =
         IO.raiseError(new Exception("spreadCommon: Unexpected call"))
+
+      override def spreadDirect[A: TypeTag: Encoder](rumorContent: A, targets: Set[PeerId]): IO[Unit] = IO.unit
+
+      override def setDirectPushFn(fn: Gossip.DirectPushFn[IO]): IO[Unit] = IO.unit
     }
 
   def mkSignedArtifacts()(

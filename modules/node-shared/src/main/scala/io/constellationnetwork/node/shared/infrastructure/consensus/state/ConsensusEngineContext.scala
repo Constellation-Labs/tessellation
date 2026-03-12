@@ -8,8 +8,8 @@ import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, PendingTriggersF}
+import io.constellationnetwork.node.shared.infrastructure.consensus.{FacilitatorSelector, _}
 
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 
@@ -60,7 +60,9 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   logger: SelfAwareStructuredLogger[F],
   config: ConsensusConfig,
   fns: ConsensusFunctions[F, Event, Key, Artifact, Context],
-  consensusClient: ConsensusClient[F, Key, Outcome]
+  consensusClient: ConsensusClient[F, Key, Outcome],
+  facilitatorSelector: FacilitatorSelector,
+  peerQualityTracker: PeerQualityTracker[F]
 )
 
 object ConsensusEngineContext {
@@ -79,7 +81,9 @@ object ConsensusEngineContext {
     logger: SelfAwareStructuredLogger[F],
     config: ConsensusConfig,
     fns: ConsensusFunctions[F, Event, Key, Artifact, Ctx],
-    consensusClient: ConsensusClient[F, Key, Outcome]
+    consensusClient: ConsensusClient[F, Key, Outcome],
+    facilitatorSelector: FacilitatorSelector,
+    peerQualityTracker: PeerQualityTracker[F]
   ): F[ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =
     for {
       running <- Ref.of[F, Boolean](false)
@@ -99,6 +103,8 @@ object ConsensusEngineContext {
         logger,
         config,
         fns,
-        consensusClient
+        consensusClient,
+        facilitatorSelector,
+        peerQualityTracker
       )
 }

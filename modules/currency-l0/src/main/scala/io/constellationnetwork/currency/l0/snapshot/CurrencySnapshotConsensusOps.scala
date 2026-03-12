@@ -40,5 +40,10 @@ object CurrencySnapshotConsensusOps {
       case _: Finished => true
       case _           => false
     }
+
+    override def isProposalPhase(status: CurrencySnapshotStatus): Boolean = status match {
+      case _: CollectingProposals => true
+      case _                      => false
+    }
   }
 }

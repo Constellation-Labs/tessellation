@@ -11,6 +11,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.engine.Conse
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.GetConsensusOutcomeRequest
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.Peer
 import io.constellationnetwork.security.signature.Signed
@@ -82,7 +83,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
           advancer
             .getConsensusOutcome(newState)
             .map { case (prevKey, outcome) => finalizeAndNotify(newState, prevKey, outcome) }
-            .getOrElse(log.debug(s"State updated for key=$key"))
+            .getOrElse(log.debug(s"[CONSENSUS] State updated for key=$key"))
       }
     } yield ()
 
@@ -93,8 +94,12 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
   ): F[Unit] =
     for {
       now <- Async[F].monotonic
-      _ <- Metrics[F].recordTime("dag_consensus_duration", now - newState.createdAt)
+      duration = now - newState.createdAt
+      _ <- Metrics[F].recordTime("dag_consensus_duration", duration)
+      _ <- Metrics[F].recordTimeHistogram("dag_consensus_duration", duration)
 
+      _ <- ctx.peerQualityTracker.recordRoundSuccess(newState.facilitators.value.toSet)
+      leaderScore <- ctx.peerQualityTracker.getQualityScore(newState.leader)
       updated <- storage.tryUpdateLastConsensusOutcomeWithCleanup(prevKey, outcome)
       _ <- ctx.nodeStorage.clearJoiningGracePeriod
       _ <-
@@ -102,11 +107,26 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
           val key = outcomeKey.get(outcome)
           val trigger = outcomeTrigger.get(outcome)
 
-          log.info(s"Consensus reached outcome at key=$key") >>
+          val withdrawnCount = newState.withdrawnFacilitators.value.size
+          val removedCount = newState.removedFacilitators.value.size
+
+          Metrics[F].incrementCounter(
+            "dag_consensus_outcome_finalized",
+            Seq(unsafeLabelName("trigger_type") -> trigger.toString)
+          ) >>
+            log.info(
+              s"[CONSENSUS] Round COMPLETED\n" +
+                s"  key=$key trigger=$trigger duration=${duration.toMillis}ms\n" +
+                s"  facilitators=${newState.facilitators.value.size} leader=${newState.leader.show
+                    .take(8)}... leaderScore=${f"$leaderScore%.2f"} view=${newState.viewNumber}" +
+                (if (withdrawnCount > 0) s" withdrawn=$withdrawnCount" else "") +
+                (if (removedCount > 0) s" removed=$removedCount" else "")
+            ) >>
             ctx.nodeStorage.tryModifyStateGetResult(NodeState.WaitingForReady, NodeState.Ready).void >>
             queue.offer(ConsensusFinished(key, outcome, trigger))
         } else {
-          log.warn("Could not update last outcome; another thread may have finalized.")
+          Metrics[F].incrementCounter("dag_consensus_outcome_conflict") >>
+            log.warn("[CONSENSUS] Could not update last outcome; another thread may have finalized.")
         }
     } yield ()
 
