@@ -95,11 +95,10 @@ object GlobalSnapshotConsensusStateCreator {
             (if (previouslyRemoved.nonEmpty) s", excludedFromPreviousRound=${previouslyRemoved.size}" else "")
         )
 
-        // TCA (Trailing Common Ancestor): exclude degraded peers based on historical snapshot signers.
-        // Deterministic: all nodes read the same finalized snapshots, computing the same exclusion set.
-        // Only peers that appeared in the lookback window but signed fewer than minParticipation snapshots
-        // are excluded. New peers (zero appearances) are NOT excluded — they're presumed new joiners.
-        // Falls back to fullBase (no exclusions) when insufficient history is available.
+        // TCA (Trailing Common Ancestor): exclude degraded peers using early/recent split.
+        // Splits the lookback window into early and recent regions. A peer is degraded if it signed
+        // early snapshots but NOT any recent ones (was active, now silent). New peers that only appear
+        // in recent snapshots are NOT excluded. Deterministic: all nodes read the same finalized snapshots.
         tcaDegraded <- tcaFilter.degradedPeers(key)
         tcaFilteredBase = tcaDegraded match {
           case Some(degraded) =>
