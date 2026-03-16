@@ -182,6 +182,8 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
         else if (containsTriggerEvent)
           queue.offer(ConsensusCommand.StartRound(Some(EventTrigger)))
         else
+          // No timer expired, timer is scheduled, no events — the supervised timer fiber
+          // will fire TimeTick when the interval elapses. Nothing to do.
           Async[F].unit
     } yield ()
 
@@ -192,11 +194,18 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
       _ <- queue.offer(ConsensusCommand.StartRound(Some(EventTrigger))).whenA(containsTriggerEvent)
     } yield ()
 
+  /** Schedule the next time-triggered round.
+    *
+    * CRITICAL: Uses `supervisor.supervise` directly instead of `spawnTracked` because the timer fiber must survive round cleanup.
+    * `spawnTracked` adds fibers to `roundFibersRef`, which `cleanupRound` cancels at the start of the NEXT round's completion. If the timer
+    * fires between rounds (e.g., an EventTrigger round runs before the timer expires), `cleanupRound` would cancel the timer fiber, leaving
+    * `storage.timeTrigger` set but no fiber alive to fire `TimeTick` — permanently deadlocking consensus.
+    */
   private def scheduleTimeTrigger: F[Unit] =
     for {
       nextTime <- Async[F].monotonic.map(_ + config.timeTriggerInterval)
       _ <- storage.setTimeTrigger(nextTime)
-      _ <- spawnTracked {
+      _ <- supervisor.supervise {
         Temporal[F].sleep(config.timeTriggerInterval) >>
           checkAndTriggerTime.handleErrorWith(err => logger.error(err)("Error triggering consensus with time trigger"))
       }

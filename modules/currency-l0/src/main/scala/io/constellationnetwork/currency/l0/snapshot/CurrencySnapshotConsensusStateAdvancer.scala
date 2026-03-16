@@ -182,7 +182,10 @@ object CurrencySnapshotConsensusStateAdvancer {
       ): F[Option[Transition]] =
         for {
           maybeFacilities <- maybeGetQuorumDeclarations(state, resources)(_.facility)(_.lastSnapshotHash)
-          _ <- maybeFacilities.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
+          // NOTE: facilitatorsHash fork check is handled by identifyForkedPeers below (evicts minority
+          // instead of killing this node). Do NOT call checkForkByFacilitatorsHash here — after stall-based
+          // eviction, different nodes may legitimately have different facilitator sets, which would cause
+          // cascading false-positive fork detections and kill all nodes.
           _ <- maybeFacilities.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
           _ <- maybeFacilities.traverse_(checkForkByConsensusConfigHash)
 
@@ -314,10 +317,11 @@ object CurrencySnapshotConsensusStateAdvancer {
           maybeLeaderProposal match {
             case Some(leaderProposal) =>
               for {
+                // Skip facilitatorsHash fork check when view > 0 (eviction happened)
                 _ <- checkForkByFacilitatorsHash(
                   SortedMap(leader -> leaderProposal),
                   status.facilitatorsHash
-                )(_.facilitatorsHash)
+                )(_.facilitatorsHash).whenA(state.viewNumber === 0)
                 _ <- checkForkByLastSnapshotHash(
                   SortedMap(leader -> leaderProposal),
                   status.lastSnapshotHash
@@ -481,7 +485,10 @@ object CurrencySnapshotConsensusStateAdvancer {
         for {
           maybeSignatures <- maybeGetQuorumDeclarations(state, resources)(_.signature)(_.facilitatorsHash)
           maybeFacilities <- maybeGetQuorumDeclarations(state, resources)(_.facility)(_.trigger)
-          _ <- maybeSignatures.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
+          // Skip facilitatorsHash fork check when view > 0 (eviction happened)
+          _ <- maybeSignatures
+            .traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
+            .whenA(state.viewNumber === 0)
           _ <- maybeSignatures.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
           maybeGlobalOrd = extractGlobalSnapshotOrdinal(maybeFacilities)
           result <- (maybeGlobalOrd, maybeSignatures) match {
@@ -569,7 +576,10 @@ object CurrencySnapshotConsensusStateAdvancer {
       ): F[Option[Transition]] =
         for {
           maybeBinarySignatures <- maybeGetQuorumDeclarations(state, resources)(_.binarySignature)(_.facilitatorsHash)
-          _ <- maybeBinarySignatures.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
+          // Skip facilitatorsHash fork check when view > 0 (eviction happened)
+          _ <- maybeBinarySignatures
+            .traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
+            .whenA(state.viewNumber === 0)
           _ <- maybeBinarySignatures.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
           result <- maybeBinarySignatures.flatTraverse(toFinishedPhase(state, status, _))
         } yield result
