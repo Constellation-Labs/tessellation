@@ -180,7 +180,8 @@ object peer {
     jar: Hash,
     environment: AppEnvironment,
     allowanceList: Hash,
-    metagraphId: Option[Address]
+    metagraphId: Option[Address],
+    consensusConfigHash: Option[Hash] = None
   )
 
   @derive(eqv, decoder, encoder, show)

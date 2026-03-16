@@ -8,8 +8,9 @@ import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, PendingTriggersF}
+import io.constellationnetwork.node.shared.infrastructure.consensus.{FacilitatorSelector, _}
+import io.constellationnetwork.schema.peer.PeerId
 
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 
@@ -46,6 +47,7 @@ import org.typelevel.log4cats.SelfAwareStructuredLogger
   *   - `ops` - Status-specific operations
   */
 final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Status, Outcome, Kind](
+  selfId: PeerId,
   queue: Queue[F, ConsensusCommand],
   isRoundRunning: Ref[F, Boolean],
   pending: PendingTriggersF[F],
@@ -60,12 +62,15 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   logger: SelfAwareStructuredLogger[F],
   config: ConsensusConfig,
   fns: ConsensusFunctions[F, Event, Key, Artifact, Context],
-  consensusClient: ConsensusClient[F, Key, Outcome]
+  consensusClient: ConsensusClient[F, Key, Outcome],
+  facilitatorSelector: FacilitatorSelector,
+  peerQualityTracker: PeerQualityTracker[F]
 )
 
 object ConsensusEngineContext {
 
   def create[F[_]: Async, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
+    selfId: PeerId,
     queue: Queue[F, ConsensusCommand],
     pending: PendingTriggersF[F],
     storage: ConsensusStorage[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
@@ -79,12 +84,15 @@ object ConsensusEngineContext {
     logger: SelfAwareStructuredLogger[F],
     config: ConsensusConfig,
     fns: ConsensusFunctions[F, Event, Key, Artifact, Ctx],
-    consensusClient: ConsensusClient[F, Key, Outcome]
+    consensusClient: ConsensusClient[F, Key, Outcome],
+    facilitatorSelector: FacilitatorSelector,
+    peerQualityTracker: PeerQualityTracker[F]
   ): F[ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =
     for {
       running <- Ref.of[F, Boolean](false)
     } yield
       ConsensusEngineContext(
+        selfId,
         queue,
         running,
         pending,
@@ -99,6 +107,8 @@ object ConsensusEngineContext {
         logger,
         config,
         fns,
-        consensusClient
+        consensusClient,
+        facilitatorSelector,
+        peerQualityTracker
       )
 }

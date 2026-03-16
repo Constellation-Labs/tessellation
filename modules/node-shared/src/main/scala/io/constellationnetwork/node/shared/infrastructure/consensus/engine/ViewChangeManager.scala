@@ -1,0 +1,78 @@
+package io.constellationnetwork.node.shared.infrastructure.consensus.engine
+
+import cats.Eq
+import cats.effect.kernel.Async
+import cats.syntax.all._
+
+import io.constellationnetwork.node.shared.infrastructure.consensus._
+import io.constellationnetwork.node.shared.infrastructure.consensus.state._
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+
+import eu.timepit.refined.auto._
+
+/** Manages deterministic leader re-election when the current leader fails.
+  *
+  * ==View Change Protocol==
+  *
+  * When the leader fails to propose within the timeout (or is detected as unresponsive), the view number is incremented and a new leader is
+  * selected using rendezvous hashing. All nodes use the same entropy + view number, so they deterministically select the same leader.
+  *
+  * {{{
+  *   1. Increment viewNumber
+  *   2. newLeader = selectLeader(facilitators, entropy, newViewNumber)
+  *   3. Update state atomically (CAS on viewNumber)
+  *   4. Trigger CheckUpdate so new leader's proposal is processed
+  * }}}
+  *
+  * ==Early View Change==
+  *
+  * If LocalHealthcheck marks the leader as `Unresponsive`, the StallDetector triggers an immediate view change without waiting for the full
+  * timeout. This saves ~15s of stall time when the leader is known to be down.
+  */
+class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
+  storage: ConsensusStorage[F, _, Key, _, _, Status, Outcome, Kind],
+  facilitatorSelector: FacilitatorSelector,
+  peerQualityTracker: PeerQualityTracker[F],
+  queue: cats.effect.std.Queue[F, ConsensusCommand],
+  logger: org.typelevel.log4cats.SelfAwareStructuredLogger[F]
+) {
+
+  /** Perform a view change: increment viewNumber, select new leader, update state. */
+  def performViewChange(
+    key: Key,
+    currentState: ConsensusState[Key, Status, Outcome, Kind]
+  ): F[Unit] = {
+    val newViewNumber = currentState.viewNumber + 1
+    val newLeader = facilitatorSelector.selectLeader(
+      currentState.facilitators.value,
+      currentState.entropy,
+      newViewNumber
+    )
+
+    ConsensusLog.info(
+      logger,
+      ConsensusLog.Phase,
+      key.toString,
+      "n/a",
+      "event" -> "VIEW_CHANGE",
+      "oldView" -> currentState.viewNumber.toString,
+      "newView" -> newViewNumber.toString,
+      "oldLeader" -> ConsensusLog.pid(currentState.leader),
+      "newLeader" -> ConsensusLog.pid(newLeader),
+      "facilitators" -> currentState.facilitators.value.size.toString
+    ) >>
+      peerQualityTracker.recordViewChange(currentState.leader) >>
+      Metrics[F].updateGauge("dag_consensus_view_number", newViewNumber) >>
+      storage
+        .condModifyState[Unit](key) {
+          case Some(state) if state.viewNumber === currentState.viewNumber =>
+            val updated: ConsensusState[Key, Status, Outcome, Kind] =
+              state.copy(viewNumber = newViewNumber, leader = newLeader)
+            (updated.some, ()).some.pure[F]
+          case _ =>
+            none[(Option[ConsensusState[Key, Status, Outcome, Kind]], Unit)].pure[F]
+        }
+        .void >>
+      queue.offer(ConsensusCommand.CheckUpdate(key))
+  }
+}
