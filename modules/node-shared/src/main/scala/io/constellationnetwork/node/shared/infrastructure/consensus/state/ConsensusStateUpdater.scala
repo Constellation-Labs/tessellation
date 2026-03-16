@@ -178,12 +178,13 @@ object ConsensusStateUpdater {
           case (peerId, observationHash) if observationHash === majorityObservationHash => peerId
         }.toList
 
+        val logger = Slf4jLogger.getLogger[F]
+
         val forkRecovery = metrics.incrementCounter(
           "dag_consensus_fork_detected",
           Seq(unsafeLabelName("observation_type") -> observationName)
         ) >>
-          Slf4jLogger
-            .getLogger[F]
+          logger
             .warn(s"Different hash observations [$observationName]. This node is in fork") >>
           nodeStorage.setNodeState(NodeState.Leaving) >>
           Temporal[F].sleep(leavingDelay) >>
@@ -192,11 +193,15 @@ object ConsensusStateUpdater {
           ExitOnFork.exitOnFeature("CL_EXIT_ON_FORK") >>
           restartService.signalNodeForkedRestart(majorityForkPeers)
 
-        // Note: fire-and-forget fiber for fork recovery. This is acceptable because fork recovery
-        // is a one-shot operation (node transitions to Leaving → Offline → restart) and only fires
-        // on fork detection, which is rare. Using .start rather than Supervisor because the advancers
-        // don't have Supervisor in scope, and fork recovery should outlive any single round.
-        Temporal[F].start(forkRecovery).void
+        // Fire-and-forget fiber for fork recovery. Must handle all errors to ensure the node
+        // actually restarts — an unhandled error here leaves the node stuck in Offline forever.
+        val safeForkRecovery = forkRecovery.handleErrorWith { err =>
+          logger.error(err)(
+            s"Fork recovery failed for [$observationName]. Attempting fallback restart."
+          ) >> restartService.signalClusterLeaveRestart()
+        }
+
+        Temporal[F].start(safeForkRecovery).void
 
       } else Applicative[F].unit
     }.void

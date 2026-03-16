@@ -152,9 +152,10 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
 
   private def completeRound(preAction: F[Unit]): F[Unit] =
     for {
-      // Clean up BEFORE post-consensus scheduling: afterConsensusFinish spawns a timer
-      // fiber via spawnTracked for the NEXT round. If cleanup runs after, it cancels that
-      // fiber and no TimeTick ever fires — deadlocking consensus when running solo.
+      // Clean up round-scoped fibers (stall detector, etc.) before post-consensus scheduling.
+      // Note: the timer fiber from scheduleTimeTrigger is NOT tracked (uses supervisor.supervise
+      // directly) so it survives cleanup — this prevents the deadlock where a subsequent round's
+      // cleanup would cancel the timer before it fires.
       _ <- roundRunner.cleanupRound
       _ <- preAction
       _ <- Metrics[F].incrementCounter("dag_consensus_fsm_round_completed")

@@ -226,7 +226,10 @@ object GlobalSnapshotConsensusStateAdvancer {
             maybeFacilities <- maybeGetQuorumDeclarations(state, resources)(_.facility)(_.lastSnapshotHash)
             facilitators = maybeFacilities.map(_.keys.toList).getOrElse(List.empty[PeerId])
             _ <- loggerBundle.consensus.collectingFacilities(facilitators)
-            _ <- maybeFacilities.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
+            // NOTE: facilitatorsHash fork check is handled by identifyForkedPeers below (evicts minority
+            // instead of killing this node). Do NOT call checkForkByFacilitatorsHash here — after stall-based
+            // eviction, different nodes may legitimately have different facilitator sets, which would cause
+            // cascading false-positive fork detections and kill all nodes.
             _ <- maybeFacilities.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
             _ <- maybeFacilities.traverse_(checkForkByConsensusConfigHash)
             _ <- maybeFacilities.traverse_ { _ =>
@@ -382,10 +385,12 @@ object GlobalSnapshotConsensusStateAdvancer {
               case Some(leaderProposal) =>
                 for {
                   _ <- loggerBundle.consensus.collectingProposals(List(leader))
+                  // Skip facilitatorsHash fork check when view > 0 (eviction happened) — different
+                  // nodes may have different facilitator sets after stall-based eviction.
                   _ <- checkForkByFacilitatorsHash(
                     SortedMap(leader -> leaderProposal),
                     status.facilitatorsHash
-                  )(_.facilitatorsHash)
+                  )(_.facilitatorsHash).whenA(state.viewNumber === 0)
                   _ <- checkForkByLastSnapshotHash(
                     SortedMap(leader -> leaderProposal),
                     status.lastSnapshotHash
@@ -798,7 +803,10 @@ object GlobalSnapshotConsensusStateAdvancer {
             maybeSignatures <- maybeGetQuorumDeclarations(state, resources)(_.signature)(_.facilitatorsHash)
             facilitators = maybeSignatures.map(_.keys.toList).getOrElse(List.empty[PeerId])
             _ <- loggerBundle.consensus.collectingSignatures(facilitators)
-            _ <- maybeSignatures.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
+            // Skip facilitatorsHash fork check when view > 0 (eviction happened)
+            _ <- maybeSignatures
+              .traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
+              .whenA(state.viewNumber === 0)
             _ <- maybeSignatures.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
             result <- maybeSignatures.flatTraverse(toFinishedPhase(state, status, _))
           } yield result
