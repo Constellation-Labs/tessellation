@@ -77,7 +77,7 @@ jobs:
         run: |
           if [[ "${{ github.ref_name }}" == "release/mainnet" ]]; then
             DRY_RUN=$(npx commit-and-tag-version --dry-run)
-          else
+          elif [[ "${{ github.ref_name }}" == "release/integrationnet" ]]; then
             DRY_RUN=$(npx commit-and-tag-version --dry-run --prerelease rc)
           fi
           {
