@@ -1,7 +1,8 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
 import cats.Show
-import cats.effect.kernel.Async
+import cats.effect.Fiber
+import cats.effect.kernel.{Async, Deferred, Ref}
 import cats.effect.std.{Queue, Random, Supervisor}
 import cats.kernel.{Eq, Next}
 import cats.syntax.all._
@@ -10,15 +11,16 @@ import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger._
+import io.constellationnetwork.node.shared.infrastructure.consensus.{FacilitatorSelector, _}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.node.NodeState
-import io.constellationnetwork.schema.peer.Peer
+import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.signature.Signed
 
+import eu.timepit.refined.auto._
 import fs2.Stream
 
 /** Builds and wires together all consensus engine components.
@@ -59,7 +61,8 @@ object ConsensusEventLoop {
   final case class BuiltConsensusLoop[F[_], Event, Key, Artifact, Ctx, Status, Outcome, Kind](
     run: Stream[F, Unit],
     manager: ConsensusManager[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
-    queue: Queue[F, ConsensusCommand]
+    queue: Queue[F, ConsensusCommand],
+    healthRef: Ref[F, ConsensusHealthStatus]
   )
 
   def build[
@@ -68,10 +71,11 @@ object ConsensusEventLoop {
     Key: Eq: Show: Next,
     Artifact: Eq,
     Ctx: Eq,
-    Status: Eq,
+    Status,
     Outcome,
     Kind
   ](
+    selfId: PeerId,
     storage: ConsensusStorage[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
     stateCreator: ConsensusStateCreator[F, Key, Artifact, Ctx, Status, Outcome, Kind],
     stateUpdater: ConsensusStateUpdater[F, Key, Artifact, Ctx, Status, Outcome, Kind],
@@ -82,7 +86,9 @@ object ConsensusEventLoop {
     clusterStorage: ClusterStorage[F],
     consensusFunctions: ConsensusFunctions[F, Event, Key, Artifact, Ctx],
     consensusClient: ConsensusClient[F, Key, Outcome],
-    config: ConsensusConfig
+    config: ConsensusConfig,
+    facilitatorSelector: FacilitatorSelector,
+    peerQualityTracker: PeerQualityTracker[F]
   )(
     implicit _key: monocle.Lens[Outcome, Key],
     _context: monocle.Lens[Outcome, Ctx],
@@ -93,6 +99,7 @@ object ConsensusEventLoop {
       queue <- Queue.unbounded[F, ConsensusCommand]
       pending <- PendingTriggers.create[F]
       ctx <- ConsensusEngineContext.create(
+        selfId,
         queue,
         pending,
         storage,
@@ -106,9 +113,33 @@ object ConsensusEventLoop {
         org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F],
         config,
         consensusFunctions,
-        consensusClient
+        consensusClient,
+        facilitatorSelector,
+        peerQualityTracker
       )
-      roundRunner = new ConsensusRoundRunner[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](ctx)
+      healthRef <- ConsensusHealthStatus.ref[F]
+      viewChangeManager = new ViewChangeManager[F, Key, Status, Outcome, Kind](
+        storage,
+        facilitatorSelector,
+        peerQualityTracker,
+        queue,
+        org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F]
+      )
+      abandonmentTracker = new AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](ctx, healthRef)
+      stallDetector = new StallDetector[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
+        ctx,
+        viewChangeManager,
+        abandonmentTracker,
+        healthRef
+      )
+      roundFibersRef <- Ref.of[F, List[Fiber[F, Throwable, Unit]]](Nil)
+      cancelSignalRef <- Ref.of[F, Option[Deferred[F, Unit]]](None)
+      roundRunner = new ConsensusRoundRunner[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
+        ctx,
+        stallDetector,
+        roundFibersRef,
+        cancelSignalRef
+      )
       fsm = new ConsensusFSM[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](ctx, roundRunner)
       manager <- ConsensusManager.make[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
         queue,
@@ -118,7 +149,27 @@ object ConsensusEventLoop {
     } yield {
 
       val commandStream: Stream[F, Unit] =
-        Stream.repeatEval(queue.take).evalMap(fsm.handle)
+        Stream.repeatEval(queue.take).evalMap { cmd =>
+          queue.size.flatMap(sz => Metrics[F].updateGauge("dag_consensus_command_queue_size", sz)) >>
+            fsm.handle(cmd).handleErrorWith { err =>
+              ctx.logger.error(err)(s"Unhandled error processing ${cmd.getClass.getSimpleName}, recovering") >>
+                Metrics[F].incrementCounter("dag_consensus_command_error") >>
+                (cmd match {
+                  case _: ConsensusCommand.ConsensusFinished | ConsensusCommand.RoundCompleted =>
+                    // Critical: if round-completion commands fail, FSM stays stuck in BUSY forever.
+                    // Force round completion so the next round can start.
+                    // Also offer TimeTick: the forced RoundCompleted calls completeRound without
+                    // afterConsensusFinish, so no timer is scheduled for the next round. On solo nodes
+                    // with no external events, this would deadlock consensus. The TimeTick fires once
+                    // RoundCompleted sets isRunning=false, starting a new round from IDLE.
+                    ctx.logger.warn("Forcing round completion after failed ConsensusFinished/RoundCompleted") >>
+                      Metrics[F].incrementCounter("dag_consensus_forced_round_completion") >>
+                      queue.offer(ConsensusCommand.RoundCompleted) >>
+                      queue.offer(ConsensusCommand.TimeTick)
+                  case _ => Async[F].unit
+                })
+            }
+        }
 
       val peerRegistrationStream: Stream[F, Unit] =
         clusterStorage.peerChanges.mapFilter {
@@ -139,14 +190,17 @@ object ConsensusEventLoop {
       val run: Stream[F, Unit] =
         Stream(commandStream, peerRegistrationStream, leavingStream).parJoinUnbounded
 
-      BuiltConsensusLoop(run, manager, queue)
+      BuiltConsensusLoop(run, manager, queue, healthRef)
     }
 
-  private def collectRegistration[F[_]: Async, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
+  private def collectRegistration[F[_]: Async: Metrics, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
     consensusClient: ConsensusClient[F, Key, Outcome],
     storage: ConsensusStorage[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]
   )(peer: Peer): F[Unit] =
     consensusClient.getRegistration.run(peer).flatMap { reg =>
-      reg.maybeKey.traverse_(key => storage.registerPeer(peer.id, key))
+      reg.maybeKey.traverse_(key =>
+        storage.registerPeer(peer.id, key) >>
+          Metrics[F].incrementCounter("dag_consensus_peer_registered")
+      )
     }
 }

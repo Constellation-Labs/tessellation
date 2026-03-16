@@ -84,6 +84,11 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     kind: Kind
   ): F[Option[ConsensusResources[Artifact, Kind]]]
 
+  /** Clears all peer declarations, artifacts, and other resources for the given key. Must be called when abandoning a round to prevent
+    * stale state from poisoning retries.
+    */
+  private[consensus] def clearResources(key: Key): F[Unit]
+
   private[consensus] def trySetInitialConsensusOutcome(data: Outcome): F[Boolean]
 
   private[consensus] def clearAndGetLastConsensusOutcome: F[Option[Outcome]]
@@ -211,7 +216,7 @@ object ConsensusStorage {
         private def cleanupStateAndResource(key: Key): F[Unit] =
           condModifyState[Unit](key) { _ =>
             (none[ConsensusState[Key, Status, Outcome, Kind]], ()).some.pure[F]
-          }.void >> cleanResources(key)
+          }.void >> clearResources(key)
 
         def containsTriggerEvent: F[Boolean] =
           eventsR.keys.flatMap { keys =>
@@ -390,7 +395,7 @@ object ConsensusStorage {
             }
           }
 
-        private def cleanResources(key: Key): F[Unit] =
+        def clearResources(key: Key): F[Unit] =
           resourcesR(key).set(none)
 
         def getOwnRegistrationKey: F[Option[Key]] = observationKeyR.get.map(_.map(_.next))

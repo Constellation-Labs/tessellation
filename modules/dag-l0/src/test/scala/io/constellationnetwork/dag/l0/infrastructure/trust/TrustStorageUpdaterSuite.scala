@@ -12,6 +12,7 @@ import io.constellationnetwork.node.shared.config.types.TrustStorageConfig
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.trust.storage.{OrdinalTrustMap, TrustMap, TrustStorage}
 import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.trust.SnapshotOrdinalPublicTrust
 
 import eu.timepit.refined.api.Refined
@@ -48,6 +49,10 @@ object TrustStorageUpdaterSuite extends SimpleIOSuite with Checkers {
 
     override def spreadCommon[A: TypeTag: Encoder](rumorContent: A): IO[Unit] =
       IO.raiseError(new Exception("spreadCommon: Unexpected call"))
+
+    override def spreadDirect[A: TypeTag: Encoder](rumorContent: A, targets: Set[PeerId]): IO[Unit] = IO.unit
+
+    override def setDirectPushFn(fn: Gossip.DirectPushFn[IO]): IO[Unit] = IO.unit
   }
 
   def init(trust: TrustMap, ordinal: SnapshotOrdinal) =

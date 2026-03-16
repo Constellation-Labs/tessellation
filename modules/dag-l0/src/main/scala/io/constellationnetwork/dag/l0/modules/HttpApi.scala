@@ -195,7 +195,12 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   private val walletRoutes = WalletRoutes[F, GlobalIncrementalSnapshot]("/dag", services.address)
   private val consensusInfoRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>
-      new ConsensusInfoRoutes[F, GlobalSnapshotKey, GlobalConsensusOutcome](services.cluster, services.consensus.storage, selfId)
+      new ConsensusInfoRoutes[F, GlobalSnapshotKey, GlobalConsensusOutcome](
+        services.cluster,
+        services.consensus.storage,
+        selfId,
+        services.consensus.healthRef
+      )
     }
   private val consensusRoutes = services.consensus.routes.p2pRoutes
 

@@ -141,7 +141,8 @@ abstract class CurrencyL0App(
           maybeAllowanceList,
           nodeShared.customAllowanceList,
           mkCell,
-          Some(customArtifacts)
+          Some(customArtifacts),
+          queues
         )
         .asResource
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext

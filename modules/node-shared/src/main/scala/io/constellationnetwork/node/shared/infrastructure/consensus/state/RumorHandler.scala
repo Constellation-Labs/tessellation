@@ -58,7 +58,7 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
   private def processPeerRumor(rumor: PeerRumor[_]): F[Unit] =
     rumor match {
       case PeerRumor(origin, ordinal, content) => dispatchContent(origin, ordinal, content)
-      case other                               => log.warn(s"Unknown rumor wrapper: $other")
+      case other                               => log.warn(s"Unknown rumor wrapper: ${other.getClass.getSimpleName}")
     }
 
   private def dispatchContent(origin: PeerId, ordinal: Ordinal, content: Any): F[Unit] =
@@ -68,7 +68,7 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
       case w: ConsensusWithdrawPeerDeclaration[_, _] => handleWithdrawDeclaration(origin, w)
       case ConsensusEvent(event)                     => handleEvent(Some(origin -> ordinal), event.asInstanceOf[Event])
       case ConsensusArtifact(key, artifact)          => handleArtifact(key.asInstanceOf[Key], artifact.asInstanceOf[Artifact])
-      case other                                     => log.warn(s"Unknown peer rumor content: $other")
+      case other                                     => log.warn(s"Unknown peer rumor content: ${other.getClass.getSimpleName}")
     }
 
   private def processCommonRumor(rumor: CommonRumor[_]): F[Unit] =
@@ -76,7 +76,7 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
       case ConsensusArtifact(key, artifact) => handleArtifact(key.asInstanceOf[Key], artifact.asInstanceOf[Artifact])
       case ConsensusEvent(event) if fns.triggerPredicate(event.asInstanceOf[Event]) => queue.offer(FacilitateByEvent)
       case ConsensusEvent(_)                                                        => Async[F].unit
-      case other                                                                    => log.warn(s"Unknown common rumor content: $other")
+      case other => log.warn(s"Unknown common rumor content: ${other.getClass.getSimpleName}")
     }
 
   private def handleDeclaration(origin: PeerId, decl: ConsensusPeerDeclaration[_, _]): F[Unit] = {

@@ -30,6 +30,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencySnap
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.balance.Amount
+import io.constellationnetwork.schema.gossip.RumorRaw
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.signature.Signed
@@ -69,7 +70,9 @@ object CurrencySnapshotConsensus {
     restartService: RestartService[F, _],
     leavingDelay: FiniteDuration,
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
+    getSnapshotByOrdinal: SnapshotOrdinal => F[Option[Signed[CurrencySnapshotArtifact]]],
+    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
+    rumorQueue: cats.effect.std.Queue[F, Hashed[RumorRaw]]
   )(implicit supervisor: Supervisor[F]): F[CurrencySnapshotConsensus[F]] = {
     def noopDecoder: Decoder[DataTransaction] =
       Decoder.failedWithMessage("DataTransaction decoder not provided")
@@ -123,6 +126,14 @@ object CurrencySnapshotConsensus {
         snapshotConfig.consensus.maxFacilitatorCount.map(_.value)
       )
 
+      peerQualityTracker <- PeerQualityTracker.make[F]
+
+      tcaFilter = TrailingCommonAncestorFilter.make[F, CurrencySnapshotArtifact](
+        getSnapshotByOrdinal,
+        snapshotConfig.consensus.tcaLookbackWindow,
+        snapshotConfig.consensus.tcaMinParticipation
+      )
+
       consensusStateCreator =
         CurrencySnapshotConsensusStateCreator.make(
           consensusFns,
@@ -131,7 +142,10 @@ object CurrencySnapshotConsensus {
           gossip,
           selfId,
           seedlist,
-          facilitatorSelector
+          facilitatorSelector,
+          snapshotConfig.consensus.deterministicConfigHash,
+          peerQualityTracker,
+          tcaFilter
         )
 
       consensusStateRemover =
@@ -146,11 +160,13 @@ object CurrencySnapshotConsensus {
         ConsensusStateUpdater.make(
           consensusStateAdvancer,
           consensusStorage,
-          gossip,
           consensusStatusOps
         )
 
       consensusClient = ConsensusClient.make[F, CurrencySnapshotKey, CurrencyConsensusOutcome](client, session)
+
+      directPushFn = ConsensusDirectSender.makeDirectPushFn(clusterStorage, consensusClient)
+      _ <- gossip.setDirectPushFn(directPushFn)
 
       loop <-
         ConsensusEventLoop.build[
@@ -163,6 +179,7 @@ object CurrencySnapshotConsensus {
           CurrencyConsensusOutcome,
           CurrencyConsensusKind
         ](
+          selfId,
           consensusStorage,
           consensusStateCreator,
           stateUpdater,
@@ -173,7 +190,9 @@ object CurrencySnapshotConsensus {
           clusterStorage,
           consensusFns,
           consensusClient,
-          snapshotConfig.consensus
+          snapshotConfig.consensus,
+          facilitatorSelector,
+          peerQualityTracker
         )
 
       handler = CurrencyConsensusHandler.make(loop.queue)
@@ -186,10 +205,10 @@ object CurrencySnapshotConsensus {
         CurrencySnapshotStatus,
         CurrencyConsensusOutcome,
         CurrencyConsensusKind
-      ](consensusStorage)
+      ](consensusStorage, rumorQueue)
 
       _ <- supervisor.supervise(loop.run.compile.drain)
-      consensus = new Consensus(handler, consensusStorage, loop.manager, routes, consensusFns)
+      consensus = new Consensus(handler, consensusStorage, loop.manager, routes, consensusFns, Some(loop.healthRef))
     } yield consensus
   }
 }

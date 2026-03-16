@@ -148,7 +148,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
       new ConsensusInfoRoutes[F, CurrencySnapshotKey, CurrencyConsensusOutcome](
         services.cluster,
         services.consensus.storage,
-        selfId
+        selfId,
+        services.consensus.healthRef
       )
     }
 

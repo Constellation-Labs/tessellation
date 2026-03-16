@@ -90,6 +90,10 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
       override def spreadCommon[A: TypeTag: Encoder](rumorContent: A): IO[Unit] =
         IO.raiseError(new Exception("spreadCommon: Unexpected call"))
+
+      override def spreadDirect[A: TypeTag: Encoder](rumorContent: A, targets: Set[PeerId]): IO[Unit] = IO.unit
+
+      override def setDirectPushFn(fn: Gossip.DirectPushFn[IO]): IO[Unit] = IO.unit
     }
 
   def mkSignedArtifacts()(
@@ -196,7 +200,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         events.groupByNel(_.address).view.mapValues(_.map(_.snapshotBinary)).toSortedMap,
         SortedMap.empty,
         Set.empty,
-        Map.empty,
+        SortedMap.empty,
         SortedMap.empty
       )
     )
@@ -207,7 +211,10 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): IO[
-      SortedMap[Address, (NonEmptyList[(Signed[StateChannelSnapshotBinary], Option[CurrencySnapshotWithState])], Map[Address, Balance])]
+      SortedMap[
+        Address,
+        (NonEmptyList[(Signed[StateChannelSnapshotBinary], Option[CurrencySnapshotWithState])], SortedMap[Address, Balance])
+      ]
     ] = ???
 
   }
@@ -731,6 +738,58 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 //      expect(delegatedCalledScenario2).description("Delegated rewards should be called for after migration and epoch")
 //    }
 //  }
+
+  test("createProposalArtifact - deterministic: two independent calls with same inputs produce identical artifacts") { res =>
+    implicit val (_, j, h, sp, m) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+
+      genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+      signedGenesis <- Signed.forAsyncHasher[IO, GlobalSnapshot](genesis, keyPair)
+
+      lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](signedGenesis.value)
+      signedLastArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair)
+
+      scEvent <- mkStateChannelEvent()
+
+      facilitators = Set.empty[PeerId]
+      context = signedGenesis.value.info.toGlobalSnapshotInfo
+
+      // Build two independent consensus function instances (each with its own MptStore)
+      // to ensure no shared mutable state affects the output
+      gscf1 <- mkGlobalSnapshotConsensusFunctions
+      gscf2 <- mkGlobalSnapshotConsensusFunctions
+
+      (artifact1, ctx1, _) <- gscf1.createProposalArtifact(
+        SnapshotOrdinal.MinValue,
+        signedLastArtifact,
+        context,
+        h,
+        EventTrigger,
+        Set(scEvent),
+        facilitators,
+        _ => None.pure[IO]
+      )
+
+      (artifact2, ctx2, _) <- gscf2.createProposalArtifact(
+        SnapshotOrdinal.MinValue,
+        signedLastArtifact,
+        context,
+        h,
+        EventTrigger,
+        Set(scEvent),
+        facilitators,
+        _ => None.pure[IO]
+      )
+
+      hash1 <- h.hash(artifact1)
+      hash2 <- h.hash(artifact2)
+    } yield
+      expect.same(hash1, hash2) &&
+        expect.same(artifact1.ordinal, artifact2.ordinal) &&
+        expect.same(artifact1.stateProof, artifact2.stateProof)
+  }
 
   def mkStateChannelEvent()(implicit S: SecurityProvider[IO], H: Hasher[IO]): IO[StateChannelEvent] = for {
     keyPair <- KeyPairGenerator.makeKeyPair[IO]

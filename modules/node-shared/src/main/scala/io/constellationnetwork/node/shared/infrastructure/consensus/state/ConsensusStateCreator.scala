@@ -56,5 +56,9 @@ abstract class ConsensusStateCreator[F[_]: Sync, Key: Show, Artifact, Context, S
     maybeResultAndEffect.flatTraverse { case (result, effect) => effect.as(result) }
 
   protected def logIfCreated(createResult: StateCreateResult): F[Unit] =
-    createResult.traverse_(state => logger.info(s"State created ${state.show}"))
+    createResult.traverse_(state =>
+      logger.debug(
+        s"State created key=${state.key.show} leader=${state.leader.show.take(8)} facilitators=${state.facilitators.value.size} view=${state.viewNumber}"
+      )
+    )
 }
