@@ -193,11 +193,7 @@ object GlobalSnapshotConsensus {
 
       peerQualityTracker <- PeerQualityTracker.make[F]
 
-      tcaFilter = TrailingCommonAncestorFilter.make[F, GlobalSnapshotArtifact](
-        globalSnapshotStorage.get,
-        appConfig.snapshot.consensus.tcaLookbackWindow,
-        appConfig.snapshot.consensus.tcaMinParticipation
-      )
+      tcaFilter = TrailingCommonAncestorFilter.make[F]
 
       stateCreator =
         GlobalSnapshotConsensusStateCreator.make(

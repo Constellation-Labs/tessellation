@@ -201,6 +201,25 @@ object ConsensusStateUpdater {
       } else Applicative[F].unit
     }.void
 
+  /** Identify peers whose observation hash differs from the local node's (i.e., forked peers).
+    *
+    * When this node is in the majority (its hash matches the majority hash), returns all peers with a different hash. When this node is in
+    * the minority or there's no clear majority, returns empty set — `recoverIfForking` handles the minority self-recovery case.
+    *
+    * This is deterministic: all healthy nodes have the same `ownObservationHash` and see the same `observations`, so they all identify the
+    * same set of forked peers.
+    */
+  def identifyForkedPeers(
+    ownObservationHash: Hash,
+    observations: SortedMap[PeerId, Hash]
+  ): Set[PeerId] =
+    pickMajority(observations.values.toList) match {
+      case Some(majorityHash) if majorityHash === ownObservationHash =>
+        observations.collect { case (pid, hash) if hash =!= ownObservationHash => pid }.toSet
+      case _ =>
+        Set.empty[PeerId]
+    }
+
   def pickValidatedMajorityArtifact[F[_]: Sync, Event, Key, Artifact, Context, Kind](
     ownProposalInfo: ArtifactInfo[Artifact, Context],
     lastSignedArtifact: Signed[Artifact],

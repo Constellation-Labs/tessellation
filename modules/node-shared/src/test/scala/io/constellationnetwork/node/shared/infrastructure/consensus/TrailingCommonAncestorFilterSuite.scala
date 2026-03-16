@@ -1,20 +1,11 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
-import cats.data.NonEmptySet
 import cats.effect.IO
 
-import scala.collection.immutable.SortedSet
-
-import io.constellationnetwork.schema.ID.Id
-import io.constellationnetwork.schema.ID.Id._
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.peer.PeerId._
 import io.constellationnetwork.security.hex.Hex
-import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 
-import eu.timepit.refined.auto._
 import weaver.SimpleIOSuite
 
 object TrailingCommonAncestorFilterSuite extends SimpleIOSuite {
@@ -23,180 +14,79 @@ object TrailingCommonAncestorFilterSuite extends SimpleIOSuite {
   private def pid(name: String): PeerId =
     PeerId(Hex(name.getBytes("UTF-8").map(b => f"$b%02x").mkString))
 
-  private def proof(peerId: PeerId): SignatureProof =
-    SignatureProof(peerId.toId, Signature(Hex("deadbeef")))
-
-  private def signed[A](value: A, signers: Set[PeerId]): Signed[A] = {
-    val proofs = NonEmptySet.fromSetUnsafe(SortedSet.from(signers.map(proof)))
-    Signed(value, proofs)
-  }
-
   private val peer1 = pid("peer1")
   private val peer2 = pid("peer2")
   private val peer3 = pid("peer3")
   private val peer4 = pid("peer4")
   private val peer5 = pid("peer5")
+  private val peer6 = pid("peer6")
 
-  // Simple test value type
-  case class TestSnapshot(id: Int)
-
-  private def makeStorage(snapshots: Map[SnapshotOrdinal, Signed[TestSnapshot]]): SnapshotOrdinal => IO[Option[Signed[TestSnapshot]]] =
-    ordinal => IO.pure(snapshots.get(ordinal))
+  private val filter = TrailingCommonAncestorFilter.make[IO]
 
   // === Graceful degradation tests ===
 
-  test("returns None when ordinal is too low for full lookback window") {
-    val filter = TrailingCommonAncestorFilter.make[IO, TestSnapshot](
-      _ => IO.pure(None),
-      lookbackWindow = 5,
-      minParticipation = 2
-    )
-    // Ordinal 3: can only produce 3 target ordinals (3 < lookbackWindow=5)
-    filter.degradedPeers(SnapshotOrdinal.unsafeApply(3L)).map { result =>
+  test("returns None when lastFacilitators is empty") {
+    filter.degradedPeers(Set.empty, Set(peer1, peer2)).map { result =>
       expect.same(None, result)
     }
   }
 
-  test("returns None when snapshots are missing from storage") {
-    val filter = TrailingCommonAncestorFilter.make[IO, TestSnapshot](
-      _ => IO.pure(None), // storage returns nothing
-      lookbackWindow = 5,
-      minParticipation = 2
-    )
-    filter.degradedPeers(SnapshotOrdinal.unsafeApply(100L)).map { result =>
+  test("returns None when lastSigners is empty") {
+    filter.degradedPeers(Set(peer1, peer2), Set.empty).map { result =>
       expect.same(None, result)
     }
   }
 
-  test("returns None when fewer snapshots available than minParticipation") {
-    // Only 1 snapshot available out of 5 requested, with minParticipation=2
-    val snapshots = Map(
-      SnapshotOrdinal.unsafeApply(99L) -> signed(TestSnapshot(99), Set(peer1, peer2))
-    )
-    val filter = TrailingCommonAncestorFilter.make[IO, TestSnapshot](
-      makeStorage(snapshots),
-      lookbackWindow = 5,
-      minParticipation = 2
-    )
-    filter.degradedPeers(SnapshotOrdinal.unsafeApply(100L)).map { result =>
+  test("returns None when both sets are empty") {
+    filter.degradedPeers(Set.empty, Set.empty).map { result =>
       expect.same(None, result)
     }
   }
 
-  test("returns None when early region is empty (lookbackWindow == minParticipation)") {
-    // With lookbackWindow=2, minParticipation=2: all snapshots are "recent", no early region
-    val snapshots = Map(
-      SnapshotOrdinal.unsafeApply(98L) -> signed(TestSnapshot(98), Set(peer1, peer2)),
-      SnapshotOrdinal.unsafeApply(99L) -> signed(TestSnapshot(99), Set(peer1))
-    )
-    val filter = TrailingCommonAncestorFilter.make[IO, TestSnapshot](
-      makeStorage(snapshots),
-      lookbackWindow = 2,
-      minParticipation = 2
-    )
-    filter.degradedPeers(SnapshotOrdinal.unsafeApply(100L)).map { result =>
-      expect.same(None, result)
-    }
-  }
+  // === Degradation detection tests ===
 
-  // === Early/recent split degradation tests ===
-
-  test("identifies peer that signed early but not recent as degraded") {
-    // lookbackWindow=5, minParticipation=2 → early=[95,96,97], recent=[98,99]
-    // peer3 signs early (95,96) but NOT recent (98,99) → degraded
-    val snapshots = Map(
-      SnapshotOrdinal.unsafeApply(95L) -> signed(TestSnapshot(95), Set(peer1, peer2, peer3)),
-      SnapshotOrdinal.unsafeApply(96L) -> signed(TestSnapshot(96), Set(peer1, peer2, peer3)),
-      SnapshotOrdinal.unsafeApply(97L) -> signed(TestSnapshot(97), Set(peer1, peer2)),
-      SnapshotOrdinal.unsafeApply(98L) -> signed(TestSnapshot(98), Set(peer1, peer2)),
-      SnapshotOrdinal.unsafeApply(99L) -> signed(TestSnapshot(99), Set(peer1, peer2))
-    )
-    val filter = TrailingCommonAncestorFilter.make[IO, TestSnapshot](
-      makeStorage(snapshots),
-      lookbackWindow = 5,
-      minParticipation = 2
-    )
-    filter.degradedPeers(SnapshotOrdinal.unsafeApply(100L)).map { result =>
+  test("identifies peer that was facilitator but did not sign as degraded") {
+    // peer3 was a facilitator but didn't sign the last snapshot
+    val facilitators = Set(peer1, peer2, peer3)
+    val signers = Set(peer1, peer2)
+    filter.degradedPeers(facilitators, signers).map { result =>
       expect.same(Some(Set(peer3)), result)
     }
   }
 
-  test("multiple peers degraded when they all dropped from recent") {
-    // peer2 and peer3 sign early but not recent → both degraded
-    val snapshots = Map(
-      SnapshotOrdinal.unsafeApply(95L) -> signed(TestSnapshot(95), Set(peer1, peer2, peer3)),
-      SnapshotOrdinal.unsafeApply(96L) -> signed(TestSnapshot(96), Set(peer1, peer2, peer3)),
-      SnapshotOrdinal.unsafeApply(97L) -> signed(TestSnapshot(97), Set(peer1)),
-      SnapshotOrdinal.unsafeApply(98L) -> signed(TestSnapshot(98), Set(peer1)),
-      SnapshotOrdinal.unsafeApply(99L) -> signed(TestSnapshot(99), Set(peer1))
-    )
-    val filter = TrailingCommonAncestorFilter.make[IO, TestSnapshot](
-      makeStorage(snapshots),
-      lookbackWindow = 5,
-      minParticipation = 2
-    )
-    filter.degradedPeers(SnapshotOrdinal.unsafeApply(100L)).map { result =>
+  test("multiple peers degraded when they all failed to sign") {
+    // peer2 and peer3 were facilitators but neither signed
+    val facilitators = Set(peer1, peer2, peer3)
+    val signers = Set(peer1)
+    filter.degradedPeers(facilitators, signers).map { result =>
       expect.same(Some(Set(peer2, peer3)), result)
     }
   }
 
-  test("returns empty set when no peers are degraded (all still active in recent)") {
+  test("returns empty set when all facilitators signed") {
     val allPeers = Set(peer1, peer2, peer3)
-    val snapshots = Map(
-      SnapshotOrdinal.unsafeApply(95L) -> signed(TestSnapshot(95), allPeers),
-      SnapshotOrdinal.unsafeApply(96L) -> signed(TestSnapshot(96), allPeers),
-      SnapshotOrdinal.unsafeApply(97L) -> signed(TestSnapshot(97), allPeers),
-      SnapshotOrdinal.unsafeApply(98L) -> signed(TestSnapshot(98), allPeers),
-      SnapshotOrdinal.unsafeApply(99L) -> signed(TestSnapshot(99), allPeers)
-    )
-    val filter = TrailingCommonAncestorFilter.make[IO, TestSnapshot](
-      makeStorage(snapshots),
-      lookbackWindow = 5,
-      minParticipation = 2
-    )
-    filter.degradedPeers(SnapshotOrdinal.unsafeApply(100L)).map { result =>
+    filter.degradedPeers(allPeers, allPeers).map { result =>
       expect.same(Some(Set.empty[PeerId]), result)
     }
   }
 
   // === New peer onboarding tests ===
 
-  test("new peer appearing only in recent snapshots is NOT degraded") {
-    // peer3 only appears in recent region (just joined) → not in earlySigners → not degraded
-    val snapshots = Map(
-      SnapshotOrdinal.unsafeApply(95L) -> signed(TestSnapshot(95), Set(peer1, peer2)),
-      SnapshotOrdinal.unsafeApply(96L) -> signed(TestSnapshot(96), Set(peer1, peer2)),
-      SnapshotOrdinal.unsafeApply(97L) -> signed(TestSnapshot(97), Set(peer1, peer2)),
-      SnapshotOrdinal.unsafeApply(98L) -> signed(TestSnapshot(98), Set(peer1, peer2, peer3)),
-      SnapshotOrdinal.unsafeApply(99L) -> signed(TestSnapshot(99), Set(peer1, peer2, peer3))
-    )
-    val filter = TrailingCommonAncestorFilter.make[IO, TestSnapshot](
-      makeStorage(snapshots),
-      lookbackWindow = 5,
-      minParticipation = 2
-    )
-    filter.degradedPeers(SnapshotOrdinal.unsafeApply(100L)).map { result =>
-      // peer3 only in recent → NOT degraded. No one in early dropped from recent.
+  test("new peer appearing only in signers is NOT degraded") {
+    // peer3 signed but wasn't in the facilitator set (joined via candidates)
+    val facilitators = Set(peer1, peer2)
+    val signers = Set(peer1, peer2, peer3)
+    filter.degradedPeers(facilitators, signers).map { result =>
+      // peer3 only in signers → NOT degraded. No one in facilitators is missing from signers.
       expect.same(Some(Set.empty[PeerId]), result)
     }
   }
 
-  test("new peers with zero appearances anywhere are NOT degraded") {
-    // peer4, peer5 don't appear in any snapshot — they are new joiners not in the map at all
-    val snapshots = Map(
-      SnapshotOrdinal.unsafeApply(95L) -> signed(TestSnapshot(95), Set(peer1, peer2)),
-      SnapshotOrdinal.unsafeApply(96L) -> signed(TestSnapshot(96), Set(peer1, peer2)),
-      SnapshotOrdinal.unsafeApply(97L) -> signed(TestSnapshot(97), Set(peer1, peer2)),
-      SnapshotOrdinal.unsafeApply(98L) -> signed(TestSnapshot(98), Set(peer1, peer2)),
-      SnapshotOrdinal.unsafeApply(99L) -> signed(TestSnapshot(99), Set(peer1, peer2))
-    )
-    val filter = TrailingCommonAncestorFilter.make[IO, TestSnapshot](
-      makeStorage(snapshots),
-      lookbackWindow = 5,
-      minParticipation = 2
-    )
-    filter.degradedPeers(SnapshotOrdinal.unsafeApply(100L)).map { result =>
-      // No degraded peers. peer4/peer5 are not in any snapshot → not in earlySigners → can't be degraded
+  test("new peers not in either set are NOT degraded") {
+    // peer4, peer5 don't appear in facilitators or signers — they are brand new joiners
+    val facilitators = Set(peer1, peer2)
+    val signers = Set(peer1, peer2)
+    filter.degradedPeers(facilitators, signers).map { result =>
       expect
         .same(Some(Set.empty[PeerId]), result)
         .and(expect(!result.exists(_.contains(peer4))))
@@ -204,27 +94,23 @@ object TrailingCommonAncestorFilterSuite extends SimpleIOSuite {
     }
   }
 
-  // === Post-rollback scenario (the exact bug this fixes) ===
+  // === Post-rollback scenario ===
 
-  test("post-rollback: peers that joined after solo period are NOT degraded") {
-    // Solo node (peer1) running for ordinals 95-98, then peer2+peer3 join at 99
-    // lookbackWindow=5, minParticipation=2 → early=[95,96,97], recent=[98,99]
-    val snapshots = Map(
-      SnapshotOrdinal.unsafeApply(95L) -> signed(TestSnapshot(95), Set(peer1)),
-      SnapshotOrdinal.unsafeApply(96L) -> signed(TestSnapshot(96), Set(peer1)),
-      SnapshotOrdinal.unsafeApply(97L) -> signed(TestSnapshot(97), Set(peer1)),
-      SnapshotOrdinal.unsafeApply(98L) -> signed(TestSnapshot(98), Set(peer1)),
-      SnapshotOrdinal.unsafeApply(99L) -> signed(TestSnapshot(99), Set(peer1, peer2, peer3))
-    )
-    val filter = TrailingCommonAncestorFilter.make[IO, TestSnapshot](
-      makeStorage(snapshots),
-      lookbackWindow = 5,
-      minParticipation = 2
-    )
-    filter.degradedPeers(SnapshotOrdinal.unsafeApply(100L)).map { result =>
-      // earlySigners = {peer1}, recentSigners = {peer1, peer2, peer3}
-      // degraded = {peer1} -- {peer1, peer2, peer3} = {} (empty)
-      // peer2, peer3 only in recent → not flagged
+  test("post-rollback: solo node as facilitator, all signed → no degraded") {
+    // Solo node (peer1) was the only facilitator and signed
+    val facilitators = Set(peer1)
+    val signers = Set(peer1)
+    filter.degradedPeers(facilitators, signers).map { result =>
+      expect.same(Some(Set.empty[PeerId]), result)
+    }
+  }
+
+  test("post-rollback: solo facilitator but multiple signers → no degraded") {
+    // Solo node was facilitator, new joiners also signed
+    val facilitators = Set(peer1)
+    val signers = Set(peer1, peer2, peer3)
+    filter.degradedPeers(facilitators, signers).map { result =>
+      // peer1 signed → not degraded. peer2, peer3 not in facilitators → irrelevant.
       expect.same(Some(Set.empty[PeerId]), result)
     }
   }
@@ -232,65 +118,52 @@ object TrailingCommonAncestorFilterSuite extends SimpleIOSuite {
   // === Determinism test ===
 
   test("same inputs produce same outputs (deterministic)") {
-    val snapshots = Map(
-      SnapshotOrdinal.unsafeApply(95L) -> signed(TestSnapshot(95), Set(peer1, peer2, peer3)),
-      SnapshotOrdinal.unsafeApply(96L) -> signed(TestSnapshot(96), Set(peer1, peer2)),
-      SnapshotOrdinal.unsafeApply(97L) -> signed(TestSnapshot(97), Set(peer1, peer3)),
-      SnapshotOrdinal.unsafeApply(98L) -> signed(TestSnapshot(98), Set(peer1, peer2, peer4)),
-      SnapshotOrdinal.unsafeApply(99L) -> signed(TestSnapshot(99), Set(peer1, peer3, peer5))
-    )
-    val filter = TrailingCommonAncestorFilter.make[IO, TestSnapshot](
-      makeStorage(snapshots),
-      lookbackWindow = 5,
-      minParticipation = 2
-    )
+    val facilitators = Set(peer1, peer2, peer3, peer4)
+    val signers = Set(peer1, peer3, peer5)
     for {
-      result1 <- filter.degradedPeers(SnapshotOrdinal.unsafeApply(100L))
-      result2 <- filter.degradedPeers(SnapshotOrdinal.unsafeApply(100L))
+      result1 <- filter.degradedPeers(facilitators, signers)
+      result2 <- filter.degradedPeers(facilitators, signers)
     } yield expect.same(result1, result2)
   }
 
-  // === Partial availability test ===
+  // === Self-correcting behavior ===
 
-  test("handles mix of available and missing snapshots with early/recent split") {
-    // 3 of 5 snapshots available: ordinals 96, 98, 99
-    // Sorted: [96, 98, 99]. minParticipation=2 → recent=[98,99], early=[96]
-    // peer3 signs 96 (early) but not 98,99 (recent) → degraded
-    val snapshots = Map(
-      SnapshotOrdinal.unsafeApply(96L) -> signed(TestSnapshot(96), Set(peer1, peer2, peer3)),
-      SnapshotOrdinal.unsafeApply(98L) -> signed(TestSnapshot(98), Set(peer1, peer2)),
-      SnapshotOrdinal.unsafeApply(99L) -> signed(TestSnapshot(99), Set(peer1, peer2))
-    )
-    val filter = TrailingCommonAncestorFilter.make[IO, TestSnapshot](
-      makeStorage(snapshots),
-      lookbackWindow = 5,
-      minParticipation = 2
-    )
-    filter.degradedPeers(SnapshotOrdinal.unsafeApply(100L)).map { result =>
-      expect.same(Some(Set(peer3)), result)
+  test("peer that signs after being degraded in previous round is NOT degraded") {
+    // Round N: peer2 didn't sign → degraded
+    // Round N+1: peer2 is back as facilitator AND signed → not degraded
+    val facilitatorsN = Set(peer1, peer2, peer3)
+    val signersN = Set(peer1, peer3)
+
+    val facilitatorsN1 = Set(peer1, peer2, peer3)
+    val signersN1 = Set(peer1, peer2, peer3)
+
+    for {
+      degradedN <- filter.degradedPeers(facilitatorsN, signersN)
+      degradedN1 <- filter.degradedPeers(facilitatorsN1, signersN1)
+    } yield
+      expect
+        .same(Some(Set(peer2)), degradedN)
+        .and(expect.same(Some(Set.empty[PeerId]), degradedN1))
+  }
+
+  // === Quorum scenario ===
+
+  test("peers missing from quorum signatures are correctly flagged") {
+    // 6 facilitators, only 4 signed (quorum met but 2 missing)
+    val facilitators = Set(peer1, peer2, peer3, peer4, peer5, peer6)
+    val signers = Set(peer1, peer2, peer3, peer4)
+    filter.degradedPeers(facilitators, signers).map { result =>
+      expect.same(Some(Set(peer5, peer6)), result)
     }
   }
 
-  // === Edge case: peer returns in recent after gap ===
+  // === Only one facilitator signed (minimum quorum) ===
 
-  test("peer that was early AND recent is NOT degraded even if absent in middle") {
-    // peer2 signs early (95,96), absent middle (97), returns in recent (98,99) → NOT degraded
-    val snapshots = Map(
-      SnapshotOrdinal.unsafeApply(95L) -> signed(TestSnapshot(95), Set(peer1, peer2)),
-      SnapshotOrdinal.unsafeApply(96L) -> signed(TestSnapshot(96), Set(peer1, peer2)),
-      SnapshotOrdinal.unsafeApply(97L) -> signed(TestSnapshot(97), Set(peer1)),
-      SnapshotOrdinal.unsafeApply(98L) -> signed(TestSnapshot(98), Set(peer1, peer2)),
-      SnapshotOrdinal.unsafeApply(99L) -> signed(TestSnapshot(99), Set(peer1, peer2))
-    )
-    val filter = TrailingCommonAncestorFilter.make[IO, TestSnapshot](
-      makeStorage(snapshots),
-      lookbackWindow = 5,
-      minParticipation = 2
-    )
-    filter.degradedPeers(SnapshotOrdinal.unsafeApply(100L)).map { result =>
-      // earlySigners={peer1,peer2}, recentSigners={peer1,peer2}
-      // degraded = {} → peer2 returned, not degraded
-      expect.same(Some(Set.empty[PeerId]), result)
+  test("all but one facilitator degraded when only one signed") {
+    val facilitators = Set(peer1, peer2, peer3)
+    val signers = Set(peer1)
+    filter.degradedPeers(facilitators, signers).map { result =>
+      expect.same(Some(Set(peer2, peer3)), result)
     }
   }
 }

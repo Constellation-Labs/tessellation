@@ -185,7 +185,45 @@ object CurrencySnapshotConsensusStateAdvancer {
           _ <- maybeFacilities.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
           _ <- maybeFacilities.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
           _ <- maybeFacilities.traverse_(checkForkByConsensusConfigHash)
-          result <- maybeFacilities.flatTraverse(toProposalsPhase(state, _))
+
+          // Evict peers with minority facilitatorsHash — deterministic since all healthy nodes
+          // see the same declarations and identify the same minority.
+          cleanFacilities = maybeFacilities.map { facilities =>
+            val forkedPeers = ConsensusStateUpdater.identifyForkedPeers(
+              status.facilitatorsHash,
+              facilities.map { case (pid, f) => (pid, f.facilitatorsHash) }
+            )
+            if (forkedPeers.nonEmpty) facilities -- forkedPeers else facilities
+          }
+
+          _ <- (maybeFacilities, cleanFacilities).tupled.traverse_ {
+            case (original, clean) =>
+              val evicted = original.keySet -- clean.keySet
+              ConsensusLog
+                .warn(
+                  logger,
+                  ConsensusLog.Fork,
+                  state.key.show,
+                  "n/a",
+                  "event" -> "FORKED_PEERS_EVICTED",
+                  "evicted" -> evicted.size.toString,
+                  "remaining" -> clean.size.toString,
+                  "evictedPeers" -> evicted.toList.map(ConsensusLog.pid).mkString(",")
+                )
+                .whenA(evicted.nonEmpty)
+          }
+
+          result <- cleanFacilities.flatTraverse { facilities =>
+            val evictedPeers = state.facilitators.value.filterNot(facilities.contains).toSet
+            val updatedState: CurrencySnapshotConsensusState =
+              if (evictedPeers.nonEmpty)
+                state.copy[CurrencySnapshotKey, CurrencySnapshotStatus, CurrencyConsensusOutcome, CurrencyConsensusKind](
+                  facilitators = Facilitators(state.facilitators.value.filter(facilities.contains)),
+                  removedFacilitators = RemovedFacilitators(state.removedFacilitators.value ++ evictedPeers)
+                )
+              else state
+            toProposalsPhase(updatedState, facilities)
+          }
         } yield result
 
       private def toProposalsPhase(

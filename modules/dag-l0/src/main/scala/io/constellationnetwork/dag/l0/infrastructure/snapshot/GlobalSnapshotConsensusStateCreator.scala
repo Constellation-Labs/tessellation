@@ -95,11 +95,13 @@ object GlobalSnapshotConsensusStateCreator {
             (if (previouslyRemoved.nonEmpty) s", excludedFromPreviousRound=${previouslyRemoved.size}" else "")
         )
 
-        // TCA (Trailing Common Ancestor): exclude degraded peers using early/recent split.
-        // Splits the lookback window into early and recent regions. A peer is degraded if it signed
-        // early snapshots but NOT any recent ones (was active, now silent). New peers that only appear
-        // in recent snapshots are NOT excluded. Deterministic: all nodes read the same finalized snapshots.
-        tcaDegraded <- tcaFilter.degradedPeers(key)
+        // TCA (Trailing Common Ancestor): exclude degraded peers using proofs-based detection.
+        // Compares lastOutcome.facilitators (who was supposed to sign) with the actual proofs on the
+        // last finalized snapshot (who actually signed). Peers that were facilitators but did NOT sign
+        // are degraded. 100% deterministic: both inputs come from consensus-agreed lastOutcome.
+        lastFacilitators = lastOutcome.facilitators.value.toSet
+        lastSigners = lastOutcome.finished.signedMajorityArtifact.proofs.map(_.id.toPeerId).toSortedSet.toSet
+        tcaDegraded <- tcaFilter.degradedPeers(lastFacilitators, lastSigners)
         tcaFilteredBase = tcaDegraded match {
           case Some(degraded) =>
             val filtered = fullBase.filterNot(degraded.contains)
@@ -117,7 +119,8 @@ object GlobalSnapshotConsensusStateCreator {
             "event" -> "TCA_FILTER_APPLIED",
             "tcaDegraded" -> degraded.size.toString,
             "fullBase" -> fullBase.size.toString,
-            "tcaFiltered" -> tcaFilteredBase.size.toString
+            "tcaFiltered" -> tcaFilteredBase.size.toString,
+            "degradedPeers" -> degraded.toList.map(_.value.value.take(8)).mkString(",")
           )
         }
 

@@ -7,10 +7,11 @@ import cats.syntax.all._
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.schema.peer.PeerId
 
 import eu.timepit.refined.auto._
 
-/** Manages deterministic leader re-election when the current leader fails.
+/** Manages deterministic leader re-election and peer eviction when facilitators fail.
   *
   * ==View Change Protocol==
   *
@@ -23,6 +24,11 @@ import eu.timepit.refined.auto._
   *   3. Update state atomically (CAS on viewNumber)
   *   4. Trigger CheckUpdate so new leader's proposal is processed
   * }}}
+  *
+  * ==Peer Eviction==
+  *
+  * When facilitators fail to declare within the timeout, `performViewChangeWithEviction` removes them from the active facilitator set. This
+  * allows the remaining peers to continue with a reduced quorum instead of being stuck waiting forever for an unresponsive peer.
   *
   * ==Early View Change==
   *
@@ -74,5 +80,73 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
         }
         .void >>
       queue.offer(ConsensusCommand.CheckUpdate(key))
+  }
+
+  /** Perform a view change with peer eviction: remove unresponsive peers, select new leader from remaining.
+    *
+    * When facilitators fail to declare within the timeout, this method removes them from the active set. The remaining peers can then
+    * proceed with a reduced quorum (`ceil(remaining × threshold)`) instead of being stuck waiting for an unresponsive peer.
+    *
+    * Safety: never evicts below 2 facilitators — falls back to normal view change if eviction would leave fewer than 2.
+    *
+    * The CAS guard on `viewNumber` prevents conflicting evictions: if the state has already advanced (e.g., because a late declaration
+    * arrived and the phase progressed), the eviction is skipped.
+    */
+  def performViewChangeWithEviction(
+    key: Key,
+    currentState: ConsensusState[Key, Status, Outcome, Kind],
+    peersToEvict: Set[PeerId]
+  ): F[Unit] = {
+    val remainingFacilitators = currentState.facilitators.value.filterNot(peersToEvict.contains)
+
+    if (remainingFacilitators.size < 2) {
+      // Can't evict to below minimum viable cluster — fall back to normal view change
+      ConsensusLog.warn(
+        logger,
+        ConsensusLog.Phase,
+        key.toString,
+        "n/a",
+        "event" -> "EVICTION_SKIPPED_MIN_FACILITATORS",
+        "peersToEvict" -> peersToEvict.size.toString,
+        "remaining" -> remainingFacilitators.size.toString
+      ) >> performViewChange(key, currentState)
+    } else {
+      val newViewNumber = currentState.viewNumber + 1
+      val newLeader = facilitatorSelector.selectLeader(remainingFacilitators, currentState.entropy, newViewNumber)
+
+      ConsensusLog.warn(
+        logger,
+        ConsensusLog.Phase,
+        key.toString,
+        "n/a",
+        "event" -> "VIEW_CHANGE_WITH_EVICTION",
+        "evicted" -> peersToEvict.size.toString,
+        "remaining" -> remainingFacilitators.size.toString,
+        "oldView" -> currentState.viewNumber.toString,
+        "newView" -> newViewNumber.toString,
+        "oldLeader" -> ConsensusLog.pid(currentState.leader),
+        "newLeader" -> ConsensusLog.pid(newLeader),
+        "evictedPeers" -> peersToEvict.toList.map(ConsensusLog.pid).mkString(",")
+      ) >>
+        peersToEvict.toList.traverse_(peerQualityTracker.recordViewChange) >>
+        Metrics[F].updateGauge("dag_consensus_view_number", newViewNumber) >>
+        Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>
+        storage
+          .condModifyState[Unit](key) {
+            case Some(state) if state.viewNumber === currentState.viewNumber =>
+              val updated: ConsensusState[Key, Status, Outcome, Kind] =
+                state.copy(
+                  facilitators = Facilitators(remainingFacilitators),
+                  removedFacilitators = RemovedFacilitators(state.removedFacilitators.value ++ peersToEvict),
+                  viewNumber = newViewNumber,
+                  leader = newLeader
+                )
+              (updated.some, ()).some.pure[F]
+            case _ =>
+              none[(Option[ConsensusState[Key, Status, Outcome, Kind]], Unit)].pure[F]
+          }
+          .void >>
+        queue.offer(ConsensusCommand.CheckUpdate(key))
+    }
   }
 }

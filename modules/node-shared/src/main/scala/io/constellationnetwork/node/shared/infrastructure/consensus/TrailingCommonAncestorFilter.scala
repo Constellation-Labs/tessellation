@@ -3,10 +3,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 import cats.effect.Async
 import cats.syntax.all._
 
-import io.constellationnetwork.schema.ID.Id._
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.security.signature.Signed
 
 /** Ouroboros-inspired Trailing Common Ancestor filter for facilitator selection.
   *
@@ -15,122 +12,83 @@ import io.constellationnetwork.security.signature.Signed
   * When facilitators go offline between rounds, surviving nodes detect them as "abandoned missing" but cannot exclude them from the
   * eligible set — each node's local observations differ, causing `facilitatorsHash` mismatches and forks.
   *
-  * ==Solution: Early/Recent Split==
+  * ==Solution: Proofs-Based Detection==
   *
-  * Split the lookback window into two regions:
-  *   - '''Early''' (first `lookbackWindow - minParticipation` snapshots): establishes who was previously active
-  *   - '''Recent''' (last `minParticipation` snapshots): establishes who is currently active
-  *
-  * A peer is '''degraded''' if it signed snapshots in the early region but did NOT sign any in the recent region. This means it was active
-  * but has gone silent — exactly the case that causes facilitatorsHash mismatches.
+  * Compare the agreed-upon facilitator set from `lastOutcome` with the actual signers of the last finalized snapshot
+  * (`lastOutcome.finished.signedMajorityArtifact.proofs`). Peers that were facilitators but did NOT sign the last snapshot are
+  * '''degraded''' — they were supposed to be active but failed to participate.
   *
   * ==Why This Works==
   *
-  * Since `Signed[Snapshot].proofs` records who actually signed each finalized snapshot, and all nodes agree on finalized snapshots, the
-  * early/recent split is fully deterministic.
+  * Both inputs (`lastFacilitators` and `lastSigners`) come from `lastOutcome`, which is consensus-agreed data that all honest nodes share.
+  * This makes the computation 100% deterministic with zero dependency on local storage state.
+  *
+  * ==Why Not Storage-Based Lookback?==
+  *
+  * The previous approach read `Signed[Snapshot].proofs` from the last K snapshots in local storage. However, different nodes can have
+  * different snapshot availability (due to storage eviction, async persistence timing, or different join times), causing the early/recent
+  * split to produce different results on different nodes — the exact nondeterminism that causes `facilitatorsHash` forks.
   *
   * ==New Peer Onboarding==
   *
-  * Peers that '''only''' appear in the recent region (they just joined) are '''not''' flagged as degraded — they have no early history to
-  * compare against. Peers with '''zero''' appearances anywhere in the window are also safe. This avoids the chicken-and-egg problem where a
-  * new peer could never become eligible because it has no history.
+  * Peers that were NOT in `lastFacilitators` (new joiners via candidates) are never flagged as degraded — they weren't expected to sign the
+  * previous snapshot. This avoids the chicken-and-egg problem where a new peer could never become eligible.
   *
   * ==Post-Rollback Behavior==
   *
   * After a network rollback where 1 node runs solo, then others join:
-  *   - Early region: only the solo node signed
-  *   - Recent region: solo node + newly joined peers signed
-  *   - earlySigners = {solo}, recentSigners = {solo, new1, new2, ...}
-  *   - degraded = earlySigners -- recentSigners = {} (empty)
+  *   - `lastFacilitators` = {solo} (only the solo node was a facilitator)
+  *   - `lastSigners` = {solo} (the solo node signed)
+  *   - `degraded` = {solo} -- {solo} = {} (empty)
+  *   - New peers are NOT in lastFacilitators → not flagged
   *   - Result: all peers pass TCA, new peers can participate immediately
   *
-  * ==Graceful Degradation==
+  * ==Transient Failures==
   *
-  * Returns `None` (signaling no exclusions / fallback to current behavior) when:
-  *   - Current ordinal is too low for sufficient history
-  *   - The early region is empty (can't determine who was previously active)
-  *   - Historical snapshots are unavailable in storage
+  * A peer that misses 1 round (e.g., slow network) gets excluded for 1 round but can immediately rejoin as a candidate in the next round.
+  * The penalty is minor and self-correcting.
   */
 trait TrailingCommonAncestorFilter[F[_]] {
 
   /** Compute the set of peers that should be excluded from facilitator selection.
     *
-    * Excluded peers are those that signed snapshots in the early region of the lookback window but did NOT sign any in the recent region —
-    * i.e., they were active but have gone silent. Peers that only appear in the recent region (new joiners) and peers with zero appearances
-    * are not excluded.
+    * Excluded peers are those that were in the facilitator set for the last round but did NOT sign the finalized snapshot — i.e., they were
+    * expected to participate but didn't. Peers not in `lastFacilitators` (new joiners) are never excluded.
     *
-    * @param currentOrdinal
-    *   the ordinal being decided (lookback examines ordinals before this)
+    * @param lastFacilitators
+    *   the set of peers that were facilitators in the last completed round (from `lastOutcome.facilitators`)
+    * @param lastSigners
+    *   the set of peers that actually signed the last finalized snapshot (from `lastOutcome.finished.signedMajorityArtifact.proofs`)
     * @return
-    *   Some(degradedPeers) if TCA has enough history to identify degraded peers, None to signal fallback (no exclusions)
+    *   Some(degradedPeers) with the set of peers to exclude, or None if inputs are insufficient
     */
-  def degradedPeers(currentOrdinal: SnapshotOrdinal): F[Option[Set[PeerId]]]
+  def degradedPeers(
+    lastFacilitators: Set[PeerId],
+    lastSigners: Set[PeerId]
+  ): F[Option[Set[PeerId]]]
 }
 
 object TrailingCommonAncestorFilter {
 
-  /** Create a TCA filter that examines historical snapshot proofs using an early/recent split.
+  /** Create a TCA filter that uses only consensus-agreed data (no local storage reads).
     *
-    * The lookback window is split into:
-    *   - '''Early''' region: first `lookbackWindow - minParticipation` snapshots
-    *   - '''Recent''' region: last `minParticipation` snapshots
+    * Compares `lastFacilitators` (who was supposed to sign) with `lastSigners` (who actually signed). The difference is the set of degraded
+    * peers that should be excluded from the next round's facilitator selection.
     *
-    * A peer is degraded if it appears in the early region but not in the recent region.
-    *
-    * @param getSnapshot
-    *   function to retrieve a signed snapshot by ordinal
-    * @param lookbackWindow
-    *   K: number of past snapshots to examine (must be > minParticipation for meaningful early region)
-    * @param minParticipation
-    *   number of most-recent snapshots that define the "recent" region
+    * This approach is 100% deterministic because both inputs come from `lastOutcome`, which all honest nodes agree on.
     */
-  def make[F[_]: Async, S](
-    getSnapshot: SnapshotOrdinal => F[Option[Signed[S]]],
-    lookbackWindow: Int,
-    minParticipation: Int
-  ): TrailingCommonAncestorFilter[F] = new TrailingCommonAncestorFilter[F] {
+  def make[F[_]: Async]: TrailingCommonAncestorFilter[F] = new TrailingCommonAncestorFilter[F] {
 
-    def degradedPeers(currentOrdinal: SnapshotOrdinal): F[Option[Set[PeerId]]] = {
-      val targetOrdinals: List[SnapshotOrdinal] =
-        (1 to lookbackWindow).toList.flatMap { offset =>
-          SnapshotOrdinal(currentOrdinal.value.value - offset)
-        }
-
-      if (targetOrdinals.size < lookbackWindow)
+    def degradedPeers(
+      lastFacilitators: Set[PeerId],
+      lastSigners: Set[PeerId]
+    ): F[Option[Set[PeerId]]] =
+      if (lastFacilitators.isEmpty || lastSigners.isEmpty)
         none[Set[PeerId]].pure[F]
-      else
-        targetOrdinals
-          .traverse(ord => getSnapshot(ord).map(snap => (ord, snap)))
-          .map { results =>
-            val available = results.collect { case (ord, Some(snap)) => (ord, snap) }
-
-            if (available.size < minParticipation)
-              none[Set[PeerId]]
-            else {
-              // Sort by ordinal ascending and split into early/recent
-              val sorted = available.sortBy(_._1.value.value)
-              val recentCount = math.min(minParticipation, sorted.size)
-              val earlySnapshots = sorted.dropRight(recentCount)
-              val recentSnapshots = sorted.takeRight(recentCount)
-
-              // Early region empty means we can't distinguish "was active before" from "just joined"
-              // This happens when lookbackWindow == minParticipation or not enough early snapshots available
-              if (earlySnapshots.isEmpty)
-                none[Set[PeerId]]
-              else {
-                val earlySigners = earlySnapshots.flatMap { case (_, snap) => extractSigners(snap) }.toSet
-                val recentSigners = recentSnapshots.flatMap { case (_, snap) => extractSigners(snap) }.toSet
-
-                // Degraded = signed early snapshots but NOT any recent snapshots
-                val degraded = earlySigners -- recentSigners
-
-                degraded.some
-              }
-            }
-          }
-    }
-
-    private def extractSigners(signed: Signed[S]): Set[PeerId] =
-      signed.proofs.map(_.id.toPeerId).toSortedSet.toSet
+      else {
+        // Degraded = facilitators that were supposed to sign but didn't
+        val degraded = lastFacilitators -- lastSigners
+        degraded.some.pure[F]
+      }
   }
 }

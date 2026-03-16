@@ -229,7 +229,35 @@ object GlobalSnapshotConsensusStateAdvancer {
             _ <- maybeFacilities.traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
             _ <- maybeFacilities.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
             _ <- maybeFacilities.traverse_(checkForkByConsensusConfigHash)
-            _ <- maybeFacilities.traverse_ { _ =>
+
+            // Evict peers with minority facilitatorsHash — deterministic since all healthy nodes
+            // see the same declarations and identify the same minority.
+            cleanFacilities = maybeFacilities.map { facilities =>
+              val forkedPeers = ConsensusStateUpdater.identifyForkedPeers(
+                status.facilitatorsHash,
+                facilities.map { case (pid, f) => (pid, f.facilitatorsHash) }
+              )
+              if (forkedPeers.nonEmpty) facilities -- forkedPeers else facilities
+            }
+
+            _ <- (maybeFacilities, cleanFacilities).tupled.traverse_ {
+              case (original, clean) =>
+                val evicted = original.keySet -- clean.keySet
+                ConsensusLog
+                  .warn(
+                    logger,
+                    ConsensusLog.Fork,
+                    state.key.show,
+                    "n/a",
+                    "event" -> "FORKED_PEERS_EVICTED",
+                    "evicted" -> evicted.size.toString,
+                    "remaining" -> clean.size.toString,
+                    "evictedPeers" -> evicted.toList.map(ConsensusLog.pid).mkString(",")
+                  )
+                  .whenA(evicted.nonEmpty)
+            }
+
+            _ <- cleanFacilities.traverse_ { _ =>
               ConsensusLog.debug(
                 logger,
                 ConsensusLog.Fork,
@@ -240,7 +268,19 @@ object GlobalSnapshotConsensusStateAdvancer {
                 "lastSnapshotHash" -> status.lastSnapshotHash.show.take(8)
               )
             }
-            result <- maybeFacilities.flatTraverse(toProposalsPhase(state, _))
+
+            result <- cleanFacilities.flatTraverse { facilities =>
+              // Update state to reflect eviction before proceeding to proposals
+              val evictedPeers = state.facilitators.value.filterNot(facilities.contains).toSet
+              val updatedState: GlobalSnapshotConsensusState =
+                if (evictedPeers.nonEmpty)
+                  state.copy[GlobalSnapshotKey, GlobalSnapshotStatus, GlobalConsensusOutcome, GlobalConsensusKind](
+                    facilitators = Facilitators(state.facilitators.value.filter(facilities.contains)),
+                    removedFacilitators = RemovedFacilitators(state.removedFacilitators.value ++ evictedPeers)
+                  )
+                else state
+              toProposalsPhase(updatedState, facilities)
+            }
           } yield result
         }
       }

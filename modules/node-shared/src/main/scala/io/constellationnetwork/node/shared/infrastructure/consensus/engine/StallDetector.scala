@@ -152,7 +152,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status,
             statusDuration = statusDuration,
             declaredCount = info.declaredCount,
             activeCount = info.activeCount,
-            missingPeerIds = info.missingPeerIds
+            missingPeerIds = info.missingPeerIds,
+            missingPeers = info.missingPeers
           )
 
       adjustedStatusStartTime = if (didStall) now else newStatusStartTime
@@ -285,7 +286,14 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status,
 
   // ── Stall Handling ────────────────────────────────────────────────
 
-  /** Handle a stall condition. Returns true if a stall was detected (view change or non-proposal timeout). */
+  /** Handle a stall condition. Returns true if a stall was detected.
+    *
+    * When peers are missing (haven't declared for the current phase), they are evicted from the facilitator set via
+    * `performViewChangeWithEviction`. This allows the remaining peers to continue with a reduced quorum instead of being stuck.
+    *
+    * When all peers have declared but the phase hasn't advanced (e.g., leader hasn't proposed), a normal view change (leader rotation) is
+    * performed for proposal phases, or the stall is counted toward abandonment for other phases.
+    */
   private def handleStall(
     key: Key,
     state: ConsensusState[Key, Status, Outcome, Kind],
@@ -293,13 +301,35 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status,
     statusDuration: FiniteDuration,
     declaredCount: Int,
     activeCount: Int,
-    missingPeerIds: Set[String]
+    missingPeerIds: Set[String],
+    missingPeers: Set[PeerId]
   ): F[Boolean] =
     if (statusDuration >= declarationTimeout) {
       val statusName = state.status.getClass.getSimpleName.stripSuffix("$")
       val phaseLabel = Seq((Metrics.unsafeLabelName("phase"), statusName))
 
-      if (ops.isProposalPhase(state.status)) {
+      if (missingPeers.nonEmpty) {
+        // Peers haven't declared — evict them and continue with reduced facilitator set
+        ConsensusLog.warn(
+          logger,
+          ConsensusLog.Stall,
+          key.toString,
+          selfRole(state),
+          "event" -> "PEER_EVICTION",
+          "phase" -> statusName,
+          "elapsed" -> s"${statusDuration.toSeconds}s",
+          "timeout" -> s"${declarationTimeout.toSeconds}s",
+          "progress" -> s"$declaredCount/$activeCount",
+          "evicted" -> missingPeers.size.toString,
+          "remaining" -> (state.facilitators.value.size - missingPeers.size).toString,
+          "evictedPeers" -> missingPeerIds.mkString(","),
+          "view" -> state.viewNumber.toString
+        ) >>
+          Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>
+          Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
+          viewChangeManager.performViewChangeWithEviction(key, state, missingPeers).as(true)
+      } else if (ops.isProposalPhase(state.status)) {
+        // All declared but leader hasn't proposed → normal view change (leader rotation only)
         ConsensusLog.warn(
           logger,
           ConsensusLog.Stall,
@@ -311,13 +341,13 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status,
           "timeout" -> s"${declarationTimeout.toSeconds}s",
           "progress" -> s"$declaredCount/$activeCount",
           "leader" -> ConsensusLog.pid(state.leader),
-          "view" -> state.viewNumber.toString,
-          "missingCount" -> missingPeerIds.size.toString
+          "view" -> state.viewNumber.toString
         ) >>
           Metrics[F].incrementCounter("dag_consensus_view_change") >>
           Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
           viewChangeManager.performViewChange(key, state).as(true)
       } else {
+        // All declared but phase hasn't advanced → count toward abandon
         ConsensusLog.warn(
           logger,
           ConsensusLog.Stall,
@@ -327,8 +357,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status,
           "phase" -> statusName,
           "elapsed" -> s"${statusDuration.toSeconds}s",
           "timeout" -> s"${declarationTimeout.toSeconds}s",
-          "progress" -> s"$declaredCount/$activeCount",
-          "missingCount" -> missingPeerIds.size.toString
+          "progress" -> s"$declaredCount/$activeCount"
         ) >>
           Metrics[F].incrementCounter("dag_consensus_stall_detected") >>
           Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>

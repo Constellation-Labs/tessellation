@@ -128,11 +128,7 @@ object CurrencySnapshotConsensus {
 
       peerQualityTracker <- PeerQualityTracker.make[F]
 
-      tcaFilter = TrailingCommonAncestorFilter.make[F, CurrencySnapshotArtifact](
-        getSnapshotByOrdinal,
-        snapshotConfig.consensus.tcaLookbackWindow,
-        snapshotConfig.consensus.tcaMinParticipation
-      )
+      tcaFilter = TrailingCommonAncestorFilter.make[F]
 
       consensusStateCreator =
         CurrencySnapshotConsensusStateCreator.make(
