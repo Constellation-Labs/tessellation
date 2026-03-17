@@ -215,6 +215,18 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
   def initFromRollback(key: Key, outcome: Outcome): F[Unit] =
     for {
       _ <- ConsensusLog.info(log, ConsensusLog.Lifecycle, key.toString, "n/a", "event" -> "ROLLBACK_INIT_START")
+      // Clear ALL stale consensus state before initializing from rollback.
+      // Without this cleanup, peer registrations from the pre-rollback network survive
+      // and contain keys higher than the rollback ordinal. The StallDetector then sees
+      // the rollback node as "lagging behind network" (peersAtHigherKey > total/2) and
+      // immediately abandons rounds → recovery download → 0 selectable peers → stuck.
+      // This mirrors the cleanup done in AbandonmentTracker.attemptRecoveryDownload.
+      _ <- storage.clearAllConsensusState
+      _ <- storage.clearAllPeerRegistrations
+      _ <- storage.clearTimeTrigger
+      _ <- storage.clearObservationKey
+      _ <- ctx.pending.clear()
+      _ <- ConsensusLog.info(log, ConsensusLog.Lifecycle, key.toString, "n/a", "event" -> "ROLLBACK_STATE_CLEARED")
       _ <- storage.trySetInitialConsensusOutcome(outcome)
       _ <- queue.offer(StartRound(TimeTrigger.some))
     } yield ()

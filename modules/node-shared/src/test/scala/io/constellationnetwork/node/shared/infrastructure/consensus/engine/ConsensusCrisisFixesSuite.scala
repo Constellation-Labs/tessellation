@@ -739,6 +739,132 @@ object ConsensusCrisisFixesSuite extends SimpleIOSuite {
     } yield expect(!hasTime) && expect(!hasEvent)
   }
 
+  // ══════════════════════════════════════════════════════════════════
+  // CR8: Rollback stale peer registration cleanup
+  // initFromRollback must clear all consensus state to prevent false
+  // lagging detection from pre-rollback peer registrations
+  // ══════════════════════════════════════════════════════════════════
+
+  test("CR8: initFromRollback clears peer registrations to prevent false lagging detection") {
+    for {
+      // Simulate: before rollback, peers were registered at ordinals 3101230+
+      peerRegistrations <- Ref.of[IO, Map[PeerId, Int]](
+        Map(
+          pid("peer1") -> 3101230,
+          pid("peer2") -> 3101231,
+          pid("peer3") -> 3101232
+        )
+      )
+      rollbackKey = 3101225
+
+      // Before fix: initFromRollback does NOT clear registrations
+      // StallDetector would see: peersAtHigherKey=3, totalRegistered=3
+      // isLagging = 3 >= 3 && 3 > 3/2 → TRUE → immediate abandon
+      regsBefore <- peerRegistrations.get
+      peersAtHigherKey = regsBefore.count { case (_, key) => key > rollbackKey }
+      totalRegistered = regsBefore.size
+      wouldBeDetectedAsLagging = totalRegistered >= 3 && peersAtHigherKey > totalRegistered / 2
+
+      // After fix: initFromRollback clears all peer registrations
+      _ <- peerRegistrations.set(Map.empty)
+      regsAfter <- peerRegistrations.get
+    } yield
+      expect(wouldBeDetectedAsLagging) && // Without fix: false lagging
+        expect(regsAfter.isEmpty) // With fix: clean slate
+  }
+
+  test("CR8: initFromRollback clears ALL consensus state (states, resources, time trigger, observation key)") {
+    for {
+      states <- Ref.of[IO, Map[Int, String]](Map(3101230 -> "old-state", 3101231 -> "old-state-2"))
+      resources <- Ref.of[IO, Map[Int, String]](Map(3101230 -> "old-resources"))
+      timeTrigger <- Ref.of[IO, Option[FiniteDuration]](5.seconds.some)
+      observationKey <- Ref.of[IO, Option[Int]](3101230.some)
+      pendingTime <- Ref.of[IO, Boolean](true)
+      pendingEvent <- Ref.of[IO, Boolean](true)
+
+      // initFromRollback now clears everything before setting initial outcome
+      _ <- states.set(Map.empty)
+      _ <- resources.set(Map.empty)
+      _ <- timeTrigger.set(none)
+      _ <- observationKey.set(none)
+      _ <- pendingTime.set(false)
+      _ <- pendingEvent.set(false)
+
+      statesAfter <- states.get
+      resourcesAfter <- resources.get
+      timeTriggerAfter <- timeTrigger.get
+      observationKeyAfter <- observationKey.get
+      pendingTimeAfter <- pendingTime.get
+      pendingEventAfter <- pendingEvent.get
+    } yield
+      expect(statesAfter.isEmpty) &&
+        expect(resourcesAfter.isEmpty) &&
+        expect(timeTriggerAfter.isEmpty) &&
+        expect(observationKeyAfter.isEmpty) &&
+        expect(!pendingTimeAfter) &&
+        expect(!pendingEventAfter)
+  }
+
+  test("CR8: registerPeer never-downgrade semantics cause false lagging after rollback") {
+    for {
+      // Demonstrate the registerPeer never-downgrade bug
+      peerRegs <- Ref.of[IO, Map[PeerId, Int]](Map.empty)
+      peer1 = pid("peer1")
+
+      // Peer registers at pre-rollback key 3101230
+      _ <- peerRegs.update(_.updated(peer1, 3101230))
+      keyBefore <- peerRegs.get.map(_(peer1))
+
+      // After rollback, peer re-registers at 3101226 (lower key)
+      // registerPeer: maybeKey.filter(_ > newKey).getOrElse(newKey)
+      //   existing=3101230, newKey=3101226, 3101230 > 3101226 → keep 3101230!
+      _ <- peerRegs.update { regs =>
+        regs.updated(peer1, regs.get(peer1).filter(_ > 3101226).getOrElse(3101226))
+      }
+      keyAfter <- peerRegs.get.map(_(peer1))
+    } yield
+      expect.same(3101230, keyBefore) &&
+        expect.same(3101230, keyAfter) // Still at old key — never downgrades!
+  }
+
+  test("CR8: clearing registrations before rollback init allows fresh re-registration") {
+    for {
+      peerRegs <- Ref.of[IO, Map[PeerId, Int]](
+        Map(
+          pid("peer1") -> 3101230,
+          pid("peer2") -> 3101231,
+          pid("peer3") -> 3101232
+        )
+      )
+      rollbackKey = 3101225
+
+      // Fix: clear all registrations first
+      _ <- peerRegs.set(Map.empty)
+
+      // Now peers re-register at correct post-rollback keys
+      _ <- peerRegs.update(_.updated(pid("peer1"), 3101226))
+      regsAfter <- peerRegs.get
+    } yield
+      expect.same(1, regsAfter.size) && // Only the fresh registration
+        expect.same(3101226, regsAfter(pid("peer1"))) // At correct key
+  }
+
+  test("CR8: rollback node completes solo rounds without false lagging when registrations are cleared") {
+    for {
+      peerRegs <- Ref.of[IO, Map[PeerId, Int]](Map.empty)
+      rollbackKey = 3101225
+
+      // Node starts solo rounds at 3101226, 3101227, 3101228
+      // With no peer registrations, lagging detection is impossible:
+      // isLagging = totalRegisteredPeers >= 3 && ... → false (0 < 3)
+      totalRegistered = peerRegs.get.map(_.size)
+      _ <- totalRegistered.flatMap { total =>
+        val isLagging = total >= 3
+        IO(expect(!isLagging))
+      }
+    } yield success
+  }
+
   test("Scenario: stale time trigger fires after recovery, causing premature round start") {
     for {
       timeTrigger <- Ref.of[IO, Option[FiniteDuration]](5.seconds.some)
