@@ -376,6 +376,18 @@ if [ -n "$METAGRAPH" ]; then
     fi
 fi
 
+# Compute MAX_NODES as the maximum of all NUM_*_NODES values (capped at 10)
+# This drives how many node directories, keys, and configs are created
+_max_of() { [ "$1" -gt "$2" ] && echo "$1" || echo "$2"; }
+MAX_NODES=$(_max_of ${NUM_GL0_NODES:-0} ${NUM_GL1_NODES:-0})
+MAX_NODES=$(_max_of $MAX_NODES ${NUM_ML0_NODES:-0})
+MAX_NODES=$(_max_of $MAX_NODES ${NUM_CL1_NODES:-0})
+MAX_NODES=$(_max_of $MAX_NODES ${NUM_DL1_NODES:-0})
+# Ensure at least 3 (legacy default) and at most 9 (single-digit IP/port offset limit)
+MAX_NODES=$(_max_of $MAX_NODES 3)
+[ "$MAX_NODES" -gt 9 ] && MAX_NODES=9
+export MAX_NODES
+
 # Layer URLs: explicit overrides take priority, otherwise built from TEST_HOST + port prefix
 # When using a remote host, GL1 defaults to port 9010 instead of 9100
 if [ "$TEST_HOST" != "http://localhost" ]; then

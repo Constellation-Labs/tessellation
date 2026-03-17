@@ -76,7 +76,7 @@ if env | grep -q "^CL_TEST_"; then
   done
 fi
 
-for i in 0 1 2; do
+for i in $(seq 0 $((MAX_NODES - 1))); do
   cp ./nodes/.env ./nodes/$i/.env
   cp ./nodes/.envrc ./nodes/$i/.envrc
 done
@@ -105,7 +105,7 @@ cd ../../
 
 
 
-for i in 0 1 2; do
+for i in $(seq 0 $((MAX_NODES - 1))); do
   cd ./nodes/$i
 
   # if i != 0:
