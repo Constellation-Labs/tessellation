@@ -154,7 +154,7 @@ object types {
     removalPenaltyRounds: Int = 3,
     leaderQualityThreshold: Double = 0.5,
     leaderQualityTimeoutMultiplier: Double = 0.5,
-    facilitiesTimeoutMultiplier: Double = 0.5,
+    facilitiesTimeoutMultiplier: Double = 0.3,
     proposalsTimeoutMultiplier: Double = 1.5,
     signaturesTimeoutMultiplier: Double = 0.75,
     maxConsecutiveAbandonments: Int = 5,

@@ -230,11 +230,10 @@ object GlobalSnapshotConsensusStateCreator {
 
         // Quality-weighted leader selection: use consensus-agreed quality scores
         // so all nodes compute the same leader deterministically.
-        qualityScores = lastOutcome.peerQuality.map {
-          case (pid, (completed, participated)) =>
-            pid -> (completed.toDouble / participated.max(1))
-        }
-        leader = facilitatorSelector.selectLeaderWeighted(active, entropy, qualityScores = qualityScores, qualityWeight = 0.3)
+        // Pass raw (completed, participated) integers — the selector uses integer-only
+        // tier computation (tier = participated - completed = failure count) to avoid
+        // platform-dependent float-to-long conversion differences.
+        leader = facilitatorSelector.selectLeaderWeighted(active, entropy, qualityScores = lastOutcome.peerQuality, qualityWeight = 0.3)
 
         _ <- ConsensusLog.info(
           logger,

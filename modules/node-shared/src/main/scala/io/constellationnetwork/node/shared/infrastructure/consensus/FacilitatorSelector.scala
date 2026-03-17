@@ -127,15 +127,11 @@ class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
     sorted(index)
   }
 
-  /** Selects a leader with quality-weighted scoring.
+  /** Selects a leader with quality-weighted scoring using integer-only tier computation.
     *
-    * Combines the deterministic rendezvous score with a quality multiplier. Peers with higher quality scores are more likely to be selected
-    * as leader. The `qualityWeight` parameter controls how strongly quality affects selection (0.0 = pure rendezvous, 1.0 = quality
-    * dominates).
-    *
-    * '''Important:''' This method is deterministic only when all nodes agree on the same `qualityScores`. Currently, quality scores are
-    * tracked locally and may differ across nodes. Use this method only when quality scores are consensus-agreed (future work). For now, use
-    * `selectLeader` for production leader selection.
+    * Uses consensus-agreed quality scores (completed, participated) to compute deterministic tiers.
+    * Integer arithmetic avoids platform-dependent float-to-long conversion differences that could
+    * cause different nodes to compute different tiers → different leaders → fork.
     *
     * @param facilitators
     *   The already-selected facilitators for this round
@@ -144,9 +140,10 @@ class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
     * @param viewNumber
     *   Current view number (0 = initial leader, incremented on view change)
     * @param qualityScores
-    *   Map of peer quality scores (0.0 = worst, 1.0 = best). Peers not in the map default to 1.0.
+    *   Map of peer → (completedRounds, participatedRounds) from consensus-agreed outcome.
+    *   Must be identical across all nodes for determinism.
     * @param qualityWeight
-    *   Weight of quality in the combined score (0.0 to 1.0). Default 0.3.
+    *   Unused, kept for API compatibility. Tier is derived from integer failure count.
     * @return
     *   The selected leader PeerId
     */
@@ -154,21 +151,22 @@ class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
     facilitators: List[PeerId],
     entropy: Hash,
     viewNumber: Int = 0,
-    qualityScores: Map[PeerId, Double] = Map.empty,
+    qualityScores: Map[PeerId, (Int, Int)] = Map.empty,
     qualityWeight: Double = 0.3
   ): PeerId = {
     require(
       facilitators.nonEmpty,
       "selectLeaderWeighted called with empty facilitators list — consensus cannot proceed without facilitators"
     )
-    // Tiered ordering: quality determines the tier (inverted so high quality = tier 0 = first),
-    // rendezvous score breaks ties within same tier. qualityWeight controls tier granularity:
-    // weight=0 → all tiers are 0 → pure rendezvous; weight=1 → full quality tiers.
+    // Tiered ordering using integer-only arithmetic for determinism.
+    // Tier = number of failures (participated - completed). Lower tier = better peer = selected first.
+    // Rendezvous score breaks ties within the same tier.
+    // This avoids float-to-long conversion which can differ across JVM platforms.
     val sorted = facilitators.sortBy { pid =>
       val rendezvousScore = FacilitatorSelector.rendezvousScore(pid.value.value, entropy.value)
-      val quality = qualityScores.getOrElse(pid, 1.0)
-      val tier = ((1.0 - quality) * qualityWeight * 1000).toLong
-      (tier, rendezvousScore)
+      val (completed, participated) = qualityScores.getOrElse(pid, (0, 0))
+      val tier = if (participated > 0) participated - completed else 0L
+      (tier.toLong, rendezvousScore)
     }
     val index = viewNumber % sorted.size
     sorted(index)

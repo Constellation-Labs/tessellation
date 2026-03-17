@@ -31,6 +31,7 @@ import derevo.derive
   * '''Health:'''
   *   - `stallCount` — Number of stall cycles detected this round
   *   - `consecutiveAbandonments` — Consecutive rounds abandoned at same ordinal
+  *   - `totalRecoveryAttempts` — Total recovery download attempts (resets on force leave)
   *   - `isRunning` — Whether a round is currently in progress
   */
 @derive(encoder)
@@ -47,6 +48,7 @@ final case class ConsensusHealthStatus(
   phaseElapsedMs: Long = 0,
   stallCount: Int = 0,
   consecutiveAbandonments: Int = 0,
+  totalRecoveryAttempts: Int = 0,
   isRunning: Boolean = false,
   missingPeers: List[String] = Nil,
   facilitatorIds: List[String] = Nil

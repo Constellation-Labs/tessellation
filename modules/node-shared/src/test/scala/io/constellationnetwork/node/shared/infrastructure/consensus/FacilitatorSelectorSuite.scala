@@ -66,7 +66,8 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
     forall(facilitatorsGen) { facilitators =>
       IO {
         val entropy = Hash.empty
-        val scores = facilitators.map(_ -> 0.5).toMap
+        // (completed=5, participated=10) → 50% quality for all
+        val scores = facilitators.map(_ -> (5, 10)).toMap
         val leader1 = selector.selectLeaderWeighted(facilitators, entropy, 0, scores)
         val leader2 = selector.selectLeaderWeighted(facilitators, entropy, 0, scores)
         expect.same(leader1, leader2)
@@ -74,11 +75,12 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
     }
   }
 
-  test("selectLeaderWeighted with all equal scores matches selectLeader when qualityWeight=0") {
+  test("selectLeaderWeighted with all zero-failure scores matches pure rendezvous ordering") {
     forall(facilitatorsGen) { facilitators =>
       IO {
         val entropy = Hash.empty
-        val scores = facilitators.map(_ -> 1.0).toMap
+        // All perfect: (10, 10) → 0 failures → all tier 0 → pure rendezvous
+        val scores = facilitators.map(_ -> (10, 10)).toMap
         val standard = selector.selectLeader(facilitators, entropy)
         val weighted = selector.selectLeaderWeighted(facilitators, entropy, 0, scores, qualityWeight = 0.0)
         expect.same(standard, weighted)
@@ -86,16 +88,16 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
     }
   }
 
-  test("selectLeaderWeighted prefers high-quality peer when qualityWeight is high") {
+  test("selectLeaderWeighted prefers high-quality peer (fewer failures)") {
     IO {
       val peers = (1 to 5).map(i => pid(s"peer$i")).toList
       val entropy = Hash.empty
 
-      // Give one peer very high quality, rest very low
+      // Give one peer perfect quality (0 failures), rest very poor (9 out of 10 failed)
       val highQualityPeer = peers.head
-      val scores = peers.map(p => p -> (if (p == highQualityPeer) 1.0 else 0.0)).toMap
+      val scores = peers.map(p => p -> (if (p == highQualityPeer) (10, 10) else (1, 10))).toMap
 
-      // With very high quality weight, high-quality peer should be selected more often across entropies
+      // With quality weight, high-quality peer (tier=0) should beat poor peers (tier=9) across entropies
       val entropies = (0 until 20).map(i => Hash.fromBytes(s"entropy$i".getBytes("UTF-8")))
       val selections = entropies.map(e => selector.selectLeaderWeighted(peers, e, 0, scores, qualityWeight = 0.9))
       val highQualityCount = selections.count(_ == highQualityPeer)
@@ -109,11 +111,28 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
     IO {
       val peers = (1 to 5).map(i => pid(s"peer$i")).toList
       val entropy = Hash.empty
-      val scores = peers.map(_ -> 0.8).toMap
+      // (8, 10) = 2 failures each → same tier for all → view rotation works
+      val scores = peers.map(_ -> (8, 10)).toMap
 
       val leaders = (0 until peers.size).map(v => selector.selectLeaderWeighted(peers, entropy, v, scores))
       // All leaders should be distinct for different view numbers
       expect.same(peers.size, leaders.distinct.size)
+    }
+  }
+
+  test("selectLeaderWeighted integer tier is deterministic across invocations") {
+    IO {
+      // Verify that integer-only tier computation produces identical results
+      // This is the key safety test — float-to-long conversion was the fork risk
+      val peers = (1 to 10).map(i => pid(s"peer$i")).toList
+      val entropy = Hash.fromBytes("test-entropy".getBytes("UTF-8"))
+      val scores: Map[PeerId, (Int, Int)] = peers.zipWithIndex.map { case (p, i) =>
+        p -> (i, 10) // varying quality: 0/10, 1/10, ... 9/10
+      }.toMap
+
+      val results = (1 to 100).map(_ => selector.selectLeaderWeighted(peers, entropy, 0, scores))
+      // Must be perfectly deterministic
+      expect(results.distinct.size == 1)
     }
   }
 

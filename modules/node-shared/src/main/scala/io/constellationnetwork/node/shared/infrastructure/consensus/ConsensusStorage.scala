@@ -114,6 +114,9 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
 
   private[consensus] def registerPeer(peerId: PeerId, key: Key): F[Boolean]
 
+  /** Returns all peer registrations (peerId → key) for lagging node detection. */
+  private[consensus] def getPeerRegistrations: F[Map[PeerId, Key]]
+
 }
 
 object ConsensusStorage {
@@ -427,6 +430,8 @@ object ConsensusStorage {
               }
             (result, result.get(peerId).exists(_ === newKey))
           }
+
+        def getPeerRegistrations: F[Map[PeerId, Key]] = peerRegistrationsR.get
       }
   }
 }

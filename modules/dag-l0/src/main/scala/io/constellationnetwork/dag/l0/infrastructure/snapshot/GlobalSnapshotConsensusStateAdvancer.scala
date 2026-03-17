@@ -149,13 +149,15 @@ object GlobalSnapshotConsensusStateAdvancer {
           val finalPenalties = if (config.removalPenaltyRounds > 0) newPenalties else SortedMap.empty[PeerId, Int]
 
           // Compute consensus-agreed peer quality: (roundsCompleted, roundsParticipated) per peer.
-          // A peer "completed" if it wasn't withdrawn or removed. This is deterministic because
-          // all nodes agree on the same facilitator list, removals, and withdrawals.
+          // CRITICAL: We derive "completed" from the signed artifact's proofs (who actually signed),
+          // NOT from withdrawnFacilitators/removedFacilitators. The proofs are embedded in the
+          // consensus-agreed artifact and are identical across all nodes. Using withdrawnFacilitators
+          // would be non-deterministic because withdrawal gossip may not have propagated to all nodes
+          // before outcome finalization, causing quality score divergence → leader divergence → fork.
+          val signers = f.signedMajorityArtifact.proofs.map(_.id.toPeerId).toSortedSet
           val thisRoundQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.from(
             state.facilitators.value.map { pid =>
-              val completed =
-                if (state.withdrawnFacilitators.value.contains(pid) || state.removedFacilitators.value.contains(pid)) 0
-                else 1
+              val completed = if (signers.contains(pid)) 1 else 0
               pid -> (completed, 1)
             }
           )

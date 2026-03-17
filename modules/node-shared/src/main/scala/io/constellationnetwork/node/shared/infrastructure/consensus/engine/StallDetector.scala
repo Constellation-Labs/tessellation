@@ -164,17 +164,55 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status,
       declarationProgress = if (info.activeCount > 0) info.declaredCount.toDouble / info.activeCount else 0.0
       _ <- Metrics[F].updateGauge("dag_consensus_stall_declaration_progress", declarationProgress)
 
+      // --- Lagging node detection ---
+      // If majority of registered peers are at a different (likely higher) key,
+      // this node is lagging behind the network. Abandon immediately to trigger recovery.
+      peerRegs <- storage.getPeerRegistrations
+      peersAtDifferentKey = peerRegs.count { case (_, peerKey) => peerKey =!= key }
+      totalRegisteredPeers = peerRegs.size
+      isLagging = totalRegisteredPeers >= 3 && peersAtDifferentKey > totalRegisteredPeers / 2
+      _ <- (
+        ConsensusLog.warn(
+          logger,
+          ConsensusLog.Stall,
+          key.toString,
+          selfRole(state),
+          "event" -> "LAGGING_NODE_DETECTED",
+          "peersAtDifferentKey" -> peersAtDifferentKey.toString,
+          "totalRegistered" -> totalRegisteredPeers.toString,
+          "ownKey" -> key.toString
+        ) >>
+          Metrics[F].incrementCounter("dag_consensus_lagging_node_detected")
+      ).whenA(isLagging)
+
+      // --- Quorum feasibility check ---
+      // If remaining active facilitators can't form quorum, abandon immediately
+      activeAfterWithdrawals = state.facilitators.value.size - state.withdrawnFacilitators.value.size
+      quorumSize = config.quorumThreshold match {
+        case Some(threshold) => math.ceil(state.facilitators.value.size * threshold).toInt.max(1)
+        case None            => state.facilitators.value.size
+      }
+      quorumInfeasible = activeAfterWithdrawals > 0 && activeAfterWithdrawals < quorumSize
+
       // --- Round timeout / abandon check ---
       roundElapsed = now - ms.roundStartTime
       _ <- Metrics[F].updateGauge("dag_consensus_round_elapsed_seconds", roundElapsed.toSeconds.toInt)
       roundTimedOut = config.maxRoundDuration.exists(roundElapsed >= _)
-      shouldAbandon = finalStallCount >= config.maxStallCycles || roundTimedOut
+      shouldAbandon = finalStallCount >= config.maxStallCycles || roundTimedOut || quorumInfeasible || isLagging
 
       abandonReason =
-        if (roundTimedOut)
+        if (isLagging)
+          s"lagging behind network: $peersAtDifferentKey/$totalRegisteredPeers peers at different key"
+        else if (quorumInfeasible)
+          s"quorum infeasible: $activeAfterWithdrawals active < $quorumSize required"
+        else if (roundTimedOut)
           s"round timed out after ${roundElapsed.toSeconds}s (max=${config.maxRoundDuration.map(_.toSeconds)}s)"
         else s"stuck after $finalStallCount stall cycles"
-      abandonReasonLabel = if (roundTimedOut) "timeout" else "max_stalls"
+      abandonReasonLabel =
+        if (isLagging) "lagging"
+        else if (quorumInfeasible) "quorum_infeasible"
+        else if (roundTimedOut) "timeout"
+        else "max_stalls"
 
       _ <- (
         peerQualityTracker.recordAbandonedMissingPeers(info.missingPeers).whenA(info.missingPeers.nonEmpty) >>
@@ -259,30 +297,46 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status,
     info: ResourcesInfo,
     state: ConsensusState[Key, Status, Outcome, Kind]
   ): F[FiniteDuration] =
-    getCurrentDeclarationTimeout.map { declarationTimeout =>
-      val baseTimeout =
+    for {
+      declarationTimeout <- getCurrentDeclarationTimeout
+      // noProgressTimeout only applies in facilities phase (phase index 0) where no declarations at all
+      // means peers haven't started. In other phases (proposals, signatures), the standard phase timeout
+      // should apply — e.g., in proposals phase the leader may be creating a complex artifact.
+      isFacilitiesPhase = ops.phaseIndex(state.status) == 0
+      baseTimeout =
         if (stallCount > 0)
           config.reStallTimeout.getOrElse(declarationTimeout)
-        else if (info.declaredCount == 0)
+        else if (info.declaredCount == 0 && isFacilitiesPhase)
           config.noProgressTimeout.getOrElse(declarationTimeout)
         else
           declarationTimeout
 
-      val declarationProgress = if (info.activeCount > 0) info.declaredCount.toDouble / info.activeCount else 0.0
-      val nearCompletion = declarationProgress >= 0.75 && info.declaredCount < info.activeCount
-      val baseEffective =
-        if (nearCompletion && stallCount == 0)
+      declarationProgress = if (info.activeCount > 0) info.declaredCount.toDouble / info.activeCount else 0.0
+      nearCompletion = declarationProgress >= 0.75 && info.declaredCount < info.activeCount
+
+      // Skip near-completion timeout bonus when all missing peers are Unresponsive.
+      // Waiting longer for peers that are known-unreachable just delays stall detection.
+      allMissingUnresponsive <- if (nearCompletion && info.missingPeers.nonEmpty)
+        info.missingPeers.toList.forallM { pid =>
+          clusterStorage.getPeer(pid).map {
+            case Some(peer) => peer.responsiveness === (Unresponsive: PeerResponsiveness)
+            case None       => true // Unknown peer treated as unresponsive
+          }
+        }
+      else false.pure[F]
+
+      baseEffective =
+        if (nearCompletion && stallCount == 0 && !allMissingUnresponsive)
           baseTimeout + (baseTimeout / 2)
         else baseTimeout
 
-      val phaseMultiplier = ops.phaseIndex(state.status) match {
+      phaseMultiplier = ops.phaseIndex(state.status) match {
         case 0 => config.facilitiesTimeoutMultiplier
         case 1 => config.proposalsTimeoutMultiplier
         case 2 => config.signaturesTimeoutMultiplier
         case _ => 1.0
       }
-      FiniteDuration((baseEffective.toMillis * phaseMultiplier).toLong, MILLISECONDS)
-    }
+    } yield FiniteDuration((baseEffective.toMillis * phaseMultiplier).toLong, MILLISECONDS)
 
   // ── Stall Handling ────────────────────────────────────────────────
 
@@ -309,25 +363,37 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status,
       val phaseLabel = Seq((Metrics.unsafeLabelName("phase"), statusName))
 
       if (missingPeers.nonEmpty) {
+        val remaining = state.facilitators.value.size - missingPeers.size
+        val effectiveQuorum = config.quorumThreshold match {
+          case Some(threshold) => math.ceil(remaining * threshold).toInt.max(1)
+          case None            => remaining
+        }
+        val quorumInfeasible = remaining > 0 && remaining < effectiveQuorum
+
         // Peers haven't declared — evict them and continue with reduced facilitator set
         ConsensusLog.warn(
           logger,
           ConsensusLog.Stall,
           key.toString,
           selfRole(state),
-          "event" -> "PEER_EVICTION",
+          "event" -> (if (quorumInfeasible) "QUORUM_INFEASIBLE_AFTER_EVICTION" else "PEER_EVICTION"),
           "phase" -> statusName,
           "elapsed" -> s"${statusDuration.toSeconds}s",
           "timeout" -> s"${declarationTimeout.toSeconds}s",
           "progress" -> s"$declaredCount/$activeCount",
           "evicted" -> missingPeers.size.toString,
-          "remaining" -> (state.facilitators.value.size - missingPeers.size).toString,
+          "remaining" -> remaining.toString,
+          "effectiveQuorum" -> effectiveQuorum.toString,
+          "quorumFeasible" -> (!quorumInfeasible).toString,
           "evictedPeers" -> missingPeerIds.mkString(","),
           "view" -> state.viewNumber.toString
         ) >>
           Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>
           Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
-          viewChangeManager.performViewChangeWithEviction(key, state, missingPeers).as(true)
+          // If quorum is infeasible after eviction, skip the view change (it can't help)
+          // and let the abandon check in the main loop handle it on the next cycle.
+          // The stall count increment ensures maxStallCycles is reached faster.
+          viewChangeManager.performViewChangeWithEviction(key, state, missingPeers).unlessA(quorumInfeasible).as(true)
       } else if (ops.isProposalPhase(state.status)) {
         // All declared but leader hasn't proposed → normal view change (leader rotation only)
         ConsensusLog.warn(
