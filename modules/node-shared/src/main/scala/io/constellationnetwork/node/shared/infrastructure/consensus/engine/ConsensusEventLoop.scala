@@ -4,7 +4,7 @@ import cats.Show
 import cats.effect.Fiber
 import cats.effect.kernel.{Async, Deferred, Ref}
 import cats.effect.std.{Queue, Random, Supervisor}
-import cats.kernel.{Eq, Next}
+import cats.kernel.{Eq, Next, Order}
 import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
@@ -68,7 +68,7 @@ object ConsensusEventLoop {
   def build[
     F[_]: Async: HasherSelector: Metrics: Random: Supervisor,
     Event,
-    Key: Eq: Show: Next,
+    Key: Order: Show: Next,
     Artifact: Eq,
     Ctx: Eq,
     Status,

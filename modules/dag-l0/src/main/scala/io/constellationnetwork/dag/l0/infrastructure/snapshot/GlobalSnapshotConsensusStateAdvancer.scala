@@ -139,22 +139,30 @@ object GlobalSnapshotConsensusStateAdvancer {
     ): Option[(Previous[GlobalSnapshotKey], GlobalConsensusOutcome)] =
       state.status match {
         case f: Finished =>
-          // Compute removal penalties: decrement previous, add new removals.
+          // Compute consensus-agreed peer quality and removal penalties from PROOFS ONLY.
+          // CRITICAL: We derive both "completed" and "removed" from the signed artifact's proofs
+          // (who actually signed), NOT from removedFacilitators/withdrawnFacilitators. The proofs
+          // are embedded in the consensus-agreed artifact and are identical across all nodes.
+          //
+          // removedFacilitators includes BOTH:
+          //   1. Fork-evicted peers (deterministic — based on quorum facility declarations)
+          //   2. View-change-evicted peers (NON-deterministic — based on local stall detection timing)
+          // Using removedFacilitators for penalties would cause different nodes to compute different
+          // penalty maps → different facilitator exclusions → different facilitator sets → fork.
+          //
+          // Instead, we use: nonSigners = facilitators - signers (proofs).
+          // This is fully deterministic: both facilitators and proofs are consensus-agreed.
+          val signers = f.signedMajorityArtifact.proofs.map(_.id.toPeerId).toSortedSet
+          val nonSigners = state.facilitators.value.filterNot(signers.contains).toSet
+
+          // Compute removal penalties: decrement previous, add penalties for non-signers.
           // Uses SortedMap for deterministic iteration when filtering penalized peers.
           val previousPenalties = state.lastOutcome.removalPenalties
           val decrementedPenalties = previousPenalties.view.mapValues(_ - 1).filter(_._2 > 0).to(SortedMap)
-          val newPenalties = state.removedFacilitators.value.foldLeft(decrementedPenalties) { (acc, pid) =>
+          val newPenalties = nonSigners.foldLeft(decrementedPenalties) { (acc, pid) =>
             acc.updated(pid, config.removalPenaltyRounds)
           }
           val finalPenalties = if (config.removalPenaltyRounds > 0) newPenalties else SortedMap.empty[PeerId, Int]
-
-          // Compute consensus-agreed peer quality: (roundsCompleted, roundsParticipated) per peer.
-          // CRITICAL: We derive "completed" from the signed artifact's proofs (who actually signed),
-          // NOT from withdrawnFacilitators/removedFacilitators. The proofs are embedded in the
-          // consensus-agreed artifact and are identical across all nodes. Using withdrawnFacilitators
-          // would be non-deterministic because withdrawal gossip may not have propagated to all nodes
-          // before outcome finalization, causing quality score divergence → leader divergence → fork.
-          val signers = f.signedMajorityArtifact.proofs.map(_.id.toPeerId).toSortedSet
           val thisRoundQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.from(
             state.facilitators.value.map { pid =>
               val completed = if (signers.contains(pid)) 1 else 0

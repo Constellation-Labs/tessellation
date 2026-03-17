@@ -107,10 +107,13 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
       // This prevents memory growth from abandoned rounds leaving behind resource entries.
       activeKey = outcomeKey.get(outcome)
       _ <- storage.pruneStaleResources(activeKey)
-      // Prune events from peers no longer in the cluster
+      // Prune events and peer registrations from peers no longer in the cluster.
+      // Peer registrations must be pruned to prevent stale departed-peer entries from
+      // corrupting lagging detection in StallDetector (peersAtDifferentKey count).
       responsivePeers <- ctx.clusterStorage.getResponsivePeers
       activePeerIds = responsivePeers.map(_.id) + ctx.selfId
       _ <- storage.pruneStaleEvents(activePeerIds)
+      _ <- storage.pruneStalePeerRegistrations(activePeerIds)
       _ <-
         if (updated) {
           val key = activeKey
@@ -145,11 +148,16 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
             ctx.nodeStorage.tryModifyStateGetResult(NodeState.WaitingForReady, NodeState.Ready).void >>
             queue.offer(ConsensusFinished(key, outcome, trigger))
         } else {
-          Metrics[F].incrementCounter("dag_consensus_outcome_conflict") >>
+          // OUTCOME_CONFLICT: another round completed first and stored its outcome.
+          // Clean up the stale state and resources for this key to prevent memory leaks.
+          // Without this cleanup, finished state entries accumulate in statesR/resourcesR
+          // since cleanupStateAndResource only runs on the success path.
+          storage.cleanupConflictedRound(activeKey) >>
+            Metrics[F].incrementCounter("dag_consensus_outcome_conflict") >>
             ConsensusLog.warn(
               log,
               ConsensusLog.Lifecycle,
-              "n/a",
+              activeKey.show,
               "n/a",
               "event" -> "OUTCOME_CONFLICT",
               "reason" -> "concurrent_finalization"
@@ -180,6 +188,20 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
       _ <- ConsensusLog.info(log, ConsensusLog.Lifecycle, key.toString, "n/a", "event" -> "DOWNLOAD_INIT_START")
       outcome <- fetchOutcomeFromCluster(key, artifact, context)
         .flatMap(_.liftTo[F](new Throwable(s"[DownloadInit] Could not observe outcome for key=$key")))
+        .flatMap { o =>
+          // Explicit post-retry validation: retryingOnFailuresAndAllErrors returns the last value
+          // when retries exhaust, even if wasSuccessful returned false for it. This guard prevents
+          // silently accepting a mismatched outcome (wrong artifact/context) into consensus storage.
+          val keyMatch = outcomeKey.get(o) === key
+          val artifactMatch = outcomeArtifact.get(o) === artifact
+          val contextMatch = outcomeContext.get(o) === context
+          if (keyMatch && artifactMatch && contextMatch) o.pure[F]
+          else
+            new Throwable(
+              s"[DownloadInit] Outcome validation failed after retries for key=$key: " +
+                s"keyMatch=$keyMatch, artifactMatch=$artifactMatch, contextMatch=$contextMatch"
+            ).raiseError[F, Outcome]
+        }
       _ <- storage
         .trySetInitialConsensusOutcome(outcome)
         .ifM(

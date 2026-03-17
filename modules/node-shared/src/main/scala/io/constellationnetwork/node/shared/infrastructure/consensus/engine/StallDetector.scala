@@ -1,6 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
-import cats.Eq
+import cats.Order
 import cats.effect.kernel._
 import cats.syntax.all._
 
@@ -36,7 +36,7 @@ import eu.timepit.refined.auto._
   * }}}
   */
 @scala.annotation.nowarn("msg=type parameter Outcome.*shadows")
-class StallDetector[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status, Outcome, Kind](
+class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Status, Outcome, Kind](
   ctx: ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   viewChangeManager: ViewChangeManager[F, Key, Status, Outcome, Kind],
   abandonmentTracker: AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
@@ -168,12 +168,18 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status,
       _ <- Metrics[F].updateGauge("dag_consensus_stall_declaration_progress", declarationProgress)
 
       // --- Lagging node detection ---
-      // If majority of registered peers are at a different (likely higher) key,
+      // If majority of registered peers are at a STRICTLY HIGHER key,
       // this node is lagging behind the network. Abandon immediately to trigger recovery.
+      // IMPORTANT: Only peers at HIGHER keys indicate this node is behind.
+      // Peers at the same or lower keys are stale registrations (e.g. from PeerObserved
+      // using lastOutcome key, which is always one behind the current round key).
+      // Using =!= (any different) instead of > caused cluster-wide cascade failures:
+      // all nodes simultaneously detected "lagging" from stale registrations at the
+      // previous ordinal, triggering mass recovery downloads with no peers to serve.
       peerRegs <- storage.getPeerRegistrations
-      peersAtDifferentKey = peerRegs.count { case (_, peerKey) => peerKey =!= key }
+      peersAtHigherKey = peerRegs.count { case (_, peerKey) => peerKey > key }
       totalRegisteredPeers = peerRegs.size
-      isLagging = totalRegisteredPeers >= 3 && peersAtDifferentKey > totalRegisteredPeers / 2
+      isLagging = totalRegisteredPeers >= 3 && peersAtHigherKey > totalRegisteredPeers / 2
       _ <- (
         ConsensusLog.warn(
           logger,
@@ -181,7 +187,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status,
           key.toString,
           selfRole(state),
           "event" -> "LAGGING_NODE_DETECTED",
-          "peersAtDifferentKey" -> peersAtDifferentKey.toString,
+          "peersAtHigherKey" -> peersAtHigherKey.toString,
           "totalRegistered" -> totalRegisteredPeers.toString,
           "ownKey" -> key.toString
         ) >>
@@ -212,7 +218,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status,
 
       abandonReason =
         if (isLagging)
-          s"lagging behind network: $peersAtDifferentKey/$totalRegisteredPeers peers at different key"
+          s"lagging behind network: $peersAtHigherKey/$totalRegisteredPeers peers at higher key"
         else if (quorumInfeasible)
           s"quorum infeasible: $activeFacilitators active < $quorumSize required"
         else if (evictionLoopStuck)

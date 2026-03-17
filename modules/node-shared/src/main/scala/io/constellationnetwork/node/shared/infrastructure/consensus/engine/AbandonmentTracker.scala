@@ -216,6 +216,11 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
         ) >>
           consecutiveAbandonCountRef.set((none[Key], 0)) >>
           healthRef.update(_.copy(consecutiveAbandonments = 0)) >>
+          // Clear stale peer registrations so after recovery the node doesn't
+          // immediately re-trigger false lagging detection from old entries.
+          // Fresh registrations will be populated via peerRegistrationStream
+          // when the node re-enters Observing state after download.
+          storage.clearAllPeerRegistrations >>
           ctx.pending.clear() >>
           queue.offer(ConsensusCommand.RoundCompleted)
       case None =>
