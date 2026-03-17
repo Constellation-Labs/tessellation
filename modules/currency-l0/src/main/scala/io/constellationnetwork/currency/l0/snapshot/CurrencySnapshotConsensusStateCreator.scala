@@ -233,12 +233,8 @@ object CurrencySnapshotConsensusStateCreator {
           )
         }
 
-        // Quality-weighted leader selection using consensus-agreed quality scores
-        qualityScores = lastOutcome.peerQuality.map {
-          case (pid, (completed, participated)) =>
-            pid -> (completed.toDouble / participated.max(1))
-        }
-        leader = facilitatorSelector.selectLeaderWeighted(active, entropy, qualityScores = qualityScores, qualityWeight = 0.3)
+        // Quality-weighted leader selection using consensus-agreed integer quality scores
+        leader = facilitatorSelector.selectLeaderWeighted(active, entropy, qualityScores = lastOutcome.peerQuality, qualityWeight = 0.3)
 
         _ <- ConsensusLog.info(
           logger,

@@ -40,7 +40,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status,
   ctx: ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   viewChangeManager: ViewChangeManager[F, Key, Status, Outcome, Kind],
   abandonmentTracker: AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
-  healthRef: Ref[F, ConsensusHealthStatus]
+  healthRef: Ref[F, ConsensusHealthStatus],
+  evictionVoteTracker: EvictionVoteTracker[F]
 ) {
 
   import ctx.{clusterStorage, config, logger, ops, peerQualityTracker, queue, selfId, storage}
@@ -67,6 +68,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status,
   def monitor(key: Key, cancelSignal: Deferred[F, Unit]): F[Unit] =
     for {
       now <- Async[F].monotonic
+      _ <- viewChangeManager.resetSkippedEvictions
+      _ <- evictionVoteTracker.clearVotes
       _ <- Async[F].race(
         cancelSignal.get,
         Async[F].tailRecM(
@@ -194,23 +197,31 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status,
       }
       quorumInfeasible = activeAfterWithdrawals > 0 && activeAfterWithdrawals < quorumSize
 
+      // --- View change loop escalation check ---
+      // If repeated eviction attempts are skipped (below minimum facilitators), the view change
+      // loop is cycling view numbers without progress. Escalate to abandonment.
+      evictionLoopStuck <- viewChangeManager.shouldEscalateToAbandon
+
       // --- Round timeout / abandon check ---
       roundElapsed = now - ms.roundStartTime
       _ <- Metrics[F].updateGauge("dag_consensus_round_elapsed_seconds", roundElapsed.toSeconds.toInt)
       roundTimedOut = config.maxRoundDuration.exists(roundElapsed >= _)
-      shouldAbandon = finalStallCount >= config.maxStallCycles || roundTimedOut || quorumInfeasible || isLagging
+      shouldAbandon = finalStallCount >= config.maxStallCycles || roundTimedOut || quorumInfeasible || isLagging || evictionLoopStuck
 
       abandonReason =
         if (isLagging)
           s"lagging behind network: $peersAtDifferentKey/$totalRegisteredPeers peers at different key"
         else if (quorumInfeasible)
           s"quorum infeasible: $activeAfterWithdrawals active < $quorumSize required"
+        else if (evictionLoopStuck)
+          s"eviction loop: repeated eviction skips (below minimum facilitators), escalating to abandon"
         else if (roundTimedOut)
           s"round timed out after ${roundElapsed.toSeconds}s (max=${config.maxRoundDuration.map(_.toSeconds)}s)"
         else s"stuck after $finalStallCount stall cycles"
       abandonReasonLabel =
         if (isLagging) "lagging"
         else if (quorumInfeasible) "quorum_infeasible"
+        else if (evictionLoopStuck) "eviction_loop"
         else if (roundTimedOut) "timeout"
         else "max_stalls"
 
@@ -370,6 +381,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status,
         }
         val quorumInfeasible = remaining > 0 && remaining < effectiveQuorum
 
+        // Record local eviction votes for missing peers (scaffolding for future gossip-based deterministic eviction)
+        missingPeers.toList.traverse_(target => evictionVoteTracker.voteToEvict(selfId, target)) >>
         // Peers haven't declared — evict them and continue with reduced facilitator set
         ConsensusLog.warn(
           logger,

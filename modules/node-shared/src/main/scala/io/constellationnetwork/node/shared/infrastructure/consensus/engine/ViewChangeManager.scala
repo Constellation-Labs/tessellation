@@ -1,7 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
 import cats.Eq
-import cats.effect.kernel.Async
+import cats.effect.kernel.{Async, Ref}
 import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.infrastructure.consensus._
@@ -42,6 +42,23 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
   queue: cats.effect.std.Queue[F, ConsensusCommand],
   logger: org.typelevel.log4cats.SelfAwareStructuredLogger[F]
 ) {
+
+  /** Maximum consecutive eviction-skipped view changes before escalating to abandonment.
+    * When the same peers keep failing but can't be evicted (below minimum 2), cycling view numbers
+    * wastes stall cycles. After this many skipped evictions, signal that the round should be abandoned.
+    */
+  private val maxSkippedEvictions: Int = 3
+
+  /** Tracks consecutive eviction-skipped view changes for the current round. Reset on successful eviction or round completion. */
+  private val skippedEvictionCountRef: Ref[F, Int] = Ref.unsafe(0)
+
+  /** Check if we've exceeded the skipped eviction threshold — callers should abandon the round instead. */
+  def shouldEscalateToAbandon: F[Boolean] =
+    skippedEvictionCountRef.get.map(_ >= maxSkippedEvictions)
+
+  /** Reset the skipped eviction counter (call on round completion or successful eviction). */
+  def resetSkippedEvictions: F[Unit] =
+    skippedEvictionCountRef.set(0)
 
   /** Perform a view change: increment viewNumber, select new leader, update state. */
   def performViewChange(
@@ -100,20 +117,39 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
     val remainingFacilitators = currentState.facilitators.value.filterNot(peersToEvict.contains)
 
     if (remainingFacilitators.size < 2) {
-      // Can't evict to below minimum viable cluster — fall back to normal view change
-      ConsensusLog.warn(
-        logger,
-        ConsensusLog.Phase,
-        key.toString,
-        "n/a",
-        "event" -> "EVICTION_SKIPPED_MIN_FACILITATORS",
-        "peersToEvict" -> peersToEvict.size.toString,
-        "remaining" -> remainingFacilitators.size.toString
-      ) >> performViewChange(key, currentState)
+      // Can't evict to below minimum viable cluster — track and fall back to normal view change.
+      // After maxSkippedEvictions consecutive skips, callers should escalate to abandonment.
+      skippedEvictionCountRef.updateAndGet(_ + 1).flatMap { skipped =>
+        ConsensusLog.warn(
+          logger,
+          ConsensusLog.Phase,
+          key.toString,
+          "n/a",
+          "event" -> "EVICTION_SKIPPED_MIN_FACILITATORS",
+          "peersToEvict" -> peersToEvict.size.toString,
+          "remaining" -> remainingFacilitators.size.toString,
+          "skippedEvictionCount" -> skipped.toString,
+          "maxSkippedEvictions" -> maxSkippedEvictions.toString
+        ) >> (if (skipped >= maxSkippedEvictions)
+                Metrics[F].incrementCounter("dag_consensus_eviction_loop_escalation") >>
+                  ConsensusLog.error(
+                    logger,
+                    ConsensusLog.Phase,
+                    key.toString,
+                    "n/a",
+                    "event" -> "EVICTION_LOOP_ESCALATION",
+                    "skippedEvictions" -> skipped.toString,
+                    "reason" -> "repeated eviction skips exhausted, signaling abandon"
+                  )
+              else
+                performViewChange(key, currentState))
+      }
     } else {
+      // Successful eviction — reset the skipped counter
       val newViewNumber = currentState.viewNumber + 1
       val newLeader = facilitatorSelector.selectLeader(remainingFacilitators, currentState.entropy, newViewNumber)
 
+      skippedEvictionCountRef.set(0) >>
       ConsensusLog.warn(
         logger,
         ConsensusLog.Phase,

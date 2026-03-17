@@ -7,7 +7,7 @@ import cats.effect.std.Semaphore
 import cats.kernel.Next
 import cats.syntax.all._
 
-import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 
 import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.ext.crypto._
@@ -117,6 +117,21 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
   /** Returns all peer registrations (peerId → key) for lagging node detection. */
   private[consensus] def getPeerRegistrations: F[Map[PeerId, Key]]
 
+  /** Prune stale resources for keys other than the current active key.
+    *
+    * Over time, abandoned rounds leave behind entries in the resources map for keys that are no longer active.
+    * This method removes all resource entries except the current key, preventing unbounded memory growth.
+    * Should be called after each successful consensus round.
+    */
+  private[consensus] def pruneStaleResources(activeKey: Key): F[Unit]
+
+  /** Remove event entries for peers that are no longer in the cluster.
+    *
+    * When peers depart the cluster, their entries in the events map persist indefinitely.
+    * This method removes entries for peers not in the provided active set.
+    */
+  private[consensus] def pruneStaleEvents(activePeers: Set[PeerId]): F[Unit]
+
 }
 
 object ConsensusStorage {
@@ -169,24 +184,38 @@ object ConsensusStorage {
         def clearTimeTrigger: F[Unit] =
           timeTriggerR.set(none)
 
-        def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[F, Key, Status, Outcome, Kind, B]): F[Option[B]] =
-          stateUpdateSemaphore.permit.use { _ =>
-            for {
-              (maybeState, setter) <- statesR(key).access
-              maybeResult <- modifyStateFn(maybeState)
+        /** Maximum time to wait for the state update semaphore before failing.
+          * Prevents deadlock if a modify function hangs — the semaphore would block
+          * all subsequent state updates indefinitely without this timeout.
+          */
+        private val semaphoreTimeout: FiniteDuration = 30.seconds
 
-              maybeB <- maybeResult.traverse {
-                case (maybeState, b) =>
-                  setter(maybeState)
-                    .ifM(
-                      b.pure[F],
-                      new Throwable(
-                        "Failed consensus state update, all consensus state updates should be sequenced with a semaphore"
-                      ).raiseError[F, B]
-                    )
-              }
-            } yield maybeB
-          }
+        def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[F, Key, Status, Outcome, Kind, B]): F[Option[B]] =
+          Async[F].timeoutTo(
+            stateUpdateSemaphore.permit.use { _ =>
+              for {
+                (maybeState, setter) <- statesR(key).access
+                maybeResult <- modifyStateFn(maybeState)
+
+                maybeB <- maybeResult.traverse {
+                  case (maybeState, b) =>
+                    setter(maybeState)
+                      .ifM(
+                        b.pure[F],
+                        new Throwable(
+                          "Failed consensus state update, all consensus state updates should be sequenced with a semaphore"
+                        ).raiseError[F, B]
+                      )
+                }
+              } yield maybeB
+            },
+            semaphoreTimeout,
+            Async[F].raiseError(
+              new java.util.concurrent.TimeoutException(
+                s"Consensus state update semaphore acquisition timed out after ${semaphoreTimeout.toSeconds}s"
+              )
+            )
+          )
 
         def trySetInitialConsensusOutcome(initialOutcome: Outcome): F[Boolean] =
           lastOutcomeR.modify {
@@ -432,6 +461,18 @@ object ConsensusStorage {
           }
 
         def getPeerRegistrations: F[Map[PeerId, Key]] = peerRegistrationsR.get
+
+        def pruneStaleResources(activeKey: Key): F[Unit] =
+          resourcesR.keys.flatMap { keys =>
+            keys.filterNot(_ === activeKey).traverse_(k => resourcesR(k).set(none))
+          }
+
+        def pruneStaleEvents(activePeers: Set[PeerId]): F[Unit] =
+          eventsR.keys.flatMap { peerIds =>
+            peerIds.filterNot(activePeers.contains).traverse_ { stalePeerId =>
+              eventsR(stalePeerId).set(none)
+            }
+          }
       }
   }
 }

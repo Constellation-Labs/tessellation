@@ -103,9 +103,17 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
       leaderScore <- ctx.peerQualityTracker.getQualityScore(newState.leader)
       updated <- storage.tryUpdateLastConsensusOutcomeWithCleanup(prevKey, outcome)
       _ <- ctx.nodeStorage.clearJoiningGracePeriod
+      // Prune stale resources for keys other than the newly completed key.
+      // This prevents memory growth from abandoned rounds leaving behind resource entries.
+      activeKey = outcomeKey.get(outcome)
+      _ <- storage.pruneStaleResources(activeKey)
+      // Prune events from peers no longer in the cluster
+      responsivePeers <- ctx.clusterStorage.getResponsivePeers
+      activePeerIds = responsivePeers.map(_.id) + ctx.selfId
+      _ <- storage.pruneStaleEvents(activePeerIds)
       _ <-
         if (updated) {
-          val key = outcomeKey.get(outcome)
+          val key = activeKey
           val trigger = outcomeTrigger.get(outcome)
 
           val withdrawnCount = newState.withdrawnFacilitators.value.size

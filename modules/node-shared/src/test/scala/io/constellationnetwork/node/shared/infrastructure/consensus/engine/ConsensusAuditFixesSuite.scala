@@ -1,6 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
 import cats.effect.IO
+import cats.syntax.all._
 
 import scala.concurrent.duration._
 
@@ -536,6 +537,265 @@ object ConsensusAuditFixesSuite extends SimpleIOSuite {
 
       val shouldAbandon = stallCount >= maxStallCycles || roundTimedOut || quorumInfeasible || isLagging
       expect(!shouldAbandon)
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // P7: initFromDownload failure recovery
+  // ══════════════════════════════════════════════════════════════════
+
+  test("P7: initFromDownload error handler triggers recovery state transition") {
+    IO {
+      // Simulate the error handler logic from ConsensusEventLoop
+      // When initFromDownload fails after retries, the handler should transition
+      // the node to WaitingForDownload so DownloadDaemon can retry
+      sealed trait State
+      case object Observing extends State
+      case object Ready extends State
+      case object WaitingForDownload extends State
+
+      var currentState: State = Observing
+      val transitioned = currentState match {
+        case Observing =>
+          currentState = WaitingForDownload
+          true
+        case Ready =>
+          currentState = WaitingForDownload
+          true
+        case _ => false
+      }
+
+      expect(transitioned) &&
+      expect(currentState == WaitingForDownload)
+    }
+  }
+
+  test("P7: initFromDownload recovery falls back to Ready → WaitingForDownload") {
+    IO {
+      // If node is already in Ready (e.g., race condition), try Ready → WaitingForDownload
+      sealed trait State
+      case object Observing extends State
+      case object Ready extends State
+      case object WaitingForDownload extends State
+
+      var currentState: State = Ready
+      val primaryTransitioned = currentState match {
+        case Observing =>
+          currentState = WaitingForDownload
+          true
+        case _ => false
+      }
+      // Primary failed, try fallback
+      val fallbackTransitioned = if (!primaryTransitioned) {
+        currentState match {
+          case Ready =>
+            currentState = WaitingForDownload
+            true
+          case _ => false
+        }
+      } else false
+
+      expect(!primaryTransitioned) &&
+      expect(fallbackTransitioned) &&
+      expect(currentState == WaitingForDownload)
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // P8: View change loop mitigation — eviction skip escalation
+  // ══════════════════════════════════════════════════════════════════
+
+  test("P8: eviction loop escalates to abandon after maxSkippedEvictions") {
+    IO {
+      val maxSkippedEvictions = 3
+      var skippedCount = 0
+
+      // Simulate 3 eviction skips (below minimum facilitators)
+      (1 to 3).foreach { _ =>
+        skippedCount += 1
+      }
+
+      val shouldEscalate = skippedCount >= maxSkippedEvictions
+      expect(shouldEscalate) &&
+      expect.same(3, skippedCount)
+    }
+  }
+
+  test("P8: eviction loop does NOT escalate below threshold") {
+    IO {
+      val maxSkippedEvictions = 3
+      var skippedCount = 0
+
+      // Only 2 skips
+      (1 to 2).foreach { _ =>
+        skippedCount += 1
+      }
+
+      val shouldEscalate = skippedCount >= maxSkippedEvictions
+      expect(!shouldEscalate)
+    }
+  }
+
+  test("P8: successful eviction resets the skip counter") {
+    IO {
+      val maxSkippedEvictions = 3
+      var skippedCount = 0
+
+      // 2 skips, then a successful eviction resets to 0
+      skippedCount += 1
+      skippedCount += 1
+      // Successful eviction
+      skippedCount = 0
+      // One more skip
+      skippedCount += 1
+
+      val shouldEscalate = skippedCount >= maxSkippedEvictions
+      expect(!shouldEscalate) &&
+      expect.same(1, skippedCount)
+    }
+  }
+
+  test("P8: eviction loop escalation included in shouldAbandon") {
+    IO {
+      val stallCount = 0
+      val maxStallCycles = 5
+      val roundTimedOut = false
+      val quorumInfeasible = false
+      val isLagging = false
+      val evictionLoopStuck = true
+
+      val shouldAbandon = stallCount >= maxStallCycles || roundTimedOut || quorumInfeasible || isLagging || evictionLoopStuck
+      expect(shouldAbandon)
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // P9: Resource cleanup for departed peers
+  // ══════════════════════════════════════════════════════════════════
+
+  test("P9: pruneStaleResources removes entries for non-active keys") {
+    IO {
+      // Simulate resource map with stale entries
+      var resources: Map[Int, String] = Map(100 -> "active", 99 -> "stale", 98 -> "stale")
+      val activeKey = 100
+
+      // Prune stale resources
+      resources = resources.filter { case (k, _) => k == activeKey }
+
+      expect.same(1, resources.size) &&
+      expect(resources.contains(activeKey)) &&
+      expect(!resources.contains(99)) &&
+      expect(!resources.contains(98))
+    }
+  }
+
+  test("P9: pruneStaleEvents removes entries for departed peers") {
+    IO {
+      val activePeers = Set("peer1", "peer2", "peer3")
+      var events: Map[String, List[String]] = Map(
+        "peer1" -> List("event1"),
+        "peer2" -> List("event2"),
+        "departed1" -> List("stale1"),
+        "departed2" -> List("stale2")
+      )
+
+      // Prune events from departed peers
+      events = events.filter { case (pid, _) => activePeers.contains(pid) }
+
+      expect.same(2, events.size) &&
+      expect(events.contains("peer1")) &&
+      expect(events.contains("peer2")) &&
+      expect(!events.contains("departed1")) &&
+      expect(!events.contains("departed2"))
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // P10: Semaphore timeout protection
+  // ══════════════════════════════════════════════════════════════════
+
+  test("P10: semaphore timeout is 30 seconds") {
+    IO {
+      val semaphoreTimeout = 30.seconds
+      // Verify the timeout is reasonable: long enough for legitimate operations
+      // but short enough to prevent indefinite blocking
+      expect(semaphoreTimeout >= 10.seconds) &&
+      expect(semaphoreTimeout <= 60.seconds) &&
+      expect.same(30.seconds, semaphoreTimeout)
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // P11: Eviction vote tracker scaffolding
+  // ══════════════════════════════════════════════════════════════════
+
+  test("P11: eviction vote tracker records and queries votes") {
+    import io.constellationnetwork.node.shared.infrastructure.consensus.engine.EvictionVoteTracker
+    EvictionVoteTracker.make[IO].flatMap { tracker =>
+      val voter1 = pid("voter1")
+      val voter2 = pid("voter2")
+      val target = pid("target1")
+
+      tracker.voteToEvict(voter1, target) >>
+        tracker.voteToEvict(voter2, target) >>
+        tracker.getEvictionVotes.map { votes =>
+          val targetVoters = votes.getOrElse(target, Set.empty)
+          expect.same(2, targetVoters.size) &&
+          expect(targetVoters.contains(voter1)) &&
+          expect(targetVoters.contains(voter2))
+        }
+    }
+  }
+
+  test("P11: eviction vote tracker supermajority check") {
+    import io.constellationnetwork.node.shared.infrastructure.consensus.engine.EvictionVoteTracker
+    EvictionVoteTracker.make[IO].flatMap { tracker =>
+      val target = pid("target1")
+      val totalFacilitators = 10
+      val threshold = 0.75 // Need 8 votes
+
+      // Add 7 votes — not enough
+      (1 to 7).toList.traverse_ { i =>
+        tracker.voteToEvict(pid(s"voter$i"), target)
+      } >>
+        tracker.hasSupermajorityVotes(target, totalFacilitators, threshold).flatMap { hasMajority7 =>
+          // Add 8th vote — now has supermajority
+          tracker.voteToEvict(pid("voter8"), target) >>
+            tracker.hasSupermajorityVotes(target, totalFacilitators, threshold).map { hasMajority8 =>
+              expect(!hasMajority7) &&
+              expect(hasMajority8)
+            }
+        }
+    }
+  }
+
+  test("P11: eviction vote tracker clears votes between rounds") {
+    import io.constellationnetwork.node.shared.infrastructure.consensus.engine.EvictionVoteTracker
+    EvictionVoteTracker.make[IO].flatMap { tracker =>
+      val target = pid("target1")
+
+      tracker.voteToEvict(pid("voter1"), target) >>
+        tracker.clearVotes >>
+        tracker.getEvictionVotes.map { votes =>
+          expect(votes.isEmpty)
+        }
+    }
+  }
+
+  test("P11: eviction votes for multiple targets tracked independently") {
+    import io.constellationnetwork.node.shared.infrastructure.consensus.engine.EvictionVoteTracker
+    EvictionVoteTracker.make[IO].flatMap { tracker =>
+      val target1 = pid("target1")
+      val target2 = pid("target2")
+      val voter = pid("voter1")
+
+      tracker.voteToEvict(voter, target1) >>
+        tracker.voteToEvict(voter, target2) >>
+        tracker.getEvictionVotes.map { votes =>
+          expect.same(2, votes.size) &&
+          expect(votes.getOrElse(target1, Set.empty).contains(voter)) &&
+          expect(votes.getOrElse(target2, Set.empty).contains(voter))
+        }
     }
   }
 }

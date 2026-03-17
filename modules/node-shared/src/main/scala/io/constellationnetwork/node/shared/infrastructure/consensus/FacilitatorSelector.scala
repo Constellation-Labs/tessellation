@@ -165,8 +165,8 @@ class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
     val sorted = facilitators.sortBy { pid =>
       val rendezvousScore = FacilitatorSelector.rendezvousScore(pid.value.value, entropy.value)
       val (completed, participated) = qualityScores.getOrElse(pid, (0, 0))
-      val tier = if (participated > 0) participated - completed else 0L
-      (tier.toLong, rendezvousScore)
+      val tier: Long = if (participated > 0) (participated - completed).toLong else 0L
+      (tier, rendezvousScore)
     }
     val index = viewNumber % sorted.size
     sorted(index)

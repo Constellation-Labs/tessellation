@@ -15,7 +15,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger._
 import io.constellationnetwork.node.shared.infrastructure.consensus.{FacilitatorSelector, _}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
-import io.constellationnetwork.schema.node.NodeState
+import io.constellationnetwork.schema.node.{NodeState, NodeStateTransition}
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.signature.Signed
@@ -118,6 +118,7 @@ object ConsensusEventLoop {
         peerQualityTracker
       )
       healthRef <- ConsensusHealthStatus.ref[F]
+      evictionVoteTracker <- EvictionVoteTracker.make[F]
       viewChangeManager = new ViewChangeManager[F, Key, Status, Outcome, Kind](
         storage,
         facilitatorSelector,
@@ -130,7 +131,8 @@ object ConsensusEventLoop {
         ctx,
         viewChangeManager,
         abandonmentTracker,
-        healthRef
+        healthRef,
+        evictionVoteTracker
       )
       roundFibersRef <- Ref.of[F, List[Fiber[F, Throwable, Unit]]](Nil)
       cancelSignalRef <- Ref.of[F, Option[Deferred[F, Unit]]](None)
@@ -166,6 +168,19 @@ object ConsensusEventLoop {
                       Metrics[F].incrementCounter("dag_consensus_forced_round_completion") >>
                       queue.offer(ConsensusCommand.RoundCompleted) >>
                       queue.offer(ConsensusCommand.TimeTick)
+                  case _: ConsensusCommand.InitializeFromDownload =>
+                    // After 20 retries, initFromDownload exhausts its retry policy and the error propagates here.
+                    // Without recovery, the node stays stuck — never initializes, never starts consensus.
+                    // Transition back to WaitingForDownload so the DownloadDaemon can retry with fresh state.
+                    ctx.logger.error(err)("InitializeFromDownload failed after exhausting retries, triggering recovery download") >>
+                      Metrics[F].incrementCounter("dag_consensus_init_download_failure") >>
+                      nodeStorage.tryModifyStateGetResult(NodeState.Observing, NodeState.WaitingForDownload).flatMap {
+                        case NodeStateTransition.Success =>
+                          ctx.logger.info("Recovery: transitioned Observing → WaitingForDownload for DownloadDaemon retry")
+                        case _ =>
+                          // May already be in a different state; try from Ready as well
+                          nodeStorage.tryModifyStateGetResult(NodeState.Ready, NodeState.WaitingForDownload).void
+                      }
                   case _ => Async[F].unit
                 })
             }
