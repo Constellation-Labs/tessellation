@@ -54,8 +54,13 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
 
   import ctx.{isRoundRunning => isRunning, logger => log, nodeStorage, pending}
 
-  /** Node states where consensus rounds must NOT start (recovery / download in progress). */
-  private val roundBlockedStates: Set[NodeState] = Set(NodeState.WaitingForDownload, NodeState.DownloadInProgress)
+  /** Node states where consensus rounds must NOT start (recovery / download / leaving in progress). Leaving is included to prevent an
+    * infinite tight loop: when a node is in Leaving state, rounds immediately abandon (no peers), try to force-leave (already Leaving →
+    * fails), try recovery (not in Ready/Observing → fails), and re-queue TimeTick → creating a CPU-burning spin loop at 21,000+
+    * iterations/second.
+    */
+  private val roundBlockedStates: Set[NodeState] =
+    Set(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.Leaving)
 
   def handle(cmd: ConsensusCommand): F[Unit] =
     Metrics[F].incrementCounter(
@@ -68,8 +73,7 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
           case CheckUpdate(key)         => transitions.checkUpdate(key.asInstanceOf[Key])
           case InternalScheduled(inner) => handle(inner)
           case PeerObserved(peer)       => transitions.registerPeer(peer)
-          case IgnoreUnexpectedRumor(r) =>
-            log.warn(ConsensusLog.format(ConsensusLog.Rumor, "n/a", "n/a", "event" -> "UNEXPECTED_RUMOR", "type" -> r.getClass.getSimpleName))
+          case IgnoreUnexpectedRumor(r) => log.warn(s"Ignoring unexpected rumor: ${r.getClass.getSimpleName}")
 
           case _ if running => handleWhileBusy(cmd)
           case _            => handleWhileIdle(cmd)
@@ -118,7 +122,7 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
 
   private def startRound(trigger: Option[ConsensusTrigger]): F[Unit] =
     isRunning.get.ifM(
-      ifTrue = log.debug(ConsensusLog.format(ConsensusLog.Lifecycle, "n/a", "n/a", "event" -> "START_ROUND_SKIPPED", "reason" -> "already_running")),
+      ifTrue = log.debug(s"Ignoring StartRound($trigger) — round already running"),
       ifFalse = nodeStorage.getNodeState.flatMap { state =>
         if (!roundBlockedStates.contains(state))
           log.info(

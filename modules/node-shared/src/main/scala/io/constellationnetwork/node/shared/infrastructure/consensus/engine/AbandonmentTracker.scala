@@ -25,9 +25,9 @@ import eu.timepit.refined.auto._
   *
   * ==Extended Recovery Loop Protection==
   *
-  * If the node enters a recovery loop (abandon → download → come back to same state → abandon → download → ...), a total recovery
-  * attempt counter eventually forces the node to `Leaving` state. This breaks pathological loops where the downloaded state itself
-  * leads to the same stuck ordinal. The hard limit is `maxConsecutiveAbandonments * 3` (default: 15 recovery attempts).
+  * If the node enters a recovery loop (abandon → download → come back to same state → abandon → download → ...), a total recovery attempt
+  * counter eventually forces the node to `Leaving` state. This breaks pathological loops where the downloaded state itself leads to the
+  * same stuck ordinal. The hard limit is `maxConsecutiveAbandonments * 3` (default: 15 recovery attempts).
   *
   * ==Resource Cleanup==
   *
@@ -47,19 +47,16 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
   /** Tracks total recovery download attempts across all keys to detect extended recovery loops. */
   private val totalRecoveryAttemptsRef: Ref[F, Int] = Ref.unsafe(0)
 
-  /** Reset recovery counters after a successful consensus round.
-    * This prevents a node that recovered successfully from carrying stale recovery history
-    * that could trigger premature force-leave on a future (unrelated) recovery.
+  /** Reset recovery counters after a successful consensus round. This prevents a node that recovered successfully from carrying stale
+    * recovery history that could trigger premature force-leave on a future (unrelated) recovery.
     */
   def resetOnSuccessfulRound: F[Unit] =
     totalRecoveryAttemptsRef.set(0) >>
       healthRef.update(_.copy(totalRecoveryAttempts = 0))
 
-  /** Track a failed initFromDownload attempt. Called by the event loop error handler when
-    * InitializeFromDownload exhausts retries. Without this, repeated init failures would
-    * loop forever (download → init fail → download) because the recovery counter is only
-    * incremented by abandonRound, not by init failures. After maxTotalRecoveryAttempts,
-    * the node will force-leave the cluster.
+  /** Track a failed initFromDownload attempt. Called by the event loop error handler when InitializeFromDownload exhausts retries. Without
+    * this, repeated init failures would loop forever (download → init fail → download) because the recovery counter is only incremented by
+    * abandonRound, not by init failures. After maxTotalRecoveryAttempts, the node will force-leave the cluster.
     */
   def trackInitFromDownloadFailure: F[Unit] =
     totalRecoveryAttemptsRef.updateAndGet(_ + 1).flatMap { totalAttempts =>
@@ -91,9 +88,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
          else Async[F].unit)
     }
 
-  /** Force the node to leave the cluster after exhausting initFromDownload recovery attempts.
-    * Similar to forceLeave but doesn't require a Key parameter since init failures
-    * don't have a round key context.
+  /** Force the node to leave the cluster after exhausting initFromDownload recovery attempts. Similar to forceLeave but doesn't require a
+    * Key parameter since init failures don't have a round key context.
     */
   private def forceLeaveFromInitFailures(totalAttempts: Int): F[Unit] = {
     val forceLeaveStates = List(
@@ -109,34 +105,54 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
         case state :: rest =>
           ctx.nodeStorage.tryModifyStateGetResult(state, NodeState.Leaving).flatMap {
             case NodeStateTransition.Success => true.pure[F]
-            case _                          => tryStates(rest)
+            case _                           => tryStates(rest)
           }
       }
 
-    tryStates(forceLeaveStates).flatMap {
-      case true =>
-        ConsensusLog.error(
+    // Check if already in Leaving state first to avoid futile transition attempts
+    ctx.nodeStorage.getNodeState.flatMap { currentState =>
+      if (currentState === NodeState.Leaving) {
+        ConsensusLog.warn(
           logger,
           ConsensusLog.Lifecycle,
           "n/a",
           "n/a",
-          "event" -> "FORCE_LEAVE_INIT_FAILURES_SUCCESS",
-          "totalRecoveryAttempts" -> totalAttempts.toString
+          "event" -> "FORCE_LEAVE_INIT_FAILURES_ALREADY_LEAVING",
+          "totalRecoveryAttempts" -> totalAttempts.toString,
+          "reason" -> "node already in Leaving state, cleaning up consensus and stopping"
         ) >>
           consecutiveAbandonCountRef.set((none[Key], 0)) >>
           totalRecoveryAttemptsRef.set(0) >>
           healthRef.update(_.copy(consecutiveAbandonments = 0, totalRecoveryAttempts = 0)) >>
           ctx.pending.clear() >>
           queue.offer(ConsensusCommand.RoundCompleted)
-      case false =>
-        ConsensusLog.warn(
-          logger,
-          ConsensusLog.Lifecycle,
-          "n/a",
-          "n/a",
-          "event" -> "FORCE_LEAVE_INIT_FAILURES_FAILED",
-          "reason" -> "could not transition to Leaving from any state"
-        )
+      } else {
+        tryStates(forceLeaveStates).flatMap {
+          case true =>
+            ConsensusLog.error(
+              logger,
+              ConsensusLog.Lifecycle,
+              "n/a",
+              "n/a",
+              "event" -> "FORCE_LEAVE_INIT_FAILURES_SUCCESS",
+              "totalRecoveryAttempts" -> totalAttempts.toString
+            ) >>
+              consecutiveAbandonCountRef.set((none[Key], 0)) >>
+              totalRecoveryAttemptsRef.set(0) >>
+              healthRef.update(_.copy(consecutiveAbandonments = 0, totalRecoveryAttempts = 0)) >>
+              ctx.pending.clear() >>
+              queue.offer(ConsensusCommand.RoundCompleted)
+          case false =>
+            ConsensusLog.warn(
+              logger,
+              ConsensusLog.Lifecycle,
+              "n/a",
+              "n/a",
+              "event" -> "FORCE_LEAVE_INIT_FAILURES_FAILED",
+              "reason" -> "could not transition to Leaving from any state"
+            )
+        }
+      }
     }
   }
 
@@ -187,8 +203,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
         ((key.some, 1), 1)
     }
 
-  /** Hard limit for total recovery attempts before forcing the node to leave the cluster.
-    * Default: 3 * maxConsecutiveAbandonments (e.g., 15 if maxConsecutiveAbandonments=5).
+  /** Hard limit for total recovery attempts before forcing the node to leave the cluster. Default: 3 * maxConsecutiveAbandonments (e.g., 15
+    * if maxConsecutiveAbandonments=5).
     */
   private val maxTotalRecoveryAttempts: Int = config.maxConsecutiveAbandonments * 3
 
@@ -219,9 +235,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
            attemptRecoveryDownload(key))
     }
 
-  /** Force the node to leave the cluster after exhausting all recovery attempts.
-    * This breaks pathological loops where downloaded state leads to the same stuck ordinal.
-    * Tries multiple source states since the node could be in Ready, WaitingForDownload,
+  /** Force the node to leave the cluster after exhausting all recovery attempts. This breaks pathological loops where downloaded state
+    * leads to the same stuck ordinal. Tries multiple source states since the node could be in Ready, WaitingForDownload,
     * DownloadInProgress, or Observing when force-leave fires.
     */
   private def forceLeave(key: Key, totalAttempts: Int): F[Unit] = {
@@ -238,37 +253,59 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
         case state :: rest =>
           ctx.nodeStorage.tryModifyStateGetResult(state, NodeState.Leaving).flatMap {
             case NodeStateTransition.Success => true.pure[F]
-            case _                          => tryStates(rest)
+            case _                           => tryStates(rest)
           }
       }
 
-    tryStates(forceLeaveStates).flatMap {
-      case true =>
-        ConsensusLog.error(
+    // First check if already in Leaving state — if so, no transition needed, just clean up and stop.
+    // This prevents the infinite loop where forceLeave fails (already Leaving) → falls back to
+    // attemptRecoveryDownload → also fails (not Ready/Observing) → queues TimeTick → repeat.
+    ctx.nodeStorage.getNodeState.flatMap { currentState =>
+      if (currentState === NodeState.Leaving) {
+        ConsensusLog.warn(
           logger,
           ConsensusLog.Lifecycle,
           key.toString,
           "n/a",
-          "event" -> "FORCE_LEAVE_SUCCESS",
+          "event" -> "FORCE_LEAVE_ALREADY_LEAVING",
           "totalRecoveryAttempts" -> totalAttempts.toString,
-          "reason" -> "node leaving cluster after extended recovery loop"
+          "reason" -> "node already in Leaving state, cleaning up consensus and stopping"
         ) >>
           consecutiveAbandonCountRef.set((none[Key], 0)) >>
           totalRecoveryAttemptsRef.set(0) >>
           healthRef.update(_.copy(consecutiveAbandonments = 0, totalRecoveryAttempts = 0)) >>
           ctx.pending.clear() >>
           queue.offer(ConsensusCommand.RoundCompleted)
-      case false =>
-        // If we can't transition to Leaving from any state, fall back to recovery download
-        ConsensusLog.warn(
-          logger,
-          ConsensusLog.Lifecycle,
-          key.toString,
-          "n/a",
-          "event" -> "FORCE_LEAVE_FAILED",
-          "reason" -> "could not transition to Leaving from any state, falling back to recovery download"
-        ) >>
-          attemptRecoveryDownload(key)
+      } else {
+        tryStates(forceLeaveStates).flatMap {
+          case true =>
+            ConsensusLog.error(
+              logger,
+              ConsensusLog.Lifecycle,
+              key.toString,
+              "n/a",
+              "event" -> "FORCE_LEAVE_SUCCESS",
+              "totalRecoveryAttempts" -> totalAttempts.toString,
+              "reason" -> "node leaving cluster after extended recovery loop"
+            ) >>
+              consecutiveAbandonCountRef.set((none[Key], 0)) >>
+              totalRecoveryAttemptsRef.set(0) >>
+              healthRef.update(_.copy(consecutiveAbandonments = 0, totalRecoveryAttempts = 0)) >>
+              ctx.pending.clear() >>
+              queue.offer(ConsensusCommand.RoundCompleted)
+          case false =>
+            // If we can't transition to Leaving from any state, fall back to recovery download
+            ConsensusLog.warn(
+              logger,
+              ConsensusLog.Lifecycle,
+              key.toString,
+              "n/a",
+              "event" -> "FORCE_LEAVE_FAILED",
+              "reason" -> "could not transition to Leaving from any state, falling back to recovery download"
+            ) >>
+              attemptRecoveryDownload(key)
+        }
+      }
     }
   }
 
@@ -284,7 +321,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
         case state :: rest =>
           ctx.nodeStorage.tryModifyStateGetResult(state, NodeState.WaitingForDownload).flatMap {
             case NodeStateTransition.Success => state.some.pure[F]
-            case _                          => tryStates(rest)
+            case _                           => tryStates(rest)
           }
       }
 
@@ -315,16 +352,25 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
           ctx.pending.clear() >>
           queue.offer(ConsensusCommand.RoundCompleted)
       case None =>
-        ConsensusLog.warn(
-          logger,
-          ConsensusLog.Lifecycle,
-          key.toString,
-          "n/a",
-          "event" -> "RECOVERY_TRANSITION_FAILED",
-          "reason" -> "node not in Ready or Observing state"
-        ) >>
-          queue.offer(ConsensusCommand.RoundCompleted) >>
-          queue.offer(ConsensusCommand.TimeTick)
+        // Check if node is already in Leaving state — if so, just complete the round and stop.
+        // CRITICAL: Do NOT queue TimeTick here. The old code queued RoundCompleted + TimeTick,
+        // which created an infinite tight loop when node is in Leaving state:
+        //   TimeTick → startRound → abandon → forceLeave(fails) → recoveryDownload(fails) → TimeTick → ...
+        // By only queuing RoundCompleted (no TimeTick), the loop terminates after this iteration.
+        // The next round will only start when an external trigger arrives (peer event, timer, etc.)
+        ctx.nodeStorage.getNodeState.flatMap { currentState =>
+          ConsensusLog.warn(
+            logger,
+            ConsensusLog.Lifecycle,
+            key.toString,
+            "n/a",
+            "event" -> "RECOVERY_TRANSITION_FAILED",
+            "reason" -> s"node in $currentState state, not Ready or Observing",
+            "nodeState" -> currentState.show
+          ) >>
+            ctx.pending.clear() >>
+            queue.offer(ConsensusCommand.RoundCompleted)
+        }
     }
   }
 }

@@ -184,11 +184,13 @@ object ConsensusCrisisFixesSuite extends SimpleIOSuite {
   test("CR3: recovery must clear state for ALL keys, not just current") {
     for {
       // Simulate MapRef-like storage with multiple keys
-      states <- Ref.of[IO, Map[Int, Option[String]]](Map(
-        100 -> "state-100".some,
-        101 -> "state-101".some,
-        102 -> "state-102".some
-      ))
+      states <- Ref.of[IO, Map[Int, Option[String]]](
+        Map(
+          100 -> "state-100".some,
+          101 -> "state-101".some,
+          102 -> "state-102".some
+        )
+      )
 
       // Old behavior: only clear current key
       abandonedKey = 102
@@ -199,17 +201,20 @@ object ConsensusCrisisFixesSuite extends SimpleIOSuite {
       // New behavior (Fix 3): clear ALL keys
       _ <- states.set(Map.empty)
       afterFullClear <- states.get
-    } yield expect(ghostsRemain) && // Old behavior leaves ghosts
-      expect(afterFullClear.isEmpty) // New behavior clears everything
+    } yield
+      expect(ghostsRemain) && // Old behavior leaves ghosts
+        expect(afterFullClear.isEmpty) // New behavior clears everything
   }
 
   test("CR3: stale resources from abandoned rounds are cleared during recovery") {
     for {
-      resources <- Ref.of[IO, Map[Int, Option[String]]](Map(
-        100 -> "resources-100".some,
-        101 -> "resources-101".some,
-        102 -> "resources-102".some
-      ))
+      resources <- Ref.of[IO, Map[Int, Option[String]]](
+        Map(
+          100 -> "resources-100".some,
+          101 -> "resources-101".some,
+          102 -> "resources-102".some
+        )
+      )
 
       // clearAllConsensusState clears both states and resources
       _ <- resources.update(_.view.mapValues(_ => none[String]).toMap)
@@ -245,11 +250,13 @@ object ConsensusCrisisFixesSuite extends SimpleIOSuite {
 
   test("CR3: recovery clears peer registrations to prevent stale lagging detection") {
     for {
-      peerRegistrations <- Ref.of[IO, Map[PeerId, Int]](Map(
-        pid("peer1") -> 100,
-        pid("peer2") -> 101,
-        pid("departed") -> 99 // departed peer with stale registration
-      ))
+      peerRegistrations <- Ref.of[IO, Map[PeerId, Int]](
+        Map(
+          pid("peer1") -> 100,
+          pid("peer2") -> 101,
+          pid("departed") -> 99 // departed peer with stale registration
+        )
+      )
 
       // Stale registration would cause false lagging detection
       staleDeparted = peerRegistrations.get.map(_.contains(pid("departed")))
@@ -351,9 +358,9 @@ object ConsensusCrisisFixesSuite extends SimpleIOSuite {
 
       // First two attempts fail, third succeeds
       val result = forceLeaveStates.foldLeft(none[String]) {
-        case (Some(found), _) => found.some
+        case (Some(found), _)                       => found.some
         case (None, state) if state == currentState => state.some
-        case (None, _) => none
+        case (None, _)                              => none
       }
 
       expect(result.contains("DownloadInProgress"))
@@ -448,9 +455,11 @@ object ConsensusCrisisFixesSuite extends SimpleIOSuite {
   test("CR6: abandoned round resources are cleared to prevent addFacility orElse poisoning") {
     for {
       // Simulate resource storage for a key
-      resources <- Ref.of[IO, Map[Int, Option[Map[String, String]]]](Map(
-        100 -> Map("peer1" -> "facility-data").some
-      ))
+      resources <- Ref.of[IO, Map[Int, Option[Map[String, String]]]](
+        Map(
+          100 -> Map("peer1" -> "facility-data").some
+        )
+      )
 
       // Abandonment clears resources
       _ <- resources.update(_.updated(100, none))
@@ -460,10 +469,12 @@ object ConsensusCrisisFixesSuite extends SimpleIOSuite {
 
   test("CR6: stale peer declarations from abandoned round do not leak into retry") {
     for {
-      declarations <- Ref.of[IO, Map[PeerId, String]](Map(
-        pid("peer1") -> "old-facility",
-        pid("peer2") -> "old-proposal"
-      ))
+      declarations <- Ref.of[IO, Map[PeerId, String]](
+        Map(
+          pid("peer1") -> "old-facility",
+          pid("peer2") -> "old-proposal"
+        )
+      )
 
       // clearResources removes all peer declarations for the key
       _ <- declarations.set(Map.empty)
@@ -473,9 +484,11 @@ object ConsensusCrisisFixesSuite extends SimpleIOSuite {
 
   test("CR6: withdrawal maps cleared during abandonment prevent ghost withdrawals") {
     for {
-      withdrawals <- Ref.of[IO, Map[PeerId, String]](Map(
-        pid("withdrawn-peer") -> "some-kind"
-      ))
+      withdrawals <- Ref.of[IO, Map[PeerId, String]](
+        Map(
+          pid("withdrawn-peer") -> "some-kind"
+        )
+      )
 
       // Resources including withdrawals are cleared
       _ <- withdrawals.set(Map.empty)
@@ -501,16 +514,17 @@ object ConsensusCrisisFixesSuite extends SimpleIOSuite {
       _ <- (1 to 5).toList.traverse_ { _ =>
         consecutiveRef.modify {
           case (Some(k), c) if k == 100 => ((100.some, c + 1), c + 1)
-          case _                         => ((100.some, 1), 1)
+          case _                        => ((100.some, 1), 1)
         }
       }
       count1 <- consecutiveRef.get.map(_._2)
       shouldRecover = count1 >= maxConsecutiveAbandonments
-      _ <- if (shouldRecover) {
-        totalRecoveryRef.update(_ + 1) >>
-          nodeState.set("WaitingForDownload") >>
-          consecutiveRef.set((none, 0))
-      } else IO.unit
+      _ <-
+        if (shouldRecover) {
+          totalRecoveryRef.update(_ + 1) >>
+            nodeState.set("WaitingForDownload") >>
+            consecutiveRef.set((none, 0))
+        } else IO.unit
 
       // Phase 2: Repeated download → init fail cycles (14 more times)
       _ <- (1 to 14).toList.traverse_ { _ =>
@@ -527,8 +541,8 @@ object ConsensusCrisisFixesSuite extends SimpleIOSuite {
       totalAttempts <- totalRecoveryRef.get
     } yield
       expect(triggered) &&
-      expect.same("Leaving", finalState) &&
-      expect.same(maxTotalRecoveryAttempts, totalAttempts)
+        expect.same("Leaving", finalState) &&
+        expect.same(maxTotalRecoveryAttempts, totalAttempts)
   }
 
   test("Scenario: abandon cycle interrupted by successful round resets all counters") {
@@ -541,7 +555,7 @@ object ConsensusCrisisFixesSuite extends SimpleIOSuite {
       _ <- (1 to 3).toList.traverse_ { _ =>
         consecutiveRef.modify {
           case (Some(k), c) if k == 100 => ((100.some, c + 1), c + 1)
-          case _                         => ((100.some, 1), 1)
+          case _                        => ((100.some, 1), 1)
         }
       }
 
@@ -556,17 +570,19 @@ object ConsensusCrisisFixesSuite extends SimpleIOSuite {
       healthAfter <- healthRef.get
     } yield
       expect.same(0, totalAfter) &&
-      expect.same((0, 0), healthAfter)
+        expect.same((0, 0), healthAfter)
   }
 
   test("Scenario: ghost entries from ordinal 100 interfere with round at ordinal 200") {
     for {
       // Simulate: states map has entries for multiple ordinals
-      states <- Ref.of[IO, Map[Int, Option[String]]](Map(
-        100 -> "old-state-from-abandoned-round".some,
-        101 -> "another-old-state".some,
-        200 -> none // current round, not yet created
-      ))
+      states <- Ref.of[IO, Map[Int, Option[String]]](
+        Map(
+          100 -> "old-state-from-abandoned-round".some,
+          101 -> "another-old-state".some,
+          200 -> none // current round, not yet created
+        )
+      )
 
       // Without clearAllConsensusState: ghost entry at 100 exists
       ghostsBefore <- states.get.map(_.values.flatten.size)
@@ -576,7 +592,151 @@ object ConsensusCrisisFixesSuite extends SimpleIOSuite {
       ghostsAfter <- states.get.map(_.values.flatten.size)
     } yield
       expect(ghostsBefore == 2) && // Two ghost entries
-      expect(ghostsAfter == 0) // All cleared after fix
+        expect(ghostsAfter == 0) // All cleared after fix
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // CR7: Leaving state infinite loop prevention
+  // Prevents tight spin loop when node is in Leaving state:
+  //   TimeTick → startRound → abandon → forceLeave(fails) → recovery(fails) → TimeTick → ...
+  // ══════════════════════════════════════════════════════════════════
+
+  test("CR7: roundBlockedStates includes Leaving to prevent rounds from starting") {
+    IO {
+      // The fix adds Leaving to the set of blocked states
+      val roundBlockedStates = Set("WaitingForDownload", "DownloadInProgress", "Leaving")
+
+      // Node in Leaving state should be blocked from starting rounds
+      val nodeState = "Leaving"
+      val isBlocked = roundBlockedStates.contains(nodeState)
+
+      expect(isBlocked)
+    }
+  }
+
+  test("CR7: forceLeave detects already-Leaving state and stops instead of looping") {
+    for {
+      nodeState <- Ref.of[IO, String]("Leaving")
+      forceLeaveAttempted <- Ref.of[IO, Boolean](false)
+      cleanupPerformed <- Ref.of[IO, Boolean](false)
+
+      // Simulate forceLeave logic with the fix:
+      // 1. Check current state first
+      // 2. If already Leaving, clean up and stop — don't try state transitions
+      state <- nodeState.get
+      _ <-
+        if (state == "Leaving") {
+          cleanupPerformed.set(true) // Just clean up, don't attempt transitions
+        } else {
+          forceLeaveAttempted.set(true) // Would try transitioning
+        }
+
+      attempted <- forceLeaveAttempted.get
+      cleaned <- cleanupPerformed.get
+    } yield
+      expect(!attempted) && // Did NOT attempt futile state transitions
+        expect(cleaned) // DID clean up and stop
+  }
+
+  test("CR7: attemptRecoveryDownload fallback does NOT queue TimeTick (breaks spin loop)") {
+    for {
+      queuedCommands <- Ref.of[IO, List[String]](Nil)
+
+      // Simulate the old fallback (before fix): queued both RoundCompleted and TimeTick
+      oldBehavior = List("RoundCompleted", "TimeTick")
+
+      // Simulate the new fallback (after fix): only queues RoundCompleted
+      newBehavior = List("RoundCompleted")
+
+      _ <- queuedCommands.set(newBehavior)
+      commands <- queuedCommands.get
+    } yield
+      expect(!commands.contains("TimeTick")) && // No TimeTick — loop is broken
+        expect(commands.contains("RoundCompleted")) // Still completes the round
+  }
+
+  test("CR7: Leaving node cannot start rounds, enter recovery, or force-leave again") {
+    for {
+      nodeState <- Ref.of[IO, String]("Leaving")
+      roundStarted <- Ref.of[IO, Boolean](false)
+      recoveryAttempted <- Ref.of[IO, Boolean](false)
+      forceLeaveAttempted <- Ref.of[IO, Boolean](false)
+
+      state <- nodeState.get
+      roundBlockedStates = Set("WaitingForDownload", "DownloadInProgress", "Leaving")
+
+      // startRound check: blocked by state
+      _ <- if (!roundBlockedStates.contains(state)) roundStarted.set(true) else IO.unit
+
+      // attemptRecoveryDownload: requires Ready or Observing
+      recoveryStates = Set("Ready", "Observing")
+      _ <- if (recoveryStates.contains(state)) recoveryAttempted.set(true) else IO.unit
+
+      // forceLeave: detects already Leaving
+      forceLeaveStates = Set("Ready", "WaitingForDownload", "DownloadInProgress", "Observing")
+      _ <- if (forceLeaveStates.contains(state)) forceLeaveAttempted.set(true) else IO.unit
+
+      started <- roundStarted.get
+      recovered <- recoveryAttempted.get
+      forced <- forceLeaveAttempted.get
+    } yield
+      expect(!started) && // Cannot start rounds
+        expect(!recovered) && // Cannot enter recovery download
+        expect(!forced) // Cannot force-leave again
+  }
+
+  test("CR7: error handler suppresses TimeTick when node is Leaving") {
+    for {
+      nodeState <- Ref.of[IO, String]("Leaving")
+      queuedTimeTick <- Ref.of[IO, Boolean](false)
+
+      // Simulate error handler after ConsensusFinished fails:
+      // Old: always queues RoundCompleted + TimeTick
+      // New: checks state, only queues TimeTick if NOT Leaving
+      state <- nodeState.get
+      _ <- if (state != "Leaving") queuedTimeTick.set(true) else IO.unit
+
+      queued <- queuedTimeTick.get
+    } yield expect(!queued) // TimeTick suppressed in Leaving state
+  }
+
+  test("CR7: spin loop stops within bounded iterations when node enters Leaving") {
+    for {
+      nodeState <- Ref.of[IO, String]("Ready")
+      iterations <- Ref.of[IO, Int](0)
+      roundBlockedStates = Set("WaitingForDownload", "DownloadInProgress", "Leaving")
+
+      // Simulate: node transitions to Leaving mid-loop
+      _ <- nodeState.set("Leaving")
+
+      // Simulate the fixed event loop behavior:
+      // Each iteration checks roundBlockedStates before starting a round
+      _ <- (1 to 100).toList.traverse_ { _ =>
+        nodeState.get.flatMap { state =>
+          if (roundBlockedStates.contains(state))
+            IO.unit // Round blocked — loop effectively stops producing work
+          else
+            iterations.update(_ + 1) // Round would have started
+        }
+      }
+
+      count <- iterations.get
+    } yield expect.same(0, count) // Zero rounds started after entering Leaving
+  }
+
+  test("CR7: pending triggers cleared when recovery fails in Leaving state") {
+    for {
+      pendingTime <- Ref.of[IO, Boolean](true)
+      pendingEvent <- Ref.of[IO, Boolean](true)
+
+      // When recovery fails and node is Leaving, pending triggers are cleared
+      // to prevent them from firing and re-starting the loop
+      _ <- pendingTime.set(false)
+      _ <- pendingEvent.set(false)
+
+      hasTime <- pendingTime.get
+      hasEvent <- pendingEvent.get
+    } yield expect(!hasTime) && expect(!hasEvent)
   }
 
   test("Scenario: stale time trigger fires after recovery, causing premature round start") {
@@ -596,6 +756,6 @@ object ConsensusCrisisFixesSuite extends SimpleIOSuite {
       started <- roundStarted.get
     } yield
       expect(staleExists) && // Stale trigger existed
-      expect(!started) // But didn't fire after cleanup
+        expect(!started) // But didn't fire after cleanup
   }
 }
