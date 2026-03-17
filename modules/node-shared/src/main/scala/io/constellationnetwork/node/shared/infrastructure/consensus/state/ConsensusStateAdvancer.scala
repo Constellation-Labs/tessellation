@@ -8,7 +8,7 @@ import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
-import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusResources, PeerDeclarations}
+import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusResources, PeerDeclarations}
 import io.constellationnetwork.schema.peer.PeerId
 
 import org.typelevel.log4cats.SelfAwareStructuredLogger
@@ -121,9 +121,17 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
       // In either case there is exactly one possible declaration set, so pickMajority is deterministic.
       val allDeclared = receivedCount == totalRequired
       if (!isSubsetQuorum || allDeclared) {
-        logger.debug(
-          s"[CONSENSUS] Declarations received: $receivedCount/$totalRequired key=${state.key} status=$statusName quorum=$quorumSize" +
-            (if (missingPeerIds.nonEmpty) s" missing=[$missingPeerIds]" else "")
+        ConsensusLog.debug(
+          logger,
+          ConsensusLog.Quorum,
+          state.key.toString,
+          "n/a",
+          (Seq(
+            "event" -> "DECLARATIONS_RECEIVED",
+            "progress" -> s"$receivedCount/$totalRequired",
+            "status" -> statusName,
+            "quorum" -> quorumSize.toString
+          ) ++ (if (missingPeerIds.nonEmpty) Seq("missing" -> s"[$missingPeerIds]") else Seq.empty)): _*
         ) >>
           declarationsMap.some.pure[F]
       } else {
@@ -132,15 +140,33 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
         val maxSupport = values.groupBy(identity).values.map(_.size).maxOption.getOrElse(0)
 
         if (maxSupport >= quorumSize) {
-          logger.debug(
-            s"[CONSENSUS] Quorum reached: $receivedCount/$totalRequired (need $quorumSize, max_support=$maxSupport) key=${state.key} status=$statusName" +
-              (if (missingPeerIds.nonEmpty) s" missing=[$missingPeerIds]" else "")
+          ConsensusLog.debug(
+            logger,
+            ConsensusLog.Quorum,
+            state.key.toString,
+            "n/a",
+            (Seq(
+              "event" -> "QUORUM_REACHED",
+              "progress" -> s"$receivedCount/$totalRequired",
+              "quorum" -> quorumSize.toString,
+              "maxSupport" -> maxSupport.toString,
+              "status" -> statusName
+            ) ++ (if (missingPeerIds.nonEmpty) Seq("missing" -> s"[$missingPeerIds]") else Seq.empty)): _*
           ) >>
             declarationsMap.some.pure[F]
         } else {
-          logger.debug(
-            s"[CONSENSUS] Quorum met ($receivedCount/$totalRequired) but no safe majority (max_support=$maxSupport < quorum=$quorumSize) key=${state.key} status=$statusName" +
-              (if (missingPeerIds.nonEmpty) s" missing=[$missingPeerIds]" else "")
+          ConsensusLog.debug(
+            logger,
+            ConsensusLog.Quorum,
+            state.key.toString,
+            "n/a",
+            (Seq(
+              "event" -> "NO_SAFE_MAJORITY",
+              "progress" -> s"$receivedCount/$totalRequired",
+              "quorum" -> quorumSize.toString,
+              "maxSupport" -> maxSupport.toString,
+              "status" -> statusName
+            ) ++ (if (missingPeerIds.nonEmpty) Seq("missing" -> s"[$missingPeerIds]") else Seq.empty)): _*
           ) >>
             none[SortedMap[PeerId, A]].pure[F]
         }

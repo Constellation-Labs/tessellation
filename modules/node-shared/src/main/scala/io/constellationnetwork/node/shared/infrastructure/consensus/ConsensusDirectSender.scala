@@ -34,7 +34,11 @@ object ConsensusDirectSender {
           .pushRumor(hashedRumor.signed)
           .run(peer)
           .void
-          .handleErrorWith(err => logger.debug(err)(s"Direct push to ${peer.id.value.value.take(8)} failed"))
+          .handleErrorWith(err =>
+            logger.debug(err)(
+              ConsensusLog.format(ConsensusLog.Rumor, "n/a", "n/a", "event" -> "DIRECT_PUSH_FAILED", "peer" -> ConsensusLog.pid(peer.id))
+            )
+          )
       }
       _ <- Metrics[F].incrementCounterBy("dag_consensus_direct_push_total", targetPeers.size.toLong)
     } yield ()

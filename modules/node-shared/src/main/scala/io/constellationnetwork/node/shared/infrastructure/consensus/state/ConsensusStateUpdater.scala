@@ -184,8 +184,17 @@ object ConsensusStateUpdater {
           "dag_consensus_fork_detected",
           Seq(unsafeLabelName("observation_type") -> observationName)
         ) >>
-          logger
-            .warn(s"Different hash observations [$observationName]. This node is in fork") >>
+          logger.warn(
+            ConsensusLog.format(
+              ConsensusLog.Fork,
+              "n/a",
+              "n/a",
+              "event" -> "FORK_DETECTED",
+              "observation" -> observationName,
+              "majorityPeers" -> ConsensusLog.pids(majorityForkPeers),
+              "totalObservations" -> observations.size.toString
+            )
+          ) >>
           nodeStorage.setNodeState(NodeState.Leaving) >>
           Temporal[F].sleep(leavingDelay) >>
           nodeStorage.setNodeState(NodeState.Offline) >>
@@ -197,7 +206,13 @@ object ConsensusStateUpdater {
         // actually restarts — an unhandled error here leaves the node stuck in Offline forever.
         val safeForkRecovery = forkRecovery.handleErrorWith { err =>
           logger.error(err)(
-            s"Fork recovery failed for [$observationName]. Attempting fallback restart."
+            ConsensusLog.format(
+              ConsensusLog.Recovery,
+              "n/a",
+              "n/a",
+              "event" -> "FORK_RECOVERY_FAILED",
+              "observation" -> observationName
+            )
           ) >> restartService.signalClusterLeaveRestart()
         }
 
@@ -276,14 +291,30 @@ object ConsensusStateUpdater {
                           Slf4jLogger
                             .getLogger[F]
                             .error(cause)(
-                              s"Majority artifact validation failed hash=${majorityHash.show} with $occurrences/$totalProposals proposals. " +
-                                s"Abandoning round to prevent fork (would diverge from ${occurrences} nodes)."
+                              ConsensusLog.format(
+                                ConsensusLog.Validation,
+                                "n/a",
+                                "n/a",
+                                "event" -> "MAJORITY_ARTIFACT_ABANDONED",
+                                "hash" -> majorityHash.show.take(8),
+                                "proposals" -> s"$occurrences/$totalProposals",
+                                "reason" -> "validation_failed"
+                              )
                             ) >> none[ArtifactInfo[Artifact, Context]].pure[F]
                       else
                         metrics.incrementCounter("dag_consensus_majority_artifact_fallback") >>
                           Slf4jLogger
                             .getLogger[F]
-                            .warn(cause)(s"Found invalid majority hash=${majorityHash.show} with occurrences=$occurrences") >>
+                            .warn(cause)(
+                              ConsensusLog.format(
+                                ConsensusLog.Validation,
+                                "n/a",
+                                "n/a",
+                                "event" -> "MAJORITY_ARTIFACT_FALLBACK",
+                                "hash" -> majorityHash.show.take(8),
+                                "occurrences" -> occurrences.toString
+                              )
+                            ) >>
                           go(tail, isFirst = false),
                     ai => ai.some.pure[F]
                   )

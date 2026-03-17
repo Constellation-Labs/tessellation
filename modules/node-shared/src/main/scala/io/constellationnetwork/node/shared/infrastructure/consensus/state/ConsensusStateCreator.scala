@@ -5,7 +5,7 @@ import cats.effect.Sync
 import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
-import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusResources, ConsensusStorage}
+import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusResources, ConsensusStorage}
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -57,8 +57,15 @@ abstract class ConsensusStateCreator[F[_]: Sync, Key: Show, Artifact, Context, S
 
   protected def logIfCreated(createResult: StateCreateResult): F[Unit] =
     createResult.traverse_(state =>
-      logger.debug(
-        s"State created key=${state.key.show} leader=${state.leader.show.take(8)} facilitators=${state.facilitators.value.size} view=${state.viewNumber}"
+      ConsensusLog.info(
+        logger,
+        ConsensusLog.Lifecycle,
+        state.key.show,
+        "n/a",
+        "event" -> "STATE_CREATED",
+        "leader" -> ConsensusLog.pid(state.leader),
+        "facilitators" -> state.facilitators.value.size.toString,
+        "view" -> state.viewNumber.toString
       )
     )
 }

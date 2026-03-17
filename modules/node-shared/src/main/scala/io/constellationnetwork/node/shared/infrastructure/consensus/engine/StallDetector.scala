@@ -406,7 +406,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
           "remaining" -> remaining.toString,
           "effectiveQuorum" -> effectiveQuorum.toString,
           "quorumFeasible" -> (!quorumInfeasible).toString,
-          "evictedPeers" -> missingPeerIds.mkString(","),
+          "evictedPeers" -> ConsensusLog.pids(missingPeers),
           "view" -> state.viewNumber.toString
         ) >>
           Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>

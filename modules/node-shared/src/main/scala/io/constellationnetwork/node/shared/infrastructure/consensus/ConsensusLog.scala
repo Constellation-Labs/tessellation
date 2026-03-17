@@ -43,6 +43,8 @@ object ConsensusLog {
   val Facilitator: String = "FACILITATOR"
   val Proposal: String = "PROPOSAL"
   val Validation: String = "VALIDATION"
+  val Recovery: String = "RECOVERY"
+  val Rumor: String = "RUMOR"
 
   // ── Formatting ──────────────────────────────────────────────────
 
@@ -104,6 +106,28 @@ object ConsensusLog {
   ): F[Unit] =
     logger.error(format(category, round, role, pairs: _*))
 
+  /** Log at error level with an attached throwable. */
+  def errorCause[F[_]: Applicative](
+    logger: SelfAwareStructuredLogger[F],
+    cause: Throwable,
+    category: String,
+    round: String,
+    role: String,
+    pairs: (String, String)*
+  ): F[Unit] =
+    logger.error(cause)(format(category, round, role, pairs: _*))
+
+  /** Log at warn level with an attached throwable. */
+  def warnCause[F[_]: Applicative](
+    logger: SelfAwareStructuredLogger[F],
+    cause: Throwable,
+    category: String,
+    round: String,
+    role: String,
+    pairs: (String, String)*
+  ): F[Unit] =
+    logger.warn(cause)(format(category, round, role, pairs: _*))
+
   // ── Helpers ─────────────────────────────────────────────────────
 
   /** Determine the node's role based on whether it is the current leader. */
@@ -112,4 +136,10 @@ object ConsensusLog {
 
   /** Truncated peer ID for log display (first 8 hex chars). */
   def pid(p: PeerId): String = p.show.take(8)
+
+  /** Format a list of peer IDs for log display, truncating to at most `max` entries. */
+  def pids(peers: Iterable[PeerId], max: Int = 5): String = {
+    val truncated = peers.take(max).map(pid).mkString(",")
+    if (peers.size > max) s"$truncated...(+${peers.size - max})" else truncated
+  }
 }

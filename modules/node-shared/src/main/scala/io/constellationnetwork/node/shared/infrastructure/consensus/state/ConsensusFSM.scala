@@ -68,7 +68,8 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
           case CheckUpdate(key)         => transitions.checkUpdate(key.asInstanceOf[Key])
           case InternalScheduled(inner) => handle(inner)
           case PeerObserved(peer)       => transitions.registerPeer(peer)
-          case IgnoreUnexpectedRumor(r) => log.warn(s"Ignoring unexpected rumor: ${r.getClass.getSimpleName}")
+          case IgnoreUnexpectedRumor(r) =>
+            log.warn(ConsensusLog.format(ConsensusLog.Rumor, "n/a", "n/a", "event" -> "UNEXPECTED_RUMOR", "type" -> r.getClass.getSimpleName))
 
           case _ if running => handleWhileBusy(cmd)
           case _            => handleWhileIdle(cmd)
@@ -117,7 +118,7 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
 
   private def startRound(trigger: Option[ConsensusTrigger]): F[Unit] =
     isRunning.get.ifM(
-      ifTrue = log.debug(s"Ignoring StartRound($trigger) — round already running"),
+      ifTrue = log.debug(ConsensusLog.format(ConsensusLog.Lifecycle, "n/a", "n/a", "event" -> "START_ROUND_SKIPPED", "reason" -> "already_running")),
       ifFalse = nodeStorage.getNodeState.flatMap { state =>
         if (!roundBlockedStates.contains(state))
           log.info(
