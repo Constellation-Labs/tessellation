@@ -164,7 +164,7 @@ object Mocks {
         accepted = SortedMap.empty[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
         calculatedCurrencyState = SortedMap.empty[Address, CurrencySnapshotWithState],
         returned = Set.empty[StateChannelOutput],
-        balanceUpdate = Map.empty[Address, Balance],
+        balanceUpdate = SortedMap.empty[Address, Balance],
         incomingCurrencySnapshotsWithState = SortedMap.empty[Address, List[CurrencySnapshotWithState]]
       ).pure[IO]
 

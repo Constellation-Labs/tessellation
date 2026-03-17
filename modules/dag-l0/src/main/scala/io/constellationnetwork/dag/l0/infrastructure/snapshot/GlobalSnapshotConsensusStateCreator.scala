@@ -14,6 +14,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.message.Cons
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.security.hash.Hash
 
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -36,7 +37,10 @@ object GlobalSnapshotConsensusStateCreator {
     gossip: Gossip[F],
     selfId: PeerId,
     seedlist: Option[Set[SeedlistEntry]],
-    facilitatorSelector: FacilitatorSelector
+    facilitatorSelector: FacilitatorSelector,
+    consensusConfigHash: Hash,
+    peerQualityTracker: PeerQualityTracker[F],
+    tcaFilter: TrailingCommonAncestorFilter[F]
   ): GlobalSnapshotConsensusStateCreator[F] = new GlobalSnapshotConsensusStateCreator[F] {
 
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
@@ -70,23 +74,61 @@ object GlobalSnapshotConsensusStateCreator {
         filteredCandidates = approvedCandidates
           .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
 
-        // Exclude peers that were removed by unlock consensus in the previous round.
-        // This is deterministic: all nodes agreed on removedFacilitators via majority vote.
-        previouslyRemoved = lastOutcome.removedFacilitators.value
+        // Peers that failed to sign in the previous round — derived from PROOFS for determinism.
+        // removedFacilitators and withdrawnFacilitators are non-deterministic (they include
+        // view-change evictions based on local stall detection timing and gossip propagation).
+        // Instead, we use: nonSigners = lastFacilitators - lastSigners (from proofs on the
+        // consensus-agreed signed artifact). This is 100% deterministic across all nodes.
+        lastRoundFacilitators = lastOutcome.facilitators.value.toSet
+        lastRoundSigners = lastOutcome.finished.signedMajorityArtifact.proofs.map(_.id.toPeerId).toSortedSet.toSet
+        previouslyRemoved = lastRoundFacilitators -- lastRoundSigners
 
-        baseFacilitators = (filteredPreviousEligible ++ filteredCandidates).distinct
-          .filterNot(previouslyRemoved.contains)
+        // Full base WITHOUT removal filter — so removed peers can re-enter in future rounds.
+        // The removal filter is only applied for active selection THIS round (see eligibleThisRound below).
+        // Note: we do NOT filter by cluster state here because each node has a different local view
+        // of peer states, making such filtering non-deterministic across the network. Instead, the
+        // StallDetector handles unreachable peers via view change (proposal phase) and round abandon.
+        fullBase = (filteredPreviousEligible ++ filteredCandidates :+ selfId).distinct
 
         _ <- logger.debug(
           s"Facilitator selection for key=$key: " +
             s"previousEligible=${filteredPreviousEligible.size}, " +
             s"candidates=${filteredCandidates.size}, " +
-            s"base=${baseFacilitators.size}" +
+            s"fullBase=${fullBase.size}" +
             (if (previouslyRemoved.nonEmpty) s", excludedFromPreviousRound=${previouslyRemoved.size}" else "")
         )
 
-        // Full eligible set after collateral filtering
-        eligible <- (baseFacilitators :+ selfId).distinct
+        // TCA (Trailing Common Ancestor): exclude degraded peers using proofs-based detection.
+        // Compares lastOutcome.facilitators (who was supposed to sign) with the actual proofs on the
+        // last finalized snapshot (who actually signed). Peers that were facilitators but did NOT sign
+        // are degraded. 100% deterministic: both inputs come from consensus-agreed lastOutcome.
+        lastFacilitators = lastOutcome.facilitators.value.toSet
+        lastSigners = lastOutcome.finished.signedMajorityArtifact.proofs.map(_.id.toPeerId).toSortedSet.toSet
+        tcaDegraded <- tcaFilter.degradedPeers(lastFacilitators, lastSigners)
+        tcaFilteredBase = tcaDegraded match {
+          case Some(degraded) =>
+            val filtered = fullBase.filterNot(degraded.contains)
+            if (filtered.isEmpty) fullBase
+            else filtered
+          case None => fullBase
+        }
+
+        _ <- tcaDegraded.traverse_ { degraded =>
+          ConsensusLog.info(
+            logger,
+            ConsensusLog.Facilitator,
+            key.show,
+            "n/a",
+            "event" -> "TCA_FILTER_APPLIED",
+            "tcaDegraded" -> degraded.size.toString,
+            "fullBase" -> fullBase.size.toString,
+            "tcaFiltered" -> tcaFilteredBase.size.toString,
+            "degradedPeers" -> degraded.toList.map(_.value.value.take(8)).mkString(",")
+          )
+        }
+
+        // All eligible after collateral filtering (includes previously removed peers so they can re-enter)
+        allEligible <- tcaFilteredBase
           .filterA(
             consensusFns.facilitatorFilter(
               lastOutcome.finished.signedMajorityArtifact,
@@ -98,22 +140,69 @@ object GlobalSnapshotConsensusStateCreator {
             if (list.isEmpty) List(selfId) else list
           }
 
-        filteredOutByCollateral = baseFacilitators.filterNot(eligible.contains)
+        filteredOutByCollateral = fullBase.filterNot(allEligible.contains)
         _ <- filteredOutByCollateral.traverse_ { peerId =>
           logger.debug(s"Facilitator ${peerId.show} removed by facilitatorFilter for key=$key")
+        }
+
+        // Multi-round removal penalty: peers removed in prior rounds stay excluded
+        // for removalPenaltyRounds rounds. Deterministic: derived from agreed-upon lastOutcome.
+        penalizedPeers = lastOutcome.removalPenalties.filter(_._2 > 0).keySet
+
+        _ <- logger
+          .debug(
+            s"Removal penalties for key=$key: ${penalizedPeers.size} penalized peers" +
+              (if (penalizedPeers.nonEmpty)
+                 s" [${lastOutcome.removalPenalties.filter(_._2 > 0).map(kv => s"${kv._1.value.value.take(8)}:${kv._2}").mkString(",")}]"
+               else "")
+          )
+          .whenA(penalizedPeers.nonEmpty)
+
+        // Clear abandoned-missing tracking (but don't use it for exclusion — it's local-only and
+        // causes non-deterministic facilitator sets across nodes, leading to fork detection failures).
+        // The deterministic mechanisms (previouslyRemoved + penalizedPeers from consensus-agreed
+        // lastOutcome) already handle unresponsive peer exclusion.
+        abandonedMissing <- peerQualityTracker.getAndClearAbandonedMissingPeers
+
+        _ <- ConsensusLog
+          .info(
+            logger,
+            ConsensusLog.Facilitator,
+            key.show,
+            "n/a",
+            "event" -> "ABANDONED_MISSING_LOGGED",
+            "count" -> abandonedMissing.size.toString,
+            "peers" -> abandonedMissing.toList.map(_.value.value.take(8)).mkString(",")
+          )
+          .whenA(abandonedMissing.nonEmpty)
+
+        // For THIS round only: exclude recently removed and penalized peers from active selection.
+        // They remain in allEligible so they can be re-selected in future rounds.
+        // NOTE: abandonedMissing is intentionally NOT included — it's a local-only tracker that
+        // can diverge between nodes, causing different facilitator sets → fork detection → Leaving state.
+        eligibleThisRound = {
+          val excluded = previouslyRemoved ++ penalizedPeers
+          val filtered = allEligible.filterNot(excluded.contains)
+          if (filtered.isEmpty) List(selfId) else filtered
         }
 
         // Apply deterministic subset selection using hash-distance ordering
         // Uses the previous round's snapshot hash as entropy for randomization
         entropy = lastOutcome.finished.snapshotHash
-        activeFacilitators = facilitatorSelector.select(eligible, entropy)
+        activeFacilitators = facilitatorSelector.select(eligibleThisRound, entropy)
 
-        _ <- logger
+        _ <- ConsensusLog
           .info(
-            s"Facilitator subsetting for key=$key: " +
-              s"eligible=${eligible.size}, selected=${activeFacilitators.size}"
+            logger,
+            ConsensusLog.Facilitator,
+            key.show,
+            "n/a",
+            "event" -> "FACILITATOR_SUBSETTING",
+            "allEligible" -> allEligible.size.toString,
+            "eligibleThisRound" -> eligibleThisRound.size.toString,
+            "selected" -> activeFacilitators.size.toString
           )
-          .whenA(activeFacilitators.size < eligible.size)
+          .whenA(activeFacilitators.size < allEligible.size)
 
         (withdrawn, active) = activeFacilitators.partition { peerId =>
           resources.withdrawalsMap.get(peerId).contains(GlobalConsensusKind.Facility)
@@ -135,11 +224,31 @@ object GlobalSnapshotConsensusStateCreator {
                 maybeTrigger,
                 lastOutcome.finished.facilitatorsHash,
                 lastOutcome.key,
-                lastOutcome.finished.snapshotHash
+                lastOutcome.finished.snapshotHash,
+                consensusConfigHash = consensusConfigHash.some
               )
             )
           )
         }
+
+        // Quality-weighted leader selection: use consensus-agreed quality scores
+        // so all nodes compute the same leader deterministically.
+        // Pass raw (completed, participated) integers — the selector uses integer-only
+        // tier computation (tier = participated - completed = failure count) to avoid
+        // platform-dependent float-to-long conversion differences.
+        leader = facilitatorSelector.selectLeaderWeighted(active, entropy, qualityScores = lastOutcome.peerQuality, qualityWeight = 0.3)
+
+        _ <- ConsensusLog.info(
+          logger,
+          ConsensusLog.Facilitator,
+          key.show,
+          if (leader === selfId) "Leader" else "Validator",
+          "event" -> "FACILITATORS_FINALIZED",
+          "eligible" -> allEligible.size.toString,
+          "active" -> active.size.toString,
+          "excluded" -> (allEligible.size - eligibleThisRound.size).toString,
+          "leader" -> ConsensusLog.pid(leader)
+        )
 
         state = ConsensusState[GlobalSnapshotKey, GlobalSnapshotStatus, GlobalConsensusOutcome, GlobalConsensusKind](
           key,
@@ -152,15 +261,32 @@ object GlobalSnapshotConsensusStateCreator {
           ),
           time,
           withdrawnFacilitators = WithdrawnFacilitators(withdrawn.toSet),
-          spreadAckKinds = Set.empty,
-          eligibleFacilitators = EligibleFacilitators(eligible)
+          eligibleFacilitators = EligibleFacilitators(allEligible),
+          leader = leader,
+          entropy = entropy
         )
 
-        _ <- logger.info(
-          s"Created consensus state for key=$key with ${active.size} active facilitators" +
-            s" (${eligible.size} eligible)" +
-            withdrawn.headOption.fold("")(_ => s", ${withdrawn.size} withdrawn")
-        )
+        role = ConsensusLog.role(selfId, leader)
+        leaderScore <- peerQualityTracker.getQualityScore(leader)
+        _ <- {
+          val basePairs = Seq(
+            "event" -> "ROUND_STARTED",
+            "trigger" -> maybeTrigger.map(_.toString).getOrElse("none"),
+            "facilitators" -> active.size.toString,
+            "eligible" -> allEligible.size.toString,
+            "candidates" -> filteredCandidates.size.toString,
+            "leader" -> ConsensusLog.pid(leader),
+            "leaderScore" -> f"$leaderScore%.2f",
+            "self" -> ConsensusLog.pid(selfId),
+            "view" -> "0"
+          )
+          val optionalPairs =
+            (if (withdrawn.nonEmpty) Seq("withdrawn" -> withdrawn.size.toString) else Seq.empty) ++
+              (if (penalizedPeers.nonEmpty) Seq("penalized" -> penalizedPeers.size.toString) else Seq.empty) ++
+              (if (previouslyRemoved.nonEmpty) Seq("previouslyRemoved" -> previouslyRemoved.size.toString) else Seq.empty) ++
+              (if (abandonedMissing.nonEmpty) Seq("abandonedMissing" -> abandonedMissing.size.toString) else Seq.empty)
+          ConsensusLog.info(logger, ConsensusLog.Lifecycle, key.show, role, (basePairs ++ optionalPairs): _*)
+        }
 
       } yield (state, effect)
   }

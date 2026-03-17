@@ -200,7 +200,7 @@ abstract class SnapshotLocalFileSystemStorage[
   def cleanupAboveOrdinal(
     ordinal: SnapshotOrdinal,
     movePersistedToTmp: (Hash, SnapshotOrdinal) => F[Unit]
-  )(implicit hs: HasherSelector[F], kryoSerializer: KryoSerializer[F]): F[Unit] = for {
+  )(implicit hs: HasherSelector[F]): F[Unit] = for {
     _ <- logger.debug(s"Searching for persisted files above ordinal ${ordinal.show}")
     baseDirectory = (ordinal.value.value / ordinalChunkSize.value) * ordinalChunkSize.value
 

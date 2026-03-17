@@ -70,7 +70,8 @@ class Joining[
   metagraphVersionHash: Hash,
   peerDiscovery: PeerDiscovery[F],
   allowanceList: Option[Set[AllowanceListEntry]],
-  metagraphId: Option[Address]
+  metagraphId: Option[Address],
+  consensusConfigHash: Option[Hash] = None
 ) {
 
   private val logger = Slf4jLogger.getLogger[F]
@@ -276,6 +277,12 @@ class Joining[
 
       allowanceListHash <- allowanceList.map(_.map(_.peerId)).hash
       _ <- Applicative[F].unlessA(registrationRequest.allowanceList === allowanceListHash)(AllowanceListDoesNotMatch.raiseError[F, Unit])
+
+      // Validate consensus config hash if both sides provide it (backward-compatible: skip during rolling upgrades)
+      configHashMismatch = (consensusConfigHash, registrationRequest.consensusConfigHash)
+        .mapN(_ =!= _)
+        .getOrElse(false)
+      _ <- ConsensusConfigMismatch.raiseError[F, Unit].whenA(configHashMismatch)
 
     } yield ()
 

@@ -7,7 +7,7 @@ import cats.effect.std.Semaphore
 import cats.kernel.Next
 import cats.syntax.all._
 
-import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 
 import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.ext.crypto._
@@ -84,6 +84,11 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     kind: Kind
   ): F[Option[ConsensusResources[Artifact, Kind]]]
 
+  /** Clears all peer declarations, artifacts, and other resources for the given key. Must be called when abandoning a round to prevent
+    * stale state from poisoning retries.
+    */
+  private[consensus] def clearResources(key: Key): F[Unit]
+
   private[consensus] def trySetInitialConsensusOutcome(data: Outcome): F[Boolean]
 
   private[consensus] def clearAndGetLastConsensusOutcome: F[Option[Outcome]]
@@ -108,6 +113,51 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
   def getCandidates(key: Key): F[Candidates]
 
   private[consensus] def registerPeer(peerId: PeerId, key: Key): F[Boolean]
+
+  /** Returns all peer registrations (peerId → key) for lagging node detection. */
+  private[consensus] def getPeerRegistrations: F[Map[PeerId, Key]]
+
+  /** Prune stale resources for keys other than the current active key.
+    *
+    * Over time, abandoned rounds leave behind entries in the resources map for keys that are no longer active. This method removes all
+    * resource entries except the current key, preventing unbounded memory growth. Should be called after each successful consensus round.
+    */
+  private[consensus] def pruneStaleResources(activeKey: Key): F[Unit]
+
+  /** Remove event entries for peers that are no longer in the cluster.
+    *
+    * When peers depart the cluster, their entries in the events map persist indefinitely. This method removes entries for peers not in the
+    * provided active set.
+    */
+  private[consensus] def pruneStaleEvents(activePeers: Set[PeerId]): F[Unit]
+
+  /** Prune peer registrations for peers no longer in the cluster.
+    *
+    * peerRegistrationsR is populated by registerPeer but never cleaned up when peers depart. Stale entries corrupt lagging detection in
+    * StallDetector (peersAtDifferentKey count includes departed peers) and cause unbounded memory growth. Should be called after each
+    * consensus round.
+    */
+  private[consensus] def pruneStalePeerRegistrations(activePeers: Set[PeerId]): F[Unit]
+
+  /** Clear all peer registrations. Used during recovery download to prevent stale registrations from causing false lagging detection after
+    * the node rejoins.
+    */
+  private[consensus] def clearAllPeerRegistrations: F[Unit]
+
+  /** Clean up state and resources for a key whose outcome conflicted with a concurrent finalization.
+    *
+    * When tryUpdateLastConsensusOutcomeWithCleanup returns false (another round's outcome was already stored), the finished state for the
+    * conflicted key remains in statesR/resourcesR. Without explicit cleanup, these entries accumulate and leak memory. This method removes
+    * both the state and resource entries.
+    */
+  private[consensus] def cleanupConflictedRound(key: Key): F[Unit]
+
+  /** Clear ALL consensus states and resources across all keys.
+    *
+    * Used during recovery download to ensure no stale state from previous abandoned rounds persists into the fresh post-recovery context.
+    * Without this, ghost entries from other ordinals can interfere with the first post-recovery round.
+    */
+  private[consensus] def clearAllConsensusState: F[Unit]
 
 }
 
@@ -161,24 +211,37 @@ object ConsensusStorage {
         def clearTimeTrigger: F[Unit] =
           timeTriggerR.set(none)
 
-        def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[F, Key, Status, Outcome, Kind, B]): F[Option[B]] =
-          stateUpdateSemaphore.permit.use { _ =>
-            for {
-              (maybeState, setter) <- statesR(key).access
-              maybeResult <- modifyStateFn(maybeState)
+        /** Maximum time to wait for the state update semaphore before failing. Prevents deadlock if a modify function hangs — the semaphore
+          * would block all subsequent state updates indefinitely without this timeout.
+          */
+        private val semaphoreTimeout: FiniteDuration = 30.seconds
 
-              maybeB <- maybeResult.traverse {
-                case (maybeState, b) =>
-                  setter(maybeState)
-                    .ifM(
-                      b.pure[F],
-                      new Throwable(
-                        "Failed consensus state update, all consensus state updates should be sequenced with a semaphore"
-                      ).raiseError[F, B]
-                    )
-              }
-            } yield maybeB
-          }
+        def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[F, Key, Status, Outcome, Kind, B]): F[Option[B]] =
+          Async[F].timeoutTo(
+            stateUpdateSemaphore.permit.use { _ =>
+              for {
+                (maybeState, setter) <- statesR(key).access
+                maybeResult <- modifyStateFn(maybeState)
+
+                maybeB <- maybeResult.traverse {
+                  case (maybeState, b) =>
+                    setter(maybeState)
+                      .ifM(
+                        b.pure[F],
+                        new Throwable(
+                          "Failed consensus state update, all consensus state updates should be sequenced with a semaphore"
+                        ).raiseError[F, B]
+                      )
+                }
+              } yield maybeB
+            },
+            semaphoreTimeout,
+            Async[F].raiseError(
+              new java.util.concurrent.TimeoutException(
+                s"Consensus state update semaphore acquisition timed out after ${semaphoreTimeout.toSeconds}s"
+              )
+            )
+          )
 
         def trySetInitialConsensusOutcome(initialOutcome: Outcome): F[Boolean] =
           lastOutcomeR.modify {
@@ -211,7 +274,7 @@ object ConsensusStorage {
         private def cleanupStateAndResource(key: Key): F[Unit] =
           condModifyState[Unit](key) { _ =>
             (none[ConsensusState[Key, Status, Outcome, Kind]], ()).some.pure[F]
-          }.void >> cleanResources(key)
+          }.void >> clearResources(key)
 
         def containsTriggerEvent: F[Boolean] =
           eventsR.keys.flatMap { keys =>
@@ -390,7 +453,7 @@ object ConsensusStorage {
             }
           }
 
-        private def cleanResources(key: Key): F[Unit] =
+        def clearResources(key: Key): F[Unit] =
           resourcesR(key).set(none)
 
         def getOwnRegistrationKey: F[Option[Key]] = observationKeyR.get.map(_.map(_.next))
@@ -422,6 +485,39 @@ object ConsensusStorage {
               }
             (result, result.get(peerId).exists(_ === newKey))
           }
+
+        def getPeerRegistrations: F[Map[PeerId, Key]] = peerRegistrationsR.get
+
+        def pruneStaleResources(activeKey: Key): F[Unit] =
+          resourcesR.keys.flatMap { keys =>
+            keys.filterNot(_ === activeKey).traverse_(k => resourcesR(k).set(none))
+          }
+
+        def pruneStaleEvents(activePeers: Set[PeerId]): F[Unit] =
+          eventsR.keys.flatMap { peerIds =>
+            peerIds.filterNot(activePeers.contains).traverse_ { stalePeerId =>
+              eventsR(stalePeerId).set(none)
+            }
+          }
+
+        def pruneStalePeerRegistrations(activePeers: Set[PeerId]): F[Unit] =
+          peerRegistrationsR.update(_.view.filterKeys(activePeers.contains).toMap)
+
+        def clearAllPeerRegistrations: F[Unit] =
+          peerRegistrationsR.set(Map.empty)
+
+        def cleanupConflictedRound(key: Key): F[Unit] =
+          condModifyState[Unit](key) { _ =>
+            (none[ConsensusState[Key, Status, Outcome, Kind]], ()).some.pure[F]
+          }.void >> clearResources(key)
+
+        def clearAllConsensusState: F[Unit] =
+          for {
+            stateKeys <- statesR.keys
+            _ <- stateKeys.traverse_(k => statesR(k).set(none))
+            resourceKeys <- resourcesR.keys
+            _ <- resourceKeys.traverse_(k => resourcesR(k).set(none))
+          } yield ()
       }
   }
 }

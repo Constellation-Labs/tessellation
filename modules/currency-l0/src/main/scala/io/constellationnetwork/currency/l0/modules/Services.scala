@@ -77,7 +77,8 @@ object Services {
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     customPeersAllowanceList: Option[Set[AllowanceListEntry]],
     mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
-    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
+    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
+    queues: Queues[F]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector,
     currencyStateProofSelector: CurrencyStateProofSelector
@@ -175,7 +176,9 @@ object Services {
           sharedServices.restart,
           cfg.shared.leavingDelay,
           globalL0Service.pullGlobalSnapshot,
-          maybeCustomArtifacts
+          storages.snapshot.get,
+          maybeCustomArtifacts,
+          queues.rumor
         )
     } yield
       new Services[F, R](

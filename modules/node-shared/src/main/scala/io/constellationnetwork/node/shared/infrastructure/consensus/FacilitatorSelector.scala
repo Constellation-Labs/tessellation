@@ -101,6 +101,77 @@ class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
         candidates.sorted(scoreOrder.toOrdering).take(maxCount).sorted
     }
 
+  /** Selects a deterministic leader from facilitators using rendezvous hashing.
+    *
+    * The leader is the highest-scoring facilitator. All nodes compute the same leader given the same inputs. The `viewNumber` parameter
+    * allows rotating the leader on view change: for view 0 it picks rank 0, for view 1 rank 1, etc.
+    *
+    * @param facilitators
+    *   The already-selected facilitators for this round
+    * @param entropy
+    *   Hash from the last consensus outcome
+    * @param viewNumber
+    *   Current view number (0 = initial leader, incremented on view change)
+    * @return
+    *   The selected leader PeerId
+    */
+  def selectLeader(
+    facilitators: List[PeerId],
+    entropy: Hash,
+    viewNumber: Int = 0
+  ): PeerId = {
+    require(facilitators.nonEmpty, "selectLeader called with empty facilitators list — consensus cannot proceed without facilitators")
+    implicit val scoreOrder: Order[PeerId] = FacilitatorSelector.orderByScore(entropy)
+    val sorted = facilitators.sorted(scoreOrder.toOrdering)
+    val index = viewNumber % sorted.size
+    sorted(index)
+  }
+
+  /** Selects a leader with quality-weighted scoring using integer-only tier computation.
+    *
+    * Uses consensus-agreed quality scores (completed, participated) to compute deterministic tiers. Integer arithmetic avoids
+    * platform-dependent float-to-long conversion differences that could cause different nodes to compute different tiers → different
+    * leaders → fork.
+    *
+    * @param facilitators
+    *   The already-selected facilitators for this round
+    * @param entropy
+    *   Hash from the last consensus outcome
+    * @param viewNumber
+    *   Current view number (0 = initial leader, incremented on view change)
+    * @param qualityScores
+    *   Map of peer → (completedRounds, participatedRounds) from consensus-agreed outcome. Must be identical across all nodes for
+    *   determinism.
+    * @param qualityWeight
+    *   Unused, kept for API compatibility. Tier is derived from integer failure count.
+    * @return
+    *   The selected leader PeerId
+    */
+  def selectLeaderWeighted(
+    facilitators: List[PeerId],
+    entropy: Hash,
+    viewNumber: Int = 0,
+    qualityScores: Map[PeerId, (Int, Int)] = Map.empty,
+    qualityWeight: Double = 0.3
+  ): PeerId = {
+    require(
+      facilitators.nonEmpty,
+      "selectLeaderWeighted called with empty facilitators list — consensus cannot proceed without facilitators"
+    )
+    // Tiered ordering using integer-only arithmetic for determinism.
+    // Tier = number of failures (participated - completed). Lower tier = better peer = selected first.
+    // Rendezvous score breaks ties within the same tier.
+    // This avoids float-to-long conversion which can differ across JVM platforms.
+    val sorted = facilitators.sortBy { pid =>
+      val rendezvousScore = FacilitatorSelector.rendezvousScore(pid.value.value, entropy.value)
+      val (completed, participated) = qualityScores.getOrElse(pid, (0, 0))
+      val tier: Long = if (participated > 0) (participated - completed).toLong else 0L
+      (tier, rendezvousScore)
+    }
+    val index = viewNumber % sorted.size
+    sorted(index)
+  }
+
   /** Returns the configured maximum facilitator count, if any. */
   def getMaxCount: Option[Int] = maxFacilitatorCount
 }

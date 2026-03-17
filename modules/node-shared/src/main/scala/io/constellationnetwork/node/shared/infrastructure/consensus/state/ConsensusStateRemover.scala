@@ -7,8 +7,8 @@ import cats.syntax.all._
 import scala.reflect.runtime.universe.TypeTag
 
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
-import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusWithdrawPeerDeclaration
+import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusStorage}
 
 import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -54,7 +54,14 @@ abstract class ConsensusStateRemover[F[
         val declaration = getWithdrawalDeclaration(key, maybeState)
         val effect =
           gossip.spread(declaration) >>
-            logger.info(s"Withdrew from consensus {key=${declaration.key.show}, kind=${declaration.kind.show}}")
+            ConsensusLog.info(
+              logger,
+              ConsensusLog.Lifecycle,
+              declaration.key.show,
+              "n/a",
+              "event" -> "WITHDREW",
+              "kind" -> declaration.kind.show
+            )
 
         (none[ConsensusState[Key, Status, Outcome, Kind]], effect).some.pure[F]
       }

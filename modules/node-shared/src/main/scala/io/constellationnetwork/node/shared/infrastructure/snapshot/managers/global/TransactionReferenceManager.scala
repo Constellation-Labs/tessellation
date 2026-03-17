@@ -2,7 +2,6 @@ package io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glo
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.transaction.{Transaction, TransactionReference}
 import io.constellationnetwork.security.signature.Signed

@@ -148,8 +148,63 @@ object types {
     maxFacilitatorCount: Option[PosInt] = None,
     reStallTimeout: Option[FiniteDuration] = None,
     noProgressTimeout: Option[FiniteDuration] = None,
-    maxStallCycles: Int = 3
-  )
+    maxStallCycles: Int = 3,
+    maxRoundDuration: Option[FiniteDuration] = None,
+    quorumThreshold: Option[Double] = Some(0.75),
+    removalPenaltyRounds: Int = 3,
+    leaderQualityThreshold: Double = 0.5,
+    leaderQualityTimeoutMultiplier: Double = 0.5,
+    facilitiesTimeoutMultiplier: Double = 0.3,
+    proposalsTimeoutMultiplier: Double = 1.5,
+    signaturesTimeoutMultiplier: Double = 0.75,
+    maxConsecutiveAbandonments: Int = 5,
+    monitorSummaryInterval: FiniteDuration = FiniteDuration(10, "s"),
+    peerScoreLogInterval: FiniteDuration = FiniteDuration(60, "s"),
+    tcaLookbackWindow: Int = 5,
+    tcaMinParticipation: Int = 2,
+    qualityDecayThreshold: Int = 100
+  ) {
+    quorumThreshold.foreach { t =>
+      require(t > 2.0 / 3.0 && t <= 1.0, s"quorumThreshold must be in (2/3, 1.0], got $t")
+    }
+
+    /** Deterministic hash of consensus-critical config values.
+      *
+      * All nodes in a consensus round MUST have the same config to produce the same results. This hash is included in Facility declarations
+      * so that config divergence is detected immediately during the CollectingFacilities phase, rather than causing mysterious forks
+      * downstream.
+      *
+      * '''Consensus-critical fields''' (included in hash):
+      *   - `maxFacilitatorCount`: determines eligible facilitator list size
+      *   - `maxStallCycles`: affects when rounds are abandoned
+      *   - `quorumThreshold`: determines quorum size for declaration collection
+      *   - `removalPenaltyRounds`: affects facilitator eligibility after removal
+      *   - `tcaLookbackWindow`, `tcaMinParticipation`: TCA facilitator selection parameters
+      *
+      * '''Non-critical fields''' (excluded — affect timing/performance, not deterministic outcomes):
+      *   - `timeTriggerInterval`, `declarationTimeout`, `lockDuration`, `reStallTimeout`, `noProgressTimeout`: timing only
+      *   - `facilitiesTimeoutMultiplier`, `proposalsTimeoutMultiplier`, `signaturesTimeoutMultiplier`: timing multipliers only
+      *   - `maxRoundDuration`: safety net, not consensus logic
+      *   - `declarationRangeLimit`, `eventCutter`: event filtering, not consensus decisions
+      *
+      * IMPORTANT: When adding new fields to ConsensusConfig, evaluate whether they affect consensus determinism. If the field changes what
+      * peers decide (facilitator selection, quorum logic, voting thresholds), add it to the hash string below. If it only affects timing or
+      * performance, exclude it.
+      *
+      * Hash.fromBytes applies SHA-256 (via sha256DigestFromBytes), producing a compact 64-char hex digest.
+      */
+    lazy val deterministicConfigHash: io.constellationnetwork.security.hash.Hash = {
+      val configString =
+        s"maxFacilitatorCount=${maxFacilitatorCount.map(_.value)}," +
+          s"maxStallCycles=$maxStallCycles," +
+          s"quorumThreshold=$quorumThreshold," +
+          s"removalPenaltyRounds=$removalPenaltyRounds," +
+          s"tcaLookbackWindow=$tcaLookbackWindow," +
+          s"tcaMinParticipation=$tcaMinParticipation," +
+          s"qualityDecayThreshold=$qualityDecayThreshold"
+      io.constellationnetwork.security.hash.Hash.fromBytes(configString.getBytes("UTF-8"))
+    }
+  }
 
   case class EventCutterConfig(
     maxBinarySizeBytes: PosInt,

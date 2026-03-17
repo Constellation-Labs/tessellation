@@ -25,7 +25,8 @@ object declaration {
     trigger: Option[ConsensusTrigger],
     facilitatorsHash: Hash,
     lastGlobalSnapshotOrdinal: SnapshotOrdinal,
-    lastSnapshotHash: Hash
+    lastSnapshotHash: Hash,
+    consensusConfigHash: Option[Hash] = None
   ) extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)

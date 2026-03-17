@@ -5,7 +5,6 @@ import cats.syntax.functor._
 
 import io.constellationnetwork.node.shared.logger.{LogEntry, LogSink}
 
-import io.circe.syntax._
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 

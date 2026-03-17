@@ -29,7 +29,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlock
 import io.constellationnetwork.node.shared.http.p2p.clients.NodeClient
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.cluster.services.Cluster
-import io.constellationnetwork.node.shared.infrastructure.gossip.Gossip
+import io.constellationnetwork.node.shared.infrastructure.gossip.{Gossip => GossipImpl}
 import io.constellationnetwork.node.shared.infrastructure.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
@@ -102,7 +102,7 @@ object SharedServices {
         )
 
       localHealthcheck <- LocalHealthcheck.make[F](nodeClient, storages.cluster)
-      gossip <- HasherSelector[F].withCurrent(implicit hasher => Gossip.make[F](queues.rumor, nodeId, generation, keyPair))
+      gossip <- HasherSelector[F].withCurrent(implicit hasher => GossipImpl.make[F](queues.rumor, nodeId, generation, keyPair))
       currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager.make(
         cfg.fieldsAddedOrdinals,
         cfg.environment,
