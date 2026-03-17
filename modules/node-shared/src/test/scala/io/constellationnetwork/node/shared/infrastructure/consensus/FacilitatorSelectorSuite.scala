@@ -126,8 +126,9 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
       // This is the key safety test — float-to-long conversion was the fork risk
       val peers = (1 to 10).map(i => pid(s"peer$i")).toList
       val entropy = Hash.fromBytes("test-entropy".getBytes("UTF-8"))
-      val scores: Map[PeerId, (Int, Int)] = peers.zipWithIndex.map { case (p, i) =>
-        p -> (i, 10) // varying quality: 0/10, 1/10, ... 9/10
+      val scores: Map[PeerId, (Int, Int)] = peers.zipWithIndex.map {
+        case (p, i) =>
+          p -> (i, 10) // varying quality: 0/10, 1/10, ... 9/10
       }.toMap
 
       val results = (1 to 100).map(_ => selector.selectLeaderWeighted(peers, entropy, 0, scores))

@@ -119,45 +119,43 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
 
   /** Prune stale resources for keys other than the current active key.
     *
-    * Over time, abandoned rounds leave behind entries in the resources map for keys that are no longer active.
-    * This method removes all resource entries except the current key, preventing unbounded memory growth.
-    * Should be called after each successful consensus round.
+    * Over time, abandoned rounds leave behind entries in the resources map for keys that are no longer active. This method removes all
+    * resource entries except the current key, preventing unbounded memory growth. Should be called after each successful consensus round.
     */
   private[consensus] def pruneStaleResources(activeKey: Key): F[Unit]
 
   /** Remove event entries for peers that are no longer in the cluster.
     *
-    * When peers depart the cluster, their entries in the events map persist indefinitely.
-    * This method removes entries for peers not in the provided active set.
+    * When peers depart the cluster, their entries in the events map persist indefinitely. This method removes entries for peers not in the
+    * provided active set.
     */
   private[consensus] def pruneStaleEvents(activePeers: Set[PeerId]): F[Unit]
 
   /** Prune peer registrations for peers no longer in the cluster.
     *
-    * peerRegistrationsR is populated by registerPeer but never cleaned up when peers depart.
-    * Stale entries corrupt lagging detection in StallDetector (peersAtDifferentKey count includes
-    * departed peers) and cause unbounded memory growth. Should be called after each consensus round.
+    * peerRegistrationsR is populated by registerPeer but never cleaned up when peers depart. Stale entries corrupt lagging detection in
+    * StallDetector (peersAtDifferentKey count includes departed peers) and cause unbounded memory growth. Should be called after each
+    * consensus round.
     */
   private[consensus] def pruneStalePeerRegistrations(activePeers: Set[PeerId]): F[Unit]
 
-  /** Clear all peer registrations. Used during recovery download to prevent stale registrations
-    * from causing false lagging detection after the node rejoins.
+  /** Clear all peer registrations. Used during recovery download to prevent stale registrations from causing false lagging detection after
+    * the node rejoins.
     */
   private[consensus] def clearAllPeerRegistrations: F[Unit]
 
   /** Clean up state and resources for a key whose outcome conflicted with a concurrent finalization.
     *
-    * When tryUpdateLastConsensusOutcomeWithCleanup returns false (another round's outcome was already stored),
-    * the finished state for the conflicted key remains in statesR/resourcesR. Without explicit cleanup,
-    * these entries accumulate and leak memory. This method removes both the state and resource entries.
+    * When tryUpdateLastConsensusOutcomeWithCleanup returns false (another round's outcome was already stored), the finished state for the
+    * conflicted key remains in statesR/resourcesR. Without explicit cleanup, these entries accumulate and leak memory. This method removes
+    * both the state and resource entries.
     */
   private[consensus] def cleanupConflictedRound(key: Key): F[Unit]
 
   /** Clear ALL consensus states and resources across all keys.
     *
-    * Used during recovery download to ensure no stale state from previous abandoned rounds
-    * persists into the fresh post-recovery context. Without this, ghost entries from other
-    * ordinals can interfere with the first post-recovery round.
+    * Used during recovery download to ensure no stale state from previous abandoned rounds persists into the fresh post-recovery context.
+    * Without this, ghost entries from other ordinals can interfere with the first post-recovery round.
     */
   private[consensus] def clearAllConsensusState: F[Unit]
 
@@ -213,9 +211,8 @@ object ConsensusStorage {
         def clearTimeTrigger: F[Unit] =
           timeTriggerR.set(none)
 
-        /** Maximum time to wait for the state update semaphore before failing.
-          * Prevents deadlock if a modify function hangs — the semaphore would block
-          * all subsequent state updates indefinitely without this timeout.
+        /** Maximum time to wait for the state update semaphore before failing. Prevents deadlock if a modify function hangs — the semaphore
+          * would block all subsequent state updates indefinitely without this timeout.
           */
         private val semaphoreTimeout: FiniteDuration = 30.seconds
 

@@ -43,9 +43,9 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
   logger: org.typelevel.log4cats.SelfAwareStructuredLogger[F]
 ) {
 
-  /** Maximum consecutive eviction-skipped view changes before escalating to abandonment.
-    * When the same peers keep failing but can't be evicted (below minimum 2), cycling view numbers
-    * wastes stall cycles. After this many skipped evictions, signal that the round should be abandoned.
+  /** Maximum consecutive eviction-skipped view changes before escalating to abandonment. When the same peers keep failing but can't be
+    * evicted (below minimum 2), cycling view numbers wastes stall cycles. After this many skipped evictions, signal that the round should
+    * be abandoned.
     */
   private val maxSkippedEvictions: Int = 3
 
@@ -150,20 +150,20 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
       val newLeader = facilitatorSelector.selectLeader(remainingFacilitators, currentState.entropy, newViewNumber)
 
       skippedEvictionCountRef.set(0) >>
-      ConsensusLog.warn(
-        logger,
-        ConsensusLog.Phase,
-        key.toString,
-        "n/a",
-        "event" -> "VIEW_CHANGE_WITH_EVICTION",
-        "evicted" -> peersToEvict.size.toString,
-        "remaining" -> remainingFacilitators.size.toString,
-        "oldView" -> currentState.viewNumber.toString,
-        "newView" -> newViewNumber.toString,
-        "oldLeader" -> ConsensusLog.pid(currentState.leader),
-        "newLeader" -> ConsensusLog.pid(newLeader),
-        "evictedPeers" -> peersToEvict.toList.map(ConsensusLog.pid).mkString(",")
-      ) >>
+        ConsensusLog.warn(
+          logger,
+          ConsensusLog.Phase,
+          key.toString,
+          "n/a",
+          "event" -> "VIEW_CHANGE_WITH_EVICTION",
+          "evicted" -> peersToEvict.size.toString,
+          "remaining" -> remainingFacilitators.size.toString,
+          "oldView" -> currentState.viewNumber.toString,
+          "newView" -> newViewNumber.toString,
+          "oldLeader" -> ConsensusLog.pid(currentState.leader),
+          "newLeader" -> ConsensusLog.pid(newLeader),
+          "evictedPeers" -> peersToEvict.toList.map(ConsensusLog.pid).mkString(",")
+        ) >>
         peersToEvict.toList.traverse_(peerQualityTracker.recordViewChange) >>
         Metrics[F].updateGauge("dag_consensus_view_number", newViewNumber) >>
         Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>

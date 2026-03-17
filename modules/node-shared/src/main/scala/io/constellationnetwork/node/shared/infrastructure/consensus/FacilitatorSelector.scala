@@ -129,9 +129,9 @@ class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
 
   /** Selects a leader with quality-weighted scoring using integer-only tier computation.
     *
-    * Uses consensus-agreed quality scores (completed, participated) to compute deterministic tiers.
-    * Integer arithmetic avoids platform-dependent float-to-long conversion differences that could
-    * cause different nodes to compute different tiers → different leaders → fork.
+    * Uses consensus-agreed quality scores (completed, participated) to compute deterministic tiers. Integer arithmetic avoids
+    * platform-dependent float-to-long conversion differences that could cause different nodes to compute different tiers → different
+    * leaders → fork.
     *
     * @param facilitators
     *   The already-selected facilitators for this round
@@ -140,8 +140,8 @@ class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
     * @param viewNumber
     *   Current view number (0 = initial leader, incremented on view change)
     * @param qualityScores
-    *   Map of peer → (completedRounds, participatedRounds) from consensus-agreed outcome.
-    *   Must be identical across all nodes for determinism.
+    *   Map of peer → (completedRounds, participatedRounds) from consensus-agreed outcome. Must be identical across all nodes for
+    *   determinism.
     * @param qualityWeight
     *   Unused, kept for API compatibility. Tier is derived from integer failure count.
     * @return

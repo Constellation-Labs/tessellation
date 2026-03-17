@@ -7,8 +7,8 @@ import cats.syntax.all._
 import scala.reflect.runtime.universe.TypeTag
 
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
-import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusStorage}
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusWithdrawPeerDeclaration
+import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusStorage}
 
 import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger

@@ -106,8 +106,9 @@ object ConsensusAuditFixesSuite extends SimpleIOSuite {
       val selector = FacilitatorSelector.make(Some(10))
       val peers = (1 to 10).map(i => pid(s"peer$i")).toList
       val entropy = Hash.fromBytes("determinism-test".getBytes("UTF-8"))
-      val scores: Map[PeerId, (Int, Int)] = peers.zipWithIndex.map { case (p, i) =>
-        p -> (i, 10) // varying quality: 0/10, 1/10, ... 9/10
+      val scores: Map[PeerId, (Int, Int)] = peers.zipWithIndex.map {
+        case (p, i) =>
+          p -> (i, 10) // varying quality: 0/10, 1/10, ... 9/10
       }.toMap
 
       val results = (1 to 1000).map(_ => selector.selectLeaderWeighted(peers, entropy, 0, scores))
@@ -221,8 +222,11 @@ object ConsensusAuditFixesSuite extends SimpleIOSuite {
     IO {
       val ownKey = 100
       val peerRegistrations: Map[String, Int] = Map(
-        "peer1" -> 105, "peer2" -> 105, "peer3" -> 105,
-        "peer4" -> 100, "peer5" -> 105
+        "peer1" -> 105,
+        "peer2" -> 105,
+        "peer3" -> 105,
+        "peer4" -> 100,
+        "peer5" -> 105
       )
 
       val peersAtDifferentKey = peerRegistrations.count { case (_, peerKey) => peerKey != ownKey }
@@ -239,8 +243,11 @@ object ConsensusAuditFixesSuite extends SimpleIOSuite {
     IO {
       val ownKey = 105
       val peerRegistrations: Map[String, Int] = Map(
-        "peer1" -> 105, "peer2" -> 105, "peer3" -> 105,
-        "peer4" -> 100, "peer5" -> 105
+        "peer1" -> 105,
+        "peer2" -> 105,
+        "peer3" -> 105,
+        "peer4" -> 100,
+        "peer5" -> 105
       )
 
       val peersAtDifferentKey = peerRegistrations.count { case (_, peerKey) => peerKey != ownKey }
@@ -257,7 +264,8 @@ object ConsensusAuditFixesSuite extends SimpleIOSuite {
     IO {
       val ownKey = 100
       val peerRegistrations: Map[String, Int] = Map(
-        "peer1" -> 105, "peer2" -> 105
+        "peer1" -> 105,
+        "peer2" -> 105
       )
 
       val peersAtDifferentKey = peerRegistrations.count { case (_, peerKey) => peerKey != ownKey }
@@ -274,8 +282,10 @@ object ConsensusAuditFixesSuite extends SimpleIOSuite {
     IO {
       val ownKey = 100
       val peerRegistrations: Map[String, Int] = Map(
-        "peer1" -> 105, "peer2" -> 105,
-        "peer3" -> 100, "peer4" -> 100
+        "peer1" -> 105,
+        "peer2" -> 105,
+        "peer3" -> 100,
+        "peer4" -> 100
       )
 
       val peersAtDifferentKey = peerRegistrations.count { case (_, peerKey) => peerKey != ownKey }
@@ -872,8 +882,7 @@ object ConsensusAuditFixesSuite extends SimpleIOSuite {
       totalRecoveryAttempts += 1
       totalRecoveryAttempts += 1
       totalRecoveryAttempts += 1
-      expect.same(3, totalRecoveryAttempts) &&
-      {
+      expect.same(3, totalRecoveryAttempts) && {
         // After successful round → resetOnSuccessfulRound
         totalRecoveryAttempts = 0
         expect.same(0, totalRecoveryAttempts)
@@ -920,8 +929,9 @@ object ConsensusAuditFixesSuite extends SimpleIOSuite {
       )
 
       val needsDecay = accumulated.values.exists { case (_, p) => p > qualityDecayThreshold }
-      val decayed = if (needsDecay) accumulated.view.mapValues { case (c, p) => (c / 2, p / 2) }.to(SortedMap)
-      else accumulated
+      val decayed =
+        if (needsDecay) accumulated.view.mapValues { case (c, p) => (c / 2, p / 2) }.to(SortedMap)
+        else accumulated
 
       expect(needsDecay) &&
       expect.same((45, 55), decayed("peer1")) &&
@@ -977,8 +987,9 @@ object ConsensusAuditFixesSuite extends SimpleIOSuite {
 
       def applyDecay(m: SortedMap[String, (Int, Int)]): SortedMap[String, (Int, Int)] = {
         val needsDecay = m.values.exists { case (_, p) => p > qualityDecayThreshold }
-        val decayed = if (needsDecay) m.view.mapValues { case (c, p) => (c / 2, p / 2) }.to(SortedMap)
-        else m
+        val decayed =
+          if (needsDecay) m.view.mapValues { case (c, p) => (c / 2, p / 2) }.to(SortedMap)
+          else m
         decayed.filter { case (_, (c, p)) => c > 0 || p > 0 }
       }
 

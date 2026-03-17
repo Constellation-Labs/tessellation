@@ -88,7 +88,14 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
       case ConsensusEvent(event) if fns.triggerPredicate(event.asInstanceOf[Event]) => queue.offer(FacilitateByEvent)
       case ConsensusEvent(_)                                                        => Async[F].unit
       case other =>
-        ConsensusLog.warn(log, ConsensusLog.Rumor, "n/a", "n/a", "event" -> "UNKNOWN_COMMON_CONTENT", "type" -> other.getClass.getSimpleName)
+        ConsensusLog.warn(
+          log,
+          ConsensusLog.Rumor,
+          "n/a",
+          "n/a",
+          "event" -> "UNKNOWN_COMMON_CONTENT",
+          "type" -> other.getClass.getSimpleName
+        )
     }
 
   private def handleDeclaration(origin: PeerId, decl: ConsensusPeerDeclaration[_, _]): F[Unit] = {

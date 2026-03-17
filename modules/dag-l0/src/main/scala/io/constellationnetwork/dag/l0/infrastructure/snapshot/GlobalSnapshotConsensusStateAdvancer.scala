@@ -127,9 +127,9 @@ object GlobalSnapshotConsensusStateAdvancer {
     /** Savepoint taken before `createArtifact()` mutations. On round abandonment + retry at the same ordinal, this is restored before
       * re-building the proposal to ensure the MptStore starts from a clean pre-mutation state.
       *
-      * Tracks the key (ordinal) alongside the savepoint so that stale savepoints from a different ordinal
-      * (e.g., after recovery download) are discarded instead of restored — restoring a savepoint from
-      * ordinal N into an MptStore that was replaced by a download at ordinal M would corrupt state.
+      * Tracks the key (ordinal) alongside the savepoint so that stale savepoints from a different ordinal (e.g., after recovery download)
+      * are discarded instead of restored — restoring a savepoint from ordinal N into an MptStore that was replaced by a download at ordinal
+      * M would corrupt state.
       */
     private val proposalSavepointRef: Ref[F, Option[(GlobalSnapshotKey, MptStoreSavepoint[F])]] = Ref.unsafe(none)
 
@@ -187,8 +187,9 @@ object GlobalSnapshotConsensusStateAdvancer {
             })
           }
           val needsDecay = rawAccumulated.values.exists { case (_, p) => p > config.qualityDecayThreshold }
-          val decayed = if (needsDecay) rawAccumulated.view.mapValues { case (c, p) => (c / 2, p / 2) }.to(SortedMap)
-          else rawAccumulated
+          val decayed =
+            if (needsDecay) rawAccumulated.view.mapValues { case (c, p) => (c / 2, p / 2) }.to(SortedMap)
+            else rawAccumulated
           val accumulatedQuality = decayed.filter { case (_, (c, p)) => c > 0 || p > 0 }
 
           val outcome = GlobalConsensusOutcome(
@@ -337,20 +338,21 @@ object GlobalSnapshotConsensusStateAdvancer {
         // savepoint from a different ordinal would revert the MptStore to pre-download state,
         // corrupting all subsequent rounds.
         previousSp <- proposalSavepointRef.getAndSet(none)
-        _ <- previousSp.traverse_ { case (spKey, sp) =>
-          if (spKey === state.key)
-            sp.restore >>
-              ConsensusLog.info(logger, ConsensusLog.Lifecycle, state.key.show, "n/a", "event" -> "MPT_SAVEPOINT_RESTORED")
-          else
-            ConsensusLog.warn(
-              logger,
-              ConsensusLog.Lifecycle,
-              state.key.show,
-              "n/a",
-              "event" -> "MPT_SAVEPOINT_DISCARDED_WRONG_KEY",
-              "savepointKey" -> spKey.show,
-              "currentKey" -> state.key.show
-            )
+        _ <- previousSp.traverse_ {
+          case (spKey, sp) =>
+            if (spKey === state.key)
+              sp.restore >>
+                ConsensusLog.info(logger, ConsensusLog.Lifecycle, state.key.show, "n/a", "event" -> "MPT_SAVEPOINT_RESTORED")
+            else
+              ConsensusLog.warn(
+                logger,
+                ConsensusLog.Lifecycle,
+                state.key.show,
+                "n/a",
+                "event" -> "MPT_SAVEPOINT_DISCARDED_WRONG_KEY",
+                "savepointKey" -> spKey.show,
+                "currentKey" -> state.key.show
+              )
         }
         // Take a fresh savepoint before mutations. If this round is abandoned and retried,
         // the next buildProposalTransition will restore this savepoint.

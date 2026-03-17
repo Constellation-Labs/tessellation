@@ -146,8 +146,9 @@ object CurrencySnapshotConsensusStateAdvancer {
               })
             }
             val needsDecay = rawAccumulated.values.exists { case (_, p) => p > consensusConfig.qualityDecayThreshold }
-            val decayed = if (needsDecay) rawAccumulated.view.mapValues { case (c, p) => (c / 2, p / 2) }.to(SortedMap)
-            else rawAccumulated
+            val decayed =
+              if (needsDecay) rawAccumulated.view.mapValues { case (c, p) => (c / 2, p / 2) }.to(SortedMap)
+              else rawAccumulated
             val accumulatedQuality = decayed.filter { case (_, (c, p)) => c > 0 || p > 0 }
 
             val outcome = CurrencyConsensusOutcome(

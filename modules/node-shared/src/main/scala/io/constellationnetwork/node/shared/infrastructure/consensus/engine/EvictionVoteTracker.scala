@@ -29,10 +29,8 @@ import io.constellationnetwork.schema.peer.PeerId
   * ==Future Work==
   *
   * To make eviction fully deterministic:
-  *   1. Spread eviction votes via gossip (new rumor type)
-  *   2. Collect votes from all facilitators (not just local)
-  *   3. Include vote tallies in the Facility declaration for consensus agreement
-  *   4. Only evict when the facilitatorsHash-agreed vote tally reaches supermajority
+  *   1. Spread eviction votes via gossip (new rumor type) 2. Collect votes from all facilitators (not just local) 3. Include vote tallies
+  *      in the Facility declaration for consensus agreement 4. Only evict when the facilitatorsHash-agreed vote tally reaches supermajority
   *
   * This scaffolding prepares the local tracking infrastructure so the gossip protocol can be added incrementally.
   */
