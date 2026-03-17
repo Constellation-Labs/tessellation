@@ -9,6 +9,7 @@ import scala.concurrent.duration._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusResources}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{PeerId, PeerResponsiveness, Unresponsive}
 
 import eu.timepit.refined.auto._
@@ -176,10 +177,22 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // Using =!= (any different) instead of > caused cluster-wide cascade failures:
       // all nodes simultaneously detected "lagging" from stale registrations at the
       // previous ordinal, triggering mass recovery downloads with no peers to serve.
+      //
+      // CR9: Only count peers in Ready state for lagging detection.
+      // Peers in Observing/Downloading states report stale observation keys from
+      // pre-rollback/pre-download state (trySetObservationKey is set-if-empty, never
+      // overwrites). The peerRegistrationStream re-populates registrations from these
+      // stale keys immediately after clearAllPeerRegistrations, causing false lagging
+      // detection on rollback nodes. Only Ready peers are actively participating in
+      // consensus and have accurate keys.
       peerRegs <- storage.getPeerRegistrations
-      peersAtHigherKey = peerRegs.count { case (_, peerKey) => peerKey > key }
-      totalRegisteredPeers = peerRegs.size
+      responsivePeers <- clusterStorage.getResponsivePeers
+      readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
+      readyPeerRegs = peerRegs.view.filterKeys(readyPeerIds.contains).toMap
+      peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key }
+      totalRegisteredPeers = readyPeerRegs.size
       isLagging = totalRegisteredPeers >= 3 && peersAtHigherKey > totalRegisteredPeers / 2
+      totalAllRegs = peerRegs.size
       _ <- (
         ConsensusLog.warn(
           logger,
@@ -188,7 +201,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
           selfRole(state),
           "event" -> "LAGGING_NODE_DETECTED",
           "peersAtHigherKey" -> peersAtHigherKey.toString,
-          "totalRegistered" -> totalRegisteredPeers.toString,
+          "totalReady" -> totalRegisteredPeers.toString,
+          "totalAllRegs" -> totalAllRegs.toString,
           "ownKey" -> key.toString
         ) >>
           Metrics[F].incrementCounter("dag_consensus_lagging_node_detected")
@@ -218,7 +232,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
 
       abandonReason =
         if (isLagging)
-          s"lagging behind network: $peersAtHigherKey/$totalRegisteredPeers peers at higher key"
+          s"lagging behind network: $peersAtHigherKey/$totalRegisteredPeers ready peers at higher key (totalRegs=$totalAllRegs)"
         else if (quorumInfeasible)
           s"quorum infeasible: $activeFacilitators active < $quorumSize required"
         else if (evictionLoopStuck)

@@ -228,6 +228,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
       _ <- ctx.pending.clear()
       _ <- ConsensusLog.info(log, ConsensusLog.Lifecycle, key.toString, "n/a", "event" -> "ROLLBACK_STATE_CLEARED")
       _ <- storage.trySetInitialConsensusOutcome(outcome)
+      // Set joining grace period to use relaxed timeouts for first rounds after rollback.
+      // Without this, the rollback node uses aggressive timeouts while peers are still
+      // downloading to the rollback ordinal, leading to premature stall detection.
+      _ <- ctx.nodeStorage.setJoiningGracePeriod
       _ <- queue.offer(StartRound(TimeTrigger.some))
     } yield ()
 

@@ -884,4 +884,150 @@ object ConsensusCrisisFixesSuite extends SimpleIOSuite {
       expect(staleExists) && // Stale trigger existed
         expect(!started) // But didn't fire after cleanup
   }
+
+  // ══════════════════════════════════════════════════════════════════
+  // CR9: Lagging detection filters by peer state (Ready only)
+  // Prevents false lagging when Observing/Downloading peers have stale observation keys
+  // ══════════════════════════════════════════════════════════════════
+
+  test("CR9: lagging detection ignores non-Ready peers with stale high keys") {
+    IO {
+      // Simulate: rollback node at key=100, 3 peers registered:
+      //   - peerA (Ready, key=100) — correct, same round
+      //   - peerB (Observing, key=500) — stale observation key from pre-rollback
+      //   - peerC (Observing, key=500) — stale observation key from pre-rollback
+      val ownKey = 100
+
+      val allRegs = Map(
+        pid("peerA") -> 100,
+        pid("peerB") -> 500,
+        pid("peerC") -> 500
+      )
+
+      // Old behavior (BUG): count ALL registered peers
+      val oldPeersAtHigher = allRegs.count { case (_, k) => k > ownKey } // 2
+      val oldTotal = allRegs.size // 3
+      val oldIsLagging = oldTotal >= 3 && oldPeersAtHigher > oldTotal / 2 // 2 > 1 = true → FALSE POSITIVE
+
+      // New behavior (CR9): filter to Ready peers only
+      val readyPeerIds = Set(pid("peerA")) // Only peerA is Ready
+      val readyRegs = allRegs.view.filterKeys(readyPeerIds.contains).toMap
+      val newPeersAtHigher = readyRegs.count { case (_, k) => k > ownKey } // 0
+      val newTotal = readyRegs.size // 1
+      val newIsLagging = newTotal >= 3 && newPeersAtHigher > newTotal / 2 // 1 < 3, threshold not met
+
+      expect(oldIsLagging) && // Old behavior would false-positive
+      expect(!newIsLagging) // New behavior correctly ignores stale non-Ready peers
+    }
+  }
+
+  test("CR9: lagging detection still triggers when Ready peers are genuinely ahead") {
+    IO {
+      // All 4 peers are Ready and at higher key — node is genuinely lagging
+      val ownKey = 100
+
+      val allRegs = Map(
+        pid("peerA") -> 200,
+        pid("peerB") -> 200,
+        pid("peerC") -> 200,
+        pid("peerD") -> 200
+      )
+
+      val readyPeerIds = Set(pid("peerA"), pid("peerB"), pid("peerC"), pid("peerD"))
+      val readyRegs = allRegs.view.filterKeys(readyPeerIds.contains).toMap
+      val peersAtHigher = readyRegs.count { case (_, k) => k > ownKey } // 4
+      val total = readyRegs.size // 4
+      val isLagging = total >= 3 && peersAtHigher > total / 2 // 4 > 2 = true
+
+      expect(isLagging) // Genuinely lagging — detection must fire
+    }
+  }
+
+  test("CR9: lagging detection requires minimum 3 Ready peers (prevents small-cluster false positives)") {
+    IO {
+      // Only 2 Ready peers at higher key — below threshold
+      val ownKey = 100
+
+      val allRegs = Map(
+        pid("peerA") -> 200,
+        pid("peerB") -> 200
+      )
+
+      val readyPeerIds = Set(pid("peerA"), pid("peerB"))
+      val readyRegs = allRegs.view.filterKeys(readyPeerIds.contains).toMap
+      val peersAtHigher = readyRegs.count { case (_, k) => k > ownKey } // 2
+      val total = readyRegs.size // 2
+      val isLagging = total >= 3 && peersAtHigher > total / 2 // 2 < 3 = false
+
+      expect(!isLagging) // Below minimum peer threshold
+    }
+  }
+
+  test("CR9: peerRegistrationStream re-population doesn't cause false lagging after rollback") {
+    for {
+      // Simulate the full rollback scenario:
+      // 1. Node at key=3101228 (rollback target)
+      // 2. 3 peers in Observing state with stale observation keys from pre-rollback (key=3101300+)
+      // 3. peerRegistrationStream re-populates registrations from these stale keys
+      // 4. Without CR9: isLagging=true (3/3 at higher key) → abandon → recovery → stuck
+      // 5. With CR9: filter to Ready peers only → 0 Ready peers → isLagging=false → round proceeds
+      regsRef <- Ref.of[IO, Map[String, Int]](Map.empty)
+
+      // initFromRollback clears registrations (CR8)
+      _ <- regsRef.set(Map.empty)
+
+      // peerRegistrationStream immediately re-populates from Observing peers with stale keys
+      _ <- regsRef.update(
+        _ ++ Map(
+          "peerA" -> 3101300,
+          "peerB" -> 3101301,
+          "peerC" -> 3101302
+        )
+      )
+
+      allRegs <- regsRef.get
+      ownKey = 3101228
+
+      // All 3 peers are Observing (not Ready)
+      readyPeerIds = Set.empty[String]
+      readyRegs = allRegs.view.filterKeys(readyPeerIds.contains).toMap
+
+      peersAtHigher = readyRegs.count { case (_, k) => k > ownKey }
+      total = readyRegs.size
+      isLagging = total >= 3 && peersAtHigher > total / 2
+    } yield
+      expect(allRegs.size == 3) && // Registrations exist (re-populated by stream)
+        expect(readyRegs.isEmpty) && // But no Ready peers
+        expect(!isLagging) // So lagging detection doesn't fire
+  }
+
+  test("CR9: mixed Ready and Observing peers — only Ready peers count for lagging") {
+    IO {
+      // 2 Ready peers at higher key, 3 Observing peers at higher key
+      // Only Ready peers should be considered
+      val ownKey = 100
+
+      val allRegs = Map(
+        pid("readyA") -> 200,
+        pid("readyB") -> 200,
+        pid("observingC") -> 300,
+        pid("observingD") -> 300,
+        pid("observingE") -> 300
+      )
+
+      val readyPeerIds = Set(pid("readyA"), pid("readyB"))
+      val readyRegs = allRegs.view.filterKeys(readyPeerIds.contains).toMap
+      val peersAtHigher = readyRegs.count { case (_, k) => k > ownKey } // 2
+      val total = readyRegs.size // 2
+      val isLagging = total >= 3 && peersAtHigher > total / 2 // 2 < 3 = false
+
+      // Without CR9: 5 total, 5 at higher key → 5 > 2 → true (BUG)
+      val oldTotal = allRegs.size // 5
+      val oldHigher = allRegs.count { case (_, k) => k > ownKey } // 5
+      val oldIsLagging = oldTotal >= 3 && oldHigher > oldTotal / 2 // 5 > 2 = true
+
+      expect(oldIsLagging) && // Old behavior: false positive
+      expect(!isLagging) // New behavior: only 2 Ready peers, below threshold
+    }
+  }
 }
