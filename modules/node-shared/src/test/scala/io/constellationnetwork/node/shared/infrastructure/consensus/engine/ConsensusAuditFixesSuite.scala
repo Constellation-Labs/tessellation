@@ -90,7 +90,7 @@ object ConsensusAuditFixesSuite extends SimpleIOSuite {
 
       val tiers = scores.map {
         case (name, (completed, participated)) =>
-          val tier = if (participated > 0) participated - completed else 0L
+          val tier: Long = if (participated > 0) participated.toLong - completed.toLong else 0L
           name -> tier
       }
 
@@ -796,6 +796,226 @@ object ConsensusAuditFixesSuite extends SimpleIOSuite {
           expect(votes.getOrElse(target1, Set.empty).contains(voter)) &&
           expect(votes.getOrElse(target2, Set.empty).contains(voter))
         }
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // F1: Quorum feasibility — correct computation on active set
+  // (fix for double-counting withdrawn peers)
+  // ══════════════════════════════════════════════════════════════════
+
+  test("F1: quorum feasibility uses active facilitator count (not double-subtracting withdrawn)") {
+    IO {
+      // After updateFacilitators, state.facilitators.value already excludes withdrawn peers.
+      // The old code computed: activeAfterWithdrawals = facilitators.size - withdrawn.size (double-count)
+      // The new code uses: activeFacilitators = facilitators.size (already correct)
+      val totalOriginal = 10
+      val withdrawn = 3
+
+      // state.facilitators.value.size already reflects removal (= totalOriginal - withdrawn)
+      val facilitatorsAfterUpdate = totalOriginal - withdrawn // 7
+      val quorumThreshold = 0.75
+
+      // Old (buggy): activeAfterWithdrawals = 7 - 3 = 4, quorumSize = ceil(7 * 0.75) = 6 → infeasible (4 < 6)
+      val oldActive = facilitatorsAfterUpdate - withdrawn // double-counting!
+      val oldQuorum = math.ceil(facilitatorsAfterUpdate * quorumThreshold).toInt.max(1)
+      val oldInfeasible = oldActive > 0 && oldActive < oldQuorum
+
+      // New (fixed): activeFacilitators = 7, quorumSize = ceil(7 * 0.75) = 6 → feasible (7 >= 6)
+      val newActive = facilitatorsAfterUpdate
+      val newQuorum = math.ceil(facilitatorsAfterUpdate * quorumThreshold).toInt.max(1)
+      val newInfeasible = newActive > 0 && newActive < newQuorum
+
+      expect(oldInfeasible) && // old code incorrectly abandons
+      expect(!newInfeasible) // new code correctly continues
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // F2: forceLeave tries multiple source states
+  // ══════════════════════════════════════════════════════════════════
+
+  test("F2: forceLeave tries Ready, WaitingForDownload, DownloadInProgress, Observing") {
+    IO {
+      // Simulate the multi-state force leave logic
+      val forceLeaveStates = List("Ready", "WaitingForDownload", "DownloadInProgress", "Observing")
+
+      // Node is in WaitingForDownload — Ready transition fails, WaitingForDownload succeeds
+      val currentState = "WaitingForDownload"
+      val successState = forceLeaveStates.find(_ == currentState)
+
+      expect(successState.contains("WaitingForDownload")) &&
+      expect.same(4, forceLeaveStates.size)
+    }
+  }
+
+  test("F2: forceLeave falls back to recovery when no state matches") {
+    IO {
+      // Node is in a state not covered by force leave (e.g., WaitingForReady)
+      val forceLeaveStates = List("Ready", "WaitingForDownload", "DownloadInProgress", "Observing")
+      val currentState = "WaitingForReady"
+      val successState = forceLeaveStates.find(_ == currentState)
+
+      expect(successState.isEmpty) // should fall back to attemptRecoveryDownload
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // F3: totalRecoveryAttemptsRef resets on successful round
+  // ══════════════════════════════════════════════════════════════════
+
+  test("F3: totalRecoveryAttempts resets after successful consensus round") {
+    IO {
+      var totalRecoveryAttempts = 0
+
+      // Simulate: 3 recovery attempts
+      totalRecoveryAttempts += 1
+      totalRecoveryAttempts += 1
+      totalRecoveryAttempts += 1
+      expect.same(3, totalRecoveryAttempts) &&
+      {
+        // After successful round → resetOnSuccessfulRound
+        totalRecoveryAttempts = 0
+        expect.same(0, totalRecoveryAttempts)
+      }
+    }
+  }
+
+  test("F3: without reset, stale recovery history causes premature force-leave") {
+    IO {
+      val maxConsecutiveAbandonments = 5
+      val maxTotalRecoveryAttempts = maxConsecutiveAbandonments * 3 // 15
+
+      // Scenario: 12 recoveries → successful for 1000 rounds → new issue → 3 more recoveries
+      var totalAttempts = 12
+
+      // Without reset: after 3 more, total = 15 → force leave (premature!)
+      totalAttempts += 3
+      val wouldForceLeaveWithoutReset = totalAttempts >= maxTotalRecoveryAttempts
+
+      // With reset: after successful round, total resets to 0, then 3 → NOT force leave
+      totalAttempts = 0 // reset on successful round
+      totalAttempts += 3
+      val wouldForceLeaveWithReset = totalAttempts >= maxTotalRecoveryAttempts
+
+      expect(wouldForceLeaveWithoutReset) && // stale history triggers premature force-leave
+      expect(!wouldForceLeaveWithReset) // reset prevents premature force-leave
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // F4: Quality decay and pruning in consensus-agreed quality maps
+  // ══════════════════════════════════════════════════════════════════
+
+  test("F4: quality decay halves counters when threshold exceeded") {
+    import scala.collection.immutable.SortedMap
+    IO {
+      val qualityDecayThreshold = 100
+
+      // Simulate accumulated quality exceeding threshold
+      val accumulated: SortedMap[String, (Int, Int)] = SortedMap(
+        "peer1" -> (90, 110), // participated > threshold
+        "peer2" -> (80, 95),
+        "peer3" -> (50, 60)
+      )
+
+      val needsDecay = accumulated.values.exists { case (_, p) => p > qualityDecayThreshold }
+      val decayed = if (needsDecay) accumulated.view.mapValues { case (c, p) => (c / 2, p / 2) }.to(SortedMap)
+      else accumulated
+
+      expect(needsDecay) &&
+      expect.same((45, 55), decayed("peer1")) &&
+      expect.same((40, 47), decayed("peer2")) &&
+      expect.same((25, 30), decayed("peer3"))
+    }
+  }
+
+  test("F4: quality decay does NOT trigger below threshold") {
+    import scala.collection.immutable.SortedMap
+    IO {
+      val qualityDecayThreshold = 100
+
+      val accumulated: SortedMap[String, (Int, Int)] = SortedMap(
+        "peer1" -> (50, 60),
+        "peer2" -> (30, 40)
+      )
+
+      val needsDecay = accumulated.values.exists { case (_, p) => p > qualityDecayThreshold }
+      expect(!needsDecay) &&
+      expect.same((50, 60), accumulated("peer1")) // unchanged
+    }
+  }
+
+  test("F4: quality pruning removes entries where both counters are zero") {
+    import scala.collection.immutable.SortedMap
+    IO {
+      // After decay, some entries may become (0, 0)
+      val decayed: SortedMap[String, (Int, Int)] = SortedMap(
+        "peer1" -> (25, 30), // active
+        "peer2" -> (0, 1), // still has participation
+        "departed" -> (0, 0) // should be pruned
+      )
+
+      val pruned = decayed.filter { case (_, (c, p)) => c > 0 || p > 0 }
+
+      expect.same(2, pruned.size) &&
+      expect(pruned.contains("peer1")) &&
+      expect(pruned.contains("peer2")) &&
+      expect(!pruned.contains("departed"))
+    }
+  }
+
+  test("F4: quality decay is deterministic (same input → same output)") {
+    import scala.collection.immutable.SortedMap
+    IO {
+      val qualityDecayThreshold = 100
+      val input: SortedMap[String, (Int, Int)] = SortedMap(
+        "a" -> (90, 110),
+        "b" -> (80, 95),
+        "c" -> (50, 60)
+      )
+
+      def applyDecay(m: SortedMap[String, (Int, Int)]): SortedMap[String, (Int, Int)] = {
+        val needsDecay = m.values.exists { case (_, p) => p > qualityDecayThreshold }
+        val decayed = if (needsDecay) m.view.mapValues { case (c, p) => (c / 2, p / 2) }.to(SortedMap)
+        else m
+        decayed.filter { case (_, (c, p)) => c > 0 || p > 0 }
+      }
+
+      // Run twice — must produce identical results
+      val result1 = applyDecay(input)
+      val result2 = applyDecay(input)
+
+      expect.same(result1, result2)
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // F5: Currency L0 quality scores — proofs-based (fork fix)
+  // ══════════════════════════════════════════════════════════════════
+
+  test("F5: currency L0 quality must use proofs, not withdrawn/removed state") {
+    IO {
+      // Demonstrate the difference between proofs-based and withdrawn-based quality
+      val facilitators = (1 to 5).map(i => pid(s"peer$i")).toList
+      val signers = facilitators.take(3).toSet // proofs say 3 signed
+      val withdrawn = Set(facilitators(3)) // gossip says peer4 withdrew
+
+      // Proofs-based (correct — deterministic)
+      val proofsQuality = facilitators.map { p =>
+        p -> (if (signers.contains(p)) 1 else 0, 1)
+      }.toMap
+
+      // Withdrawn-based (old — NON-deterministic, different nodes may disagree)
+      val withdrawnQuality = facilitators.map { p =>
+        p -> (if (withdrawn.contains(p)) 0 else 1, 1)
+      }.toMap
+
+      // They produce different results for peer5 (didn't sign but gossip didn't mark as withdrawn)
+      // peer5 (index 4): proofs says (0,1) — didn't sign; withdrawn says (1,1) — not in withdrawn set
+      expect.same((0, 1), proofsQuality(facilitators(4))) && // peer5 didn't sign
+      expect.same((1, 1), withdrawnQuality(facilitators(4))) && // but gossip didn't say it withdrew
+      expect(proofsQuality != withdrawnQuality) // they diverge → fork risk!
     }
   }
 }

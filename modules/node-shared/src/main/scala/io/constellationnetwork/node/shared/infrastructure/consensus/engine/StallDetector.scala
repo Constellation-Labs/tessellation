@@ -189,13 +189,15 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status,
       ).whenA(isLagging)
 
       // --- Quorum feasibility check ---
-      // If remaining active facilitators can't form quorum, abandon immediately
-      activeAfterWithdrawals = state.facilitators.value.size - state.withdrawnFacilitators.value.size
+      // If remaining active facilitators can't form quorum, abandon immediately.
+      // NOTE: state.facilitators.value already excludes withdrawn peers (updateFacilitators removes them),
+      // so we use it directly as the active count. Quorum is computed on the active set, not the original.
+      activeFacilitators = state.facilitators.value.size
       quorumSize = config.quorumThreshold match {
-        case Some(threshold) => math.ceil(state.facilitators.value.size * threshold).toInt.max(1)
-        case None            => state.facilitators.value.size
+        case Some(threshold) => math.ceil(activeFacilitators * threshold).toInt.max(1)
+        case None            => activeFacilitators
       }
-      quorumInfeasible = activeAfterWithdrawals > 0 && activeAfterWithdrawals < quorumSize
+      quorumInfeasible = activeFacilitators > 0 && activeFacilitators < quorumSize
 
       // --- View change loop escalation check ---
       // If repeated eviction attempts are skipped (below minimum facilitators), the view change
@@ -212,7 +214,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status,
         if (isLagging)
           s"lagging behind network: $peersAtDifferentKey/$totalRegisteredPeers peers at different key"
         else if (quorumInfeasible)
-          s"quorum infeasible: $activeAfterWithdrawals active < $quorumSize required"
+          s"quorum infeasible: $activeFacilitators active < $quorumSize required"
         else if (evictionLoopStuck)
           s"eviction loop: repeated eviction skips (below minimum facilitators), escalating to abandon"
         else if (roundTimedOut)

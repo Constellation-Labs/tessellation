@@ -153,7 +153,14 @@ object ConsensusEventLoop {
       val commandStream: Stream[F, Unit] =
         Stream.repeatEval(queue.take).evalMap { cmd =>
           queue.size.flatMap(sz => Metrics[F].updateGauge("dag_consensus_command_queue_size", sz)) >>
-            fsm.handle(cmd).handleErrorWith { err =>
+            fsm.handle(cmd).flatTap { _ =>
+              // After a successful consensus round completes, reset recovery counters.
+              // This prevents stale history from causing premature force-leave on future (unrelated) recovery.
+              cmd match {
+                case _: ConsensusCommand.ConsensusFinished => abandonmentTracker.resetOnSuccessfulRound
+                case _                                     => Async[F].unit
+              }
+            }.handleErrorWith { err =>
               ctx.logger.error(err)(s"Unhandled error processing ${cmd.getClass.getSimpleName}, recovering") >>
                 Metrics[F].incrementCounter("dag_consensus_command_error") >>
                 (cmd match {
@@ -193,14 +200,12 @@ object ConsensusEventLoop {
           case _                                                                 => None
         }
           .filter(_.isResponsive)
-          .evalMap(collectRegistration(consensusClient, storage))
-          .handleErrorWith(e => Stream.eval(ctx.logger.error(e)("Peer registration failed")))
+          .evalMap(peer => collectRegistration(consensusClient, storage)(peer).handleErrorWith(e => ctx.logger.error(e)("Peer registration failed")))
 
       val leavingStream: Stream[F, Unit] =
         nodeStorage.nodeStates
           .filter(_ === NodeState.Leaving)
-          .evalMap(_ => manager.withdrawFromConsensus)
-          .handleErrorWith(e => Stream.eval(ctx.logger.error(e)("Error handling Leaving state")))
+          .evalMap(_ => manager.withdrawFromConsensus.handleErrorWith(e => ctx.logger.error(e)("Error handling Leaving state")))
 
       val run: Stream[F, Unit] =
         Stream(commandStream, peerRegistrationStream, leavingStream).parJoinUnbounded

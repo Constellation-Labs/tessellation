@@ -161,7 +161,8 @@ object types {
     monitorSummaryInterval: FiniteDuration = FiniteDuration(10, "s"),
     peerScoreLogInterval: FiniteDuration = FiniteDuration(60, "s"),
     tcaLookbackWindow: Int = 5,
-    tcaMinParticipation: Int = 2
+    tcaMinParticipation: Int = 2,
+    qualityDecayThreshold: Int = 100
   ) {
     quorumThreshold.foreach { t =>
       require(t > 2.0 / 3.0 && t <= 1.0, s"quorumThreshold must be in (2/3, 1.0], got $t")
@@ -199,7 +200,8 @@ object types {
           s"quorumThreshold=$quorumThreshold," +
           s"removalPenaltyRounds=$removalPenaltyRounds," +
           s"tcaLookbackWindow=$tcaLookbackWindow," +
-          s"tcaMinParticipation=$tcaMinParticipation"
+          s"tcaMinParticipation=$tcaMinParticipation," +
+          s"qualityDecayThreshold=$qualityDecayThreshold"
       io.constellationnetwork.security.hash.Hash.fromBytes(configString.getBytes("UTF-8"))
     }
   }

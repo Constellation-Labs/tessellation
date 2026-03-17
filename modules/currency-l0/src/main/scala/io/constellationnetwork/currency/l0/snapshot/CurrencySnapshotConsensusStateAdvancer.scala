@@ -114,15 +114,20 @@ object CurrencySnapshotConsensusStateAdvancer {
               acc.updated(pid, config.removalPenaltyRounds)
             }
             // Compute consensus-agreed peer quality: (roundsCompleted, roundsParticipated) per peer.
+            // CRITICAL: We derive "completed" from the signed artifact's proofs (who actually signed),
+            // NOT from withdrawnFacilitators/removedFacilitators. The proofs are embedded in the
+            // consensus-agreed artifact and are identical across all nodes. Using withdrawnFacilitators
+            // would be non-deterministic because withdrawal gossip may not have propagated to all nodes
+            // before outcome finalization, causing quality score divergence → leader divergence → fork.
+            val signers = f.signedMajorityArtifact.proofs.map(p => PeerId.fromId(p.id)).toSortedSet
             val thisRoundQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.from(
               state.facilitators.value.map { pid =>
-                val completed =
-                  if (state.withdrawnFacilitators.value.contains(pid) || state.removedFacilitators.value.contains(pid)) 0
-                  else 1
+                val completed = if (signers.contains(pid)) 1 else 0
                 pid -> (completed, 1)
               }
             )
-            val accumulatedQuality: SortedMap[PeerId, (Int, Int)] = {
+            // Accumulate with previous rounds, apply deterministic decay and pruning
+            val rawAccumulated: SortedMap[PeerId, (Int, Int)] = {
               val previous = state.lastOutcome.peerQuality
               val allPeerIds = (previous.keySet.toList ::: thisRoundQuality.keySet.toList).distinct
               SortedMap.from(allPeerIds.map { pid =>
@@ -131,6 +136,10 @@ object CurrencySnapshotConsensusStateAdvancer {
                 pid -> (pc + tc, pp + tp)
               })
             }
+            val needsDecay = rawAccumulated.values.exists { case (_, p) => p > consensusConfig.qualityDecayThreshold }
+            val decayed = if (needsDecay) rawAccumulated.view.mapValues { case (c, p) => (c / 2, p / 2) }.to(SortedMap)
+            else rawAccumulated
+            val accumulatedQuality = decayed.filter { case (_, (c, p)) => c > 0 || p > 0 }
 
             val outcome = CurrencyConsensusOutcome(
               state.key,

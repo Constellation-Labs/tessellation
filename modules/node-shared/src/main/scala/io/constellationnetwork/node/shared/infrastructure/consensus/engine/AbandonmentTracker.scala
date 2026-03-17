@@ -47,6 +47,14 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
   /** Tracks total recovery download attempts across all keys to detect extended recovery loops. */
   private val totalRecoveryAttemptsRef: Ref[F, Int] = Ref.unsafe(0)
 
+  /** Reset recovery counters after a successful consensus round.
+    * This prevents a node that recovered successfully from carrying stale recovery history
+    * that could trigger premature force-leave on a future (unrelated) recovery.
+    */
+  def resetOnSuccessfulRound: F[Unit] =
+    totalRecoveryAttemptsRef.set(0) >>
+      healthRef.update(_.copy(totalRecoveryAttempts = 0))
+
   /** Abandon a round: clear state, track consecutive failures, and either retry or trigger recovery. */
   def abandonRound(key: Key, reason: String): F[Unit] =
     ConsensusLog.error(logger, ConsensusLog.Lifecycle, key.toString, "n/a", "event" -> "ROUND_ABANDONED", "reason" -> reason) >>
@@ -60,7 +68,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
           case _ =>
             none[(Option[ConsensusState[Key, Status, Outcome, Kind]], Unit)].pure[F]
         }
-        .void >>
+        .void
+        .handleErrorWith(e => logger.warn(e)("condModifyState failed during abandon, proceeding with resource cleanup")) >>
       storage.clearResources(key) >>
       trackConsecutiveAbandonments(key).flatMap { consecutiveCount =>
         val shouldRecover = consecutiveCount >= config.maxConsecutiveAbandonments
@@ -116,6 +125,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
                      else
                        s"stuck at same ordinal for $consecutiveCount consecutive rounds")
       ) >>
+        healthRef.update(_.copy(totalRecoveryAttempts = totalAttempts)) >>
         Metrics[F].incrementCounter("dag_consensus_recovery_download_triggered") >>
         (if (shouldForceLeave)
            Metrics[F].incrementCounter("dag_consensus_force_leave_triggered") >>
@@ -126,10 +136,29 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
 
   /** Force the node to leave the cluster after exhausting all recovery attempts.
     * This breaks pathological loops where downloaded state leads to the same stuck ordinal.
+    * Tries multiple source states since the node could be in Ready, WaitingForDownload,
+    * DownloadInProgress, or Observing when force-leave fires.
     */
-  private def forceLeave(key: Key, totalAttempts: Int): F[Unit] =
-    ctx.nodeStorage.tryModifyStateGetResult(NodeState.Ready, NodeState.Leaving).flatMap {
-      case NodeStateTransition.Success =>
+  private def forceLeave(key: Key, totalAttempts: Int): F[Unit] = {
+    val forceLeaveStates = List(
+      NodeState.Ready,
+      NodeState.WaitingForDownload,
+      NodeState.DownloadInProgress,
+      NodeState.Observing
+    )
+
+    def tryStates(remaining: List[NodeState]): F[Boolean] =
+      remaining match {
+        case Nil => false.pure[F]
+        case state :: rest =>
+          ctx.nodeStorage.tryModifyStateGetResult(state, NodeState.Leaving).flatMap {
+            case NodeStateTransition.Success => true.pure[F]
+            case _                          => tryStates(rest)
+          }
+      }
+
+    tryStates(forceLeaveStates).flatMap {
+      case true =>
         ConsensusLog.error(
           logger,
           ConsensusLog.Lifecycle,
@@ -144,45 +173,62 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
           healthRef.update(_.copy(consecutiveAbandonments = 0, totalRecoveryAttempts = 0)) >>
           ctx.pending.clear() >>
           queue.offer(ConsensusCommand.RoundCompleted)
-      case _ =>
-        // If we can't transition to Leaving, fall back to normal recovery download
+      case false =>
+        // If we can't transition to Leaving from any state, fall back to recovery download
         ConsensusLog.warn(
           logger,
           ConsensusLog.Lifecycle,
           key.toString,
           "n/a",
           "event" -> "FORCE_LEAVE_FAILED",
-          "reason" -> "node not in Ready state, falling back to recovery download"
+          "reason" -> "could not transition to Leaving from any state, falling back to recovery download"
         ) >>
           attemptRecoveryDownload(key)
     }
+  }
 
-  private def attemptRecoveryDownload(key: Key): F[Unit] =
-    ctx.nodeStorage.tryModifyStateGetResult(NodeState.Ready, NodeState.WaitingForDownload).flatMap {
-      case NodeStateTransition.Success =>
+  private def attemptRecoveryDownload(key: Key): F[Unit] = {
+    val recoveryStates = List(
+      NodeState.Ready,
+      NodeState.Observing
+    )
+
+    def tryStates(remaining: List[NodeState]): F[Option[NodeState]] =
+      remaining match {
+        case Nil => none[NodeState].pure[F]
+        case state :: rest =>
+          ctx.nodeStorage.tryModifyStateGetResult(state, NodeState.WaitingForDownload).flatMap {
+            case NodeStateTransition.Success => state.some.pure[F]
+            case _                          => tryStates(rest)
+          }
+      }
+
+    tryStates(recoveryStates).flatMap {
+      case Some(fromState) =>
         ConsensusLog.info(
           logger,
           ConsensusLog.Lifecycle,
           key.toString,
           "n/a",
           "event" -> "RECOVERY_STATE_TRANSITION",
-          "from" -> "Ready",
+          "from" -> fromState.toString,
           "to" -> "WaitingForDownload"
         ) >>
           consecutiveAbandonCountRef.set((none[Key], 0)) >>
           healthRef.update(_.copy(consecutiveAbandonments = 0)) >>
           ctx.pending.clear() >>
           queue.offer(ConsensusCommand.RoundCompleted)
-      case _ =>
+      case None =>
         ConsensusLog.warn(
           logger,
           ConsensusLog.Lifecycle,
           key.toString,
           "n/a",
           "event" -> "RECOVERY_TRANSITION_FAILED",
-          "reason" -> "node not in Ready state"
+          "reason" -> "node not in Ready or Observing state"
         ) >>
           queue.offer(ConsensusCommand.RoundCompleted) >>
           queue.offer(ConsensusCommand.TimeTick)
     }
+  }
 }

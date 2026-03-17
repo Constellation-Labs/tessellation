@@ -161,8 +161,11 @@ object GlobalSnapshotConsensusStateAdvancer {
               pid -> (completed, 1)
             }
           )
-          // Accumulate with previous rounds: merge (completed, participated) tuples
-          val accumulatedQuality: SortedMap[PeerId, (Int, Int)] = {
+          // Accumulate with previous rounds: merge (completed, participated) tuples.
+          // Apply deterministic decay when any counter exceeds the threshold to prevent unbounded growth.
+          // Halving preserves relative quality ordering while keeping counters bounded.
+          // After decay, prune entries where both counters are 0 (departed peers with no history).
+          val rawAccumulated: SortedMap[PeerId, (Int, Int)] = {
             val previous = state.lastOutcome.peerQuality
             val allPeerIds = (previous.keySet.toList ::: thisRoundQuality.keySet.toList).distinct
             SortedMap.from(allPeerIds.map { pid =>
@@ -171,6 +174,10 @@ object GlobalSnapshotConsensusStateAdvancer {
               pid -> (pc + tc, pp + tp)
             })
           }
+          val needsDecay = rawAccumulated.values.exists { case (_, p) => p > config.qualityDecayThreshold }
+          val decayed = if (needsDecay) rawAccumulated.view.mapValues { case (c, p) => (c / 2, p / 2) }.to(SortedMap)
+          else rawAccumulated
+          val accumulatedQuality = decayed.filter { case (_, (c, p)) => c > 0 || p > 0 }
 
           val outcome = GlobalConsensusOutcome(
             state.key,
