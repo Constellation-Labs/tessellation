@@ -178,9 +178,12 @@ object ConsensusEventLoop {
                   case _: ConsensusCommand.InitializeFromDownload =>
                     // After 20 retries, initFromDownload exhausts its retry policy and the error propagates here.
                     // Without recovery, the node stays stuck — never initializes, never starts consensus.
+                    // Track the failure so that after maxTotalRecoveryAttempts the node force-leaves
+                    // (prevents infinite download → init fail → download loops).
                     // Transition back to WaitingForDownload so the DownloadDaemon can retry with fresh state.
                     ctx.logger.error(err)("InitializeFromDownload failed after exhausting retries, triggering recovery download") >>
                       Metrics[F].incrementCounter("dag_consensus_init_download_failure") >>
+                      abandonmentTracker.trackInitFromDownloadFailure >>
                       nodeStorage.tryModifyStateGetResult(NodeState.Observing, NodeState.WaitingForDownload).flatMap {
                         case NodeStateTransition.Success =>
                           ctx.logger.info("Recovery: transitioned Observing → WaitingForDownload for DownloadDaemon retry")

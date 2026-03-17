@@ -153,6 +153,14 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     */
   private[consensus] def cleanupConflictedRound(key: Key): F[Unit]
 
+  /** Clear ALL consensus states and resources across all keys.
+    *
+    * Used during recovery download to ensure no stale state from previous abandoned rounds
+    * persists into the fresh post-recovery context. Without this, ghost entries from other
+    * ordinals can interfere with the first post-recovery round.
+    */
+  private[consensus] def clearAllConsensusState: F[Unit]
+
 }
 
 object ConsensusStorage {
@@ -505,6 +513,14 @@ object ConsensusStorage {
           condModifyState[Unit](key) { _ =>
             (none[ConsensusState[Key, Status, Outcome, Kind]], ()).some.pure[F]
           }.void >> clearResources(key)
+
+        def clearAllConsensusState: F[Unit] =
+          for {
+            stateKeys <- statesR.keys
+            _ <- stateKeys.traverse_(k => statesR(k).set(none))
+            resourceKeys <- resourcesR.keys
+            _ <- resourceKeys.traverse_(k => resourcesR(k).set(none))
+          } yield ()
       }
   }
 }

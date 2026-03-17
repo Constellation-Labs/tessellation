@@ -126,8 +126,12 @@ object GlobalSnapshotConsensusStateAdvancer {
 
     /** Savepoint taken before `createArtifact()` mutations. On round abandonment + retry at the same ordinal, this is restored before
       * re-building the proposal to ensure the MptStore starts from a clean pre-mutation state.
+      *
+      * Tracks the key (ordinal) alongside the savepoint so that stale savepoints from a different ordinal
+      * (e.g., after recovery download) are discarded instead of restored — restoring a savepoint from
+      * ordinal N into an MptStore that was replaced by a download at ordinal M would corrupt state.
       */
-    private val proposalSavepointRef: Ref[F, Option[MptStoreSavepoint[F]]] = Ref.unsafe(none)
+    private val proposalSavepointRef: Ref[F, Option[(GlobalSnapshotKey, MptStoreSavepoint[F])]] = Ref.unsafe(none)
 
     protected val clusterStorage: ClusterStorage[F] = clusterStorageInstance
     protected val config: ConsensusConfig = consensusConfig
@@ -326,17 +330,32 @@ object GlobalSnapshotConsensusStateAdvancer {
         facilitatorsHash <- hashFacilitators(state)
         peerEvents <- consensusStorage.pullEvents(bound)
 
-        // Restore any previous savepoint from an abandoned round at the same ordinal,
+        // Restore any previous savepoint from an abandoned round at the SAME ordinal,
         // ensuring MptStore is in a clean pre-mutation state before createArtifact().
+        // CRITICAL: Only restore if the savepoint was taken for this exact key. After a recovery
+        // download, the MptStore has been completely replaced with fresh state — restoring a stale
+        // savepoint from a different ordinal would revert the MptStore to pre-download state,
+        // corrupting all subsequent rounds.
         previousSp <- proposalSavepointRef.getAndSet(none)
-        _ <- previousSp.traverse_ { sp =>
-          sp.restore >>
-            ConsensusLog.info(logger, ConsensusLog.Lifecycle, state.key.show, "n/a", "event" -> "MPT_SAVEPOINT_RESTORED")
+        _ <- previousSp.traverse_ { case (spKey, sp) =>
+          if (spKey === state.key)
+            sp.restore >>
+              ConsensusLog.info(logger, ConsensusLog.Lifecycle, state.key.show, "n/a", "event" -> "MPT_SAVEPOINT_RESTORED")
+          else
+            ConsensusLog.warn(
+              logger,
+              ConsensusLog.Lifecycle,
+              state.key.show,
+              "n/a",
+              "event" -> "MPT_SAVEPOINT_DISCARDED_WRONG_KEY",
+              "savepointKey" -> spKey.show,
+              "currentKey" -> state.key.show
+            )
         }
         // Take a fresh savepoint before mutations. If this round is abandoned and retried,
         // the next buildProposalTransition will restore this savepoint.
         sp <- mptStore.savepoint
-        _ <- proposalSavepointRef.set(sp.some)
+        _ <- proposalSavepointRef.set((state.key, sp).some)
 
         (artifact, context, returnedEvents) <- createArtifact(state, majorityTrigger, extractEvents(peerEvents))
 

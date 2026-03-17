@@ -55,6 +55,91 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
     totalRecoveryAttemptsRef.set(0) >>
       healthRef.update(_.copy(totalRecoveryAttempts = 0))
 
+  /** Track a failed initFromDownload attempt. Called by the event loop error handler when
+    * InitializeFromDownload exhausts retries. Without this, repeated init failures would
+    * loop forever (download → init fail → download) because the recovery counter is only
+    * incremented by abandonRound, not by init failures. After maxTotalRecoveryAttempts,
+    * the node will force-leave the cluster.
+    */
+  def trackInitFromDownloadFailure: F[Unit] =
+    totalRecoveryAttemptsRef.updateAndGet(_ + 1).flatMap { totalAttempts =>
+      val shouldForceLeave = totalAttempts >= maxTotalRecoveryAttempts
+      healthRef.update(_.copy(totalRecoveryAttempts = totalAttempts)) >>
+        ConsensusLog.warn(
+          logger,
+          ConsensusLog.Lifecycle,
+          "n/a",
+          "n/a",
+          "event" -> "INIT_DOWNLOAD_FAILURE_TRACKED",
+          "totalRecoveryAttempts" -> totalAttempts.toString,
+          "maxTotalRecoveryAttempts" -> maxTotalRecoveryAttempts.toString,
+          "willForceLeave" -> shouldForceLeave.toString
+        ) >>
+        Metrics[F].incrementCounter("dag_consensus_init_download_failure_tracked") >>
+        (if (shouldForceLeave)
+           ConsensusLog.error(
+             logger,
+             ConsensusLog.Lifecycle,
+             "n/a",
+             "n/a",
+             "event" -> "FORCE_LEAVE_FROM_INIT_FAILURES",
+             "totalRecoveryAttempts" -> totalAttempts.toString,
+             "reason" -> "repeated initFromDownload failures exhausted recovery attempts"
+           ) >>
+             Metrics[F].incrementCounter("dag_consensus_force_leave_triggered") >>
+             forceLeaveFromInitFailures(totalAttempts)
+         else Async[F].unit)
+    }
+
+  /** Force the node to leave the cluster after exhausting initFromDownload recovery attempts.
+    * Similar to forceLeave but doesn't require a Key parameter since init failures
+    * don't have a round key context.
+    */
+  private def forceLeaveFromInitFailures(totalAttempts: Int): F[Unit] = {
+    val forceLeaveStates = List(
+      NodeState.Ready,
+      NodeState.WaitingForDownload,
+      NodeState.DownloadInProgress,
+      NodeState.Observing
+    )
+
+    def tryStates(remaining: List[NodeState]): F[Boolean] =
+      remaining match {
+        case Nil => false.pure[F]
+        case state :: rest =>
+          ctx.nodeStorage.tryModifyStateGetResult(state, NodeState.Leaving).flatMap {
+            case NodeStateTransition.Success => true.pure[F]
+            case _                          => tryStates(rest)
+          }
+      }
+
+    tryStates(forceLeaveStates).flatMap {
+      case true =>
+        ConsensusLog.error(
+          logger,
+          ConsensusLog.Lifecycle,
+          "n/a",
+          "n/a",
+          "event" -> "FORCE_LEAVE_INIT_FAILURES_SUCCESS",
+          "totalRecoveryAttempts" -> totalAttempts.toString
+        ) >>
+          consecutiveAbandonCountRef.set((none[Key], 0)) >>
+          totalRecoveryAttemptsRef.set(0) >>
+          healthRef.update(_.copy(consecutiveAbandonments = 0, totalRecoveryAttempts = 0)) >>
+          ctx.pending.clear() >>
+          queue.offer(ConsensusCommand.RoundCompleted)
+      case false =>
+        ConsensusLog.warn(
+          logger,
+          ConsensusLog.Lifecycle,
+          "n/a",
+          "n/a",
+          "event" -> "FORCE_LEAVE_INIT_FAILURES_FAILED",
+          "reason" -> "could not transition to Leaving from any state"
+        )
+    }
+  }
+
   /** Abandon a round: clear state, track consecutive failures, and either retry or trigger recovery. */
   def abandonRound(key: Key, reason: String): F[Unit] =
     ConsensusLog.error(logger, ConsensusLog.Lifecycle, key.toString, "n/a", "event" -> "ROUND_ABANDONED", "reason" -> reason) >>
@@ -216,11 +301,17 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
         ) >>
           consecutiveAbandonCountRef.set((none[Key], 0)) >>
           healthRef.update(_.copy(consecutiveAbandonments = 0)) >>
-          // Clear stale peer registrations so after recovery the node doesn't
-          // immediately re-trigger false lagging detection from old entries.
-          // Fresh registrations will be populated via peerRegistrationStream
-          // when the node re-enters Observing state after download.
+          // Clear ALL consensus state (states, resources, peer registrations, scheduling state)
+          // to ensure no stale data from previous abandoned rounds persists into post-recovery.
+          // Without clearAllConsensusState, ghost entries from other ordinals can interfere
+          // with the first post-recovery round. clearAllPeerRegistrations prevents false
+          // lagging detection from stale departed-peer entries.
+          // clearTimeTrigger and clearObservationKey prevent stale scheduling and observation
+          // state from carrying over into the fresh context after download.
+          storage.clearAllConsensusState >>
           storage.clearAllPeerRegistrations >>
+          storage.clearTimeTrigger >>
+          storage.clearObservationKey >>
           ctx.pending.clear() >>
           queue.offer(ConsensusCommand.RoundCompleted)
       case None =>
