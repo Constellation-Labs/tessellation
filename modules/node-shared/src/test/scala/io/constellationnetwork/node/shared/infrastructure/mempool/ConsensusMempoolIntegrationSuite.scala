@@ -94,6 +94,9 @@ object ConsensusMempoolIntegrationSuite extends SimpleIOSuite {
         def getEventHashes: IO[Set[Hash]] =
           storageRef.get.map(_.keySet)
 
+        def clear: IO[Unit] =
+          storageRef.set(Map.empty)
+
         // Test helper to add entries directly
         def addEntry(entry: MempoolEntry[TestEvent, GlobalStateKey]): IO[Unit] =
           storageRef.update(_ + (entry.hashed.hash -> entry))

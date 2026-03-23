@@ -14,6 +14,8 @@ object ForkRecoveryDetectorSuite extends SimpleIOSuite {
 
   def makePeerId(n: Int): PeerId = PeerId(Hex(s"peer$n".padTo(64, '0')))
   def ordinal(n: Long): SnapshotOrdinal = SnapshotOrdinal.unsafeApply(n)
+  def chainTip(ord: Long, hash: String): ChainTip = ChainTip(ordinal(ord), Hash(hash))
+  def localTip(ord: Long, hash: String): IO[Option[ChainTip]] = ChainTip(ordinal(ord), Hash(hash)).some.pure[IO]
 
   val testConfig: MeshState.MeshConfig = MeshState.MeshConfig(
     targetMeshSize = 6,
@@ -33,7 +35,7 @@ object ForkRecoveryDetectorSuite extends SimpleIOSuite {
         mesh.updateChainTip(makePeerId(i), ChainTip(ordinal(20), majorityHash))
       }
 
-      detector = ForkRecoveryDetector.make[IO](mesh, ordinal(10).some.pure[IO], forkLagThreshold = 5)
+      detector = ForkRecoveryDetector.make[IO](mesh, localTip(10, "local-hash"), forkLagThreshold = 5)
       result <- detector.detectForkDivergence
     } yield
       expect(result.isDefined, "Should detect fork divergence")
@@ -51,7 +53,7 @@ object ForkRecoveryDetectorSuite extends SimpleIOSuite {
         mesh.updateChainTip(makePeerId(i), ChainTip(ordinal(20), Hash("hash")))
       }
 
-      detector = ForkRecoveryDetector.make[IO](mesh, ordinal(18).some.pure[IO], forkLagThreshold = 5)
+      detector = ForkRecoveryDetector.make[IO](mesh, localTip(18, "hash"), forkLagThreshold = 5)
       result <- detector.detectForkDivergence
     } yield expect(result.isEmpty, "Should not detect fork when lag (2) is below threshold (5)")
   }
@@ -68,26 +70,26 @@ object ForkRecoveryDetectorSuite extends SimpleIOSuite {
         mesh.updateChainTip(makePeerId(i), ChainTip(ordinal(15), Hash("hash-15")))
       }
 
-      detector = ForkRecoveryDetector.make[IO](mesh, ordinal(10).some.pure[IO], forkLagThreshold = 5)
+      detector = ForkRecoveryDetector.make[IO](mesh, localTip(10, "local-hash"), forkLagThreshold = 5)
       result <- detector.detectForkDivergence
     } yield expect(result.isEmpty, "Should not detect fork when no ordinal has > 50% majority")
   }
 
-  test("does not detect fork when local ordinal is unknown") {
+  test("does not detect fork when local chain tip is unknown") {
     for {
       mesh <- MeshState.make[IO](testConfig)
       _ <- (1 to 5).toList.traverse_ { i =>
         mesh.updateChainTip(makePeerId(i), ChainTip(ordinal(20), Hash("hash")))
       }
-      detector = ForkRecoveryDetector.make[IO](mesh, none[SnapshotOrdinal].pure[IO], forkLagThreshold = 5)
+      detector = ForkRecoveryDetector.make[IO](mesh, none[ChainTip].pure[IO], forkLagThreshold = 5)
       result <- detector.detectForkDivergence
-    } yield expect(result.isEmpty, "Should not detect fork when local ordinal is unknown")
+    } yield expect(result.isEmpty, "Should not detect fork when local chain tip is unknown")
   }
 
   test("does not detect fork with no chain tips") {
     for {
       mesh <- MeshState.make[IO](testConfig)
-      detector = ForkRecoveryDetector.make[IO](mesh, ordinal(10).some.pure[IO], forkLagThreshold = 5)
+      detector = ForkRecoveryDetector.make[IO](mesh, localTip(10, "hash"), forkLagThreshold = 5)
       result <- detector.detectForkDivergence
     } yield expect(result.isEmpty, "Should not detect fork with empty chain tips")
   }
@@ -102,9 +104,43 @@ object ForkRecoveryDetectorSuite extends SimpleIOSuite {
       }
       _ <- mesh.updateChainTip(makePeerId(5), ChainTip(ordinal(15), Hash("hash-15")))
 
-      detector = ForkRecoveryDetector.make[IO](mesh, ordinal(10).some.pure[IO], forkLagThreshold = 5)
+      detector = ForkRecoveryDetector.make[IO](mesh, localTip(10, "local-hash"), forkLagThreshold = 5)
       result <- detector.detectForkDivergence
       expectedPeers = (1 to 4).map(makePeerId).toSet
     } yield expect(result.isDefined).and(expect(result.get.majorityPeers == expectedPeers, "Majority should be peers 1-4"))
+  }
+
+  test("detects running fork — same ordinal, different hash") {
+    for {
+      mesh <- MeshState.make[IO](testConfig)
+      majorityHash = Hash("canonical-hash")
+      localHash = Hash("forked-hash")
+
+      // 4 peers at ordinal 10 with canonical hash
+      _ <- (1 to 4).toList.traverse_ { i =>
+        mesh.updateChainTip(makePeerId(i), ChainTip(ordinal(10), majorityHash))
+      }
+      // 1 peer at ordinal 10 with same forked hash as local
+      _ <- mesh.updateChainTip(makePeerId(5), ChainTip(ordinal(10), localHash))
+
+      detector = ForkRecoveryDetector.make[IO](mesh, localTip(10, "forked-hash"), forkLagThreshold = 5)
+      result <- detector.detectForkDivergence
+    } yield
+      expect(result.isDefined, "Should detect running fork (same ordinal, different hash)")
+        .and(expect(result.get.majorityHash == majorityHash, "Should identify canonical hash"))
+  }
+
+  test("no running fork when local hash matches majority") {
+    for {
+      mesh <- MeshState.make[IO](testConfig)
+      sharedHash = Hash("same-hash")
+
+      _ <- (1 to 5).toList.traverse_ { i =>
+        mesh.updateChainTip(makePeerId(i), ChainTip(ordinal(10), sharedHash))
+      }
+
+      detector = ForkRecoveryDetector.make[IO](mesh, localTip(10, "same-hash"), forkLagThreshold = 5)
+      result <- detector.detectForkDivergence
+    } yield expect(result.isEmpty, "Should not detect fork when local hash matches majority")
   }
 }

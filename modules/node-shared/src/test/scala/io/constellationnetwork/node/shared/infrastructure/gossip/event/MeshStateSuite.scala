@@ -131,12 +131,13 @@ object MeshStateSuite extends SimpleIOSuite {
     for {
       mesh <- MeshState.make[IO](testConfig)
       // Provide available peers but don't graft any yet
+      // With adaptive mesh, effectiveTarget = min(availablePeers.size, maxMeshSize)
       availablePeers = Set(makePeerId(1), makePeerId(2), makePeerId(3), makePeerId(4))
       result <- mesh.heartbeat(availablePeers)
     } yield
       expect.all(
-        result.grafted.size == testConfig.targetMeshSize, // Should graft to target
-        result.meshSize == testConfig.targetMeshSize
+        result.grafted.size == availablePeers.size, // Should graft all available (4 < targetMeshSize)
+        result.meshSize == availablePeers.size
       )
   }
 

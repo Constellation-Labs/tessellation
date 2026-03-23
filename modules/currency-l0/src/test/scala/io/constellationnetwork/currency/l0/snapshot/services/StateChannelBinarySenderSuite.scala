@@ -131,6 +131,10 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         def getOrdinal: IO[Option[SnapshotOrdinal]] = currentOrdinal.some.pure[IO]
 
         def getHeight: IO[Option[Height]] = ???
+
+        def clear: IO[Unit] = ().pure[IO]
+
+        def setForRecovery(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ().pure[IO]
       }
 
       postedRef <- Resource.eval(Ref.of[IO, List[Hashed[StateChannelSnapshotBinary]]](List.empty))
