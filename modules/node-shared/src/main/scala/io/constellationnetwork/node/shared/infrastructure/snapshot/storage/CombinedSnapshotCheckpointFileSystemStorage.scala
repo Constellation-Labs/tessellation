@@ -41,7 +41,7 @@ object LastCheckpointInfo {
 }
 
 final class CombinedSnapshotCheckpointFileSystemStorage[
-  F[_]: Async: Concurrent: Files,
+  F[_]: Async: Files,
   S <: Snapshot,
   SI <: SnapshotInfo[_]
 ](
@@ -210,7 +210,7 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
 object CombinedSnapshotCheckpointFileSystemStorage {
 
   def make[
-    F[_]: Async: Concurrent: Files,
+    F[_]: Async: Files,
     S <: Snapshot,
     SI <: SnapshotInfo[_]
   ](

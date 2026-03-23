@@ -5,13 +5,12 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.currency.schema.currency.CurrencySnapshotInfoV1
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.TokenUnlock
-import io.constellationnetwork.schema.balance.{Amount, Balance, BalanceArithmeticError}
-import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeError, MissingTokenLock, PendingDelegatedStakeWithdrawal}
+import io.constellationnetwork.schema.balance.{Balance, BalanceArithmeticError}
+import io.constellationnetwork.schema.delegatedStake.PendingDelegatedStakeWithdrawal
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}

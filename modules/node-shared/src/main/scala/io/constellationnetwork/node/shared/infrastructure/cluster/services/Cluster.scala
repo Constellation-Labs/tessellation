@@ -45,7 +45,8 @@ object Cluster {
     jarHash: Hash,
     environment: AppEnvironment,
     allowanceList: Option[Set[AllowanceListEntry]],
-    metagraphId: Option[Address]
+    metagraphId: Option[Address],
+    consensusConfigHash: Option[Hash] = None
   ): Cluster[F] =
     new Cluster[F] {
 
@@ -79,7 +80,8 @@ object Cluster {
             jarHash,
             environment,
             allowanceListHash,
-            metagraphId
+            metagraphId,
+            consensusConfigHash
           )
 
       def signRequest(signRequest: SignRequest)(implicit hasher: Hasher[F]): F[Signed[SignRequest]] =
