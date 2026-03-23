@@ -37,5 +37,17 @@ object GlobalSnapshotConsensusOps {
       case _: Finished => true
       case _           => false
     }
+
+    def isProposalPhase(status: GlobalSnapshotStatus): Boolean = status match {
+      case _: CollectingProposals => true
+      case _                      => false
+    }
+
+    def phaseIndex(status: GlobalSnapshotStatus): Int = status match {
+      case _: CollectingFacilities => 0
+      case _: CollectingProposals  => 1
+      case _: CollectingSignatures => 2
+      case _: Finished             => 3
+    }
   }
 }

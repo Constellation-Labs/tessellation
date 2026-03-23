@@ -43,7 +43,7 @@ object ClickHouseSink {
       queue <- Resource.eval(Queue.bounded[F, QueuedEntry](config.maxQueueSize))
       pausedUntil <- Resource.eval(Ref.of[F, Long](0L))
       writer = new BatchWriter[F](ds, config, nodeId, networkId, logger, queue, pausedUntil)
-      _ <- startFlusher(queue, writer, config, logger, pausedUntil)
+      _ <- startFlusher(queue, writer, config, pausedUntil)
     } yield new Impl[F](queue, logger, config.tableName)
 
   def makeWithDataSource[F[_]: Async](
@@ -57,7 +57,7 @@ object ClickHouseSink {
       queue <- Resource.eval(Queue.bounded[F, QueuedEntry](config.maxQueueSize))
       pausedUntil <- Resource.eval(Ref.of[F, Long](0L))
       writer = new BatchWriter[F](ds, config, nodeId, networkId, logger, queue, pausedUntil)
-      _ <- startFlusher(queue, writer, config, logger, pausedUntil)
+      _ <- startFlusher(queue, writer, config, pausedUntil)
     } yield new Impl[F](queue, logger, config.tableName)
 
   // === DataSource Management ===
@@ -92,7 +92,6 @@ object ClickHouseSink {
     queue: Queue[F, QueuedEntry],
     writer: BatchWriter[F],
     config: ClickHouseConfig,
-    logger: SelfAwareStructuredLogger[F],
     pausedUntil: Ref[F, Long]
   ): Resource[F, Unit] = {
     val flush: F[Unit] = for {

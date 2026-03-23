@@ -12,7 +12,9 @@ import io.constellationnetwork.currency.dataApplication.storage.{
   GlobalSnapshotsWithStateLocalFileSystemStorage
 }
 import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnapshotCleanupStorage
+import io.constellationnetwork.currency.l0.infrastructure.mempool.CurrencyEventMempool
 import io.constellationnetwork.currency.l0.infrastructure.snapshot.CurrencySnapshotCleanupStorage
+import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
@@ -25,12 +27,13 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSyncGlob
 import io.constellationnetwork.node.shared.infrastructure.cluster.storage.L0ClusterStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.ValidationErrorStorage
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage
+import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage._
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.L0Peer
-import io.constellationnetwork.security.HasherSelector
+import io.constellationnetwork.security.{Hasher, HasherSelector}
 
 import fs2.io.file.Files
 
@@ -85,6 +88,19 @@ object Storages {
           snapshotLocalFileSystemStorage,
           snapshotInfoLocalFileSystemStorage
         )
+
+      eventMempool <- {
+        val maybeDA = dataApplication
+        import io.constellationnetwork.currency.dataApplication._
+        import io.circe.{Encoder, Json}
+        def noopEncoder: Encoder[DataTransaction] = (_: DataTransaction) => Json.Null
+        implicit val dtEncoder: Encoder[DataTransaction] = maybeDA.map { da =>
+          implicit val dataUpdateEncoder: Encoder[DataUpdate] = da.dataEncoder
+          DataTransaction.encoder
+        }.getOrElse(noopEncoder)
+        implicit val hasherInstance: Hasher[F] = hasherSelector.getCurrent
+        CurrencyEventMempool.make[F](CurrencyEventMempool.defaultConfig)
+      }
     } yield
       new Storages[F](
         globalL0Cluster = globalL0ClusterStorage,
@@ -102,7 +118,8 @@ object Storages {
         lastGlobalSnapshotSync = lastGlobalSnapshotSyncStorage,
         currencySnapshotEventValidationError = sharedStorages.currencySnapshotEventValidationError,
         currencySnapshotCleanup = currencySnapshotCleanupStorage,
-        combinedCurrencySnapshotCheckpointStorage = combinedCurrencySnapshotCheckpointStorage
+        combinedCurrencySnapshotCheckpointStorage = combinedCurrencySnapshotCheckpointStorage,
+        eventMempool = eventMempool
       ) {}
 }
 
@@ -126,5 +143,6 @@ sealed abstract class Storages[F[_]] private (
     F,
     CurrencyIncrementalSnapshot,
     CurrencySnapshotInfo
-  ]
+  ],
+  val eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey]
 )

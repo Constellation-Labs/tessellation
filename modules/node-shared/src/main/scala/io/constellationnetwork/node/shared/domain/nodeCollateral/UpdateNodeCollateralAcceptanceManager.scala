@@ -21,7 +21,13 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 
 import eu.timepit.refined.types.numeric.NonNegLong
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
+/** Accepts or rejects node collateral create/withdraw events for inclusion in a global snapshot.
+  *
+  * '''Determinism''': Uses `traverse` for validation (order-independent) and `foldLeft` for partitioning accepted/rejected results. Input
+  * lists should be in canonical order for deterministic partition ordering. Callers sort events before passing them.
+  */
 trait UpdateNodeCollateralAcceptanceManager[F[_]] {
 
   def accept(
@@ -38,6 +44,8 @@ trait UpdateNodeCollateralAcceptanceManager[F[_]] {
 object UpdateNodeCollateralAcceptanceManager {
   def make[F[_]: Async: SecurityProvider](validator: UpdateNodeCollateralValidator[F]) =
     new UpdateNodeCollateralAcceptanceManager[F] {
+      private val logger = Slf4jLogger.getLoggerFromClass[F](getClass)
+
       def accept(
         creates: List[Signed[UpdateNodeCollateral.Create]],
         withdrawals: List[Signed[UpdateNodeCollateral.Withdraw]],
@@ -63,11 +71,16 @@ object UpdateNodeCollateralAcceptanceManager {
                 }
             }
 
+        // Defensive sort for deterministic partition ordering across all peers.
+        val sortedCreates = creates.sortBy(_.show)
+        val sortedWithdrawals = withdrawals.sortBy(_.show)
         for {
-          validatedCreates <- creates.traverse(signed => validator.validateCreateNodeCollateral(signed, lastSnapshotContext))
-          validatedWithdrawals <- withdrawals.traverse(signed => validator.validateWithdrawNodeCollateral(signed, lastSnapshotContext))
-          (acceptedCreates, notAcceptedCreates) = partitionAccepted(validatedCreates, creates)
-          (acceptedWithdrawals, notAcceptedWithdrawals) = partitionAccepted(validatedWithdrawals, withdrawals)
+          validatedCreates <- sortedCreates.traverse(signed => validator.validateCreateNodeCollateral(signed, lastSnapshotContext))
+          validatedWithdrawals <- sortedWithdrawals.traverse(signed =>
+            validator.validateWithdrawNodeCollateral(signed, lastSnapshotContext)
+          )
+          (acceptedCreates, notAcceptedCreates) = partitionAccepted(validatedCreates, sortedCreates)
+          (acceptedWithdrawals, notAcceptedWithdrawals) = partitionAccepted(validatedWithdrawals, sortedWithdrawals)
 
           delegatedStakeTokenLockReferences = updateDelegatedStakeAcceptanceResult.acceptedCreates.values
             .flatMap(_.map(_._1.tokenLockRef))
@@ -84,6 +97,16 @@ object UpdateNodeCollateralAcceptanceManager {
             .traverse { case (signed, epoch) => signed.proofs.head.id.toAddress.map((_, (signed, epoch))) }
             .map(_.groupBy(_._1).view.mapValues(_.map(_._2)).toSortedMap)
 
+          filteredByDelegStake = acceptedCreates.size - acceptedCreatesMap.values.map(_.size).sum
+          _ <- logger.info(
+            s"[NODE_COLLATERAL] ordinal=${lastSnapshotOrdinal.show} " +
+              s"input: creates=${creates.size} withdrawals=${withdrawals.size} " +
+              s"delegStakeTokenLockRefs=${delegatedStakeTokenLockReferences.size} | " +
+              s"result: acceptedCreates=${acceptedCreatesMap.values.map(_.size).sum} " +
+              s"rejectedCreates=${notAcceptedCreates.size} filteredByDelegStake=$filteredByDelegStake " +
+              s"acceptedWithdrawals=${acceptedWithdrawalsMap.values.map(_.size).sum} " +
+              s"rejectedWithdrawals=${notAcceptedWithdrawals.size}"
+          )
         } yield
           UpdateNodeCollateralAcceptanceResult(
             acceptedCreatesMap,

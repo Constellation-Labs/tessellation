@@ -1,11 +1,13 @@
 package io.constellationnetwork.node.shared.http.routes
 
 import cats.effect.Async
+import cats.effect.kernel.Ref
 import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.domain.cluster.services.Cluster
 import io.constellationnetwork.node.shared.http.routes.ConsensusInfoRoutes.ConsensusInfo
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusHealthStatus
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema.peer.{PeerId, PeerInfo}
@@ -23,7 +25,8 @@ import org.http4s.dsl.Http4sDsl
 class ConsensusInfoRoutes[F[_]: Async: Hasher, Key: Encoder, Outcome](
   cluster: Cluster[F],
   consensusStorage: ConsensusStorage[F, _, Key, _, _, _, Outcome, _],
-  selfId: PeerId
+  selfId: PeerId,
+  healthRef: Option[Ref[F, ConsensusHealthStatus]] = None
 )(implicit _facilitators: Lens[Outcome, Facilitators], _key: Lens[Outcome, Key])
     extends Http4sDsl[F]
     with PublicRoutes[F] {
@@ -35,6 +38,12 @@ class ConsensusInfoRoutes[F[_]: Async: Hasher, Key: Encoder, Outcome](
       consensusStorage.getLastConsensusOutcome.flatMap {
         case Some(outcome) => Ok(makeConsensusInfo(outcome))
         case _             => NotFound()
+      }
+
+    case GET -> Root / "health" =>
+      healthRef match {
+        case Some(ref) => ref.get.flatMap(Ok(_))
+        case None      => Ok(ConsensusHealthStatus.empty)
       }
   }
 

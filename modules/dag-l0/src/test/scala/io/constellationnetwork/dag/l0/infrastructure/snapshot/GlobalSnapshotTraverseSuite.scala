@@ -466,6 +466,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
         override def download(implicit hasherSelector: HasherSelector[IO]): IO[Unit] = ???
 
+        override def recoveryDownload(implicit hasherSelector: HasherSelector[IO]): IO[Unit] = ???
+
         override def fetchSnapshot(hash: Option[Hash], ordinal: GlobalSnapshotKey)(
           implicit hasher: Hasher[IO]
         ): IO[Signed[GlobalSnapshotArtifact]] = ???

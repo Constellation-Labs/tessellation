@@ -29,8 +29,7 @@ object CurrencyConsensusHandler {
       CurrencyConsensusKind
     ](queue)
 
-    all.eventHandler <+>
-      all.facilityHandler <+>
+    all.facilityHandler <+>
       all.proposalHandler <+>
       all.signatureHandler <+>
       all.binarySignatureHandler <+>

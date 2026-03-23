@@ -11,13 +11,15 @@ import io.constellationnetwork.currency.l0.cli.method.Run
 import io.constellationnetwork.currency.l0.http.routes._
 import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotKey
 import io.constellationnetwork.currency.l0.snapshot.schema.CurrencyConsensusOutcome
+import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment.{Dev, Integrationnet, Testnet}
 import io.constellationnetwork.kernel._
 import io.constellationnetwork.node.shared.config.types.{HttpConfig, RouteRateLimiterConfig, SharedConfig}
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
-import io.constellationnetwork.node.shared.http.routes._
+import io.constellationnetwork.node.shared.http.routes.{EventGossipRoutes, _}
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.CombinedSnapshotCheckpointFileSystemStorage
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
@@ -52,7 +54,8 @@ object HttpApi {
       F,
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
-    ]
+    ],
+    getLocalChainTip: Option[F[Option[ChainTip]]] = None
   ): F[HttpApi[F]] =
     for {
       snapshotRoutes <-
@@ -81,7 +84,8 @@ object HttpApi {
         maybeMetagraphVersion,
         queues,
         sharedConfig,
-        snapshotRoutes
+        snapshotRoutes,
+        getLocalChainTip
       ) {}
 }
 
@@ -100,7 +104,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   maybeMetagraphVersion: Option[MetagraphVersion],
   queues: Queues[F],
   sharedConfig: SharedConfig,
-  snapshotRoutes: SnapshotRoutes[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
+  snapshotRoutes: SnapshotRoutes[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+  getLocalChainTip: Option[F[Option[ChainTip]]] = None
 ) {
 
   private val clusterRoutes =
@@ -114,6 +119,25 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes =
     GossipRoutes[F](storages.rumor, services.gossip, sharedConfig.gossip.timeouts)
+
+  private val eventGossipRoutes = {
+    import io.constellationnetwork.currency.dataApplication._
+    import io.circe.{Encoder => CEnc, Decoder => CDec, Json => CJson}
+    def noopDtEncoder: CEnc[DataTransaction] = (_: DataTransaction) => CJson.Null
+    def noopDtDecoder: CDec[DataTransaction] = CDec.failedWithMessage("DataTransaction decoder not provided")
+    implicit val dtEncoder: CEnc[DataTransaction] = maybeDataApplication.map { da =>
+      implicit val duEnc: CEnc[DataUpdate] = da.dataEncoder
+      DataTransaction.encoder
+    }.getOrElse(noopDtEncoder)
+    implicit val dtDecoder: CDec[DataTransaction] = maybeDataApplication.map { da =>
+      implicit val duDec: CDec[DataUpdate] = da.dataDecoder
+      DataTransaction.decoder
+    }.getOrElse(noopDtDecoder)
+    EventGossipRoutes.make[F, CurrencySnapshotEvent, CurrencyStateKey](
+      storages.eventMempool,
+      getLocalChainTip
+    )
+  }
 
   private val currencyBlockRoutes = CurrencyBlockRoutes[F](mkCell)
   private val allowSpendBlockRoutes = AllowSpendBlockRoutes[F](queues.l1Output)
@@ -148,7 +172,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
       new ConsensusInfoRoutes[F, CurrencySnapshotKey, CurrencyConsensusOutcome](
         services.cluster,
         services.consensus.storage,
-        selfId
+        selfId,
+        services.consensus.healthRef
       )
     }
 
@@ -215,6 +240,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
                 clusterRoutes.p2pRoutes <+>
                 nodeRoutes.p2pRoutes <+>
                 gossipRoutes.p2pRoutes <+>
+                eventGossipRoutes.p2pRoutes <+>
                 consensusRoutes <+>
                 dataBlockRoutes.map(_.p2pRoutes).getOrElse(HttpRoutes.empty) <+>
                 metagraphNodeRoutes.map(_.p2pRoutes).getOrElse(HttpRoutes.empty)
