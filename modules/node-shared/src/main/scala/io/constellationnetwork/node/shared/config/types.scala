@@ -15,6 +15,7 @@ import io.constellationnetwork.schema.node.{NodeState, RewardFraction}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.transaction.TransactionAmount
 import io.constellationnetwork.schema.{NonNegFraction, SnapshotOrdinal}
+import io.constellationnetwork.security.hash.Hash
 
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.types.numeric._
@@ -161,7 +162,10 @@ object types {
     peerScoreLogInterval: FiniteDuration = FiniteDuration(60, "s"),
     tcaLookbackWindow: Int = 5,
     tcaMinParticipation: Int = 2,
-    qualityDecayThreshold: Int = 100
+    qualityDecayThreshold: Int = 100,
+    eventTriggerMinPeers: Int = 2,
+    eventTriggerThreshold: Int = 1,
+    eventTriggerCooldown: FiniteDuration = FiniteDuration(5, "s")
   ) {
 
     /** Deterministic hash of consensus-critical config values.
@@ -188,7 +192,7 @@ object types {
       *
       * Hash.fromBytes applies SHA-256 (via sha256DigestFromBytes), producing a compact 64-char hex digest.
       */
-    lazy val deterministicConfigHash: io.constellationnetwork.security.hash.Hash = {
+    lazy val deterministicConfigHash: Hash = {
       val configString =
         s"maxFacilitatorCount=${maxFacilitatorCount.map(_.value)}," +
           s"maxStallCycles=$maxStallCycles," +
@@ -196,7 +200,7 @@ object types {
           s"tcaLookbackWindow=$tcaLookbackWindow," +
           s"tcaMinParticipation=$tcaMinParticipation," +
           s"qualityDecayThreshold=$qualityDecayThreshold"
-      io.constellationnetwork.security.hash.Hash.fromBytes(configString.getBytes("UTF-8"))
+      Hash.fromBytes(configString.getBytes("UTF-8"))
     }
   }
 

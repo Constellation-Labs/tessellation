@@ -5,7 +5,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
 
-import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
+import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataTransaction, L0NodeContext}
 import io.constellationnetwork.currency.l0.StoragesInitializer.initializeCurrencySnapshotStorages
 import io.constellationnetwork.currency.l0.cell.{L0Cell, L0CellInput}
 import io.constellationnetwork.currency.l0.cli.method
@@ -14,6 +14,7 @@ import io.constellationnetwork.currency.l0.config.types._
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
 import io.constellationnetwork.currency.l0.modules._
 import io.constellationnetwork.currency.l0.node.L0NodeContext
+import io.constellationnetwork.currency.l0.snapshot.DataTransactionCodecs
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
 import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency._
@@ -46,6 +47,7 @@ import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.pureconfig._
 import fs2.concurrent.SignallingRef
+import io.circe.{Decoder => CirceDecoder, Encoder => CirceEncoder}
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import pureconfig.generic.auto._
@@ -182,18 +184,8 @@ abstract class CurrencyL0App(
       }
 
       daemonWithRecovery <- {
-        import io.constellationnetwork.currency.dataApplication._
-        import io.circe.{Encoder => CEncoder, Decoder => CDecoder, Json => CJson}
-        def noopDtEncoder: CEncoder[DataTransaction] = (_: DataTransaction) => CJson.Null
-        def noopDtDecoder: CDecoder[DataTransaction] = CDecoder.failedWithMessage("DataTransaction decoder not provided")
-        implicit val dtEncoder: CEncoder[DataTransaction] = dataApplicationService.map { da =>
-          implicit val duEnc: CEncoder[DataUpdate] = da.dataEncoder
-          DataTransaction.encoder
-        }.getOrElse(noopDtEncoder)
-        implicit val dtDecoder: CDecoder[DataTransaction] = dataApplicationService.map { da =>
-          implicit val duDec: CDecoder[DataUpdate] = da.dataDecoder
-          DataTransaction.decoder
-        }.getOrElse(noopDtDecoder)
+        implicit val dtEncoder: CirceEncoder[DataTransaction] = DataTransactionCodecs.encoder(dataApplicationService)
+        implicit val dtDecoder: CirceDecoder[DataTransaction] = DataTransactionCodecs.decoder(dataApplicationService)
         EventGossipDaemon
           .make[IO, CurrencySnapshotEvent, CurrencyStateKey](
             storages.eventMempool,
@@ -466,13 +458,7 @@ abstract class CurrencyL0App(
                           maybeOwnerEvent <- services.currencyMessages.validateInitialCurrencyOwner(m.metagraphOwnerMessagePath)
                           _ <- logger.info(s"Owner address set")
                           _ <- maybeOwnerEvent.traverse_ { event =>
-                            import io.constellationnetwork.currency.dataApplication._
-                            import io.circe.{Encoder => CEnc, Json => CJson}
-                            def noopDtEnc: CEnc[DataTransaction] = (_: DataTransaction) => CJson.Null
-                            implicit val dtEnc: CEnc[DataTransaction] = dataApplicationService.map { da =>
-                              implicit val duEnc: CEnc[DataUpdate] = da.dataEncoder
-                              DataTransaction.encoder
-                            }.getOrElse(noopDtEnc)
+                            implicit val dtEnc: CirceEncoder[DataTransaction] = DataTransactionCodecs.encoder(dataApplicationService)
                             hasherSelectorAlwaysCurrent.withCurrent { implicit hasher =>
                               Signed.forAsyncHasher[IO, CurrencySnapshotEvent](event, keyPair).flatMap { signedEvent =>
                                 signedEvent.toHashed[IO].flatMap { hashedEvent =>

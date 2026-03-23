@@ -23,6 +23,7 @@ import io.constellationnetwork.node.shared.domain.event.EventCutter
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event}
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.delegatedStake.RewardsInfoStorage
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.GlobalSnapshotAcceptanceManager
@@ -356,10 +357,10 @@ object GlobalSnapshotConsensusFunctions {
 
         _ <- ConsensusLog.info(
           logger,
-          ConsensusLog.Proposal,
+          Category.Proposal,
           currentOrdinal.show,
           "n/a",
-          "event" -> "PROPOSAL_EVENTS",
+          Event.ProposalEvents,
           "trigger" -> trigger.toString,
           "events.total" -> events.size.toString,
           "dag" -> blocksForAcceptance.size.toString,
@@ -413,18 +414,18 @@ object GlobalSnapshotConsensusFunctions {
         acceptEndMs <- Async[F].monotonic.map(_.toMillis)
         _ <- ConsensusLog.info(
           logger,
-          ConsensusLog.Proposal,
+          Category.Proposal,
           currentOrdinal.show,
           "n/a",
-          "event" -> "ACCEPT_TIMING",
+          Event.AcceptTiming,
           "acceptDurationMs" -> (acceptEndMs - acceptStartMs).toString
         )
         _ <- ConsensusLog.info(
           logger,
-          ConsensusLog.Proposal,
+          Category.Proposal,
           currentOrdinal.show,
           "n/a",
-          "event" -> "ACCEPTANCE_RESULTS",
+          Event.AcceptanceResults,
           "blocks.accepted" -> acceptanceResult.accepted.size.toString,
           "blocks.notAccepted" -> acceptanceResult.notAccepted.size.toString,
           "allowSpend.accepted" -> allowSpendBlockAcceptanceResult.accepted.size.toString,
@@ -486,10 +487,10 @@ object GlobalSnapshotConsensusFunctions {
         returnedEvents = returnedSCEvents.map(StateChannelEvent(_)) ++ returnedDAGEvents
         _ <- ConsensusLog.info(
           logger,
-          ConsensusLog.Proposal,
+          Category.Proposal,
           currentOrdinal.show,
           "n/a",
-          "event" -> "ARTIFACT_BUILT",
+          Event.ArtifactBuilt,
           "height" -> globalSnapshot.height.show,
           "subHeight" -> globalSnapshot.subHeight.show,
           "epoch" -> globalSnapshot.epochProgress.show,

@@ -12,6 +12,7 @@ import scala.concurrent.duration._
 import io.constellationnetwork.dag.l0.domain.delegatedStake.{CreateDelegatedStakeOutput, DelegatedStakeOutput, WithdrawDelegatedStakeOutput}
 import io.constellationnetwork.dag.l0.domain.nodeCollateral.{CreateNodeCollateralOutput, NodeCollateralOutput, WithdrawNodeCollateralOutput}
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
+import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.Daemon
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.EventGossipDaemon
@@ -26,25 +27,11 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.StateChannelOutput
 
 import fs2.Stream
+import io.circe.{Encoder => CirceEncoder}
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object GlobalSnapshotEventsPublisherDaemon {
-
-  /** Minimum cluster peers (excluding self) required to trigger event-driven consensus. Prevents solo nodes from triggering EventConsensus,
-    * which causes facilitators-hash divergence during cluster formation and re-admission.
-    */
-  val MinClusterPeersForEventTrigger: Int =
-    sys.env.getOrElse("CL_EVENT_TRIGGER_MIN_PEERS", "2").toInt
-
-  /** Number of pending mempool events required before triggering event-driven consensus. Batches events for efficiency under backpressure.
-    */
-  val EventTriggerThreshold: Int =
-    sys.env.getOrElse("CL_EVENT_TRIGGER_THRESHOLD", "1").toInt
-
-  /** Cooldown between event-driven consensus triggers to prevent rapid-fire rounds. */
-  val EventTriggerCooldown: FiniteDuration =
-    sys.env.getOrElse("CL_EVENT_TRIGGER_COOLDOWN_SECONDS", "5").toInt.seconds
 
   def make[F[_]: Async: Supervisor: HasherSelector: SecurityProvider](
     stateChannelOutputs: Queue[F, StateChannelOutput],
@@ -59,8 +46,12 @@ object GlobalSnapshotEventsPublisherDaemon {
     eventGossipDaemon: EventGossipDaemon[F, GlobalSnapshotEvent, GlobalStateKey],
     clusterStorage: ClusterStorage[F],
     triggerEventConsensus: Option[F[Unit]],
-    getLastFacilitatorCount: F[Int]
+    getLastFacilitatorCount: F[Int],
+    consensusConfig: ConsensusConfig
   ): Daemon[F] = {
+    val eventTriggerMinPeers = consensusConfig.eventTriggerMinPeers
+    val eventTriggerThreshold = consensusConfig.eventTriggerThreshold
+    val eventTriggerCooldown = consensusConfig.eventTriggerCooldown
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotEventsPublisherDaemon.getClass)
 
     val events: Stream[F, GlobalSnapshotEvent] = Stream
@@ -114,7 +105,10 @@ object GlobalSnapshotEventsPublisherDaemon {
                 triggerEventConsensus,
                 getLastFacilitatorCount,
                 lastTriggerRef,
-                logger
+                logger,
+                eventTriggerMinPeers,
+                eventTriggerThreshold,
+                eventTriggerCooldown
               )
           }.compile.drain
         }
@@ -128,7 +122,7 @@ object GlobalSnapshotEventsPublisherDaemon {
     eventMempool: EventMempool[F, E, K],
     eventGossipDaemon: EventGossipDaemon[F, E, K],
     logger: SelfAwareStructuredLogger[F]
-  )(implicit hasher: Hasher[F], signed: io.circe.Encoder[E]): F[Unit] =
+  )(implicit hasher: Hasher[F], signed: CirceEncoder[E]): F[Unit] =
     Signed.forAsyncHasher[F, E](event, keyPair).flatMap { signedEvent =>
       signedEvent.toHashed.flatMap { hashedEvent =>
         eventMempool.add(signedEvent).flatMap {
@@ -141,8 +135,8 @@ object GlobalSnapshotEventsPublisherDaemon {
     }
 
   /** Trigger event-driven consensus if all guards pass:
-    *   1. triggerEventConsensus is available (consensus wired) 2. Cluster has >= MinClusterPeersForEventTrigger responsive peers (not solo)
-    *      3. Mempool has >= EventTriggerThreshold pending events (batch efficiency) 4. Cooldown elapsed since last trigger (prevent
+    *   1. triggerEventConsensus is available (consensus wired) 2. Cluster has >= eventTriggerMinPeers responsive peers (not solo) 3.
+    *      Mempool has >= eventTriggerThreshold pending events (batch efficiency) 4. Cooldown elapsed since last trigger (prevent
     *      rapid-fire)
     */
   private def maybeEventTrigger[F[_]: Async, E, K](
@@ -151,7 +145,10 @@ object GlobalSnapshotEventsPublisherDaemon {
     triggerEventConsensus: Option[F[Unit]],
     getLastFacilitatorCount: F[Int],
     lastTriggerRef: Ref[F, Long],
-    logger: SelfAwareStructuredLogger[F]
+    logger: SelfAwareStructuredLogger[F],
+    eventTriggerMinPeers: Int,
+    eventTriggerThreshold: Int,
+    eventTriggerCooldown: FiniteDuration
   ): F[Unit] =
     triggerEventConsensus match {
       case None => Async[F].unit
@@ -161,22 +158,22 @@ object GlobalSnapshotEventsPublisherDaemon {
           peerCount = peers.size
           lastFacCount <- getLastFacilitatorCount
           _ <-
-            if (peerCount < MinClusterPeersForEventTrigger)
+            if (peerCount < eventTriggerMinPeers)
               Async[F].unit
-            else if (lastFacCount > 0 && lastFacCount < MinClusterPeersForEventTrigger + 1)
+            else if (lastFacCount > 0 && lastFacCount < eventTriggerMinPeers + 1)
               logger.debug(
                 s"EventTrigger skipped: last round had $lastFacCount facilitator(s), waiting for multi-node consensus"
               )
             else
               eventMempool.size.flatMap { mempoolSize =>
-                if (mempoolSize < EventTriggerThreshold)
+                if (mempoolSize < eventTriggerThreshold)
                   Async[F].unit
                 else
                   Clock[F].monotonic.flatMap { now =>
                     val nowMs = now.toMillis
                     lastTriggerRef.modify { lastMs =>
                       val elapsed = nowMs - lastMs
-                      if (elapsed >= EventTriggerCooldown.toMillis)
+                      if (elapsed >= eventTriggerCooldown.toMillis)
                         (nowMs, true)
                       else
                         (lastMs, false)
@@ -184,7 +181,7 @@ object GlobalSnapshotEventsPublisherDaemon {
                       case true =>
                         logger.info(
                           s"EventTrigger fired: peers=$peerCount, lastFacilitators=$lastFacCount, pending=$mempoolSize, " +
-                            s"threshold=$EventTriggerThreshold, cooldown=${EventTriggerCooldown.toSeconds}s"
+                            s"threshold=$eventTriggerThreshold, cooldown=${eventTriggerCooldown.toSeconds}s"
                         ) >> trigger
                       case false =>
                         Async[F].unit

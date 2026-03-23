@@ -13,6 +13,7 @@ import cats.syntax.functor._
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.cell.L0Cell
 import io.constellationnetwork.dag.l0.domain.statechannel.StateChannelService
+import io.constellationnetwork.dag.l0.infrastructure.mempool.GlobalEventMempool
 import io.constellationnetwork.dag.l0.infrastructure.rewards._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
@@ -100,8 +101,8 @@ object Services {
       )
 
       eventMempoolService <- HasherSelector[F].withCurrent { implicit hasher =>
-        io.constellationnetwork.dag.l0.infrastructure.mempool.GlobalEventMempool.make[F](
-          io.constellationnetwork.dag.l0.infrastructure.mempool.GlobalEventMempool.defaultConfig
+        GlobalEventMempool.make[F](
+          GlobalEventMempool.defaultConfig
         )
       }
 

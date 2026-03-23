@@ -8,6 +8,7 @@ import io.constellationnetwork.BuildInfo
 import io.constellationnetwork.dag.l0.StoragesInitializer.initializeStorages
 import io.constellationnetwork.dag.l0.cli.method._
 import io.constellationnetwork.dag.l0.config.types._
+import io.constellationnetwork.dag.l0.domain.snapshot.ForkRecoveryService
 import io.constellationnetwork.dag.l0.http.p2p.P2PClient
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{Finished, GlobalConsensusOutcome}
@@ -128,49 +129,23 @@ object Main
         .handlers <+>
         trustHandler(storages.trust) <+> ordinalTrustHandler(storages.trust) <+> services.consensus.handler
 
-      // Shared chain tip getter used by both the gossip daemon (fork detection) and
-      // the HTTP IHave route (so peers can report their chain tip back to callers).
-      getLocalChainTip = sharedStorages.lastGlobalSnapshot.getCombined.map(
-        _.map { case (hashed, _) => ChainTip(hashed.ordinal, hashed.hash) }
+      forkRecoveryService = ForkRecoveryService.make[IO](
+        storages.node,
+        sharedStorages.lastGlobalSnapshot,
+        services.recoveryPeerHint
       )
 
-      daemonWithRecovery <- {
-        val onForkDetected = { (info: ForkRecoveryInfo) =>
-          storages.node.getNodeState.flatMap { currentState =>
-            if (
-              currentState === NodeState.Observing || currentState === NodeState.DownloadInProgress || currentState === NodeState.WaitingForDownload
-            ) {
-              logger.info(
-                s"Fork divergence suppressed: node in $currentState (recovery in progress). " +
-                  s"local=${info.localOrdinal.value.value} majority=${info.majorityOrdinal.value.value}"
-              )
-            } else {
-              logger.warn(
-                s"Fork divergence detected: local=${info.localOrdinal.value.value} " +
-                  s"majority=${info.majorityOrdinal.value.value} lag=${info.lag} " +
-                  s"majorityPeers=${info.majorityPeers.size}"
-              ) >>
-                services.recoveryPeerHint.setPreferredPeers(info.majorityPeers) >>
-                storages.node.setRecoveryDownload >>
-                storages.node
-                  .tryModifyState(NodeState.Ready, NodeState.WaitingForDownload)
-                  .handleErrorWith(_ => storages.node.tryModifyState(NodeState.WaitingForReady, NodeState.WaitingForDownload))
-            }
-          }
-        }
-
-        EventGossipDaemon
-          .make[IO, GlobalSnapshotEvent, GlobalStateKey](
-            services.eventMempool,
-            storages.cluster,
-            storages.node,
-            sharedResources.gossipClient,
-            sharedServices.session,
-            getLocalChainTip = Some(getLocalChainTip),
-            onForkDetected = Some(onForkDetected)
-          )
-          .asResource
-      }
+      daemonWithRecovery <- EventGossipDaemon
+        .make[IO, GlobalSnapshotEvent, GlobalStateKey](
+          services.eventMempool,
+          storages.cluster,
+          storages.node,
+          sharedResources.gossipClient,
+          sharedServices.session,
+          getLocalChainTip = Some(forkRecoveryService.getLocalChainTip),
+          onForkDetected = Some(forkRecoveryService.onForkDetected)
+        )
+        .asResource
 
       eventGossipDaemon = daemonWithRecovery.daemon
 
@@ -204,7 +179,7 @@ object Main
             .getOrElse(sharedConfig.environment, EpochProgress.MinValue),
           cfg.shared,
           storages.combinedGlobalSnapshotCheckpointStorage,
-          getLocalChainTip = Some(getLocalChainTip)
+          getLocalChainTip = Some(forkRecoveryService.getLocalChainTip)
         )
       )
 

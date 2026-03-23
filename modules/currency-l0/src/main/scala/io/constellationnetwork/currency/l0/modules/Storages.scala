@@ -5,15 +5,16 @@ import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.all._
 
-import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
 import io.constellationnetwork.currency.dataApplication.storage.{
   CalculatedStateLocalFileSystemStorage,
   GlobalSnapshotsWithStateDeltasLocalFileSystemStorage,
   GlobalSnapshotsWithStateLocalFileSystemStorage
 }
+import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataTransaction}
 import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnapshotCleanupStorage
 import io.constellationnetwork.currency.l0.infrastructure.mempool.CurrencyEventMempool
 import io.constellationnetwork.currency.l0.infrastructure.snapshot.CurrencySnapshotCleanupStorage
+import io.constellationnetwork.currency.l0.snapshot.DataTransactionCodecs
 import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.json.JsonSerializer
@@ -36,6 +37,7 @@ import io.constellationnetwork.schema.peer.L0Peer
 import io.constellationnetwork.security.{Hasher, HasherSelector}
 
 import fs2.io.file.Files
+import io.circe.{Encoder => CirceEncoder}
 
 object Storages {
 
@@ -90,14 +92,7 @@ object Storages {
         )
 
       eventMempool <- {
-        val maybeDA = dataApplication
-        import io.constellationnetwork.currency.dataApplication._
-        import io.circe.{Encoder, Json}
-        def noopEncoder: Encoder[DataTransaction] = (_: DataTransaction) => Json.Null
-        implicit val dtEncoder: Encoder[DataTransaction] = maybeDA.map { da =>
-          implicit val dataUpdateEncoder: Encoder[DataUpdate] = da.dataEncoder
-          DataTransaction.encoder
-        }.getOrElse(noopEncoder)
+        implicit val dtEncoder: CirceEncoder[DataTransaction] = DataTransactionCodecs.encoder(dataApplication)
         implicit val hasherInstance: Hasher[F] = hasherSelector.getCurrent
         CurrencyEventMempool.make[F](CurrencyEventMempool.defaultConfig)
       }

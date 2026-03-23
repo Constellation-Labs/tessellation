@@ -21,6 +21,7 @@ import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions.I
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event}
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
@@ -135,9 +136,9 @@ object GlobalSnapshotConsensusStateAdvancer {
       * are discarded instead of restored — restoring a savepoint from ordinal N into an MptStore that was replaced by a download at ordinal
       * M would corrupt state.
       *
-      * TODO: Consider clearing proposalSavepointRef explicitly in round cleanup to strengthen the invariant.
-      * Currently the ordinal-check guard prevents stale restore, but explicit cleanup would make the
-      * lifecycle more defensive against theoretical races during recovery (two rounds racing).
+      * TODO: Consider clearing proposalSavepointRef explicitly in round cleanup to strengthen the invariant. Currently the ordinal-check
+      * guard prevents stale restore, but explicit cleanup would make the lifecycle more defensive against theoretical races during recovery
+      * (two rounds racing).
       */
     private val proposalSavepointRef: Ref[F, Option[(GlobalSnapshotKey, MptStoreSavepoint[F])]] = Ref.unsafe(none)
 
@@ -283,10 +284,10 @@ object GlobalSnapshotConsensusStateAdvancer {
                 ConsensusLog
                   .warn(
                     logger,
-                    ConsensusLog.Fork,
+                    Category.Fork,
                     state.key.show,
                     "n/a",
-                    "event" -> "FORKED_PEERS_EVICTED",
+                    Event.ForkedPeersEvicted,
                     "evicted" -> evicted.size.toString,
                     "remaining" -> clean.size.toString,
                     "evictedPeers" -> evicted.toList.map(ConsensusLog.pid).mkString(",")
@@ -297,10 +298,10 @@ object GlobalSnapshotConsensusStateAdvancer {
             _ <- cleanFacilities.traverse_ { _ =>
               ConsensusLog.debug(
                 logger,
-                ConsensusLog.Fork,
+                Category.Fork,
                 state.key.show,
                 "n/a",
-                "event" -> "FORK_CHECKS_PASSED",
+                Event.ForkChecksPassed,
                 "facilitatorsHash" -> status.facilitatorsHash.show.take(8),
                 "lastSnapshotHash" -> status.lastSnapshotHash.show.take(8)
               )
@@ -420,14 +421,14 @@ object GlobalSnapshotConsensusStateAdvancer {
           case (spKey, sp) =>
             if (spKey === state.key)
               sp.restore >>
-                ConsensusLog.info(logger, ConsensusLog.Lifecycle, state.key.show, "n/a", "event" -> "MPT_SAVEPOINT_RESTORED")
+                ConsensusLog.info(logger, Category.Lifecycle, state.key.show, "n/a", Event.MptSavepointRestored)
             else
               ConsensusLog.warn(
                 logger,
-                ConsensusLog.Lifecycle,
+                Category.Lifecycle,
                 state.key.show,
                 "n/a",
-                "event" -> "MPT_SAVEPOINT_DISCARDED_WRONG_KEY",
+                Event.MptSavepointDiscardedWrongKey,
                 "savepointKey" -> spKey.show,
                 "currentKey" -> state.key.show
               )
@@ -453,11 +454,11 @@ object GlobalSnapshotConsensusStateAdvancer {
         withdrawnCount = state.withdrawnFacilitators.value.size
         _ <- ConsensusLog.info(
           logger,
-          ConsensusLog.Phase,
+          Category.Phase,
           state.key.show,
           role,
+          Event.FacilitiesToProposals,
           (Seq(
-            "event" -> "FACILITIES_TO_PROPOSALS",
             "ordinal" -> artifact.ordinal.show,
             "trigger" -> majorityTrigger.toString,
             "hash" -> hash.show.take(8),
@@ -472,18 +473,18 @@ object GlobalSnapshotConsensusStateAdvancer {
         )
         _ <- ConsensusLog.info(
           logger,
-          ConsensusLog.Proposal,
+          Category.Proposal,
           state.key.show,
           role,
-          "event" -> "PROPOSAL_STATE_PROOF",
+          Event.ProposalStateProof,
           "detail" -> describeStateProof(artifact.stateProof)
         )
         _ <- ConsensusLog.info(
           logger,
-          ConsensusLog.Proposal,
+          Category.Proposal,
           state.key.show,
           role,
-          "event" -> "PROPOSAL_CONTEXT_DIGEST",
+          Event.ProposalContextDigest,
           "detail" -> contextDigest(context)
         )
       } yield
@@ -567,10 +568,10 @@ object GlobalSnapshotConsensusStateAdvancer {
                   // Leader (possibly after view change) — spread proposal so peers can advance
                   ConsensusLog.info(
                     logger,
-                    ConsensusLog.Phase,
+                    Category.Phase,
                     state.key.show,
                     "Leader",
-                    "event" -> "PROPOSAL_RESPREAD",
+                    Event.ProposalRespread,
                     "hash" -> status.proposalArtifactInfo.hash.show.take(8),
                     "targets" -> state.facilitators.value.size.toString,
                     "view" -> state.viewNumber.toString
@@ -601,19 +602,19 @@ object GlobalSnapshotConsensusStateAdvancer {
         // Leader's artifact matches our own — use local ArtifactInfo (avoids re-validation)
         ConsensusLog.info(
           logger,
-          ConsensusLog.Validation,
+          Category.Validation,
           state.key.show,
           role,
-          "event" -> "ARTIFACT_HASH_MATCH",
+          Event.ArtifactHashMatch,
           "hash" -> leaderProposal.hash.show.take(12),
           "match" -> "true"
         ) >>
           ConsensusLog.info(
             logger,
-            ConsensusLog.Phase,
+            Category.Phase,
             state.key.show,
             role,
-            "event" -> "PROPOSALS_TO_SIGNATURES",
+            Event.ProposalsToSignatures,
             "matchesOwn" -> "true",
             "hash" -> leaderProposal.hash.show.take(8),
             "trigger" -> status.majorityTrigger.toString,
@@ -633,10 +634,10 @@ object GlobalSnapshotConsensusStateAdvancer {
               val validate =
                 ConsensusLog.info(
                   logger,
-                  ConsensusLog.Validation,
+                  Category.Validation,
                   state.key.show,
                   "Validator",
-                  "event" -> "VALIDATING_LEADER_ARTIFACT",
+                  Event.ValidatingLeaderArtifact,
                   "leaderHash" -> leaderProposal.hash.show.take(8),
                   "ownHash" -> status.proposalArtifactInfo.hash.show.take(8)
                 ) >>
@@ -645,10 +646,10 @@ object GlobalSnapshotConsensusStateAdvancer {
                       // Validation succeeded — MptStore mutations are correct, keep them
                       ConsensusLog.info(
                         logger,
-                        ConsensusLog.Validation,
+                        Category.Validation,
                         state.key.show,
                         role,
-                        "event" -> "ARTIFACT_REVALIDATED",
+                        Event.ArtifactRevalidated,
                         "matchesOwn" -> "false",
                         "leaderHash" -> leaderProposal.hash.show.take(8),
                         "ownHash" -> status.proposalArtifactInfo.hash.show.take(8),
@@ -666,10 +667,10 @@ object GlobalSnapshotConsensusStateAdvancer {
                       sp.restore >>
                         ConsensusLog.warn(
                           logger,
-                          ConsensusLog.Validation,
+                          Category.Validation,
                           state.key.show,
                           role,
-                          "event" -> "VALIDATION_FAILED",
+                          Event.ValidationFailed,
                           "leaderHash" -> leaderProposal.hash.show.take(8),
                           "ownHash" -> status.proposalArtifactInfo.hash.show.take(8),
                           "leader" -> ConsensusLog.pid(state.leader),
@@ -678,18 +679,18 @@ object GlobalSnapshotConsensusStateAdvancer {
                         ) >>
                         ConsensusLog.info(
                           logger,
-                          ConsensusLog.Validation,
+                          Category.Validation,
                           state.key.show,
                           role,
-                          "event" -> "OWN_CONTEXT_DIGEST",
+                          Event.OwnContextDigest,
                           "detail" -> ctxDigest
                         ) >>
                         ConsensusLog.info(
                           logger,
-                          ConsensusLog.Phase,
+                          Category.Phase,
                           state.key.show,
                           role,
-                          "event" -> "WITHDRAW_VALIDATION_FAIL",
+                          Event.WithdrawValidationFail,
                           "reason" -> "proposal_validation_failed",
                           "mptStoreRestored" -> "true"
                         ) >>
@@ -705,7 +706,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               Async[F].guaranteeCase(validate) {
                 case Outcome.Errored(_) | Outcome.Canceled() =>
                   sp.restore >>
-                    ConsensusLog.error(logger, ConsensusLog.Lifecycle, state.key.show, role, "event" -> "MPT_RESTORED_AFTER_FAILURE")
+                    ConsensusLog.error(logger, Category.Lifecycle, state.key.show, role, Event.MptRestoredAfterFailure)
                 case Outcome.Succeeded(_) =>
                   Applicative[F].unit
               }
@@ -994,10 +995,10 @@ object GlobalSnapshotConsensusStateAdvancer {
         role = ConsensusLog.role(selfId, state.leader)
         _ <- ConsensusLog.info(
           logger,
-          ConsensusLog.Phase,
+          Category.Phase,
           state.key.show,
           role,
-          "event" -> "SIGNATURES_TO_FINISHED",
+          Event.SignaturesToFinished,
           "ordinal" -> status.majorityArtifactInfo.artifact.ordinal.show,
           "signatures" -> s"${valid.size}/${proofs.size}",
           "hash" -> status.majorityArtifactInfo.hash.show.take(8),
@@ -1116,7 +1117,7 @@ object GlobalSnapshotConsensusStateAdvancer {
 
       persist.ifM(
         recordMetrics(signedArtifact) >> gossipFork,
-        ConsensusLog.error(logger, ConsensusLog.Lifecycle, signedArtifact.ordinal.show, "n/a", "event" -> "PERSIST_FAILED") >> MonadThrow[F]
+        ConsensusLog.error(logger, Category.Lifecycle, signedArtifact.ordinal.show, "n/a", Event.PersistFailed) >> MonadThrow[F]
           .raiseError(
             new RuntimeException("Persist failed")
           )

@@ -145,12 +145,10 @@ object PeerQualityTracker {
           ref.get.map(_.map { case (pid, m) => (pid, m.qualityScore) })
       }
 
-  /**
-    * Halve all counters when any peer exceeds the decay threshold to keep recent data relevant.
+  /** Halve all counters when any peer exceeds the decay threshold to keep recent data relevant.
     *
-    * TODO: Repeated halving can push counters to 0 for active peers (e.g., (1, 2) → (0, 1) → pruned).
-    * Consider using max(1, c/2) for roundsCompleted to prevent false pruning of peers who have
-    * completed rounds but have low absolute counts after multiple decay cycles.
+    * TODO: Repeated halving can push counters to 0 for active peers (e.g., (1, 2) → (0, 1) → pruned). Consider using max(1, c/2) for
+    * roundsCompleted to prevent false pruning of peers who have completed rounds but have low absolute counts after multiple decay cycles.
     */
   private def maybeDecay(metrics: Map[PeerId, PeerMetrics]): Map[PeerId, PeerMetrics] =
     if (metrics.values.exists(_.roundsParticipated > decayThreshold))

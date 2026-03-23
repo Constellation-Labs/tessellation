@@ -11,6 +11,7 @@ import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event}
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Facility
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
@@ -127,10 +128,10 @@ object CurrencySnapshotConsensusStateCreator {
         _ <- tcaDegraded.traverse_ { degraded =>
           ConsensusLog.info(
             logger,
-            ConsensusLog.Facilitator,
+            Category.Facilitator,
             key.show,
             "n/a",
-            "event" -> "TCA_FILTER_APPLIED",
+            Event.TcaFilterApplied,
             "tcaDegraded" -> degraded.size.toString,
             "fullBase" -> fullBase.size.toString,
             "tcaFiltered" -> tcaFilteredBase.size.toString,
@@ -178,10 +179,10 @@ object CurrencySnapshotConsensusStateCreator {
         _ <- ConsensusLog
           .info(
             logger,
-            ConsensusLog.Facilitator,
+            Category.Facilitator,
             key.show,
             "n/a",
-            "event" -> "ABANDONED_MISSING_LOGGED",
+            Event.AbandonedMissingLogged,
             "count" -> abandonedMissing.size.toString,
             "peers" -> abandonedMissing.toList.map(_.value.value.take(8)).mkString(",")
           )
@@ -215,10 +216,10 @@ object CurrencySnapshotConsensusStateCreator {
         _ <- ConsensusLog
           .info(
             logger,
-            ConsensusLog.Facilitator,
+            Category.Facilitator,
             key.show,
             "n/a",
-            "event" -> "MIN_QUORUM_FLOOR_APPLIED",
+            Event.MinQuorumFloorApplied,
             "filteredCount" -> allEligible.filterNot((previouslyRemoved ++ penalizedPeers).contains).size.toString,
             "minViableQuorum" -> minViableQuorum.toString,
             "usingAll" -> allEligible.size.toString,
@@ -235,10 +236,10 @@ object CurrencySnapshotConsensusStateCreator {
         _ <- ConsensusLog
           .info(
             logger,
-            ConsensusLog.Facilitator,
+            Category.Facilitator,
             key.show,
             "n/a",
-            "event" -> "FACILITATOR_SUBSETTING",
+            Event.FacilitatorSubsetting,
             "allEligible" -> allEligible.size.toString,
             "eligibleThisRound" -> eligibleThisRound.size.toString,
             "selected" -> activeFacilitators.size.toString
@@ -277,10 +278,10 @@ object CurrencySnapshotConsensusStateCreator {
 
         _ <- ConsensusLog.info(
           logger,
-          ConsensusLog.Facilitator,
+          Category.Facilitator,
           key.show,
           if (leader === selfId) "Leader" else "Validator",
-          "event" -> "FACILITATORS_FINALIZED",
+          Event.FacilitatorsFinalized,
           "eligible" -> allEligible.size.toString,
           "active" -> active.size.toString,
           "excluded" -> (allEligible.size - eligibleThisRound.size).toString,
@@ -307,7 +308,6 @@ object CurrencySnapshotConsensusStateCreator {
         leaderScore <- peerQualityTracker.getQualityScore(leader)
         _ <- {
           val basePairs = Seq(
-            "event" -> "ROUND_STARTED",
             "trigger" -> maybeTrigger.map(_.toString).getOrElse("none"),
             "facilitators" -> active.size.toString,
             "eligible" -> allEligible.size.toString,
@@ -323,7 +323,7 @@ object CurrencySnapshotConsensusStateCreator {
               (if (penalizedPeers.nonEmpty) Seq("penalized" -> penalizedPeers.size.toString) else Seq.empty) ++
               (if (previouslyRemoved.nonEmpty) Seq("previouslyRemoved" -> previouslyRemoved.size.toString) else Seq.empty) ++
               (if (abandonedMissing.nonEmpty) Seq("abandonedMissing" -> abandonedMissing.size.toString) else Seq.empty)
-          ConsensusLog.info(logger, ConsensusLog.Lifecycle, key.show, role, (basePairs ++ optionalPairs): _*)
+          ConsensusLog.info(logger, Category.Lifecycle, key.show, role, Event.RoundStarted, (basePairs ++ optionalPairs): _*)
         }
 
       } yield (state, effect)

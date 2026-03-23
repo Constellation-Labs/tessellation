@@ -9,8 +9,8 @@ import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
 import io.constellationnetwork.currency.l0.cli.method.Run
 import io.constellationnetwork.currency.l0.http.routes._
-import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotKey
 import io.constellationnetwork.currency.l0.snapshot.schema.CurrencyConsensusOutcome
+import io.constellationnetwork.currency.l0.snapshot.{CurrencySnapshotKey, DataTransactionCodecs}
 import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.env.AppEnvironment
@@ -29,6 +29,7 @@ import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import io.circe.Decoder
+import io.circe.{Decoder => CirceDecoder, Encoder => CirceEncoder}
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
 import org.http4s.{HttpApp, HttpRoutes}
@@ -121,18 +122,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
     GossipRoutes[F](storages.rumor, services.gossip, sharedConfig.gossip.timeouts)
 
   private val eventGossipRoutes = {
-    import io.constellationnetwork.currency.dataApplication._
-    import io.circe.{Encoder => CEnc, Decoder => CDec, Json => CJson}
-    def noopDtEncoder: CEnc[DataTransaction] = (_: DataTransaction) => CJson.Null
-    def noopDtDecoder: CDec[DataTransaction] = CDec.failedWithMessage("DataTransaction decoder not provided")
-    implicit val dtEncoder: CEnc[DataTransaction] = maybeDataApplication.map { da =>
-      implicit val duEnc: CEnc[DataUpdate] = da.dataEncoder
-      DataTransaction.encoder
-    }.getOrElse(noopDtEncoder)
-    implicit val dtDecoder: CDec[DataTransaction] = maybeDataApplication.map { da =>
-      implicit val duDec: CDec[DataUpdate] = da.dataDecoder
-      DataTransaction.decoder
-    }.getOrElse(noopDtDecoder)
+    implicit val dtEncoder: CirceEncoder[DataTransaction] = DataTransactionCodecs.encoder(maybeDataApplication)
+    implicit val dtDecoder: CirceDecoder[DataTransaction] = DataTransactionCodecs.decoder(maybeDataApplication)
     EventGossipRoutes.make[F, CurrencySnapshotEvent, CurrencyStateKey](
       storages.eventMempool,
       getLocalChainTip

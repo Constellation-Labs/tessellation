@@ -2,14 +2,17 @@ package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
 import cats.Eq
 import cats.effect.kernel.{Async, Ref}
+import cats.effect.std.Queue
 import cats.syntax.all._
 
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event}
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.peer.PeerId
 
 import eu.timepit.refined.auto._
+import org.typelevel.log4cats.SelfAwareStructuredLogger
 
 /** Manages deterministic leader re-election and peer eviction when facilitators fail.
   *
@@ -39,8 +42,8 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
   storage: ConsensusStorage[F, _, Key, _, _, Status, Outcome, Kind],
   facilitatorSelector: FacilitatorSelector,
   peerQualityTracker: PeerQualityTracker[F],
-  queue: cats.effect.std.Queue[F, ConsensusCommand],
-  logger: org.typelevel.log4cats.SelfAwareStructuredLogger[F]
+  queue: Queue[F, ConsensusCommand],
+  logger: SelfAwareStructuredLogger[F]
 ) {
 
   /** Maximum consecutive eviction-skipped view changes before escalating to abandonment. When the same peers keep failing but can't be
@@ -74,10 +77,10 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
 
     ConsensusLog.info(
       logger,
-      ConsensusLog.Phase,
+      Category.Phase,
       key.toString,
       "n/a",
-      "event" -> "VIEW_CHANGE",
+      Event.ViewChange,
       "oldView" -> currentState.viewNumber.toString,
       "newView" -> newViewNumber.toString,
       "oldLeader" -> ConsensusLog.pid(currentState.leader),
@@ -122,10 +125,10 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
       skippedEvictionCountRef.updateAndGet(_ + 1).flatMap { skipped =>
         ConsensusLog.warn(
           logger,
-          ConsensusLog.Phase,
+          Category.Phase,
           key.toString,
           "n/a",
-          "event" -> "EVICTION_SKIPPED_MIN_FACILITATORS",
+          Event.EvictionSkippedMinFacilitators,
           "peersToEvict" -> peersToEvict.size.toString,
           "remaining" -> remainingFacilitators.size.toString,
           "skippedEvictionCount" -> skipped.toString,
@@ -134,10 +137,10 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
                 Metrics[F].incrementCounter("dag_consensus_eviction_loop_escalation") >>
                   ConsensusLog.error(
                     logger,
-                    ConsensusLog.Phase,
+                    Category.Phase,
                     key.toString,
                     "n/a",
-                    "event" -> "EVICTION_LOOP_ESCALATION",
+                    Event.EvictionLoopEscalation,
                     "skippedEvictions" -> skipped.toString,
                     "reason" -> "repeated eviction skips exhausted, signaling abandon"
                   )
@@ -152,10 +155,10 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
       skippedEvictionCountRef.set(0) >>
         ConsensusLog.warn(
           logger,
-          ConsensusLog.Phase,
+          Category.Phase,
           key.toString,
           "n/a",
-          "event" -> "VIEW_CHANGE_WITH_EVICTION",
+          Event.ViewChangeWithEviction,
           "evicted" -> peersToEvict.size.toString,
           "remaining" -> remainingFacilitators.size.toString,
           "oldView" -> currentState.viewNumber.toString,

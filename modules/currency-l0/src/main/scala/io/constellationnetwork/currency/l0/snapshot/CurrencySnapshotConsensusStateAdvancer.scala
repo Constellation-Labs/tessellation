@@ -18,11 +18,11 @@ import io.constellationnetwork.currency.schema.currency.CurrencySnapshotContext
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
-import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions.InvalidArtifact
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event}
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
@@ -52,7 +52,6 @@ import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
 
 import eu.timepit.refined.auto._
 import io.circe.{Decoder, Encoder}
-import org.http4s.client.Client
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -94,8 +93,7 @@ object CurrencySnapshotConsensusStateAdvancer {
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     clusterStorageInstance: ClusterStorage[F],
     eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey],
-    client: Client[F],
-    session: Session[F]
+    eventGossipClient: EventGossipClient[F, CurrencySnapshotEvent]
   )(
     implicit eventEncoder: Encoder[CurrencySnapshotEvent],
     eventDecoder: Decoder[CurrencySnapshotEvent]
@@ -104,8 +102,6 @@ object CurrencySnapshotConsensusStateAdvancer {
 
       private val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](getClass)
       private val lastSnapshotHashObservationName = "last-snapshot-hash"
-      private val eventGossipClient: EventGossipClient[F, CurrencySnapshotEvent] =
-        EventGossipClient.make[F, CurrencySnapshotEvent](client, session)
       private val facilitatorsHashObservationName = "facilitators-hash"
       private val consensusConfigHashObservationName = "consensus-config-hash"
 
@@ -241,10 +237,10 @@ object CurrencySnapshotConsensusStateAdvancer {
               ConsensusLog
                 .warn(
                   logger,
-                  ConsensusLog.Fork,
+                  Category.Fork,
                   state.key.show,
                   "n/a",
-                  "event" -> "FORKED_PEERS_EVICTED",
+                  Event.ForkedPeersEvicted,
                   "evicted" -> evicted.size.toString,
                   "remaining" -> clean.size.toString,
                   "evictedPeers" -> evicted.toList.map(ConsensusLog.pid).mkString(",")

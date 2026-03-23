@@ -5,6 +5,7 @@ import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.gossip.Gossip.DirectPushFn
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.gossip.RumorRaw
 import io.constellationnetwork.schema.peer.PeerId
@@ -36,7 +37,7 @@ object ConsensusDirectSender {
           .void
           .handleErrorWith(err =>
             logger.debug(err)(
-              ConsensusLog.format(ConsensusLog.Rumor, "n/a", "n/a", "event" -> "DIRECT_PUSH_FAILED", "peer" -> ConsensusLog.pid(peer.id))
+              ConsensusLog.format(Category.Rumor, "n/a", "n/a", Event.DirectPushFailed, "peer" -> ConsensusLog.pid(peer.id))
             )
           )
       }

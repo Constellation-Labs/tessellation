@@ -54,7 +54,8 @@ object Daemons {
         eventGossipDaemon,
         storages.cluster,
         services.consensus.triggerEventConsensus,
-        services.consensus.storage.getLastConsensusOutcome.map(_.fold(0)(_.facilitators.value.size))
+        services.consensus.storage.getLastConsensusOutcome.map(_.fold(0)(_.facilitators.value.size)),
+        config.snapshot.consensus
       ),
       Daemon.spawn(eventGossipDaemon.start),
       CollateralDaemon.make(services.collateral, storages.snapshot, storages.cluster)

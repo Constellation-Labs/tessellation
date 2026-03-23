@@ -62,7 +62,8 @@ object Daemons {
           eventGossipDaemon,
           storages.cluster,
           services.consensus.triggerEventConsensus,
-          services.consensus.storage.getLastConsensusOutcome.map(_.fold(0)(_.facilitators.value.size))
+          services.consensus.storage.getLastConsensusOutcome.map(_.fold(0)(_.facilitators.value.size)),
+          cfg.snapshot.consensus
         ),
       CollateralDaemon.make(services.collateral, storages.globalSnapshot, storages.cluster),
       TrustStorageUpdater.daemon(services.trustStorageUpdater),

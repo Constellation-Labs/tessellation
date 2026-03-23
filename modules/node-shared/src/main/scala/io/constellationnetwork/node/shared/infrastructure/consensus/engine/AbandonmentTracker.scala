@@ -5,6 +5,7 @@ import cats.syntax.all._
 import cats.{Eq, Show}
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.node.{NodeState, NodeStateTransition}
@@ -119,10 +120,10 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
       healthRef.update(_.copy(totalRecoveryAttempts = totalAttempts)) >>
         ConsensusLog.warn(
           logger,
-          ConsensusLog.Lifecycle,
+          Category.Lifecycle,
           "n/a",
           "n/a",
-          "event" -> "INIT_DOWNLOAD_FAILURE_TRACKED",
+          LogEvent.InitDownloadFailureTracked,
           "totalRecoveryAttempts" -> totalAttempts.toString,
           "maxTotalRecoveryAttempts" -> maxTotalRecoveryAttempts.toString,
           "willForceLeave" -> shouldForceLeave.toString
@@ -131,10 +132,10 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
         (if (shouldForceLeave)
            ConsensusLog.error(
              logger,
-             ConsensusLog.Lifecycle,
+             Category.Lifecycle,
              "n/a",
              "n/a",
-             "event" -> "FORCE_LEAVE_FROM_INIT_FAILURES",
+             LogEvent.ForceLeaveFromInitFailures,
              "totalRecoveryAttempts" -> totalAttempts.toString,
              "reason" -> "repeated initFromDownload failures exhausted recovery attempts"
            ) >>
@@ -169,10 +170,10 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
       if (currentState === NodeState.Leaving) {
         ConsensusLog.warn(
           logger,
-          ConsensusLog.Lifecycle,
+          Category.Lifecycle,
           "n/a",
           "n/a",
-          "event" -> "FORCE_LEAVE_INIT_FAILURES_ALREADY_LEAVING",
+          LogEvent.ForceLeaveInitFailuresAlreadyLeaving,
           "totalRecoveryAttempts" -> totalAttempts.toString,
           "reason" -> "node already in Leaving state, cleaning up consensus and stopping"
         ) >>
@@ -186,10 +187,10 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
           case true =>
             ConsensusLog.error(
               logger,
-              ConsensusLog.Lifecycle,
+              Category.Lifecycle,
               "n/a",
               "n/a",
-              "event" -> "FORCE_LEAVE_INIT_FAILURES_SUCCESS",
+              LogEvent.ForceLeaveInitFailuresSuccess,
               "totalRecoveryAttempts" -> totalAttempts.toString
             ) >>
               consecutiveAbandonCountRef.set((none[Key], 0)) >>
@@ -200,10 +201,10 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
           case false =>
             ConsensusLog.warn(
               logger,
-              ConsensusLog.Lifecycle,
+              Category.Lifecycle,
               "n/a",
               "n/a",
-              "event" -> "FORCE_LEAVE_INIT_FAILURES_FAILED",
+              LogEvent.ForceLeaveInitFailuresFailed,
               "reason" -> "could not transition to Leaving from any state"
             )
         }
@@ -215,7 +216,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
     * retried without counting toward recovery threshold, since the node isn't stuck or forked — it just needs more peers to reach quorum.
     */
   def abandonRound(key: Key, reason: AbandonReason): F[Unit] =
-    ConsensusLog.error(logger, ConsensusLog.Lifecycle, key.toString, "n/a", "event" -> "ROUND_ABANDONED", "reason" -> reason.message) >>
+    ConsensusLog.error(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.RoundAbandoned, "reason" -> reason.message) >>
       Metrics[F].incrementCounter("dag_consensus_round_abandoned") >>
       Metrics[F].incrementCounter("dag_consensus_stall_abandon_reason", Seq((Metrics.unsafeLabelName("reason"), reason.label))) >>
       storage
@@ -233,10 +234,10 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
       (if (reason.retriable)
          ConsensusLog.info(
            logger,
-           ConsensusLog.Lifecycle,
+           Category.Lifecycle,
            key.toString,
            "n/a",
-           "event" -> "ROUND_ABANDONED_RETRIABLE",
+           LogEvent.RoundAbandonedRetriable,
            "reason" -> reason.label,
            "detail" -> reason.message
          ) >>
@@ -248,10 +249,10 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
            healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount)) >>
              ConsensusLog.info(
                logger,
-               ConsensusLog.Lifecycle,
+               Category.Lifecycle,
                key.toString,
                "n/a",
-               "event" -> "ROUND_ABANDONED_TRACKED",
+               LogEvent.RoundAbandonedTracked,
                "reason" -> reason.label,
                "consecutiveAbandonments" -> consecutiveCount.toString,
                "maxConsecutiveAbandonments" -> config.maxConsecutiveAbandonments.toString,
@@ -284,20 +285,30 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
     totalRecoveryAttemptsRef.updateAndGet(_ + 1).flatMap { totalAttempts =>
       val shouldForceLeave = totalAttempts >= maxTotalRecoveryAttempts
 
-      ConsensusLog.error(
-        logger,
-        ConsensusLog.Lifecycle,
-        key.toString,
-        "n/a",
-        "event" -> (if (shouldForceLeave) "FORCE_LEAVE_TRIGGERED" else "RECOVERY_DOWNLOAD_TRIGGERED"),
-        "consecutiveAbandonments" -> consecutiveCount.toString,
-        "totalRecoveryAttempts" -> totalAttempts.toString,
-        "maxTotalRecoveryAttempts" -> maxTotalRecoveryAttempts.toString,
-        "reason" -> (if (shouldForceLeave)
-                       s"extended recovery loop: $totalAttempts recovery attempts exhausted, forcing node to leave"
-                     else
-                       s"stuck at same ordinal for $consecutiveCount consecutive rounds")
-      ) >>
+      (if (shouldForceLeave)
+         ConsensusLog.error(
+           logger,
+           Category.Lifecycle,
+           key.toString,
+           "n/a",
+           LogEvent.ForceLeaveTriggered,
+           "consecutiveAbandonments" -> consecutiveCount.toString,
+           "totalRecoveryAttempts" -> totalAttempts.toString,
+           "maxTotalRecoveryAttempts" -> maxTotalRecoveryAttempts.toString,
+           "reason" -> s"extended recovery loop: $totalAttempts recovery attempts exhausted, forcing node to leave"
+         )
+       else
+         ConsensusLog.error(
+           logger,
+           Category.Lifecycle,
+           key.toString,
+           "n/a",
+           LogEvent.RecoveryDownloadTriggered,
+           "consecutiveAbandonments" -> consecutiveCount.toString,
+           "totalRecoveryAttempts" -> totalAttempts.toString,
+           "maxTotalRecoveryAttempts" -> maxTotalRecoveryAttempts.toString,
+           "reason" -> s"stuck at same ordinal for $consecutiveCount consecutive rounds"
+         )) >>
         healthRef.update(_.copy(totalRecoveryAttempts = totalAttempts)) >>
         Metrics[F].incrementCounter("dag_consensus_recovery_download_triggered") >>
         (if (shouldForceLeave)
@@ -336,10 +347,10 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
       if (currentState === NodeState.Leaving) {
         ConsensusLog.warn(
           logger,
-          ConsensusLog.Lifecycle,
+          Category.Lifecycle,
           key.toString,
           "n/a",
-          "event" -> "FORCE_LEAVE_ALREADY_LEAVING",
+          LogEvent.ForceLeaveAlreadyLeaving,
           "totalRecoveryAttempts" -> totalAttempts.toString,
           "reason" -> "node already in Leaving state, cleaning up consensus and stopping"
         ) >>
@@ -353,10 +364,10 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
           case true =>
             ConsensusLog.error(
               logger,
-              ConsensusLog.Lifecycle,
+              Category.Lifecycle,
               key.toString,
               "n/a",
-              "event" -> "FORCE_LEAVE_SUCCESS",
+              LogEvent.ForceLeaveSuccess,
               "totalRecoveryAttempts" -> totalAttempts.toString,
               "reason" -> "node leaving cluster after extended recovery loop"
             ) >>
@@ -369,10 +380,10 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
             // If we can't transition to Leaving from any state, fall back to recovery download
             ConsensusLog.warn(
               logger,
-              ConsensusLog.Lifecycle,
+              Category.Lifecycle,
               key.toString,
               "n/a",
-              "event" -> "FORCE_LEAVE_FAILED",
+              LogEvent.ForceLeaveFailed,
               "reason" -> "could not transition to Leaving from any state, falling back to recovery download"
             ) >>
               attemptRecoveryDownload(key)
@@ -405,10 +416,10 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
         case Some(fromState) =>
           ConsensusLog.info(
             logger,
-            ConsensusLog.Lifecycle,
+            Category.Lifecycle,
             key.toString,
             "n/a",
-            "event" -> "RECOVERY_STATE_TRANSITION",
+            LogEvent.RecoveryStateTransition,
             "from" -> fromState.toString,
             "to" -> "WaitingForDownload"
           ) >>
@@ -437,10 +448,10 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
           ctx.nodeStorage.getNodeState.flatMap { currentState =>
             ConsensusLog.warn(
               logger,
-              ConsensusLog.Lifecycle,
+              Category.Lifecycle,
               key.toString,
               "n/a",
-              "event" -> "RECOVERY_TRANSITION_FAILED",
+              LogEvent.RecoveryTransitionFailed,
               "reason" -> s"node in $currentState state, not Ready or Observing",
               "nodeState" -> currentState.show
             ) >>

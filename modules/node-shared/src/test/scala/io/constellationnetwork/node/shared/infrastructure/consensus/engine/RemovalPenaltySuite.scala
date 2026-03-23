@@ -1,5 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
+import cats.effect.IO
+
 import io.constellationnetwork.schema.peer.PeerId
 
 import org.scalacheck.Arbitrary.arbitrary
@@ -70,7 +72,7 @@ object RemovalPenaltySuite extends SimpleIOSuite with Checkers {
 
   test("no penalties when removalPenaltyRounds = 0") {
     forall(peerIdsGen) { peers =>
-      cats.effect.IO {
+      IO {
         val removed = peers.take(2).toSet
         val result = computeNewPenalties(Map.empty, removed, removalPenaltyRounds = 0)
         expect(result.isEmpty)
@@ -80,7 +82,7 @@ object RemovalPenaltySuite extends SimpleIOSuite with Checkers {
 
   test("removed peer gets penalty of N rounds") {
     forall(peerIdsGen) { peers =>
-      cats.effect.IO {
+      IO {
         val removed = Set(peers.head)
         val result = computeNewPenalties(Map.empty, removed, removalPenaltyRounds = 3)
         expect(result.get(peers.head).contains(3)) &&
@@ -91,7 +93,7 @@ object RemovalPenaltySuite extends SimpleIOSuite with Checkers {
 
   test("penalties decrement each round") {
     forall(peerIdsGen) { peers =>
-      cats.effect.IO {
+      IO {
         val peer = peers.head
         val initial = Map(peer -> 3)
         val round1 = computeNewPenalties(initial, Set.empty, removalPenaltyRounds = 3)
@@ -104,7 +106,7 @@ object RemovalPenaltySuite extends SimpleIOSuite with Checkers {
 
   test("penalty expires after N rounds") {
     forall(peerIdsGen) { peers =>
-      cats.effect.IO {
+      IO {
         val peer = peers.head
         val initial = Map(peer -> 3)
         // Simulate 3 rounds of decrement
@@ -121,7 +123,7 @@ object RemovalPenaltySuite extends SimpleIOSuite with Checkers {
 
   test("multiple removals: latest penalty wins (reset on re-removal)") {
     forall(peerIdsGen) { peers =>
-      cats.effect.IO {
+      IO {
         val peer = peers.head
         // Peer has penalty of 1 (about to expire)
         val previous = Map(peer -> 1)
@@ -135,7 +137,7 @@ object RemovalPenaltySuite extends SimpleIOSuite with Checkers {
 
   test("penalized peers excluded from eligibleThisRound") {
     forall(peerIdsGen) { peers =>
-      cats.effect.IO {
+      IO {
         val selfId = peers.last
         val penalizedPeer = peers.head
         val penalties = Map(penalizedPeer -> 2)
@@ -148,7 +150,7 @@ object RemovalPenaltySuite extends SimpleIOSuite with Checkers {
   }
 
   test("penalized peers remain in allEligible (re-entry pool preserved)") {
-    cats.effect.IO {
+    IO {
       // This test verifies a design property: penalty-based exclusion only affects
       // `eligibleThisRound`, not `allEligible`. The state creators filter `allEligible`
       // into `eligibleThisRound` by removing penalized peers, but `allEligible` is stored
@@ -160,7 +162,7 @@ object RemovalPenaltySuite extends SimpleIOSuite with Checkers {
 
   test("fallback to selfId when all peers penalized") {
     forall(peerIdsGen) { peers =>
-      cats.effect.IO {
+      IO {
         val selfId = peers.last
         // All peers are penalized
         val penalized = peers.toSet
@@ -172,7 +174,7 @@ object RemovalPenaltySuite extends SimpleIOSuite with Checkers {
 
   test("penalty computation is deterministic") {
     forall(peerIdsGen) { peers =>
-      cats.effect.IO {
+      IO {
         val removed = peers.take(3).toSet
         val previous = peers.drop(3).take(2).map(_ -> 2).toMap
         val r1 = computeNewPenalties(previous, removed, removalPenaltyRounds = 3)
@@ -184,7 +186,7 @@ object RemovalPenaltySuite extends SimpleIOSuite with Checkers {
 
   test("combined previouslyRemoved and penalized exclusions") {
     forall(peerIdsGen) { peers =>
-      cats.effect.IO {
+      IO {
         val selfId = peers.last
         val previouslyRemoved = Set(peers(0))
         val penalized = Set(peers(1))
@@ -198,7 +200,7 @@ object RemovalPenaltySuite extends SimpleIOSuite with Checkers {
 
   test("overlapping previouslyRemoved and penalized correctly handled") {
     forall(peerIdsGen) { peers =>
-      cats.effect.IO {
+      IO {
         val selfId = peers.last
         // Same peer in both sets (overlap)
         val peer = peers.head
@@ -211,7 +213,7 @@ object RemovalPenaltySuite extends SimpleIOSuite with Checkers {
 
   test("full lifecycle simulation: remove → exclude N rounds → re-eligible") {
     forall(Gen.containerOfN[Set, PeerId](3, peerIdGen).suchThat(_.size == 3)) { peerSet =>
-      cats.effect.IO {
+      IO {
         val peers = peerSet.toList
         val peerA = peers(0)
         val allPeers = peers

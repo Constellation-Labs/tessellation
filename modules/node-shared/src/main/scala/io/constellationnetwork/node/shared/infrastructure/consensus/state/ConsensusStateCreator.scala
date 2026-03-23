@@ -4,6 +4,7 @@ import cats._
 import cats.effect.Sync
 import cats.syntax.all._
 
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusResources, ConsensusStorage}
 
@@ -59,10 +60,10 @@ abstract class ConsensusStateCreator[F[_]: Sync, Key: Show, Artifact, Context, S
     createResult.traverse_(state =>
       ConsensusLog.info(
         logger,
-        ConsensusLog.Lifecycle,
+        Category.Lifecycle,
         state.key.show,
         "n/a",
-        "event" -> "STATE_CREATED",
+        LogEvent.StateCreated,
         "leader" -> ConsensusLog.pid(state.leader),
         "facilitators" -> state.facilitators.value.size.toString,
         "view" -> state.viewNumber.toString

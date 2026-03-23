@@ -247,7 +247,7 @@ object GlobalStateConverter {
       private val LogProgressEvery = 50000
 
       def buildMpt(implicit stateProofSelector: StateProofSelector, j: JsonSerializer[F]): F[MptRoot] = {
-        val logger = org.typelevel.log4cats.slf4j.Slf4jLogger.getLoggerFromName[F]("MPT.BuildMpt")
+        val logger = Slf4jLogger.getLoggerFromName[F]("MPT.BuildMpt")
 
         def toHexMap(kvPairs: Map[GlobalStateKey, Json]): F[Map[Hex, Json]] = {
           def convertBatch(batch: List[(GlobalStateKey, Json)]): F[List[(Hex, Json)]] =
@@ -383,7 +383,7 @@ object GlobalStateConverter {
       def syncFromStateChanges(acc: StateChangesAccumulator, snapshotOrdinal: SnapshotOrdinal)(
         implicit stateProofSelector: StateProofSelector
       ): F[Unit] = {
-        val syncLogger = org.typelevel.log4cats.slf4j.Slf4jLogger.getLoggerFromName[F]("MPT.Sync")
+        val syncLogger = Slf4jLogger.getLoggerFromName[F]("MPT.Sync")
         val BatchSize = 5000
 
         // Convert removal keys from accumulator to GlobalStateKey

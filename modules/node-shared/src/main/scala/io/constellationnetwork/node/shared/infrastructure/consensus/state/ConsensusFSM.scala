@@ -6,6 +6,7 @@ import cats.syntax.all._
 import cats.{Eq, Show}
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand._
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger._
@@ -85,9 +86,9 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
       case StartRound(trigger) => startRound(trigger)
       case TimeTick            => startRound(Some(TimeTrigger))
       case FacilitateByEvent   => startRound(Some(EventTrigger))
-      case RoundCompleted      => log.warn(ConsensusLog.format(ConsensusLog.Lifecycle, "n/a", "n/a", "event" -> "IDLE_ROUND_COMPLETED"))
+      case RoundCompleted      => log.warn(ConsensusLog.format(Category.Lifecycle, "n/a", "n/a", LogEvent.IdleRoundCompleted))
       case ConsensusFinished(_, _, _) =>
-        log.warn(ConsensusLog.format(ConsensusLog.Lifecycle, "n/a", "n/a", "event" -> "IDLE_CONSENSUS_FINISHED"))
+        log.warn(ConsensusLog.format(Category.Lifecycle, "n/a", "n/a", LogEvent.IdleConsensusFinished))
       case InitializeFromDownload(key, art, c, isRecovery) =>
         transitions.initFromDownload(key.asInstanceOf[Key], art.asInstanceOf[Signed[Artifact]], c.asInstanceOf[Ctx], isRecovery)
       case InitializeFromRollback(key, outcome) => transitions.initFromRollback(key.asInstanceOf[Key], outcome.asInstanceOf[Outcome])
@@ -110,10 +111,10 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
         Metrics[F].incrementCounter("dag_consensus_fsm_pending_deferred", Seq(unsafeLabelName("trigger_type") -> "event")) >>
           pending.setEvent()
       case RoundCompleted =>
-        completeRound(log.debug(ConsensusLog.format(ConsensusLog.Lifecycle, "n/a", "n/a", "event" -> "ROUND_COMPLETED_NO_OUTCOME")))
+        completeRound(log.debug(ConsensusLog.format(Category.Lifecycle, "n/a", "n/a", LogEvent.RoundCompletedNoOutcome)))
       case ConsensusFinished(key, _, trigger) =>
         completeRound(
-          log.info(ConsensusLog.format(ConsensusLog.Lifecycle, key.toString, "n/a", "event" -> "CONSENSUS_FINISHED")) >>
+          log.info(ConsensusLog.format(Category.Lifecycle, key.toString, "n/a", LogEvent.ConsensusFinished)) >>
             roundRunner.afterConsensusFinish(trigger)
         )
       case WithdrawFromConsensus => pending.setEvent()
@@ -127,10 +128,10 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
         if (!roundBlockedStates.contains(state))
           log.info(
             ConsensusLog.format(
-              ConsensusLog.Lifecycle,
+              Category.Lifecycle,
               "n/a",
               "n/a",
-              "event" -> "FSM_ROUND_START",
+              LogEvent.FsmRoundStart,
               "trigger" -> trigger.map(_.toString).getOrElse("none")
             )
           ) >>
@@ -144,10 +145,10 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
         else
           ConsensusLog.warn(
             log,
-            ConsensusLog.Lifecycle,
+            Category.Lifecycle,
             "n/a",
             "n/a",
-            "event" -> "ROUND_BLOCKED_BY_STATE",
+            LogEvent.RoundBlockedByState,
             "nodeState" -> state.show,
             "trigger" -> trigger.map(_.toString).getOrElse("none")
           ) >>

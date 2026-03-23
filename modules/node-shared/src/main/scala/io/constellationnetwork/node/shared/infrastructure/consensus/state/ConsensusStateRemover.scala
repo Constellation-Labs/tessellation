@@ -7,6 +7,7 @@ import cats.syntax.all._
 import scala.reflect.runtime.universe.TypeTag
 
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusWithdrawPeerDeclaration
 import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusStorage}
 
@@ -56,10 +57,10 @@ abstract class ConsensusStateRemover[F[
           gossip.spread(declaration) >>
             ConsensusLog.info(
               logger,
-              ConsensusLog.Lifecycle,
+              Category.Lifecycle,
               declaration.key.show,
               "n/a",
-              "event" -> "WITHDREW",
+              LogEvent.Withdrew,
               "kind" -> declaration.kind.show
             )
 

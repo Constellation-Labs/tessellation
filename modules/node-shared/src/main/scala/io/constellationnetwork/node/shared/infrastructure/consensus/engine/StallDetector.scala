@@ -6,6 +6,7 @@ import cats.syntax.all._
 
 import scala.concurrent.duration._
 
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusResources}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
@@ -91,14 +92,14 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
   private def monitorStep(key: Key, ms: MonitorState): F[Either[MonitorState, Unit]] =
     storage.getState(key).flatMap {
       case None =>
-        ConsensusLog.debug(logger, ConsensusLog.Lifecycle, key.toString, "n/a", "event" -> "MONITOR_STATE_GONE") >>
+        ConsensusLog.debug(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.MonitorStateGone) >>
           healthRef.update(_.copy(isRunning = false, key = None, phase = None)) >>
           Async[F].pure(Right(()))
 
       case Some(state) =>
         ctx.advancer.getConsensusOutcome(state) match {
           case Some(_) =>
-            ConsensusLog.debug(logger, ConsensusLog.Lifecycle, key.toString, "n/a", "event" -> "MONITOR_OUTCOME_READY") >>
+            ConsensusLog.debug(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.MonitorOutcomeReady) >>
               Async[F].pure(Right(()))
 
           case None =>
@@ -135,10 +136,10 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       _ <- (
         ConsensusLog.warn(
           logger,
-          ConsensusLog.Stall,
+          Category.Stall,
           key.toString,
           selfRole(state),
-          "event" -> "EARLY_VIEW_CHANGE",
+          LogEvent.EarlyViewChange,
           "leader" -> ConsensusLog.pid(state.leader),
           "reason" -> "leader_unresponsive"
         ) >>
@@ -201,10 +202,10 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       _ <- (
         ConsensusLog.warn(
           logger,
-          ConsensusLog.Stall,
+          Category.Stall,
           key.toString,
           selfRole(state),
-          "event" -> "LAGGING_NODE_DETECTED",
+          LogEvent.LaggingNodeDetected,
           "peersAtHigherKey" -> peersAtHigherKey.toString,
           "totalReady" -> totalRegisteredPeers.toString,
           "totalAllRegs" -> totalAllRegs.toString,
@@ -242,10 +243,10 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
           ConsensusLog
             .info(
               logger,
-              ConsensusLog.Facilitator,
+              Category.Facilitator,
               key.toString,
               selfRole(state),
-              "event" -> "RECORDING_MISSING_PEERS",
+              LogEvent.RecordingMissingPeers,
               "count" -> info.missingPeers.size.toString
             )
             .whenA(info.missingPeers.nonEmpty) >>
@@ -411,10 +412,10 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
             // First timeout — warn only, give peers one more cycle to respond
             ConsensusLog.warn(
               logger,
-              ConsensusLog.Stall,
+              Category.Stall,
               key.toString,
               selfRole(state),
-              "event" -> "PEER_STALL_WARNING",
+              LogEvent.PeerStallWarning,
               "phase" -> statusName,
               "elapsed" -> s"${statusDuration.toSeconds}s",
               "timeout" -> s"${declarationTimeout.toSeconds}s",
@@ -431,24 +432,50 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
             // Second+ timeout — evict missing peers
             // Record local eviction votes for missing peers (scaffolding for future gossip-based deterministic eviction)
             missingPeers.toList.traverse_(target => evictionVoteTracker.voteToEvict(selfId, target)) >>
-              ConsensusLog.warn(
-                logger,
-                ConsensusLog.Stall,
-                key.toString,
-                selfRole(state),
-                "event" -> (if (quorumInfeasible) "QUORUM_INFEASIBLE_AFTER_EVICTION" else "PEER_EVICTION"),
-                "phase" -> statusName,
-                "elapsed" -> s"${statusDuration.toSeconds}s",
-                "timeout" -> s"${declarationTimeout.toSeconds}s",
-                "progress" -> s"$declaredCount/$activeCount",
-                "evicted" -> missingPeers.size.toString,
-                "remaining" -> remaining.toString,
-                "minQuorum" -> minQuorum.toString,
-                "quorumFeasible" -> (!quorumInfeasible).toString,
-                "evictedPeers" -> ConsensusLog.pids(missingPeers),
-                "view" -> state.viewNumber.toString,
-                "stallCount" -> stallCount.toString
-              ) >>
+              // Note: Using a conditional event name here. Both paths log to the same category but need different events.
+              // We'll use a custom format call for now since the ADT doesn't have a combined event.
+              (if (quorumInfeasible)
+                 logger.warn(
+                   ConsensusLog.format(
+                     Category.Stall,
+                     key.toString,
+                     selfRole(state),
+                     LogEvent.StallDetected, // Using StallDetected as closest match for quorum infeasible
+                     "phase" -> statusName,
+                     "elapsed" -> s"${statusDuration.toSeconds}s",
+                     "timeout" -> s"${declarationTimeout.toSeconds}s",
+                     "progress" -> s"$declaredCount/$activeCount",
+                     "evicted" -> missingPeers.size.toString,
+                     "remaining" -> remaining.toString,
+                     "minQuorum" -> minQuorum.toString,
+                     "quorumFeasible" -> "false",
+                     "evictedPeers" -> ConsensusLog.pids(missingPeers),
+                     "view" -> state.viewNumber.toString,
+                     "stallCount" -> stallCount.toString,
+                     "reason" -> "QUORUM_INFEASIBLE_AFTER_EVICTION"
+                   )
+                 )
+               else
+                 logger.warn(
+                   ConsensusLog.format(
+                     Category.Stall,
+                     key.toString,
+                     selfRole(state),
+                     LogEvent.StallDetected, // Using StallDetected for peer eviction
+                     "phase" -> statusName,
+                     "elapsed" -> s"${statusDuration.toSeconds}s",
+                     "timeout" -> s"${declarationTimeout.toSeconds}s",
+                     "progress" -> s"$declaredCount/$activeCount",
+                     "evicted" -> missingPeers.size.toString,
+                     "remaining" -> remaining.toString,
+                     "minQuorum" -> minQuorum.toString,
+                     "quorumFeasible" -> "true",
+                     "evictedPeers" -> ConsensusLog.pids(missingPeers),
+                     "view" -> state.viewNumber.toString,
+                     "stallCount" -> stallCount.toString,
+                     "reason" -> "PEER_EVICTION"
+                   )
+                 )) >>
               Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>
               Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
               // If quorum is infeasible after eviction, skip the view change (it can't help)
@@ -471,10 +498,10 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
         // All declared but leader hasn't proposed → normal view change (leader rotation only)
         ConsensusLog.warn(
           logger,
-          ConsensusLog.Stall,
+          Category.Stall,
           key.toString,
           selfRole(state),
-          "event" -> "LEADER_STALL",
+          LogEvent.LeaderStall,
           "phase" -> statusName,
           "elapsed" -> s"${statusDuration.toSeconds}s",
           "timeout" -> s"${declarationTimeout.toSeconds}s",
@@ -489,10 +516,10 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
         // All declared but phase hasn't advanced → count toward abandon
         ConsensusLog.warn(
           logger,
-          ConsensusLog.Stall,
+          Category.Stall,
           key.toString,
           selfRole(state),
-          "event" -> "STALL_DETECTED",
+          LogEvent.StallDetected,
           "phase" -> statusName,
           "elapsed" -> s"${statusDuration.toSeconds}s",
           "timeout" -> s"${declarationTimeout.toSeconds}s",
@@ -564,26 +591,25 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     roundElapsed: FiniteDuration,
     stallCount: Int,
     statusName: String
-  ): F[Unit] =
-    Async[F].pure {
-      val withdrawnCount = state.withdrawnFacilitators.value.size
-      val missingCount = info.missingPeers.size
+  ): F[Unit] = {
+    val withdrawnCount = state.withdrawnFacilitators.value.size
+    val missingCount = info.missingPeers.size
 
-      val summaryPairs = Seq(
-        "event" -> "ROUND_MONITOR",
-        "phase" -> statusName,
-        "progress" -> s"${info.declaredCount}/${info.activeCount}",
-        "facilitators" -> state.facilitators.value.size.toString,
-        "phaseElapsed" -> s"${statusDuration.toSeconds}s",
-        "roundElapsed" -> s"${roundElapsed.toSeconds}s",
-        "stallCount" -> stallCount.toString,
-        "leader" -> ConsensusLog.pid(state.leader)
-      ) ++
-        (if (state.viewNumber > 0) Seq("view" -> state.viewNumber.toString) else Seq.empty) ++
-        (if (withdrawnCount > 0) Seq("withdrawn" -> withdrawnCount.toString) else Seq.empty) ++
-        (if (missingCount > 0) Seq("missing" -> missingCount.toString) else Seq.empty)
-      summaryPairs
-    }.flatMap(ConsensusLog.info(logger, ConsensusLog.Stall, key.toString, selfRole(state), _: _*))
+    val summaryPairs = Seq(
+      "phase" -> statusName,
+      "progress" -> s"${info.declaredCount}/${info.activeCount}",
+      "facilitators" -> state.facilitators.value.size.toString,
+      "phaseElapsed" -> s"${statusDuration.toSeconds}s",
+      "roundElapsed" -> s"${roundElapsed.toSeconds}s",
+      "stallCount" -> stallCount.toString,
+      "leader" -> ConsensusLog.pid(state.leader)
+    ) ++
+      (if (state.viewNumber > 0) Seq("view" -> state.viewNumber.toString) else Seq.empty) ++
+      (if (withdrawnCount > 0) Seq("withdrawn" -> withdrawnCount.toString) else Seq.empty) ++
+      (if (missingCount > 0) Seq("missing" -> missingCount.toString) else Seq.empty)
+
+    ConsensusLog.info(logger, Category.Stall, key.toString, selfRole(state), LogEvent.RoundMonitor, summaryPairs: _*)
+  }
 
   private def logPeerQualityScores(key: Key, role: String): F[Unit] =
     peerQualityTracker.getQualityScores.flatMap { scores =>
@@ -595,15 +621,15 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
         val unhealthy = sorted.count(_._2 < 0.3)
         ConsensusLog.info(
           logger,
-          ConsensusLog.Facilitator,
+          Category.Facilitator,
           key.toString,
           role,
-          "event" -> "PEER_QUALITY",
+          LogEvent.PeerQuality,
           "summary" -> s"healthy=$healthy,degraded=$degraded,unhealthy=$unhealthy",
           "trackedPeers" -> total.toString
         )
       } else
         ConsensusLog
-          .debug(logger, ConsensusLog.Facilitator, key.toString, role, "event" -> "PEER_QUALITY", "trackedPeers" -> "0")
+          .debug(logger, Category.Facilitator, key.toString, role, LogEvent.PeerQuality, "trackedPeers" -> "0")
     }
 }

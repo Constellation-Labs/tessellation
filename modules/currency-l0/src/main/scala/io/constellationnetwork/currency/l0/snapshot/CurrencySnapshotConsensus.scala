@@ -3,13 +3,13 @@ package io.constellationnetwork.currency.l0.snapshot
 import java.security.KeyPair
 
 import cats.effect.kernel.Async
-import cats.effect.std.{Random, Supervisor}
+import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
 import scala.concurrent.duration.FiniteDuration
 
-import io.constellationnetwork.currency.dataApplication._
+import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataTransaction}
 import io.constellationnetwork.currency.l0.snapshot.schema._
 import io.constellationnetwork.currency.l0.snapshot.services.StateChannelSnapshotService
 import io.constellationnetwork.currency.schema.CurrencyStateKey
@@ -23,8 +23,9 @@ import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus._
-import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusEventLoop
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, ConsensusEventLoop}
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.EventGossipClient
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
@@ -74,27 +75,11 @@ object CurrencySnapshotConsensus {
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
     eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey],
-    rumorQueue: cats.effect.std.Queue[F, Hashed[RumorRaw]]
+    rumorQueue: Queue[F, Hashed[RumorRaw]]
   )(implicit supervisor: Supervisor[F]): F[CurrencySnapshotConsensus[F]] = {
-    def noopDecoder: Decoder[DataTransaction] =
-      Decoder.failedWithMessage("DataTransaction decoder not provided")
-
-    implicit def daDecoder: Decoder[DataTransaction] =
-      maybeDataApplication.map { da =>
-        implicit val dataUpdateDecoder: Decoder[DataUpdate] = da.dataDecoder
-        DataTransaction.decoder
-      }.getOrElse(noopDecoder)
-
+    implicit val daDecoder: Decoder[DataTransaction] = DataTransactionCodecs.decoder(maybeDataApplication)
+    implicit val daEncoder: Encoder[DataTransaction] = DataTransactionCodecs.encoder(maybeDataApplication)
     implicit val hs: HasherSelector[F] = hasherSelector
-
-    def noopEncoder: Encoder[DataTransaction] =
-      Encoder.instance(_ => io.circe.Json.Null)
-
-    implicit def daEncoder: Encoder[DataTransaction] =
-      maybeDataApplication.map { da =>
-        implicit val dataUpdateEncoder: Encoder[DataUpdate] = da.dataEncoder
-        DataTransaction.encoder
-      }.getOrElse(noopEncoder)
 
     for {
       consensusStorage <- ConsensusStorage.make[
@@ -117,6 +102,8 @@ object CurrencySnapshotConsensus {
           maybeCustomArtifacts
         )
 
+      eventGossipClient = EventGossipClient.make[F, CurrencySnapshotEvent](client, session)
+
       consensusStateAdvancer =
         CurrencySnapshotConsensusStateAdvancer.make(
           snapshotConfig.consensus,
@@ -132,8 +119,7 @@ object CurrencySnapshotConsensus {
           getGlobalSnapshotByOrdinal,
           clusterStorage,
           eventMempool,
-          client,
-          session
+          eventGossipClient
         )
 
       facilitatorSelector = FacilitatorSelector.make(
@@ -220,7 +206,7 @@ object CurrencySnapshotConsensus {
 
       _ <- supervisor.supervise(loop.run.compile.drain)
       triggerEventConsensus = loop.queue.offer(
-        io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand.FacilitateByEvent
+        ConsensusCommand.FacilitateByEvent
       )
       consensus = new Consensus(
         handler,

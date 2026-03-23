@@ -5,7 +5,7 @@ import java.security.KeyPair
 import cats.Parallel
 import cats.data.NonEmptySet
 import cats.effect.kernel.{Async, Fiber}
-import cats.effect.std.{Random, Supervisor}
+import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
@@ -104,7 +104,7 @@ object GlobalSnapshotConsensus {
     eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey],
     eventGossipClient: EventGossipClient[F, GlobalSnapshotEvent],
     loggerBundle: LoggerBundle[F],
-    rumorQueue: cats.effect.std.Queue[F, Hashed[RumorRaw]]
+    rumorQueue: Queue[F, Hashed[RumorRaw]]
   )(implicit supervisor: Supervisor[F], globalStateProofSelector: GlobalStateProofSelector): F[GlobalSnapshotConsensus[F]] =
     for {
       globalStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager

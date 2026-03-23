@@ -12,6 +12,7 @@ import scala.reflect.runtime.universe.TypeTag
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage.ModifyStateFn
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, _}
@@ -107,10 +108,10 @@ object ConsensusStateUpdater {
             val statusTransition = if (oldStatusName =!= newStatusName) s"$oldStatusName→$newStatusName" else newStatusName
             ConsensusLog.info(
               logger,
-              ConsensusLog.Phase,
+              Category.Phase,
               newState.key.show,
               "n/a",
-              "event" -> "STATE_UPDATED",
+              LogEvent.StateUpdated,
               "status" -> statusTransition,
               "facilitators" -> newState.facilitators.value.size.toString,
               "leader" -> ConsensusLog.pid(newState.leader),
@@ -186,10 +187,10 @@ object ConsensusStateUpdater {
         ) >>
           logger.warn(
             ConsensusLog.format(
-              ConsensusLog.Fork,
+              Category.Fork,
               "n/a",
               "n/a",
-              "event" -> "FORK_DETECTED",
+              LogEvent.ForkDetected,
               "observation" -> observationName,
               "majorityPeers" -> ConsensusLog.pids(majorityForkPeers),
               "totalObservations" -> observations.size.toString
@@ -207,10 +208,10 @@ object ConsensusStateUpdater {
         val safeForkRecovery = forkRecovery.handleErrorWith { err =>
           logger.error(err)(
             ConsensusLog.format(
-              ConsensusLog.Recovery,
+              Category.Recovery,
               "n/a",
               "n/a",
-              "event" -> "FORK_RECOVERY_FAILED",
+              LogEvent.ForkRecoveryFailed,
               "observation" -> observationName
             )
           ) >> restartService.signalClusterLeaveRestart()
@@ -292,10 +293,10 @@ object ConsensusStateUpdater {
                             .getLogger[F]
                             .error(cause)(
                               ConsensusLog.format(
-                                ConsensusLog.Validation,
+                                Category.Validation,
                                 "n/a",
                                 "n/a",
-                                "event" -> "MAJORITY_ARTIFACT_ABANDONED",
+                                LogEvent.MajorityArtifactAbandoned,
                                 "hash" -> majorityHash.show.take(8),
                                 "proposals" -> s"$occurrences/$totalProposals",
                                 "reason" -> "validation_failed"
@@ -307,10 +308,10 @@ object ConsensusStateUpdater {
                             .getLogger[F]
                             .warn(cause)(
                               ConsensusLog.format(
-                                ConsensusLog.Validation,
+                                Category.Validation,
                                 "n/a",
                                 "n/a",
-                                "event" -> "MAJORITY_ARTIFACT_FALLBACK",
+                                LogEvent.MajorityArtifactFallback,
                                 "hash" -> majorityHash.show.take(8),
                                 "occurrences" -> occurrences.toString
                               )

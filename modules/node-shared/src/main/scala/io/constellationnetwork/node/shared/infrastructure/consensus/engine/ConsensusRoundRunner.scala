@@ -8,6 +8,7 @@ import cats.syntax.all._
 
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
@@ -54,7 +55,7 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
   def runRound(trigger: Option[ConsensusTrigger]): F[Unit] =
     storage.getLastConsensusOutcome.flatMap {
       case None =>
-        ConsensusLog.warn(logger, ConsensusLog.Lifecycle, "n/a", "n/a", "event" -> "NO_PREVIOUS_OUTCOME") >>
+        ConsensusLog.warn(logger, Category.Lifecycle, "n/a", "n/a", LogEvent.NoPreviousOutcome) >>
           Metrics[F].incrementCounter("dag_consensus_round_no_outcome") >>
           queue.offer(ConsensusCommand.RoundCompleted)
 
@@ -63,10 +64,10 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
         val lastKey = outcomeKey.get(outcome)
         ConsensusLog.info(
           logger,
-          ConsensusLog.Lifecycle,
+          Category.Lifecycle,
           nextKey.toString,
           "n/a",
-          "event" -> "ROUND_FACILITATING",
+          LogEvent.RoundFacilitating,
           "trigger" -> trigger.toString,
           "lastKey" -> lastKey.toString,
           "declarationTimeout" -> config.declarationTimeout.toString,
@@ -93,10 +94,10 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
             ) >>
               ConsensusLog.info(
                 logger,
-                ConsensusLog.Lifecycle,
+                Category.Lifecycle,
                 key.toString,
                 role,
-                "event" -> "ROUND_FACILITATED",
+                LogEvent.RoundFacilitated,
                 "leader" -> leaderInfo,
                 "facilitators" -> count.toString
               )
@@ -119,10 +120,10 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
         ) >>
           ConsensusLog.debug(
             logger,
-            ConsensusLog.Lifecycle,
+            Category.Lifecycle,
             key.toString,
             ConsensusLog.role(ctx.selfId, state.leader),
-            "event" -> "STATE_EXISTS",
+            LogEvent.StateExists,
             "status" -> statusName
           ) >>
           startRoundMonitor(key) >>
@@ -133,7 +134,7 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
           "dag_consensus_round_facilitated",
           Seq(unsafeLabelName("outcome") -> "no_state")
         ) >>
-          ConsensusLog.warn(logger, ConsensusLog.Lifecycle, key.toString, "n/a", "event" -> "NO_STATE") >>
+          ConsensusLog.warn(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.NoState) >>
           queue.offer(ConsensusCommand.RoundCompleted)
     }
 
@@ -150,10 +151,10 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
             case None =>
               ConsensusLog.debug(
                 logger,
-                ConsensusLog.Lifecycle,
+                Category.Lifecycle,
                 key.toString,
                 ConsensusLog.role(ctx.selfId, newState.leader),
-                "event" -> "INITIAL_CHECK",
+                LogEvent.InitialCheck,
                 "phase" -> statusName,
                 "facilitators" -> newState.facilitators.value.size.toString,
                 "leader" -> ConsensusLog.pid(newState.leader)

@@ -22,6 +22,7 @@ import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import fs2.Stream
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 /** Builds and wires together all consensus engine components.
   *
@@ -110,7 +111,7 @@ object ConsensusEventLoop {
         ops,
         nodeStorage,
         clusterStorage,
-        org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F],
+        Slf4jLogger.getLogger[F],
         config,
         consensusFunctions,
         consensusClient,
@@ -124,7 +125,7 @@ object ConsensusEventLoop {
         facilitatorSelector,
         peerQualityTracker,
         queue,
-        org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F]
+        Slf4jLogger.getLogger[F]
       )
       abandonmentTracker = new AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](ctx, healthRef)
       stallDetector = new StallDetector[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](

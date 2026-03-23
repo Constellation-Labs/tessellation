@@ -8,6 +8,7 @@ import cats.{Eq, Show}
 import scala.concurrent.duration._
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand._
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.GetConsensusOutcomeRequest
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger._
@@ -84,7 +85,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
           advancer
             .getConsensusOutcome(newState)
             .map { case (prevKey, outcome) => finalizeAndNotify(newState, prevKey, outcome) }
-            .getOrElse(log.debug(ConsensusLog.format(ConsensusLog.Phase, key.show, "n/a", "event" -> "STATE_UPDATED")))
+            .getOrElse(log.debug(ConsensusLog.format(Category.Phase, key.show, "n/a", LogEvent.StateUpdated)))
       }
     } yield ()
 
@@ -129,11 +130,11 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
             Metrics[F].updateGauge("dag_consensus_round_eligible_count", newState.eligibleFacilitators.value.size) >>
             ConsensusLog.info(
               log,
-              ConsensusLog.Lifecycle,
+              Category.Lifecycle,
               key.show,
               ConsensusLog.role(ctx.selfId, newState.leader),
+              LogEvent.RoundCompleted,
               (Seq(
-                "event" -> "ROUND_COMPLETED",
                 "trigger" -> trigger.toString,
                 "duration" -> s"${duration.toMillis}ms",
                 "facilitators" -> newState.facilitators.value.size.toString,
@@ -155,10 +156,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
             Metrics[F].incrementCounter("dag_consensus_outcome_conflict") >>
             ConsensusLog.warn(
               log,
-              ConsensusLog.Lifecycle,
+              Category.Lifecycle,
               activeKey.show,
               "n/a",
-              "event" -> "OUTCOME_CONFLICT",
+              LogEvent.OutcomeConflict,
               "reason" -> "concurrent_finalization"
             )
         }
@@ -184,7 +185,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
 
   def initFromDownload(key: Key, artifact: Signed[Artifact], context: Ctx, isRecovery: Boolean = false): F[Unit] =
     for {
-      _ <- ConsensusLog.info(log, ConsensusLog.Lifecycle, key.toString, "n/a", "event" -> "DOWNLOAD_INIT_START")
+      _ <- ConsensusLog.info(log, Category.Lifecycle, key.toString, "n/a", LogEvent.DownloadInitStart)
       outcome <- fetchOutcomeFromCluster(key, artifact, context)
         .flatMap(_.liftTo[F](new Throwable(s"[DownloadInit] Could not observe outcome for key=$key")))
         .flatMap { o =>
@@ -213,10 +214,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                 // cause the cluster to advance further, making the node's first round stale.
                 ConsensusLog.info(
                   log,
-                  ConsensusLog.Lifecycle,
+                  Category.Lifecycle,
                   key.toString,
                   "n/a",
-                  "event" -> "DOWNLOAD_INIT_RECOVERY_IMMEDIATE",
+                  LogEvent.DownloadInitRecoveryImmediate,
                   "note" -> "Skipping deferral for recovery download"
                 ) >>
                   queue.offer(StartRound(TimeTrigger.some))
@@ -230,10 +231,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                 // the cluster's existing cadence, ensuring all nodes participate together.
                 ConsensusLog.info(
                   log,
-                  ConsensusLog.Lifecycle,
+                  Category.Lifecycle,
                   key.toString,
                   "n/a",
-                  "event" -> "DOWNLOAD_INIT_DEFERRED",
+                  LogEvent.DownloadInitDeferred,
                   "deferral" -> s"${ctx.config.timeTriggerInterval.toSeconds}s"
                 ) >>
                   Temporal[F].sleep(ctx.config.timeTriggerInterval) >>
@@ -245,7 +246,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
 
   def initFromRollback(key: Key, outcome: Outcome): F[Unit] =
     for {
-      _ <- ConsensusLog.info(log, ConsensusLog.Lifecycle, key.toString, "n/a", "event" -> "ROLLBACK_INIT_START")
+      _ <- ConsensusLog.info(log, Category.Lifecycle, key.toString, "n/a", LogEvent.RollbackInitStart)
       // Clear ALL stale consensus state before initializing from rollback.
       // Without this cleanup, peer registrations from the pre-rollback network survive
       // and contain keys higher than the rollback ordinal. The StallDetector then sees
@@ -257,7 +258,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
       _ <- storage.clearTimeTrigger
       _ <- storage.clearObservationKey
       _ <- ctx.pending.clear()
-      _ <- ConsensusLog.info(log, ConsensusLog.Lifecycle, key.toString, "n/a", "event" -> "ROLLBACK_STATE_CLEARED")
+      _ <- ConsensusLog.info(log, Category.Lifecycle, key.toString, "n/a", LogEvent.RollbackStateCleared)
       _ <- storage.trySetInitialConsensusOutcome(outcome)
       // Set joining grace period to use relaxed timeouts for first rounds after rollback.
       // Without this, the rollback node uses aggressive timeouts while peers are still
@@ -280,10 +281,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
           val peerStates = allPeers.toList.map(p => s"${ConsensusLog.pid(p.id)}=${p.state}").mkString(", ")
           ConsensusLog.warn(
             log,
-            ConsensusLog.Lifecycle,
+            Category.Lifecycle,
             "n/a",
             "n/a",
-            "event" -> "DOWNLOAD_INIT_NO_PEERS",
+            LogEvent.DownloadInitNoPeers,
             "peerStates" -> s"[$peerStates]"
           ) >>
             new NoValidPeersException(
@@ -297,10 +298,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
     def fetch(peer: Peer): F[Option[Outcome]] =
       ConsensusLog.debug(
         log,
-        ConsensusLog.Lifecycle,
+        Category.Lifecycle,
         key.toString,
         "n/a",
-        "event" -> "DOWNLOAD_INIT_FETCH",
+        LogEvent.DownloadInitFetch,
         "peer" -> ConsensusLog.pid(peer.id),
         "state" -> peer.state.toString
       ) >>
@@ -322,10 +323,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
           val sameContext = outcomeContext.get(outcome) === context
           ConsensusLog.info(
             log,
-            ConsensusLog.Lifecycle,
+            Category.Lifecycle,
             key.show,
             "n/a",
-            "event" -> "DOWNLOAD_INIT_MISMATCH",
+            LogEvent.DownloadInitMismatch,
             "sameArtifact" -> sameArtifact.show,
             "sameContext" -> sameContext.show,
             "attempt" -> attempt.toString
@@ -333,10 +334,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
         }.getOrElse(
           ConsensusLog.info(
             log,
-            ConsensusLog.Lifecycle,
+            Category.Lifecycle,
             key.show,
             "n/a",
-            "event" -> "DOWNLOAD_INIT_WAITING",
+            LogEvent.DownloadInitWaiting,
             "attempt" -> attempt.toString
           )
         )
@@ -346,10 +347,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
     def onError(err: Throwable, retryDetails: RetryDetails): F[Unit] =
       log.error(err)(
         ConsensusLog.format(
-          ConsensusLog.Lifecycle,
+          Category.Lifecycle,
           key.show,
           "n/a",
-          "event" -> "DOWNLOAD_INIT_ERROR",
+          LogEvent.DownloadInitError,
           "attempt" -> retryDetails.retriesSoFar.toString,
           "error" -> err.getMessage
         )
