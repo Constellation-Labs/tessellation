@@ -26,7 +26,7 @@ This document provides an in-depth walkthrough of the Tessellation consensus mec
 
 The consensus engine follows an **event-driven architecture** with a central command queue. All state changes happen in response to commands, making the system deterministic and easier to test.
 
-![Consensus State Machine](img/consensus-fsm.png)
+![Consensus State Machine](diagrams/consensus-fsm.png)
 
 ### Core Components
 
@@ -48,7 +48,7 @@ The consensus engine follows an **event-driven architecture** with a central com
 
 The consensus engine uses an **unbounded command queue** to coordinate **5 concurrent streams**. All event sources feed commands into the queue, and the FSM processes them sequentially.
 
-![Concurrent Loops](img/consensus-concurrent-loops.png)
+![Concurrent Loops](diagrams/consensus-concurrent-loops.png)
 
 ### Command Types
 
@@ -279,7 +279,7 @@ pending.pullNext match {
 
 Understanding how `Outcome`, `Key`, and the `outcomeKey` lens work together is crucial to understanding the consensus flow.
 
-![Outcome Tracking](img/consensus-outcome-tracking.png)
+![Outcome Tracking](diagrams/consensus-outcome-tracking.png)
 
 ### What is an Outcome?
 
@@ -1147,4 +1147,4 @@ without progress.
 
 For a detailed view of the full consensus lifecycle including gossip, queue, and FSM interactions, see:
 
-![Consensus Sequence](img/consensus-sequence.png)
+![Consensus Sequence](diagrams/consensus-sequence.png)
