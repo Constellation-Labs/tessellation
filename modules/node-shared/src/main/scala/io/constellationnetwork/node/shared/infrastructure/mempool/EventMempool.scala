@@ -134,6 +134,10 @@ trait EventMempool[F[_], Event, Key] {
 }
 
 /** Configuration for the event mempool.
+  *
+  * TODO: Add a `trimOldEvents(maxAge: FiniteDuration)` method that the gossip daemon could call
+  * periodically. Currently events are only trimmed via `clearIncluded` (which depends on consensus
+  * running). Events could accumulate if consensus stalls for an extended period.
   */
 case class MempoolConfig(
   maxSize: Int,

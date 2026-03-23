@@ -88,6 +88,11 @@ object ForkRecoveryDetector {
               // Find peers at our ordinal: if a majority of them have a different hash, we're forked.
               val peersAtLocalOrdinal = chainTips.filter { case (_, tip) => tip.ordinal == localOrdinal }
               val peersWithDifferentHash = peersAtLocalOrdinal.filter { case (_, tip) => tip.snapshotHash != localHash }
+              // Intentionally conservative: requires strict majority (> 50%) of peers at our ordinal
+              // to disagree on hash. With 2 peers, both must disagree (unanimity). This avoids
+              // false positives from temporary network jitter at the cost of slower detection
+              // for 2-node mini-forks. The lagging fork check (forkLagThreshold) catches those
+              // cases once the mini-fork falls behind the canonical chain.
               val isRunningFork = peersAtLocalOrdinal.size >= 2 && peersWithDifferentHash.size > peersAtLocalOrdinal.size / 2
 
               if (isLagging || isRunningFork) {

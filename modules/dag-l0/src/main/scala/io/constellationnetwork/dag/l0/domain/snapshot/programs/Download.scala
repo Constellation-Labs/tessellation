@@ -150,7 +150,8 @@ object Download {
       *
       * Unlike full download, this path:
       *   - Does NOT clear in-memory caches (lastNGlobalSnapshotStorage, lastGlobalSnapshotStorage)
-      *   - Does NOT clear the event mempool
+      *   - Does NOT clear the event mempool — forked events from a minority fork will be
+      *     rejected by consensus validation when proposed, so stale mempool entries are harmless
       *   - Does NOT clear the MPT store
       *   - Observes exactly one round (waits for the next snapshot) before facilitating
       *   - Uses setForRecovery on lastNGlobalSnapshotStorage (sets single snapshot, no backfill)

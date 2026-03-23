@@ -187,6 +187,9 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // stale keys immediately after clearAllPeerRegistrations, causing false lagging
       // detection on rollback nodes. Only Ready peers are actively participating in
       // consensus and have accurate keys.
+      // TODO: These two Ref reads are non-atomic — peer registrations and responsive peers
+      // could observe inconsistent state. The race is benign: worst case is one extra round
+      // of lagging detection before self-correcting on the next monitor cycle.
       peerRegs <- storage.getPeerRegistrations
       responsivePeers <- clusterStorage.getResponsivePeers
       readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet

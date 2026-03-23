@@ -134,6 +134,10 @@ object GlobalSnapshotConsensusStateAdvancer {
       * Tracks the key (ordinal) alongside the savepoint so that stale savepoints from a different ordinal (e.g., after recovery download)
       * are discarded instead of restored — restoring a savepoint from ordinal N into an MptStore that was replaced by a download at ordinal
       * M would corrupt state.
+      *
+      * TODO: Consider clearing proposalSavepointRef explicitly in round cleanup to strengthen the invariant.
+      * Currently the ordinal-check guard prevents stale restore, but explicit cleanup would make the
+      * lifecycle more defensive against theoretical races during recovery (two rounds racing).
       */
     private val proposalSavepointRef: Ref[F, Option[(GlobalSnapshotKey, MptStoreSavepoint[F])]] = Ref.unsafe(none)
 
