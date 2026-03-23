@@ -1,0 +1,82 @@
+// Fork Detection Flow
+// Render: dot -Tsvg fork-detection.dot -o fork-detection.svg
+
+digraph ForkDetection {
+    rankdir=TB;
+    node [shape=box, style=rounded, fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=10];
+
+    // Heartbeat trigger
+    Heartbeat [shape=ellipse, label="EventGossipDaemon\nHeartbeat (~10s)"];
+
+    // Chain tip sampling
+    Sample [label="Sample Chain Tips\n\n1. Select 3 random mesh peers\n2. GET /events/ihave\n3. Store in MeshState", style="rounded,filled", fillcolor="lightblue"];
+    
+    Heartbeat -> Sample;
+
+    // Detection
+    Detect [label="ForkRecoveryDetector.\ndetectForkDivergence()", style="rounded,filled", fillcolor="lightyellow"];
+    
+    Sample -> Detect;
+
+    // Grouping
+    Group [label="Group peers by\n(ordinal, hash)"];
+    
+    Detect -> Group;
+
+    // Majority check
+    MajorityCheck [shape=diamond, label="Clear\nMajority?\n(>50%)"];
+    
+    Group -> MajorityCheck;
+    MajorityCheck -> NoFork [label="no"];
+    NoFork [label="No fork detected\n(ambiguous)"];
+    NoFork -> Done;
+
+    MajorityCheck -> CheckLag [label="yes"];
+
+    // Lag check
+    CheckLag [shape=diamond, label="Local lag\n> threshold\n(default: 2)?"];
+    
+    CheckLag -> LaggingFork [label="yes"];
+    LaggingFork [label="LAGGING FORK\n\nLocal ordinal far behind\nmajority ordinal", style="rounded,filled", fillcolor="lightcoral"];
+    LaggingFork -> TriggerRecovery;
+
+    CheckLag -> CheckHash [label="no"];
+
+    // Hash divergence check
+    CheckHash [shape=diamond, label="Same ordinal,\ndifferent hash?\n(>50% disagree)"];
+    
+    CheckHash -> RunningFork [label="yes"];
+    RunningFork [label="RUNNING FORK\n\nLocal hash differs from\nmajority at same ordinal", style="rounded,filled", fillcolor="lightcoral"];
+    RunningFork -> TriggerRecovery;
+
+    CheckHash -> NoFork2 [label="no"];
+    NoFork2 [label="No fork detected\n(in sync)"];
+    NoFork2 -> Done;
+
+    // Recovery trigger
+    TriggerRecovery [label="onForkDetected callback", style="rounded,filled", fillcolor="orange"];
+
+    // State guard
+    StateGuard [shape=diamond, label="Node in\nObserving/\nDownload?"];
+    
+    TriggerRecovery -> StateGuard;
+    StateGuard -> Suppressed [label="yes"];
+    Suppressed [label="Fork detection\nSUPPRESSED\n(prevent restart loops)", style="rounded,filled", fillcolor="lightgray"];
+    Suppressed -> Done;
+
+    StateGuard -> WaitForDownload [label="no"];
+    WaitForDownload [label="Transition to\nWaitingForDownload", style="rounded,filled", fillcolor="red", fontcolor="white"];
+    WaitForDownload -> Done;
+
+    Done [shape=ellipse, label="Done"];
+
+    // Detection modes summary
+    subgraph cluster_modes {
+        label="Detection Modes";
+        style=dashed;
+        fontsize=10;
+        
+        ModesNote [shape=plaintext, label="Lagging Fork: majorityOrdinal - localOrdinal > 2\nRunning Fork: Same ordinal, hash differs from majority\n\nBoth require >50% of reporters to agree"];
+    }
+}

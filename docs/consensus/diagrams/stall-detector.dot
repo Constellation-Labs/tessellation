@@ -1,0 +1,124 @@
+// Stall Detector Flow
+// Render: dot -Tsvg stall-detector.dot -o stall-detector.svg
+
+digraph StallDetector {
+    rankdir=TB;
+    node [shape=box, style=rounded, fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=10];
+
+    // Entry
+    Start [shape=ellipse, label="Monitor\nStarted"];
+
+    // Main loop
+    Poll [label="Poll State\n(100ms-1000ms\nadaptive)", style="rounded,filled", fillcolor="lightblue"];
+
+    Start -> Poll;
+
+    // Checks
+    StateGone [shape=diamond, label="State\nGone?"];
+    OutcomeReady [shape=diamond, label="Outcome\nReady?"];
+    
+    Poll -> StateGone;
+    StateGone -> Exit [label="yes"];
+    StateGone -> OutcomeReady [label="no"];
+    OutcomeReady -> Exit [label="yes"];
+    OutcomeReady -> CheckChanges [label="no"];
+
+    Exit [shape=ellipse, label="Exit\nMonitor"];
+
+    // Change detection
+    CheckChanges [label="Detect Changes\n• Status changed?\n• Resources changed?", style="rounded,filled", fillcolor="lightyellow"];
+    
+    CheckChanges -> QueueCheckUpdate [label="changed"];
+    QueueCheckUpdate [label="queue.offer(\nCheckUpdate(key))"];
+    QueueCheckUpdate -> CalculateTimeout;
+    CheckChanges -> CalculateTimeout [label="no change"];
+
+    // Timeout calculation
+    CalculateTimeout [label="Calculate Timeout\n• Base: declarationTimeout\n• Phase multiplier\n• Near-completion bonus\n• Stall count adjustment", style="rounded,filled", fillcolor="lightcyan"];
+
+    CalculateTimeout -> CheckEarlyViewChange;
+
+    // Early view change
+    CheckEarlyViewChange [shape=diamond, label="Leader\nUnresponsive\n& Proposal\nPhase?"];
+    
+    CheckEarlyViewChange -> EarlyViewChange [label="yes"];
+    EarlyViewChange [label="Early View Change\nViewChangeManager", style="rounded,filled", fillcolor="orange"];
+    EarlyViewChange -> UpdateHealth;
+
+    CheckEarlyViewChange -> CheckStall [label="no"];
+
+    // Stall handling
+    CheckStall [shape=diamond, label="Timeout\nExceeded?"];
+    
+    CheckStall -> GraduatedResponse [label="yes"];
+    CheckStall -> CheckLagging [label="no"];
+
+    GraduatedResponse [shape=diamond, label="First\nStall?"];
+    
+    GraduatedResponse -> WarnOnly [label="yes"];
+    WarnOnly [label="PEER_STALL_WARNING\n(double tolerance)", style="rounded,filled", fillcolor="lightyellow"];
+    WarnOnly -> CheckLagging;
+
+    GraduatedResponse -> CheckMissing [label="no"];
+
+    CheckMissing [shape=diamond, label="Missing\nPeers?"];
+    
+    CheckMissing -> CheckQuorum [label="yes"];
+    CheckMissing -> CheckProposalPhase [label="no"];
+
+    CheckQuorum [shape=diamond, label="Remaining\n≥ MinQuorum?"];
+    
+    CheckQuorum -> Evict [label="yes"];
+    CheckQuorum -> QuorumInfeasible [label="no"];
+
+    Evict [label="ViewChangeManager.\nperformViewChange\nWithEviction()", style="rounded,filled", fillcolor="lightcoral"];
+    Evict -> CheckLagging;
+
+    QuorumInfeasible [label="QuorumInfeasible\n(retriable=true)", style="rounded,filled", fillcolor="lightpink"];
+    QuorumInfeasible -> CheckAbandon;
+
+    CheckProposalPhase [shape=diamond, label="Proposal\nPhase?"];
+    
+    CheckProposalPhase -> ViewChange [label="yes"];
+    ViewChange [label="ViewChangeManager.\nperformViewChange()", style="rounded,filled", fillcolor="orange"];
+    ViewChange -> CheckLagging;
+
+    CheckProposalPhase -> CountStall [label="no"];
+    CountStall [label="Count toward\nabandonment"];
+    CountStall -> CheckLagging;
+
+    // Lagging check
+    CheckLagging [shape=diamond, label="Majority\nat Higher\nKey?"];
+    
+    CheckLagging -> Lagging [label="yes"];
+    Lagging [label="Lagging\n(retriable=false)", style="rounded,filled", fillcolor="lightcoral"];
+    Lagging -> CheckAbandon;
+    
+    CheckLagging -> CheckAbandon [label="no"];
+
+    // Abandon check
+    CheckAbandon [shape=diamond, label="Should\nAbandon?"];
+    
+    CheckAbandon -> Abandon [label="yes\nmaxStalls\ntimeout\nquorumInfeasible\nlagging"];
+    Abandon [label="AbandonmentTracker.\nabandonRound()", style="rounded,filled", fillcolor="red", fontcolor="white"];
+    Abandon -> Exit;
+
+    CheckAbandon -> UpdateHealth [label="no"];
+
+    // Health update and loop
+    UpdateHealth [label="Update Health\nSnapshot", style="rounded,filled", fillcolor="lightgreen"];
+    UpdateHealth -> Sleep;
+    
+    Sleep [label="Adaptive Sleep\n(100ms - 1000ms)"];
+    Sleep -> Poll;
+
+    // Min Quorum calculation note
+    subgraph cluster_quorum {
+        label="Quorum Floor Calculation";
+        style=dashed;
+        fontsize=10;
+        
+        QuorumNote [shape=plaintext, label="clusterSize = max(readyPeerCount + 1, facilitators)\nminQuorum = floor(clusterSize / 2) + 1\n\nUses cluster-wide Ready count, NOT round facilitator count"];
+    }
+}

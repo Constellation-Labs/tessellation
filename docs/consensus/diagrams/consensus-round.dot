@@ -1,0 +1,51 @@
+// Consensus Round Protocol
+// Render: dot -Tsvg consensus-round.dot -o consensus-round.svg
+
+digraph ConsensusRound {
+    rankdir=TB;
+    node [shape=box, style=rounded, fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=10];
+
+    // Phases
+    subgraph cluster_phases {
+        label="Consensus Phases";
+        style=rounded;
+
+        CollectingFacilities [label="CollectingFacilities\n\nAll peers gossip:\n• Event hashes\n• Candidates\n• Trigger\n• FacilitatorsHash", style="rounded,filled", fillcolor="lightblue"];
+        CollectingProposals [label="CollectingProposals\n\nLeader creates artifact\nAll validate & gossip:\n• Proposal hash\n• FacilitatorsHash", style="rounded,filled", fillcolor="lightyellow"];
+        CollectingSignatures [label="CollectingSignatures\n\nAll sign majority hash:\n• MajoritySignature\n• FacilitatorsHash", style="rounded,filled", fillcolor="lightpink"];
+        Finished [label="Finished\n\nOutcome persisted\nTCA filter updated", style="rounded,filled", fillcolor="lightgreen"];
+    }
+
+    // Transitions
+    CollectingFacilities -> CollectingProposals [label="all declared"];
+    CollectingProposals -> CollectingSignatures [label="all declared"];
+    CollectingSignatures -> Finished [label="all signed"];
+
+    // Stall handling
+    StallDetector [shape=ellipse, label="StallDetector\n(100ms poll)", style=filled, fillcolor="lightsalmon"];
+
+    StallDetector -> CollectingFacilities [label="timeout → evict", style=dashed, color="red"];
+    StallDetector -> CollectingProposals [label="leader stall →\nview change", style=dashed, color="red"];
+    StallDetector -> CollectingSignatures [label="timeout → evict", style=dashed, color="red"];
+
+    // Abandon
+    Abandon [shape=diamond, label="Abandon\nRound?", style=filled, fillcolor="orange"];
+    
+    StallDetector -> Abandon [label="maxStalls\nor timeout"];
+    Abandon -> Recovery [label="yes"];
+    Abandon -> CollectingFacilities [label="no\n(retry)", style=dashed];
+
+    Recovery [shape=box, label="AbandonmentTracker\n→ WaitingForDownload", style="rounded,filled", fillcolor="lightcoral"];
+
+    // Legend
+    subgraph cluster_legend {
+        label="Legend";
+        style=dashed;
+        fontsize=10;
+        
+        l1 [shape=plaintext, label="Solid: Normal transitions"];
+        l2 [shape=plaintext, label="Dashed Red: Stall handling"];
+        l3 [shape=plaintext, label="Orange: Abandon decision"];
+    }
+}
