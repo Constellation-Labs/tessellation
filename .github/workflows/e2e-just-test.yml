@@ -2,7 +2,7 @@ name: E2E Test (Just)
 
 on:
   pull_request:
-    branches: [develop]
+    branches: [develop, release/testnet]
     types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
@@ -97,6 +97,7 @@ jobs:
           - { name: dag-cluster,            tests: "dag-cluster" }
           - { name: delegated-staking,      tests: "delegated-staking" }
           - { name: token-lock-replacement, tests: "token-lock-replacement" }
+          - { name: fork-recovery,          tests: "fork-recovery", num-gl0: "4" }
           - { name: currency,               tests: "currency" }
           - { name: rewards,                tests: "rewards" }
           - { name: token-locks,            tests: "token-locks" }
@@ -176,14 +177,14 @@ jobs:
           # Container status
           docker ps -a > runner-logs/container-status.txt 2>&1
 
-          # GL0 node logs
-          for i in 0 1 2; do
-            docker logs "gl0-$i" > "runner-logs/gl0-$i.log" 2>&1 || echo "No gl0-$i container"
+          # GL0 node logs (up to 9 nodes)
+          for i in $(seq 0 9); do
+            docker logs "gl0-$i" > "runner-logs/gl0-$i.log" 2>&1 || true
           done
 
           # GL1 node logs
-          for i in 0 1 2; do
-            docker logs "gl1-$i" > "runner-logs/gl1-$i.log" 2>&1 || echo "No gl1-$i container"
+          for i in $(seq 0 9); do
+            docker logs "gl1-$i" > "runner-logs/gl1-$i.log" 2>&1 || true
           done
 
           # ML0 node logs

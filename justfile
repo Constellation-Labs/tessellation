@@ -36,6 +36,13 @@ purge-docker:
 clean-docker:
 	@bash docker/bin/tessellation-docker-cleanup.sh
 
+# Remove root-owned node data (gl0/gl1/ml0 persisted state) using a Docker container to bypass sudo
+# Data lives in nodes/ (repo root, used by compose-runner) AND docker/nodes/ (legacy)
+clean-data:
+	@docker run --rm -v $(pwd)/nodes:/nodes alpine sh -c "rm -rf /nodes/*/gl0-data /nodes/*/gl1-data /nodes/*/ml0-data /nodes/*/gl0-logs /nodes/*/gl1-logs /nodes/*/ml0-logs" 2>/dev/null || true
+	@docker run --rm -v $(pwd)/docker/nodes:/nodes alpine sh -c "rm -rf /nodes/*/gl0-data /nodes/*/gl1-data /nodes/*/ml0-data" 2>/dev/null || true
+	@echo "Node data cleaned (nodes/ and docker/nodes/)"
+
 clean-configs:
 	@bash docker/bin/clean-configs.sh
 

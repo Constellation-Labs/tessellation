@@ -104,7 +104,7 @@ const sendDataTransaction = async () => {
 
     const address = await sendDataTransactionsUsingUrls(globalL0Url, metagraphL1DataUrl, privateKey);
 
-    const maxAttempts = 60
+    const maxAttempts = 120
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
             const response = await axios.get(`${metagraphL0Url}/data-application/addresses/${address}`);

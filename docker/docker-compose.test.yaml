@@ -1,5 +1,8 @@
 services:
   gl0:
+    # NET_ADMIN required for tc-based network isolation in fork recovery tests
+    cap_add:
+      - NET_ADMIN
     # merge in an extra network just for tests
     networks:
       tessellation_common:

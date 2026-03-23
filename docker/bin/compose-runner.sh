@@ -49,6 +49,7 @@ if [ "$LIST_TESTS" = "true" ]; then
   echo "DAG tests (no metagraph required):"
   echo "  dag-cluster              DAG cluster check"
   echo "  delegated-staking        Delegated staking tests"
+  echo "  fork-recovery            Fork recovery test (needs --num-gl0=4)"
   echo "  token-lock-replacement   Token lock replacement edge case tests"
   echo "  snapshot-streaming       Snapshot streaming indexer E2E test"
   echo ""
@@ -127,6 +128,9 @@ else
     mkdir -p ./nodes/$i
   done
 
+  # Copy keytool and wallet jars to nodes directory for key generation (needed for nodes 3+)
+  cp ./docker/jars/keytool.jar ./docker/jars/wallet.jar ./nodes/ 2>/dev/null || true
+
   source ./docker/bin/node-key-env-setup.sh
   source ./docker/bin/docker-env-setup.sh
 
@@ -170,14 +174,17 @@ else
     cp ../../docker/docker-compose.metagraph-test.yaml . ;
     cp ../../docker/docker-compose.metagraph-genesis.yaml . ;
 
-    if [ "$i" -lt "$NUM_GL0_NODES" ]; then
-      docker compose -f docker-compose.test.yaml \
+    cd ../../
+  done
+
+  # Start all GL0 nodes together
+  for i in $(seq 0 $((NUM_GL0_NODES - 1))); do
+    cd ./nodes/$i/
+    docker compose -f docker-compose.test.yaml \
       -f docker-compose.yaml \
       -f docker-compose.volumes.yaml \
       --profile l0 \
       up -d
-    fi
-
     cd ../../
   done
 
@@ -515,6 +522,15 @@ if should_run_test "token-lock-replacement"; then
   cd $PROJECT_ROOT/.github/action_scripts/delegated_staking
   node token-lock-replacement-edge-cases.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX testTokenLockReplacementEdgeCases
   show_time "Token lock replacement edge case tests completed"
+fi
+
+if should_run_test "fork-recovery"; then
+  echo "================================================"
+  echo "Running fork-recovery test"
+  echo "================================================"
+  cd $PROJECT_ROOT
+  bash docker/bin/test-fork-recovery.sh $DAG_L0_PORT_PREFIX
+  show_time "Fork recovery test completed"
 fi
 
 if should_run_test "snapshot-streaming"; then
