@@ -2,7 +2,7 @@ name: E2E Test (Just)
 
 on:
   pull_request:
-    branches: [develop, release/testnet]
+    branches: [develop]
     types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
