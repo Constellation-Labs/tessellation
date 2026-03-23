@@ -46,15 +46,16 @@ digraph NodeStateMachine {
     // Suppressed transitions (dashed gray)
     Observing -> Observing [label="fork detection\nsuppressed", style="dashed", color="gray", fontcolor="gray"];
 
-    // Legend
-    subgraph cluster_legend {
-        label="Legend";
-        style=dashed;
-        fontsize=10;
-        
-        legend_normal [shape=plaintext, label="Black: Normal flow"];
-        legend_recovery [shape=plaintext, label="Red: Recovery flow"];
-        legend_leaving [shape=plaintext, label="Orange: Leaving flow"];
-        legend_suppressed [shape=plaintext, label="Dashed: Suppressed"];
-    }
+    // Legend — compact HTML table at bottom
+    Legend [shape=plaintext, label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+        <TR><TD COLSPAN="2"><B>Legend</B></TD></TR>
+        <TR><TD>→</TD><TD>Normal flow</TD></TR>
+        <TR><TD><FONT COLOR="red">→</FONT></TD><TD><FONT COLOR="red">Recovery flow</FONT></TD></TR>
+        <TR><TD><FONT COLOR="orange">→</FONT></TD><TD><FONT COLOR="orange">Leaving flow</FONT></TD></TR>
+        <TR><TD><FONT COLOR="gray">⇢</FONT></TD><TD><FONT COLOR="gray">Suppressed</FONT></TD></TR>
+        </TABLE>
+    >];
+
+    Leaving -> Legend [style=invis];
 }
