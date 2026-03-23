@@ -9,6 +9,7 @@ import io.constellationnetwork.dag.l0.StoragesInitializer.initializeStorages
 import io.constellationnetwork.dag.l0.cli.method._
 import io.constellationnetwork.dag.l0.config.types._
 import io.constellationnetwork.dag.l0.http.p2p.P2PClient
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{Finished, GlobalConsensusOutcome}
 import io.constellationnetwork.dag.l0.infrastructure.trust.handler.{ordinalTrustHandler, trustHandler}
 import io.constellationnetwork.dag.l0.modules._
@@ -21,6 +22,7 @@ import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.genesis.{GenesisFS => GenesisLoader}
+import io.constellationnetwork.node.shared.infrastructure.gossip.event._
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.GlobalSnapshotLocalFileSystemStorage
 import io.constellationnetwork.node.shared.resources.MkHttpServer
@@ -126,8 +128,64 @@ object Main
         .handlers <+>
         trustHandler(storages.trust) <+> ordinalTrustHandler(storages.trust) <+> services.consensus.handler
 
+      // Shared chain tip getter used by both the gossip daemon (fork detection) and
+      // the HTTP IHave route (so peers can report their chain tip back to callers).
+      getLocalChainTip = sharedStorages.lastGlobalSnapshot.getCombined.map(
+        _.map { case (hashed, _) => ChainTip(hashed.ordinal, hashed.hash) }
+      )
+
+      daemonWithRecovery <- {
+        val onForkDetected = { (info: ForkRecoveryInfo) =>
+          storages.node.getNodeState.flatMap { currentState =>
+            if (
+              currentState === NodeState.Observing || currentState === NodeState.DownloadInProgress || currentState === NodeState.WaitingForDownload
+            ) {
+              logger.info(
+                s"Fork divergence suppressed: node in $currentState (recovery in progress). " +
+                  s"local=${info.localOrdinal.value.value} majority=${info.majorityOrdinal.value.value}"
+              )
+            } else {
+              logger.warn(
+                s"Fork divergence detected: local=${info.localOrdinal.value.value} " +
+                  s"majority=${info.majorityOrdinal.value.value} lag=${info.lag} " +
+                  s"majorityPeers=${info.majorityPeers.size}"
+              ) >>
+                services.recoveryPeerHint.setPreferredPeers(info.majorityPeers) >>
+                storages.node.setRecoveryDownload >>
+                storages.node
+                  .tryModifyState(NodeState.Ready, NodeState.WaitingForDownload)
+                  .handleErrorWith(_ => storages.node.tryModifyState(NodeState.WaitingForReady, NodeState.WaitingForDownload))
+            }
+          }
+        }
+
+        EventGossipDaemon
+          .make[IO, GlobalSnapshotEvent, GlobalStateKey](
+            services.eventMempool,
+            storages.cluster,
+            storages.node,
+            sharedResources.gossipClient,
+            sharedServices.session,
+            getLocalChainTip = Some(getLocalChainTip),
+            onForkDetected = Some(onForkDetected)
+          )
+          .asResource
+      }
+
+      eventGossipDaemon = daemonWithRecovery.daemon
+
       _ <- Daemons
-        .start(storages, services, programs, queues, nodeId, cfg, hasherSelector)
+        .start(
+          storages,
+          services,
+          programs,
+          queues,
+          nodeId,
+          keyPair,
+          cfg,
+          hasherSelector,
+          eventGossipDaemon
+        )
         .asResource
 
       api <- Resource.eval(
@@ -145,7 +203,8 @@ object Main
           cfg.shared.delegatedStaking.withdrawalTimeLimit
             .getOrElse(sharedConfig.environment, EpochProgress.MinValue),
           cfg.shared,
-          storages.combinedGlobalSnapshotCheckpointStorage
+          storages.combinedGlobalSnapshotCheckpointStorage,
+          getLocalChainTip = Some(getLocalChainTip)
         )
       )
 
