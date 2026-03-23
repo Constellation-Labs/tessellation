@@ -105,20 +105,6 @@ const checkInitialNodeParamsNode = async (urls, nodeId) => {
   }
 }
 
-const waitForNodeParamsUpdate = async (urls, verifyFn, maxAttempts = 30, intervalMs = 5000) => {
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const nodeParams = await getNodeParams(urls)
-      verifyFn(nodeParams)
-      return nodeParams
-    } catch (e) {
-      if (attempt === maxAttempts) throw e
-      logWorkflow.info(`Waiting for node params to propagate (attempt ${attempt}/${maxAttempts}): ${e.message}`)
-      await sleep(intervalMs)
-    }
-  }
-}
-
 const verifyNodeParamsResponse = (
   nodeParams,
   nodeId,
@@ -126,7 +112,7 @@ const verifyNodeParamsResponse = (
   expectedRewardFraction,
 ) => {
   const data = nodeParams.find((item) => item.peerId === nodeId)
-  if (!data) throw new Error(`PeerId ${nodeId.slice(0, 8)} not found in node-params (have: ${nodeParams.map(p => p.peerId.slice(0, 8)).join(', ') || 'none'})`)
+  if (!data) throw new Error(`PeerId is not correct`)
   if (data.nodeMetadataParameters.name !== expectedName)
     throw new Error(
       `Node parameters name expected ${expectedName} but received ${data.nodeMetadataParameters.name}`,
@@ -149,65 +135,40 @@ const getNodeParamsNodeIdVerify = async (
   expectedRewardFraction,
   expectedOrdinal,
 ) => {
-  const maxAttempts = 30;
-  const intervalMs = 5000;
+  await sleep(5000);
+  const response = await axios.get(
+    `${urls.globalL0Url}/node-params/${nodeId}?t=${Date.now()}`,
+    {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        Pragma: 'no-cache',
+        Expires: '0',
+      },
+    },
+  )
+  if (response.status !== 200)
+    throw new Error(`NodeParamsNode returned ${response.status} instead of 200`)
+  const receivedRewardFraction =
+    response.data.latest.value.delegatedStakeRewardParameters.rewardFraction
+  if (receivedRewardFraction !== expectedRewardFraction)
+    throw new Error(
+      `Node parameters node rewardFraction expected ${expectedRewardFraction} but received ${receivedRewardFraction}`,
+    )
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    await sleep(intervalMs);
-    let response;
-    try {
-      response = await axios.get(
-        `${urls.globalL0Url}/node-params/${nodeId}?t=${Date.now()}`,
-        {
-          headers: {
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            Pragma: 'no-cache',
-            Expires: '0',
-          },
-        },
-      )
-    } catch (err) {
-      if (err.response && err.response.status === 404 && attempt < maxAttempts) {
-        logWorkflow.info(`Waiting for node-params/${nodeId} to appear (attempt ${attempt}/${maxAttempts}): 404`)
-        continue;
-      }
-      throw err;
-    }
+  const receivedName = response.data.latest.value.nodeMetadataParameters.name
+  if (receivedName !== expectedName) {
+    throw new Error(
+      `Node parameters node name expected ${expectedName} but received ${receivedName}`,
+    )
+  }
 
-    if (response.status !== 200)
-      throw new Error(`NodeParamsNode returned ${response.status} instead of 200`)
-
-    const receivedRewardFraction =
-      response.data.latest.value.delegatedStakeRewardParameters.rewardFraction
-    const receivedName = response.data.latest.value.nodeMetadataParameters.name
-    const receivedOrdinal = response.data.latest.value.parent.ordinal
-
-    const fractionOk = receivedRewardFraction === expectedRewardFraction;
-    const nameOk = receivedName === expectedName;
-    const ordinalOk = receivedOrdinal === expectedOrdinal;
-
-    if (fractionOk && nameOk && ordinalOk) {
-      return;
-    }
-
-    if (attempt < maxAttempts) {
-      const reasons = [];
-      if (!nameOk) reasons.push(`name=${receivedName} expected=${expectedName}`);
-      if (!fractionOk) reasons.push(`fraction=${receivedRewardFraction} expected=${expectedRewardFraction}`);
-      if (!ordinalOk) reasons.push(`ordinal=${receivedOrdinal} expected=${expectedOrdinal}`);
-      logWorkflow.info(`Waiting for node-params/${nodeId} to update (attempt ${attempt}/${maxAttempts}): ${reasons.join(', ')}`)
-      continue;
-    }
-
-    if (!fractionOk)
-      throw new Error(`Node parameters node rewardFraction expected ${expectedRewardFraction} but received ${receivedRewardFraction}`)
-    if (!nameOk)
-      throw new Error(`Node parameters node name expected ${expectedName} but received ${receivedName}`)
-    if (!ordinalOk)
-      throw new Error(`Node parameters node name expected expected 0 ordinal but received ${receivedOrdinal}`)
+  const receivedOrdinal = response.data.latest.value.parent.ordinal
+  if (receivedOrdinal !== expectedOrdinal) {
+    throw new Error(
+      `Node parameters node name expected expected 0 ordinal but received ${receivedOrdinal}`,
+    )
   }
 }
-
 
 const firstNodeParameterName1 = 'FirstNode1'
 const firstNodeFraction1 = 10000000
@@ -271,8 +232,12 @@ const testCreateNodeParameters = async (urls) => {
   checkOk(ur1)
   logWorkflow.info('create node params 1 is OK')
 
-  await waitForNodeParamsUpdate(urls, (params) =>
-    verifyNodeParamsResponse(params, nodeId1, firstNodeParameterName1, firstNodeFraction1)
+  const nodeParamsAfterUpdate = await getNodeParams(urls)
+  verifyNodeParamsResponse(
+    nodeParamsAfterUpdate,
+    nodeId1,
+    firstNodeParameterName1,
+    firstNodeFraction1,
   )
   logWorkflow.info('Check updates node params is OK')
 
@@ -296,8 +261,12 @@ const testCreateNodeParameters = async (urls) => {
   checkOk(ur2)
   logWorkflow.info('Update node params second time is OK')
 
-  await waitForNodeParamsUpdate(urls, (params) =>
-    verifyNodeParamsResponse(params, nodeId1, firstNodeParameterName2, firstNodeFraction2)
+  const nodeParamsAfterSecondUpdate = await getNodeParams(urls)
+  verifyNodeParamsResponse(
+    nodeParamsAfterSecondUpdate,
+    nodeId1,
+    firstNodeParameterName2,
+    firstNodeFraction2,
   )
   logWorkflow.info('Check second updates node params is OK')
 
@@ -364,12 +333,32 @@ const testCreateNodeParameters = async (urls) => {
   )
   checkOk(third)
 
-  await waitForNodeParamsUpdate(urls, (params) => {
-    if (params.length < 3) throw new Error(`Expected 3 node params, got ${params.length}`)
-    verifyNodeParamsResponse(params, nodeId1, firstNodeParameterName2, firstNodeFraction2)
-    verifyNodeParamsResponse(params, nodeId2, secondNodeParameterName1, secondNodeFraction1)
-    verifyNodeParamsResponse(params, nodeId3, thirdNodeParameterName1, thirdNodeFraction1)
-  })
+  // tends to fail here in CI, wait a little longer
+  await sleep(5000)
+
+  const allNodeParams = await getNodeParams(urls)
+  if (allNodeParams.length !== 3) {
+    throw new Error(`Expected 3 node params, got ${allNodeParams.length}`)
+  }
+
+  verifyNodeParamsResponse(
+    allNodeParams,
+    nodeId1,
+    firstNodeParameterName2,
+    firstNodeFraction2,
+  )
+  verifyNodeParamsResponse(
+    allNodeParams,
+    nodeId2,
+    secondNodeParameterName1,
+    secondNodeFraction1,
+  )
+  verifyNodeParamsResponse(
+    allNodeParams,
+    nodeId3,
+    thirdNodeParameterName1,
+    thirdNodeFraction1,
+  )
   logWorkflow.info('All nodes check is OK')
 
   logWorkflow.info('---- End testCreateNodeParameters ----')
@@ -523,8 +512,7 @@ const testUpdateDelegatedStake = async (urls, account, stakeHash, nodeId) => {
         urls,
         account.address,
       )
-      // Verify structural fields (exact match)
-      assertDelegatedStakes(
+      return assertDelegatedStakes(
         updatedStakeResponse,
         [
           {
@@ -532,32 +520,25 @@ const testUpdateDelegatedStake = async (urls, account, stakeHash, nodeId) => {
             nodeId,
             amount: originalStake.amount,
             tokenLockRef: originalStake.tokenLockRef,
+            rewardAmount: originalStake.rewardAmount, // balance is transferred
           },
           {
             hash: otherStake.hash,
             nodeId: otherStake.nodeId,
             amount: otherStake.amount,
             tokenLockRef: otherStake.tokenLockRef,
+            rewardAmount: otherStake.rewardAmount,
           },
         ],
         [],
       )
-      // Verify rewards transferred (>= original, since rewards accumulate each ordinal)
-      const updatedStake = updatedStakeResponse.activeDelegatedStakes.find(
-        s => s.hash === updatedStakeHash
-      )
-      if (updatedStake.rewardAmount < originalStake.rewardAmount) {
-        throw new Error(
-          `Expected rewardAmount >= ${originalStake.rewardAmount} but got ${updatedStake.rewardAmount}`
-        )
-      }
     },
     {
       globalL0Url: urls.globalL0Url,
       name: 'assertDelegatedStakeUpdated',
     },
   )
-  logWorkflow.info('Stake update verified with balance change and rewards >= original')
+  logWorkflow.info('Stake update verified with balance change')
 
   logWorkflow.info('---- End testUpdateDelegatedStake ----')
 
@@ -607,7 +588,7 @@ const testIncreaseDelegatedStake = async (urls, account, stakeHash, nodeId) => {
         urls,
         account.address,
       )
-      assertDelegatedStakes(
+      return assertDelegatedStakes(
         updatedStakeResponse,
         [
           {
@@ -615,26 +596,18 @@ const testIncreaseDelegatedStake = async (urls, account, stakeHash, nodeId) => {
             nodeId,
             amount: thirdLockAmount,
             tokenLockRef: thirdLockHash,
+            rewardAmount: originalStake.rewardAmount, // balance is transferred
           }
         ],
         [],
       )
-      // Verify rewards carried over (>= original)
-      const updatedStake = updatedStakeResponse.activeDelegatedStakes.find(
-        s => s.hash === stakeHash
-      )
-      if (updatedStake.rewardAmount < originalStake.rewardAmount) {
-        throw new Error(
-          `Expected rewardAmount >= ${originalStake.rewardAmount} but got ${updatedStake.rewardAmount}`
-        )
-      }
     },
     {
       globalL0Url: urls.globalL0Url,
       name: 'assertDelegatedStakeUpdated',
     },
   )
-  logWorkflow.info('Stake increase verified with balance change and rewards >= original')
+  logWorkflow.info('Stake increase verified with balance change')
 
   logWorkflow.info('---- End testIncreaseDelegatedStake ----')
 
@@ -672,7 +645,7 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
         urls,
         account.address,
       )
-      assertDelegatedStakes(
+      return assertDelegatedStakes(
         updatedStakeResponse,
         [
           {
@@ -680,6 +653,7 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
             nodeId: otherStake.nodeId,
             amount: otherStake.amount,
             tokenLockRef: otherStake.tokenLockRef,
+            rewardAmount: otherStake.rewardAmount,
           },
         ],
         [
@@ -688,18 +662,11 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
             nodeId: originalStake.nodeId,
             amount: originalStake.amount,
             tokenLockRef: originalStake.tokenLockRef,
+            rewardAmount: originalStake.rewardAmount,
+            totalBalance: originalStake.totalBalance,
           },
         ],
       )
-      // Verify pending stake has rewards >= what it had when active
-      const pendingStake = updatedStakeResponse.pendingWithdrawals.find(
-        s => s.hash === stakeHash
-      )
-      if (pendingStake.rewardAmount < originalStake.rewardAmount) {
-        throw new Error(
-          `Expected pending rewardAmount >= ${originalStake.rewardAmount} but got ${pendingStake.rewardAmount}`
-        )
-      }
     },
     {
       globalL0Url: urls.globalL0Url,

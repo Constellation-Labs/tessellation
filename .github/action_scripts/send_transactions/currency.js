@@ -14,7 +14,7 @@ const createConfig = () => {
   return { ...sharedArgs }
 }
 
-const SLEEP_TIME_UNTIL_QUERY = 60 * 1000
+const SLEEP_TIME_UNTIL_QUERY = 30 * 1000
 
 const FIRST_WALLET_SEED_PHRASE =
   'right off artist rare copy zebra shuffle excite evidence mercy isolate raise'

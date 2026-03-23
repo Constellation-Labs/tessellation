@@ -150,7 +150,7 @@ const sendDataTransactionsUsingUrls = async (
 };
 
 const checkDataTransactionInMetagraphL0 = async (metagraphL0Url, address) => {
-    const maxAttempts = 120
+    const maxAttempts = 60
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
             const response = await axios.get(`${metagraphL0Url}/data-application/addresses/${address}`);
@@ -175,7 +175,7 @@ const checkDataTransactionInMetagraphL0 = async (metagraphL0Url, address) => {
 }
 
 const checkFeeTransactionInGlobalL0 = async (globalL0Url, feeWallet) => {
-    const maxAttempts = 120
+    const maxAttempts = 60
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
             const response = await axios.get(`${globalL0Url}/global-snapshots/latest/combined`);
