@@ -77,8 +77,10 @@ object Download {
     type DownloadResult = (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)
     type ObservationLimit = SnapshotOrdinal
 
-    // Currency L0 recovery currently delegates to full download.
-    // Currency snapshots are small enough that the overhead is minimal.
+    // Currency L0 recovery delegates to the full download path for now.
+    // The download walker is already incremental (fetches only the gap),
+    // so the main cost is cache clearing + observe phase — acceptable
+    // until a dedicated recovery path is warranted.
     def recoveryDownload(implicit hasherSelector: HasherSelector[F]): F[Unit] = download
 
     def download(implicit hasherSelector: HasherSelector[F]): F[Unit] = {

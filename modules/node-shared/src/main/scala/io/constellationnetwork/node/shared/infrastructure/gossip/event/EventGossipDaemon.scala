@@ -97,20 +97,8 @@ case class EventGossipConfig(
 )
 
 object EventGossipConfig {
-
-  /** Default intervals, configurable via environment variables for resource-constrained CI environments.
-    *
-    * CL_EVENT_GOSSIP_HEARTBEAT_SECONDS — heartbeat interval (default 10) CL_EVENT_GOSSIP_PULL_SECONDS — pull interval (default 20)
-    */
-  val defaultHeartbeatInterval: FiniteDuration = {
-    val seconds = sys.env.getOrElse("CL_EVENT_GOSSIP_HEARTBEAT_SECONDS", "10").toLongOption.getOrElse(10L)
-    seconds.seconds
-  }
-
-  val defaultPullInterval: FiniteDuration = {
-    val seconds = sys.env.getOrElse("CL_EVENT_GOSSIP_PULL_SECONDS", "20").toLongOption.getOrElse(20L)
-    seconds.seconds
-  }
+  val defaultHeartbeatInterval: FiniteDuration = 10.seconds
+  val defaultPullInterval: FiniteDuration = 20.seconds
 }
 
 // ---------------------------------------------------------------------------

@@ -396,13 +396,25 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       if (missingPeers.nonEmpty) {
         val totalFacilitators = state.facilitators.value.size
         val remaining = totalFacilitators - missingPeers.size
-        // Quorum based on Ready peers in cluster, not current round's facilitator count.
-        // Only Ready peers can participate in consensus, so Observing/WaitingForReady peers
-        // don't inflate the denominator. This prevents eviction cascades from shrinking
-        // quorum each round until a 2-node fork becomes self-sustaining.
+        // Quorum floor uses the MINIMUM of cluster-wide and round-level quorum:
+        //
+        // - Cluster quorum (Ready peers): prevents eviction cascades from shrinking quorum
+        //   each round until a 2-node fork becomes self-sustaining.
+        //
+        // - Round quorum (facilitator count): when facilitator subsetting is active
+        //   (maxFacilitatorCount < clusterSize), the round may have fewer facilitators
+        //   than Ready peers. Using only cluster quorum would make every round with a
+        //   missing facilitator quorum-infeasible (e.g., 3 facilitators, 1 missing,
+        //   remaining=2 < clusterQuorum=5 → false QUORUM_INFEASIBLE).
+        //
+        // The min() ensures both invariants hold:
+        // - Without subsetting: roundQuorum == clusterQuorum (all nodes are facilitators)
+        // - With subsetting: roundQuorum governs (smaller group, lower threshold)
         clusterStorage.getResponsivePeers.map(_.count(_.state === NodeState.Ready)).flatMap { readyPeerCount =>
           val clusterSize = math.max(readyPeerCount + 1, totalFacilitators)
-          val minQuorum = (clusterSize / 2) + 1
+          val clusterQuorum = (clusterSize / 2) + 1
+          val roundQuorum = (totalFacilitators / 2) + 1
+          val minQuorum = math.min(clusterQuorum, roundQuorum)
           val quorumInfeasible = remaining < minQuorum
 
           // Graduated response: first stall warns and waits, second stall evicts.

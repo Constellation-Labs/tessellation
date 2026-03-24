@@ -9,7 +9,7 @@ import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{Collecting
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
-import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.Category.{Facilitator, Lifecycle}
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.Category._
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.Event._
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Facility

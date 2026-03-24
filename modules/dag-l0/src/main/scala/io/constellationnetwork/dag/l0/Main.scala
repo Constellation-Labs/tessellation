@@ -142,6 +142,10 @@ object Main
           storages.node,
           sharedResources.gossipClient,
           sharedServices.session,
+          config = EventGossipConfig(
+            heartbeatInterval = cfg.snapshot.consensus.eventGossipHeartbeatInterval,
+            pullInterval = cfg.snapshot.consensus.eventGossipPullInterval
+          ),
           getLocalChainTip = Some(forkRecoveryService.getLocalChainTip),
           onForkDetected = Some(forkRecoveryService.onForkDetected)
         )

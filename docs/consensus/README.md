@@ -343,6 +343,8 @@ If two rounds try to finalize simultaneously, only the first succeeds.
 
 ## 5. Consensus Round Phases
 
+![Consensus Round Protocol](diagrams/consensus-round.png)
+
 Each consensus round progresses through 4 phases (Global L0):
 
 ```
@@ -737,7 +739,7 @@ def performViewChangeWithEviction(
 
 > **Note (v2 change):** The Lock/ACK/Vote mechanism from v1 is **completely replaced** by `StallDetector` with graduated response.
 
-![Stall Detector](diagrams/stall-detector.svg)
+![Stall Detector](diagrams/stall-detector.png)
 
 ### Architecture
 
@@ -827,7 +829,7 @@ case class MaxStalls(count) extends AbandonReason
 
 ## 12. Fork Detection
 
-![Fork Detection](diagrams/fork-detection.svg)
+![Fork Detection](diagrams/fork-detection.png)
 
 ### Chain Tip Sampling
 
@@ -885,12 +887,12 @@ Fork detection is suppressed when the node is already in recovery states to prev
 
 ### Node State Machine
 
-![Node State Machine](diagrams/node-state-machine.svg)
+![Node State Machine](diagrams/node-state-machine.png)
 
 <details>
 <summary>Source: diagrams/node-state-machine.dot</summary>
 
-Render with: `dot -Tsvg diagrams/node-state-machine.dot -o diagrams/node-state-machine.svg`
+Render with: `dot -Tsvg diagrams/node-state-machine.dot -o diagrams/node-state-machine.png`
 </details>
 
 Every Tessellation node transitions through these states. The recovery path
@@ -909,7 +911,7 @@ abandonments exhaust the recovery threshold.
 | Observing | WaitingForReady | Observe offset reached |
 | WaitingForReady | Ready | First round completes successfully |
 
-![Recovery Decision Tree](diagrams/recovery-decision-tree.svg)
+![Recovery Decision Tree](diagrams/recovery-decision-tree.png)
 
 ### Recovery Triggers
 

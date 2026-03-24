@@ -3,11 +3,9 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 import java.security.KeyPair
 
 import cats.effect.Async
-import cats.effect.kernel.{Clock, Ref}
+import cats.effect.kernel.Ref
 import cats.effect.std.{Queue, Supervisor}
 import cats.syntax.all._
-
-import scala.concurrent.duration._
 
 import io.constellationnetwork.dag.l0.domain.delegatedStake.{CreateDelegatedStakeOutput, DelegatedStakeOutput, WithdrawDelegatedStakeOutput}
 import io.constellationnetwork.dag.l0.domain.nodeCollateral.{CreateNodeCollateralOutput, NodeCollateralOutput, WithdrawNodeCollateralOutput}
@@ -17,9 +15,10 @@ import io.constellationnetwork.node.shared.domain.Daemon
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.EventGossipDaemon
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
+import io.constellationnetwork.node.shared.infrastructure.snapshot.EventTriggerGuard
 import io.constellationnetwork.schema.Block
 import io.constellationnetwork.schema.mpt.GlobalStateKey
-import io.constellationnetwork.schema.node.{NodeState, UpdateNodeParameters}
+import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.swap.AllowSpendBlock
 import io.constellationnetwork.schema.tokenLock.TokenLockBlock
 import io.constellationnetwork.security._
@@ -99,7 +98,7 @@ object GlobalSnapshotEventsPublisherDaemon {
         HasherSelector[F].withCurrent { implicit hasher =>
           events.evalMap { event =>
             signAndPublish(event, keyPair, eventMempool, eventGossipDaemon, logger) >>
-              maybeEventTrigger(
+              EventTriggerGuard(
                 eventMempool,
                 clusterStorage,
                 triggerEventConsensus,
@@ -134,60 +133,4 @@ object GlobalSnapshotEventsPublisherDaemon {
       }
     }
 
-  /** Trigger event-driven consensus if all guards pass:
-    *   1. triggerEventConsensus is available (consensus wired) 2. Cluster has >= eventTriggerMinPeers responsive peers (not solo) 3.
-    *      Mempool has >= eventTriggerThreshold pending events (batch efficiency) 4. Cooldown elapsed since last trigger (prevent
-    *      rapid-fire)
-    */
-  private def maybeEventTrigger[F[_]: Async, E, K](
-    eventMempool: EventMempool[F, E, K],
-    clusterStorage: ClusterStorage[F],
-    triggerEventConsensus: Option[F[Unit]],
-    getLastFacilitatorCount: F[Int],
-    lastTriggerRef: Ref[F, Long],
-    logger: SelfAwareStructuredLogger[F],
-    eventTriggerMinPeers: Int,
-    eventTriggerThreshold: Int,
-    eventTriggerCooldown: FiniteDuration
-  ): F[Unit] =
-    triggerEventConsensus match {
-      case None => Async[F].unit
-      case Some(trigger) =>
-        for {
-          peers <- clusterStorage.getResponsivePeers.map(_.filter(_.state === NodeState.Ready))
-          peerCount = peers.size
-          lastFacCount <- getLastFacilitatorCount
-          _ <-
-            if (peerCount < eventTriggerMinPeers)
-              Async[F].unit
-            else if (lastFacCount > 0 && lastFacCount < eventTriggerMinPeers + 1)
-              logger.debug(
-                s"EventTrigger skipped: last round had $lastFacCount facilitator(s), waiting for multi-node consensus"
-              )
-            else
-              eventMempool.size.flatMap { mempoolSize =>
-                if (mempoolSize < eventTriggerThreshold)
-                  Async[F].unit
-                else
-                  Clock[F].monotonic.flatMap { now =>
-                    val nowMs = now.toMillis
-                    lastTriggerRef.modify { lastMs =>
-                      val elapsed = nowMs - lastMs
-                      if (elapsed >= eventTriggerCooldown.toMillis)
-                        (nowMs, true)
-                      else
-                        (lastMs, false)
-                    }.flatMap {
-                      case true =>
-                        logger.info(
-                          s"EventTrigger fired: peers=$peerCount, lastFacilitators=$lastFacCount, pending=$mempoolSize, " +
-                            s"threshold=$eventTriggerThreshold, cooldown=${eventTriggerCooldown.toSeconds}s"
-                        ) >> trigger
-                      case false =>
-                        Async[F].unit
-                    }
-                  }
-              }
-        } yield ()
-    }
 }

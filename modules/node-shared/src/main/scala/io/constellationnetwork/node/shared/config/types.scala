@@ -165,7 +165,9 @@ object types {
     qualityDecayThreshold: Int = 100,
     eventTriggerMinPeers: Int = 2,
     eventTriggerThreshold: Int = 1,
-    eventTriggerCooldown: FiniteDuration = FiniteDuration(5, "s")
+    eventTriggerCooldown: FiniteDuration = FiniteDuration(5, "s"),
+    eventGossipHeartbeatInterval: FiniteDuration = FiniteDuration(10, "s"),
+    eventGossipPullInterval: FiniteDuration = FiniteDuration(20, "s")
   ) {
 
     /** Deterministic hash of consensus-critical config values.

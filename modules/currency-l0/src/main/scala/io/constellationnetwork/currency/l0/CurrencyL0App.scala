@@ -26,7 +26,7 @@ import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
-import io.constellationnetwork.node.shared.infrastructure.gossip.event.{ChainTip, EventGossipDaemon}
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.{ChainTip, EventGossipConfig, EventGossipDaemon}
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastCheckpointInfo
 import io.constellationnetwork.node.shared.infrastructure.statechannel.StateChannelAllowanceLists
@@ -193,6 +193,10 @@ abstract class CurrencyL0App(
             storages.node,
             sharedResources.gossipClient,
             sharedServices.session,
+            config = EventGossipConfig(
+              heartbeatInterval = cfg.snapshot.consensus.eventGossipHeartbeatInterval,
+              pullInterval = cfg.snapshot.consensus.eventGossipPullInterval
+            ),
             getLocalChainTip = Some(getLocalChainTip)
           )
           .asResource

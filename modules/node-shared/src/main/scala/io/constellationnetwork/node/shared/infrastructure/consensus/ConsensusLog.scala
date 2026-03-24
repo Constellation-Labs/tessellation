@@ -55,18 +55,6 @@ object ConsensusLog {
     case object Rumor extends Category { val show = "RUMOR" }
   }
 
-  // Legacy string vals for backward compatibility during migration
-  val Lifecycle: String = "LIFECYCLE"
-  val Phase: String = "PHASE"
-  val Stall: String = "STALL"
-  val Quorum: String = "QUORUM"
-  val Fork: String = "FORK"
-  val Facilitator: String = "FACILITATOR"
-  val Proposal: String = "PROPOSAL"
-  val Validation: String = "VALIDATION"
-  val Recovery: String = "RECOVERY"
-  val Rumor: String = "RUMOR"
-
   // ── Consensus events ────────────────────────────────────────────
 
   /** Type-safe consensus event names. Prevents typos and enables compile-time checking. */
@@ -228,26 +216,6 @@ object ConsensusLog {
     sb.toString
   }
 
-  /** Build a structured log line (legacy string-based version).
-    *
-    * @param category
-    *   One of the constants above (e.g. `Lifecycle`, `Phase`)
-    * @param round
-    *   The consensus round key (ordinal), or `"n/a"` when not yet known
-    * @param role
-    *   `"Leader"`, `"Validator"`, or `"n/a"`
-    * @param pairs
-    *   Additional key=value pairs (event, trigger, hash, etc.)
-    * @return
-    *   Formatted string like `[CONSENSUS:LIFECYCLE] round=42 role=Leader event=ROUND_STARTED ...`
-    */
-  def format(category: String, round: String, role: String, pairs: (String, String)*): String = {
-    val sb = new StringBuilder(128)
-    sb.append("[CONSENSUS:").append(category).append("] round=").append(round).append(" role=").append(role)
-    pairs.foreach { case (k, v) => sb.append(' ').append(k).append('=').append(v) }
-    sb.toString
-  }
-
   // ── Type-safe convenience loggers ───────────────────────────────
 
   def info[F[_]: Applicative](
@@ -313,66 +281,6 @@ object ConsensusLog {
     pairs: (String, String)*
   ): F[Unit] =
     logger.warn(cause)(format(category, round, role, event, pairs: _*))
-
-  // ── Legacy convenience loggers (for gradual migration) ──────────
-
-  def info[F[_]: Applicative](
-    logger: SelfAwareStructuredLogger[F],
-    category: String,
-    round: String,
-    role: String,
-    pairs: (String, String)*
-  ): F[Unit] =
-    logger.info(format(category, round, role, pairs: _*))
-
-  def warn[F[_]: Applicative](
-    logger: SelfAwareStructuredLogger[F],
-    category: String,
-    round: String,
-    role: String,
-    pairs: (String, String)*
-  ): F[Unit] =
-    logger.warn(format(category, round, role, pairs: _*))
-
-  def debug[F[_]: Applicative](
-    logger: SelfAwareStructuredLogger[F],
-    category: String,
-    round: String,
-    role: String,
-    pairs: (String, String)*
-  ): F[Unit] =
-    logger.debug(format(category, round, role, pairs: _*))
-
-  def error[F[_]: Applicative](
-    logger: SelfAwareStructuredLogger[F],
-    category: String,
-    round: String,
-    role: String,
-    pairs: (String, String)*
-  ): F[Unit] =
-    logger.error(format(category, round, role, pairs: _*))
-
-  /** Log at error level with an attached throwable. */
-  def errorCause[F[_]: Applicative](
-    logger: SelfAwareStructuredLogger[F],
-    cause: Throwable,
-    category: String,
-    round: String,
-    role: String,
-    pairs: (String, String)*
-  ): F[Unit] =
-    logger.error(cause)(format(category, round, role, pairs: _*))
-
-  /** Log at warn level with an attached throwable. */
-  def warnCause[F[_]: Applicative](
-    logger: SelfAwareStructuredLogger[F],
-    cause: Throwable,
-    category: String,
-    round: String,
-    role: String,
-    pairs: (String, String)*
-  ): F[Unit] =
-    logger.warn(cause)(format(category, round, role, pairs: _*))
 
   // ── Helpers ─────────────────────────────────────────────────────
 
