@@ -1067,6 +1067,30 @@ abandonments, they unnecessarily trigger recovery download. `QuorumInfeasible`
 abandonments don't count, but `MaxStalls` can still fire after 5 stall cycles
 without progress.
 
+#### Facilitator Subsetting and Partition Forks
+
+When `maxFacilitatorCount` is small relative to cluster size (e.g., 3 out of
+8 nodes), a network partition that isolates a connected subgroup of nodes can
+create a competing chain if all selected facilitators fall within the isolated
+group. The isolated nodes have full quorum among themselves and produce valid
+snapshots with a different hash than the main chain.
+
+This is primarily a test-environment artifact: `tc netem loss 100%` creates
+symmetric partitions where isolated nodes retain connectivity to each other.
+In production, faulty nodes typically lose connectivity to all peers (hardware
+failure, network outage), not forming connected subgroups.
+
+**Constraint:** `maxFacilitatorCount` should be > N/2 when operating clusters
+small enough for connected partitions to form. The default value (20) is safe
+for all current deployment sizes.
+
+**StallDetector interaction:** The quorum floor uses
+`min(clusterQuorum, roundQuorum)` so that subsetting rounds compute quorum
+from the round's facilitator count, not the full cluster size. Without this,
+every round with a missing facilitator would be abandoned as
+QUORUM_INFEASIBLE (e.g., 3 facilitators, 1 missing, remaining=2 <
+clusterQuorum=5).
+
 ---
 
 ## 15. Key Files Reference

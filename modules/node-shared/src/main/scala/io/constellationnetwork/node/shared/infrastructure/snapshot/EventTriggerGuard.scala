@@ -14,10 +14,8 @@ import org.typelevel.log4cats.SelfAwareStructuredLogger
 /** Shared guard logic for event-driven consensus triggering.
   *
   * Checks pass when:
-  *   1. `triggerEventConsensus` is available (consensus wired)
-  *   2. Cluster has >= `minPeers` responsive Ready peers (not solo)
-  *   3. Mempool has >= `threshold` pending events (batch efficiency)
-  *   4. Cooldown elapsed since last trigger (prevent rapid-fire)
+  *   1. `triggerEventConsensus` is available (consensus wired) 2. Cluster has >= `minPeers` responsive Ready peers (not solo) 3. Mempool
+  *      has >= `threshold` pending events (batch efficiency) 4. Cooldown elapsed since last trigger (prevent rapid-fire)
   */
 object EventTriggerGuard {
 
