@@ -16,6 +16,7 @@ export EXTRA_ENV_PATH=${EXTRA_ENV_PATH:-""}
 export EXIT_CODE=${EXIT_CODE:-0}
 export SNAPSHOT_STREAMING_JAR=${SNAPSHOT_STREAMING_JAR:-""}
 export SNAPSHOT_STREAMING_BRANCH=${SNAPSHOT_STREAMING_BRANCH:-"develop"}
+export SNAPSHOT_STREAMING_REPO=${SNAPSHOT_STREAMING_REPO:-"Constellation-Labs/snapshot-streaming"}
 export BLOCK_EXPLORER_BRANCH=${BLOCK_EXPLORER_BRANCH:-"develop"}
 export CL_DOCKER_BIND_INTERFACE=${CL_DOCKER_BIND_INTERFACE:-""}
 export CLEAN_ASSEMBLY=${CLEAN_ASSEMBLY:-false}
@@ -148,6 +149,9 @@ for arg in "$@"; do
       ;;
     --snapshot-streaming-branch=*)
       export SNAPSHOT_STREAMING_BRANCH="${arg#*=}"
+      ;;
+    --snapshot-streaming-repo=*)
+      export SNAPSHOT_STREAMING_REPO="${arg#*=}"
       ;;
     --block-explorer-branch=*)
       export BLOCK_EXPLORER_BRANCH="${arg#*=}"
