@@ -39,6 +39,7 @@ object ForkRecoveryService {
         nodeStorage.getNodeState.flatMap { currentState =>
           if (
             currentState === NodeState.Observing ||
+            currentState === NodeState.WaitingForObserving ||
             currentState === NodeState.DownloadInProgress ||
             currentState === NodeState.WaitingForDownload
           ) {
