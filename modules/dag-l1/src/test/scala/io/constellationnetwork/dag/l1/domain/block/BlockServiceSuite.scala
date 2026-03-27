@@ -111,6 +111,10 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
         override def getOrdinal: IO[Option[SnapshotOrdinal]] = IO.pure(SnapshotOrdinal.MinValue.some)
 
         override def getHeight: IO[Option[height.Height]] = ???
+
+        override def setForRecovery(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ???
+
+        override def clear: IO[Unit] = ???
       }
       BlockService
         .make[IO](
