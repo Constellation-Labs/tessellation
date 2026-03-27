@@ -1,0 +1,59 @@
+flowchart TB
+    subgraph Storage["ConsensusStorage (Shared State)"]
+        direction TB
+        LastOutcome["lastOutcome: Ref[Option[Outcome]]<br/>The most recent completed consensus result"]
+        StateMap["statesR: Ref[Map[Key, ConsensusState]]<br/>In-progress rounds keyed by ordinal"]
+        Resources["Resources per Key<br/>peerDeclarationsMap, acksMap, artifacts"]
+    end
+
+    subgraph Loop1["Loop 1: Command Stream (Event Loop)"]
+        direction TB
+        Queue["Command Queue<br/>(unbounded)"]
+        Take["queue.take"]
+        FSM["fsm.handle(cmd)"]
+        Queue --> Take --> FSM
+    end
+
+    subgraph Loop2["Loop 2: Gossip Processing"]
+        direction TB
+        GossipStream["Gossip Stream<br/>(rumors from peers)"]
+        RHQ["RumorHandlerWithQueue"]
+        Decode["Decode and Filter"]
+        GossipStream --> RHQ --> Decode
+    end
+
+    subgraph Loop3["Loop 3: Stall Detection"]
+        direction TB
+        StallLoop["stallDetectionLoop<br/>(supervised fiber)"]
+        Wait["smartWaitUntil<br/>(timeout)"]
+        Lock["tryLockConsensus"]
+        StallLoop --> Wait --> Lock
+    end
+
+    subgraph Loop4["Loop 4: Time Trigger"]
+        direction TB
+        Sleep["sleep(interval)"]
+        CheckTime["checkAndTriggerTime"]
+        Sleep --> CheckTime
+    end
+
+    subgraph Loop5["Loop 5: Peer Registration"]
+        direction TB
+        PeerChanges["clusterStorage.peerChanges"]
+        CollectReg["collectRegistration"]
+        PeerChanges --> CollectReg
+    end
+
+    Decode -->|"offer(RumorReceived)"| Queue
+    Lock -->|"offer(CheckUpdate)"| Queue
+    CheckTime -->|"offer(TimeTick)"| Queue
+    CollectReg -->|"offer(PeerObserved)"| Queue
+
+    FSM -->|"read/write"| Storage
+
+    style Storage fill:#e8f4ea,stroke:#2d5a3d
+    style Loop1 fill:#e8eef4,stroke:#2d4a5a
+    style Loop2 fill:#f4e8f4,stroke:#5a2d5a
+    style Loop3 fill:#f4f4e8,stroke:#5a5a2d
+    style Loop4 fill:#f4e8e8,stroke:#5a2d2d
+    style Loop5 fill:#e8f4f4,stroke:#2d5a5a

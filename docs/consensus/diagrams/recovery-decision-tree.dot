@@ -1,0 +1,98 @@
+// Recovery Decision Tree
+// Render: dot -Tsvg recovery-decision-tree.dot -o recovery-decision-tree.svg
+
+digraph RecoveryDecisionTree {
+    rankdir=TB;
+    node [shape=box, style=rounded, fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=10];
+
+    // Triggers
+    subgraph cluster_triggers {
+        label="Recovery Triggers";
+        style=rounded;
+        fillcolor="lightyellow";
+        
+        AbandonTrigger [label="AbandonmentTracker\n5 non-retriable\nabandonments", style="rounded,filled", fillcolor="lightyellow"];
+        ForkTrigger [label="ForkRecoveryDetector\nChain tip divergence", style="rounded,filled", fillcolor="lightyellow"];
+    }
+
+    // State guard
+    StateGuard [shape=diamond, label="Node in\nObserving/\nDownload/\nWaitingForDownload?"];
+    
+    AbandonTrigger -> StateGuard;
+    ForkTrigger -> StateGuard;
+
+    StateGuard -> Suppressed [label="yes"];
+    Suppressed [label="Recovery\nSUPPRESSED\n(prevent loops)", style="rounded,filled", fillcolor="lightgray"];
+
+    StateGuard -> SetFlag [label="no"];
+
+    // Recovery initiation
+    SetFlag [label="Set isRecovery flag\non NodeStorage", style="rounded,filled", fillcolor="lightblue"];
+    
+    SetFlag -> Transition;
+    
+    Transition [label="Transition to\nWaitingForDownload", style="rounded,filled", fillcolor="lightblue"];
+    
+    Transition -> DownloadDaemon;
+
+    // Download daemon
+    DownloadDaemon [label="DownloadDaemon\npicks up recovery", style="rounded,filled", fillcolor="lightyellow"];
+    
+    DownloadDaemon -> RecoveryDownload;
+
+    // Recovery download steps
+    RecoveryDownload [label="recoveryDownload()\n\n1. Clear in-memory caches (NOT disk)\n2. Fetch latest tip from peers\n3. Walk back from tip\n4. Stop at persisted hash\n5. setForRecovery bypasses sequential prepend", style="rounded,filled", fillcolor="lightcyan"];
+    
+    RecoveryDownload -> DownloadResult;
+
+    DownloadResult [shape=diamond, label="Download\nSuccess?"];
+    
+    DownloadResult -> Rejoin [label="yes"];
+    DownloadResult -> DownloadRetry [label="no"];
+
+    DownloadRetry [label="Sleep 10s backoff\nRetry recoveryDownload\n(preserve isRecovery flag)", style="rounded,filled", fillcolor="orange"];
+    DownloadRetry -> CheckTotalAttempts;
+
+    CheckTotalAttempts [shape=diamond, label="Total attempts\n≥ 15?"];
+    
+    CheckTotalAttempts -> ForceLeave [label="yes"];
+    CheckTotalAttempts -> RecoveryDownload [label="no"];
+
+    ForceLeave [label="FORCE LEAVE\nTransition to Leaving\n(manual restart required)", style="rounded,filled", fillcolor="red", fontcolor="white"];
+
+    // Rejoin
+    Rejoin [label="rejoinAfterRecovery()\n\nSend twoWayHandshake to all known peers\n(restore P2P mesh)", style="rounded,filled", fillcolor="lightgreen"];
+    
+    Rejoin -> RecoveryObserve;
+
+    // Recovery observe
+    RecoveryObserve [label="recoveryObserve()\n\n1. Reset storage heads\n2. Observe 1-5 rounds (random offset per node)\n3. Sync SnapshotStorage head", style="rounded,filled", fillcolor="lightgreen"];
+    
+    RecoveryObserve -> InitFromDownload;
+
+    // Init from download
+    InitFromDownload [label="initFromDownload(isRecovery=true)\n\n• Skip 43s TimeTick deferral\n• Set grace period = 3", style="rounded,filled", fillcolor="lightgreen"];
+    
+    InitFromDownload -> FirstRound;
+
+    // First round
+    FirstRound [label="First successful round\n\nTransition to Ready\nGrace period: 3→2→1→0", style="rounded,filled", fillcolor="palegreen"];
+
+    // Legend — compact, at bottom
+    Legend [shape=plaintext, label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+        <TR><TD COLSPAN="2"><B>Legend</B></TD></TR>
+        <TR><TD BGCOLOR="lightyellow">  </TD><TD>Detection / Trigger</TD></TR>
+        <TR><TD BGCOLOR="lightblue">  </TD><TD>State transition</TD></TR>
+        <TR><TD BGCOLOR="lightcyan">  </TD><TD>Download phase</TD></TR>
+        <TR><TD BGCOLOR="lightgreen">  </TD><TD>Recovery / Rejoin</TD></TR>
+        <TR><TD BGCOLOR="orange">  </TD><TD>Retry</TD></TR>
+        <TR><TD BGCOLOR="red">  </TD><TD>Force leave</TD></TR>
+        </TABLE>
+    >];
+
+    // Force legend below the flow
+    FirstRound -> Legend [style=invis];
+    ForceLeave -> Legend [style=invis];
+}
