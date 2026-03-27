@@ -4,7 +4,7 @@ import java.security.KeyPair
 import java.time.Instant
 
 import cats.data.{NonEmptySet, StateT}
-import cats.effect.Async
+import cats.effect.{Async, Outcome, Ref}
 import cats.syntax.all._
 import cats.{Applicative, MonadThrow}
 
@@ -17,9 +17,11 @@ import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
+import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions.InvalidArtifact
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event}
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
@@ -27,13 +29,17 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.state.Consen
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.{EventGossipClient, IWantRequest}
+import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
+import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalArtifactMismatch
 import io.constellationnetwork.node.shared.infrastructure.snapshot.SnapshotConsensusFunctions.gossipForkInfo
 import io.constellationnetwork.node.shared.logger.LoggerBundle
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.gossip.Ordinal
-import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore, MptStoreSavepoint}
+import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -46,13 +52,44 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 /** Advances Global L0 consensus through status phases and extracts final outcomes.
   *
-  * Status Flow:
+  * '''Consensus Flow (Leader-Based Proposal Model)''':
   * {{{
   *   CollectingFacilities → CollectingProposals → CollectingSignatures → Finished
   * }}}
   *
+  * '''Phase 1: CollectingFacilities → CollectingProposals'''
+  *   - All peers declare a `Facility` with their upper bounds, candidates, and trigger type.
+  *   - Once quorum is reached, EVERY peer (leader and followers) independently builds a proposal by calling `createProposalArtifact` from
+  *     the same inputs.
+  *   - The leader spreads its proposal hash + artifact via gossip.
+  *   - Fork detection: peers verify facilitatorsHash and lastSnapshotHash match.
+  *
+  * '''Phase 2: CollectingProposals → CollectingSignatures'''
+  *   - Followers compare their locally-built artifact hash to the leader's proposal:
+  *     - '''Match''': Use local ArtifactInfo directly (fast path, no extra validation).
+  *     - '''Mismatch''': Re-validate the leader's artifact via `validateArtifact` (full recompute). This mutates MptStore; a savepoint is
+  *       taken before and restored on failure.
+  *     - '''Validation failure''': Follower withdraws from the round. The leader's artifact stays in resources, but a guard
+  *       (`alreadyWithdrawn`) prevents hot-loop re-entry.
+  *   - On success, the peer signs the agreed artifact hash.
+  *
+  * '''Phase 3: CollectingSignatures → Finished'''
+  *   - Quorum of valid signatures collected.
+  *   - `snapshotHash` uses the artifact hash (agreed in Phase 2), NOT the signed artifact hash, to avoid non-determinism from different
+  *     signature counts per node.
+  *
+  * '''Determinism guarantees''':
+  *   - All event lists are sorted before processing (see `GlobalSnapshotConsensusFunctions`).
+  *   - Facilitators are derived from facility declarations (deterministic), not from gossip proofs.
+  *   - Penalty tracking uses `SortedMap` for deterministic iteration.
+  *   - MptStore mutations are protected by savepoint/restore on validation failure.
+  *
   * @see
   *   ConsensusStateAdvancer for the generic interface
+  * @see
+  *   GlobalSnapshotConsensusFunctions for proposal creation and validation
+  * @see
+  *   GlobalSnapshotAcceptanceManager for the acceptance pipeline
   */
 abstract class GlobalSnapshotConsensusStateAdvancer[F[_]]
     extends ConsensusStateAdvancer[
@@ -81,11 +118,29 @@ object GlobalSnapshotConsensusStateAdvancer {
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     clusterStorageInstance: ClusterStorage[F],
-    loggerBundle: LoggerBundle[F]
+    eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey],
+    eventGossipClient: EventGossipClient[F, GlobalSnapshotEvent],
+    loggerBundle: LoggerBundle[F],
+    mptStore: MptStore[F, GlobalStateKey]
   ): GlobalSnapshotConsensusStateAdvancer[F] = new GlobalSnapshotConsensusStateAdvancer[F] {
 
     private val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](getClass)
     private val lastSnapshotHashObservationName = "last-snapshot-hash"
+    private val facilitatorsHashObservationName = "facilitators-hash"
+    private val consensusConfigHashObservationName = "consensus-config-hash"
+
+    /** Savepoint taken before `createArtifact()` mutations. On round abandonment + retry at the same ordinal, this is restored before
+      * re-building the proposal to ensure the MptStore starts from a clean pre-mutation state.
+      *
+      * Tracks the key (ordinal) alongside the savepoint so that stale savepoints from a different ordinal (e.g., after recovery download)
+      * are discarded instead of restored — restoring a savepoint from ordinal N into an MptStore that was replaced by a download at ordinal
+      * M would corrupt state.
+      *
+      * TODO: Consider clearing proposalSavepointRef explicitly in round cleanup to strengthen the invariant. Currently the ordinal-check
+      * guard prevents stale restore, but explicit cleanup would make the lifecycle more defensive against theoretical races during recovery
+      * (two rounds racing).
+      */
+    private val proposalSavepointRef: Ref[F, Option[(GlobalSnapshotKey, MptStoreSavepoint[F])]] = Ref.unsafe(none)
 
     protected val clusterStorage: ClusterStorage[F] = clusterStorageInstance
     protected val config: ConsensusConfig = consensusConfig
@@ -97,13 +152,68 @@ object GlobalSnapshotConsensusStateAdvancer {
     ): Option[(Previous[GlobalSnapshotKey], GlobalConsensusOutcome)] =
       state.status match {
         case f: Finished =>
+          // Compute consensus-agreed peer quality and removal penalties from PROOFS ONLY.
+          // CRITICAL: We derive both "completed" and "removed" from the signed artifact's proofs
+          // (who actually signed), NOT from removedFacilitators/withdrawnFacilitators. The proofs
+          // are embedded in the consensus-agreed artifact and are identical across all nodes.
+          //
+          // removedFacilitators includes BOTH:
+          //   1. Fork-evicted peers (deterministic — based on quorum facility declarations)
+          //   2. View-change-evicted peers (NON-deterministic — based on local stall detection timing)
+          // Using removedFacilitators for penalties would cause different nodes to compute different
+          // penalty maps → different facilitator exclusions → different facilitator sets → fork.
+          //
+          // Instead, we use: nonSigners = facilitators - signers (proofs).
+          // This is fully deterministic: both facilitators and proofs are consensus-agreed.
+          val signers = f.signedMajorityArtifact.proofs.map(_.id.toPeerId).toSortedSet
+          val nonSigners = state.facilitators.value.filterNot(signers.contains).toSet
+
+          // Compute removal penalties: decrement previous, add penalties for non-signers AND evicted peers.
+          // Both nonSigners (facilitators - signers) and removedFacilitators (evicted mid-round)
+          // should receive penalties. Without penalizing evicted peers, they get re-selected every
+          // round and waste stall detection time before being re-evicted.
+          // Uses SortedMap for deterministic iteration when filtering penalized peers.
+          val evictedPeers = state.removedFacilitators.value
+          val previousPenalties = state.lastOutcome.removalPenalties
+          val decrementedPenalties = previousPenalties.view.mapValues(_ - 1).filter(_._2 > 0).to(SortedMap)
+          val newPenalties = (nonSigners ++ evictedPeers).foldLeft(decrementedPenalties) { (acc, pid) =>
+            acc.updated(pid, config.removalPenaltyRounds)
+          }
+          val finalPenalties = if (config.removalPenaltyRounds > 0) newPenalties else SortedMap.empty[PeerId, Int]
+          val thisRoundQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.from(
+            state.facilitators.value.map { pid =>
+              val completed = if (signers.contains(pid)) 1 else 0
+              pid -> (completed, 1)
+            }
+          )
+          // Accumulate with previous rounds: merge (completed, participated) tuples.
+          // Apply deterministic decay when any counter exceeds the threshold to prevent unbounded growth.
+          // Halving preserves relative quality ordering while keeping counters bounded.
+          // After decay, prune entries where both counters are 0 (departed peers with no history).
+          val rawAccumulated: SortedMap[PeerId, (Int, Int)] = {
+            val previous = state.lastOutcome.peerQuality
+            val allPeerIds = (previous.keySet.toList ::: thisRoundQuality.keySet.toList).distinct
+            SortedMap.from(allPeerIds.map { pid =>
+              val (pc, pp) = previous.getOrElse(pid, (0, 0))
+              val (tc, tp) = thisRoundQuality.getOrElse(pid, (0, 0))
+              pid -> (pc + tc, pp + tp)
+            })
+          }
+          val needsDecay = rawAccumulated.values.exists { case (_, p) => p > config.qualityDecayThreshold }
+          val decayed =
+            if (needsDecay) rawAccumulated.view.mapValues { case (c, p) => (c / 2, p / 2) }.to(SortedMap)
+            else rawAccumulated
+          val accumulatedQuality = decayed.filter { case (_, (c, p)) => c > 0 || p > 0 }
+
           val outcome = GlobalConsensusOutcome(
             state.key,
             state.facilitators,
             state.removedFacilitators,
             state.withdrawnFacilitators,
             state.eligibleFacilitators,
-            Finished(f.signedMajorityArtifact, f.context, f.majorityTrigger, f.candidates, f.facilitatorsHash, f.snapshotHash)
+            Finished(f.signedMajorityArtifact, f.context, f.majorityTrigger, f.candidates, f.facilitatorsHash, f.snapshotHash),
+            removalPenalties = finalPenalties,
+            peerQuality = accumulatedQuality
           )
           (Previous(state.lastOutcome.key), outcome).some
         case _ =>
@@ -114,13 +224,10 @@ object GlobalSnapshotConsensusStateAdvancer {
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind]
     ): StateT[F, GlobalSnapshotConsensusState, F[Unit]] =
       StateT { state =>
-        if (state.lockStatus === LockStatus.Closed)
-          (state, Applicative[F].unit).pure[F]
-        else
-          tryAdvance(state, resources).map {
-            case Some(t) => (t.newState.copy(lockStatus = LockStatus.Open), t.sideEffect)
-            case None    => (state, Applicative[F].unit)
-          }
+        tryAdvance(state, resources).map {
+          case Some(t) => (t.newState, t.sideEffect)
+          case None    => (state, Applicative[F].unit)
+        }
       }
 
     private def tryAdvance(
@@ -138,6 +245,11 @@ object GlobalSnapshotConsensusStateAdvancer {
     // COLLECTING FACILITIES → COLLECTING PROPOSALS
     // =========================================================================
 
+    /** Advances from Facilities to Proposals once quorum facility declarations are collected.
+      *
+      * All peers independently build the proposal artifact from the same events. The leader then spreads its proposal; followers compare
+      * hashes in the next phase. Fork detection verifies facilitatorsHash, lastSnapshotHash, and consensusConfigHash match across peers.
+      */
     private def advanceFromFacilities(
       state: GlobalSnapshotConsensusState,
       status: CollectingFacilities,
@@ -149,8 +261,64 @@ object GlobalSnapshotConsensusStateAdvancer {
             maybeFacilities <- maybeGetAllDeclarations(state, resources)(_.facility)
             facilitators = maybeFacilities.map(_.keys.toList).getOrElse(List.empty[PeerId])
             _ <- loggerBundle.consensus.collectingFacilities(facilitators)
+            // NOTE: facilitatorsHash fork check is handled by identifyForkedPeers below (evicts minority
+            // instead of killing this node). Do NOT call checkForkByFacilitatorsHash here — after stall-based
+            // eviction, different nodes may legitimately have different facilitator sets, which would cause
+            // cascading false-positive fork detections and kill all nodes.
             _ <- maybeFacilities.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
-            result <- maybeFacilities.flatTraverse(toProposalsPhase(state, _))
+            _ <- maybeFacilities.traverse_(checkForkByConsensusConfigHash)
+
+            // Evict peers with minority facilitatorsHash — deterministic since all healthy nodes
+            // see the same declarations and identify the same minority.
+            cleanFacilities = maybeFacilities.map { facilities =>
+              val forkedPeers = ConsensusStateUpdater.identifyForkedPeers(
+                status.facilitatorsHash,
+                facilities.map { case (pid, f) => (pid, f.facilitatorsHash) }
+              )
+              if (forkedPeers.nonEmpty) facilities -- forkedPeers else facilities
+            }
+
+            _ <- (maybeFacilities, cleanFacilities).tupled.traverse_ {
+              case (original, clean) =>
+                val evicted = original.keySet -- clean.keySet
+                ConsensusLog
+                  .warn(
+                    logger,
+                    Category.Fork,
+                    state.key.show,
+                    "n/a",
+                    Event.ForkedPeersEvicted,
+                    "evicted" -> evicted.size.toString,
+                    "remaining" -> clean.size.toString,
+                    "evictedPeers" -> evicted.toList.map(ConsensusLog.pid).mkString(",")
+                  )
+                  .whenA(evicted.nonEmpty)
+            }
+
+            _ <- cleanFacilities.traverse_ { _ =>
+              ConsensusLog.debug(
+                logger,
+                Category.Fork,
+                state.key.show,
+                "n/a",
+                Event.ForkChecksPassed,
+                "facilitatorsHash" -> status.facilitatorsHash.show.take(8),
+                "lastSnapshotHash" -> status.lastSnapshotHash.show.take(8)
+              )
+            }
+
+            result <- cleanFacilities.flatTraverse { facilities =>
+              // Update state to reflect eviction before proceeding to proposals
+              val evictedPeers = state.facilitators.value.filterNot(facilities.contains).toSet
+              val updatedState: GlobalSnapshotConsensusState =
+                if (evictedPeers.nonEmpty)
+                  state.copy[GlobalSnapshotKey, GlobalSnapshotStatus, GlobalConsensusOutcome, GlobalConsensusKind](
+                    facilitators = Facilitators(state.facilitators.value.filter(facilities.contains)),
+                    removedFacilitators = RemovedFacilitators(state.removedFacilitators.value ++ evictedPeers)
+                  )
+                else state
+              toProposalsPhase(updatedState, facilities)
+            }
           } yield result
         }
       }
@@ -159,28 +327,166 @@ object GlobalSnapshotConsensusStateAdvancer {
       state: GlobalSnapshotConsensusState,
       facilities: SortedMap[PeerId, Facility]
     ): F[Option[Transition]] = {
-      val (bound, candidates, triggers) = facilities.foldMap(f => (f.upperBound, f.candidates.value, f.trigger.toList))
+      val (candidates, triggers) = facilities.foldMap(f => (f.candidates.value, f.trigger.toList))
+
+      // Compute hash UNION - include events ANY facilitator has, then sync missing
+      val allHashSets = facilities.values.map(_.eventHashes).toList
+      val unionHashes = allHashSets.reduceOption(_ union _).getOrElse(Set.empty[Hash])
 
       val trigger = pickMajority(triggers).getOrElse(EventTrigger)
-      buildProposalTransition(state, bound, candidates, trigger).map(_.some)
+
+      // Build map of hash -> peer who has it (for fetching missing events)
+      val hashToPeer: Map[Hash, PeerId] = facilities.toList.flatMap {
+        case (peerId, facility) => facility.eventHashes.map(_ -> peerId)
+      }.toMap
+
+      for {
+        // Get local hashes and identify what we're missing
+        localHashes <- eventMempool.getEventHashes
+        missingHashes = unionHashes -- localHashes
+
+        _ <- logger.debug(
+          s"[HashUnion] Ordinal=${state.key.value} facilitators=${facilities.size} " +
+            s"unionHashes=${unionHashes.size} localHashes=${localHashes.size} missing=${missingHashes.size}"
+        )
+
+        // Sync missing events from peers before building proposal
+        _ <- syncMissingEvents(missingHashes, hashToPeer).whenA(missingHashes.nonEmpty)
+
+        result <- buildProposalTransition(state, unionHashes, candidates, trigger)
+      } yield result.some
     }
+
+    /** Sync missing events from peers who have them. */
+    private def syncMissingEvents(
+      missingHashes: Set[Hash],
+      hashToPeer: Map[Hash, PeerId]
+    ): F[Unit] = {
+      val hashesPerPeer: Map[PeerId, Set[Hash]] = missingHashes
+        .flatMap(h => hashToPeer.get(h).map(peerId => (peerId, h)))
+        .groupMap(_._1)(_._2)
+
+      for {
+        _ <- logger.info(s"[EventSync] Syncing ${missingHashes.size} missing events from ${hashesPerPeer.size} peers")
+        _ <- hashesPerPeer.toList.traverse_ {
+          case (peerId, hashes) =>
+            fetchEventsFromPeer(peerId, hashes)
+        }
+        _ <- logger.debug(s"[EventSync] Sync complete")
+      } yield ()
+    }
+
+    /** Fetch specific events from a peer using IWANT and add to local mempool. */
+    private def fetchEventsFromPeer(peerId: PeerId, hashes: Set[Hash]): F[Unit] =
+      for {
+        maybePeer <- clusterStorage.getPeer(peerId)
+        _ <- maybePeer.traverse_ { peer =>
+          eventGossipClient
+            .requestEvents(IWantRequest(hashes))
+            .run(Peer.toP2PContext(peer))
+            .flatMap { response =>
+              response.events.traverse_ {
+                case (_, signedEvent) =>
+                  eventMempool.add(signedEvent).void
+              }
+            }
+            .handleErrorWith { err =>
+              logger.warn(s"[EventSync] Failed to fetch events from peer ${peerId.show.take(8)}: ${err.getMessage}")
+            }
+        }
+      } yield ()
 
     private def buildProposalTransition(
       state: GlobalSnapshotConsensusState,
-      bound: Bound,
+      commonHashes: Set[Hash],
       candidates: Set[PeerId],
       majorityTrigger: ConsensusTrigger
     ): F[Transition] =
       for {
         _ <- clearTimeTriggerIfNeeded(majorityTrigger)
         facilitatorsHash <- hashFacilitators(state)
-        peerEvents <- consensusStorage.pullEvents(bound)
 
-        (artifact, context, returnedEvents) <- createArtifact(state, majorityTrigger, extractEvents(peerEvents))
+        // Pull events from mempool using hash union
+        mempoolData <- eventMempool.getMultiple(commonHashes).map { hashToHashed =>
+          val events = hashToHashed.values.map(_.signed.value).toSet
+          val hashToEvent = hashToHashed.map { case (h, hashed) => h -> hashed.signed.value }
+          (events, hashToEvent)
+        }
+        (mempoolEvents, mempoolHashToEvent) = mempoolData
 
-        _ <- storeReturnedEvents(peerEvents, returnedEvents)
+        // Restore any previous savepoint from an abandoned round at the SAME ordinal,
+        // ensuring MptStore is in a clean pre-mutation state before createArtifact().
+        previousSp <- proposalSavepointRef.getAndSet(none)
+        _ <- previousSp.traverse_ {
+          case (spKey, sp) =>
+            if (spKey === state.key)
+              sp.restore >>
+                ConsensusLog.info(logger, Category.Lifecycle, state.key.show, "n/a", Event.MptSavepointRestored)
+            else
+              ConsensusLog.warn(
+                logger,
+                Category.Lifecycle,
+                state.key.show,
+                "n/a",
+                Event.MptSavepointDiscardedWrongKey,
+                "savepointKey" -> spKey.show,
+                "currentKey" -> state.key.show
+              )
+        }
+        // Take a fresh savepoint before mutations
+        sp <- mptStore.savepoint
+        _ <- proposalSavepointRef.set((state.key, sp).some)
+
+        (artifact, context, returnedEvents) <- createArtifact(state, majorityTrigger, mempoolEvents)
+
+        // Clear included events from mempool
+        includedHashes = {
+          val returnedSet = returnedEvents.toSet
+          mempoolHashToEvent.collect {
+            case (hash, event) if !returnedSet.contains(event) => hash
+          }.toSet
+        }
+        _ <- eventMempool.clearIncluded(includedHashes)
         hash <- hashArtifact(artifact)
         _ <- checkFollowerExit(state)
+        isLeader = selfId === state.leader
+        role = if (isLeader) "LEADER" else "FOLLOWER"
+        withdrawnCount = state.withdrawnFacilitators.value.size
+        _ <- ConsensusLog.info(
+          logger,
+          Category.Phase,
+          state.key.show,
+          role,
+          Event.FacilitiesToProposals,
+          (Seq(
+            "ordinal" -> artifact.ordinal.show,
+            "trigger" -> majorityTrigger.toString,
+            "hash" -> hash.show.take(8),
+            "facilitators" -> state.facilitators.value.size.toString,
+            "candidates" -> candidates.size.toString,
+            "leader" -> ConsensusLog.pid(state.leader),
+            "self" -> ConsensusLog.pid(selfId),
+            "view" -> state.viewNumber.toString,
+            "facilitatorsHash" -> facilitatorsHash.show.take(8),
+            "lastSnapshotHash" -> state.lastOutcome.finished.snapshotHash.show.take(8)
+          ) ++ (if (withdrawnCount > 0) Seq("withdrawn" -> withdrawnCount.toString) else Seq.empty)): _*
+        )
+        _ <- ConsensusLog.info(
+          logger,
+          Category.Proposal,
+          state.key.show,
+          role,
+          Event.ProposalStateProof,
+          "detail" -> describeStateProof(artifact.stateProof)
+        )
+        _ <- ConsensusLog.info(
+          logger,
+          Category.Proposal,
+          state.key.show,
+          role,
+          Event.ProposalContextDigest,
+          "detail" -> contextDigest(context)
+        )
       } yield
         Transition(
           newState = state.copy(status =
@@ -192,13 +498,31 @@ object GlobalSnapshotConsensusStateAdvancer {
               state.lastOutcome.finished.snapshotHash
             )
           ),
-          sideEffect = spreadProposal(state.key, hash, facilitatorsHash, artifact, state.lastOutcome.finished.snapshotHash)
+          sideEffect =
+            if (isLeader)
+              spreadProposal(state, state.key, hash, facilitatorsHash, artifact, state.lastOutcome.finished.snapshotHash)
+            else
+              Applicative[F].unit
         )
 
     // =========================================================================
     // COLLECTING PROPOSALS → COLLECTING SIGNATURES
     // =========================================================================
 
+    /** Advances from Proposals to Signatures by resolving the leader's proposal.
+      *
+      * '''Leader-based proposal resolution''': Only the leader spreads a Proposal + ConsensusArtifact. Non-leaders wait for the leader's
+      * proposal via gossip, then either:
+      *   - Use their local ArtifactInfo if hashes match (fast path), or
+      *   - Re-validate the leader's artifact via full recompute (slow path).
+      *
+      * '''Hot-loop guard''': If this peer already withdrew from this round, it skips re-entry. Without this guard, a validation failure
+      * (which returns `none[Transition]`) would cause the leader's proposal (still in resources) to re-trigger validation on every
+      * `checkUpdate`.
+      *
+      * '''MptStore safety''': The slow path takes an MptStore savepoint before validation and restores it on failure. This prevents partial
+      * state from cascading to future rounds.
+      */
     private def advanceFromProposals(
       state: GlobalSnapshotConsensusState,
       status: CollectingProposals,
@@ -206,49 +530,398 @@ object GlobalSnapshotConsensusStateAdvancer {
     ): F[Option[Transition]] =
       loggerBundle.app.withOrdinal(status.proposalArtifactInfo.artifact.ordinal) {
         HasherSelector[F].withCurrent { implicit hasher =>
-          for {
-            maybeProposals <- maybeGetAllDeclarations(state, resources)(_.proposal)
-            facilitators = maybeProposals.map(_.keys.toList).getOrElse(List.empty[PeerId])
-            _ <- loggerBundle.consensus.collectingProposals(facilitators)
-            _ <- maybeProposals.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
-            result <- maybeProposals.flatTraverse(toSignaturesPhase(state, status, resources, _))
-          } yield result
+          // Guard: if we already withdrew from this round, don't re-enter validation.
+          // Without this, a validation failure (which returns none[Transition]) causes a hot loop:
+          // the leader's proposal stays in resources, so every checkUpdate re-enters here,
+          // re-validates, re-fails, and re-withdraws (7+/sec observed in production).
+          val alreadyWithdrawn =
+            resources.withdrawalsMap.get(selfId).contains(GlobalConsensusKind.Signature: GlobalConsensusKind) ||
+              state.withdrawnFacilitators.value.contains(selfId)
+
+          if (alreadyWithdrawn)
+            none[Transition].pure[F]
+          else {
+            val leader = state.leader
+            val maybeLeaderProposal = resources.peerDeclarationsMap.get(leader).flatMap(_.proposal)
+
+            maybeLeaderProposal match {
+              case Some(leaderProposal) =>
+                for {
+                  _ <- loggerBundle.consensus.collectingProposals(List(leader))
+                  // Skip facilitatorsHash fork check when view > 0 (eviction happened), when
+                  // transitioning from solo genesis to multi-node consensus (penalty state diverges),
+                  // or during joining grace period (peer quality scores haven't converged yet).
+                  lastSolo <- wasLastRoundSolo
+                  inGrace <- nodeStorage.isInJoiningGracePeriod
+                  _ <- checkForkByFacilitatorsHash(
+                    SortedMap(leader -> leaderProposal),
+                    status.facilitatorsHash
+                  )(_.facilitatorsHash).whenA(state.viewNumber === 0 && !lastSolo && !inGrace)
+                  _ <- checkForkByLastSnapshotHash(
+                    SortedMap(leader -> leaderProposal),
+                    status.lastSnapshotHash
+                  )
+                  result <- resolveLeaderProposal(state, status, resources, leaderProposal)
+                } yield result
+              case None =>
+                if (selfId === state.leader)
+                  // Leader (possibly after view change) — spread proposal so peers can advance
+                  ConsensusLog.info(
+                    logger,
+                    Category.Phase,
+                    state.key.show,
+                    "Leader",
+                    Event.ProposalRespread,
+                    "hash" -> status.proposalArtifactInfo.hash.show.take(8),
+                    "targets" -> state.facilitators.value.size.toString,
+                    "view" -> state.viewNumber.toString
+                  ) >>
+                    spreadProposal(
+                      state,
+                      state.key,
+                      status.proposalArtifactInfo.hash,
+                      status.facilitatorsHash,
+                      status.proposalArtifactInfo.artifact,
+                      status.lastSnapshotHash
+                    ).as(none[Transition])
+                else
+                  none[Transition].pure[F]
+            }
+          }
         }
       }
 
-    private def toSignaturesPhase(
+    private def resolveLeaderProposal(
       state: GlobalSnapshotConsensusState,
       status: CollectingProposals,
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind],
-      proposals: SortedMap[PeerId, Proposal]
+      leaderProposal: Proposal
     )(implicit hasher: Hasher[F]): F[Option[Transition]] = {
-      val hashes = proposals.values.toList.map(_.hash)
+      val role = if (selfId === state.leader) "LEADER" else "FOLLOWER"
+      if (leaderProposal.hash === status.proposalArtifactInfo.hash) {
+        // Leader's artifact matches our own — use local ArtifactInfo (avoids re-validation)
+        ConsensusLog.info(
+          logger,
+          Category.Validation,
+          state.key.show,
+          role,
+          Event.ArtifactHashMatch,
+          "hash" -> leaderProposal.hash.show.take(12),
+          "match" -> "true"
+        ) >>
+          ConsensusLog.info(
+            logger,
+            Category.Phase,
+            state.key.show,
+            role,
+            Event.ProposalsToSignatures,
+            "matchesOwn" -> "true",
+            "hash" -> leaderProposal.hash.show.take(8),
+            "trigger" -> status.majorityTrigger.toString,
+            "leader" -> ConsensusLog.pid(state.leader),
+            "view" -> state.viewNumber.toString
+          ) >>
+          Metrics[F].incrementCounter("dag_consensus_proposal_affinity_match") >>
+          buildSignatureTransition(state, status, status.proposalArtifactInfo, List(leaderProposal.hash)).map(_.some)
+      } else {
+        // Leader proposed a different artifact — apply it via the follower path.
+        // createContext (follower path) mutates the shared MptStore.
+        // We take a savepoint so we can restore on IO-level failure to prevent
+        // partial state from cascading to future rounds.
+        resources.artifacts.get(leaderProposal.hash) match {
+          case Some(leaderArtifact) =>
+            mptStore.savepoint.flatMap { sp =>
+              val validate =
+                ConsensusLog.info(
+                  logger,
+                  Category.Validation,
+                  state.key.show,
+                  "Validator",
+                  Event.ValidatingLeaderArtifact,
+                  "leaderHash" -> leaderProposal.hash.show.take(8),
+                  "ownHash" -> status.proposalArtifactInfo.hash.show.take(8)
+                ) >>
+                  validateLeaderArtifact(state, status, leaderArtifact, leaderProposal.hash).flatMap {
+                    case Right(leaderInfo) =>
+                      // Validation succeeded — MptStore mutations are correct, keep them
+                      ConsensusLog.info(
+                        logger,
+                        Category.Validation,
+                        state.key.show,
+                        role,
+                        Event.ArtifactRevalidated,
+                        "matchesOwn" -> "false",
+                        "leaderHash" -> leaderProposal.hash.show.take(8),
+                        "ownHash" -> status.proposalArtifactInfo.hash.show.take(8),
+                        "trigger" -> status.majorityTrigger.toString,
+                        "leader" -> ConsensusLog.pid(state.leader),
+                        "view" -> state.viewNumber.toString
+                      ) >>
+                        Metrics[F].incrementCounter("dag_consensus_proposal_affinity_mismatch_accepted") >>
+                        buildSignatureTransition(state, status, leaderInfo, List(leaderProposal.hash)).map(_.some)
+                    case Left(invalidArtifact) =>
+                      // Validation failed — restore MptStore to pre-validation state
+                      val diffDetail = describeInvalidArtifact(invalidArtifact)
+                      val ownCtx = status.proposalArtifactInfo.context
+                      val ctxDigest = contextDigest(ownCtx)
+                      sp.restore >>
+                        ConsensusLog.warn(
+                          logger,
+                          Category.Validation,
+                          state.key.show,
+                          role,
+                          Event.ValidationFailed,
+                          "leaderHash" -> leaderProposal.hash.show.take(8),
+                          "ownHash" -> status.proposalArtifactInfo.hash.show.take(8),
+                          "leader" -> ConsensusLog.pid(state.leader),
+                          "view" -> state.viewNumber.toString,
+                          "reason" -> diffDetail
+                        ) >>
+                        ConsensusLog.info(
+                          logger,
+                          Category.Validation,
+                          state.key.show,
+                          role,
+                          Event.OwnContextDigest,
+                          "detail" -> ctxDigest
+                        ) >>
+                        ConsensusLog.info(
+                          logger,
+                          Category.Phase,
+                          state.key.show,
+                          role,
+                          Event.WithdrawValidationFail,
+                          "reason" -> "proposal_validation_failed",
+                          "mptStoreRestored" -> "true"
+                        ) >>
+                        gossip.spread(ConsensusWithdrawPeerDeclaration(state.key, GlobalConsensusKind.Signature: GlobalConsensusKind)) >>
+                        Metrics[F].incrementCounter("dag_consensus_proposal_validation_failure") >>
+                        Metrics[F].incrementCounter("dag_consensus_withdrawal_sent") >>
+                        none[Transition].pure[F]
+                  }
 
-      findMajorityArtifact(state, status, resources, hashes).flatMap {
-        case Some(majorityInfo) => buildSignatureTransition(state, status, majorityInfo, hashes).map(_.some)
-        case None               => none[Transition].pure[F]
+              // Use guaranteeCase to restore MptStore on any unexpected exception.
+              // Without this, an IO-level failure in validateLeaderArtifact would skip
+              // sp.restore, leaving partial MptStore state that poisons future rounds.
+              Async[F].guaranteeCase(validate) {
+                case Outcome.Errored(_) | Outcome.Canceled() =>
+                  sp.restore >>
+                    ConsensusLog.error(logger, Category.Lifecycle, state.key.show, role, Event.MptRestoredAfterFailure)
+                case Outcome.Succeeded(_) =>
+                  Applicative[F].unit
+              }
+            }
+          case None =>
+            // Leader's artifact not yet received via gossip — wait
+            none[Transition].pure[F]
+        }
       }
     }
 
-    private def findMajorityArtifact(
+    private def validateLeaderArtifact(
       state: GlobalSnapshotConsensusState,
       status: CollectingProposals,
-      resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind],
-      proposalHashes: List[Hash]
-    )(implicit hasher: Hasher[F]): F[Option[ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext]]] =
+      artifact: GlobalSnapshotArtifact,
+      hash: Hash
+    )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext]]] =
       state.lastOutcome.finished.signedMajorityArtifact.toHashed.flatMap { hashedLast =>
-        pickValidatedMajorityArtifact(
-          status.proposalArtifactInfo,
-          hashedLast.signed,
-          state.lastOutcome.finished.context,
-          status.majorityTrigger,
-          resources,
-          proposalHashes,
-          state.facilitators.value.toSet,
-          consensusFns,
-          getGlobalSnapshotByOrdinal
-        )
+        // Re-derive the artifact locally and compare it to the leader's proposal.
+        // validateArtifact already derives the trigger from artifact.epochProgress (not from
+        // status.majorityTrigger), so trigger divergence cannot cause a false mismatch.
+        // The full recompute-and-compare approach is kept so that validators can reject
+        // a malicious or buggy leader artifact before signing it.
+        consensusFns
+          .validateArtifact(
+            hashedLast.signed,
+            state.lastOutcome.finished.context,
+            status.majorityTrigger,
+            artifact,
+            state.facilitators.value.toSet,
+            getGlobalSnapshotByOrdinal
+          )
+          .map {
+            case Right((validatedArtifact, context)) =>
+              ArtifactInfo(validatedArtifact, context, hash).asRight[InvalidArtifact]
+            case Left(err) =>
+              err.asLeft[ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext]]
+          }
       }
+
+    /** Produces a human-readable description of why the leader's artifact failed validation. */
+    private def describeInvalidArtifact(err: InvalidArtifact): String = err match {
+      case GlobalArtifactMismatch(leader, own) =>
+        val diffs = List.newBuilder[String]
+        if (leader.ordinal =!= own.ordinal) diffs += s"ordinal(leader=${leader.ordinal.show},own=${own.ordinal.show})"
+        if (leader.height =!= own.height) diffs += s"height(leader=${leader.height.show},own=${own.height.show})"
+        if (leader.subHeight =!= own.subHeight) diffs += s"subHeight(leader=${leader.subHeight.show},own=${own.subHeight.show})"
+        if (leader.lastSnapshotHash =!= own.lastSnapshotHash)
+          diffs += s"lastSnapshotHash(leader=${leader.lastSnapshotHash.show.take(8)},own=${own.lastSnapshotHash.show.take(8)})"
+        if (leader.blocks.size != own.blocks.size) diffs += s"blocks(leader=${leader.blocks.size},own=${own.blocks.size})"
+        if (leader.stateChannelSnapshots.size != own.stateChannelSnapshots.size)
+          diffs += s"stateChannels(leader=${leader.stateChannelSnapshots.size},own=${own.stateChannelSnapshots.size})"
+        val leaderScAddrs = leader.stateChannelSnapshots.keySet
+        val ownScAddrs = own.stateChannelSnapshots.keySet
+        val onlyLeader = leaderScAddrs -- ownScAddrs
+        val onlyOwn = ownScAddrs -- leaderScAddrs
+        if (onlyLeader.nonEmpty) diffs += s"scOnlyInLeader=[${onlyLeader.toList.map(_.show.take(8)).mkString(",")}]"
+        if (onlyOwn.nonEmpty) diffs += s"scOnlyInOwn=[${onlyOwn.toList.map(_.show.take(8)).mkString(",")}]"
+        if (leader.rewards =!= own.rewards) {
+          diffs += s"rewards(leader=${leader.rewards.size},own=${own.rewards.size})"
+          val onlyInLeader = leader.rewards -- own.rewards
+          val onlyInOwn = own.rewards -- leader.rewards
+          if (onlyInLeader.nonEmpty)
+            diffs += s"rewardsOnlyInLeader=[${onlyInLeader.toList.map(r => s"${r.destination.show.take(8)}:${r.amount.value.value}").mkString(",")}]"
+          if (onlyInOwn.nonEmpty)
+            diffs += s"rewardsOnlyInOwn=[${onlyInOwn.toList.map(r => s"${r.destination.show.take(8)}:${r.amount.value.value}").mkString(",")}]"
+        }
+        if (leader.epochProgress =!= own.epochProgress)
+          diffs += s"epochProgress(leader=${leader.epochProgress.show},own=${own.epochProgress.show})"
+        if (leader.tips =!= own.tips) diffs += "tipsDiffer"
+        if (leader.stateProof =!= own.stateProof) {
+          val lp = leader.stateProof
+          val op = own.stateProof
+          val spDiffs = List.newBuilder[String]
+          if (lp.lastStateChannelSnapshotHashesProof =!= op.lastStateChannelSnapshotHashesProof)
+            spDiffs += s"scHashesProof(l=${lp.lastStateChannelSnapshotHashesProof.show.take(8)},o=${op.lastStateChannelSnapshotHashesProof.show
+                .take(8)})"
+          if (lp.lastTxRefsProof =!= op.lastTxRefsProof)
+            spDiffs += s"txRefsProof(l=${lp.lastTxRefsProof.show.take(8)},o=${op.lastTxRefsProof.show.take(8)})"
+          if (lp.balancesProof =!= op.balancesProof)
+            spDiffs += s"balancesProof(l=${lp.balancesProof.show.take(8)},o=${op.balancesProof.show.take(8)})"
+          if (lp.lastCurrencySnapshotsProof =!= op.lastCurrencySnapshotsProof)
+            spDiffs += "currencySnapshotsProof"
+          if (lp.activeAllowSpends =!= op.activeAllowSpends)
+            spDiffs += s"activeAllowSpends(l=${lp.activeAllowSpends.map(_.show.take(8))},o=${op.activeAllowSpends.map(_.show.take(8))})"
+          if (lp.activeTokenLocks =!= op.activeTokenLocks)
+            spDiffs += s"activeTokenLocks(l=${lp.activeTokenLocks.map(_.show.take(8))},o=${op.activeTokenLocks.map(_.show.take(8))})"
+          if (lp.tokenLockBalances =!= op.tokenLockBalances)
+            spDiffs += s"tokenLockBalances(l=${lp.tokenLockBalances.map(_.show.take(8))},o=${op.tokenLockBalances.map(_.show.take(8))})"
+          if (lp.lastAllowSpendRefs =!= op.lastAllowSpendRefs)
+            spDiffs += s"lastAllowSpendRefs(l=${lp.lastAllowSpendRefs.map(_.show.take(8))},o=${op.lastAllowSpendRefs.map(_.show.take(8))})"
+          if (lp.lastTokenLockRefs =!= op.lastTokenLockRefs)
+            spDiffs += s"lastTokenLockRefs(l=${lp.lastTokenLockRefs.map(_.show.take(8))},o=${op.lastTokenLockRefs.map(_.show.take(8))})"
+          if (lp.updateNodeParameters =!= op.updateNodeParameters)
+            spDiffs += s"updateNodeParams(l=${lp.updateNodeParameters.map(_.show.take(8))},o=${op.updateNodeParameters.map(_.show.take(8))})"
+          if (lp.activeDelegatedStakes =!= op.activeDelegatedStakes)
+            spDiffs += s"activeDelegatedStakes(l=${lp.activeDelegatedStakes
+                .map(_.show.take(8))},o=${op.activeDelegatedStakes.map(_.show.take(8))})"
+          if (lp.delegatedStakesWithdrawals =!= op.delegatedStakesWithdrawals)
+            spDiffs += s"delegatedStakesWithdrawals(l=${lp.delegatedStakesWithdrawals.map(_.show.take(8))},o=${op.delegatedStakesWithdrawals
+                .map(_.show.take(8))})"
+          if (lp.activeNodeCollaterals =!= op.activeNodeCollaterals)
+            spDiffs += s"activeNodeCollaterals(l=${lp.activeNodeCollaterals
+                .map(_.show.take(8))},o=${op.activeNodeCollaterals.map(_.show.take(8))})"
+          if (lp.nodeCollateralWithdrawals =!= op.nodeCollateralWithdrawals)
+            spDiffs += s"nodeCollateralWithdrawals(l=${lp.nodeCollateralWithdrawals.map(_.show.take(8))},o=${op.nodeCollateralWithdrawals
+                .map(_.show.take(8))})"
+          if (lp.priceState =!= op.priceState)
+            spDiffs += s"priceState(l=${lp.priceState.map(_.show.take(8))},o=${op.priceState.map(_.show.take(8))})"
+          if (lp.lastGlobalSnapshotsWithCurrency =!= op.lastGlobalSnapshotsWithCurrency)
+            spDiffs += s"lastGlobalSnapshotsWithCurrency(l=${lp.lastGlobalSnapshotsWithCurrency.map(_.show.take(8))},o=${op.lastGlobalSnapshotsWithCurrency
+                .map(_.show.take(8))})"
+          if (lp.mptRoot =!= op.mptRoot)
+            spDiffs += s"mptRoot(l=${lp.mptRoot.map(_.show.take(8))},o=${op.mptRoot.map(_.show.take(8))})"
+          val spResult = spDiffs.result()
+          if (spResult.isEmpty) diffs += "stateProofDiffers(no sub-field diff — possible serialization difference)"
+          else diffs += s"stateProofDiffers{${spResult.mkString(",")}}"
+        }
+        if (leader.nextFacilitators =!= own.nextFacilitators)
+          diffs += s"nextFacilitators(leader=${leader.nextFacilitators.size},own=${own.nextFacilitators.size})"
+        if (leader.delegateRewards =!= own.delegateRewards) {
+          val leaderDR = leader.delegateRewards.map(_.size).getOrElse(0)
+          val ownDR = own.delegateRewards.map(_.size).getOrElse(0)
+          diffs += s"delegateRewards(leader=$leaderDR,own=$ownDR)"
+        }
+        val leaderAllowSpend = leader.allowSpendBlocks.map(_.size).getOrElse(0)
+        val ownAllowSpend = own.allowSpendBlocks.map(_.size).getOrElse(0)
+        if (leaderAllowSpend != ownAllowSpend) diffs += s"allowSpendBlocks(leader=$leaderAllowSpend,own=$ownAllowSpend)"
+        val leaderTokenLock = leader.tokenLockBlocks.map(_.size).getOrElse(0)
+        val ownTokenLock = own.tokenLockBlocks.map(_.size).getOrElse(0)
+        if (leaderTokenLock != ownTokenLock) diffs += s"tokenLockBlocks(leader=$leaderTokenLock,own=$ownTokenLock)"
+        if (leader.spendActions =!= own.spendActions) {
+          val leaderSA = leader.spendActions.map(_.size).getOrElse(0)
+          val ownSA = own.spendActions.map(_.size).getOrElse(0)
+          diffs += s"spendActions(leader=$leaderSA,own=$ownSA)"
+        }
+        if (leader.activeDelegatedStakes =!= own.activeDelegatedStakes) {
+          val leaderADS = leader.activeDelegatedStakes.map(_.size).getOrElse(0)
+          val ownADS = own.activeDelegatedStakes.map(_.size).getOrElse(0)
+          diffs += s"activeDelegatedStakes(leader=$leaderADS,own=$ownADS)"
+        }
+        if (leader.delegatedStakesWithdrawals =!= own.delegatedStakesWithdrawals) {
+          val leaderDSW = leader.delegatedStakesWithdrawals.map(_.size).getOrElse(0)
+          val ownDSW = own.delegatedStakesWithdrawals.map(_.size).getOrElse(0)
+          diffs += s"delegatedStakesWithdrawals(leader=$leaderDSW,own=$ownDSW)"
+        }
+        if (leader.activeNodeCollaterals =!= own.activeNodeCollaterals) {
+          val leaderANC = leader.activeNodeCollaterals.map(_.size).getOrElse(0)
+          val ownANC = own.activeNodeCollaterals.map(_.size).getOrElse(0)
+          diffs += s"activeNodeCollaterals(leader=$leaderANC,own=$ownANC)"
+        }
+        if (leader.nodeCollateralWithdrawals =!= own.nodeCollateralWithdrawals) {
+          val leaderNCW = leader.nodeCollateralWithdrawals.map(_.size).getOrElse(0)
+          val ownNCW = own.nodeCollateralWithdrawals.map(_.size).getOrElse(0)
+          diffs += s"nodeCollateralWithdrawals(leader=$leaderNCW,own=$ownNCW)"
+        }
+        if (leader.updateNodeParameters =!= own.updateNodeParameters) {
+          val leaderUNP = leader.updateNodeParameters.map(_.size).getOrElse(0)
+          val ownUNP = own.updateNodeParameters.map(_.size).getOrElse(0)
+          diffs += s"updateNodeParameters(leader=$leaderUNP,own=$ownUNP)"
+        }
+        if (leader.version =!= own.version)
+          diffs += s"version(leader=${leader.version.show},own=${own.version.show})"
+        val result = diffs.result()
+        if (result.isEmpty) "GlobalArtifactMismatch(no field-level diff detected — possible serialization difference)"
+        else s"GlobalArtifactMismatch[${result.mkString(",")}]"
+      case other =>
+        other.getClass.getSimpleName
+    }
+
+    /** Produces a compact representation of all stateProof sub-field hash prefixes for comparing leader vs follower. */
+    private def describeStateProof(sp: GlobalSnapshotStateProof): String = {
+      val parts = List.newBuilder[String]
+      parts += s"scHashes=${sp.lastStateChannelSnapshotHashesProof.show.take(8)}"
+      parts += s"txRefs=${sp.lastTxRefsProof.show.take(8)}"
+      parts += s"balances=${sp.balancesProof.show.take(8)}"
+      parts += s"currSnapshotsProof=${sp.lastCurrencySnapshotsProof.map(_.show.take(8)).getOrElse("none")}"
+      parts += s"allowSpends=${sp.activeAllowSpends.map(_.show.take(8)).getOrElse("none")}"
+      parts += s"tokenLocks=${sp.activeTokenLocks.map(_.show.take(8)).getOrElse("none")}"
+      parts += s"tokenLockBal=${sp.tokenLockBalances.map(_.show.take(8)).getOrElse("none")}"
+      parts += s"allowSpendRefs=${sp.lastAllowSpendRefs.map(_.show.take(8)).getOrElse("none")}"
+      parts += s"tokenLockRefs=${sp.lastTokenLockRefs.map(_.show.take(8)).getOrElse("none")}"
+      parts += s"nodeParams=${sp.updateNodeParameters.map(_.show.take(8)).getOrElse("none")}"
+      parts += s"delegStakes=${sp.activeDelegatedStakes.map(_.show.take(8)).getOrElse("none")}"
+      parts += s"delegWithdrawals=${sp.delegatedStakesWithdrawals.map(_.show.take(8)).getOrElse("none")}"
+      parts += s"nodeCollaterals=${sp.activeNodeCollaterals.map(_.show.take(8)).getOrElse("none")}"
+      parts += s"collateralWithdrawals=${sp.nodeCollateralWithdrawals.map(_.show.take(8)).getOrElse("none")}"
+      parts += s"priceState=${sp.priceState.map(_.show.take(8)).getOrElse("none")}"
+      parts += s"globalSnapsWithCurrency=${sp.lastGlobalSnapshotsWithCurrency.map(_.show.take(8)).getOrElse("none")}"
+      parts += s"mptRoot=${sp.mptRoot.map(_.show.take(8)).getOrElse("none")}"
+      parts.result().mkString(" ")
+    }
+
+    /** Produces a compact digest of GlobalSnapshotInfo field sizes/counts for diagnostic logging. Does NOT log actual data (state can be
+      * 90MB+), only counts and hash prefixes of the stateProof.
+      */
+    private def contextDigest(ctx: GlobalSnapshotContext): String = {
+      val parts = List.newBuilder[String]
+      parts += s"scHashes=${ctx.lastStateChannelSnapshotHashes.size}"
+      parts += s"txRefs=${ctx.lastTxRefs.size}"
+      parts += s"balances=${ctx.balances.size}"
+      parts += s"currencySnapshots=${ctx.lastCurrencySnapshots.size}"
+      parts += s"currencyProofs=${ctx.lastCurrencySnapshotsProofs.size}"
+      parts += s"allowSpends=${ctx.activeAllowSpends.map(_.values.map(_.values.map(_.size).sum).sum).getOrElse(0)}"
+      parts += s"tokenLocks=${ctx.activeTokenLocks.map(_.values.map(_.size).sum).getOrElse(0)}"
+      parts += s"tokenLockBal=${ctx.tokenLockBalances.map(_.size).getOrElse(0)}"
+      parts += s"delegStakes=${ctx.activeDelegatedStakes.map(_.size).getOrElse(0)}"
+      parts += s"delegWithdrawals=${ctx.delegatedStakesWithdrawals.map(_.size).getOrElse(0)}"
+      parts += s"nodeCollaterals=${ctx.activeNodeCollaterals.map(_.size).getOrElse(0)}"
+      parts += s"collateralWithdrawals=${ctx.nodeCollateralWithdrawals.map(_.size).getOrElse(0)}"
+      parts += s"updateNodeParams=${ctx.updateNodeParameters.map(_.size).getOrElse(0)}"
+      parts += s"priceState=${ctx.priceState.map(_.size).getOrElse(0)}"
+      parts += s"metagraphSync=${ctx.metagraphSyncData.map(_.size).getOrElse(0)}"
+      parts.result().mkString(" ")
+    }
 
     private def buildSignatureTransition(
       state: GlobalSnapshotConsensusState,
@@ -260,6 +933,8 @@ object GlobalSnapshotConsensusStateAdvancer {
         facilitatorsHash <- state.facilitators.value.hash
         signature <- Signature.fromHash(keyPair.getPrivate, majorityInfo.hash)
         _ <- recordProposalAffinity(proposalHashes, status.proposalArtifactInfo.hash)
+        // Round succeeded — discard the proposal savepoint so it won't be restored on the next ordinal
+        _ <- proposalSavepointRef.set(none)
       } yield
         Transition(
           newState = state.copy(status =
@@ -271,13 +946,18 @@ object GlobalSnapshotConsensusStateAdvancer {
               state.lastOutcome.finished.snapshotHash
             )
           ),
-          sideEffect = spreadSignature(state.key, signature, facilitatorsHash, state.lastOutcome.finished.snapshotHash)
+          sideEffect = spreadSignature(state, state.key, signature, facilitatorsHash, state.lastOutcome.finished.snapshotHash)
         )
 
     // =========================================================================
     // COLLECTING SIGNATURES → FINISHED
     // =========================================================================
 
+    /** Advances from Signatures to Finished once quorum valid signatures are collected.
+      *
+      * Collects signature declarations, verifies each against the artifact hash, and transitions to Finished with the signed artifact. Uses
+      * the artifact hash (not signed-artifact hash) as `snapshotHash` to avoid non-determinism from varying signature counts across peers.
+      */
     private def advanceFromSignatures(
       state: GlobalSnapshotConsensusState,
       status: CollectingSignatures,
@@ -289,6 +969,13 @@ object GlobalSnapshotConsensusStateAdvancer {
             maybeSignatures <- maybeGetAllDeclarations(state, resources)(_.signature)
             facilitators = maybeSignatures.map(_.keys.toList).getOrElse(List.empty[PeerId])
             _ <- loggerBundle.consensus.collectingSignatures(facilitators)
+            // Skip facilitatorsHash fork check when view > 0 (eviction happened), solo→multi transition,
+            // or during joining grace period (peer quality scores haven't converged yet).
+            lastSolo2 <- wasLastRoundSolo
+            inGrace2 <- nodeStorage.isInJoiningGracePeriod
+            _ <- maybeSignatures
+              .traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
+              .whenA(state.viewNumber === 0 && !lastSolo2 && !inGrace2)
             _ <- maybeSignatures.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
             result <- maybeSignatures.flatTraverse(toFinishedPhase(state, status, _))
           } yield result
@@ -305,6 +992,21 @@ object GlobalSnapshotConsensusStateAdvancer {
       for {
         valid <- proofs.filterA(verifySignatureProof(status.majorityArtifactInfo.hash, _))
         _ <- logInvalidSignatures(state.key, proofs.size, valid.size)
+        role = ConsensusLog.role(selfId, state.leader)
+        _ <- ConsensusLog.info(
+          logger,
+          Category.Phase,
+          state.key.show,
+          role,
+          Event.SignaturesToFinished,
+          "ordinal" -> status.majorityArtifactInfo.artifact.ordinal.show,
+          "signatures" -> s"${valid.size}/${proofs.size}",
+          "hash" -> status.majorityArtifactInfo.hash.show.take(8),
+          "trigger" -> status.majorityTrigger.toString,
+          "leader" -> ConsensusLog.pid(state.leader),
+          "self" -> ConsensusLog.pid(selfId),
+          "view" -> state.viewNumber.toString
+        )
         result <- buildFinishedTransition(state, status, valid)
       } yield result
     }
@@ -322,22 +1024,24 @@ object GlobalSnapshotConsensusStateAdvancer {
             _ <- loggerBundle.consensus.roundFinished(facilitators)
             result <- NonEmptySet.fromSet(validSignatures.toSortedSet).traverse { signaturesNes =>
               val signedArtifact = Signed(status.majorityArtifactInfo.artifact, signaturesNes)
-              for {
-                snapshotHash <- signedArtifact.hash
-                result = Transition(
-                  newState = state.copy(status =
-                    Finished(
-                      signedArtifact,
-                      status.majorityArtifactInfo.context,
-                      status.majorityTrigger,
-                      status.candidates,
-                      facilitatorsHash,
-                      snapshotHash
-                    )
-                  ),
-                  sideEffect = persistAndGossip(signedArtifact, status.majorityArtifactInfo.context)
-                )
-              } yield result
+              // Use the artifact hash (agreed upon during Proposals phase) instead of signedArtifact.hash.
+              // signedArtifact.hash includes signatures, which can differ across nodes when quorum < total
+              // (e.g., some nodes collect 3 signatures, others 4), causing non-deterministic snapshotHash
+              // and deadlocking the next round's Facility phase.
+              val snapshotHash = status.majorityArtifactInfo.hash
+              Transition(
+                newState = state.copy(status =
+                  Finished(
+                    signedArtifact,
+                    status.majorityArtifactInfo.context,
+                    status.majorityTrigger,
+                    status.candidates,
+                    facilitatorsHash,
+                    snapshotHash
+                  )
+                ),
+                sideEffect = persistAndGossip(signedArtifact, status.majorityArtifactInfo.context)
+              ).pure[F]
             }
           } yield result
         }
@@ -348,9 +1052,6 @@ object GlobalSnapshotConsensusStateAdvancer {
 
     private def hashArtifact(artifact: GlobalSnapshotArtifact): F[Hash] =
       HasherSelector[F].withCurrent(implicit h => artifact.hash)
-
-    private def extractEvents(peerEvents: Map[PeerId, List[(Ordinal, GlobalSnapshotEvent)]]): Set[GlobalSnapshotEvent] =
-      peerEvents.values.flatten.map(_._2).toSet
 
     private def createArtifact(
       state: GlobalSnapshotConsensusState,
@@ -373,27 +1074,34 @@ object GlobalSnapshotConsensusStateAdvancer {
         }
       }
 
-    private def storeReturnedEvents(
-      peerEvents: Map[PeerId, List[(Ordinal, GlobalSnapshotEvent)]],
-      returnedEvents: Set[GlobalSnapshotEvent]
-    ): F[Unit] = {
-      val filtered = peerEvents.map { case (pid, evts) => (pid, evts.filter { case (_, e) => returnedEvents.contains(e) }) }
-        .filter(_._2.nonEmpty)
-      consensusStorage.addEvents(filtered)
-    }
+    private val selfId: PeerId = PeerId.fromPublic(keyPair.getPublic)
 
+    /** Spread proposal — only called by the leader. Uses direct push to all facilitators. */
     private def spreadProposal(
+      state: GlobalSnapshotConsensusState,
       key: GlobalSnapshotKey,
       hash: Hash,
       facilitatorsHash: Hash,
       artifact: GlobalSnapshotArtifact,
       lastSnapshotHash: Hash
-    ): F[Unit] =
-      gossip.spread(ConsensusPeerDeclaration(key, Proposal(hash, facilitatorsHash, lastSnapshotHash))) >>
-        gossip.spreadCommon(ConsensusArtifact(key, artifact))
+    ): F[Unit] = {
+      val declaration = ConsensusPeerDeclaration(key, Proposal(hash, facilitatorsHash, lastSnapshotHash))
+      val targets = state.facilitators.value.toSet
 
-    private def spreadSignature(key: GlobalSnapshotKey, signature: Signature, facilitatorsHash: Hash, lastSnapshotHash: Hash): F[Unit] =
-      gossip.spread(ConsensusPeerDeclaration(key, MajoritySignature(signature, facilitatorsHash, lastSnapshotHash)))
+      gossip.spreadDirect(declaration, targets) >>
+        gossip.spreadCommon(ConsensusArtifact(key, artifact))
+    }
+
+    private def spreadSignature(
+      state: GlobalSnapshotConsensusState,
+      key: GlobalSnapshotKey,
+      signature: Signature,
+      facilitatorsHash: Hash,
+      lastSnapshotHash: Hash
+    ): F[Unit] = {
+      val declaration = ConsensusPeerDeclaration(key, MajoritySignature(signature, facilitatorsHash, lastSnapshotHash))
+      gossip.spreadDirect(declaration, state.facilitators.value.toSet)
+    }
 
     private def persistAndGossip(signedArtifact: Signed[GlobalIncrementalSnapshot], context: GlobalSnapshotContext): F[Unit] = {
       val persist = HasherSelector[F].withCurrent { implicit h =>
@@ -409,7 +1117,10 @@ object GlobalSnapshotConsensusStateAdvancer {
 
       persist.ifM(
         recordMetrics(signedArtifact) >> gossipFork,
-        logger.error("Cannot save GlobalSnapshot") >> MonadThrow[F].raiseError(new RuntimeException("Persist failed"))
+        ConsensusLog.error(logger, Category.Lifecycle, signedArtifact.ordinal.show, "n/a", Event.PersistFailed) >> MonadThrow[F]
+          .raiseError(
+            new RuntimeException("Persist failed")
+          )
       )
     }
 
@@ -419,6 +1130,31 @@ object GlobalSnapshotConsensusStateAdvancer {
       recoverIfForking[F](ownHash, lastSnapshotHashObservationName, restartService, nodeStorage, leavingDelay)(
         declarations.map { case (pid, decl) => (pid, extract(decl)) }
       )
+
+    /** Skip facilitatorsHash fork check when transitioning from solo genesis (facilitators=1) to multi-node consensus. During solo rounds,
+      * PeerQualityTracker penalty state diverges between genesis and downloading validators (it's node-local, not shared via consensus).
+      * This causes different facilitatorsHash values on the first multi-node round.
+      */
+    private def wasLastRoundSolo: F[Boolean] =
+      consensusStorage.getLastConsensusOutcome.map {
+        case Some(outcome) => outcome.facilitators.value.size <= 1
+        case None          => true // No previous round — genesis, treat as solo
+      }
+
+    private def checkForkByFacilitatorsHash[A](
+      declarations: SortedMap[PeerId, A],
+      ownHash: Hash
+    )(extractHash: A => Hash): F[Unit] =
+      recoverIfForking[F](ownHash, facilitatorsHashObservationName, restartService, nodeStorage, leavingDelay)(
+        declarations.map { case (pid, decl) => (pid, extractHash(decl)) }
+      )
+
+    /** @note
+      *   consensusConfigHash was removed from Facility in the mempool migration. Config mismatch is still detectable via facilitatorsHash
+      *   divergence.
+      */
+    private def checkForkByConsensusConfigHash(facilities: SortedMap[PeerId, Facility]): F[Unit] =
+      Applicative[F].unit
 
     private implicit val extractFacilityHash: Facility => Hash = _.lastSnapshotHash
     private implicit val extractProposalHash: Proposal => Hash = _.lastSnapshotHash

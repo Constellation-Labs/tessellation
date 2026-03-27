@@ -13,8 +13,10 @@ import cats.syntax.functor._
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.cell.L0Cell
 import io.constellationnetwork.dag.l0.domain.statechannel.StateChannelService
+import io.constellationnetwork.dag.l0.infrastructure.mempool.GlobalEventMempool
 import io.constellationnetwork.dag.l0.infrastructure.rewards._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot._
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.dag.l0.infrastructure.trust.TrustStorageUpdater
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.json.JsonSerializer
@@ -30,12 +32,15 @@ import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.infrastructure.collateral.MptStoreCollateral
 import io.constellationnetwork.node.shared.infrastructure.delegatedStake.{RewardsInfoCalculator, RewardsInfoStorage}
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.{EventGossipClient, RecoveryPeerHint}
+import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages, SharedValidators}
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalStateProofSelector}
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
@@ -95,6 +100,14 @@ object Services {
         rewardsInfoStorage
       )
 
+      eventMempoolService <- HasherSelector[F].withCurrent { implicit hasher =>
+        GlobalEventMempool.make[F](
+          GlobalEventMempool.defaultConfig
+        )
+      }
+
+      eventGossipClient = EventGossipClient.make[F, GlobalSnapshotEvent](client, session)
+
       consensus <- HasherSelector[F].withCurrent { implicit hs =>
         GlobalSnapshotConsensus
           .make[F, R](
@@ -123,7 +136,10 @@ object Services {
             sharedStorages.lastGlobalSnapshot,
             storages.globalSnapshot.getHashed,
             sharedStorages.mptStore,
-            loggerBundle
+            eventMempoolService,
+            eventGossipClient,
+            loggerBundle,
+            queues.rumor
           )
       }
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
@@ -146,6 +162,7 @@ object Services {
         )
       getOrdinal = storages.globalSnapshot.headSnapshot.map(_.map(_.ordinal))
       trustUpdaterService = TrustStorageUpdater.make(getOrdinal, sharedServices.gossip, storages.trust)
+      recoveryPeerHintService <- RecoveryPeerHint.make[F]
     } yield
       new Services[F, R](
         localHealthcheck = sharedServices.localHealthcheck,
@@ -158,7 +175,9 @@ object Services {
         stateChannel = stateChannelService,
         trustStorageUpdater = trustUpdaterService,
         restart = sharedServices.restart,
-        rewards = rewardsService
+        rewards = rewardsService,
+        recoveryPeerHint = recoveryPeerHintService,
+        eventMempool = eventMempoolService
       ) {}
 }
 
@@ -173,5 +192,7 @@ sealed abstract class Services[F[_], R <: CliMethod] private (
   val stateChannel: StateChannelService[F],
   val trustStorageUpdater: TrustStorageUpdater[F],
   val restart: RestartService[F, R],
-  val rewards: RewardsService[F]
+  val rewards: RewardsService[F],
+  val recoveryPeerHint: RecoveryPeerHint[F],
+  val eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey]
 )

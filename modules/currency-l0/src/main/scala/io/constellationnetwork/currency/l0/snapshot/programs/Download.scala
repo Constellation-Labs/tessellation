@@ -21,6 +21,7 @@ import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Se
 import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnapshotCleanupStorage
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
 import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotConsensus
+import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
@@ -29,8 +30,10 @@ import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
+import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotContextFunctions
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{CombinedSnapshotCheckpointFileSystemStorage, IdentifierStorage}
+import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.Peer
@@ -62,7 +65,8 @@ object Download {
       F,
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
-    ]
+    ],
+    eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey]
   )(implicit l0NodeContext: L0NodeContext[F]): Download[F, CurrencyIncrementalSnapshot] = new Download[F, CurrencyIncrementalSnapshot] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -72,6 +76,12 @@ object Download {
 
     type DownloadResult = (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)
     type ObservationLimit = SnapshotOrdinal
+
+    // Currency L0 recovery delegates to the full download path for now.
+    // The download walker is already incremental (fetches only the gap),
+    // so the main cost is cache clearing + observe phase — acceptable
+    // until a dedicated recovery path is warranted.
+    def recoveryDownload(implicit hasherSelector: HasherSelector[F]): F[Unit] = download
 
     def download(implicit hasherSelector: HasherSelector[F]): F[Unit] = {
       implicit val hasher = hasherSelector.getCurrent
@@ -85,6 +95,8 @@ object Download {
           logger.info(s"[Download] Cleanup for snapshots greater than ${snapshot.ordinal}") >>
             currencySnapshotCleanupStorage.cleanupAbove(snapshot.ordinal) >>
             combinedSnapshotCheckpointFileSystemStorage.deleteAbove(snapshot.ordinal) >>
+            eventMempool.clear >>
+            logger.info("[Download] Cleared event mempool for recovery") >>
             snapshotStorage.prepend(snapshot, context).flatMap { prepended =>
               if (!prepended)
                 (new Exception(s"Failed to prepend currency snapshot ordinal=${snapshot.ordinal} to storage")).raiseError[F, Unit]
