@@ -4,23 +4,19 @@ import java.security.KeyPair
 
 import cats.effect.std.Queue
 import cats.effect.{Async, Ref}
-import cats.syntax.applicative._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.show._
+import cats.syntax.all._
 
 import scala.reflect.runtime.universe.TypeTag
 
 import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.ext.crypto._
-import io.constellationnetwork.node.shared.domain.gossip.Gossip
+import io.constellationnetwork.node.shared.domain.gossip.{Gossip => GossipAlg}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.generation.Generation
 import io.constellationnetwork.schema.gossip._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
 
-import eu.timepit.refined.auto._
 import io.circe.Encoder
 import io.circe.syntax._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -32,9 +28,12 @@ object Gossip {
     selfId: PeerId,
     generation: Generation,
     keyPair: KeyPair
-  ): F[Gossip[F]] =
-    Ref.of[F, Counter](Counter.MinValue).map { counter =>
-      new Gossip[F] {
+  ): F[GossipAlg[F]] =
+    for {
+      counter <- Ref.of[F, Counter](Counter.MinValue)
+      directPushRef <- Ref.of[F, Option[GossipAlg.DirectPushFn[F]]](None)
+    } yield
+      new GossipAlg[F] {
 
         private val rumorLogger = Slf4jLogger.getLoggerFromName[F](rumorLoggerName)
 
@@ -53,14 +52,32 @@ object Gossip {
             _ <- signAndOffer(rumor)
           } yield ()
 
+        def spreadDirect[A: TypeTag: Encoder](rumorContent: A, targets: Set[PeerId]): F[Unit] =
+          for {
+            contentJson <- rumorContent.asJson.pure[F]
+            count <- counter.getAndUpdate(_.next)
+            rumor = PeerRumorRaw(selfId, Ordinal(generation, count), contentJson, ContentType.of[A])
+            hashed <- signAndOfferReturn(rumor)
+            maybeFn <- directPushRef.get
+            _ <- maybeFn.traverse_(fn =>
+              fn(hashed, targets.excl(selfId)).handleErrorWith(err => rumorLogger.warn(err)(s"Direct push failed, gossip will propagate"))
+            )
+          } yield ()
+
+        def setDirectPushFn(fn: GossipAlg.DirectPushFn[F]): F[Unit] =
+          directPushRef.set(fn.some)
+
         private def signAndOffer(rumor: RumorRaw): F[Unit] =
+          signAndOfferReturn(rumor).void
+
+        private def signAndOfferReturn(rumor: RumorRaw): F[Hashed[RumorRaw]] =
           for {
             signedRumor <- rumor.sign(keyPair)
             hashedRumor <- signedRumor.toHashed
             _ <- rumorQueue.offer(hashedRumor)
             _ <- metrics.updateRumorsSpread(signedRumor)
             _ <- logSpread(hashedRumor)
-          } yield ()
+          } yield hashedRumor
 
         private def logSpread(hashedRumor: Hashed[RumorRaw]): F[Unit] =
           rumorLogger.info(
@@ -68,6 +85,5 @@ object Gossip {
           )
 
       }
-    }
 
 }

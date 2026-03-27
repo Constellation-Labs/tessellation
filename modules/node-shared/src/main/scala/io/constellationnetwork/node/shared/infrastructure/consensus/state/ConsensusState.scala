@@ -3,7 +3,6 @@ package io.constellationnetwork.node.shared.infrastructure.consensus.state
 import cats.Show
 import cats.syntax.show._
 
-import scala.collection.immutable.SortedSet
 import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.PeerDeclarations
@@ -28,8 +27,9 @@ import monocle.macros.GenLens
   *     facilitators: Facilitators,        // Active participants
   *     withdrawnFacilitators: Set[PeerId], // Peers who left
   *     removedFacilitators: Set[PeerId],  // Peers kicked out
-  *     lockStatus: LockStatus,            // Open or Closed (prevents new facilitators)
-  *     spreadAckKinds: Set[Kind],         // Which acks we've already spread
+  *     leader: PeerId,                    // Current round leader
+  *     viewNumber: Int,                   // View change counter
+  *     entropy: Hash,                     // Entropy for leader selection
   *     createdAt: FiniteDuration          // For metrics
   *   )
   * }}}
@@ -40,22 +40,22 @@ import monocle.macros.GenLens
   *   CollectingFacilities    // Waiting for all peers' facility info
   *         │
   *         ▼
-  *   CollectingProposals     // Waiting for all peers' artifact proposals
+  *   CollectingProposals     // Waiting for leader's artifact proposal
   *         │
   *         ▼
   *   CollectingSignatures    // Waiting for majority signatures
   *         │
   *         ▼
-  *   CollectingBinarySignatures  // Waiting for final binary signatures
+  *   CollectingBinarySignatures  // Waiting for final binary signatures (currency only)
   *         │
   *         ▼
   *   Finished                // Outcome ready, round complete
   * }}}
   *
-  * ==Lock Status==
+  * ==View Change==
   *
-  *   - `Open` - New facilitators can join mid-round
-  *   - `Closed` - Locked during stall detection, no new facilitators
+  * When the leader fails to propose within the timeout, the view number is incremented and a new leader is selected using rendezvous
+  * hashing with the round's entropy. This avoids the complexity of the previous lock/unlock/ACK voting mechanism.
   */
 
 @derive(eqv, encoder, decoder)
@@ -95,25 +95,23 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   removedFacilitators: RemovedFacilitators = RemovedFacilitators.empty,
   withdrawnFacilitators: WithdrawnFacilitators = WithdrawnFacilitators.empty,
   eligibleFacilitators: EligibleFacilitators = EligibleFacilitators.empty,
-  lockStatus: LockStatus = LockStatus.Open,
-  spreadAckKinds: Set[Kind]
+  leader: PeerId,
+  viewNumber: Int = 0,
+  entropy: Hash
 )
 
 object ConsensusState {
   implicit def showInstance[K: Show, S: Show, O, Kind: Show]: Show[ConsensusState[K, S, O, Kind]] = { cs =>
     s"""ConsensusState{
        |key=${cs.key.show},
-       |lockStatus=${cs.lockStatus.show},
+       |leader=${cs.leader.show},
+       |viewNumber=${cs.viewNumber.show},
        |facilitatorCount=${cs.facilitators.value.size.show},
        |removedFacilitators=${cs.removedFacilitators.value.show},
        |withdrawnFacilitators=${cs.withdrawnFacilitators.value.show},
-       |spreadAckKinds=${cs.spreadAckKinds.show},
        |status=${cs.status.show}
        |}""".stripMargin.replace(",\n", ", ")
   }
-
-  implicit def _lockStatus[K, S, O, Kind]: Lens[ConsensusState[K, S, O, Kind], LockStatus] =
-    GenLens[ConsensusState[K, S, O, Kind]](_.lockStatus)
 
   implicit def _facilitators[K, S, O, Kind]: Lens[ConsensusState[K, S, O, Kind], Facilitators] =
     GenLens[ConsensusState[K, S, O, Kind]](_.facilitators)
@@ -127,19 +125,16 @@ trait ConsensusOps[S, Kind] {
   def maybeCollectingKind(status: S): Option[Kind]
   def kindGetter: Kind => PeerDeclarations => Option[PeerDeclaration]
   def isFinished(status: S): Boolean
+  def isProposalPhase(status: S): Boolean
+
+  /** Phase index for adaptive timeout multipliers. 0 = CollectingFacilities, 1 = CollectingProposals, 2 = CollectingSignatures, 3 =
+    * CollectingBinarySignatures (currency only), higher = Finished.
+    */
+  def phaseIndex(status: S): Int
 }
 
 @derive(eqv)
 case class ArtifactInfo[A, C](artifact: A, context: C, hash: Hash)
 object ArtifactInfo {
   implicit def showInstance[A, C]: Show[ArtifactInfo[A, C]] = pi => s"ArtifactInfo{hash=${pi.hash.show}}"
-}
-
-@derive(eqv, show)
-sealed trait LockStatus
-
-object LockStatus {
-  case object Open extends LockStatus
-  case object Closed extends LockStatus
-  case object Reopened extends LockStatus
 }

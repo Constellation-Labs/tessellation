@@ -104,6 +104,14 @@ object LastSyncGlobalSnapshotStorage {
           }
         }.flatten
 
+      def setForRecovery(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] =
+        logger.info(s"[LastSyncGlobalSnapshotStorage] Recovery reset at ordinal=${snapshot.ordinal}") >>
+          snapshotsR.set(SortedMap(snapshot.ordinal -> (snapshot, state)))
+
+      def clear: F[Unit] =
+        logger.info("[LastSyncGlobalSnapshotStorage] Clearing for recovery download") >>
+          snapshotsR.set(SortedMap.empty)
+
       def get: F[Option[Hashed[GlobalIncrementalSnapshot]]] = getCombined.map(_.map { case (snapshot, _) => snapshot })
 
       def getCombined: F[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = snapshotsR.get.map {

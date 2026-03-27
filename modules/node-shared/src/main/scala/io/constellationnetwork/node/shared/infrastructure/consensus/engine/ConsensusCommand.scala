@@ -43,7 +43,7 @@ object ConsensusCommand {
   case object RoundCompleted extends ConsensusCommand
   case class InternalScheduled(inner: ConsensusCommand) extends ConsensusCommand
   case class PeerObserved(peer: Peer) extends ConsensusCommand
-  case class InitializeFromDownload(key: Any, artifact: Any, context: Any) extends ConsensusCommand
+  case class InitializeFromDownload(key: Any, artifact: Any, context: Any, isRecovery: Boolean = false) extends ConsensusCommand
   case class InitializeFromRollback(key: Any, outcome: Any) extends ConsensusCommand
   case object WithdrawFromConsensus extends ConsensusCommand
   case class IgnoreUnexpectedRumor(rumor: Any) extends ConsensusCommand

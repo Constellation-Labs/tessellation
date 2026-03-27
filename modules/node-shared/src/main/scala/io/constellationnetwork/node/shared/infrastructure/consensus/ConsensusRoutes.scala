@@ -2,10 +2,14 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 
 import cats.Order
 import cats.effect.Async
+import cats.effect.std.Queue
 import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.{GetConsensusOutcomeRequest, RegistrationResponse}
 import io.constellationnetwork.routes.internal._
+import io.constellationnetwork.schema.gossip.RumorRaw
+import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.{Hashed, HasherSelector}
 
 import eu.timepit.refined.auto._
 import io.circe.{Decoder, Encoder}
@@ -15,8 +19,9 @@ import org.http4s.circe.CirceEntityCodec._
 import org.http4s.dsl._
 import org.http4s.server.Router
 
-class ConsensusRoutes[F[_]: Async, Key: Order: Encoder: Decoder, Artifact, Context, ConStatus, Outcome: Encoder, Kind](
-  storage: ConsensusStorage[F, _, Key, Artifact, Context, ConStatus, Outcome, Kind]
+class ConsensusRoutes[F[_]: Async: HasherSelector, Key: Order: Encoder: Decoder, Artifact, Context, ConStatus, Outcome: Encoder, Kind](
+  storage: ConsensusStorage[F, _, Key, Artifact, Context, ConStatus, Outcome, Kind],
+  rumorQueue: Queue[F, Hashed[RumorRaw]]
 )(implicit _key: Lens[Outcome, Key])
     extends Http4sDsl[F] {
 
@@ -36,6 +41,15 @@ class ConsensusRoutes[F[_]: Async, Key: Order: Encoder: Decoder, Artifact, Conte
           case _                                                     => Ok(none[GetConsensusOutcomeRequest[Key]])
         }
       } yield result
+    case req @ POST -> Root / "push-rumor" =>
+      HasherSelector[F].withCurrent { implicit hasher =>
+        for {
+          signedRumor <- req.as[Signed[RumorRaw]]
+          hashedRumor <- signedRumor.toHashed[F]
+          _ <- rumorQueue.offer(hashedRumor)
+          result <- Ok()
+        } yield result
+      }
   }
 
   val p2pRoutes: HttpRoutes[F] = Router(

@@ -36,7 +36,8 @@ import io.constellationnetwork.security.signature.Signed
 
 trait ConsensusManager[F[_], Event, Key, Artifact, Context, Status, Outcome, Kind] {
   def registerForConsensus(observationKey: Key): F[Unit]
-  def startFacilitatingAfterDownload(key: Key, lastArtifact: Signed[Artifact], lastContext: Context): F[Unit]
+  def resetForRecovery: F[Unit]
+  def startFacilitatingAfterDownload(key: Key, lastArtifact: Signed[Artifact], lastContext: Context, isRecovery: Boolean = false): F[Unit]
   def startFacilitatingAfterRollback(lastKey: Key, initialOutcome: Outcome): F[Unit]
   def withdrawFromConsensus: F[Unit]
 }
@@ -59,8 +60,16 @@ object ConsensusManager {
               ifFalse = new Throwable("Registration failed: already registered at different key").raiseError[F, Unit]
             )
 
-        def startFacilitatingAfterDownload(key: Key, lastArtifact: Signed[Artifact], lastContext: Context): F[Unit] =
-          queue.offer(InitializeFromDownload(key, lastArtifact, lastContext))
+        def resetForRecovery: F[Unit] =
+          storage.clearObservationKey >> storage.clearAndGetLastConsensusOutcome.void
+
+        def startFacilitatingAfterDownload(
+          key: Key,
+          lastArtifact: Signed[Artifact],
+          lastContext: Context,
+          isRecovery: Boolean = false
+        ): F[Unit] =
+          queue.offer(InitializeFromDownload(key, lastArtifact, lastContext, isRecovery))
 
         def startFacilitatingAfterRollback(lastKey: Key, initialOutcome: Outcome): F[Unit] =
           queue.offer(InitializeFromRollback(lastKey, initialOutcome))
