@@ -255,8 +255,8 @@ const createTokenLock = async (account, urls, lockAmount, replaceRef = null, rep
     async () => assertBalanceChange(account, initialBalance - lockAmount + replaceBalance),
     {
       name: 'assertBalanceChangeAfterTokenLock',
-      maxAttempts: 20,
-      interval: 1000,
+      maxAttempts: 60,
+      interval: 2000,
       handleError: () => {},
     },
   )

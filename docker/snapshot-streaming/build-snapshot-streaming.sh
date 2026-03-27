@@ -11,7 +11,7 @@ fi
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 SS_DIR="$SCRIPT_DIR"
 SS_BRANCH="${SNAPSHOT_STREAMING_BRANCH:-develop}"
-SS_REPO="https://github.com/Constellation-Labs/snapshot-streaming.git"
+SS_REPO="${SNAPSHOT_STREAMING_REPO:-https://github.com/Constellation-Labs/snapshot-streaming.git}"
 
 BE_BRANCH="${BLOCK_EXPLORER_BRANCH:-develop}"
 BE_REPO="https://github.com/Constellation-Labs/block_explorer.git"
@@ -37,6 +37,20 @@ else
     echo "Overriding tessellation version to $TESSELLATION_VERSION in snapshot-streaming build"
     sed -i.bak "s/val tessellation = \"[^\"]*\"/val tessellation = \"$TESSELLATION_VERSION\"/" \
       "$BUILD_DIR/project/Dependencies.scala"
+  fi
+
+  # Apply compatibility patch if present (breaks circular dependency with tessellation)
+  # Uses --check first to skip gracefully if already applied upstream
+  PATCH_FILE="$SS_DIR/snapshot-streaming.patch"
+  if [ -f "$PATCH_FILE" ] && [ -s "$PATCH_FILE" ]; then
+    cd "$BUILD_DIR"
+    if git apply --check "$PATCH_FILE" 2>/dev/null; then
+      echo "Applying snapshot-streaming compatibility patch..."
+      git apply "$PATCH_FILE"
+    else
+      echo "Patch already applied or not needed, skipping..."
+    fi
+    cd "$SCRIPT_DIR"
   fi
 
   cd "$BUILD_DIR"

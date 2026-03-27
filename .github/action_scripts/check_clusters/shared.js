@@ -58,7 +58,7 @@ const checkIfNodeIsReady = async (url, name) => {
   );
 };
 
-const validateOrdinalsAndSnapshots = async (urls) => {
+const validateOrdinalsAndSnapshots = async (urls, expectedSigners) => {
   const ordinalsPromises = [];
   for (const url of urls) {
     ordinalsPromises.push(fetchData(`${url}/latest`));
@@ -74,7 +74,7 @@ const validateOrdinalsAndSnapshots = async (urls) => {
 
   if (differenceBetweenLowestAndHigherOrdinal > 3) {
     throw Error(
-      `Ordinals difference greater than 3. Difference: ${differenceBetwenLowestAndHigherOrdinal}`
+      `Ordinals difference greater than 3. Difference: ${differenceBetweenLowestAndHigherOrdinal}`
     );
   }
 
@@ -83,7 +83,8 @@ const validateOrdinalsAndSnapshots = async (urls) => {
     snapshotsPromises.push(fetchData(`${url}/${lowestOrdinal}`));
   }
 
-  const snapshots = (await Promise.all(snapshotsPromises)).map((_) => _.value.lastSnapshotHash);
+  const snapshotResponses = await Promise.all(snapshotsPromises);
+  const snapshots = snapshotResponses.map((_) => _.value.lastSnapshotHash);
   const areSnapshotsTheSame = snapshots.every(
     (snapshot) => snapshot === snapshots[0]
   );
@@ -98,6 +99,38 @@ const validateOrdinalsAndSnapshots = async (urls) => {
       snapshots
     )}`
   );
+
+  // Validate signature count — poll until a snapshot has all expected signatures
+  if (expectedSigners) {
+    const maxPollAttempts = 30; // 30 × 10s = 300s (enough for ~7 rounds at 43s)
+    let found = false;
+    for (let attempt = 1; attempt <= maxPollAttempts; attempt++) {
+      const pollUrl = urls[attempt % urls.length]; // cycle through nodes
+      try {
+        const latestResp = await fetchData(`${pollUrl}/latest`);
+        const ord = latestResp.value.ordinal;
+        const proofs = latestResp.proofs || [];
+        const signerCount = proofs.length;
+        console.log(`  Signature poll ${attempt}/${maxPollAttempts}: ordinal=${ord} signatures=${signerCount} (need ${expectedSigners})`);
+        if (signerCount >= expectedSigners) {
+          const signerIds = proofs.map((p) => p.id.hex ? p.id.hex.substring(0, 8) : p.id.substring(0, 8));
+          console.log(
+            `Snapshot at ordinal ${ord} has ${signerCount} signatures (>= ${expectedSigners}): [${signerIds.join(', ')}]`
+          );
+          found = true;
+          break;
+        }
+      } catch (e) {
+        console.log(`  Signature poll ${attempt}/${maxPollAttempts}: fetch error, retrying...`);
+      }
+      await sleep(10 * 1000);
+    }
+    if (!found) {
+      throw Error(
+        `No snapshot with >= ${expectedSigners} signatures found after ${maxPollAttempts} attempts`
+      );
+    }
+  }
 };
 
 const assertClusterSize = async (clusterUrl, expectedSize, name) => {
@@ -118,7 +151,8 @@ const clusterCheck = async (
   checkOrdinalsAndSnapshots,
   clusterName,
   expectedClusterSize,
-  globalLayer
+  globalLayer,
+  expectedSigners
 ) => {
   try {
     console.log(`Starting to check if nodes are ready: ${clusterName}`);
@@ -137,7 +171,7 @@ const clusterCheck = async (
         (info) =>
           `${info.baseUrl}/${globalLayer ? 'global-snapshots' : 'snapshots'}`
       );
-      await validateOrdinalsAndSnapshots(urls);
+      await validateOrdinalsAndSnapshots(urls, expectedSigners);
       console.log(
         `Finished to validate ordinals and snapshots: ${clusterName}`
       );
@@ -170,12 +204,14 @@ const checkGlobalL0Node = async (config) => {
     const infos = [{ name: 'Global L0', baseUrl: gl0Url }];
     await clusterCheck(infos, true, 'Global L0', 1, true);
   } else {
-    const infos = [
-      { name: 'Global L0 Genesis', baseUrl: `${host}:${dagL0PortPrefix}00` },
-      { name: 'Global L0 Validator 1', baseUrl: `${host}:${dagL0PortPrefix}10` },
-      { name: 'Global L0 Validator 2', baseUrl: `${host}:${dagL0PortPrefix}20` },
-    ];
-    await clusterCheck(infos, true, 'Global L0', 3, true);
+    const numGL0 = parseInt(process.env.NUM_GL0_NODES || '3', 10);
+    const infos = [];
+    for (let i = 0; i < numGL0; i++) {
+      const port = `${dagL0PortPrefix}${String(i * 10).padStart(2, '0')}`;
+      const name = i === 0 ? 'Global L0 Genesis' : `Global L0 Validator ${i}`;
+      infos.push({ name, baseUrl: `${host}:${port}` });
+    }
+    await clusterCheck(infos, true, 'Global L0', numGL0, true, numGL0);
   }
 };
 
