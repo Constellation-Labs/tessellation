@@ -147,7 +147,8 @@ object Main
             pullInterval = cfg.snapshot.consensus.eventGossipPullInterval
           ),
           getLocalChainTip = Some(forkRecoveryService.getLocalChainTip),
-          onForkDetected = Some(forkRecoveryService.onForkDetected)
+          onForkDetected = Some(forkRecoveryService.onForkDetected),
+          forkLagThreshold = cfg.snapshot.consensus.forkLagThreshold
         )
         .asResource
 

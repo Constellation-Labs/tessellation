@@ -162,7 +162,8 @@ object types {
     eventTriggerThreshold: Int = 1,
     eventTriggerCooldown: FiniteDuration = FiniteDuration(5, "s"),
     eventGossipHeartbeatInterval: FiniteDuration = FiniteDuration(10, "s"),
-    eventGossipPullInterval: FiniteDuration = FiniteDuration(20, "s")
+    eventGossipPullInterval: FiniteDuration = FiniteDuration(20, "s"),
+    forkLagThreshold: Long = 10
   ) {
 
     /** Deterministic hash of consensus-critical config values.
