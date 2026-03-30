@@ -397,9 +397,11 @@ object GlobalSnapshotConsensusStateAdvancer {
                 .requestEvents(IWantRequest(hashes))
                 .run(Peer.toP2PContext(peer))
                 .flatMap { response =>
-                  val receivedHashes = response.events.keySet
+                  val receivedHashes = response.events.map(_._1).toSet
                   val stillMissing = hashes -- receivedHashes
-                  response.events.values.toList.traverse_(signedEvent => eventMempool.add(signedEvent).void) >>
+                  response.events.traverse_ {
+                    case (_, signedEvent) => eventMempool.add(signedEvent).void
+                  } >>
                     (if (stillMissing.nonEmpty)
                        logger.debug(
                          s"[EventSync] Peer ${peerId.show.take(8)} returned ${receivedHashes.size}/${hashes.size}, retrying ${stillMissing.size} with next peer"
@@ -1171,11 +1173,17 @@ object GlobalSnapshotConsensusStateAdvancer {
       *   consensusConfigHash was removed from Facility in the mempool migration. Config mismatch is still detectable via facilitatorsHash
       *   divergence.
       */
-    // Stub: consensus config hash validation is not implemented for dag-l0.
-    // currency-l0 validates this to detect metagraph config divergence; dag-l0 has no equivalent
-    // concept of per-chain config that would cause facilitators to diverge on the hash.
-    private def checkForkByConsensusConfigHash(facilities: SortedMap[PeerId, Facility]): F[Unit] =
-      Applicative[F].unit
+    private def checkForkByConsensusConfigHash(facilities: SortedMap[PeerId, Facility]): F[Unit] = {
+      val ownConfigHash = consensusConfig.deterministicConfigHash
+      val peerConfigHashes = facilities.flatMap {
+        case (pid, f) => f.consensusConfigHash.map(pid -> _)
+      }
+      if (peerConfigHashes.nonEmpty)
+        recoverIfForking[F](ownConfigHash, consensusConfigHashObservationName, restartService, nodeStorage, leavingDelay)(
+          SortedMap.from(peerConfigHashes)
+        )
+      else Applicative[F].unit
+    }
 
     private implicit val extractFacilityHash: Facility => Hash = _.lastSnapshotHash
     private implicit val extractProposalHash: Proposal => Hash = _.lastSnapshotHash
