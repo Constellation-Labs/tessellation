@@ -305,7 +305,15 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
         "peer" -> ConsensusLog.pid(peer.id),
         "state" -> peer.state.toString
       ) >>
-        ctx.consensusClient.getSpecificConsensusOutcome(GetConsensusOutcomeRequest(key)).run(peer)
+        ctx.consensusClient
+          .getSpecificConsensusOutcome(GetConsensusOutcomeRequest(key))
+          .run(peer)
+          .recoverWith {
+            // 409 means the peer has already evicted this ordinal's outcome (cluster moved on).
+            // Fall back to the latest available outcome so we can join at the current tip.
+            case _: org.http4s.client.UnexpectedStatus =>
+              ctx.consensusClient.getLatestConsensusOutcome.run(peer)
+          }
 
     def wasSuccessful(maybeOutcome: Option[Outcome]): F[Boolean] =
       maybeOutcome.exists { outcome =>
