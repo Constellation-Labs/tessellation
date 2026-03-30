@@ -105,10 +105,10 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
     */
   private val retriableAtSameKeyRef: Ref[F, (Option[Key], Int)] = Ref.unsafe((none[Key], 0))
 
-  /** After this many retriable abandonments at the same ordinal, escalate to recovery. Default: 2x maxConsecutiveAbandonments (10 with
+  /** After this many retriable abandonments at the same ordinal, escalate to recovery. Default: 1x maxConsecutiveAbandonments (5 with
     * default config). This is higher than the non-retriable threshold because quorum-infeasible is expected during transient partitions.
     */
-  private val maxRetriableAtSameKey: Int = config.maxConsecutiveAbandonments * 2
+  private val maxRetriableAtSameKey: Int = config.maxConsecutiveAbandonments * 1
 
   /** Tracks total recovery download attempts across all keys to detect extended recovery loops. */
   private val totalRecoveryAttemptsRef: Ref[F, Int] = Ref.unsafe(0)
