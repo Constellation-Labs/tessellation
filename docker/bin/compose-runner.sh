@@ -50,7 +50,7 @@ if [ "$LIST_TESTS" = "true" ]; then
   echo "DAG tests (no metagraph required):"
   echo "  dag-cluster              DAG cluster check"
   echo "  delegated-staking        Delegated staking tests"
-  echo "  fork-recovery            Fork recovery test (needs --num-gl0=4)"
+  echo "  fork-recovery            Fork recovery test (needs --num-gl0=5)"
   echo "  token-lock-replacement   Token lock replacement edge case tests"
   echo "  snapshot-streaming       Snapshot streaming indexer E2E test"
   echo ""

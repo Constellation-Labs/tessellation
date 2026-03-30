@@ -88,7 +88,7 @@ jobs:
   e2e-test:
     name: E2E - ${{ matrix.test-group.name }}
     needs: build
-    runs-on: Ubuntu-22-64-core
+    runs-on: ${{ matrix.test-group.runner || 'ubuntu-22.04' }}
     timeout-minutes: 30
 
     strategy:
@@ -98,7 +98,7 @@ jobs:
           - { name: dag-cluster,            tests: "dag-cluster" }
           - { name: delegated-staking,      tests: "delegated-staking" }
           - { name: token-lock-replacement, tests: "token-lock-replacement" }
-          - { name: fork-recovery,          tests: "fork-recovery", extra-args: "--num-gl0=5" }
+          - { name: fork-recovery,          tests: "fork-recovery", extra-args: "--num-gl0=5", runner: "Ubuntu-22-64-core" }
           - { name: currency,               tests: "currency" }
           - { name: rewards,                tests: "rewards" }
           - { name: token-locks,            tests: "token-locks" }

@@ -166,7 +166,7 @@ fi
 echo "  Waiting for ${NUM_GL0}-node consensus to stabilize (3+ rounds)..."
 stable_rounds=0
 stab_deadline=$(($(date +%s) + 300))
-while [ "$(date +%s)" -lt "$stab_deadline" ] && [ "$stable_rounds" -lt 1 ]; do
+while [ "$(date +%s)" -lt "$stab_deadline" ] && [ "$stable_rounds" -lt 3 ]; do
   fac=$(get_facilitator_count "$MONITOR_NODE")
   ord=$(get_ordinal "$MONITOR_NODE")
   if [ "${fac:-0}" -eq "$NUM_GL0" ]; then
@@ -178,7 +178,7 @@ while [ "$(date +%s)" -lt "$stab_deadline" ] && [ "$stable_rounds" -lt 1 ]; do
   fi
   sleep 45
 done
-if [ "$stable_rounds" -lt 1 ]; then
+if [ "$stable_rounds" -lt 3 ]; then
   echo "  WARNING: Only $stable_rounds/3 stable rounds achieved, proceeding anyway"
 fi
 

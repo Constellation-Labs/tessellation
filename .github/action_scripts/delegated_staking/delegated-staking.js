@@ -546,6 +546,9 @@ const testUpdateDelegatedStake = async (urls, account, stakeHash, nodeId) => {
       const updatedStake = updatedStakeResponse.activeDelegatedStakes.find(
         s => s.hash === updatedStakeHash
       )
+      if (!updatedStake) {
+        throw new Error(`Updated stake not found for hash ${updatedStakeHash} in activeDelegatedStakes`)
+      }
       if (updatedStake.rewardAmount < originalStake.rewardAmount) {
         throw new Error(
           `Expected rewardAmount >= ${originalStake.rewardAmount} but got ${updatedStake.rewardAmount}`
@@ -701,6 +704,9 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
       const pendingStake = updatedStakeResponse.pendingWithdrawals.find(
         s => s.hash === stakeHash
       )
+      if (!pendingStake) {
+        throw new Error(`Pending stake not found for hash ${stakeHash} in pendingWithdrawals`)
+      }
       if (pendingStake.rewardAmount < originalStake.rewardAmount) {
         throw new Error(
           `Expected pending rewardAmount >= ${originalStake.rewardAmount} but got ${pendingStake.rewardAmount}`
