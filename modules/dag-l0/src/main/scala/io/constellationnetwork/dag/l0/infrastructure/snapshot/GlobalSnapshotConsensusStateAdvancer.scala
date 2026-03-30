@@ -385,7 +385,10 @@ object GlobalSnapshotConsensusStateAdvancer {
     /** Fetch specific events, trying peers in order until one responds. */
     private def fetchEventsFromPeers(hashes: Set[Hash], peers: List[PeerId]): F[Unit] =
       peers match {
-        case Nil => logger.warn(s"[EventSync] No peers available for ${hashes.size} hashes, dropping")
+        case Nil =>
+          if (hashes.nonEmpty)
+            logger.warn(s"[EventSync] No more peers for ${hashes.size} remaining hashes, dropping")
+          else Applicative[F].unit
         case peerId :: rest =>
           clusterStorage.getPeer(peerId).flatMap {
             case None => fetchEventsFromPeers(hashes, rest)
@@ -394,9 +397,15 @@ object GlobalSnapshotConsensusStateAdvancer {
                 .requestEvents(IWantRequest(hashes))
                 .run(Peer.toP2PContext(peer))
                 .flatMap { response =>
-                  response.events.traverse_ {
-                    case (_, signedEvent) => eventMempool.add(signedEvent).void
-                  }
+                  val receivedHashes = response.events.keySet
+                  val stillMissing = hashes -- receivedHashes
+                  response.events.values.toList.traverse_(signedEvent => eventMempool.add(signedEvent).void) >>
+                    (if (stillMissing.nonEmpty)
+                       logger.debug(
+                         s"[EventSync] Peer ${peerId.show.take(8)} returned ${receivedHashes.size}/${hashes.size}, retrying ${stillMissing.size} with next peer"
+                       ) >>
+                         fetchEventsFromPeers(stillMissing, rest)
+                     else Applicative[F].unit)
                 }
                 .handleErrorWith { err =>
                   logger.warn(s"[EventSync] Peer ${peerId.show.take(8)} failed: ${err.getMessage}, trying next") >>
@@ -1162,6 +1171,9 @@ object GlobalSnapshotConsensusStateAdvancer {
       *   consensusConfigHash was removed from Facility in the mempool migration. Config mismatch is still detectable via facilitatorsHash
       *   divergence.
       */
+    // Stub: consensus config hash validation is not implemented for dag-l0.
+    // currency-l0 validates this to detect metagraph config divergence; dag-l0 has no equivalent
+    // concept of per-chain config that would cause facilitators to diverge on the hash.
     private def checkForkByConsensusConfigHash(facilities: SortedMap[PeerId, Facility]): F[Unit] =
       Applicative[F].unit
 
