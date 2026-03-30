@@ -299,6 +299,8 @@ object CurrencySnapshotConsensusStateAdvancer {
         * For each missing hash we try each candidate peer in order, stopping as soon as one succeeds. This prevents a single unavailable
         * peer from causing an event to be silently skipped for the round.
         */
+      // TODO: Group by first-available peer and fetch in parallel (parTraverse) like dag-l0 does.
+      // Currently serializes per-hash requests; under load, adds latency proportional to missingHashes.size × RTT.
       private def syncMissingEvents(
         missingHashes: Set[Hash],
         hashToPeers: Map[Hash, List[PeerId]]

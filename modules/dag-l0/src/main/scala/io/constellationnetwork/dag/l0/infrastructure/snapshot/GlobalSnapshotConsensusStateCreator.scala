@@ -43,7 +43,6 @@ object GlobalSnapshotConsensusStateCreator {
     selfId: PeerId,
     seedlist: Option[Set[SeedlistEntry]],
     facilitatorSelector: FacilitatorSelector,
-    consensusConfigHash: Hash,
     peerQualityTracker: PeerQualityTracker[F],
     tcaFilter: TrailingCommonAncestorFilter[F],
     eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey]

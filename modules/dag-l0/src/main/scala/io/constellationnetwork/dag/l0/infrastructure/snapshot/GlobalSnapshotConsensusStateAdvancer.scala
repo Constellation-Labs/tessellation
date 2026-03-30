@@ -127,7 +127,6 @@ object GlobalSnapshotConsensusStateAdvancer {
     private val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](getClass)
     private val lastSnapshotHashObservationName = "last-snapshot-hash"
     private val facilitatorsHashObservationName = "facilitators-hash"
-    private val consensusConfigHashObservationName = "consensus-config-hash"
 
     /** Savepoint taken before `createArtifact()` mutations. On round abandonment + retry at the same ordinal, this is restored before
       * re-building the proposal to ensure the MptStore starts from a clean pre-mutation state.
@@ -248,7 +247,7 @@ object GlobalSnapshotConsensusStateAdvancer {
     /** Advances from Facilities to Proposals once quorum facility declarations are collected.
       *
       * All peers independently build the proposal artifact from the same events. The leader then spreads its proposal; followers compare
-      * hashes in the next phase. Fork detection verifies facilitatorsHash, lastSnapshotHash, and consensusConfigHash match across peers.
+      * hashes in the next phase. Fork detection verifies facilitatorsHash and lastSnapshotHash match across peers.
       */
     private def advanceFromFacilities(
       state: GlobalSnapshotConsensusState,
@@ -266,7 +265,6 @@ object GlobalSnapshotConsensusStateAdvancer {
             // eviction, different nodes may legitimately have different facilitator sets, which would cause
             // cascading false-positive fork detections and kill all nodes.
             _ <- maybeFacilities.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
-            _ <- maybeFacilities.traverse_(checkForkByConsensusConfigHash)
 
             // Evict peers with minority facilitatorsHash — deterministic since all healthy nodes
             // see the same declarations and identify the same minority.
@@ -1168,22 +1166,6 @@ object GlobalSnapshotConsensusStateAdvancer {
       recoverIfForking[F](ownHash, facilitatorsHashObservationName, restartService, nodeStorage, leavingDelay)(
         declarations.map { case (pid, decl) => (pid, extractHash(decl)) }
       )
-
-    /** @note
-      *   consensusConfigHash was removed from Facility in the mempool migration. Config mismatch is still detectable via facilitatorsHash
-      *   divergence.
-      */
-    private def checkForkByConsensusConfigHash(facilities: SortedMap[PeerId, Facility]): F[Unit] = {
-      val ownConfigHash = consensusConfig.deterministicConfigHash
-      val peerConfigHashes = facilities.flatMap {
-        case (pid, f) => f.consensusConfigHash.map(pid -> _)
-      }
-      if (peerConfigHashes.nonEmpty)
-        recoverIfForking[F](ownConfigHash, consensusConfigHashObservationName, restartService, nodeStorage, leavingDelay)(
-          SortedMap.from(peerConfigHashes)
-        )
-      else Applicative[F].unit
-    }
 
     private implicit val extractFacilityHash: Facility => Hash = _.lastSnapshotHash
     private implicit val extractProposalHash: Proposal => Hash = _.lastSnapshotHash
