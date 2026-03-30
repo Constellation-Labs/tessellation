@@ -335,10 +335,10 @@ object GlobalSnapshotConsensusStateAdvancer {
 
       val trigger = pickMajority(triggers).getOrElse(EventTrigger)
 
-      // Build map of hash -> peer who has it (for fetching missing events)
-      val hashToPeer: Map[Hash, PeerId] = facilities.toList.flatMap {
+      // Build map of hash -> all peers who have it (try in order until one responds)
+      val hashToPeers: Map[Hash, List[PeerId]] = facilities.toList.flatMap {
         case (peerId, facility) => facility.eventHashes.map(_ -> peerId)
-      }.toMap
+      }.groupMap(_._1)(_._2)
 
       for {
         // Get local hashes and identify what we're missing
@@ -351,50 +351,59 @@ object GlobalSnapshotConsensusStateAdvancer {
         )
 
         // Sync missing events from peers before building proposal
-        _ <- syncMissingEvents(missingHashes, hashToPeer).whenA(missingHashes.nonEmpty)
+        _ <- syncMissingEvents(missingHashes, hashToPeers).whenA(missingHashes.nonEmpty)
 
         result <- buildProposalTransition(state, unionHashes, candidates, trigger)
       } yield result.some
     }
 
-    /** Sync missing events from peers who have them. */
+    /** Sync missing events from peers who have them.
+      *
+      * Each hash may be fetchable from multiple peers. For each hash, the peers list is tried in order until one succeeds, providing
+      * fallback when the first peer is offline.
+      */
     private def syncMissingEvents(
       missingHashes: Set[Hash],
-      hashToPeer: Map[Hash, PeerId]
+      hashToPeers: Map[Hash, List[PeerId]]
     ): F[Unit] = {
-      val hashesPerPeer: Map[PeerId, Set[Hash]] = missingHashes
-        .flatMap(h => hashToPeer.get(h).map(peerId => (peerId, h)))
-        .groupMap(_._1)(_._2)
+      // Group by first available peer but keep the full candidate list per hash for fallback
+      val hashesWithPeers: List[(Set[Hash], List[PeerId])] = missingHashes.toList
+        .flatMap(h => hashToPeers.get(h).map(peers => (h, peers)))
+        .groupMap(_._2)(_._1)
+        .toList
+        .map { case (peers, hashes) => (hashes.toSet, peers) }
 
       for {
-        _ <- logger.info(s"[EventSync] Syncing ${missingHashes.size} missing events from ${hashesPerPeer.size} peers")
-        _ <- hashesPerPeer.toList.traverse_ {
-          case (peerId, hashes) =>
-            fetchEventsFromPeer(peerId, hashes)
+        _ <- logger.info(s"[EventSync] Syncing ${missingHashes.size} missing events from ${hashesWithPeers.size} peer groups")
+        _ <- hashesWithPeers.traverse_ {
+          case (hashes, peers) => fetchEventsFromPeers(hashes, peers)
         }
         _ <- logger.debug(s"[EventSync] Sync complete")
       } yield ()
     }
 
-    /** Fetch specific events from a peer using IWANT and add to local mempool. */
-    private def fetchEventsFromPeer(peerId: PeerId, hashes: Set[Hash]): F[Unit] =
-      for {
-        maybePeer <- clusterStorage.getPeer(peerId)
-        _ <- maybePeer.traverse_ { peer =>
-          eventGossipClient
-            .requestEvents(IWantRequest(hashes))
-            .run(Peer.toP2PContext(peer))
-            .flatMap { response =>
-              response.events.traverse_ {
-                case (_, signedEvent) =>
-                  eventMempool.add(signedEvent).void
-              }
-            }
-            .handleErrorWith { err =>
-              logger.warn(s"[EventSync] Failed to fetch events from peer ${peerId.show.take(8)}: ${err.getMessage}")
-            }
-        }
-      } yield ()
+    /** Fetch specific events, trying peers in order until one responds. */
+    private def fetchEventsFromPeers(hashes: Set[Hash], peers: List[PeerId]): F[Unit] =
+      peers match {
+        case Nil => logger.warn(s"[EventSync] No peers available for ${hashes.size} hashes, dropping")
+        case peerId :: rest =>
+          clusterStorage.getPeer(peerId).flatMap {
+            case None => fetchEventsFromPeers(hashes, rest)
+            case Some(peer) =>
+              eventGossipClient
+                .requestEvents(IWantRequest(hashes))
+                .run(Peer.toP2PContext(peer))
+                .flatMap { response =>
+                  response.events.traverse_ {
+                    case (_, signedEvent) => eventMempool.add(signedEvent).void
+                  }
+                }
+                .handleErrorWith { err =>
+                  logger.warn(s"[EventSync] Peer ${peerId.show.take(8)} failed: ${err.getMessage}, trying next") >>
+                    fetchEventsFromPeers(hashes, rest)
+                }
+          }
+      }
 
     private def buildProposalTransition(
       state: GlobalSnapshotConsensusState,

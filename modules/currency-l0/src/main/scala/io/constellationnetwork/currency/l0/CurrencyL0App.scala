@@ -227,7 +227,8 @@ abstract class CurrencyL0App(
             queues,
             sharedConfig,
             storages.combinedCurrencySnapshotCheckpointStorage,
-            getLocalChainTip = Some(getLocalChainTip)
+            getLocalChainTip = Some(getLocalChainTip),
+            maybeMarkSeen = Some(eventGossipDaemon.markSeen)
           )
       )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
