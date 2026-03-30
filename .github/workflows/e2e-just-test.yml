@@ -104,7 +104,7 @@ jobs:
           - { name: token-locks,            tests: "token-locks" }
           - { name: allow-spends,           tests: "allow-spends" }
           - { name: spend,                  tests: "spend" }
-          - { name: snapshot-streaming,    tests: "snapshot-streaming" }
+          - { name: snapshot-streaming,    tests: "snapshot-streaming", runner: "ubuntu-22.04" }
 
     env:
       BASH_DEBUG_MODE: ${{ github.event.inputs.debug_enabled || 'false' }}
