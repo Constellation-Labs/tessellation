@@ -1,0 +1,175 @@
+name: Nightly Rebuild
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+
+# Shared with nightly-deploy.yml — only one deploy/rebuild can run at a time
+concurrency:
+  group: nightly-deploy
+  cancel-in-progress: true
+
+jobs:
+  rebuild:
+    name: Clean restart of nightly cluster
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Validate configuration
+        run: |
+          if [ -z "${{ vars.NIGHTLY_HOSTS }}" ]; then
+            echo "::error::NIGHTLY_HOSTS repository variable is not configured"
+            exit 1
+          fi
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.NIGHTLY_SSH_KEY }}" > ~/.ssh/nightly_key
+          chmod 600 ~/.ssh/nightly_key
+          touch ~/.ssh/config
+
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          for i in "${!IPS[@]}"; do
+            cat >> ~/.ssh/config <<EOF
+          Host n$i
+              User root
+              Hostname ${IPS[$i]}
+              IdentityFile ~/.ssh/nightly_key
+              StrictHostKeyChecking no
+              UserKnownHostsFile /dev/null
+          EOF
+          done
+          chmod 600 ~/.ssh/config
+
+      - name: Stop all services and wipe data
+        run: |
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          LAST_NODE=$((${#IPS[@]} - 1))
+          DIR="/opt/tessellation"
+          COMPOSE="docker compose -f docker-compose.yaml -f docker-compose.host.yaml"
+
+          # Stop snapshot-streaming on last node
+          echo "Stopping snapshot-streaming on n$LAST_NODE"
+          ssh "n$LAST_NODE" "if [ -f $DIR/snapshot-streaming/docker-compose.yaml ]; then cd $DIR/snapshot-streaming && docker compose down 2>&1 | grep -E '(Stopped|Removed)' || true; fi"
+          ssh "n$LAST_NODE" "rm -rf $DIR/snapshot-streaming/data && mkdir -p $DIR/snapshot-streaming/data; docker volume rm ss-pgdata 2>/dev/null" || true
+          echo "  n$LAST_NODE snapshot-streaming data wiped"
+
+          # Stop tessellation and wipe data on all nodes except last
+          for i in $(seq 0 $((LAST_NODE - 1))); do
+            echo "Stopping n$i"
+            ssh "n$i" "if [ -d $DIR ]; then cd $DIR && $COMPOSE --profile l0 --profile l1 down 2>&1 | grep -E '(Stopped|Removed)' || true; fi"
+            ssh "n$i" "rm -rf $DIR/gl0-data $DIR/gl1-data $DIR/gl0-logs $DIR/gl1-logs $DIR/.last-snapshot-hash && mkdir -p $DIR/gl0-data $DIR/gl1-data $DIR/gl0-logs $DIR/gl1-logs" 2>/dev/null || true
+            echo "  n$i data wiped"
+          done
+
+      - name: Start cluster
+        run: |
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          LAST_NODE=$((${#IPS[@]} - 1))
+          DIR="/opt/tessellation"
+          COMPOSE="docker compose -f docker-compose.yaml -f docker-compose.host.yaml"
+
+          # Start GL0 genesis on n0
+          echo "Starting GL0 genesis on n0"
+          ssh "n0" "cd $DIR && $COMPOSE --profile l0 up -d gl0" 2>&1 | grep -vE "variable is not set|Published ports" || true
+          GL0_GENESIS_OK=false
+          for i in $(seq 1 30); do
+            state=$(ssh "n0" "curl -sf http://localhost:9000/node/info 2>/dev/null" \
+              | python3 -c "import sys,json;print(json.load(sys.stdin).get('state',''))" 2>/dev/null || true)
+            [ "$state" = "Ready" ] && echo "  GL0-0 ready" && GL0_GENESIS_OK=true && break
+            printf "  GL0-0: %s (%d/30)\n" "${state:-pending}" "$i"; sleep 10
+          done
+          if [ "$GL0_GENESIS_OK" != "true" ]; then
+            echo "::error::GL0 genesis did not reach Ready state within 5 minutes"
+            exit 1
+          fi
+
+          # Start GL0 on validators
+          echo "Starting GL0 on validators"
+          for i in $(seq 1 $((LAST_NODE - 1))); do
+            ssh "n$i" "cd $DIR && $COMPOSE --profile l0 up -d gl0" 2>&1 | grep -vE "variable is not set|Published ports" || true
+          done
+          NUM_NODES=$((LAST_NODE))
+          GL0_CLUSTER_OK=false
+          for i in $(seq 1 30); do
+            count=$(ssh "n0" "curl -sf http://localhost:9000/cluster/info 2>/dev/null" \
+              | python3 -c "import sys,json;print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+            [ "$count" = "$NUM_NODES" ] && echo "  GL0 cluster: $count/$NUM_NODES" && GL0_CLUSTER_OK=true && break
+            printf "  GL0: %s/%s (%d/30)\n" "$count" "$NUM_NODES" "$i"; sleep 10
+          done
+          if [ "$GL0_CLUSTER_OK" != "true" ]; then
+            echo "::error::GL0 cluster did not form within 5 minutes"
+            exit 1
+          fi
+
+          # Start GL1 on all tessellation nodes
+          echo "Starting GL1 on all nodes"
+          for i in $(seq 0 $((LAST_NODE - 1))); do
+            ssh "n$i" "cd $DIR && $COMPOSE --profile l1 up -d gl1" 2>&1 | grep -vE "variable is not set|Published ports" || true
+          done
+          GL1_CLUSTER_OK=false
+          for i in $(seq 1 30); do
+            count=$(ssh "n0" "curl -sf http://localhost:9010/cluster/info 2>/dev/null" \
+              | python3 -c "import sys,json;print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+            [ "$count" = "$NUM_NODES" ] && echo "  GL1 cluster: $count/$NUM_NODES" && GL1_CLUSTER_OK=true && break
+            printf "  GL1: %s/%s (%d/30)\n" "$count" "$NUM_NODES" "$i"; sleep 10
+          done
+          if [ "$GL1_CLUSTER_OK" != "true" ]; then
+            echo "::error::GL1 cluster did not form within 5 minutes"
+            exit 1
+          fi
+
+          # Start snapshot-streaming on last node
+          echo "Starting snapshot-streaming on n$LAST_NODE"
+          ssh "n$LAST_NODE" "if [ -f $DIR/snapshot-streaming/docker-compose.yaml ]; then cd $DIR/snapshot-streaming && docker compose up -d; fi" 2>&1 || true
+
+      - name: Health check
+        run: |
+          GENESIS_IP=$(echo "${{ vars.NIGHTLY_HOSTS }}" | cut -d',' -f1)
+
+          echo "=== GL0 Cluster ==="
+          curl -sf "http://$GENESIS_IP:9000/cluster/info" | python3 -c "
+          import sys,json
+          peers=json.load(sys.stdin)
+          for p in peers: print(f\"  {p['state']:12} {p['ip']}:{p['publicPort']}\")
+          assert len(peers) >= 3, f'Expected 3+ GL0 nodes, got {len(peers)}'
+          "
+
+          echo "=== GL1 Cluster ==="
+          curl -sf "http://$GENESIS_IP:9010/cluster/info" | python3 -c "
+          import sys,json
+          peers=json.load(sys.stdin)
+          for p in peers: print(f\"  {p['state']:12} {p['ip']}:{p['publicPort']}\")
+          assert len(peers) >= 3, f'Expected 3+ GL1 nodes, got {len(peers)}'
+          "
+
+          echo "=== Snapshots ==="
+          curl -sf "http://$GENESIS_IP:9000/global-snapshots/latest" | python3 -c "
+          import sys,json
+          ordinal=json.load(sys.stdin)['value']['ordinal']
+          print(f'Latest ordinal: {ordinal}')
+          assert ordinal > 0, 'No snapshots produced'
+          "
+
+      - name: Collect remote logs on failure
+        if: failure()
+        run: |
+          mkdir -p runner-logs
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          for i in "${!IPS[@]}"; do
+            echo "=== n$i (${IPS[$i]}) ===" >> runner-logs/remote-status.txt
+            ssh "n$i" "docker ps -a 2>/dev/null" >> runner-logs/remote-status.txt 2>&1 || true
+            for svc in gl0 gl1; do
+              ssh "n$i" "docker logs $svc 2>&1 | tail -50" > "runner-logs/n${i}-${svc}.log" 2>&1 || true
+            done
+          done
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-rebuild-logs-${{ github.run_number }}
+          path: runner-logs/
+          retention-days: 7
