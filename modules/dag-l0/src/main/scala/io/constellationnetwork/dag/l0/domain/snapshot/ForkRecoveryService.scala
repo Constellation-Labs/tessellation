@@ -6,7 +6,7 @@ import cats.syntax.all._
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.{ChainTip, ForkRecoveryInfo, RecoveryPeerHint}
-import io.constellationnetwork.schema.node.NodeState
+import io.constellationnetwork.schema.node.{InvalidNodeStateTransition, NodeState}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 
 import org.typelevel.log4cats.SelfAwareStructuredLogger
@@ -53,11 +53,19 @@ object ForkRecoveryService {
                 s"majority=${info.majorityOrdinal.value.value} lag=${info.lag} " +
                 s"majorityPeers=${info.majorityPeers.size}"
             ) >>
-              recoveryPeerHint.setPreferredPeers(info.majorityPeers) >>
-              nodeStorage.setRecoveryDownload >>
+              // Attempt state transition first. Only set recovery flags if the transition
+              // succeeds — avoids leaving stale flags when the node is in an unexpected state.
+              // We only catch InvalidNodeStateTransition (wrong source state), not broader errors.
               nodeStorage
                 .tryModifyState(NodeState.Ready, NodeState.WaitingForDownload)
-                .handleErrorWith(_ => nodeStorage.tryModifyState(NodeState.WaitingForReady, NodeState.WaitingForDownload))
+                .recoverWith {
+                  case _: InvalidNodeStateTransition =>
+                    nodeStorage.tryModifyState(NodeState.WaitingForReady, NodeState.WaitingForDownload)
+                }
+                .flatMap { _ =>
+                  recoveryPeerHint.setPreferredPeers(info.majorityPeers) >>
+                    nodeStorage.setRecoveryDownload
+                }
           }
         }
     }

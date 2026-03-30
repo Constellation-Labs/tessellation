@@ -81,7 +81,9 @@ trait EventMempool[F[_], Event, Key] {
 
   /** Get a snapshot of the mempool for consensus proposal.
     *
-    * Returns events in FIFO order (oldest first) up to the specified limit.
+    * Selects up to `limit` events in FIFO order (oldest first) based on insertion order, then wraps them in a `MempoolSnapshot`. Note that
+    * `MempoolSnapshot.events` does not preserve this ordering — use the returned hash set for consensus and rely on the underlying event
+    * data, not iteration order.
     *
     * @param limit
     *   Maximum number of events to include (default 10000)

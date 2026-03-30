@@ -141,9 +141,12 @@ private[event] object SeenHashCache {
                   // Already tracked, just update timestamp
                   (map + (hash -> nowMs), order)
                 } else {
-                  // FIFO eviction: drop oldest 25% when at capacity
-                  val (evictedMap, evictedOrder) = if (map.size >= maxSize) {
-                    val toRemove = map.size / 4
+                  // FIFO eviction: drop oldest 25% when at 90% capacity.
+                  // Evicting before hitting maxSize means the O(n/4) foldLeft fires less
+                  // frequently and never blocks insertion on a fully-saturated cache.
+                  val threshold = maxSize * 9 / 10
+                  val (evictedMap, evictedOrder) = if (map.size >= threshold) {
+                    val toRemove = maxSize / 4
                     val (dropped, kept) = order.splitAt(toRemove)
                     val newMap = dropped.foldLeft(map)(_ - _)
                     (newMap, kept)
@@ -369,14 +372,6 @@ object EventGossipDaemon {
     *
     * This is the primary factory method for production use. Events will be gossiped to mesh peers via the HTTP client.
     */
-  /** Result of creating an EventGossipDaemon, including the fork recovery detector (if configured) so it can be shared with the consensus
-    * AbandonmentTracker.
-    */
-  case class DaemonWithForkRecovery[F[_], Event, Key](
-    daemon: EventGossipDaemon[F, Event, Key],
-    maybeForkRecoveryDetector: Option[ForkRecoveryDetector[F]]
-  )
-
   def make[F[_]: Async: Parallel: SecurityProvider, Event: Encoder: Decoder, Key](
     mempool: EventMempool[F, Event, Key],
     clusterStorage: ClusterStorage[F],
@@ -387,7 +382,7 @@ object EventGossipDaemon {
     getLocalChainTip: Option[F[Option[ChainTip]]] = None,
     onForkDetected: Option[ForkRecoveryInfo => F[Unit]] = None,
     forkLagThreshold: Long = 10
-  )(implicit S: Supervisor[F]): F[DaemonWithForkRecovery[F, Event, Key]] =
+  )(implicit S: Supervisor[F]): F[EventGossipDaemon[F, Event, Key]] =
     for {
       incomingQueue <- Queue.unbounded[F, Hashed[Event]]
       seenCache <- SeenHashCache.make[F](config.maxSeenHashes, config.seenHashTtlMs)
@@ -413,23 +408,20 @@ object EventGossipDaemon {
       puller = GossipPuller.make[F, Event, Key](meshState, gossipClient, mempool, seenCache, getGossipEligiblePeers, config)
       graftSyncer = GraftSyncer.make[F, Event, Key](gossipClient, mempool, meshState)
     } yield
-      DaemonWithForkRecovery(
-        new EventGossipDaemonImpl[F, Event, Key](
-          incomingQueue,
-          seenCache,
-          running,
-          meshState,
-          config,
-          publisher,
-          puller,
-          graftSyncer,
-          gossipClient,
-          getGossipEligiblePeers,
-          maybeForkDetector,
-          onForkDetected,
-          nodeStorage
-        ),
-        maybeForkDetector
+      new EventGossipDaemonImpl[F, Event, Key](
+        incomingQueue,
+        seenCache,
+        running,
+        meshState,
+        config,
+        publisher,
+        puller,
+        graftSyncer,
+        gossipClient,
+        getGossipEligiblePeers,
+        maybeForkDetector,
+        onForkDetected,
+        nodeStorage
       )
 }
 

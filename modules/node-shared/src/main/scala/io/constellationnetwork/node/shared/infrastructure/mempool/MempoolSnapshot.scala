@@ -5,7 +5,8 @@ import io.constellationnetwork.security.hash.Hash
 
 /** A snapshot of the mempool state.
   *
-  * Used during consensus proposal to select events to include.
+  * Used during consensus proposal to select events to include. Events are stored in an unordered Map; iteration order is not guaranteed to
+  * match insertion order. Use `hashes` for set-based operations and avoid relying on `events` ordering.
   *
   * @tparam Event
   *   The event type
@@ -21,7 +22,7 @@ case class MempoolSnapshot[Event, Key](
   /** Get all event hashes */
   def hashes: Set[Hash] = entries.keySet
 
-  /** Get all events */
+  /** Get all events. Note: order is not guaranteed to match insertion order. */
   def events: List[Hashed[Event]] = entries.values.map(_.hashed).toList
 
   /** Number of events */

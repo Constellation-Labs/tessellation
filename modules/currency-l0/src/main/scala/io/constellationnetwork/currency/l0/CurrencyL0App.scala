@@ -184,7 +184,7 @@ abstract class CurrencyL0App(
         else ChainTip(info.ordinal, info.hash).some
       }
 
-      daemonWithRecovery <- {
+      eventGossipDaemon <- {
         implicit val dtEncoder: CirceEncoder[DataTransaction] = DataTransactionCodecs.encoder(dataApplicationService)
         implicit val dtDecoder: CirceDecoder[DataTransaction] = DataTransactionCodecs.decoder(dataApplicationService)
         // TODO: Wire ForkRecoveryService for currency-l0 (deferred).
@@ -204,8 +204,6 @@ abstract class CurrencyL0App(
           )
           .asResource
       }
-
-      eventGossipDaemon = daemonWithRecovery.daemon
 
       _ <- Daemons
         .start(storages, services, programs, queues, keyPair, services.dataApplication, eventGossipDaemon, cfg, hasherSelectorAlwaysCurrent)

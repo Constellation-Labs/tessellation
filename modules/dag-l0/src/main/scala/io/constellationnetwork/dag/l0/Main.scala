@@ -135,7 +135,7 @@ object Main
         services.recoveryPeerHint
       )
 
-      daemonWithRecovery <- EventGossipDaemon
+      eventGossipDaemon <- EventGossipDaemon
         .make[IO, GlobalSnapshotEvent, GlobalStateKey](
           services.eventMempool,
           storages.cluster,
@@ -150,8 +150,6 @@ object Main
           onForkDetected = Some(forkRecoveryService.onForkDetected)
         )
         .asResource
-
-      eventGossipDaemon = daemonWithRecovery.daemon
 
       _ <- Daemons
         .start(
