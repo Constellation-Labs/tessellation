@@ -305,17 +305,17 @@ object CurrencySnapshotConsensusStateAdvancer {
       ): F[Unit] =
         missingHashes.toList.traverse_ { hash =>
           hashToPeers.getOrElse(hash, Nil) match {
-            case Nil => Async[F].unit
+            case Nil   => Async[F].unit
             case peers =>
+              // foldLeftM short-circuits on first success: once a peer returns the event, remaining peers are skipped
               peers
-                .traverse(peerId => fetchEventFromPeer(peerId, hash).map(peerId -> _))
-                .flatMap { results =>
-                  if (results.exists(_._2))
-                    Async[F].unit
-                  else
-                    logger.warn(
-                      s"[EventSync] Could not fetch hash ${hash.show.take(8)} from any of ${peers.size} peers"
-                    )
+                .foldLeftM(false) { (found, peerId) =>
+                  if (found) true.pure[F]
+                  else fetchEventFromPeer(peerId, hash)
+                }
+                .flatMap { fetched =>
+                  if (fetched) Async[F].unit
+                  else logger.warn(s"[EventSync] Could not fetch hash ${hash.show.take(8)} from any of ${peers.size} peers")
                 }
           }
         }
