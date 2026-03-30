@@ -43,6 +43,7 @@ object GlobalSnapshotConsensusStateCreator {
     selfId: PeerId,
     seedlist: Option[Set[SeedlistEntry]],
     facilitatorSelector: FacilitatorSelector,
+    consensusConfigHash: Hash,
     peerQualityTracker: PeerQualityTracker[F],
     tcaFilter: TrailingCommonAncestorFilter[F],
     eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey]
@@ -265,7 +266,8 @@ object GlobalSnapshotConsensusStateCreator {
                 maybeTrigger,
                 lastOutcome.finished.facilitatorsHash,
                 lastOutcome.key,
-                lastOutcome.finished.snapshotHash
+                lastOutcome.finished.snapshotHash,
+                consensusConfigHash = consensusConfigHash.some
               )
             )
           )

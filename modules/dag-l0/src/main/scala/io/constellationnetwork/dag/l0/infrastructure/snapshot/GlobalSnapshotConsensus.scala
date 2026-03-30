@@ -209,6 +209,7 @@ object GlobalSnapshotConsensus {
           selfId,
           seedlist,
           facilitatorSelector,
+          appConfig.snapshot.consensus.deterministicConfigHash,
           peerQualityTracker,
           tcaFilter,
           eventMempool
