@@ -2,7 +2,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
 import cats.effect.kernel.{Async, Ref}
 import cats.syntax.all._
-import cats.{Eq, Show}
+import cats.{Order, Show}
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
@@ -90,7 +90,7 @@ object AbandonReason {
   * On every abandonment, stale peer declarations, artifacts, and withdrawal maps are cleared. Without this, abandoned rounds leave
   * resources that poison retries via `.orElse` semantics in `addFacility`.
   */
-class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status, Outcome, Kind](
+class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Status, Outcome, Kind](
   ctx: ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   healthRef: Ref[F, ConsensusHealthStatus]
 ) {
@@ -250,7 +250,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
              Category.Lifecycle,
              key.toString,
              "n/a",
-             if (shouldEscalate) LogEvent.RetriableEscalated else LogEvent.RoundAbandonedRetriable,
+             LogEvent.RoundAbandonedRetriable,
              "reason" -> reason.label,
              "detail" -> reason.message,
              "retriableAtSameKey" -> retriableCount.toString,
@@ -258,12 +258,53 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
            ) >>
              (if (shouldEscalate)
                 // Stuck at the same ordinal with quorum-infeasible for too long.
-                // Escalate: treat as non-retriable to trigger recovery download.
-                retriableAtSameKeyRef.set((none[Key], 0)) >>
-                  trackConsecutiveAbandonments(key).flatMap { consecutiveCount =>
-                    healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount)) >>
-                      triggerRecoveryDownload(key, consecutiveCount)
+                // ONLY escalate to recovery if majority of Ready peers are at a HIGHER key —
+                // meaning this node is genuinely behind the network. If all peers are stuck at
+                // the same ordinal (e.g. CPU pressure causing slow gossip on a small cluster),
+                // recovery download would cause a kill-4 deadlock: all nodes enter
+                // WaitingForDownload simultaneously with no Ready peers to serve downloads.
+                ctx.clusterStorage.getResponsivePeers.flatMap { responsivePeers =>
+                  storage.getPeerRegistrations.flatMap { peerRegs =>
+                    val readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
+                    val readyPeerRegs = peerRegs.view.filterKeys(readyPeerIds.contains).toMap
+                    val peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key }
+                    val totalReadyPeers = readyPeerRegs.size
+                    val peersMajorityAhead = totalReadyPeers >= 2 && peersAtHigherKey > totalReadyPeers / 2
+                    if (peersMajorityAhead)
+                      // Peers have moved on — this node is genuinely behind. Trigger recovery.
+                      retriableAtSameKeyRef.set((none[Key], 0)) >>
+                        trackConsecutiveAbandonments(key).flatMap { consecutiveCount =>
+                          ConsensusLog.info(
+                            logger,
+                            Category.Lifecycle,
+                            key.toString,
+                            "n/a",
+                            LogEvent.RetriableEscalated,
+                            "reason" -> reason.label,
+                            "peersAtHigherKey" -> peersAtHigherKey.toString,
+                            "totalReadyPeers" -> totalReadyPeers.toString
+                          ) >>
+                            healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount)) >>
+                            triggerRecoveryDownload(key, consecutiveCount)
+                        }
+                    else
+                      // Peers are at same or lower key — whole cluster is stuck, not just us.
+                      // Keep retrying; recovery download would deadlock with no peers to serve.
+                      ConsensusLog.info(
+                        logger,
+                        Category.Lifecycle,
+                        key.toString,
+                        "n/a",
+                        LogEvent.RoundAbandonedRetriable,
+                        "reason" -> reason.label,
+                        "detail" -> s"escalation suppressed: not lagging (peersAtHigherKey=$peersAtHigherKey totalReady=$totalReadyPeers)",
+                        "retriableAtSameKey" -> retriableCount.toString,
+                        "maxRetriableAtSameKey" -> maxRetriableAtSameKey.toString
+                      ) >>
+                        queue.offer(ConsensusCommand.RoundCompleted) >>
+                        queue.offer(ConsensusCommand.TimeTick)
                   }
+                }
               else
                 queue.offer(ConsensusCommand.RoundCompleted) >>
                   queue.offer(ConsensusCommand.TimeTick))
