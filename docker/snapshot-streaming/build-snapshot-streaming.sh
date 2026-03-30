@@ -24,7 +24,7 @@ BE_DIR="$SS_DIR/block-explorer"
 if [ -n "$SNAPSHOT_STREAMING_JAR" ] && [ -f "$SNAPSHOT_STREAMING_JAR" ]; then
   echo "Using pre-built snapshot-streaming JAR: $SNAPSHOT_STREAMING_JAR"
   cp "$SNAPSHOT_STREAMING_JAR" "$JAR_DEST"
-elif [ -f "$JAR_DEST" ] && [ -s "$JAR_DEST" ]; then
+elif [ -f "$JAR_DEST" ] && [ -s "$JAR_DEST" ] && [ "$SKIP_ASSEMBLY" = "true" ]; then
   echo "Reusing existing snapshot-streaming JAR: $JAR_DEST"
 else
   echo "Building snapshot-streaming from source (branch: $SS_BRANCH)..."

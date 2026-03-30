@@ -33,6 +33,10 @@ export CLEANUP_DOCKER_AT_END=${CLEANUP_DOCKER_AT_END:-false}
 export REGENERATE_TEST_KEYS=${REGENERATE_TEST_KEYS:-false}
 export BUILD_ONLY=${BUILD_ONLY:-false}
 
+# Remote deployment settings
+export REMOTE_NODES=${REMOTE_NODES:-""}
+export REMOTE_CLEAN=${REMOTE_CLEAN:-false}
+export REMOTE_DIR=${REMOTE_DIR:-"/opt/tessellation"}
 
 export DAG_L0_PORT_PREFIX=${DAG_L0_PORT_PREFIX:-90}
 export DAG_L1_PORT_PREFIX=${DAG_L1_PORT_PREFIX:-91}
@@ -230,6 +234,12 @@ for arg in "$@"; do
       ;;
     --list-tests)
       export LIST_TESTS=true
+      ;;
+    --remote=*)
+      export REMOTE_NODES="${arg#*=}"
+      ;;
+    --clean)
+      export REMOTE_CLEAN=true
       ;;
     *)
       echo "Unknown argument: $arg"

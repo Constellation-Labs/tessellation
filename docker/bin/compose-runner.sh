@@ -94,7 +94,12 @@ fi
 
 REMOTE_HOST=${TEST_HOST:-}
 
-if [ -n "$REMOTE_HOST" ] && [ "$REMOTE_HOST" != "http://localhost" ]; then
+if [ -n "$REMOTE_NODES" ] && [ -z "$REMOTE_HOST" -o "$REMOTE_HOST" = "http://localhost" ]; then
+  echo "------------------------------------------------"
+  echo "Remote deployment to: $REMOTE_NODES"
+  echo "------------------------------------------------"
+  source ./docker/bin/remote-deploy.sh
+elif [ -n "$REMOTE_HOST" ] && [ "$REMOTE_HOST" != "http://localhost" ]; then
   echo "------------------------------------------------"
   echo "Remote host provided ($REMOTE_HOST), skipping docker setup"
   echo "------------------------------------------------"
@@ -565,17 +570,32 @@ if should_run_test "snapshot-streaming"; then
   docker rm -f tx-sender 2>/dev/null || true
   cd $PROJECT_ROOT
 
+  # Determine how to query postgres: local docker exec or remote SSH
+  if [ -n "$REMOTE_NODES" ]; then
+    IFS=',' read -ra _SS_NODES <<< "$REMOTE_NODES"
+    if [ "${#_SS_NODES[@]}" -ge 4 ]; then
+      SS_TEST_NODE="${_SS_NODES[3]}"
+      ss_psql() { ssh "$SS_TEST_NODE" "docker exec snapshot-streaming-postgres psql -U snapshot_streaming -d snapshot_streaming $(printf '%q ' "$@")" 2>/dev/null; }
+      ss_logs() { ssh "$SS_TEST_NODE" "docker logs snapshot-streaming 2>&1 | tail -100"; }
+      echo "Testing snapshot-streaming on remote node: $SS_TEST_NODE"
+    else
+      ss_psql() { docker exec snapshot-streaming-postgres psql -U snapshot_streaming -d snapshot_streaming "$@" 2>/dev/null; }
+      ss_logs() { docker logs snapshot-streaming 2>&1 | tail -100 || true; }
+    fi
+  else
+    ss_psql() { docker exec snapshot-streaming-postgres psql -U snapshot_streaming -d snapshot_streaming "$@" 2>/dev/null; }
+    ss_logs() { docker logs snapshot-streaming 2>&1 | tail -100 || true; }
+  fi
+
   ss_test_passed=false
   echo "Waiting for snapshot-streaming to index snapshots..."
   for attempt in $(seq 1 120); do
-    count=$(docker exec snapshot-streaming-postgres psql -U snapshot_streaming -d snapshot_streaming -t -A -c \
-      "SELECT COUNT(*) FROM global_snapshots;" 2>/dev/null || echo "0")
+    count=$(ss_psql -t -A -c "SELECT COUNT(*) FROM global_snapshots;" || echo "0")
     count=$(echo "$count" | tr -d '[:space:]')
 
     if [ "$count" -ge 3 ]; then
       echo "snapshot-streaming indexed $count global snapshots"
-      max_ordinal=$(docker exec snapshot-streaming-postgres psql -U snapshot_streaming -d snapshot_streaming -t -A -c \
-        "SELECT MAX(ordinal) FROM global_snapshots;" 2>/dev/null || echo "0")
+      max_ordinal=$(ss_psql -t -A -c "SELECT MAX(ordinal) FROM global_snapshots;" || echo "0")
       max_ordinal=$(echo "$max_ordinal" | tr -d '[:space:]')
       echo "Max ordinal: $max_ordinal"
       if [ "$max_ordinal" -gt 0 ]; then
@@ -595,9 +615,9 @@ if should_run_test "snapshot-streaming"; then
   else
     echo "snapshot-streaming E2E test FAILED"
     echo "--- snapshot-streaming logs ---"
-    docker logs snapshot-streaming 2>&1 | tail -100 || true
+    ss_logs
     echo "--- postgres tables ---"
-    docker exec snapshot-streaming-postgres psql -U snapshot_streaming -d snapshot_streaming -c '\dt' || true
+    ss_psql -c '\dt' || true
     exit 1
   fi
   show_time "Snapshot-streaming E2E test completed"
