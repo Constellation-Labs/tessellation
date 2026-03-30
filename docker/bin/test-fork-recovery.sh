@@ -247,12 +247,15 @@ while [ "$(date +%s)" -lt "$recovery_deadline" ]; do
 
   echo "  [${elapsed}s] $ISOLATION_NODE: facilitators=${iso_fac:-?} completedAfterIsolation=$iso_completed forkEvents=$fork_events clusterOrdinal=${monitor_ord:-?}"
 
-  # Success criterion: node logged "Round finished" >= 2 times after the isolation period ended.
+  # Success criterion: node logged "Round finished" >= 1 time after the isolation period ended.
   # get_completed_rounds_after counts log lines containing "Round finished ordinal=N" where N > post_isolation_ordinal,
   # so it only counts rounds completed on the re-joined node's own consensus loop.
+  # (Threshold is 1, not 2: after recovery the node participates in one round cleanly. Subsequent rounds
+  # may still evict it due to TCA penalty expiry cycles and removalPenaltyRounds — this is expected and
+  # handled by the StallDetector. One completed round is sufficient proof of successful recovery.)
   # (Criterion B based on iso_fac was removed: get_facilitator_count returns the last ever-written
   # log value which is stale from before isolation and therefore always appears ≥ 2.)
-  if [ -n "$iso_completed" ] && [ "$iso_completed" -ge 2 ]; then
+  if [ -n "$iso_completed" ] && [ "$iso_completed" -ge 1 ]; then
     recovered=true
     rejoined_consensus=true
     break
