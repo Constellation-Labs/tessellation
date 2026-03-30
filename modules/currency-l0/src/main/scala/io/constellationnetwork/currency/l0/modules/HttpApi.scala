@@ -25,6 +25,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.Combi
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
 import eu.timepit.refined.auto._
@@ -56,7 +57,8 @@ object HttpApi {
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
     ],
-    getLocalChainTip: Option[F[Option[ChainTip]]] = None
+    getLocalChainTip: Option[F[Option[ChainTip]]] = None,
+    maybeMarkSeen: Option[Hash => F[Unit]] = None
   ): F[HttpApi[F]] =
     for {
       snapshotRoutes <-
@@ -86,7 +88,8 @@ object HttpApi {
         queues,
         sharedConfig,
         snapshotRoutes,
-        getLocalChainTip
+        getLocalChainTip,
+        maybeMarkSeen
       ) {}
 }
 
@@ -106,7 +109,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   queues: Queues[F],
   sharedConfig: SharedConfig,
   snapshotRoutes: SnapshotRoutes[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-  getLocalChainTip: Option[F[Option[ChainTip]]] = None
+  getLocalChainTip: Option[F[Option[ChainTip]]] = None,
+  maybeMarkSeen: Option[Hash => F[Unit]] = None
 ) {
 
   private val clusterRoutes =
@@ -126,7 +130,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
     implicit val dtDecoder: CirceDecoder[DataTransaction] = DataTransactionCodecs.decoder(maybeDataApplication)
     EventGossipRoutes.make[F, CurrencySnapshotEvent, CurrencyStateKey](
       storages.eventMempool,
-      getLocalChainTip
+      getLocalChainTip,
+      maybeMarkSeen
     )
   }
 

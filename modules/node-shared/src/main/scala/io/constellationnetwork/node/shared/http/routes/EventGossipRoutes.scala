@@ -6,6 +6,7 @@ import cats.syntax.all._
 import io.constellationnetwork.node.shared.infrastructure.gossip.event._
 import io.constellationnetwork.node.shared.infrastructure.mempool.{EventMempool, MempoolRejectionReason}
 import io.constellationnetwork.routes.internal._
+import io.constellationnetwork.security.hash.Hash
 
 import eu.timepit.refined.auto._
 import io.circe.{Decoder, Encoder}
@@ -25,7 +26,8 @@ import org.http4s.dsl.Http4sDsl
   */
 final case class EventGossipRoutes[F[_]: Async, Event: Encoder: Decoder, Key](
   mempool: EventMempool[F, Event, Key],
-  getLocalChainTip: Option[F[Option[ChainTip]]] = None
+  getLocalChainTip: Option[F[Option[ChainTip]]] = None,
+  maybeMarkSeen: Option[Hash => F[Unit]] = None
 ) extends Http4sDsl[F]
     with P2PRoutes[F] {
 
@@ -62,6 +64,12 @@ final case class EventGossipRoutes[F[_]: Async, Event: Encoder: Decoder, Key](
   private def handlePush(push: EventPush[Event]): F[Either[String, Unit]] =
     mempool
       .add(push.event)
+      .flatTap {
+        // Mark seen on successful add so the pull loop does not issue redundant IWANT
+        // requests for events already received via push.
+        case Right(entry) => maybeMarkSeen.fold(Async[F].unit)(_(entry.hashed.hash))
+        case Left(_)      => Async[F].unit
+      }
       .map(_.bimap(MempoolRejectionReason.show.show, _ => ()))
 }
 
@@ -69,7 +77,8 @@ object EventGossipRoutes {
 
   def make[F[_]: Async, Event: Encoder: Decoder, Key](
     mempool: EventMempool[F, Event, Key],
-    getLocalChainTip: Option[F[Option[ChainTip]]] = None
+    getLocalChainTip: Option[F[Option[ChainTip]]] = None,
+    maybeMarkSeen: Option[Hash => F[Unit]] = None
   ): EventGossipRoutes[F, Event, Key] =
-    new EventGossipRoutes[F, Event, Key](mempool, getLocalChainTip)
+    new EventGossipRoutes[F, Event, Key](mempool, getLocalChainTip, maybeMarkSeen)
 }

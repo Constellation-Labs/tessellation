@@ -28,6 +28,7 @@ import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
@@ -56,7 +57,8 @@ object HttpApi {
       GlobalIncrementalSnapshot,
       GlobalSnapshotInfo
     ],
-    getLocalChainTip: Option[F[Option[ChainTip]]] = None
+    getLocalChainTip: Option[F[Option[ChainTip]]] = None,
+    maybeMarkSeen: Option[Hash => F[Unit]] = None
   ): F[HttpApi[F, R]] =
     SnapshotRoutes
       .make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
@@ -83,7 +85,8 @@ object HttpApi {
           delegatedStakingWithdrawalTimeLimit,
           sharedConfig,
           snapshotRoutes,
-          getLocalChainTip
+          getLocalChainTip,
+          maybeMarkSeen
         ) {}
       }
 }
@@ -102,7 +105,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   delegatedStakingWithdrawalTimeLimit: EpochProgress,
   sharedConfig: SharedConfig,
   snapshotRoutes: SnapshotRoutes[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-  getLocalChainTip: Option[F[Option[ChainTip]]] = None
+  getLocalChainTip: Option[F[Option[ChainTip]]] = None,
+  maybeMarkSeen: Option[Hash => F[Unit]] = None
 ) {
 
   private val mkDagCell = (block: Signed[Block]) =>
@@ -159,7 +163,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip, sharedConfig.gossip.timeouts)
   private val eventGossipRoutes = EventGossipRoutes.make[F, GlobalSnapshotEvent, GlobalStateKey](
     services.eventMempool,
-    getLocalChainTip
+    getLocalChainTip,
+    maybeMarkSeen
   )
   private val trustRoutes = TrustRoutes[F](storages.trust, programs.trustPush)
   private val stateChannelRoutes =

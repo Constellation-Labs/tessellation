@@ -1,7 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.gossip.event
 
 import cats.Parallel
-import cats.effect.std.{Queue, Supervisor}
+import cats.effect.std.Supervisor
 import cats.effect.{Async, Clock, Ref}
 import cats.syntax.all._
 
@@ -48,14 +48,16 @@ trait EventGossipDaemon[F[_], Event, Key] {
   /** Publish an event to the gossip network */
   def publish(event: Hashed[Event]): F[Unit]
 
-  /** Stream of events received from the network */
-  def subscribe: Stream[F, Hashed[Event]]
-
   /** Check if an event has already been seen */
   def hasSeen(hash: Hash): F[Boolean]
 
-  /** Receive an event from the network (via routes) */
-  def receiveEvent(event: Hashed[Event]): F[Boolean]
+  /** Mark an event as seen (called by routes after a successful mempool.add).
+    *
+    * This keeps the seenCache consistent with the mempool so the pull loop does not issue redundant IWANT requests for events that were
+    * already received via push. The push route calls mempool.add directly (not via the daemon) to avoid an extra queue hop; this method
+    * lets the route notify the daemon's seenCache of the result.
+    */
+  def markSeen(hash: Hash): F[Unit]
 
   /** Get current mesh state for monitoring */
   def getMeshInfo: F[MeshInfo]
@@ -384,7 +386,6 @@ object EventGossipDaemon {
     forkLagThreshold: Long = 10
   )(implicit S: Supervisor[F]): F[EventGossipDaemon[F, Event, Key]] =
     for {
-      incomingQueue <- Queue.unbounded[F, Hashed[Event]]
       seenCache <- SeenHashCache.make[F](config.maxSeenHashes, config.seenHashTtlMs)
       running <- Ref.of[F, Boolean](false)
       meshConfig = MeshState.MeshConfig(
@@ -409,7 +410,6 @@ object EventGossipDaemon {
       graftSyncer = GraftSyncer.make[F, Event, Key](gossipClient, mempool, meshState)
     } yield
       new EventGossipDaemonImpl[F, Event, Key](
-        incomingQueue,
         seenCache,
         running,
         meshState,
@@ -428,7 +428,6 @@ object EventGossipDaemon {
 /** Implementation of EventGossipDaemon — thin coordinator composing focused components.
   */
 private class EventGossipDaemonImpl[F[_]: Async: Parallel, Event, Key](
-  incomingQueue: Queue[F, Hashed[Event]],
   seenCache: SeenHashCache[F],
   running: Ref[F, Boolean],
   meshState: MeshState[F],
@@ -499,22 +498,11 @@ private class EventGossipDaemonImpl[F[_]: Async: Parallel, Event, Key](
         )
     } yield ()
 
-  override def subscribe: Stream[F, Hashed[Event]] =
-    Stream.fromQueueUnterminated(incomingQueue)
-
   override def hasSeen(hash: Hash): F[Boolean] =
     seenCache.hasSeen(hash)
 
-  override def receiveEvent(event: Hashed[Event]): F[Boolean] =
-    for {
-      alreadySeen <- seenCache.hasSeen(event.hash)
-      isNew <- alreadySeen
-        .pure[F]
-        .ifM(
-          ifTrue = false.pure[F],
-          ifFalse = seenCache.markSeen(event.hash) >> incomingQueue.offer(event).as(true)
-        )
-    } yield isNew
+  override def markSeen(hash: Hash): F[Unit] =
+    seenCache.markSeen(hash)
 
   override def getMeshInfo: F[MeshInfo] =
     for {

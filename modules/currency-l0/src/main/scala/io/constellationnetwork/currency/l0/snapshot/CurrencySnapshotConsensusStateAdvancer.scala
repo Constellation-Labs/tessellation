@@ -351,7 +351,7 @@ object CurrencySnapshotConsensusStateAdvancer {
             _ <- clearTimeTriggerIfNeeded(majorityTrigger)
             facilitatorsHash <- hashFacilitators(state)
 
-            // Pull events from mempool using hash intersection for consensus safety
+            // Pull events from mempool using hash union across all facilitator declarations
             mempoolData <- eventMempool.getMultiple(commonHashes).map { hashToHashed =>
               val events = hashToHashed.values.map(_.signed.value).toSet
               val hashToEvent = hashToHashed.map { case (h, hashed) => h -> hashed.signed.value }

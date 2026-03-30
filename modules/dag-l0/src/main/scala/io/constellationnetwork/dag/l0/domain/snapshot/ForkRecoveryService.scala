@@ -55,16 +55,25 @@ object ForkRecoveryService {
             ) >>
               // Attempt state transition first. Only set recovery flags if the transition
               // succeeds — avoids leaving stale flags when the node is in an unexpected state.
-              // We only catch InvalidNodeStateTransition (wrong source state), not broader errors.
               nodeStorage
                 .tryModifyState(NodeState.Ready, NodeState.WaitingForDownload)
                 .recoverWith {
                   case _: InvalidNodeStateTransition =>
                     nodeStorage.tryModifyState(NodeState.WaitingForReady, NodeState.WaitingForDownload)
                 }
-                .flatMap { _ =>
-                  recoveryPeerHint.setPreferredPeers(info.majorityPeers) >>
-                    nodeStorage.setRecoveryDownload
+                .attempt
+                .flatMap {
+                  case Right(_) =>
+                    recoveryPeerHint.setPreferredPeers(info.majorityPeers) >>
+                      nodeStorage.setRecoveryDownload
+                  case Left(_: InvalidNodeStateTransition) =>
+                    // Node is in a non-operational state (Leaving, Offline, Initial, etc.) —
+                    // fork recovery is not applicable. Suppress to avoid misleading heartbeat error log.
+                    logger.debug(
+                      s"Fork divergence suppressed: state transition not possible from $currentState — node not in recoverable state"
+                    )
+                  case Left(err) =>
+                    Async[F].raiseError(err)
                 }
           }
         }
