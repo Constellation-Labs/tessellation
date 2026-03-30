@@ -6,7 +6,7 @@ import java.time.Instant
 import cats.data.{NonEmptySet, StateT}
 import cats.effect.{Async, Outcome, Ref}
 import cats.syntax.all._
-import cats.{Applicative, MonadThrow}
+import cats.{Applicative, MonadThrow, Parallel}
 
 import scala.collection.immutable.SortedMap
 import scala.concurrent.duration.FiniteDuration
@@ -104,7 +104,7 @@ abstract class GlobalSnapshotConsensusStateAdvancer[F[_]]
 
 object GlobalSnapshotConsensusStateAdvancer {
 
-  def make[F[_]: Async: SecurityProvider: Metrics: HasherSelector](
+  def make[F[_]: Async: Parallel: SecurityProvider: Metrics: HasherSelector](
     consensusConfig: ConsensusConfig,
     keyPair: KeyPair,
     consensusStorage: GlobalConsensusStorage[F],
@@ -375,7 +375,7 @@ object GlobalSnapshotConsensusStateAdvancer {
 
       for {
         _ <- logger.info(s"[EventSync] Syncing ${missingHashes.size} missing events from ${hashesWithPeers.size} peer groups")
-        _ <- hashesWithPeers.traverse_ {
+        _ <- hashesWithPeers.parTraverse_ {
           case (hashes, peers) => fetchEventsFromPeers(hashes, peers)
         }
         _ <- logger.debug(s"[EventSync] Sync complete")
