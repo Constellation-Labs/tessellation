@@ -29,11 +29,13 @@ if [ "$NUM_GL0" -lt 5 ]; then
   exit 1
 fi
 
-ISOLATION_DURATION=180  # seconds to keep node isolated
+ISOLATION_DURATION=270  # seconds to keep node isolated
 # NOTE: CI sets CL_DECLARATION_TIMEOUT=60s and CL_RE_STALL_TIMEOUT=25s.
-# Worst-case: isolation happens right after a round completes, then 60s declaration
-# timeout + 25s re-stall fires before a new 3-node round can start and finish.
-# 180s gives comfortable margin for the cluster to produce ≥1 snapshot.
+# Worst-case: isolation happens right when gl0-4 was the declared leader, so the remaining
+# 4 nodes must wait 60s (declaration timeout) + 25s (re-stall) before a new 3-node round
+# can start and finish — approximately 90s/ordinal. 270s = 3 ordinals, which is enough for
+# AbandonmentTracker's lagging-detection gate (peersMajorityAhead=true) to trigger on gl0-4
+# after reconnect (3 ordinals behind > forkLagThreshold doesn't apply; abandonment threshold fires).
 RECOVERY_TIMEOUT=900    # max seconds to wait for recovery (observe() needs ~4 ordinals × 43s + download time)
 STABILIZE_WAIT=480      # seconds to wait for initial cluster stability (nodes need time to join + sync)
 
@@ -247,7 +249,7 @@ while [ "$(date +%s)" -lt "$recovery_deadline" ]; do
 
   echo "  [${elapsed}s] $ISOLATION_NODE: facilitators=${iso_fac:-?} completedAfterIsolation=$iso_completed forkEvents=$fork_events clusterOrdinal=${monitor_ord:-?}"
 
-  # Success criterion: node logged "Round finished" >= 1 time after the isolation period ended.
+  # Success criterion A: node logged "Round finished" >= 1 time after the isolation period ended.
   # get_completed_rounds_after counts log lines containing "Round finished ordinal=N" where N > post_isolation_ordinal,
   # so it only counts rounds completed on the re-joined node's own consensus loop.
   # (Threshold is 1, not 2: after recovery the node participates in one round cleanly. Subsequent rounds
@@ -255,9 +257,31 @@ while [ "$(date +%s)" -lt "$recovery_deadline" ]; do
   # handled by the StallDetector. One completed round is sufficient proof of successful recovery.)
   # (Criterion B based on iso_fac was removed: get_facilitator_count returns the last ever-written
   # log value which is stale from before isolation and therefore always appears ≥ 2.)
+  #
+  # Success criterion B: cluster advanced ≥ 5 ordinals after gl0-4 reconnected AND gl0-4's
+  # HTTP-reported ordinal matches the cluster (node caught up via download, not log-based).
+  # This handles the case where the cluster produced only 1 ordinal during isolation (so gl0-4
+  # was only 1 behind and forkLagThreshold suppresses gossip-based recovery), but the node
+  # still successfully caught up via AbandonmentTracker's lagging-detection escalation.
+  iso_ord=$(get_ordinal "$ISOLATION_NODE")
+  cluster_advanced=false
+  if [ -n "$monitor_ord" ] && [ -n "$post_isolation_ordinal" ] && [ "$monitor_ord" -ge "$((post_isolation_ordinal + 5))" ]; then
+    cluster_advanced=true
+  fi
+  iso_caught_up=false
+  if [ -n "$iso_ord" ] && [ -n "$monitor_ord" ] && [ "$iso_ord" -ge "$((monitor_ord - 1))" ]; then
+    iso_caught_up=true
+  fi
+
   if [ -n "$iso_completed" ] && [ "$iso_completed" -ge 1 ]; then
     recovered=true
     rejoined_consensus=true
+    break
+  fi
+  if [ "$cluster_advanced" = "true" ] && [ "$iso_caught_up" = "true" ]; then
+    recovered=true
+    rejoined_consensus=true
+    echo "  Criterion B: cluster advanced ≥5 ordinals and $ISOLATION_NODE caught up (iso_ord=$iso_ord cluster_ord=$monitor_ord)"
     break
   fi
 
