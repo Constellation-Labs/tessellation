@@ -1,7 +1,8 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
+import cats.Functor
+import cats.effect.Sync
 import cats.effect.kernel.Ref
-import cats.effect.{Sync, SyncIO}
 import cats.syntax.all._
 
 /** Tracks pending triggers that arrived while a consensus round was running.
@@ -13,9 +14,8 @@ import cats.syntax.all._
   *
   * ==Solution==
   *
-  * PendingTriggers stores at most one pending trigger with priority:
-  *   - Time triggers have higher priority than Event triggers
-  *   - If both arrive, Time wins
+  * Uses a single atomic Ref to avoid the race condition of reading/clearing two separate Refs. Time triggers have higher priority than
+  * Event triggers. If both arrive, Time wins.
   *
   * ==Usage==
   * {{{
@@ -31,41 +31,42 @@ import cats.syntax.all._
   *   }
   * }}}
   */
-final case class PendingTriggers(
-  eventPending: Ref[SyncIO, Boolean],
-  timePending: Ref[SyncIO, Boolean]
-)
-
 object PendingTriggers {
 
-  def create[F[_]: Sync]: F[PendingTriggersF[F]] =
-    for {
-      eventRef <- Ref.of[F, Boolean](false)
-      timeRef <- Ref.of[F, Boolean](false)
-    } yield new PendingTriggersF[F](eventRef, timeRef)
+  private[engine] sealed trait PendingState
+  private[engine] case object NoPending extends PendingState
+  private[engine] case object EventPending extends PendingState
+  private[engine] case object TimePending extends PendingState
 
+  def create[F[_]: Sync]: F[PendingTriggersF[F]] =
+    Ref.of[F, PendingState](NoPending).map(new PendingTriggersF[F](_))
 }
 
-final class PendingTriggersF[F[_]: Sync](
-  private val eventRef: Ref[F, Boolean],
-  private val timeRef: Ref[F, Boolean]
+final class PendingTriggersF[F[_]: Functor] private[engine] (
+  private val stateRef: Ref[F, PendingTriggers.PendingState]
 ) {
 
-  def setEvent(): F[Unit] = eventRef.set(true)
+  import PendingTriggers._
 
-  def setTime(): F[Unit] = timeRef.set(true)
+  def setEvent(): F[Unit] = stateRef.update {
+    case TimePending => TimePending // Don't downgrade time to event
+    case _           => EventPending
+  }
 
+  def setTime(): F[Unit] = stateRef.set(TimePending)
+
+  /** Clears any pending trigger without returning it. Used during recovery to prevent stale triggers from starting a new round while the
+    * node is downloading state.
+    */
+  def clear(): F[Unit] = stateRef.set(NoPending)
+
+  /** Atomically retrieves and clears the pending trigger. */
   def pullNext: F[Option[TriggerPriority]] =
-    for {
-      time <- timeRef.get
-      event <- eventRef.get
-
-      _ <- timeRef.set(false)
-      _ <- eventRef.set(false)
-    } yield
-      if (time) Some(TriggerPriority.Time)
-      else if (event) Some(TriggerPriority.Event)
-      else None
+    stateRef.getAndSet(NoPending).map {
+      case TimePending  => Some(TriggerPriority.Time)
+      case EventPending => Some(TriggerPriority.Event)
+      case NoPending    => None
+    }
 }
 
 sealed trait TriggerPriority

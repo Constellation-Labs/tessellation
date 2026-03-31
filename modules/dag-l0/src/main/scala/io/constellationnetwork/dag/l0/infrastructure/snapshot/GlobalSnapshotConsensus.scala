@@ -5,7 +5,7 @@ import java.security.KeyPair
 import cats.Parallel
 import cats.data.NonEmptySet
 import cats.effect.kernel.{Async, Fiber}
-import cats.effect.std.{Random, Supervisor}
+import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
@@ -37,9 +37,11 @@ import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcce
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.consensus._
-import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusEventLoop, _}
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, ConsensusEventLoop, _}
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorHandler
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.EventGossipClient
+import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
@@ -54,6 +56,7 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.gossip.RumorRaw
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security._
@@ -98,7 +101,10 @@ object GlobalSnapshotConsensus {
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     mptStore: MptStore[F, GlobalStateKey],
-    loggerBundle: LoggerBundle[F]
+    eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey],
+    eventGossipClient: EventGossipClient[F, GlobalSnapshotEvent],
+    loggerBundle: LoggerBundle[F],
+    rumorQueue: Queue[F, Hashed[RumorRaw]]
   )(implicit supervisor: Supervisor[F], globalStateProofSelector: GlobalStateProofSelector): F[GlobalSnapshotConsensus[F]] =
     for {
       globalStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
@@ -181,12 +187,19 @@ object GlobalSnapshotConsensus {
           lastGlobalSnapshotStorage,
           getGlobalSnapshotByOrdinal,
           clusterStorage,
-          loggerBundle
+          eventMempool,
+          eventGossipClient,
+          loggerBundle,
+          mptStore
         )
 
       facilitatorSelector = FacilitatorSelector.make(
         appConfig.snapshot.consensus.maxFacilitatorCount.map(_.value)
       )
+
+      peerQualityTracker <- PeerQualityTracker.make[F]
+
+      tcaFilter = TrailingCommonAncestorFilter.make[F]
 
       stateCreator =
         GlobalSnapshotConsensusStateCreator.make(
@@ -195,7 +208,11 @@ object GlobalSnapshotConsensus {
           gossip,
           selfId,
           seedlist,
-          facilitatorSelector
+          facilitatorSelector,
+          appConfig.snapshot.consensus.deterministicConfigHash,
+          peerQualityTracker,
+          tcaFilter,
+          eventMempool
         )
 
       stateRemover =
@@ -210,11 +227,13 @@ object GlobalSnapshotConsensus {
         ConsensusStateUpdater.make(
           stateAdvancer,
           consensusStorage,
-          gossip,
           consensusOps
         )
 
       consensusClient = ConsensusClient.make[F, GlobalSnapshotKey, GlobalConsensusOutcome](client, session)
+
+      directPushFn = ConsensusDirectSender.makeDirectPushFn(clusterStorage, consensusClient)
+      _ <- gossip.setDirectPushFn(directPushFn)
 
       loop <-
         ConsensusEventLoop.build[
@@ -227,6 +246,7 @@ object GlobalSnapshotConsensus {
           GlobalConsensusOutcome,
           GlobalConsensusKind
         ](
+          selfId,
           consensusStorage,
           stateCreator,
           stateUpdater,
@@ -237,7 +257,9 @@ object GlobalSnapshotConsensus {
           clusterStorage,
           consensusFunctions,
           consensusClient,
-          appConfig.snapshot.consensus
+          appConfig.snapshot.consensus,
+          facilitatorSelector,
+          peerQualityTracker
         )
 
       handler = GlobalConsensusHandler.make(loop.queue)
@@ -250,9 +272,19 @@ object GlobalSnapshotConsensus {
         GlobalSnapshotStatus,
         GlobalConsensusOutcome,
         GlobalConsensusKind
-      ](consensusStorage)
+      ](consensusStorage, rumorQueue)
+
+      triggerEvent = loop.queue.offer(ConsensusCommand.FacilitateByEvent)
 
       _ <- supervisor.supervise(loop.run.compile.drain)
-      consensus = new Consensus(handler, consensusStorage, loop.manager, routes, consensusFunctions)
+      consensus = new Consensus(
+        handler,
+        consensusStorage,
+        loop.manager,
+        routes,
+        consensusFunctions,
+        Some(loop.healthRef),
+        Some(triggerEvent)
+      )
     } yield consensus
 }

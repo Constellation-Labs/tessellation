@@ -15,6 +15,7 @@ import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.errorShow
+import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.Peer
 
 import fs2.Stream
@@ -50,6 +51,10 @@ object GossipRoundRunner {
             .drain
         } >> S.supervise(selectPeers.foreverM).void
 
+        /** Peers in transient states where gossip failures are expected and should not be logged at ERROR level. */
+        private val transientStates: Set[NodeState] =
+          Set(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.WaitingForObserving, NodeState.Leaving)
+
         private def evalRound(peer: Peer): F[Unit] =
           MonadCancel[F].guarantee(
             Temporal[F]
@@ -59,8 +64,12 @@ object GossipRoundRunner {
               }
               .flatMap(_ => metrics.incrementGossipRoundSucceeded)
               .handleErrorWith { err =>
-                logger.error(s"Error running gossip round {peer=${peer.show}, reason=${err.show}") >>
-                  localHealthcheck.start(peer)
+                val logEffect =
+                  if (transientStates.contains(peer.state))
+                    logger.debug(s"Gossip round failed for peer in ${peer.state} {peer=${peer.show}, reason=${err.show}}")
+                  else
+                    logger.error(s"Error running gossip round {peer=${peer.show}, reason=${err.show}")
+                logEffect >> localHealthcheck.start(peer)
               },
             selectedPeersR.update(_.excl(peer))
           )

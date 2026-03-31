@@ -94,6 +94,7 @@ object cluster {
   case object MetagraphVersionMismatch extends RegistrationRequestValidation
   case object MetagraphIdMismatch extends RegistrationRequestValidation
   case object EnvMismatch extends RegistrationRequestValidation
+  case object ConsensusConfigMismatch extends RegistrationRequestValidation
 
   trait ClusterVerificationResult extends NoStackTrace
   case object ClusterIdDoesNotMatch extends ClusterVerificationResult

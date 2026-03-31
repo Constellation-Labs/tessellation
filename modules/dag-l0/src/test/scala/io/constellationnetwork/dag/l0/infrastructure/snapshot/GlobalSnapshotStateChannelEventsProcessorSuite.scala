@@ -183,7 +183,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         SortedMap((address, NonEmptyList.one(output.snapshotBinary))),
         SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState],
         Set.empty,
-        Map.empty,
+        SortedMap.empty,
         SortedMap.empty[Address, List[StateChannelAcceptanceResult.CurrencySnapshotWithState]]
       )
       result <- service.process(
@@ -216,7 +216,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         SortedMap((address1, NonEmptyList.of(output1.snapshotBinary)), (address2, NonEmptyList.of(output2.snapshotBinary))),
         SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState],
         Set.empty,
-        Map.empty,
+        SortedMap.empty,
         SortedMap.empty[Address, List[StateChannelAcceptanceResult.CurrencySnapshotWithState]]
       )
       result <- service.process(
@@ -250,7 +250,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         SortedMap((address2, NonEmptyList.of(output2.snapshotBinary))),
         SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState],
         Set.empty,
-        Map.empty,
+        SortedMap.empty,
         SortedMap.empty[Address, List[StateChannelAcceptanceResult.CurrencySnapshotWithState]]
       )
       result <- service.process(

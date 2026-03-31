@@ -228,19 +228,6 @@ object SnapshotStorage {
             case None       => snapshotLocalFileSystemStorage.read(ordinal).flatMap(_.traverse(_.toHashed))
           }
 
-        def getLastN(ordinal: SnapshotOrdinal, n: Int): F[Option[List[Signed[S]]]] = {
-          val ordinalsToFetch = (0 until n)
-            .flatMap(i => SnapshotOrdinal(ordinal.value.value - i))
-            .toList
-
-          ordinalsToFetch.traverse(get).map { results =>
-            val snapshots = results.flatten
-
-            if (snapshots.isEmpty) None
-            else Some(snapshots)
-          }
-        }
-
         def get(hash: Hash): F[Option[Signed[S]]] =
           hashCache(hash).get.flatMap {
             case Some(s) => s.some.pure[F]
@@ -251,6 +238,11 @@ object SnapshotStorage {
           get(ordinal).flatMap {
             _.traverse(_.toHashed.map(_.hash))
           }
+
+        def setHeadForRecovery(snapshot: Signed[S], state: C)(implicit hasher: Hasher[F]): F[Unit] =
+          logger.info(s"[SnapshotStorage] Recovery: setting head to ordinal=${snapshot.ordinal.show}") >>
+            enqueue(snapshot, state) >>
+            headRef.set((snapshot, hasher, state).some).void
 
         def getLatestBalances: F[Option[Map[Address, Balance]]] =
           headRef.get.map(_.map(_._3.balances))

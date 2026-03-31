@@ -5,14 +5,17 @@ import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.all._
 
-import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
 import io.constellationnetwork.currency.dataApplication.storage.{
   CalculatedStateLocalFileSystemStorage,
   GlobalSnapshotsWithStateDeltasLocalFileSystemStorage,
   GlobalSnapshotsWithStateLocalFileSystemStorage
 }
+import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataTransaction}
 import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnapshotCleanupStorage
+import io.constellationnetwork.currency.l0.infrastructure.mempool.CurrencyEventMempool
 import io.constellationnetwork.currency.l0.infrastructure.snapshot.CurrencySnapshotCleanupStorage
+import io.constellationnetwork.currency.l0.snapshot.DataTransactionCodecs
+import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
@@ -25,14 +28,16 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSyncGlob
 import io.constellationnetwork.node.shared.infrastructure.cluster.storage.L0ClusterStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.ValidationErrorStorage
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage
+import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage._
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.L0Peer
-import io.constellationnetwork.security.HasherSelector
+import io.constellationnetwork.security.{Hasher, HasherSelector}
 
 import fs2.io.file.Files
+import io.circe.{Encoder => CirceEncoder}
 
 object Storages {
 
@@ -85,6 +90,12 @@ object Storages {
           snapshotLocalFileSystemStorage,
           snapshotInfoLocalFileSystemStorage
         )
+
+      eventMempool <- {
+        implicit val dtEncoder: CirceEncoder[DataTransaction] = DataTransactionCodecs.encoder(dataApplication)
+        implicit val hasherInstance: Hasher[F] = hasherSelector.getCurrent
+        CurrencyEventMempool.make[F](CurrencyEventMempool.defaultConfig)
+      }
     } yield
       new Storages[F](
         globalL0Cluster = globalL0ClusterStorage,
@@ -102,7 +113,8 @@ object Storages {
         lastGlobalSnapshotSync = lastGlobalSnapshotSyncStorage,
         currencySnapshotEventValidationError = sharedStorages.currencySnapshotEventValidationError,
         currencySnapshotCleanup = currencySnapshotCleanupStorage,
-        combinedCurrencySnapshotCheckpointStorage = combinedCurrencySnapshotCheckpointStorage
+        combinedCurrencySnapshotCheckpointStorage = combinedCurrencySnapshotCheckpointStorage,
+        eventMempool = eventMempool
       ) {}
 }
 
@@ -126,5 +138,6 @@ sealed abstract class Storages[F[_]] private (
     F,
     CurrencyIncrementalSnapshot,
     CurrencySnapshotInfo
-  ]
+  ],
+  val eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey]
 )

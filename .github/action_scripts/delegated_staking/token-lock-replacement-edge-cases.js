@@ -347,10 +347,18 @@ const testMultipleSequentialReplacements = async (urls, account, currentLockHash
     amount = newAmount
     logWorkflow.info(`  Sequential replacement ${i} verified ✓`)
     
-    // Brief wait for L1 sync before next replacement
+    // Wait for ordinal progression + L1 sync before next replacement
     if (i < 3) {
-      logWorkflow.info('  Waiting for GL0 sync before next replacement...')
-      await sleep(5000)
+      logWorkflow.info('  Waiting for ordinal progression before next replacement...')
+      await withRetryOrdinal(
+        async ({ ordinal, prevOrdinal }) => {
+          if (!prevOrdinal) throw new Error('Waiting for first ordinal')
+          if (ordinal - prevOrdinal < 1) throw new Error(`Waiting for ordinal progression: ${ordinal}`)
+          return true
+        },
+        { globalL0Url: urls.globalL0Url, name: `waitBeforeReplacement${i + 1}`, maxOrdinalMisses: 10, maxStalledChecks: 30 }
+      )
+      await sleep(5000) // Extra buffer for L1 to process the snapshot
     }
   }
 
@@ -499,11 +507,15 @@ const setupNodeParameters = async (urls) => {
     'EdgeCaseTestNode2', 6000000
   )
   checkOk(ur2)
-  
-  await sleep(5000)
 
-  const nodeParams = await getNodeParams(urls)
-  logWorkflow.info(`Node parameters configured: ${nodeParams.length} nodes`)
+  // Wait for node-params to be included in a snapshot (up to 120s = ~3 consensus rounds at 43s each)
+  let nodeParams = []
+  for (let attempt = 1; attempt <= 12; attempt++) {
+    await sleep(10000)
+    nodeParams = await getNodeParams(urls)
+    logWorkflow.info(`Node parameters configured: ${nodeParams.length} nodes (attempt ${attempt}/12)`)
+    if (nodeParams.length >= 2) break
+  }
 
   return nodeParams
 }
@@ -539,6 +551,21 @@ const testTokenLockReplacementEdgeCases = async (urls) => {
   const { newLockHash, newAmount } = await testReplaceMinimumIncrease(
     urls, account, lockHash, lockAmount, stakeHash
   )
+
+  // Wait for 2 ordinal progressions to ensure lock is fully propagated to L1.
+  // One progression isn't enough with slow rounds (43s): the lock lands in ordinal N,
+  // the global snapshot for N needs to reach L1, and L1 needs to process it.
+  // Two progressions guarantees the lock's snapshot has been accepted and L1 is current.
+  logWorkflow.info('Waiting for 2 ordinal progressions before sequential replacements...')
+  await withRetryOrdinal(
+    async ({ ordinal, prevOrdinal }) => {
+      if (!prevOrdinal) throw new Error('Waiting for first ordinal')
+      if (ordinal - prevOrdinal < 2) throw new Error(`Waiting for 2 ordinal progressions: ${ordinal}`)
+      return true
+    },
+    { globalL0Url: urls.globalL0Url, name: 'waitForLockPropagation', maxOrdinalMisses: 10, maxStalledChecks: 60 }
+  )
+  await sleep(5000) // Extra buffer for L1 to process the snapshot
 
   // Test 5: Multiple sequential replacements
   await testMultipleSequentialReplacements(urls, account, newLockHash, newAmount, stakeHash)

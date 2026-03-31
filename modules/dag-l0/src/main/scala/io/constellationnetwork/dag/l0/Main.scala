@@ -8,7 +8,9 @@ import io.constellationnetwork.BuildInfo
 import io.constellationnetwork.dag.l0.StoragesInitializer.initializeStorages
 import io.constellationnetwork.dag.l0.cli.method._
 import io.constellationnetwork.dag.l0.config.types._
+import io.constellationnetwork.dag.l0.domain.snapshot.ForkRecoveryService
 import io.constellationnetwork.dag.l0.http.p2p.P2PClient
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{Finished, GlobalConsensusOutcome}
 import io.constellationnetwork.dag.l0.infrastructure.trust.handler.{ordinalTrustHandler, trustHandler}
 import io.constellationnetwork.dag.l0.modules._
@@ -21,6 +23,7 @@ import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.genesis.{GenesisFS => GenesisLoader}
+import io.constellationnetwork.node.shared.infrastructure.gossip.event._
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.GlobalSnapshotLocalFileSystemStorage
 import io.constellationnetwork.node.shared.resources.MkHttpServer
@@ -126,8 +129,41 @@ object Main
         .handlers <+>
         trustHandler(storages.trust) <+> ordinalTrustHandler(storages.trust) <+> services.consensus.handler
 
+      forkRecoveryService = ForkRecoveryService.make[IO](
+        storages.node,
+        sharedStorages.lastGlobalSnapshot,
+        services.recoveryPeerHint
+      )
+
+      eventGossipDaemon <- EventGossipDaemon
+        .make[IO, GlobalSnapshotEvent, GlobalStateKey](
+          services.eventMempool,
+          storages.cluster,
+          storages.node,
+          sharedResources.gossipClient,
+          sharedServices.session,
+          config = EventGossipConfig(
+            heartbeatInterval = cfg.snapshot.consensus.eventGossipHeartbeatInterval,
+            pullInterval = cfg.snapshot.consensus.eventGossipPullInterval
+          ),
+          getLocalChainTip = Some(forkRecoveryService.getLocalChainTip),
+          onForkDetected = Some(forkRecoveryService.onForkDetected),
+          forkLagThreshold = cfg.snapshot.consensus.forkLagThreshold
+        )
+        .asResource
+
       _ <- Daemons
-        .start(storages, services, programs, queues, nodeId, cfg, hasherSelector)
+        .start(
+          storages,
+          services,
+          programs,
+          queues,
+          nodeId,
+          keyPair,
+          cfg,
+          hasherSelector,
+          eventGossipDaemon
+        )
         .asResource
 
       api <- Resource.eval(
@@ -145,7 +181,9 @@ object Main
           cfg.shared.delegatedStaking.withdrawalTimeLimit
             .getOrElse(sharedConfig.environment, EpochProgress.MinValue),
           cfg.shared,
-          storages.combinedGlobalSnapshotCheckpointStorage
+          storages.combinedGlobalSnapshotCheckpointStorage,
+          getLocalChainTip = Some(forkRecoveryService.getLocalChainTip),
+          maybeMarkSeen = Some(eventGossipDaemon.markSeen)
         )
       )
 

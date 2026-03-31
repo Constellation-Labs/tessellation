@@ -29,6 +29,7 @@ import io.constellationnetwork.security.signature.Signed
 
 import io.circe.syntax.EncoderOps
 import io.circe.{Encoder, Json}
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object GlobalStateConverter {
 
@@ -246,7 +247,7 @@ object GlobalStateConverter {
       private val LogProgressEvery = 50000
 
       def buildMpt(implicit stateProofSelector: StateProofSelector, j: JsonSerializer[F]): F[MptRoot] = {
-        val logger = org.typelevel.log4cats.slf4j.Slf4jLogger.getLoggerFromName[F]("MPT.BuildMpt")
+        val logger = Slf4jLogger.getLoggerFromName[F]("MPT.BuildMpt")
 
         def toHexMap(kvPairs: Map[GlobalStateKey, Json]): F[Map[Hex, Json]] = {
           def convertBatch(batch: List[(GlobalStateKey, Json)]): F[List[(Hex, Json)]] =
@@ -382,6 +383,7 @@ object GlobalStateConverter {
       def syncFromStateChanges(acc: StateChangesAccumulator, snapshotOrdinal: SnapshotOrdinal)(
         implicit stateProofSelector: StateProofSelector
       ): F[Unit] = {
+        val syncLogger = Slf4jLogger.getLoggerFromName[F]("MPT.Sync")
         val BatchSize = 5000
 
         // Convert removal keys from accumulator to GlobalStateKey
@@ -414,8 +416,30 @@ object GlobalStateConverter {
         }
 
         for {
+          t0 <- Async[F].monotonic.map(_.toMillis)
           entries <- acc.toStateEntries[F]
+          t1 <- Async[F].monotonic.map(_.toMillis)
           keysToRemove = toRemovalGlobalStateKeys
+
+          // Log per-category entry counts for divergence diagnosis (DEBUG — verbose, use for troubleshooting)
+          _ <- syncLogger.debug(
+            s"[MPT.Sync] ordinal=$snapshotOrdinal delta: " +
+              s"scHashes=${acc.lastStateChannelSnapshotHashes.size} " +
+              s"txRefs=${acc.lastTxRefs.size} " +
+              s"balances=${acc.balances.size} " +
+              s"currencySnapshots=${acc.lastCurrencySnapshots.size} " +
+              s"currencyProofs=${acc.lastCurrencySnapshotsProofs.size} " +
+              s"allowSpends=${acc.activeAllowSpends.values.map(_.values.map(_.size).sum).sum} " +
+              s"tokenLocks=${acc.activeTokenLocks.values.map(_.size).sum} " +
+              s"tokenLockBal=${acc.tokenLockBalances.size} " +
+              s"delegStakes=${acc.activeDelegatedStakes.size} " +
+              s"delegWithdrawals=${acc.delegatedStakesWithdrawals.size} " +
+              s"nodeCollaterals=${acc.activeNodeCollaterals.size} " +
+              s"collateralWithdrawals=${acc.nodeCollateralWithdrawals.size} " +
+              s"metagraphSync=${acc.metagraphSyncData.size} " +
+              s"totalEntries=${entries.size} removals=${keysToRemove.size}"
+          )
+
           // Remove stale keys first (entries that are now empty: AllowSpends, TokenLocks,
           // TokenLockBalances, DelegatedStakes, DelegatedStakeWithdrawals, NodeCollaterals, NodeCollateralWithdrawals)
           _ <- store.remove(keysToRemove.toList).whenA(keysToRemove.nonEmpty)
@@ -432,6 +456,17 @@ object GlobalStateConverter {
                   store.insert[Json](batch.toMap) >> Async[F].cede
                 } >> store.sync[Json](batches.last.toMap, snapshotOrdinal)
             }
+          t2 <- Async[F].monotonic.map(_.toMillis)
+
+          // Log total MPT entry count after sync for cross-node comparison
+          totalMptEntries <- store.underlying.entries.map(_.size)
+          rootHash <- store.underlying.getRootHashForOrdinal(snapshotOrdinal)
+          _ <- syncLogger.info(
+            s"[MPT.Sync] ordinal=$snapshotOrdinal AFTER: totalMptEntries=$totalMptEntries " +
+              s"rootHash=${rootHash.map(_.show.take(12)).getOrElse("none")} " +
+              s"toStateEntriesMs=${t1 - t0} syncMs=${t2 - t1} totalMs=${t2 - t0}"
+          )
+
         } yield ()
       }
     }

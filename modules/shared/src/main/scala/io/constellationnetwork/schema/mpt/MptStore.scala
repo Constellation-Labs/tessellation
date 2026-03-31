@@ -14,6 +14,13 @@ import io.constellationnetwork.security.mpt.producer._
 import io.circe.{Decoder, Encoder, Json}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
+/** Captured snapshot of an MptStore's internal state. Call `restore` to roll back the store to the state at the time this savepoint was
+  * created. Used to undo mutations from failed artifact validation (e.g. stateProof divergence).
+  */
+trait MptStoreSavepoint[F[_]] {
+  def restore: F[Unit]
+}
+
 trait MptStore[F[_], K] {
   def get[V: Decoder](key: K): F[Option[V]]
   def getMany[V: Decoder](keys: List[K]): F[Map[K, V]]
@@ -31,6 +38,11 @@ trait MptStore[F[_], K] {
   def update[V: Encoder](toUpsert: Map[K, V], toRemove: Set[K]): F[Unit]
   def underlying: StatefulMerklePatriciaProducer[F]
   def deleteAbove(ordinal: SnapshotOrdinal): F[Unit]
+
+  /** Capture a snapshot of all internal state (producer state + last synced ordinal). The returned savepoint can restore the store to this
+    * exact state, undoing any mutations that occurred after the savepoint was created.
+    */
+  def savepoint: F[MptStoreSavepoint[F]]
 }
 
 object MptStore {
@@ -254,5 +266,15 @@ object MptStore {
         case _ =>
           Async[F].unit
       }
+
+    override def savepoint: F[MptStoreSavepoint[F]] =
+      for {
+        producerSP <- producer.savepoint
+        savedOrdinal <- lastSyncedOrdinalRef.get
+      } yield
+        new MptStoreSavepoint[F] {
+          def restore: F[Unit] =
+            producerSP.restore >> lastSyncedOrdinalRef.set(savedOrdinal)
+        }
   }
 }

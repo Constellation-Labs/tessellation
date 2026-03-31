@@ -70,7 +70,8 @@ class Joining[
   metagraphVersionHash: Hash,
   peerDiscovery: PeerDiscovery[F],
   allowanceList: Option[Set[AllowanceListEntry]],
-  metagraphId: Option[Address]
+  metagraphId: Option[Address],
+  consensusConfigHash: Option[Hash] = None
 ) {
 
   private val logger = Slf4jLogger.getLogger[F]
@@ -92,6 +93,28 @@ class Joining[
 
   def rejoin(withPeer: PeerToJoin): F[Unit] =
     twoWayHandshake(withPeer, None, skipJoinRequest = true).void
+
+  /** Re-announce this node to all known cluster peers after recovery. Unlike `join`, this does NOT require `ReadyToJoin` state — it's
+    * called from the recovery download path when the node is in DownloadInProgress/WaitingForObserving. Sends a join request to each known
+    * peer so they re-add us to their cluster storage (peers may have removed us via LocalHealthcheck during isolation).
+    */
+  def rejoinAfterRecovery: F[Unit] =
+    for {
+      peers <- clusterStorage.getResponsivePeers
+      _ <- logger.info(s"[Recovery] Re-announcing to ${peers.size} known peers")
+      results <- peers.toList.parTraverse { peer =>
+        val peerToJoin = PeerToJoin(peer.id, peer.ip, peer.p2pPort)
+        twoWayHandshake(peerToJoin, None, skipJoinRequest = false)
+          .map(p => (p.id, true))
+          .handleErrorWith { err =>
+            logger
+              .warn(s"[Recovery] Failed to rejoin with peer ${peer.id.show}: ${err.getMessage}")
+              .as((peer.id, false))
+          }
+      }
+      succeeded = results.count(_._2)
+      _ <- logger.info(s"[Recovery] Re-joined with $succeeded/${peers.size} peers")
+    } yield ()
 
   private def validateJoinConditions(): F[Unit] =
     for {
@@ -276,6 +299,12 @@ class Joining[
 
       allowanceListHash <- allowanceList.map(_.map(_.peerId)).hash
       _ <- Applicative[F].unlessA(registrationRequest.allowanceList === allowanceListHash)(AllowanceListDoesNotMatch.raiseError[F, Unit])
+
+      // Validate consensus config hash if both sides provide it (backward-compatible: skip during rolling upgrades)
+      configHashMismatch = (consensusConfigHash, registrationRequest.consensusConfigHash)
+        .mapN(_ =!= _)
+        .getOrElse(false)
+      _ <- ConsensusConfigMismatch.raiseError[F, Unit].whenA(configHashMismatch)
 
     } yield ()
 

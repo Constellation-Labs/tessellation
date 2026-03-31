@@ -10,6 +10,7 @@ import io.constellationnetwork.dag.l0.domain.delegatedStake.DelegatedStakeOutput
 import io.constellationnetwork.dag.l0.domain.nodeCollateral.NodeCollateralOutput
 import io.constellationnetwork.dag.l0.http.routes._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalSnapshotKey
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.GlobalConsensusOutcome
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment._
@@ -17,14 +18,17 @@ import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.{HttpConfig, RouteRateLimiterConfig, SharedConfig}
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{MetricsMiddleware, PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.CombinedSnapshotCheckpointFileSystemStorage
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
@@ -52,7 +56,9 @@ object HttpApi {
       F,
       GlobalIncrementalSnapshot,
       GlobalSnapshotInfo
-    ]
+    ],
+    getLocalChainTip: Option[F[Option[ChainTip]]] = None,
+    maybeMarkSeen: Option[Hash => F[Unit]] = None
   ): F[HttpApi[F, R]] =
     SnapshotRoutes
       .make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
@@ -78,7 +84,9 @@ object HttpApi {
           sharedValidators,
           delegatedStakingWithdrawalTimeLimit,
           sharedConfig,
-          snapshotRoutes
+          snapshotRoutes,
+          getLocalChainTip,
+          maybeMarkSeen
         ) {}
       }
 }
@@ -96,7 +104,9 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   sharedValidators: SharedValidators[F],
   delegatedStakingWithdrawalTimeLimit: EpochProgress,
   sharedConfig: SharedConfig,
-  snapshotRoutes: SnapshotRoutes[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
+  snapshotRoutes: SnapshotRoutes[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+  getLocalChainTip: Option[F[Option[ChainTip]]] = None,
+  maybeMarkSeen: Option[Hash => F[Unit]] = None
 ) {
 
   private val mkDagCell = (block: Signed[Block]) =>
@@ -151,6 +161,11 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
 
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip, sharedConfig.gossip.timeouts)
+  private val eventGossipRoutes = EventGossipRoutes.make[F, GlobalSnapshotEvent, GlobalStateKey](
+    services.eventMempool,
+    getLocalChainTip,
+    maybeMarkSeen
+  )
   private val trustRoutes = TrustRoutes[F](storages.trust, programs.trustPush)
   private val stateChannelRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>
@@ -195,7 +210,12 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   private val walletRoutes = WalletRoutes[F, GlobalIncrementalSnapshot]("/dag", services.address)
   private val consensusInfoRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>
-      new ConsensusInfoRoutes[F, GlobalSnapshotKey, GlobalConsensusOutcome](services.cluster, services.consensus.storage, selfId)
+      new ConsensusInfoRoutes[F, GlobalSnapshotKey, GlobalConsensusOutcome](
+        services.cluster,
+        services.consensus.storage,
+        selfId,
+        services.consensus.healthRef
+      )
     }
   private val consensusRoutes = services.consensus.routes.p2pRoutes
 
@@ -252,6 +272,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
                 clusterRoutes.p2pRoutes <+>
                   nodeRoutes.p2pRoutes <+>
                   gossipRoutes.p2pRoutes <+>
+                  eventGossipRoutes.p2pRoutes <+>
                   trustRoutes.p2pRoutes <+>
                   snapshotRoutes.p2pRoutes <+>
                   consensusRoutes

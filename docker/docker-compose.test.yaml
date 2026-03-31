@@ -1,5 +1,19 @@
 services:
   gl0:
+    # NET_ADMIN required for tc-based network isolation in fork recovery tests
+    cap_add:
+      - NET_ADMIN
+    environment:
+      # Consensus timing overrides — HOCON ${?VAR} in conf files reads these.
+      # Set in CI workflow to give slow runners more breathing room.
+      # Using bare VAR form (no =) so Docker Compose only passes them when
+      # they are actually set in the host environment (omits when unset).
+      # HOCON ${?VAR} fails to parse empty strings, so never pass empty values.
+      - CL_DECLARATION_TIMEOUT
+      - CL_RE_STALL_TIMEOUT
+      - CL_TIME_TRIGGER_INTERVAL
+      - CL_MAX_ROUND_DURATION
+      - CL_EVENT_TRIGGER_COOLDOWN
     # merge in an extra network just for tests
     networks:
       tessellation_common:

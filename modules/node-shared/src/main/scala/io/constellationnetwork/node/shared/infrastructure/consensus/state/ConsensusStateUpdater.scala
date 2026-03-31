@@ -11,14 +11,14 @@ import scala.reflect.runtime.universe.TypeTag
 
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
-import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage.ModifyStateFn
-import io.constellationnetwork.node.shared.infrastructure.consensus._
-import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
-import io.constellationnetwork.node.shared.infrastructure.consensus.update.UnlockConsensusUpdate
+import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, _}
 import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
@@ -27,6 +27,7 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher}
 
+import eu.timepit.refined.auto._
 import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -41,9 +42,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
   * {{{
   *   tryUpdateConsensus(key, resources)
   *       │
-  *       ├── unlockConsensusFn()      // Check if we can unlock
   *       ├── updateFacilitators()     // Remove withdrawn peers
-  *       ├── spreadHistoricalAck()    // Spread acks we haven't spread
   *       └── advanceStatus()          // Try to move to next status
   *             │
   *             ▼
@@ -53,22 +52,12 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
   * ==Key Methods==
   *
   * '''tryUpdateConsensus(key, resources):''' Main update method, returns old/new state if changed
-  *
-  * '''tryLockConsensus(key, state):''' Lock state during stall detection
-  *
-  * '''trySpreadAck(key, kind, resources):''' Spread acknowledgment of what we've seen
   */
 trait ConsensusStateUpdater[F[_], Key, Artifact, Context, Status, Outcome, Kind] {
 
   type StateUpdateResult = Option[(ConsensusState[Key, Status, Outcome, Kind], ConsensusState[Key, Status, Outcome, Kind])]
 
   def tryUpdateConsensus(key: Key, resources: ConsensusResources[Artifact, Kind]): F[StateUpdateResult]
-  def tryLockConsensus(key: Key, referenceState: ConsensusState[Key, Status, Outcome, Kind]): F[StateUpdateResult]
-  def trySpreadAck(
-    key: Key,
-    ackKind: Kind,
-    resources: ConsensusResources[Artifact, Kind]
-  ): F[StateUpdateResult]
 
 }
 
@@ -76,30 +65,14 @@ object ConsensusStateUpdater {
 
   def make[F[
     _
-  ]: Async, Event, Key: Show: Order: TypeTag: Encoder, Artifact <: AnyRef, Context <: AnyRef, Status: Eq: Show, Outcome: Eq, Kind: Encoder: Eq: Show: TypeTag](
+  ]: Async: Metrics, Event, Key: Show: Order: TypeTag: Encoder, Artifact <: AnyRef, Context <: AnyRef, Status: Eq: Show, Outcome: Eq, Kind: Encoder: Eq: Show: TypeTag](
     consensusStateAdvancer: ConsensusStateAdvancer[F, Key, Artifact, Context, Status, Outcome, Kind],
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind],
-    gossip: Gossip[F],
     statusOps: ConsensusOps[Status, Kind]
   ): ConsensusStateUpdater[F, Key, Artifact, Context, Status, Outcome, Kind] =
     new ConsensusStateUpdater[F, Key, Artifact, Context, Status, Outcome, Kind] {
 
       private val logger = Slf4jLogger.getLoggerFromClass(ConsensusStateUpdater.getClass)
-
-      private val unlockConsensusFn = (resources: ConsensusResources[Artifact, Kind]) =>
-        UnlockConsensusUpdate.tryUnlock[F, ConsensusState[Key, Status, Outcome, Kind], Kind](resources.acksMap)(state =>
-          statusOps.maybeCollectingKind(state.status)
-        )
-
-      def tryLockConsensus(key: Key, referenceState: ConsensusState[Key, Status, Outcome, Kind]): F[StateUpdateResult] =
-        tryUpdateExistingConsensus(key, lockConsensus(referenceState))
-
-      def trySpreadAck(
-        key: Key,
-        ackKind: Kind,
-        resources: ConsensusResources[Artifact, Kind]
-      ): F[StateUpdateResult] =
-        tryUpdateExistingConsensus(key, spreadAck(ackKind, resources))
 
       def tryUpdateConsensus(key: Key, resources: ConsensusResources[Artifact, Kind]): F[StateUpdateResult] =
         tryUpdateExistingConsensus(key, updateConsensus(resources))
@@ -129,54 +102,30 @@ object ConsensusStateUpdater {
 
       private def logIfUpdatedState(updateResult: StateUpdateResult): F[Unit] =
         updateResult.traverse {
-          case (_, newState) =>
-            logger.info(s"State updated ${newState.show}")
+          case (oldState, newState) =>
+            val oldStatusName = oldState.status.getClass.getSimpleName.stripSuffix("$")
+            val newStatusName = newState.status.getClass.getSimpleName.stripSuffix("$")
+            val statusTransition = if (oldStatusName =!= newStatusName) s"$oldStatusName→$newStatusName" else newStatusName
+            ConsensusLog.info(
+              logger,
+              Category.Phase,
+              newState.key.show,
+              "n/a",
+              LogEvent.StateUpdated,
+              "status" -> statusTransition,
+              "facilitators" -> newState.facilitators.value.size.toString,
+              "leader" -> ConsensusLog.pid(newState.leader),
+              "view" -> newState.viewNumber.toString
+            )
         }.void
-
-      private def lockConsensus(
-        referenceState: ConsensusState[Key, Status, Outcome, Kind]
-      )(state: ConsensusState[Key, Status, Outcome, Kind]): F[(ConsensusState[Key, Status, Outcome, Kind], F[Unit])] =
-        if (state.status === referenceState.status && state.lockStatus =!= LockStatus.Closed) {
-          val currentKind = statusOps.maybeCollectingKind(state.status)
-          // When re-locking from Reopened, clear the current collecting kind from spreadAckKinds
-          // so a fresh ACK reflecting the updated facilitator set can be spread
-          val clearedAckKinds =
-            if (state.lockStatus === LockStatus.Reopened)
-              currentKind.fold(state.spreadAckKinds)(state.spreadAckKinds.excl)
-            else
-              state.spreadAckKinds
-          (state.copy(lockStatus = LockStatus.Closed, spreadAckKinds = clearedAckKinds), Applicative[F].unit).pure[F]
-        } else
-          (state, Applicative[F].unit).pure[F]
-
-      private def spreadAck(
-        ackKind: Kind,
-        resources: ConsensusResources[Artifact, Kind]
-      )(state: ConsensusState[Key, Status, Outcome, Kind]): F[(ConsensusState[Key, Status, Outcome, Kind], F[Unit])] =
-        if (state.spreadAckKinds.contains(ackKind)) {
-          if (state.lockStatus === LockStatus.Closed) {
-            // Re-gossip ACK for propagation while locked; state unchanged so effect runs directly
-            val ack = getAck(ackKind, resources)
-            val effect = gossip.spread(ConsensusPeerDeclarationAck(state.key, ackKind, ack))
-            effect.as((state, Applicative[F].unit))
-          } else
-            (state, Applicative[F].unit).pure[F]
-        } else {
-          val ack = getAck(ackKind, resources)
-          val newState = state.copy(spreadAckKinds = state.spreadAckKinds.incl(ackKind))
-          val effect = gossip.spread(ConsensusPeerDeclarationAck(state.key, ackKind, ack))
-          (newState, effect).pure[F]
-        }
 
       private def updateConsensus(resources: ConsensusResources[Artifact, Kind])(
         state: ConsensusState[Key, Status, Outcome, Kind]
       ): F[(ConsensusState[Key, Status, Outcome, Kind], F[Unit])] = {
         val stateAndEffect = for {
-          _ <- unlockConsensusFn(resources)
           _ <- updateFacilitators(resources)
-          effect1 <- spreadHistoricalAck(resources)
-          effect2 <- consensusStateAdvancer.advanceStatus(resources)
-        } yield effect1 >> effect2
+          effect <- consensusStateAdvancer.advanceStatus(resources)
+        } yield effect
 
         stateAndEffect
           .run(state)
@@ -185,56 +134,32 @@ object ConsensusStateUpdater {
       private def updateFacilitators(
         resources: ConsensusResources[Artifact, Kind]
       ): StateT[F, ConsensusState[Key, Status, Outcome, Kind], Unit] =
-        StateT.modify { state =>
-          if (state.lockStatus === LockStatus.Closed || resources.withdrawalsMap.isEmpty)
-            state
-          else
-            statusOps
-              .maybeCollectingKind(state.status)
-              .map { collectingKind =>
-                val (withdrawn, remained) = state.facilitators.value.partition { peerId =>
-                  resources.withdrawalsMap.get(peerId).contains(collectingKind)
-                }
-                state.copy(
-                  facilitators = Facilitators(remained),
-                  withdrawnFacilitators = WithdrawnFacilitators(state.withdrawnFacilitators.value.union(withdrawn.toSet))
-                )
-              }
-              .getOrElse(state)
-        }
-
-      private def spreadHistoricalAck(
-        resources: ConsensusResources[Artifact, Kind]
-      ): StateT[F, ConsensusState[Key, Status, Outcome, Kind], F[Unit]] =
         StateT { state =>
-          resources.ackKinds
-            .diff(state.spreadAckKinds)
-            .intersect(statusOps.collectedKinds(state.status))
-            .toList
-            .foldLeft((state, Applicative[F].unit)) { (acc, ackKind) =>
-              acc match {
-                case (state, effect) =>
-                  val ack = getAck(ackKind, resources)
-                  val newState = state.copy(spreadAckKinds = state.spreadAckKinds.incl(ackKind))
-                  val newEffect = gossip.spread(ConsensusPeerDeclarationAck(state.key, ackKind, ack))
-                  (newState, effect >> newEffect)
-              }
-            }
-            .pure[F]
+          val newState: ConsensusState[Key, Status, Outcome, Kind] =
+            if (resources.withdrawalsMap.isEmpty)
+              state
+            else
+              statusOps
+                .maybeCollectingKind(state.status)
+                .map { collectingKind =>
+                  val (withdrawn, remained) = state.facilitators.value.partition { peerId =>
+                    resources.withdrawalsMap.get(peerId).contains(collectingKind)
+                  }
+                  state.copy(
+                    facilitators = Facilitators(remained),
+                    withdrawnFacilitators = WithdrawnFacilitators(state.withdrawnFacilitators.value.union(withdrawn.toSet))
+                  ): ConsensusState[Key, Status, Outcome, Kind]
+                }
+                .getOrElse(state)
+
+          val withdrawnCount = newState.withdrawnFacilitators.value.size - state.withdrawnFacilitators.value.size
+          val effect =
+            if (withdrawnCount > 0)
+              Metrics[F].incrementCounterBy("dag_consensus_facilitator_withdrawal", withdrawnCount)
+            else Applicative[F].unit
+
+          effect.as((newState, ()))
         }
-
-      private def getAck(ackKind: Kind, resources: ConsensusResources[Artifact, Kind]): Set[PeerId] = {
-        val getter = statusOps.kindGetter(ackKind)
-
-        val declarationAck: Set[PeerId] = resources.peerDeclarationsMap.filter {
-          case (_, peerDeclarations) => getter(peerDeclarations).isDefined
-        }.keySet
-        val withdrawalAck: Set[PeerId] = resources.withdrawalsMap.filter {
-          case (_, kind) => kind === ackKind
-        }.keySet
-
-        declarationAck.union(withdrawalAck)
-      }
     }
 
   def recoverIfForking[F[_]: Async](
@@ -245,7 +170,7 @@ object ConsensusStateUpdater {
     leavingDelay: FiniteDuration
   )(
     observations: SortedMap[PeerId, Hash]
-  ): F[Unit] =
+  )(implicit metrics: Metrics[F]): F[Unit] =
     pickMajority(observations.values.toList).traverse { majorityObservationHash =>
       val isForked = majorityObservationHash =!= ownObservationHash
 
@@ -254,9 +179,23 @@ object ConsensusStateUpdater {
           case (peerId, observationHash) if observationHash === majorityObservationHash => peerId
         }.toList
 
-        val forkRecovery = Slf4jLogger
-          .getLogger[F]
-          .warn(s"Different hash observations [$observationName]. This node is in fork") >>
+        val logger = Slf4jLogger.getLogger[F]
+
+        val forkRecovery = metrics.incrementCounter(
+          "dag_consensus_fork_detected",
+          Seq(unsafeLabelName("observation_type") -> observationName)
+        ) >>
+          logger.warn(
+            ConsensusLog.format(
+              Category.Fork,
+              "n/a",
+              "n/a",
+              LogEvent.ForkDetected,
+              "observation" -> observationName,
+              "majorityPeers" -> ConsensusLog.pids(majorityForkPeers),
+              "totalObservations" -> observations.size.toString
+            )
+          ) >>
           nodeStorage.setNodeState(NodeState.Leaving) >>
           Temporal[F].sleep(leavingDelay) >>
           nodeStorage.setNodeState(NodeState.Offline) >>
@@ -264,10 +203,43 @@ object ConsensusStateUpdater {
           ExitOnFork.exitOnFeature("CL_EXIT_ON_FORK") >>
           restartService.signalNodeForkedRestart(majorityForkPeers)
 
-        Temporal[F].start(forkRecovery).void
+        // Fire-and-forget fiber for fork recovery. Must handle all errors to ensure the node
+        // actually restarts — an unhandled error here leaves the node stuck in Offline forever.
+        val safeForkRecovery = forkRecovery.handleErrorWith { err =>
+          logger.error(err)(
+            ConsensusLog.format(
+              Category.Recovery,
+              "n/a",
+              "n/a",
+              LogEvent.ForkRecoveryFailed,
+              "observation" -> observationName
+            )
+          ) >> restartService.signalClusterLeaveRestart()
+        }
+
+        Temporal[F].start(safeForkRecovery).void
 
       } else Applicative[F].unit
     }.void
+
+  /** Identify peers whose observation hash differs from the local node's (i.e., forked peers).
+    *
+    * When this node is in the majority (its hash matches the majority hash), returns all peers with a different hash. When this node is in
+    * the minority or there's no clear majority, returns empty set — `recoverIfForking` handles the minority self-recovery case.
+    *
+    * This is deterministic: all healthy nodes have the same `ownObservationHash` and see the same `observations`, so they all identify the
+    * same set of forked peers.
+    */
+  def identifyForkedPeers(
+    ownObservationHash: Hash,
+    observations: SortedMap[PeerId, Hash]
+  ): Set[PeerId] =
+    pickMajority(observations.values.toList) match {
+      case Some(majorityHash) if majorityHash === ownObservationHash =>
+        observations.collect { case (pid, hash) if hash =!= ownObservationHash => pid }.toSet
+      case _ =>
+        Set.empty[PeerId]
+    }
 
   def pickValidatedMajorityArtifact[F[_]: Sync, Event, Key, Artifact, Context, Kind](
     ownProposalInfo: ArtifactInfo[Artifact, Context],
@@ -279,8 +251,11 @@ object ConsensusStateUpdater {
     facilitators: Set[PeerId],
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact, Context],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
-  )(implicit hasher: Hasher[F]): F[Option[ArtifactInfo[Artifact, Context]]] = {
-    def go(proposals: List[(Int, Hash)]): F[Option[ArtifactInfo[Artifact, Context]]] =
+  )(implicit hasher: Hasher[F], metrics: Metrics[F]): F[Option[ArtifactInfo[Artifact, Context]]] = {
+    val totalProposals = proposals.size
+    val majorityThreshold = totalProposals / 2
+
+    def go(proposals: List[(Int, Hash)], isFirst: Boolean): F[Option[ArtifactInfo[Artifact, Context]]] =
       proposals match {
         case (occurrences, majorityHash) :: tail =>
           if (majorityHash === ownProposalInfo.hash)
@@ -309,9 +284,39 @@ object ConsensusStateUpdater {
                 maybeArtifactInfoOrErr.flatTraverse { artifactInfoOrErr =>
                   artifactInfoOrErr.fold(
                     cause =>
-                      Slf4jLogger
-                        .getLogger[F]
-                        .warn(cause)(s"Found invalid majority hash=${majorityHash.show} with occurrences=$occurrences") >> go(tail),
+                      if (isFirst && occurrences > majorityThreshold)
+                        // The clear majority hash failed validation on this node.
+                        // Falling back to a less popular hash would diverge from the majority of nodes.
+                        // Abandon the round instead — the stall detector will recover.
+                        metrics.incrementCounter("dag_consensus_majority_artifact_abandoned") >>
+                          Slf4jLogger
+                            .getLogger[F]
+                            .error(cause)(
+                              ConsensusLog.format(
+                                Category.Validation,
+                                "n/a",
+                                "n/a",
+                                LogEvent.MajorityArtifactAbandoned,
+                                "hash" -> majorityHash.show.take(8),
+                                "proposals" -> s"$occurrences/$totalProposals",
+                                "reason" -> "validation_failed"
+                              )
+                            ) >> none[ArtifactInfo[Artifact, Context]].pure[F]
+                      else
+                        metrics.incrementCounter("dag_consensus_majority_artifact_fallback") >>
+                          Slf4jLogger
+                            .getLogger[F]
+                            .warn(cause)(
+                              ConsensusLog.format(
+                                Category.Validation,
+                                "n/a",
+                                "n/a",
+                                LogEvent.MajorityArtifactFallback,
+                                "hash" -> majorityHash.show.take(8),
+                                "occurrences" -> occurrences.toString
+                              )
+                            ) >>
+                          go(tail, isFirst = false),
                     ai => ai.some.pure[F]
                   )
                 }
@@ -320,7 +325,7 @@ object ConsensusStateUpdater {
       }
 
     val sortedProposals = proposals.foldMap(a => Map(a -> 1)).toList.map(_.swap).sorted.reverse
-    go(sortedProposals)
+    go(sortedProposals, isFirst = true)
   }
 
   def proposalAffinity[A: Order](proposals: List[A], proposal: A): Double =

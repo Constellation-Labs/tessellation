@@ -1,6 +1,6 @@
 
 assemble_all() {
-  sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
+  sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly tools/assembly
 }
 
 # Fast path: skip all assembly when docker/jars/ is pre-populated (e.g., from CI artifact cache)
@@ -43,7 +43,7 @@ if [ "$SKIP_HYPERGRAPH_BUILD" != "true" ]; then
   else
     missing=false
 
-    for module in dag-l0 dag-l1 keytool wallet; do
+    for module in dag-l0 dag-l1 keytool wallet tools; do
       set +e
       jar_path=$(ls -1t modules/"$module"/target/scala-2.13/tessellation-"$module"-assembly*.jar 2>/dev/null | head -n1)
       set -e
@@ -85,7 +85,7 @@ if [ "$SKIP_HYPERGRAPH_BUILD" != "true" ]; then
   rm -rf ./docker/jars/ > /dev/null 2>&1 || true;
   mkdir -p ./docker/jars/
 
-  for module in "dag-l0" "dag-l1" "keytool" "wallet"
+  for module in "dag-l0" "dag-l1" "keytool" "wallet" "tools"
   do
     path=$(ls -1t modules/${module}/target/scala-2.13/tessellation-${module}-assembly*.jar | head -n1)
     dest="$PROJECT_ROOT/docker/jars/${module}.jar"

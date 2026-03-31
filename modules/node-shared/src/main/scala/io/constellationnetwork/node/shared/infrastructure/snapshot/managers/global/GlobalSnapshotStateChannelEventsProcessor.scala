@@ -33,7 +33,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
   type BinaryCurrencyPair = (Signed[StateChannelSnapshotBinary], Option[CurrencySnapshotWithState])
-  type BalanceUpdate = Map[Address, Balance]
+  type BalanceUpdate = SortedMap[Address, Balance]
   type MetagraphAcceptanceResult = (NonEmptyList[BinaryCurrencyPair], BalanceUpdate)
 
   def process(
@@ -112,6 +112,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
         type Acc = (Map[Address, Set[Address]], List[ValidatedNec[(Address, StateChannelValidationError), StateChannelOutput]])
 
         events
+          .sortBy(_.address)
           .foldLeftM[F, Acc]((allFeesAddresses, List.empty)) {
             case ((prevAllFeeAddresses, alreadyProcessed), event) =>
               buildSnapshotFeesInfo(event, prevAllFeeAddresses).flatMap { snapshotFeesInfo =>
@@ -148,7 +149,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
                 val (lastCurrencyStates, incomingCurrencyState) = calculateLastCurrencySnapshots(accepted, lastGlobalSnapshotInfo)
                 val finalScSnapshots = accepted.map { case (k, (v, _)) => k -> v.map(_._1) }
                 // TODO: ASSUMING that owner addresses are restricted from being shared at this point
-                val balanceUpdates = accepted.values.map(_._2).foldLeft(Map.empty[Address, Balance])(_ ++ _)
+                val balanceUpdates = accepted.values.map(_._2).foldLeft(SortedMap.empty[Address, Balance])(_ ++ _)
 
                 StateChannelAcceptanceResult(
                   finalScSnapshots,
@@ -221,7 +222,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
               NonEmptySet.one(SignatureProof(Id(Hex("")), Signature(Hex(""))))
             )
 
-            val emptyBalanceUpdate = Map.empty[Address, Balance]
+            val emptyBalanceUpdate = SortedMap.empty[Address, Balance]
 
             // initialState reads from lastGlobalSnapshotInfo.lastCurrencySnapshots (not MptStore)
             // because the Left(fullSnapshot) vs Right(incremental, info) distinction matters:
@@ -232,7 +233,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
               lastGlobalSnapshotInfo.lastCurrencySnapshots
                 .get(address)
                 .map(init => (stubBinary, init.some))
-                .map(s => (NonEmptyList.one(s), Map.empty[Address, Balance]))
+                .map(s => (NonEmptyList.one(s), SortedMap.empty[Address, Balance]))
 
             (initialState, binaries.toList.reverse)
               .tailRecM[F, Result] {
@@ -295,7 +296,17 @@ object GlobalSnapshotStateChannelEventsProcessor {
                             // Fee deduction: if fee is required, we need a fee address (owner address from
                             // currency messages). Without one we reject. With one, we check the local balance
                             // accumulator first (to account for fees already deducted earlier in this batch),
-                            // falling back to MptStore for the initial balance lookup.
+                            // falling back to lastGlobalSnapshotInfo.balances for the initial balance lookup.
+                            //
+                            // We deliberately use lastGlobalSnapshotInfo.balances (the deterministic context
+                            // passed into accept()) rather than mptStore.getBalance, because accept() mutates
+                            // the MptStore as a side-effect (syncFromStateChanges). When validateArtifact
+                            // calls accept() a second time (to validate the leader's artifact), the MptStore
+                            // has already been updated by the validator's own proposal computation, producing
+                            // a different balance than the leader saw — causing currencyAcceptanceBalanceUpdate
+                            // to diverge. Using the immutable context snapshot avoids this entirely, and also
+                            // correctly reflects block-level balance changes (updatedGlobalBalances) that the
+                            // MptStore does not yet contain at the time of fee calculation.
                             maybeFeeAddress
                               .filter(_ => isFeeRequired)
                               .fold(
@@ -305,17 +316,17 @@ object GlobalSnapshotStateChannelEventsProcessor {
                                   current.asRight[Agg].pure[F]
                               ) { feeAddress =>
                                 val localBalance = balanceUpdate.get(feeAddress)
-                                localBalance.fold(mptStore.getBalance(feeAddress).map(_.getOrElse(Balance.empty)))(_.pure[F]).map {
-                                  balance =>
-                                    // We're inside the Some(feeAddress) handler, so isFeeRequired is always true here.
-                                    // If fee deduction succeeds, continue processing; otherwise reject remaining binaries.
-                                    (balance.minus(head.fee).toOption.map(uBalance => balanceUpdate + (feeAddress -> uBalance)) match {
-                                      case Some(newBalanceUpdate) =>
-                                        ((nel.prepend((head, (snapshot, state).asRight.some)), newBalanceUpdate).some, tail)
-                                          .asLeft[Result]
-                                      case None => // insufficient balance to cover fee — reject remaining binaries
-                                        current.asRight[Agg]
-                                    }): Either[Agg, Result]
+                                val contextBalance = lastGlobalSnapshotInfo.balances.getOrElse(feeAddress, Balance.empty)
+                                localBalance.getOrElse(contextBalance).pure[F].map { balance =>
+                                  // We're inside the Some(feeAddress) handler, so isFeeRequired is always true here.
+                                  // If fee deduction succeeds, continue processing; otherwise reject remaining binaries.
+                                  (balance.minus(head.fee).toOption.map(uBalance => balanceUpdate + (feeAddress -> uBalance)) match {
+                                    case Some(newBalanceUpdate) =>
+                                      ((nel.prepend((head, (snapshot, state).asRight.some)), newBalanceUpdate).some, tail)
+                                        .asLeft[Result]
+                                    case None => // insufficient balance to cover fee — reject remaining binaries
+                                      current.asRight[Agg]
+                                  }): Either[Agg, Result]
                                 }
                               }
                           }.handleErrorWith { e => // we don't accept neither binary nor incremental

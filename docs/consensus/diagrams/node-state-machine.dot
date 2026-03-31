@@ -1,0 +1,61 @@
+// Node State Machine
+// Render: dot -Tsvg node-state-machine.dot -o node-state-machine.svg
+
+digraph NodeStateMachine {
+    rankdir=TB;
+    node [shape=box, style=rounded, fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=10];
+
+    // States
+    Offline [label="Offline"];
+    Initial [label="Initial"];
+    ReadyToJoin [label="ReadyToJoin"];
+    LoadingGenesis [label="LoadingGenesis"];
+    GenesisReady [label="GenesisReady"];
+    WaitingForDownload [label="WaitingForDownload", style="rounded,bold"];
+    DownloadInProgress [label="DownloadInProgress", style="rounded,bold"];
+    WaitingForObserving [label="WaitingForObserving"];
+    Observing [label="Observing", style="rounded,bold"];
+    WaitingForReady [label="WaitingForReady"];
+    Ready [label="Ready", style="rounded,filled", fillcolor="lightgreen"];
+    Leaving [label="Leaving", fillcolor="lightyellow", style="rounded,filled"];
+    SessionStarted [label="SessionStarted"];
+
+    // Normal flow (black arrows)
+    Offline -> Initial;
+    Initial -> ReadyToJoin;
+    ReadyToJoin -> LoadingGenesis;
+    LoadingGenesis -> GenesisReady;
+    GenesisReady -> Ready [label="genesis node"];
+    ReadyToJoin -> SessionStarted;
+    SessionStarted -> WaitingForDownload;
+    WaitingForDownload -> DownloadInProgress [label="DownloadDaemon"];
+    DownloadInProgress -> WaitingForObserving [label="download complete"];
+    WaitingForObserving -> Observing [label="observe starts"];
+    Observing -> WaitingForReady [label="observe offset reached"];
+    WaitingForReady -> Ready [label="first round completes"];
+
+    // Recovery flow (red arrows)
+    Ready -> WaitingForDownload [label="fork detected\nor 5+ abandonments", color="red", fontcolor="red"];
+    WaitingForReady -> WaitingForDownload [label="fork detected", color="red", fontcolor="red"];
+
+    // Leaving flow (orange arrows)
+    Ready -> Leaving [label="shutdown\nor force-leave", color="orange", fontcolor="orange"];
+    Leaving -> Offline [color="orange"];
+
+    // Suppressed transitions (dashed gray)
+    Observing -> Observing [label="fork detection\nsuppressed", style="dashed", color="gray", fontcolor="gray"];
+
+    // Legend — compact HTML table at bottom
+    Legend [shape=plaintext, label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+        <TR><TD COLSPAN="2"><B>Legend</B></TD></TR>
+        <TR><TD>→</TD><TD>Normal flow</TD></TR>
+        <TR><TD><FONT COLOR="red">→</FONT></TD><TD><FONT COLOR="red">Recovery flow</FONT></TD></TR>
+        <TR><TD><FONT COLOR="orange">→</FONT></TD><TD><FONT COLOR="orange">Leaving flow</FONT></TD></TR>
+        <TR><TD><FONT COLOR="gray">⇢</FONT></TD><TD><FONT COLOR="gray">Suppressed</FONT></TD></TR>
+        </TABLE>
+    >];
+
+    Leaving -> Legend [style=invis];
+}

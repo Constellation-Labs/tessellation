@@ -340,6 +340,25 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher: JsonSerial
 
   override def applyCutoff(currentOrdinal: SnapshotOrdinal): F[Unit] =
     logger.info(s"[MPT] Applying cutoff at ordinal=$currentOrdinal") >> storage.applyCutoff(currentOrdinal)
+
+  override def savepoint: F[ProducerSavepoint[F]] =
+    for {
+      savedState <- stateRef.get
+      savedTrie <- trieRef.get
+      savedPendingInserts <- pendingInsertsRef.get
+      savedPendingRemoves <- pendingRemovesRef.get
+      savedRootHashCache <- rootHashCacheRef.get
+      savedLastBuiltOrdinal <- lastBuiltOrdinalRef.get
+    } yield
+      new ProducerSavepoint[F] {
+        def restore: F[Unit] =
+          stateRef.set(savedState) >>
+            trieRef.set(savedTrie) >>
+            pendingInsertsRef.set(savedPendingInserts) >>
+            pendingRemovesRef.set(savedPendingRemoves) >>
+            rootHashCacheRef.set(savedRootHashCache) >>
+            lastBuiltOrdinalRef.set(savedLastBuiltOrdinal)
+      }
 }
 
 object FileSystemMerklePatriciaProducer {

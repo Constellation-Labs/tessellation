@@ -23,10 +23,8 @@ import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEve
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.mpt.producer.FileSystemMerklePatriciaProducer
-import io.constellationnetwork.security.{Hasher, HasherSelector}
-
-import io.circe.Json
 
 object SharedStorages {
 

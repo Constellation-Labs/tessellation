@@ -21,6 +21,7 @@ show_time() {
 }
 
 cleanup_end() {
+  docker rm -f tx-sender 2>/dev/null || true
   if [ "$CLEANUP_DOCKER_AT_END" == "true" ] && { [ -z "$TEST_HOST" ] || [ "$TEST_HOST" = "http://localhost" ]; }; then
     ./docker/bin/tessellation-docker-cleanup.sh
   fi
@@ -49,6 +50,7 @@ if [ "$LIST_TESTS" = "true" ]; then
   echo "DAG tests (no metagraph required):"
   echo "  dag-cluster              DAG cluster check"
   echo "  delegated-staking        Delegated staking tests"
+  echo "  fork-recovery            Fork recovery test (needs --num-gl0=5)"
   echo "  token-lock-replacement   Token lock replacement edge case tests"
   echo "  snapshot-streaming       Snapshot streaming indexer E2E test"
   echo ""
@@ -127,6 +129,9 @@ else
     mkdir -p ./nodes/$i
   done
 
+  # Copy keytool and wallet jars to nodes directory for key generation (needed for nodes 3+)
+  cp ./docker/jars/keytool.jar ./docker/jars/wallet.jar ./nodes/ 2>/dev/null || true
+
   source ./docker/bin/node-key-env-setup.sh
   source ./docker/bin/docker-env-setup.sh
 
@@ -170,14 +175,17 @@ else
     cp ../../docker/docker-compose.metagraph-test.yaml . ;
     cp ../../docker/docker-compose.metagraph-genesis.yaml . ;
 
-    if [ "$i" -lt "$NUM_GL0_NODES" ]; then
-      docker compose -f docker-compose.test.yaml \
+    cd ../../
+  done
+
+  # Start all GL0 nodes together
+  for i in $(seq 0 $((NUM_GL0_NODES - 1))); do
+    cd ./nodes/$i/
+    docker compose -f docker-compose.test.yaml \
       -f docker-compose.yaml \
       -f docker-compose.volumes.yaml \
       --profile l0 \
       up -d
-    fi
-
     cd ../../
   done
 
@@ -487,6 +495,26 @@ verify_healthy
 show_time "Cluster became healthy"
 
 # ------------------------------------------------
+# Start background transaction sender (keeps EventTrigger flowing)
+# ------------------------------------------------
+TX_SENDER_JAR="$PROJECT_ROOT/docker/jars/tools.jar"
+TX_SENDER_CONF="$PROJECT_ROOT/docker/config/tx-sender.conf"
+if [ -f "$TX_SENDER_JAR" ] && [ -f "$TX_SENDER_CONF" ]; then
+  echo "Starting background transaction sender..."
+  docker rm -f tx-sender 2>/dev/null || true
+  docker run -d --name tx-sender \
+    --network tessellation_common \
+    --restart unless-stopped \
+    -v "$TX_SENDER_JAR:/app/tools.jar:ro" \
+    -v "$TX_SENDER_CONF:/app/tx-sender.conf:ro" \
+    eclipse-temurin:11-jre \
+    java -jar /app/tools.jar tx-sender --config /app/tx-sender.conf \
+    > /dev/null 2>&1 && echo "  tx-sender started" || echo "  tx-sender failed to start (non-fatal)"
+else
+  echo "Skipping background tx-sender (tools.jar or tx-sender.conf not found)"
+fi
+
+# ------------------------------------------------
 # GL0/GL1 tests (no metagraph required)
 # ------------------------------------------------
 
@@ -517,10 +545,24 @@ if should_run_test "token-lock-replacement"; then
   show_time "Token lock replacement edge case tests completed"
 fi
 
+if should_run_test "fork-recovery"; then
+  echo "================================================"
+  echo "Running fork-recovery test"
+  echo "================================================"
+  cd $PROJECT_ROOT
+  bash docker/bin/test-fork-recovery.sh $DAG_L0_PORT_PREFIX
+  show_time "Fork recovery test completed"
+fi
+
 if should_run_test "snapshot-streaming"; then
   echo "================================================"
   echo "Running snapshot-streaming E2E test"
   echo "================================================"
+  # Stop tx-sender before snapshot-streaming: the Prisma schema requires
+  # dag_transactions.snapshot_ordinal NOT NULL but the trigger that populates it
+  # from global_snapshots.hash is racy — if tx lands before the snapshot row
+  # exists, snapshot_ordinal stays NULL and the insert fails.
+  docker rm -f tx-sender 2>/dev/null || true
   cd $PROJECT_ROOT
 
   ss_test_passed=false

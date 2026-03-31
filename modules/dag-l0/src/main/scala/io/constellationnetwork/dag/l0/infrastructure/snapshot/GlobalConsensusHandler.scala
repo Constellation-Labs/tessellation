@@ -26,8 +26,7 @@ object GlobalConsensusHandler {
       GlobalConsensusKind
     ](queue)
 
-    all.eventHandler <+>
-      all.facilityHandler <+>
+    all.facilityHandler <+>
       all.proposalHandler <+>
       all.signatureHandler <+>
       all.ackHandler <+>

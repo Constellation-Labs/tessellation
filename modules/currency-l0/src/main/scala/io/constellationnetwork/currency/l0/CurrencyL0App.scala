@@ -5,7 +5,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
 
-import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
+import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataTransaction, L0NodeContext}
 import io.constellationnetwork.currency.l0.StoragesInitializer.initializeCurrencySnapshotStorages
 import io.constellationnetwork.currency.l0.cell.{L0Cell, L0CellInput}
 import io.constellationnetwork.currency.l0.cli.method
@@ -14,7 +14,9 @@ import io.constellationnetwork.currency.l0.config.types._
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
 import io.constellationnetwork.currency.l0.modules._
 import io.constellationnetwork.currency.l0.node.L0NodeContext
+import io.constellationnetwork.currency.l0.snapshot.DataTransactionCodecs
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
+import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.cats.effect.ResourceIO
@@ -24,7 +26,9 @@ import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.{ChainTip, EventGossipConfig, EventGossipDaemon}
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastCheckpointInfo
 import io.constellationnetwork.node.shared.infrastructure.statechannel.StateChannelAllowanceLists
 import io.constellationnetwork.node.shared.resources.MkHttpServer
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
@@ -43,6 +47,7 @@ import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.pureconfig._
 import fs2.concurrent.SignallingRef
+import io.circe.{Decoder => CirceDecoder, Encoder => CirceEncoder}
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import pureconfig.generic.auto._
@@ -141,7 +146,8 @@ abstract class CurrencyL0App(
           maybeAllowanceList,
           nodeShared.customAllowanceList,
           mkCell,
-          Some(customArtifacts)
+          Some(customArtifacts),
+          queues
         )
         .asResource
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext
@@ -169,8 +175,38 @@ abstract class CurrencyL0App(
         .make[IO](storages.cluster, services.localHealthcheck, sharedStorages.forkInfo)
         .handlers <+>
         services.consensus.handler
+
+      // Chain tip getter used by IHave HTTP endpoint (EventGossipRoutes, passed to HttpApi at line 231).
+      // Intentionally NOT passed to EventGossipDaemon — fork detection is deferred for currency-l0.
+      // Returns None when no checkpoint has been written yet (empty sentinel hash).
+      getLocalChainTip = storages.combinedCurrencySnapshotCheckpointStorage.getLatestCheckpointInfo.map { info =>
+        if (info.hash == Hash.empty) none[ChainTip]
+        else ChainTip(info.ordinal, info.hash).some
+      }
+
+      eventGossipDaemon <- {
+        implicit val dtEncoder: CirceEncoder[DataTransaction] = DataTransactionCodecs.encoder(dataApplicationService)
+        implicit val dtDecoder: CirceDecoder[DataTransaction] = DataTransactionCodecs.decoder(dataApplicationService)
+        // TODO: Wire ForkRecoveryService for currency-l0 (deferred).
+        // getLocalChainTip and onForkDetected are left as None to avoid chain-tip sampling
+        // overhead until the recovery callback is implemented for metagraph nodes.
+        EventGossipDaemon
+          .make[IO, CurrencySnapshotEvent, CurrencyStateKey](
+            storages.eventMempool,
+            storages.cluster,
+            storages.node,
+            sharedResources.gossipClient,
+            sharedServices.session,
+            config = EventGossipConfig(
+              heartbeatInterval = cfg.snapshot.consensus.eventGossipHeartbeatInterval,
+              pullInterval = cfg.snapshot.consensus.eventGossipPullInterval
+            )
+          )
+          .asResource
+      }
+
       _ <- Daemons
-        .start(storages, services, programs, queues, services.dataApplication, cfg, hasherSelectorAlwaysCurrent)
+        .start(storages, services, programs, queues, keyPair, services.dataApplication, eventGossipDaemon, cfg, hasherSelectorAlwaysCurrent)
         .asResource
 
       api <- Resource.eval(
@@ -190,7 +226,9 @@ abstract class CurrencyL0App(
             metagraphVersion.some,
             queues,
             sharedConfig,
-            storages.combinedCurrencySnapshotCheckpointStorage
+            storages.combinedCurrencySnapshotCheckpointStorage,
+            getLocalChainTip = Some(getLocalChainTip),
+            maybeMarkSeen = Some(eventGossipDaemon.markSeen)
           )
       )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
@@ -426,9 +464,17 @@ abstract class CurrencyL0App(
                           maybeOwnerEvent <- services.currencyMessages.validateInitialCurrencyOwner(m.metagraphOwnerMessagePath)
                           _ <- logger.info(s"Owner address set")
                           _ <- maybeOwnerEvent.traverse_ { event =>
-                            services.consensus.storage.addEvents(
-                              Map(nodeId -> List((GossipOrdinal.MinValue, event)))
-                            )
+                            implicit val dtEnc: CirceEncoder[DataTransaction] = DataTransactionCodecs.encoder(dataApplicationService)
+                            hasherSelectorAlwaysCurrent.withCurrent { implicit hasher =>
+                              Signed.forAsyncHasher[IO, CurrencySnapshotEvent](event, keyPair).flatMap { signedEvent =>
+                                signedEvent.toHashed[IO].flatMap { hashedEvent =>
+                                  storages.eventMempool.add(signedEvent).flatMap {
+                                    case Right(_) => eventGossipDaemon.publish(hashedEvent)
+                                    case Left(_)  => IO.unit
+                                  }
+                                }
+                              }
+                            }
                           }
                         } yield ()
                       } else IO.unit

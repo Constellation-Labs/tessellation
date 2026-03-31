@@ -15,6 +15,7 @@ import io.constellationnetwork.schema.node.{NodeState, RewardFraction}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.transaction.TransactionAmount
 import io.constellationnetwork.schema.{NonNegFraction, SnapshotOrdinal}
+import io.constellationnetwork.security.hash.Hash
 
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.types.numeric._
@@ -148,8 +149,53 @@ object types {
     maxFacilitatorCount: Option[PosInt] = None,
     reStallTimeout: Option[FiniteDuration] = None,
     noProgressTimeout: Option[FiniteDuration] = None,
-    maxStallCycles: Int = 3
-  )
+    maxStallCycles: Int = 3,
+    maxRoundDuration: Option[FiniteDuration] = None,
+    removalPenaltyRounds: Int = 3,
+    facilitiesTimeoutMultiplier: Double = 0.75,
+    proposalsTimeoutMultiplier: Double = 1.5,
+    signaturesTimeoutMultiplier: Double = 0.75,
+    maxConsecutiveAbandonments: Int = 5,
+    monitorSummaryInterval: FiniteDuration = FiniteDuration(10, "s"),
+    peerScoreLogInterval: FiniteDuration = FiniteDuration(60, "s"),
+    qualityDecayThreshold: Int = 100,
+    eventTriggerThreshold: Int = 1,
+    eventTriggerCooldown: FiniteDuration = FiniteDuration(5, "s"),
+    eventGossipHeartbeatInterval: FiniteDuration = FiniteDuration(10, "s"),
+    eventGossipPullInterval: FiniteDuration = FiniteDuration(20, "s"),
+    forkLagThreshold: Long = 10
+  ) {
+
+    /** Deterministic hash of consensus-critical config values.
+      *
+      * All nodes in a consensus round MUST have the same config to produce the same results. This hash is included in Facility declarations
+      * so that config divergence is detected immediately during the CollectingFacilities phase, rather than causing mysterious forks
+      * downstream.
+      *
+      * '''Consensus-critical fields''' (included in hash):
+      *   - `maxFacilitatorCount`: determines eligible facilitator list size and rendezvous hashing
+      *   - `maxStallCycles`: affects when rounds are abandoned (triggers recovery)
+      *   - `removalPenaltyRounds`: affects facilitator eligibility after eviction
+      *
+      * '''Non-critical fields''' (excluded — affect timing/performance, not deterministic outcomes):
+      *   - `timeTriggerInterval`, `declarationTimeout`, `lockDuration`, `reStallTimeout`, `noProgressTimeout`: timing only
+      *   - `facilitiesTimeoutMultiplier`, `proposalsTimeoutMultiplier`, `signaturesTimeoutMultiplier`: timing multipliers only
+      *   - `maxRoundDuration`: safety net, not consensus logic
+      *   - `declarationRangeLimit`, `eventCutter`: event filtering, not consensus decisions
+      *   - `qualityDecayThreshold`: local peer quality tracking, no consensus effect
+      *
+      * IMPORTANT: When adding new fields to ConsensusConfig, evaluate whether they affect consensus determinism. If the field changes what
+      * peers decide (facilitator selection, quorum logic, voting thresholds), add it to the hash string below. If it only affects timing or
+      * performance, exclude it.
+      */
+    lazy val deterministicConfigHash: Hash = {
+      val configString =
+        s"maxFacilitatorCount=${maxFacilitatorCount.map(_.value)}," +
+          s"maxStallCycles=$maxStallCycles," +
+          s"removalPenaltyRounds=$removalPenaltyRounds"
+      Hash.fromBytes(configString.getBytes("UTF-8"))
+    }
+  }
 
   case class EventCutterConfig(
     maxBinarySizeBytes: PosInt,
