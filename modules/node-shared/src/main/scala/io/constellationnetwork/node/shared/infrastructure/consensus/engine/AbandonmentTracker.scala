@@ -268,10 +268,21 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
                     val readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
                     val readyPeerRegs = peerRegs.view.filterKeys(readyPeerIds.contains).toMap
                     val peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key }
+                    val peersAtSameKey = readyPeerRegs.count { case (_, peerKey) => peerKey === key }
                     val totalReadyPeers = readyPeerRegs.size
                     val peersMajorityAhead = totalReadyPeers >= 2 && peersAtHigherKey > totalReadyPeers / 2
-                    if (peersMajorityAhead)
-                      // Peers have moved on — this node is genuinely behind. Trigger recovery.
+                    // Isolated node: all registrations are stale (below current key) because
+                    // peers stopped sending declarations when we were cut off. Registrations
+                    // never advance past our own current ordinal, so peersAtHigherKey=0 even
+                    // though the network has moved on. Distinguish this from kill4 (whole
+                    // cluster stuck at same key) by checking if ANY peer has our key registered.
+                    // If zero peers are at our key AND zero are ahead, registrations are stale →
+                    // treat as isolated/lagging and escalate to recovery.
+                    val peersHaveCurrentKey = peersAtSameKey > 0
+                    val shouldEscalateAsLagging = peersMajorityAhead || (!peersHaveCurrentKey && totalReadyPeers > 0)
+                    if (shouldEscalateAsLagging)
+                      // Peers have moved on (majority ahead) OR registrations are stale
+                      // (isolated node) — this node is genuinely behind. Trigger recovery.
                       retriableAtSameKeyRef.set((none[Key], 0)) >>
                         trackConsecutiveAbandonments(key).flatMap { consecutiveCount =>
                           ConsensusLog.info(
@@ -282,14 +293,16 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
                             LogEvent.RetriableEscalated,
                             "reason" -> reason.label,
                             "peersAtHigherKey" -> peersAtHigherKey.toString,
+                            "peersAtSameKey" -> peersAtSameKey.toString,
                             "totalReadyPeers" -> totalReadyPeers.toString
                           ) >>
                             healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount)) >>
                             triggerRecoveryDownload(key, consecutiveCount)
                         }
                     else
-                      // Peers are at same or lower key — whole cluster is stuck, not just us.
-                      // Keep retrying; recovery download would deadlock with no peers to serve.
+                      // Peers are at same key — whole cluster is stuck on the same ordinal,
+                      // not just us. Keep retrying; recovery download would deadlock with no
+                      // peers to serve (kill4 scenario).
                       ConsensusLog.info(
                         logger,
                         Category.Lifecycle,
@@ -297,7 +310,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
                         "n/a",
                         LogEvent.RoundAbandonedRetriable,
                         "reason" -> reason.label,
-                        "detail" -> s"escalation suppressed: not lagging (peersAtHigherKey=$peersAtHigherKey totalReady=$totalReadyPeers)",
+                        "detail" -> s"escalation suppressed: cluster stuck at same key (peersAtHigherKey=$peersAtHigherKey peersAtSameKey=$peersAtSameKey totalReady=$totalReadyPeers)",
                         "retriableAtSameKey" -> retriableCount.toString,
                         "maxRetriableAtSameKey" -> maxRetriableAtSameKey.toString
                       ) >>
