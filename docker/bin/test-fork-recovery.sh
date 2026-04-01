@@ -60,7 +60,7 @@ get_ordinal() {
 get_facilitator_count() {
   local node=$1
   local result
-  result=$(docker logs "$node" 2>&1 | grep "facilitators=" | tail -1 | grep -oP 'facilitators=\d+' | grep -oP '\d+' | head -1 || true)
+  result=$(docker logs "$node" 2>&1 | grep "facilitators=" | tail -1 | sed -n 's/.*facilitators=\([0-9]*\).*/\1/p' | head -1 || true)
   echo "${result:-0}"
 }
 
@@ -85,7 +85,7 @@ get_completed_rounds_after() {
   local node=$1
   local after_ordinal=$2
   local result
-  result=$(docker logs "$node" 2>&1 | grep "Round finished ordinal=" | grep -oP 'ordinal=\d+' | grep -oP '\d+' | awk -v min="$after_ordinal" '$1 > min' | wc -l || true)
+  result=$(docker logs "$node" 2>&1 | grep "Round finished ordinal=" | sed -n 's/.*ordinal=\([0-9]*\).*/\1/p' | awk -v min="$after_ordinal" '$1 > min' | wc -l || true)
   echo "${result:-0}"
 }
 

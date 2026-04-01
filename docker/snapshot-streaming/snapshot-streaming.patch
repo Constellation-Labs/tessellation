@@ -1,3 +1,27 @@
+diff --git a/src/main/scala/org/constellation/snapshotstreaming/db/SnapshotDAO.scala b/src/main/scala/org/constellation/snapshotstreaming/db/SnapshotDAO.scala
+index 6cda50a..90a5c8e 100644
+--- a/src/main/scala/org/constellation/snapshotstreaming/db/SnapshotDAO.scala
++++ b/src/main/scala/org/constellation/snapshotstreaming/db/SnapshotDAO.scala
+@@ -92,9 +92,10 @@ object SnapshotDAO {
+         ordinal,
+         block_hash,
+         snapshot_hash,
++        snapshot_ordinal,
+         transaction_original,
+         created_at
+-      ) VALUES ($varchar, $varchar, $varchar, $int8, $int8, $int8, $int8, $varchar, $int8, $varchar, $varchar, $jsonb, $timestamp)
++      ) VALUES ($varchar, $varchar, $varchar, $int8, $int8, $int8, $int8, $varchar, $int8, $varchar, $varchar, $int8, $jsonb, $timestamp)
+       ON CONFLICT (hash) DO NOTHING;
+     """.command.contramap { tx: STransaction =>
+       (
+@@ -109,6 +110,7 @@ object SnapshotDAO {
+         tx.ordinal,
+         tx.blockHash,
+         tx.snapshotHash,
++        tx.snapshotOrdinal,
+         tx.transactionOriginal,
+         tx.timestamp
+       )
 diff --git a/src/main/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorage.scala b/src/main/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorage.scala
 index a4683f3..45799d1 100644
 --- a/src/main/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorage.scala

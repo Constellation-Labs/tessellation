@@ -50,6 +50,9 @@ jobs:
           DIR="/opt/tessellation"
           COMPOSE="docker compose -f docker-compose.yaml -f docker-compose.host.yaml"
 
+          # Stop tx-sender on genesis node
+          ssh "n0" "docker rm -f tx-sender 2>/dev/null" || true
+
           # Stop snapshot-streaming on last node
           echo "Stopping snapshot-streaming on n$LAST_NODE"
           ssh "n$LAST_NODE" "if [ -f $DIR/snapshot-streaming/docker-compose.yaml ]; then cd $DIR/snapshot-streaming && docker compose down 2>&1 | grep -E '(Stopped|Removed)' || true; fi"

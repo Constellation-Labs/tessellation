@@ -1,15 +1,17 @@
 name: Nightly Deploy
 
 on:
+  # Deploy on every merge to develop so the nightly cluster always runs the latest code.
+  # cancel-in-progress ensures rapid pushes don't pile up — only the latest deploy runs.
   push:
     branches:
       - develop
       - nightly_ci_builds
   workflow_dispatch:
     inputs:
-      skip_assembly:
+      skip_build:
         type: boolean
-        description: 'Skip sbt assembly (reuse existing JARs on nodes)'
+        description: 'Skip build (reuse existing JARs on nodes)'
         required: false
         default: false
       clean:
@@ -19,7 +21,7 @@ on:
         default: false
   workflow_call:
     inputs:
-      skip_assembly:
+      skip_build:
         type: boolean
         required: false
         default: false
@@ -34,10 +36,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
-    name: Deploy to nightly cluster
+  build:
+    name: Build JARs
+    if: ${{ !inputs.skip_build }}
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 45
 
     steps:
       - name: Checkout code
@@ -76,6 +79,73 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/sbt-archive-keyring.gpg] https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
           sudo apt-get update
           sudo apt-get install -y sbt
+
+      - name: Build all JARs
+        run: just build --num-gl0=3 --snapshot-streaming-branch=${{ vars.SNAPSHOT_STREAMING_BRANCH || 'testing' }} --block-explorer-branch=${{ vars.BLOCK_EXPLORER_BRANCH || 'increase_delegated_stakes' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SNAPSHOT_STREAMING_REPO: https://github.com/Constellation-Labs/snapshot-streaming.git
+
+      - name: Upload tessellation JARs
+        uses: actions/upload-artifact@v4
+        with:
+          name: tessellation-jars
+          path: docker/jars/
+          retention-days: 3
+
+      - name: Upload snapshot-streaming JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-streaming-jar
+          path: docker/snapshot-streaming/snapshot-streaming.jar
+          retention-days: 3
+
+      - name: Upload block-explorer prisma
+        uses: actions/upload-artifact@v4
+        with:
+          name: block-explorer-prisma
+          path: docker/snapshot-streaming/block-explorer/prisma/
+          retention-days: 3
+
+  deploy:
+    name: Deploy to nightly cluster
+    needs: build
+    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-tags: true
+
+      - name: Install just
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+          echo "/usr/local/bin" >> $GITHUB_PATH
+
+      - name: Download tessellation JARs
+        if: ${{ !inputs.skip_build }}
+        uses: actions/download-artifact@v4
+        with:
+          name: tessellation-jars
+          path: docker/jars/
+
+      - name: Download snapshot-streaming JAR
+        if: ${{ !inputs.skip_build }}
+        uses: actions/download-artifact@v4
+        with:
+          name: snapshot-streaming-jar
+          path: docker/snapshot-streaming/
+
+      - name: Download block-explorer prisma
+        if: ${{ !inputs.skip_build }}
+        uses: actions/download-artifact@v4
+        with:
+          name: block-explorer-prisma
+          path: docker/snapshot-streaming/block-explorer/prisma/
 
       - name: Validate configuration
         run: |
@@ -127,15 +197,10 @@ jobs:
       - name: Deploy cluster
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SNAPSHOT_STREAMING_REPO: https://github.com/Constellation-Labs/snapshot-streaming.git
         run: |
           IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
           NODES=$(printf "n%s," "${!IPS[@]}" | sed 's/,$//')
-          ARGS="--remote=$NODES --snapshot-streaming-branch=testing --block-explorer-branch=increase_delegated_stakes"
-          if [ "${{ inputs.skip_assembly }}" = "true" ]; then
-            ARGS="$ARGS --skip-assembly"
-          fi
-          just up $ARGS
+          just up --skip-assembly --remote="$NODES" --snapshot-streaming-branch=${{ vars.SNAPSHOT_STREAMING_BRANCH || 'testing' }} --block-explorer-branch=${{ vars.BLOCK_EXPLORER_BRANCH || 'increase_delegated_stakes' }}
 
       - name: Post-deploy health check
         run: |

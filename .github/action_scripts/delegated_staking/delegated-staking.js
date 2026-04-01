@@ -7,7 +7,6 @@
  * - Reset Euclid to run again (`hydra stop && hydra start-genesis`)
  */
 
-const path = require('path')
 const axios = require('axios')
 const { dag4 } = require('@stardust-collective/dag4')
 
@@ -28,6 +27,7 @@ const {
   checkBadRequest,
   dagToDatum,
   getPrivateKeyAndNodeIdFromFile,
+  resolveNodeKeyPath,
   postNodeParamsNodeId,
   createDelegatedStake,
   withdrawDelegatedStake,
@@ -70,10 +70,29 @@ const setupDag4Account = (urls) => {
 }
 
 const verifyInitialNodeParams = (response) => {
-  if (response.length) {
+  if (response.length && !process.env.NODE_KEYS_DIR) {
     throw new Error(
       `Initial node parameters should be empty but received ${response.length}`,
     )
+  }
+}
+
+/** Get the current ordinal for a node's params, or -1 if none exist. */
+const getNodeParamsOrdinal = async (urls, nodeId) => {
+  try {
+    const response = await axios.get(
+      `${urls.globalL0Url}/node-params/${nodeId}?t=${Date.now()}`,
+      {
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          Pragma: 'no-cache',
+          Expires: '0',
+        },
+      },
+    )
+    return response.data.latest.value.parent.ordinal
+  } catch {
+    return -1
   }
 }
 
@@ -97,11 +116,15 @@ const checkInitialNodeParamsNode = async (urls, nodeId) => {
         },
       },
     )
-    throw new Error(
-      `Initial ${urls.globalL0Url}/node-params/${nodeId} shal not be defined`,
-    )
+    if (!process.env.NODE_KEYS_DIR) {
+      throw new Error(
+        `Initial ${urls.globalL0Url}/node-params/${nodeId} shal not be defined`,
+      )
+    }
   } catch (error) {
-    // 404 expected, NOOP
+    if (error.response && error.response.status === 404) return // expected
+    if (error.message && error.message.includes('shal not be defined')) throw error
+    // other errors: NOOP
   }
 }
 
@@ -231,34 +254,27 @@ const testCreateNodeParameters = async (urls) => {
     privateKeyString: privateKeyString1,
     nodeId: nodeId1,
     account: account1,
-  } = extractKeysAndAccount(
-    RUN_ENV === 'ci'
-      ? '../../code/hypergraph/dag-l0/genesis-node/id_ecdsa.hex'
-      : path.join(__dirname, 'keys', 'genesis-node.hex'),
-  )
+  } = extractKeysAndAccount(resolveNodeKeyPath('genesis-node', 0))
 
   const {
     privateKeyString: privateKeyString2,
     nodeId: nodeId2,
     account: account2,
-  } = extractKeysAndAccount(
-    RUN_ENV === 'ci'
-      ? '../../code/hypergraph/dag-l0/validator-1/id_ecdsa.hex'
-      : path.join(__dirname, 'keys', 'validator-1-node.hex'),
-  )
+  } = extractKeysAndAccount(resolveNodeKeyPath('validator-1', 1))
 
   const {
     privateKeyString: privateKeyString3,
     nodeId: nodeId3,
     account: account3,
-  } = extractKeysAndAccount(
-    RUN_ENV === 'ci'
-      ? '../../code/hypergraph/dag-l0/validator-2/id_ecdsa.hex'
-      : path.join(__dirname, 'keys', 'validator-2-node.hex'),
-  )
+  } = extractKeysAndAccount(resolveNodeKeyPath('validator-2', 2))
 
   await checkInitialNodeParamsNode(urls, nodeId1)
   logWorkflow.info('Check initial node params is OK')
+
+  // Read current ordinals so expected values work on clusters with existing params
+  const baseOrd1 = await getNodeParamsOrdinal(urls, nodeId1) + 1
+  const baseOrd2 = await getNodeParamsOrdinal(urls, nodeId2) + 1
+  const baseOrd3 = await getNodeParamsOrdinal(urls, nodeId3) + 1
 
   const ur1 = await postNodeParamsNodeId(
     urls,
@@ -281,7 +297,7 @@ const testCreateNodeParameters = async (urls) => {
     nodeId1,
     firstNodeParameterName1,
     firstNodeFraction1,
-    0,
+    baseOrd1,
   )
   logWorkflow.info('Check updates node params node is OK')
 
@@ -306,7 +322,7 @@ const testCreateNodeParameters = async (urls) => {
     nodeId1,
     firstNodeParameterName2,
     firstNodeFraction2,
-    1,
+    baseOrd1 + 1,
   )
   logWorkflow.info('Check second updates node params node is OK')
 
@@ -326,7 +342,7 @@ const testCreateNodeParameters = async (urls) => {
     nodeId1,
     firstNodeParameterName2,
     firstNodeFraction2,
-    1,
+    baseOrd1 + 1,
   )
   logWorkflow.info('Check updating node with incorrect params is OK')
 
@@ -349,7 +365,7 @@ const testCreateNodeParameters = async (urls) => {
     nodeId2,
     secondNodeParameterName1,
     secondNodeFraction1,
-    0,
+    baseOrd2,
   )
   logWorkflow.info('Update second node params is OK')
 
@@ -375,8 +391,43 @@ const testCreateNodeParameters = async (urls) => {
   logWorkflow.info('---- End testCreateNodeParameters ----')
 }
 
+const cleanupExistingStakes = async (urls, account) => {
+  const response = await getAccountDelegatedStakes(urls, account.address)
+  const active = response.activeDelegatedStakes || []
+  const pending = response.pendingWithdrawals || []
+
+  if (active.length === 0 && pending.length === 0) return
+
+  logWorkflow.info(`Cleaning up ${active.length} active stakes and ${pending.length} pending withdrawals`)
+
+  for (const stake of active) {
+    logWorkflow.info(`  Withdrawing stake ${stake.hash.substring(0, 16)}...`)
+    await withdrawDelegatedStake(account, stake.hash)
+  }
+
+  await withRetryOrdinal(
+    async () => {
+      const r = await getAccountDelegatedStakes(urls, account.address)
+      if (r.activeDelegatedStakes.length > 0)
+        throw new Error(`Still ${r.activeDelegatedStakes.length} active stakes`)
+      if (r.pendingWithdrawals.length > 0)
+        throw new Error(`Still ${r.pendingWithdrawals.length} pending withdrawals`)
+    },
+    {
+      globalL0Url: urls.globalL0Url,
+      name: 'cleanupExistingStakes',
+      maxOrdinalMisses: 60,
+      maxStalledChecks: 120,
+      interval: 5000,
+    },
+  )
+  logWorkflow.info('Pre-existing stakes cleaned up')
+}
+
 const testCreateDelegatedStake = async (urls, account, nodeIds) => {
   logWorkflow.info('---- Start testCreateDelegatedStake ----')
+
+  await cleanupExistingStakes(urls, account)
 
   const lockAmount = 500000000000
   const lockHash = await createTokenLock(account, urls, lockAmount)
@@ -724,13 +775,15 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
   logWorkflow.info('Waiting for withdrawal delay...')
 
   // stake removed from pendingWithdrawals after withdrawal timeout (21 days on MainNet, 3 min here)
+  // Capture the ordinal where stake is removed so we can search that snapshot for reward/unlock
+  let removalOrdinal = null
   await withRetryOrdinal(
-    async () => {
+    async ({ ordinal }) => {
       const updatedStakeResponse = await getAccountDelegatedStakes(
         urls,
         account.address,
       )
-      return assertDelegatedStakes(
+      assertDelegatedStakes(
         updatedStakeResponse,
         [
           {
@@ -742,6 +795,7 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
         ],
         [],
       )
+      removalOrdinal = ordinal
     },
     {
       globalL0Url: urls.globalL0Url,
@@ -752,7 +806,7 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
       interval: 5000,
     },
   )
-  logWorkflow.info('Stake removed from pendingWithdrawal')
+  logWorkflow.info(`Stake removed from pendingWithdrawal at ordinal ${removalOrdinal}`)
 
   await assertBalanceChange(
     account,
@@ -760,30 +814,51 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
   )
   logWorkflow.info('Wallet balance updated')
 
-  await withRetryOrdinal(
-    async ({ ordinal }) => {
-      const snapshot = await fetchSnapshot(urls, ordinal)
+  // Search the removal ordinal and a few surrounding snapshots for the reward/unlock.
+  // The reward is emitted in the same snapshot that clears the pending withdrawal,
+  // but with fast consensus the current ordinal may have already moved past it.
+  const searchStart = Math.max(1, (removalOrdinal || 1) - 2)
+  let rewardFound = false
+  for (let ord = searchStart; ord <= (removalOrdinal || searchStart) + 3; ord++) {
+    try {
+      const snapshot = await fetchSnapshot(urls, ord)
+      await assertRewardTxnInSnapshot(snapshot, account, originalStake.rewardAmount)
+      await assertTokenUnlockInSnapshot(snapshot, account, originalStake.tokenLockRef, originalStake.amount)
+      rewardFound = true
+      logWorkflow.info(`Reward and TokenUnlock found in snapshot ordinal ${ord}`)
+      break
+    } catch {
+      // not in this snapshot, try next
+    }
+  }
 
-      await assertRewardTxnInSnapshot(
-        snapshot,
-        account,
-        originalStake.rewardAmount,
-      )
-      await assertTokenUnlockInSnapshot(
-        snapshot,
-        account,
-        originalStake.tokenLockRef,
-        originalStake.amount,
-      )
-    },
-    {
-      globalL0Url: urls.globalL0Url,
-      name: 'assertRewardAndTokenUnlock',
-      maxOrdinalMisses: 10,
-      maxStalledChecks: 20,
-      interval: 3000,
-    },
-  )
+  if (!rewardFound) {
+    // Fallback: scan forward from current ordinal in case reward is delayed
+    await withRetryOrdinal(
+      async ({ ordinal }) => {
+        const snapshot = await fetchSnapshot(urls, ordinal)
+
+        await assertRewardTxnInSnapshot(
+          snapshot,
+          account,
+          originalStake.rewardAmount,
+        )
+        await assertTokenUnlockInSnapshot(
+          snapshot,
+          account,
+          originalStake.tokenLockRef,
+          originalStake.amount,
+        )
+      },
+      {
+        globalL0Url: urls.globalL0Url,
+        name: 'assertRewardAndTokenUnlock',
+        maxOrdinalMisses: 10,
+        maxStalledChecks: 20,
+        interval: 3000,
+      },
+    )
+  }
 
   logWorkflow.info('Reward and TokenUnlock transactions sent')
 
@@ -818,6 +893,30 @@ const testDelegatedStaking = async (urls) => {
     secondStakeHash,
     nodeParams[1].peerId,
   )
+
+  // Clean up: withdraw remaining stake so the account is empty for the next run
+  logWorkflow.info('---- Cleanup: withdrawing remaining stake ----')
+  await withdrawDelegatedStake(account, secondStakeHash)
+
+  await withRetryOrdinal(
+    async () => {
+      const response = await getAccountDelegatedStakes(urls, account.address)
+      if (response.activeDelegatedStakes.length > 0) {
+        throw new Error(`Still ${response.activeDelegatedStakes.length} active stakes`)
+      }
+      if (response.pendingWithdrawals.length > 0) {
+        throw new Error(`Still ${response.pendingWithdrawals.length} pending withdrawals`)
+      }
+    },
+    {
+      globalL0Url: urls.globalL0Url,
+      name: 'cleanupWithdrawRemainingStake',
+      maxOrdinalMisses: 60,
+      maxStalledChecks: 120,
+      interval: 5000,
+    },
+  )
+  logWorkflow.info('Cleanup complete: all stakes withdrawn')
 }
 
 const executeWorkflowByType = async (workflowType) => {

@@ -1,6 +1,7 @@
 const axios = require('axios')
 const elliptic = require('elliptic')
 const fs = require('fs')
+const path = require('path')
 
 const {
   sleep,
@@ -47,6 +48,37 @@ function getPrivateKeyAndNodeIdFromFile(filePath) {
     console.error('Error processing the private key:', error)
     throw error
   }
+}
+
+/**
+ * Resolve a node key file path across environments:
+ * - NODE_KEYS_DIR env var (e.g., nightly CI pointing to docker/config/local-test-keys)
+ * - CI Docker volume mounts (../../code/hypergraph/dag-l0/<node>/id_ecdsa.hex)
+ * - Local Euclid keys (delegated_staking/keys/<name>.hex)
+ *
+ * @param {string} nodeName - e.g., 'genesis-node', 'validator-1', 'validator-2'
+ * @param {number} nodeIndex - e.g., 0, 1, 2 (for NODE_KEYS_DIR layout)
+ * @returns {string} resolved file path
+ */
+function resolveNodeKeyPath(nodeName, nodeIndex) {
+  const runEnv = process.env.RUN_ENV || 'ci'
+  const keysDir = process.env.NODE_KEYS_DIR
+
+  if (keysDir) {
+    const resolved = path.isAbsolute(keysDir) ? keysDir : path.resolve(__dirname, '../../..', keysDir)
+    return path.join(resolved, String(nodeIndex), 'id_ecdsa.hex')
+  }
+
+  if (runEnv === 'ci') {
+    return `../../code/hypergraph/dag-l0/${nodeName}/id_ecdsa.hex`
+  }
+
+  const localNames = {
+    'genesis-node': 'genesis-node.hex',
+    'validator-1': 'validator-1-node.hex',
+    'validator-2': 'validator-2-node.hex',
+  }
+  return path.join(__dirname, 'keys', localNames[nodeName] || `${nodeName}.hex`)
 }
 
 const postNodeParamsNodeId = async (
@@ -465,6 +497,7 @@ module.exports = {
   checkBadRequest,
   dagToDatum,
   getPrivateKeyAndNodeIdFromFile,
+  resolveNodeKeyPath,
   postNodeParamsNodeId,
   createDelegatedStake,
   withdrawDelegatedStake,
