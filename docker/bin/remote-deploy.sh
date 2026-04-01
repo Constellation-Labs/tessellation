@@ -179,36 +179,42 @@ show_time "Transfer"
 # GL0 genesis
 log "Starting GL0 genesis on $GENESIS_NODE"
 ssh "$GENESIS_NODE" "cd $DIR && $COMPOSE --profile l0 up -d gl0" 2>&1 | grep -vE "variable is not set|Published ports"
+GL0_GENESIS_OK=false
 for i in $(seq 1 30); do
   state=$(ssh "$GENESIS_NODE" "curl -sf http://localhost:9000/node/info 2>/dev/null" \
     | python3 -c "import sys,json;print(json.load(sys.stdin).get('state',''))" 2>/dev/null || true)
-  [ "$state" = "Ready" ] && green "  GL0-0 ready" && break
+  [ "$state" = "Ready" ] && green "  GL0-0 ready" && GL0_GENESIS_OK=true && break
   printf "  GL0-0: %s (%d/30)\n" "${state:-pending}" "$i"; sleep 10
 done
+[ "$GL0_GENESIS_OK" = "true" ] || { log "ERROR: GL0 genesis did not reach Ready within 5 minutes"; exit 1; }
 
 # GL0 validators
 log "Starting GL0 on validators"
 for h in "${VALIDATORS[@]}"; do
   ssh "$h" "cd $DIR && $COMPOSE --profile l0 up -d gl0" 2>&1 | grep -vE "variable is not set|Published ports"
 done
+GL0_CLUSTER_OK=false
 for i in $(seq 1 30); do
   count=$(ssh "$GENESIS_NODE" "curl -sf http://localhost:9000/cluster/info 2>/dev/null" \
     | python3 -c "import sys,json;print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
-  [ "$count" = "$NUM_NODES" ] && green "  GL0 cluster: $count/$NUM_NODES" && break
+  [ "$count" = "$NUM_NODES" ] && green "  GL0 cluster: $count/$NUM_NODES" && GL0_CLUSTER_OK=true && break
   printf "  GL0: %s/%s (%d/30)\n" "$count" "$NUM_NODES" "$i"; sleep 10
 done
+[ "$GL0_CLUSTER_OK" = "true" ] || { log "ERROR: GL0 cluster did not form within 5 minutes"; exit 1; }
 
 # GL1 all nodes
 log "Starting GL1 on all nodes"
 for h in "${NODES[@]}"; do
   ssh "$h" "cd $DIR && $COMPOSE --profile l1 up -d gl1" 2>&1 | grep -vE "variable is not set|Published ports"
 done
+GL1_CLUSTER_OK=false
 for i in $(seq 1 30); do
   count=$(ssh "$GENESIS_NODE" "curl -sf http://localhost:9010/cluster/info 2>/dev/null" \
     | python3 -c "import sys,json;print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
-  [ "$count" = "$NUM_NODES" ] && green "  GL1 cluster: $count/$NUM_NODES" && break
+  [ "$count" = "$NUM_NODES" ] && green "  GL1 cluster: $count/$NUM_NODES" && GL1_CLUSTER_OK=true && break
   printf "  GL1: %s/%s (%d/30)\n" "$count" "$NUM_NODES" "$i"; sleep 10
 done
+[ "$GL1_CLUSTER_OK" = "true" ] || { log "ERROR: GL1 cluster did not form within 5 minutes"; exit 1; }
 
 show_time "Cluster startup"
 
@@ -224,7 +230,32 @@ ordinal=$(ssh "$GENESIS_NODE" "curl -sf http://localhost:9000/global-snapshots/l
   | python3 -c "import sys,json;print(json.load(sys.stdin)['value']['ordinal'])" 2>/dev/null || echo "?")
 green "Snapshots — ordinal: $ordinal"
 
-# === Phase 5: Snapshot-streaming on 4th node ===
+# === Phase 5: Background tx-sender on genesis node ===
+TX_SENDER_JAR="$PROJECT_ROOT/docker/jars/tools.jar"
+TX_SENDER_CONF="$PROJECT_ROOT/docker/config/tx-sender.conf"
+if [ -f "$TX_SENDER_JAR" ] && [ -s "$TX_SENDER_JAR" ] && [ -f "$TX_SENDER_CONF" ]; then
+  log "Setting up tx-sender on $GENESIS_NODE"
+  ssh "$GENESIS_NODE" "mkdir -p $DIR/tx-sender"
+  scp -q "$TX_SENDER_JAR" "$GENESIS_NODE:$DIR/tx-sender/tools.jar"
+
+  # Generate remote config pointing to localhost GL1 (host networking)
+  sed 's|http://gl1-0:9100|http://localhost:9010|' "$TX_SENDER_CONF" \
+    | ssh "$GENESIS_NODE" "cat > $DIR/tx-sender/tx-sender.conf"
+
+  ssh "$GENESIS_NODE" "docker rm -f tx-sender 2>/dev/null || true"
+  ssh "$GENESIS_NODE" "docker run -d --name tx-sender \
+    --network host \
+    --restart unless-stopped \
+    -v $DIR/tx-sender/tools.jar:/app/tools.jar:ro \
+    -v $DIR/tx-sender/tx-sender.conf:/app/tx-sender.conf:ro \
+    eclipse-temurin:11-jre \
+    java -jar /app/tools.jar tx-sender --config /app/tx-sender.conf" \
+    > /dev/null 2>&1 && green "  tx-sender started" || log "  tx-sender failed (non-fatal)"
+else
+  log "Skipping tx-sender (tools.jar or tx-sender.conf not found)"
+fi
+
+# === Phase 6: Snapshot-streaming on 4th node ===
 if [ -n "$SS_NODE" ]; then
   log "Setting up snapshot-streaming on $SS_NODE"
   SS_DIR="$PROJECT_ROOT/docker/snapshot-streaming"
@@ -311,7 +342,7 @@ services:
     depends_on:
       snapshot-streaming-postgres:
         condition: service_healthy
-    command: ["java", "-Xmx1g", "-Xms256m", "-Dconfig.file=/app/application.conf", "-cp", "/app/snapshot-streaming.jar", "org.constellation.snapshotstreaming.App"]
+    command: ["java", "-Xmx1g", "-Xms256m", "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED", "--add-opens=java.base/java.util=ALL-UNNAMED", "--add-opens=java.base/java.security=ALL-UNNAMED", "-Dconfig.file=/app/application.conf", "-cp", "/app/snapshot-streaming.jar", "org.constellation.snapshotstreaming.App"]
     volumes:
       - ./snapshot-streaming.jar:/app/snapshot-streaming.jar:ro
       - ./application.conf:/app/application.conf:ro

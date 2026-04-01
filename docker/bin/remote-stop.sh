@@ -25,8 +25,11 @@ if [ -n "$SS_NODE" ]; then
   fi
 fi
 
-# Save latest snapshot hash before stopping (for rollback restarts)
+# Stop tx-sender on genesis node
 GENESIS="${NODES[0]}"
+ssh "$GENESIS" "docker rm -f tx-sender 2>/dev/null" || true
+
+# Save latest snapshot hash before stopping (for rollback restarts)
 LAST_HASH=$(ssh "$GENESIS" "curl -sf http://localhost:9000/global-snapshots/latest 2>/dev/null" \
   | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['value']['lastSnapshotHash'])" 2>/dev/null || echo "")
 if [ -n "$LAST_HASH" ]; then
