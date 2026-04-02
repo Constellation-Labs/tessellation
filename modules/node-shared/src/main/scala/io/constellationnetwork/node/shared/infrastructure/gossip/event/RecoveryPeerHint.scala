@@ -14,6 +14,7 @@ import io.constellationnetwork.schema.peer.PeerId
 trait RecoveryPeerHint[F[_]] {
   def setPreferredPeers(peers: Set[PeerId]): F[Unit]
   def getAndClearPreferredPeers: F[Option[Set[PeerId]]]
+  def clearPreferredPeers: F[Unit]
 }
 
 object RecoveryPeerHint {
@@ -22,6 +23,7 @@ object RecoveryPeerHint {
       new RecoveryPeerHint[F] {
         def setPreferredPeers(peers: Set[PeerId]): F[Unit] = ref.set(peers.some)
         def getAndClearPreferredPeers: F[Option[Set[PeerId]]] = ref.getAndSet(None)
+        def clearPreferredPeers: F[Unit] = ref.set(None)
       }
     }
 }
