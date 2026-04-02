@@ -293,9 +293,12 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
                           triggerRecoveryDownload(key, consecutiveCount)
                       }
                   else
-                    // Multiple peers participated but couldn't form quorum — whole cluster
-                    // is stuck (kill-4 scenario). Keep retrying; recovery download would
-                    // deadlock with no Ready peers to serve downloads.
+                    // Multiple peers participated but couldn't form quorum — cluster-wide
+                    // stall (e.g. kill-4). Keep retrying; recovery download would deadlock
+                    // with no Ready peers to serve downloads.
+                    // NOTE: If all nodes lose connectivity to each other simultaneously,
+                    // each sees remaining=1 and ALL escalate — same deadlock. This is a
+                    // known limitation; external monitoring restart is the mitigation.
                     ConsensusLog.info(
                       logger,
                       Category.Lifecycle,
