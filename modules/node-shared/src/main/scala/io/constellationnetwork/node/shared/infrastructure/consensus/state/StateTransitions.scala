@@ -200,7 +200,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
           val contextMatch = outcomeContext.get(o) === context
           if (keyMatch && artifactMatch && contextMatch) (o, isRecovery).pure[F]
           else {
-            // If the peer returned a NEWER outcome (cluster has moved on past our downloaded
+            // If the peer returned a DIFFERENT outcome (cluster has moved on past our downloaded
             // ordinal), accept it and treat as recovery — skip the 43s deferral so we join
             // the cluster at its current tip instead of targeting a stale ordinal.
             val newerKeyMatch = outcomeKey.get(o) =!= key

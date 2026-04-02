@@ -2,7 +2,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
 import cats.effect.kernel.{Async, Ref}
 import cats.syntax.all._
-import cats.{Order, Show}
+import cats.{Eq, Show}
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
@@ -90,7 +90,7 @@ object AbandonReason {
   * On every abandonment, stale peer declarations, artifacts, and withdrawal maps are cleared. Without this, abandoned rounds leave
   * resources that poison retries via `.orElse` semantics in `addFacility`.
   */
-class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Status, Outcome, Kind](
+class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status, Outcome, Kind](
   ctx: ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   healthRef: Ref[F, ConsensusHealthStatus]
 ) {
@@ -258,67 +258,58 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
            ) >>
              (if (shouldEscalate)
                 // Stuck at the same ordinal with quorum-infeasible for too long.
-                // ONLY escalate to recovery if majority of Ready peers are at a HIGHER key —
-                // meaning this node is genuinely behind the network. If all peers are stuck at
-                // the same ordinal (e.g. CPU pressure causing slow gossip on a small cluster),
-                // recovery download would cause a kill-4 deadlock: all nodes enter
-                // WaitingForDownload simultaneously with no Ready peers to serve downloads.
-                ctx.clusterStorage.getResponsivePeers.flatMap { responsivePeers =>
-                  storage.getPeerRegistrations.flatMap { peerRegs =>
-                    val readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
-                    val readyPeerRegs = peerRegs.view.filterKeys(readyPeerIds.contains).toMap
-                    val peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key }
-                    val peersAtSameKey = readyPeerRegs.count { case (_, peerKey) => peerKey === key }
-                    val totalReadyPeers = readyPeerRegs.size
-                    val peersMajorityAhead = totalReadyPeers >= 2 && peersAtHigherKey > totalReadyPeers / 2
-                    // Isolated node: all registrations are stale (below current key) because
-                    // peers stopped sending declarations when we were cut off. Registrations
-                    // never advance past our own current ordinal, so peersAtHigherKey=0 even
-                    // though the network has moved on. Distinguish this from kill4 (whole
-                    // cluster stuck at same key) by checking if ANY peer has our key registered.
-                    // If zero peers are at our key AND zero are ahead, registrations are stale →
-                    // treat as isolated/lagging and escalate to recovery.
-                    val peersHaveCurrentKey = peersAtSameKey > 0
-                    val shouldEscalateAsLagging = peersMajorityAhead || (!peersHaveCurrentKey && totalReadyPeers > 0)
-                    if (shouldEscalateAsLagging)
-                      // Peers have moved on (majority ahead) OR registrations are stale
-                      // (isolated node) — this node is genuinely behind. Trigger recovery.
-                      retriableAtSameKeyRef.set((none[Key], 0)) >>
-                        trackConsecutiveAbandonments(key).flatMap { consecutiveCount =>
-                          ConsensusLog.info(
-                            logger,
-                            Category.Lifecycle,
-                            key.toString,
-                            "n/a",
-                            LogEvent.RetriableEscalated,
-                            "reason" -> reason.label,
-                            "peersAtHigherKey" -> peersAtHigherKey.toString,
-                            "peersAtSameKey" -> peersAtSameKey.toString,
-                            "totalReadyPeers" -> totalReadyPeers.toString
-                          ) >>
-                            healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount)) >>
-                            triggerRecoveryDownload(key, consecutiveCount)
-                        }
-                    else
-                      // Peers are at same key — whole cluster is stuck on the same ordinal,
-                      // not just us. Keep retrying; recovery download would deadlock with no
-                      // peers to serve (kill4 scenario).
-                      ConsensusLog.info(
-                        logger,
-                        Category.Lifecycle,
-                        key.toString,
-                        "n/a",
-                        LogEvent.RoundAbandonedRetriable,
-                        "reason" -> reason.label,
-                        "detail" -> s"escalation suppressed: cluster stuck at same key (peersAtHigherKey=$peersAtHigherKey peersAtSameKey=$peersAtSameKey totalReady=$totalReadyPeers)",
-                        "retriableAtSameKey" -> retriableCount.toString,
-                        "maxRetriableAtSameKey" -> maxRetriableAtSameKey.toString
-                      ) >>
-                        queue.offer(ConsensusCommand.RoundCompleted) >>
-                        queue.offer(ConsensusCommand.TimeTick)
+                // Determine whether this node is ISOLATED (should escalate to recovery)
+                // or the WHOLE CLUSTER is stuck (kill-4, should NOT escalate).
+                //
+                // The key signal is the last round's active facilitator count from the
+                // QuorumInfeasible reason:
+                //   active == 1: only this node participated → isolated, peers moved on
+                //   active > 1: multiple peers participated → cluster-wide stall, recovery
+                //               would deadlock with no Ready peers to serve downloads
+                //
+                // This is more reliable than peer registrations, which go stale in long-running
+                // clusters (registrations stay at join-time ordinal, far below current).
+                {
+                  val activeFacilitators = reason match {
+                    case AbandonReason.QuorumInfeasible(active, _, _) => active
+                    case _                                            => 0
                   }
-                }
-              else
+                  val isIsolated = activeFacilitators <= 1
+                  if (isIsolated)
+                    // Only this node (or nobody) participated — we're isolated from the
+                    // network. Peers have moved on. Trigger recovery download.
+                    retriableAtSameKeyRef.set((none[Key], 0)) >>
+                      trackConsecutiveAbandonments(key).flatMap { consecutiveCount =>
+                        ConsensusLog.info(
+                          logger,
+                          Category.Lifecycle,
+                          key.toString,
+                          "n/a",
+                          LogEvent.RetriableEscalated,
+                          "reason" -> reason.label,
+                          "activeFacilitators" -> activeFacilitators.toString
+                        ) >>
+                          healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount)) >>
+                          triggerRecoveryDownload(key, consecutiveCount)
+                      }
+                  else
+                    // Multiple peers participated but couldn't form quorum — whole cluster
+                    // is stuck (kill-4 scenario). Keep retrying; recovery download would
+                    // deadlock with no Ready peers to serve downloads.
+                    ConsensusLog.info(
+                      logger,
+                      Category.Lifecycle,
+                      key.toString,
+                      "n/a",
+                      LogEvent.RoundAbandonedRetriable,
+                      "reason" -> reason.label,
+                      "detail" -> s"escalation suppressed: multi-peer stall (activeFacilitators=$activeFacilitators)",
+                      "retriableAtSameKey" -> retriableCount.toString,
+                      "maxRetriableAtSameKey" -> maxRetriableAtSameKey.toString
+                    ) >>
+                      queue.offer(ConsensusCommand.RoundCompleted) >>
+                      queue.offer(ConsensusCommand.TimeTick)
+                } else
                 queue.offer(ConsensusCommand.RoundCompleted) >>
                   queue.offer(ConsensusCommand.TimeTick))
          }
