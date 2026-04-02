@@ -97,6 +97,7 @@ object ConsensusLog {
     case object FacilitatorsFinalized extends Event { val show = "FACILITATORS_FINALIZED" }
     case object FacilitatorSubsetting extends Event { val show = "FACILITATOR_SUBSETTING" }
     case object MinQuorumFloorApplied extends Event { val show = "MIN_QUORUM_FLOOR_APPLIED" }
+    case object CandidateObserving extends Event { val show = "CANDIDATE_OBSERVING" }
     case object TcaFilterApplied extends Event { val show = "TCA_FILTER_APPLIED" }
     case object AbandonedMissingLogged extends Event { val show = "ABANDONED_MISSING_LOGGED" }
 

@@ -186,7 +186,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
   def initFromDownload(key: Key, artifact: Signed[Artifact], context: Ctx, isRecovery: Boolean = false): F[Unit] =
     for {
       _ <- ConsensusLog.info(log, Category.Lifecycle, key.toString, "n/a", LogEvent.DownloadInitStart)
-      outcome <- fetchOutcomeFromCluster(key, artifact, context)
+      // isRecoveryEffective = true if either the caller flagged this as recovery, OR the cluster
+      // has advanced past our downloaded ordinal (peer returned a newer outcome). In both cases
+      // we skip the 43s TimeTrigger deferral so the node joins the cluster immediately.
+      (outcome, isRecoveryEffective) <- fetchOutcomeFromCluster(key, artifact, context, isRecovery)
         .flatMap(_.liftTo[F](new Throwable(s"[DownloadInit] Could not observe outcome for key=$key")))
         .flatMap { o =>
           // Explicit post-retry validation: retryingOnFailuresAndAllErrors returns the last value
@@ -195,12 +198,24 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
           val keyMatch = outcomeKey.get(o) === key
           val artifactMatch = outcomeArtifact.get(o) === artifact
           val contextMatch = outcomeContext.get(o) === context
-          if (keyMatch && artifactMatch && contextMatch) o.pure[F]
-          else
-            new Throwable(
-              s"[DownloadInit] Outcome validation failed after retries for key=$key: " +
-                s"keyMatch=$keyMatch, artifactMatch=$artifactMatch, contextMatch=$contextMatch"
-            ).raiseError[F, Outcome]
+          if (keyMatch && artifactMatch && contextMatch) (o, isRecovery).pure[F]
+          else {
+            // If the peer returned a DIFFERENT outcome (cluster has moved on past our downloaded
+            // ordinal), accept it and treat as recovery — skip the 43s deferral so we join
+            // the cluster at its current tip instead of targeting a stale ordinal.
+            //
+            // Lower-ordinal outcomes cannot reach here: ConsensusRoutes returns Conflict() when
+            // the peer's key > requested key, and None when key doesn't match. Only the exact
+            // key match returns Some(outcome). This branch is defensive against future API changes.
+            val keyMismatch = outcomeKey.get(o) =!= key
+            if (keyMismatch)
+              (o, true).pure[F]
+            else
+              new Throwable(
+                s"[DownloadInit] Outcome validation failed after retries for key=$key: " +
+                  s"keyMatch=$keyMatch, artifactMatch=$artifactMatch, contextMatch=$contextMatch"
+              ).raiseError[F, (Outcome, Boolean)]
+          }
         }
       _ <- storage
         .trySetInitialConsensusOutcome(outcome)
@@ -208,7 +223,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
           ifFalse = new Throwable(s"[DownloadInit] Failed to initialize consensus storage").raiseError[F, Unit],
           ifTrue = ctx.nodeStorage.tryModifyState(NodeState.Observing, NodeState.WaitingForReady) >>
             ctx.nodeStorage.setJoiningGracePeriod >> {
-              if (isRecovery) {
+              if (isRecoveryEffective) {
                 // Recovery: skip TimeTrigger deferral. The cluster is already running and the
                 // recovered node needs to join the next round immediately. Deferring 43s would
                 // cause the cluster to advance further, making the node's first round stale.
@@ -267,7 +282,12 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
       _ <- queue.offer(StartRound(TimeTrigger.some))
     } yield ()
 
-  private def fetchOutcomeFromCluster(key: Key, artifact: Signed[Artifact], context: Ctx): F[Option[Outcome]] = {
+  private def fetchOutcomeFromCluster(
+    key: Key,
+    artifact: Signed[Artifact],
+    context: Ctx,
+    isRecovery: Boolean = false
+  ): F[Option[Outcome]] = {
     val retryPolicy = limitRetries(20).join(constantDelay(3.seconds))
 
     def selectPeer: F[Peer] =
@@ -317,9 +337,15 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
 
     def wasSuccessful(maybeOutcome: Option[Outcome]): F[Boolean] =
       maybeOutcome.exists { outcome =>
-        outcomeKey.get(outcome) === key &&
-        outcomeArtifact.get(outcome) === artifact &&
-        outcomeContext.get(outcome) === context
+        val exactMatch = outcomeKey.get(outcome) === key &&
+          outcomeArtifact.get(outcome) === artifact &&
+          outcomeContext.get(outcome) === context
+        // During recovery, accept any valid outcome immediately. The cluster may have
+        // advanced past our downloaded ordinal, so exact match will never succeed.
+        // The post-retry validation in initFromDownload handles keyMismatch correctly
+        // (accepts the newer outcome and skips 43s deferral). Without this early-out,
+        // recovery wastes 60s (20 retries × 3s) on every cycle, falling further behind.
+        exactMatch || isRecovery
       }.pure[F]
 
     def onFailure(maybeOutcome: Option[Outcome], retryDetails: RetryDetails): F[Unit] = {

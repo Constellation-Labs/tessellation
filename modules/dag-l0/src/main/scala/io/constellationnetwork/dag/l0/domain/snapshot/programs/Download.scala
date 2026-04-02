@@ -44,6 +44,12 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry.RetryPolicies._
 import retry._
 
+case class ObserveDeadlineExceeded(currentOrdinal: SnapshotOrdinal, targetOrdinal: SnapshotOrdinal)
+    extends RuntimeException(
+      s"Observe deadline exceeded: stuck at $currentOrdinal, target was $targetOrdinal. Re-triggering recovery."
+    )
+    with NoStackTrace
+
 object Download {
   def make[F[_]: Async: Parallel: Random: KryoSerializer: JsonSerializer](
     snapshotStorage: SnapshotDownloadStorage[F],
@@ -221,9 +227,15 @@ object Download {
           // Reuse the normal observe path — after setForRecovery, snapshots are sequential.
           // observe updates lastN and lastGlobal storages but NOT the consensus SnapshotStorage head.
           // Override observationOffset for this call by computing the limit ourselves.
+          // Deadline: if observe doesn't complete within 5 minutes, the observe loop is stuck
+          // (peers moved too far ahead for sequential fetch). Abandon and re-trigger recovery.
           observeResult <- {
             val recoveryObservationLimit = SnapshotOrdinal(lastSnapshot.ordinal.value |+| recoveryOffset)
-            observeWithLimit(result, recoveryObservationLimit)
+            Async[F].timeoutTo(
+              observeWithLimit(result, recoveryObservationLimit),
+              5.minutes,
+              Async[F].raiseError(ObserveDeadlineExceeded(lastSnapshot.ordinal, recoveryObservationLimit))
+            )
           }
           (observedResult, observationLimit) = observeResult
           (observedSnapshot, observedContext) = observedResult
@@ -254,15 +266,16 @@ object Download {
           }
         }
         .onError(logger.error(_)("[RecoveryDownload] Unexpected failure, will retry"))
-        .handleErrorWith { _ =>
+        .handleErrorWith { err =>
           // Recovery failed — transition back to WaitingForDownload so DownloadDaemon retries.
-          // Keep the recovery flag set so the retry uses the incremental path again.
+          // Reraise so DownloadDaemon's error handler fires (which does NOT clear the recovery flag)
+          // instead of the success path (which clears it via clearRecoveryDownload).
           logger.warn("[RecoveryDownload] Failed, transitioning to WaitingForDownload for retry") >>
             nodeStorage.getNodeState.flatMap {
               case state if state =!= NodeState.WaitingForDownload && state =!= NodeState.Ready =>
                 nodeStorage.setNodeState(NodeState.WaitingForDownload)
               case _ => Async[F].unit
-            }
+            } >> err.raiseError[F, Unit]
         }
     }
 

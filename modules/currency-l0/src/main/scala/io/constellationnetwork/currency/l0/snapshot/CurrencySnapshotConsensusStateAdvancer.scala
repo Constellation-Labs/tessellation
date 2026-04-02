@@ -961,7 +961,7 @@ object CurrencySnapshotConsensusStateAdvancer {
       private def checkForkByLastSnapshotHash[A](declarations: SortedMap[PeerId, A], ownHash: Hash)(
         implicit extract: A => Hash
       ): F[Unit] =
-        recoverIfForking[F](ownHash, lastSnapshotHashObservationName, restartService, nodeStorage, leavingDelay)(
+        recoverIfForking[F](ownHash, lastSnapshotHashObservationName, nodeStorage)(
           declarations.map { case (pid, decl) => (pid, extract(decl)) }
         )
 
@@ -978,7 +978,7 @@ object CurrencySnapshotConsensusStateAdvancer {
         declarations: SortedMap[PeerId, A],
         ownHash: Hash
       )(extractHash: A => Hash): F[Unit] =
-        recoverIfForking[F](ownHash, facilitatorsHashObservationName, restartService, nodeStorage, leavingDelay)(
+        recoverIfForking[F](ownHash, facilitatorsHashObservationName, nodeStorage)(
           declarations.map { case (pid, decl) => (pid, extractHash(decl)) }
         )
 
@@ -988,7 +988,7 @@ object CurrencySnapshotConsensusStateAdvancer {
           case (pid, f) => f.consensusConfigHash.map(pid -> _)
         }
         if (peerConfigHashes.nonEmpty)
-          recoverIfForking[F](ownConfigHash, consensusConfigHashObservationName, restartService, nodeStorage, leavingDelay)(
+          recoverIfForking[F](ownConfigHash, consensusConfigHashObservationName, nodeStorage)(
             SortedMap.from(peerConfigHashes)
           )
         else Applicative[F].unit

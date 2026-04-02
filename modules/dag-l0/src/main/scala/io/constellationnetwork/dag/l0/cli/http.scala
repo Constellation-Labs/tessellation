@@ -17,17 +17,23 @@ object http {
     idleTimeInPool = 30.seconds
   )
 
+  val publicMaxConnectionsOpts: Opts[Option[Int]] = Opts
+    .option[Int]("public-max-connections", help = "Max concurrent connections on public HTTP server")
+    .orElse(Opts.env[Int]("CL_PUBLIC_HTTP_MAX_CONNECTIONS", help = "Max concurrent connections on public HTTP server"))
+    .orNone
+
   val opts: Opts[HttpConfig] =
     (
       externalIpOpts.withDefault(host"127.0.0.1"),
       publicHttpPortOpts.withDefault(port"9000"),
       p2pHttpPortOpts.withDefault(port"9001"),
-      cliHttpPortOpts.withDefault(port"9002")
-    ).mapN((externalIp, publicPort, p2pPort, cliPort) =>
+      cliHttpPortOpts.withDefault(port"9002"),
+      publicMaxConnectionsOpts
+    ).mapN((externalIp, publicPort, p2pPort, cliPort, publicMaxConn) =>
       HttpConfig(
         externalIp,
         client,
-        HttpServerConfig(host"0.0.0.0", publicPort, shutdownTimeout = 1.second),
+        HttpServerConfig(host"0.0.0.0", publicPort, shutdownTimeout = 1.second, maxConnections = publicMaxConn),
         HttpServerConfig(host"0.0.0.0", p2pPort, shutdownTimeout = 1.second),
         HttpServerConfig(host"127.0.0.1", cliPort, shutdownTimeout = 1.second)
       )
