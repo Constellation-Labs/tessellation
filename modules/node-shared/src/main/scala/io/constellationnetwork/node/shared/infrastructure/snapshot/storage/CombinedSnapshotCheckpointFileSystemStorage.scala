@@ -6,6 +6,8 @@ import cats.effect.std.Semaphore
 import cats.effect.{Async, Concurrent, Resource}
 import cats.syntax.all._
 
+import scala.concurrent.duration._
+
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo}
@@ -13,6 +15,7 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.storage.LocalFileSystemStorage
 
+import com.github.blemale.scaffeine.{Cache, Scaffeine}
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
@@ -47,7 +50,8 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
 ](
   path: Path,
   lastSnapshotInfo: SignallingRef[F, LastCheckpointInfo],
-  concurrentStreams: Semaphore[F]
+  concurrentStreams: Semaphore[F],
+  byteCache: Cache[SnapshotOrdinal, Array[Byte]]
 )(
   implicit encSigned: Encoder[Signed[S]],
   encState: Encoder[SI]
@@ -96,44 +100,47 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
     }
   }
 
-  def getAsHttpResponse(ordinal: SnapshotOrdinal): F[Option[Response[F]]] = {
-    val file = path / ordinal.value.value.toString
-
-    Files[F].exists(file).flatMap {
-      case false => Concurrent[F].pure(None)
-      case true =>
-        Files[F].size(file).flatMap { size =>
-          val fileStream: Stream[F, Byte] = Files[F].readAll(file, 64 * 1024, Flags.Read)
-          val bodyWithPermit: Stream[F, Byte] =
-            Stream.resource(concurrentStreams.permit).flatMap { _ =>
-              fileStream
-            }
-
-          Response[F](
-            status = Status.Ok,
-            headers = Headers(
-              `Content-Type`(MediaType.application.json),
-              `Transfer-Encoding`(TransferCoding.chunked),
-              `Content-Length`(size)
-            ),
-            body = bodyWithPermit
-          ).some.pure[F]
+  /** Read checkpoint bytes — serves from Scaffeine cache if present, otherwise reads from disk and populates cache. Max 4 entries (~8MB for
+    * 2MB checkpoints) with 60s TTL.
+    */
+  private def readBytesWithCache(ordinal: SnapshotOrdinal): F[Option[Array[Byte]]] =
+    Async[F].delay(byteCache.getIfPresent(ordinal)).flatMap {
+      case Some(bytes) => bytes.some.pure[F]
+      case None =>
+        val file = path / ordinal.value.value.toString
+        Files[F].exists(file).flatMap {
+          case false => none[Array[Byte]].pure[F]
+          case true =>
+            Stream
+              .resource(concurrentStreams.permit)
+              .flatMap { _ =>
+                Files[F].readAll(file, 64 * 1024, Flags.Read)
+              }
+              .compile
+              .to(Array)
+              .flatTap { bytes =>
+                Async[F].delay(byteCache.put(ordinal, bytes))
+              }
+              .map(_.some)
         }
     }
-  }
 
-  def getAsStream(ordinal: SnapshotOrdinal): F[Option[Stream[F, Byte]]] = {
-    val file = path / ordinal.value.value.toString
-    Files[F].exists(file).flatMap {
-      case false => Concurrent[F].pure(None)
-      case true =>
-        val fileStream: Stream[F, Byte] =
-          Stream.resource(concurrentStreams.permit).flatMap { _ =>
-            Files[F].readAll(file, 64 * 1024, Flags.Read)
-          }
-        fileStream.some.pure[F]
-    }
-  }
+  def getAsHttpResponse(ordinal: SnapshotOrdinal): F[Option[Response[F]]] =
+    readBytesWithCache(ordinal).map(_.map { bytes =>
+      Response[F](
+        status = Status.Ok,
+        headers = Headers(
+          `Content-Type`(MediaType.application.json),
+          `Content-Length`(bytes.length.toLong)
+        ),
+        body = Stream.chunk[F, Byte](fs2.Chunk.array(bytes))
+      )
+    })
+
+  def getAsStream(ordinal: SnapshotOrdinal): F[Option[Stream[F, Byte]]] =
+    readBytesWithCache(ordinal).map(_.map { bytes =>
+      Stream.chunk[F, Byte](fs2.Chunk.array(bytes))
+    })
 
   def exists(ordinal: SnapshotOrdinal): F[Boolean] =
     exists(toOrdinalName(ordinal))
@@ -209,6 +216,15 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
 
 object CombinedSnapshotCheckpointFileSystemStorage {
 
+  /** Scaffeine byte cache for combined checkpoint files. Small max size (4 entries) since checkpoints are ~2MB each. TTL ensures stale data
+    * is evicted.
+    */
+  private def mkByteCache: Cache[SnapshotOrdinal, Array[Byte]] =
+    Scaffeine()
+      .expireAfterWrite(60.seconds)
+      .maximumSize(4)
+      .build[SnapshotOrdinal, Array[Byte]]()
+
   def make[
     F[_]: Async: Files,
     S <: Snapshot,
@@ -218,7 +234,8 @@ object CombinedSnapshotCheckpointFileSystemStorage {
   )(implicit encSigned: Encoder[Signed[S]], encState: Encoder[SI]): F[CombinedSnapshotCheckpointFileSystemStorage[F, S, SI]] = for {
     lastCheckpointInfo <- SignallingRef.of[F, LastCheckpointInfo](LastCheckpointInfo.empty())
     concurrentStreams <- Semaphore[F](5)
-    storage = new CombinedSnapshotCheckpointFileSystemStorage[F, S, SI](path, lastCheckpointInfo, concurrentStreams)
+    cache = mkByteCache
+    storage = new CombinedSnapshotCheckpointFileSystemStorage[F, S, SI](path, lastCheckpointInfo, concurrentStreams, cache)
     _ <- storage.createDirectoryIfNotExists().rethrowT
   } yield storage
 }
