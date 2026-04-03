@@ -217,28 +217,40 @@ fi
 # that have already received the isolated node's facilities declaration will
 # stall at 0/N proposals while other nodes may do a view change — creating
 # a permanent split where half the cluster is on view=0 and half on view=1.
-# By waiting for ROUND_COMPLETED on the monitor node, we ensure all nodes
-# have finished the current round and the isolated node's state is clean.
-echo "  Waiting for a round boundary before isolating..."
-round_sync_deadline=$(($(date +%s) + 120))
+#
+# Strategy: Watch the ISOLATION NODE's own logs for ROUND_COMPLETED with all
+# facilitators, then isolate immediately. Using the isolation node guarantees
+# it has finished its round (sent all signatures, processed the outcome).
+# We use `docker logs -f` (streaming) instead of polling `--since 2s` to
+# eliminate the 1-2s gap where a round could start between polls.
+echo "  Waiting for a round boundary on $ISOLATION_NODE before isolating..."
+
+# Stream logs from the isolation node; as soon as we see ROUND_COMPLETED
+# with the full facilitator set, break and apply iptables immediately.
+# timeout ensures we don't hang forever.
 round_synced=false
-while [ "$(date +%s)" -lt "$round_sync_deadline" ]; do
-  if docker logs --since 2s "$MONITOR_NODE" 2>&1 | grep -q "ROUND_COMPLETED.*facilitators=$NUM_GL0"; then
-    echo "  Round completed on $MONITOR_NODE — isolating now"
-    round_synced=true
-    break
-  fi
-  sleep 1
-done
-if [ "$round_synced" != "true" ]; then
+if timeout 120 bash -c '
+  docker logs -f "'"$ISOLATION_NODE"'" 2>&1 | while IFS= read -r line; do
+    if echo "$line" | grep -q "ROUND_COMPLETED.*facilitators='"$NUM_GL0"'"; then
+      exit 0  # signal: round boundary found
+    fi
+  done
+'; then
+  round_synced=true
+  echo "  Round completed on $ISOLATION_NODE — isolating immediately"
+else
   echo "  WARNING: Could not sync to round boundary within 120s, isolating anyway"
 fi
 
-# Drop all inbound and outbound traffic — kills existing TCP connections immediately
-docker exec --privileged "$ISOLATION_NODE" iptables -A INPUT -j DROP 2>&1 || \
-  fail "Could not apply iptables INPUT DROP (needs --privileged or NET_ADMIN)"
-docker exec --privileged "$ISOLATION_NODE" iptables -A OUTPUT -j DROP 2>&1 || \
-  fail "Could not apply iptables OUTPUT DROP"
+# Brief pause: even after the isolation node finishes its round, other nodes
+# may still be processing signatures/acceptance for ~1-2s. This ensures the
+# cluster is in quiescent inter-round state before we cut the network.
+sleep 2
+
+# Drop all inbound and outbound traffic — kills existing TCP connections immediately.
+# Apply both rules in a single exec to minimize the window.
+docker exec --privileged "$ISOLATION_NODE" bash -c 'iptables -A INPUT -j DROP && iptables -A OUTPUT -j DROP' 2>&1 || \
+  fail "Could not apply iptables rules (needs --privileged or NET_ADMIN)"
 
 echo "  $ISOLATION_NODE isolated. Waiting ${ISOLATION_DURATION}s for cluster to advance..."
 sleep "$ISOLATION_DURATION"
