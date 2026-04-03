@@ -161,10 +161,11 @@ object ConsensusEventLoop {
               // and can crash the event loop, preventing InitializeFromDownload from being dequeued.
               val isRecovering = currentState === NodeState.WaitingForDownload ||
                 currentState === NodeState.DownloadInProgress ||
-                currentState === NodeState.WaitingForObserving
+                currentState === NodeState.WaitingForObserving ||
+                currentState === NodeState.Observing
               val isStaleCommand = cmd match {
                 case _: ConsensusCommand.CheckUpdate | _: ConsensusCommand.ConsensusFinished | ConsensusCommand.RoundCompleted |
-                    ConsensusCommand.TimeTick =>
+                    ConsensusCommand.TimeTick | ConsensusCommand.FacilitateByEvent | _: ConsensusCommand.StartRound =>
                   true
                 case _ => false
               }
