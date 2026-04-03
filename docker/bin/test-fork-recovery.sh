@@ -207,7 +207,7 @@ echo "Phase 2: Isolating $ISOLATION_NODE (100% packet loss)..."
 
 # noqueue qdisc has exclusivity flag; delete first, then add netem
 docker exec --privileged "$ISOLATION_NODE" tc qdisc del dev eth0 root 2>/dev/null || true
-docker exec --privileged "$ISOLATION_NODE" tc qdisc add dev eth0 root netem loss 100% 2>&1 || \
+docker exec --privileged "$ISOLATION_NODE" tc qdisc replace dev eth0 root netem loss 100% 2>&1 || \
   fail "Could not apply network impairment (needs --privileged or NET_ADMIN)"
 
 echo "  $ISOLATION_NODE isolated. Waiting ${ISOLATION_DURATION}s for cluster to advance..."
