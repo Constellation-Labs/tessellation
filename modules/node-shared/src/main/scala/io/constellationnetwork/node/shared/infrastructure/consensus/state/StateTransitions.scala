@@ -189,7 +189,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
       // isRecoveryEffective = true if either the caller flagged this as recovery, OR the cluster
       // has advanced past our downloaded ordinal (peer returned a newer outcome). In both cases
       // we skip the 43s TimeTrigger deferral so the node joins the cluster immediately.
-      (outcome, isRecoveryEffective) <- fetchOutcomeFromCluster(key, artifact, context)
+      (outcome, isRecoveryEffective) <- fetchOutcomeFromCluster(key, artifact, context, isRecovery)
         .flatMap(_.liftTo[F](new Throwable(s"[DownloadInit] Could not observe outcome for key=$key")))
         .flatMap { o =>
           // Explicit post-retry validation: retryingOnFailuresAndAllErrors returns the last value
@@ -282,7 +282,12 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
       _ <- queue.offer(StartRound(TimeTrigger.some))
     } yield ()
 
-  private def fetchOutcomeFromCluster(key: Key, artifact: Signed[Artifact], context: Ctx): F[Option[Outcome]] = {
+  private def fetchOutcomeFromCluster(
+    key: Key,
+    artifact: Signed[Artifact],
+    context: Ctx,
+    isRecovery: Boolean = false
+  ): F[Option[Outcome]] = {
     val retryPolicy = limitRetries(20).join(constantDelay(3.seconds))
 
     def selectPeer: F[Peer] =
@@ -332,9 +337,15 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
 
     def wasSuccessful(maybeOutcome: Option[Outcome]): F[Boolean] =
       maybeOutcome.exists { outcome =>
-        outcomeKey.get(outcome) === key &&
-        outcomeArtifact.get(outcome) === artifact &&
-        outcomeContext.get(outcome) === context
+        val exactMatch = outcomeKey.get(outcome) === key &&
+          outcomeArtifact.get(outcome) === artifact &&
+          outcomeContext.get(outcome) === context
+        // During recovery, accept any valid outcome immediately. The cluster may have
+        // advanced past our downloaded ordinal, so exact match will never succeed.
+        // The post-retry validation in initFromDownload handles keyMismatch correctly
+        // (accepts the newer outcome and skips 43s deferral). Without this early-out,
+        // recovery wastes 60s (20 retries × 3s) on every cycle, falling further behind.
+        exactMatch || isRecovery
       }.pure[F]
 
     def onFailure(maybeOutcome: Option[Outcome], retryDetails: RetryDetails): F[Unit] = {
