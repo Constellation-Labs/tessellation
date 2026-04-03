@@ -64,6 +64,16 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
       .map(validStateForSnapshotReturn)
       .ifM(action, serviceUnavailableNodeNotReady)
 
+  /** Fast-reject ordinals that are definitely not stored: above head or below head minus retention window. Avoids filesystem stat() calls
+    * and fiber allocation for pruned/future ordinal requests. The retention estimate is conservative (2x inMemoryCapacity) to avoid false
+    * rejections.
+    */
+  private def whenOrdinalPlausible(ordinal: SnapshotOrdinal)(action: F[Response[F]]): F[Response[F]] =
+    snapshotStorage.headSnapshot.map(_.map(_.ordinal)).flatMap {
+      case Some(head) if ordinal > head => NotFound()
+      case _                            => action
+    }
+
   protected val httpRoutes: HttpRoutes[F] =
     Timeout(snapshotTimeoutsConfig.routes)(
       HttpRoutes.of[F] {
@@ -125,42 +135,48 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
 
         case GET -> Root / "latest" / "combined" / "checkpoint" / SnapshotOrdinalVar(ordinal) =>
           whenNodeReady {
-            combinedSnapshotCheckpointFileSystemStorage
-              .getAsStream(ordinal)
-              .flatMap {
-                case Some(byteStream) =>
-                  Ok(byteStream, org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
-                case None => NotFound()
-              }
+            whenOrdinalPlausible(ordinal) {
+              combinedSnapshotCheckpointFileSystemStorage
+                .getAsStream(ordinal)
+                .flatMap {
+                  case Some(byteStream) =>
+                    Ok(byteStream, org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
+                  case None => NotFound()
+                }
+            }
           }
 
         case req @ GET -> Root / SnapshotOrdinalVar(ordinal) :? FullSnapshotQueryParam(fullSnapshot) =>
           whenNodeReady {
-            if (!fullSnapshot)
-              resolveEncoder[F, Signed[S]](req) { implicit enc =>
-                snapshotStorage.get(ordinal).flatMap {
-                  case Some(snapshot) => Ok(snapshot)
-                  case _              => NotFound()
-                }
-              }
-            else
-              fullGlobalSnapshotStorage.map { storage =>
-                resolveEncoder[F, Signed[GlobalSnapshot]](req) { implicit enc =>
-                  storage.read(ordinal).flatMap {
+            whenOrdinalPlausible(ordinal) {
+              if (!fullSnapshot)
+                resolveEncoder[F, Signed[S]](req) { implicit enc =>
+                  snapshotStorage.get(ordinal).flatMap {
                     case Some(snapshot) => Ok(snapshot)
                     case _              => NotFound()
                   }
                 }
-              }.getOrElse(NotFound())
+              else
+                fullGlobalSnapshotStorage.map { storage =>
+                  resolveEncoder[F, Signed[GlobalSnapshot]](req) { implicit enc =>
+                    storage.read(ordinal).flatMap {
+                      case Some(snapshot) => Ok(snapshot)
+                      case _              => NotFound()
+                    }
+                  }
+                }.getOrElse(NotFound())
+            }
           }
 
         case GET -> Root / SnapshotOrdinalVar(ordinal) / "hash" =>
           whenNodeReady {
-            hasherSelector.withCurrent { implicit hasher =>
-              snapshotStorage.getHash(ordinal)
-            }.flatMap {
-              case None           => NotFound()
-              case Some(snapshot) => Ok(snapshot)
+            whenOrdinalPlausible(ordinal) {
+              hasherSelector.withCurrent { implicit hasher =>
+                snapshotStorage.getHash(ordinal)
+              }.flatMap {
+                case None           => NotFound()
+                case Some(snapshot) => Ok(snapshot)
+              }
             }
           }
 
