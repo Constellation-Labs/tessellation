@@ -266,16 +266,16 @@ object Download {
           }
         }
         .onError(logger.error(_)("[RecoveryDownload] Unexpected failure, will retry"))
-        .handleErrorWith { _ =>
+        .handleErrorWith { err =>
           // Recovery failed — transition back to WaitingForDownload so DownloadDaemon retries.
-          // Keep the recovery flag set so the retry uses the incremental path again.
+          // Reraise so DownloadDaemon's error handler fires (which does NOT clear the recovery flag)
+          // instead of the success path (which clears it via clearRecoveryDownload).
           logger.warn("[RecoveryDownload] Failed, transitioning to WaitingForDownload for retry") >>
-            nodeStorage.setRecoveryDownload >>
             nodeStorage.getNodeState.flatMap {
               case state if state =!= NodeState.WaitingForDownload && state =!= NodeState.Ready =>
                 nodeStorage.setNodeState(NodeState.WaitingForDownload)
               case _ => Async[F].unit
-            }
+            } >> err.raiseError[F, Unit]
         }
     }
 
