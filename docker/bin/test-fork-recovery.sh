@@ -92,7 +92,7 @@ get_completed_rounds_after() {
 fail() {
   echo "FAIL: $1"
   # Attempt cleanup
-  docker exec --privileged "$ISOLATION_NODE" tc qdisc del dev eth0 root 2>/dev/null || true
+  docker exec --privileged "$ISOLATION_NODE" iptables -F 2>/dev/null || true
   exit 1
 }
 
@@ -203,12 +203,20 @@ done
 # ── Phase 2: Isolate node ──────────────────────────────────────
 
 echo ""
-echo "Phase 2: Isolating $ISOLATION_NODE (100% packet loss)..."
+echo "Phase 2: Isolating $ISOLATION_NODE (iptables DROP)..."
 
-# noqueue qdisc has exclusivity flag; delete first, then add netem
-docker exec --privileged "$ISOLATION_NODE" tc qdisc del dev eth0 root 2>/dev/null || true
-docker exec --privileged "$ISOLATION_NODE" tc qdisc replace dev eth0 root netem loss 100% 2>&1 || \
-  fail "Could not apply network impairment (needs --privileged or NET_ADMIN)"
+# Install iptables if not present (ubuntu base image doesn't include it)
+if ! docker exec "$ISOLATION_NODE" which iptables &>/dev/null; then
+  echo "  Installing iptables in $ISOLATION_NODE..."
+  docker exec --privileged "$ISOLATION_NODE" bash -c "apt-get update -qq && apt-get install -y -qq iptables" &>/dev/null || \
+    fail "Could not install iptables in $ISOLATION_NODE"
+fi
+
+# Drop all inbound and outbound traffic — kills existing TCP connections immediately
+docker exec --privileged "$ISOLATION_NODE" iptables -A INPUT -j DROP 2>&1 || \
+  fail "Could not apply iptables INPUT DROP (needs --privileged or NET_ADMIN)"
+docker exec --privileged "$ISOLATION_NODE" iptables -A OUTPUT -j DROP 2>&1 || \
+  fail "Could not apply iptables OUTPUT DROP"
 
 echo "  $ISOLATION_NODE isolated. Waiting ${ISOLATION_DURATION}s for cluster to advance..."
 sleep "$ISOLATION_DURATION"
@@ -230,8 +238,8 @@ echo "  Cluster produced $advancement snapshots while $ISOLATION_NODE was isolat
 echo ""
 echo "Phase 3: Restoring $ISOLATION_NODE network..."
 
-docker exec --privileged "$ISOLATION_NODE" tc qdisc del dev eth0 root 2>&1 || \
-  echo "  Warning: tc qdisc del failed (may already be clean)"
+docker exec --privileged "$ISOLATION_NODE" iptables -F 2>&1 || \
+  echo "  Warning: iptables flush failed"
 
 echo "  Network restored. Monitoring recovery (timeout: ${RECOVERY_TIMEOUT}s)..."
 
