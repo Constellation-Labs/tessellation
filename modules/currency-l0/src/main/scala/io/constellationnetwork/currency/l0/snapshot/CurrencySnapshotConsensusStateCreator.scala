@@ -226,11 +226,15 @@ object CurrencySnapshotConsensusStateCreator {
             key.show,
             "n/a",
             Event.MinQuorumFloorApplied,
-            "filteredCount" -> allEligible.filterNot((previouslyRemoved ++ penalizedPeers).contains).size.toString,
+            "filteredCount" -> allEligible
+              .filterNot((previouslyRemoved ++ penalizedPeers ++ genuinelyNewCandidates).contains)
+              .size
+              .toString,
             "minViableQuorum" -> minViableQuorum.toString,
             "usingAll" -> allEligible.size.toString,
             "penalizedBypassed" -> penalizedPeers.size.toString,
-            "removedBypassed" -> previouslyRemoved.size.toString
+            "removedBypassed" -> previouslyRemoved.size.toString,
+            "deferredBypassed" -> genuinelyNewCandidates.size.toString
           )
           .whenA(penaltyBypassed)
 
@@ -243,6 +247,7 @@ object CurrencySnapshotConsensusStateCreator {
             Event.CandidateObserving,
             "deferredCount" -> genuinelyNewCandidates.size.toString,
             "deferredPeers" -> genuinelyNewCandidates.toList.map(ConsensusLog.pid).mkString(","),
+            "actuallyDeferred" -> (!penaltyBypassed).toString,
             "eligibleThisRound" -> eligibleThisRound.size.toString,
             "allEligible" -> allEligible.size.toString
           )

@@ -10,12 +10,12 @@ import org.http4s.{HttpRoutes, Response, Status}
 
 /** Limits concurrent request processing for wrapped routes.
   *
-  * When the semaphore is saturated, returns 503 Service Unavailable with a Retry-After header instead of queuing
-  * requests. This provides backpressure to clients without blocking fibers or starving other route handlers.
+  * When the semaphore is saturated, returns 503 Service Unavailable with a Retry-After header instead of queuing requests. This provides
+  * backpressure to clients without blocking fibers or starving other route handlers.
   *
-  * Designed for snapshot-serving routes where many external clients may simultaneously request historical data. Without
-  * this guard, a burst of snapshot fetches (e.g. from 200+ community nodes doing initial sync) can exhaust the fiber
-  * pool and delay latency-sensitive consensus gossip.
+  * Designed for snapshot-serving routes where many external clients may simultaneously request historical data. Without this guard, a burst
+  * of snapshot fetches (e.g. from 200+ community nodes doing initial sync) can exhaust the fiber pool and delay latency-sensitive consensus
+  * gossip.
   */
 object ConcurrencyLimitMiddleware {
 
@@ -28,21 +28,20 @@ object ConcurrencyLimitMiddleware {
     maxConcurrent: Int,
     retryAfterSeconds: Long = 2
   ): F[HttpRoutes[F] => HttpRoutes[F]] =
-    Semaphore[F](maxConcurrent.toLong).map { sem =>
-      routes: HttpRoutes[F] =>
-        Kleisli { req =>
-          OptionT.liftF(sem.tryAcquire).flatMap {
-            case true =>
-              OptionT(
-                MonadCancel[F].guarantee(routes(req).value, sem.release)
-              )
-            case false =>
-              OptionT.liftF(
-                Response[F](Status.ServiceUnavailable)
-                  .putHeaders(`Retry-After`.unsafeFromLong(retryAfterSeconds))
-                  .pure[F]
-              )
-          }
+    Semaphore[F](maxConcurrent.toLong).map { sem => routes: HttpRoutes[F] =>
+      Kleisli { req =>
+        OptionT.liftF(sem.tryAcquire).flatMap {
+          case true =>
+            OptionT(
+              MonadCancel[F].guarantee(routes(req).value, sem.release)
+            )
+          case false =>
+            OptionT.liftF(
+              Response[F](Status.ServiceUnavailable)
+                .putHeaders(`Retry-After`.unsafeFromLong(retryAfterSeconds))
+                .pure[F]
+            )
         }
+      }
     }
 }
