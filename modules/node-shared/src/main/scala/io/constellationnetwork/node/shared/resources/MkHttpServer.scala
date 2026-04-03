@@ -1,7 +1,7 @@
 package io.constellationnetwork.node.shared.resources
 
 import cats.effect.kernel.{Async, Resource}
-import cats.syntax.show._
+import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.config.types.HttpServerConfig
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
@@ -33,13 +33,18 @@ object MkHttpServer {
     logger.info(s"HTTP Server name=${name.show} started at ${s.address}")
 
   implicit def forAsync[F[_]: Async: Network]: MkHttpServer[F] =
-    (name: ServerName, cfg: HttpServerConfig, httpApp: HttpApp[F]) =>
-      EmberServerBuilder
+    (name: ServerName, cfg: HttpServerConfig, httpApp: HttpApp[F]) => {
+      val base = EmberServerBuilder
         .default[F]
         .withHost(cfg.host)
         .withPort(cfg.port)
         .withShutdownTimeout(cfg.shutdownTimeout)
         .withHttpApp(httpApp)
-        .build
+
+      val withMaxConn = cfg.maxConnections.fold(base)(base.withMaxConnections)
+
+      withMaxConn.build
         .evalTap(showEmberBanner[F](name))
+        .evalTap(_ => cfg.maxConnections.traverse_(mc => logger.info(s"HTTP Server name=${name.show} maxConnections=$mc")))
+    }
 }

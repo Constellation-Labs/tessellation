@@ -63,7 +63,8 @@ object types {
     metagraphsSync: MetagraphsSyncConfig,
     priceOracle: Map[AppEnvironment, PriceOracleConfig],
     snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig,
-    clickHouseConfig: ClickHouseAppConfig
+    clickHouseConfig: ClickHouseAppConfig,
+    snapshotServing: Option[SnapshotServingConfig] = None
   )
 
   case class SharedConfig(
@@ -92,6 +93,7 @@ object types {
     priceOracle: PriceOracleConfig,
     snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig,
     snapshotTimeoutsConfig: SnapshotTimeoutsConfig,
+    snapshotServingConfig: Option[SnapshotServingConfig] = None,
     clickHouseConfig: ClickHouseAppConfig,
     mptSnapshotInfoPath: Path
   )
@@ -207,6 +209,11 @@ object types {
     client: FiniteDuration
   )
 
+  case class SnapshotServingConfig(
+    maxConcurrentPublic: Int = 20,
+    retryAfterSeconds: Long = 2
+  )
+
   case class SnapshotTimeoutsConfig(
     routes: FiniteDuration,
     client: FiniteDuration
@@ -265,7 +272,8 @@ object types {
   case class HttpServerConfig(
     host: Host,
     port: Port,
-    shutdownTimeout: FiniteDuration
+    shutdownTimeout: FiniteDuration,
+    maxConnections: Option[Int] = None
   )
 
   case class HttpConfig(

@@ -8,10 +8,11 @@ import scala.concurrent.duration._
 import io.constellationnetwork.ext.http4s.headers.negotiation.resolveEncoder
 import io.constellationnetwork.ext.http4s.{BlockingEntityEncoder, HashVar}
 import io.constellationnetwork.json.StreamingCollectionEncoder
-import io.constellationnetwork.node.shared.config.types.{RouteRateLimiterConfig, SnapshotTimeoutsConfig}
+import io.constellationnetwork.node.shared.config.types.{SnapshotServingConfig, SnapshotTimeoutsConfig}
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.ext.http4s.SnapshotOrdinalVar
+import io.constellationnetwork.node.shared.http.p2p.middlewares.ConcurrencyLimitMiddleware
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
   CombinedSnapshotCheckpointFileSystemStorage,
   SnapshotLocalFileSystemStorage
@@ -41,7 +42,8 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
   hasherSelector: HasherSelector[F],
   snapshotTimeoutsConfig: SnapshotTimeoutsConfig,
   cachedCombinedResponse: CachedCombinedResponse[F, S, SI],
-  combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, SI]
+  combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, SI],
+  publicConcurrencyLimit: Option[HttpRoutes[F] => HttpRoutes[F]] = None
 ) extends Http4sDsl[F]
     with PublicRoutes[F]
     with P2PRoutes[F] {
@@ -174,7 +176,7 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
       }
     )
 
-  protected val public: HttpRoutes[F] = httpRoutes
+  protected val public: HttpRoutes[F] = publicConcurrencyLimit.fold(httpRoutes)(_(httpRoutes))
   protected val p2p: HttpRoutes[F] = httpRoutes
 }
 
@@ -186,10 +188,14 @@ object SnapshotRoutes {
     nodeStorage: NodeStorage[F],
     hasherSelector: HasherSelector[F],
     snapshotTimeoutsConfig: SnapshotTimeoutsConfig,
-    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, SI]
+    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, SI],
+    snapshotServingConfig: Option[SnapshotServingConfig] = None
   ): F[SnapshotRoutes[F, S, SI]] =
     for {
       cachedCombined <- CachedCombinedResponse.make[F, S, SI]
+      concurrencyLimit <- snapshotServingConfig.traverse(cfg =>
+        ConcurrencyLimitMiddleware[F](cfg.maxConcurrentPublic, cfg.retryAfterSeconds)
+      )
     } yield
       new SnapshotRoutes[F, S, SI](
         snapshotStorage,
@@ -199,7 +205,8 @@ object SnapshotRoutes {
         hasherSelector,
         snapshotTimeoutsConfig,
         cachedCombined,
-        combinedSnapshotCheckpointFileSystemStorage
+        combinedSnapshotCheckpointFileSystemStorage,
+        concurrencyLimit
       )
 }
 
