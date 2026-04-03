@@ -84,6 +84,12 @@ object CurrencySnapshotConsensusStateCreator {
         filteredCandidates = approvedCandidates
           .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
 
+        // Genuinely NEW candidates: peers approved by the last round that were NOT already
+        // in the eligible/facilitator set. These are joining the consensus for the first time
+        // and must observe for one round before actively participating.
+        previousEligibleSet = filteredPreviousEligible.toSet
+        genuinelyNewCandidates = filteredCandidates.filterNot(previousEligibleSet.contains).toSet
+
         // Peers that failed to participate in the previous round.
         // Two sources (both from consensus-agreed lastOutcome, so deterministic):
         // 1. nonSigners = facilitators - signers: peers who remained as facilitators but didn't sign
@@ -199,7 +205,7 @@ object CurrencySnapshotConsensusStateCreator {
         // Dynamic majority: floor(N/2) + 1, matching StallDetector's quorum floor.
         minViableQuorum = math.max(3, (allEligible.size / 2) + 1)
         eligibleThisRound = {
-          val excluded = previouslyRemoved ++ penalizedPeers
+          val excluded = previouslyRemoved ++ penalizedPeers ++ genuinelyNewCandidates
           val filtered = allEligible.filterNot(excluded.contains)
           if (filtered.size >= minViableQuorum) filtered
           else if (allEligible.size >= minViableQuorum) allEligible
@@ -208,7 +214,7 @@ object CurrencySnapshotConsensusStateCreator {
         }
 
         penaltyBypassed = {
-          val excluded = previouslyRemoved ++ penalizedPeers
+          val excluded = previouslyRemoved ++ penalizedPeers ++ genuinelyNewCandidates
           val filtered = allEligible.filterNot(excluded.contains)
           filtered.size < minViableQuorum && allEligible.size > filtered.size
         }
@@ -227,6 +233,20 @@ object CurrencySnapshotConsensusStateCreator {
             "removedBypassed" -> previouslyRemoved.size.toString
           )
           .whenA(penaltyBypassed)
+
+        _ <- ConsensusLog
+          .info(
+            logger,
+            Category.Facilitator,
+            key.show,
+            "n/a",
+            Event.CandidateObserving,
+            "deferredCount" -> genuinelyNewCandidates.size.toString,
+            "deferredPeers" -> genuinelyNewCandidates.toList.map(ConsensusLog.pid).mkString(","),
+            "eligibleThisRound" -> eligibleThisRound.size.toString,
+            "allEligible" -> allEligible.size.toString
+          )
+          .whenA(genuinelyNewCandidates.nonEmpty)
 
         // Apply deterministic subset selection using hash-distance ordering
         // Uses the previous round's snapshot hash as entropy for randomization
@@ -322,7 +342,8 @@ object CurrencySnapshotConsensusStateCreator {
             (if (withdrawn.nonEmpty) Seq("withdrawn" -> withdrawn.size.toString) else Seq.empty) ++
               (if (penalizedPeers.nonEmpty) Seq("penalized" -> penalizedPeers.size.toString) else Seq.empty) ++
               (if (previouslyRemoved.nonEmpty) Seq("previouslyRemoved" -> previouslyRemoved.size.toString) else Seq.empty) ++
-              (if (abandonedMissing.nonEmpty) Seq("abandonedMissing" -> abandonedMissing.size.toString) else Seq.empty)
+              (if (abandonedMissing.nonEmpty) Seq("abandonedMissing" -> abandonedMissing.size.toString) else Seq.empty) ++
+              (if (genuinelyNewCandidates.nonEmpty) Seq("deferredCandidates" -> genuinelyNewCandidates.size.toString) else Seq.empty)
           ConsensusLog.info(logger, Category.Lifecycle, key.show, role, Event.RoundStarted, (basePairs ++ optionalPairs): _*)
         }
 

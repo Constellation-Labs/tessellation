@@ -80,6 +80,14 @@ object GlobalSnapshotConsensusStateCreator {
         filteredCandidates = approvedCandidates
           .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
 
+        // Genuinely NEW candidates: peers approved by the last round that were NOT already
+        // in the eligible/facilitator set. These are joining the consensus for the first time
+        // and must observe for one round before actively participating.
+        // Peers already in previousEligible who also appear in candidates (re-joining) are NOT
+        // considered new — they've already proven participation.
+        previousEligibleSet = filteredPreviousEligible.toSet
+        genuinelyNewCandidates = filteredCandidates.filterNot(previousEligibleSet.contains).toSet
+
         // Peers that failed to participate in the previous round.
         // Two sources (both from consensus-agreed lastOutcome, so deterministic):
         // 1. nonSigners = facilitators - signers: peers who remained as facilitators but didn't sign
@@ -197,7 +205,12 @@ object GlobalSnapshotConsensusStateCreator {
         // if they would, bypass them and let StallDetector handle truly unresponsive peers at runtime.
         minViableQuorum = math.max(3, (allEligible.size / 2) + 1)
         eligibleThisRound = {
-          val excluded = previouslyRemoved ++ penalizedPeers
+          // Exclude: previously removed peers, penalized peers, AND genuinely new candidates
+          // who haven't observed a round yet. New candidates are included in allEligible
+          // (and thus in the outcome's eligibleFacilitators) so they will participate next round.
+          // This prevents a newly-joined but immediately-unresponsive candidate from causing
+          // infinite abandon/retry cycles at the same ordinal.
+          val excluded = previouslyRemoved ++ penalizedPeers ++ genuinelyNewCandidates
           val filtered = allEligible.filterNot(excluded.contains)
           if (filtered.size >= minViableQuorum) filtered
           else if (allEligible.size >= minViableQuorum) allEligible
@@ -206,7 +219,7 @@ object GlobalSnapshotConsensusStateCreator {
         }
 
         penaltyBypassed = {
-          val excluded = previouslyRemoved ++ penalizedPeers
+          val excluded = previouslyRemoved ++ penalizedPeers ++ genuinelyNewCandidates
           val filtered = allEligible.filterNot(excluded.contains)
           filtered.size < minViableQuorum && allEligible.size > filtered.size
         }
@@ -225,6 +238,20 @@ object GlobalSnapshotConsensusStateCreator {
             "removedBypassed" -> previouslyRemoved.size.toString
           )
           .whenA(penaltyBypassed)
+
+        _ <- ConsensusLog
+          .info(
+            logger,
+            Facilitator,
+            key.show,
+            "n/a",
+            CandidateObserving,
+            "deferredCount" -> genuinelyNewCandidates.size.toString,
+            "deferredPeers" -> genuinelyNewCandidates.toList.map(ConsensusLog.pid).mkString(","),
+            "eligibleThisRound" -> eligibleThisRound.size.toString,
+            "allEligible" -> allEligible.size.toString
+          )
+          .whenA(genuinelyNewCandidates.nonEmpty)
 
         // Apply deterministic subset selection using hash-distance ordering
         // Uses the previous round's snapshot hash as entropy for randomization
@@ -325,7 +352,8 @@ object GlobalSnapshotConsensusStateCreator {
             (if (withdrawn.nonEmpty) Seq("withdrawn" -> withdrawn.size.toString) else Seq.empty) ++
               (if (penalizedPeers.nonEmpty) Seq("penalized" -> penalizedPeers.size.toString) else Seq.empty) ++
               (if (previouslyRemoved.nonEmpty) Seq("previouslyRemoved" -> previouslyRemoved.size.toString) else Seq.empty) ++
-              (if (abandonedMissing.nonEmpty) Seq("abandonedMissing" -> abandonedMissing.size.toString) else Seq.empty)
+              (if (abandonedMissing.nonEmpty) Seq("abandonedMissing" -> abandonedMissing.size.toString) else Seq.empty) ++
+              (if (genuinelyNewCandidates.nonEmpty) Seq("deferredCandidates" -> genuinelyNewCandidates.size.toString) else Seq.empty)
           ConsensusLog.info(logger, Lifecycle, key.show, role, RoundStarted, (basePairs ++ optionalPairs): _*)
         }
 
