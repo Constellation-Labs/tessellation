@@ -164,8 +164,11 @@ object ConsensusEventLoop {
                 currentState === NodeState.WaitingForObserving ||
                 currentState === NodeState.Observing
               val isStaleCommand = cmd match {
-                case _: ConsensusCommand.CheckUpdate | _: ConsensusCommand.ConsensusFinished | ConsensusCommand.RoundCompleted |
-                    ConsensusCommand.TimeTick | ConsensusCommand.FacilitateByEvent | _: ConsensusCommand.StartRound =>
+                // Note: ConsensusFinished and RoundCompleted are internal FSM state transitions
+                // (Busy→Idle) and must NEVER be filtered — dropping them leaves the FSM permanently
+                // stuck in Busy, causing InitializeFromDownload to re-queue forever.
+                case _: ConsensusCommand.CheckUpdate | ConsensusCommand.TimeTick | ConsensusCommand.FacilitateByEvent |
+                    _: ConsensusCommand.StartRound =>
                   true
                 case _ => false
               }
