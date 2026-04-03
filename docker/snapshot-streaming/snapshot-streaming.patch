@@ -23,10 +23,10 @@ index 6cda50a..90a5c8e 100644
          tx.timestamp
        )
 diff --git a/src/main/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorage.scala b/src/main/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorage.scala
-index a4683f3..45799d1 100644
+index a4683f3..b639670 100644
 --- a/src/main/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorage.scala
 +++ b/src/main/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorage.scala
-@@ -117,6 +117,21 @@ object FileBasedLastGlobalIncrementalSnapshotStorage {
+@@ -117,6 +117,22 @@ object FileBasedLastGlobalIncrementalSnapshotStorage {
  
        def getHeight: F[Option[Height]] = get.map(_.map(_.height))
  
@@ -44,6 +44,7 @@ index a4683f3..45799d1 100644
 +          }
 +        cachedSnapshot.set(None) >> deleteFile(path) >> deleteFile(backupPath)
 +      }
++
 +
      }
  
