@@ -3,8 +3,6 @@ package io.constellationnetwork.node.shared.http.routes
 import cats.effect._
 import cats.syntax.all._
 
-import scala.concurrent.duration._
-
 import io.constellationnetwork.ext.http4s.headers.negotiation.resolveEncoder
 import io.constellationnetwork.ext.http4s.{BlockingEntityEncoder, HashVar}
 import io.constellationnetwork.json.StreamingCollectionEncoder
@@ -64,9 +62,8 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
       .map(validStateForSnapshotReturn)
       .ifM(action, serviceUnavailableNodeNotReady)
 
-  /** Fast-reject ordinals that are definitely not stored: above head or below head minus retention window. Avoids filesystem stat() calls
-    * and fiber allocation for pruned/future ordinal requests. The retention estimate is conservative (2x inMemoryCapacity) to avoid false
-    * rejections.
+  /** Fast-reject ordinals above head snapshot. Applied to PUBLIC routes only — p2p peers legitimately request future ordinals during
+    * recovery observe, so the p2p route set must not use this guard.
     */
   private def whenOrdinalPlausible(ordinal: SnapshotOrdinal)(action: F[Response[F]]): F[Response[F]] =
     snapshotStorage.headSnapshot.map(_.map(_.ordinal)).flatMap {
@@ -74,7 +71,8 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
       case _                            => action
     }
 
-  protected val httpRoutes: HttpRoutes[F] =
+  /** Core routes shared by both public and p2p. Does NOT include the ordinal plausibility guard. */
+  private def coreRoutes: HttpRoutes[F] =
     Timeout(snapshotTimeoutsConfig.routes)(
       HttpRoutes.of[F] {
         case GET -> Root / "latest" / "ordinal" =>
@@ -135,6 +133,65 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
 
         case GET -> Root / "latest" / "combined" / "checkpoint" / SnapshotOrdinalVar(ordinal) =>
           whenNodeReady {
+            combinedSnapshotCheckpointFileSystemStorage
+              .getAsStream(ordinal)
+              .flatMap {
+                case Some(byteStream) =>
+                  Ok(byteStream, org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
+                case None => NotFound()
+              }
+          }
+
+        case req @ GET -> Root / SnapshotOrdinalVar(ordinal) :? FullSnapshotQueryParam(fullSnapshot) =>
+          whenNodeReady {
+            if (!fullSnapshot)
+              resolveEncoder[F, Signed[S]](req) { implicit enc =>
+                snapshotStorage.get(ordinal).flatMap {
+                  case Some(snapshot) => Ok(snapshot)
+                  case _              => NotFound()
+                }
+              }
+            else
+              fullGlobalSnapshotStorage.map { storage =>
+                resolveEncoder[F, Signed[GlobalSnapshot]](req) { implicit enc =>
+                  storage.read(ordinal).flatMap {
+                    case Some(snapshot) => Ok(snapshot)
+                    case _              => NotFound()
+                  }
+                }
+              }.getOrElse(NotFound())
+          }
+
+        case GET -> Root / SnapshotOrdinalVar(ordinal) / "hash" =>
+          whenNodeReady {
+            hasherSelector.withCurrent { implicit hasher =>
+              snapshotStorage.getHash(ordinal)
+            }.flatMap {
+              case None           => NotFound()
+              case Some(snapshot) => Ok(snapshot)
+            }
+          }
+
+        case req @ GET -> Root / HashVar(hash) =>
+          whenNodeReady {
+            resolveEncoder[F, Signed[S]](req) { implicit enc =>
+              snapshotStorage.get(hash).flatMap {
+                case Some(snapshot) => Ok(snapshot)
+                case _              => NotFound()
+              }
+            }
+          }
+      }
+    )
+
+  /** Public routes: core routes enhanced with ordinal plausibility guard on ordinal-based endpoints. This fast-rejects requests for
+    * future/pruned ordinals without filesystem overhead.
+    */
+  private val publicRoutes: HttpRoutes[F] =
+    Timeout(snapshotTimeoutsConfig.routes)(
+      HttpRoutes.of[F] {
+        case GET -> Root / "latest" / "combined" / "checkpoint" / SnapshotOrdinalVar(ordinal) =>
+          whenNodeReady {
             whenOrdinalPlausible(ordinal) {
               combinedSnapshotCheckpointFileSystemStorage
                 .getAsStream(ordinal)
@@ -179,21 +236,15 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
               }
             }
           }
-
-        case req @ GET -> Root / HashVar(hash) =>
-          whenNodeReady {
-            resolveEncoder[F, Signed[S]](req) { implicit enc =>
-              snapshotStorage.get(hash).flatMap {
-                case Some(snapshot) => Ok(snapshot)
-                case _              => NotFound()
-              }
-            }
-          }
       }
     )
 
-  protected val public: HttpRoutes[F] = publicConcurrencyLimit.fold(httpRoutes)(_(httpRoutes))
-  protected val p2p: HttpRoutes[F] = httpRoutes
+  protected val public: HttpRoutes[F] = {
+    // Public: ordinal-guarded routes take priority, then fall through to core routes
+    val combined = publicRoutes <+> coreRoutes
+    publicConcurrencyLimit.fold(combined)(_(combined))
+  }
+  protected val p2p: HttpRoutes[F] = coreRoutes
 }
 
 object SnapshotRoutes {
