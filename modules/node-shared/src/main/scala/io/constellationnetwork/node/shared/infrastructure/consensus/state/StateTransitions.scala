@@ -203,8 +203,8 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
             // If the peer returned a DIFFERENT outcome (cluster has moved on past our downloaded
             // ordinal), accept it and treat as recovery — skip the 43s deferral so we join
             // the cluster at its current tip instead of targeting a stale ordinal.
-            val newerKeyMatch = outcomeKey.get(o) =!= key
-            if (newerKeyMatch)
+            val keyMismatch = outcomeKey.get(o) =!= key
+            if (keyMismatch)
               (o, true).pure[F]
             else
               new Throwable(

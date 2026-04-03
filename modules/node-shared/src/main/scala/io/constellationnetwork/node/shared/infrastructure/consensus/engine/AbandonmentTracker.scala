@@ -270,10 +270,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
                 // This is more reliable than peer registrations, which go stale in long-running
                 // clusters (registrations stay at join-time ordinal, far below current).
                 {
-                  val activeFacilitators = reason match {
-                    case AbandonReason.QuorumInfeasible(active, _, _) => active
-                    case _                                            => 0
-                  }
+                  // Only QuorumInfeasible reaches here (sole retriable subtype).
+                  val AbandonReason.QuorumInfeasible(activeFacilitators, _, _) = reason: @unchecked
                   val isIsolated = activeFacilitators <= 1
                   if (isIsolated)
                     // Only this node (or nobody) participated — we're isolated from the
