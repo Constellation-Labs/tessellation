@@ -212,6 +212,28 @@ if ! docker exec "$ISOLATION_NODE" which iptables &>/dev/null; then
     fail "Could not install iptables in $ISOLATION_NODE"
 fi
 
+# CRITICAL: Sync isolation to a round boundary to avoid view desynchronization.
+# If isolation lands mid-round (especially during CollectingProposals), nodes
+# that have already received the isolated node's facilities declaration will
+# stall at 0/N proposals while other nodes may do a view change — creating
+# a permanent split where half the cluster is on view=0 and half on view=1.
+# By waiting for ROUND_COMPLETED on the monitor node, we ensure all nodes
+# have finished the current round and the isolated node's state is clean.
+echo "  Waiting for a round boundary before isolating..."
+round_sync_deadline=$(($(date +%s) + 120))
+round_synced=false
+while [ "$(date +%s)" -lt "$round_sync_deadline" ]; do
+  if docker logs --since 2s "$MONITOR_NODE" 2>&1 | grep -q "ROUND_COMPLETED.*facilitators=$NUM_GL0"; then
+    echo "  Round completed on $MONITOR_NODE — isolating now"
+    round_synced=true
+    break
+  fi
+  sleep 1
+done
+if [ "$round_synced" != "true" ]; then
+  echo "  WARNING: Could not sync to round boundary within 120s, isolating anyway"
+fi
+
 # Drop all inbound and outbound traffic — kills existing TCP connections immediately
 docker exec --privileged "$ISOLATION_NODE" iptables -A INPUT -j DROP 2>&1 || \
   fail "Could not apply iptables INPUT DROP (needs --privileged or NET_ADMIN)"
@@ -226,7 +248,7 @@ post_isolation_ordinal=$(get_ordinal "$MONITOR_NODE")
 echo "  Cluster advanced: ordinal $pre_ordinal → $post_isolation_ordinal"
 
 if [ -z "$post_isolation_ordinal" ] || [ "$post_isolation_ordinal" -le "$pre_ordinal" ]; then
-  docker exec --privileged "$ISOLATION_NODE" tc qdisc del dev eth0 root 2>/dev/null || true
+  docker exec --privileged "$ISOLATION_NODE" iptables -F 2>/dev/null || true
   fail "Cluster did not advance during isolation (stuck at ordinal $pre_ordinal)"
 fi
 
