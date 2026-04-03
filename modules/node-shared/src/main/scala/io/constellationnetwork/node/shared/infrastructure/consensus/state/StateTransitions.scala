@@ -203,6 +203,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
             // If the peer returned a DIFFERENT outcome (cluster has moved on past our downloaded
             // ordinal), accept it and treat as recovery — skip the 43s deferral so we join
             // the cluster at its current tip instead of targeting a stale ordinal.
+            //
+            // Lower-ordinal outcomes cannot reach here: ConsensusRoutes returns Conflict() when
+            // the peer's key > requested key, and None when key doesn't match. Only the exact
+            // key match returns Some(outcome). This branch is defensive against future API changes.
             val keyMismatch = outcomeKey.get(o) =!= key
             if (keyMismatch)
               (o, true).pure[F]
