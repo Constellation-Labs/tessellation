@@ -151,7 +151,9 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
         val sortedOrdinals = ordinals.sorted(Ordering[SnapshotOrdinal].reverse)
         if (sortedOrdinals.length > maxCheckpointsStored) {
           val ordinalsToDelete = sortedOrdinals.drop(maxCheckpointsStored)
-          ordinalsToDelete.traverse_(delete)
+          ordinalsToDelete.traverse_ { ord =>
+            Async[F].delay(byteCache.invalidate(ord)) >> delete(ord)
+          }
         } else Concurrent[F].unit
       }
     }

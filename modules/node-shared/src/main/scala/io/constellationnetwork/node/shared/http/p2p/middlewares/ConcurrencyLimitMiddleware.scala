@@ -18,10 +18,9 @@ import org.http4s.{HttpRoutes, Response, Status}
   * consensus gossip.
   *
   * '''Important:''' the semaphore is released when the route handler produces a `Response[F]` header, not when the response body stream is
-  * fully consumed by the client. For streaming endpoints (e.g. `GET .../checkpoint/:ordinal`) where the body is a lazy `Stream[F, Byte]`,
-  * actual disk reads occur after the semaphore slot is freed. This means `maxConcurrent` bounds concurrent dispatch operations, not
-  * concurrent data transfers. The storage-level `concurrentStreams.permit` in `CombinedSnapshotCheckpointFileSystemStorage` provides the
-  * actual file-read concurrency bound for those paths.
+  * fully consumed by the client. This means `maxConcurrent` bounds concurrent dispatch (including any eager reads like
+  * `readBytesWithCache`), not body transfer. The storage-level `concurrentStreams.permit` in `CombinedSnapshotCheckpointFileSystemStorage`
+  * provides an additional file-read concurrency bound for the non-cached fallback path.
   */
 object ConcurrencyLimitMiddleware {
 
