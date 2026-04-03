@@ -84,11 +84,7 @@ object CurrencySnapshotConsensusStateCreator {
         filteredCandidates = approvedCandidates
           .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
 
-        // Genuinely NEW candidates: peers approved by the last round that were NOT already
-        // in the eligible/facilitator set. These are joining the consensus for the first time
-        // and must observe for one round before actively participating.
         previousEligibleSet = filteredPreviousEligible.toSet
-        genuinelyNewCandidates = filteredCandidates.filterNot(previousEligibleSet.contains).toSet
 
         // Peers that failed to participate in the previous round.
         // Two sources (both from consensus-agreed lastOutcome, so deterministic):
@@ -157,6 +153,13 @@ object CurrencySnapshotConsensusStateCreator {
           .map { list =>
             if (list.isEmpty) List(selfId) else list
           }
+
+        // Genuinely NEW candidates: peers in allEligible (post-collateral) that were NOT already
+        // in the eligible/facilitator set. These are joining consensus for the first time
+        // and must observe for one round before actively participating.
+        // Computed from allEligible (not filteredCandidates) so candidates that fail collateral
+        // are not spuriously logged as deferred.
+        genuinelyNewCandidates = allEligible.filterNot(previousEligibleSet.contains).toSet - selfId
 
         filteredOutByCollateral = fullBase.filterNot(allEligible.contains)
         _ <- filteredOutByCollateral.traverse_ { peerId =>

@@ -69,7 +69,8 @@ object HttpApi {
           storages.node,
           HasherSelector.alwaysCurrent[F],
           sharedConfig.snapshotTimeoutsConfig,
-          combinedSnapshotCheckpointFileSystemStorage
+          combinedSnapshotCheckpointFileSystemStorage,
+          sharedConfig.snapshotServingConfig
         )
     } yield
       new HttpApi[F](
