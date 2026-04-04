@@ -230,7 +230,7 @@ echo "  Waiting for a round boundary on $ISOLATION_NODE before isolating..."
 # timeout ensures we don't hang forever.
 round_synced=false
 if timeout 120 bash -c '
-  docker logs -f "'"$ISOLATION_NODE"'" 2>&1 | while IFS= read -r line; do
+  docker logs -f --tail=0 "'"$ISOLATION_NODE"'" 2>&1 | while IFS= read -r line; do
     if echo "$line" | grep -q "ROUND_COMPLETED.*facilitators='"$NUM_GL0"'"; then
       exit 0  # signal: round boundary found
     fi

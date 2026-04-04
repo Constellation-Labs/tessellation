@@ -183,10 +183,9 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
 
   def deleteAbove(ordinal: SnapshotOrdinal): F[Unit] =
     listStoredOrdinals.flatMap {
-      _.filter(_ > ordinal)
-        .evalMap(delete)
-        .compile
-        .drain
+      _.filter(_ > ordinal).evalMap { ord =>
+        Async[F].delay(byteCache.invalidate(ord)) >> delete(ord)
+      }.compile.drain
     }
 
   def getLatestOrdinal: F[Option[SnapshotOrdinal]] =
