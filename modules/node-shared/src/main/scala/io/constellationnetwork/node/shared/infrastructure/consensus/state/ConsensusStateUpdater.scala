@@ -19,7 +19,6 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLo
 import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
-import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.schema.node.{NodeState, NodeStateTransition}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
@@ -165,9 +164,7 @@ object ConsensusStateUpdater {
   def recoverIfForking[F[_]: Async](
     ownObservationHash: Hash,
     observationName: String,
-    restartService: RestartService[F, _],
-    nodeStorage: NodeStorage[F],
-    leavingDelay: FiniteDuration
+    nodeStorage: NodeStorage[F]
   )(
     observations: SortedMap[PeerId, Hash]
   )(implicit metrics: Metrics[F]): F[Unit] =
