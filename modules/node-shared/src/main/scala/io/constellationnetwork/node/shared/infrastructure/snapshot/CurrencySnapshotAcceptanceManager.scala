@@ -1123,8 +1123,9 @@ object CurrencySnapshotAcceptanceManager {
               }
             }
 
+            unlocksForAddress = acceptedTokenUnlocks.filter(_.source == address)
             finalBalance <-
-              acceptedTokenUnlocks.foldLeft[Either[BalanceArithmeticError, Balance]](Right(expiredBalance)) {
+              unlocksForAddress.foldLeft[Either[BalanceArithmeticError, Balance]](Right(expiredBalance)) {
                 case (currentBalanceEither, tokenUnlock) =>
                   for {
                     currentBalance <- currentBalanceEither
