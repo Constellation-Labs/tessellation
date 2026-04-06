@@ -39,6 +39,7 @@ import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.gossip.Ordinal
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore, MptStoreSavepoint}
+import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -141,6 +142,14 @@ object GlobalSnapshotConsensusStateAdvancer {
       * (two rounds racing).
       */
     private val proposalSavepointRef: Ref[F, Option[(GlobalSnapshotKey, MptStoreSavepoint[F])]] = Ref.unsafe(none)
+
+    /** Tracks consecutive validation failures (stateProofDiffers) at the same ordinal. When a node's local state diverges (e.g., after
+      * network isolation), every validation attempt fails with the same MPT root mismatch. Neither consensus fork detection (requires
+      * completed round) nor gossip fork detection (compares hashes at same ordinal, but node is 1 behind) catches this. After
+      * `maxConsecutiveValidationFailures` failures, trigger a FULL download recovery to reset all state including MPT.
+      */
+    private val validationFailureCountRef: Ref[F, (Option[GlobalSnapshotKey], Int)] = Ref.unsafe((none, 0))
+    private val maxConsecutiveValidationFailures: Int = 3
 
     protected val clusterStorage: ClusterStorage[F] = clusterStorageInstance
     protected val config: ConsensusConfig = consensusConfig
@@ -717,6 +726,36 @@ object GlobalSnapshotConsensusStateAdvancer {
                         gossip.spread(ConsensusWithdrawPeerDeclaration(state.key, GlobalConsensusKind.Signature: GlobalConsensusKind)) >>
                         Metrics[F].incrementCounter("dag_consensus_proposal_validation_failure") >>
                         Metrics[F].incrementCounter("dag_consensus_withdrawal_sent") >>
+                        // Track consecutive validation failures at this ordinal. After repeated
+                        // failures (e.g., divergent MPT from network isolation), trigger full
+                        // download recovery. Use full download (not incremental) because the
+                        // incremental path preserves MptStore state, which is exactly what's wrong.
+                        validationFailureCountRef.modify {
+                          case (Some(k), count) if k === state.key => ((state.key.some, count + 1), count + 1)
+                          case _                                   => ((state.key.some, 1), 1)
+                        }.flatMap { count =>
+                          if (count >= maxConsecutiveValidationFailures)
+                            ConsensusLog.warn(
+                              logger,
+                              Category.Recovery,
+                              state.key.show,
+                              role,
+                              Event.RecoveryStateTransition,
+                              "trigger" -> "consecutive_validation_failures",
+                              "count" -> count.toString,
+                              "action" -> "full_download_recovery"
+                            ) >>
+                              validationFailureCountRef.set((none, 0)) >>
+                              // Set recovery download flag so DownloadDaemon uses the incremental
+                              // recovery path. The incremental path now properly syncs MptStore from
+                              // the downloaded snapshot's checkpoint data (no full rebuild needed).
+                              nodeStorage.setRecoveryDownload >>
+                              nodeStorage
+                                .tryModifyState(Set[NodeState](NodeState.Ready, NodeState.WaitingForReady), NodeState.WaitingForDownload)
+                                .void
+                          else
+                            Async[F].unit
+                        } >>
                         none[Transition].pure[F]
                   }
 

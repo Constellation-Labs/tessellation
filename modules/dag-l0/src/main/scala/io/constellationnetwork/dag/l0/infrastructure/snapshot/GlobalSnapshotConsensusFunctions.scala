@@ -333,7 +333,7 @@ object GlobalSnapshotConsensusFunctions {
         // current-round facilitators is deterministic: all nodes must receive all
         // facility declarations before advancing from CollectingFacilities, so
         // state.facilitators is identical across all consensus participants.
-        lastFacilitators <- facilitators.toList.traverse { peerId =>
+        lastFacilitators <- facilitators.toList.sorted.traverse { peerId =>
           PeerId._Id.get(peerId).toAddress.map(_ -> peerId)
         }
         // Sort all event lists before passing to accept() to ensure deterministic ordering.

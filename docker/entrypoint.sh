@@ -28,10 +28,12 @@ EOF
              --data @"$payload_file" \
              http://localhost:"$CL_DOCKER_JOIN_CLI_PORT"/cluster/join || echo "failure")
         echo "Join response: $response"
-        if [ "$response" == "failure" ]; then
+        if [[ "$response" == "failure" ]]; then
           echo "Join failed, retrying..."
-        elif [ "$response" == *"does not allow for joining the cluster"* ]; then
-          echo "Join completed"
+        elif [[ "$response" == *"does not allow for joining the cluster"* ]]; then
+          echo "Join rejected (node not ready), retrying..."
+        elif [[ "$response" == "" || "$response" == "\"\"" ]]; then
+          echo "Join succeeded"
           break
         else
           echo "Join not obvious failure, retrying..."

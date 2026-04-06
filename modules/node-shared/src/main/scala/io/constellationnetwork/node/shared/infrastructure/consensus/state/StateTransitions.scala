@@ -224,17 +224,21 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
           ifTrue = ctx.nodeStorage.tryModifyState(NodeState.Observing, NodeState.WaitingForReady) >>
             ctx.nodeStorage.setJoiningGracePeriod >> {
               if (isRecoveryEffective) {
-                // Recovery: skip TimeTrigger deferral. The cluster is already running and the
-                // recovered node needs to join the next round immediately. Deferring 43s would
-                // cause the cluster to advance further, making the node's first round stale.
+                // Recovery: use the same TimeTrigger deferral as initial join.
+                // The old approach (skipping deferral entirely) caused solo snapshots with a
+                // divergent facilitatorsHash, triggering immediate fork detection and cascading
+                // all nodes into simultaneous recovery. The deferral gives gossip time (~43s)
+                // to propagate cluster state so the node has an accurate facilitator view.
+                // This also prevents mid-round joins that can split the facilitator majority.
                 ConsensusLog.info(
                   log,
                   Category.Lifecycle,
                   key.toString,
                   "n/a",
                   LogEvent.DownloadInitRecoveryImmediate,
-                  "note" -> "Skipping deferral for recovery download"
+                  "note" -> s"Deferring recovery round by ${ctx.config.timeTriggerInterval.toSeconds}s"
                 ) >>
+                  Temporal[F].sleep(ctx.config.timeTriggerInterval) >>
                   queue.offer(StartRound(TimeTrigger.some))
               } else {
                 // Initial join: Defer first round to align with the cluster's TimeTrigger cadence.
@@ -279,6 +283,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
       // Without this, the rollback node uses aggressive timeouts while peers are still
       // downloading to the rollback ordinal, leading to premature stall detection.
       _ <- ctx.nodeStorage.setJoiningGracePeriod
+      // Start immediately after rollback. Rollback is a bootstrap operation — the node
+      // may be genesis (first/only node) where solo consensus is correct and necessary.
+      // Recovery after fork uses initFromDownload with isRecovery=true, which has its
+      // own TimeTrigger deferral to prevent solo divergent snapshots.
       _ <- queue.offer(StartRound(TimeTrigger.some))
     } yield ()
 
