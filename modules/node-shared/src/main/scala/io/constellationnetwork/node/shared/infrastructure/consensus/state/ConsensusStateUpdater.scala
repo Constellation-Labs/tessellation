@@ -19,8 +19,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLo
 import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
-import io.constellationnetwork.node.shared.infrastructure.node.RestartService
-import io.constellationnetwork.schema.node.NodeState
+import io.constellationnetwork.schema.node.{NodeState, NodeStateTransition}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
@@ -165,9 +164,7 @@ object ConsensusStateUpdater {
   def recoverIfForking[F[_]: Async](
     ownObservationHash: Hash,
     observationName: String,
-    restartService: RestartService[F, _],
-    nodeStorage: NodeStorage[F],
-    leavingDelay: FiniteDuration
+    nodeStorage: NodeStorage[F]
   )(
     observations: SortedMap[PeerId, Hash]
   )(implicit metrics: Metrics[F]): F[Unit] =
@@ -181,7 +178,7 @@ object ConsensusStateUpdater {
 
         val logger = Slf4jLogger.getLogger[F]
 
-        val forkRecovery = metrics.incrementCounter(
+        metrics.incrementCounter(
           "dag_consensus_fork_detected",
           Seq(unsafeLabelName("observation_type") -> observationName)
         ) >>
@@ -196,31 +193,66 @@ object ConsensusStateUpdater {
               "totalObservations" -> observations.size.toString
             )
           ) >>
-          nodeStorage.setNodeState(NodeState.Leaving) >>
-          Temporal[F].sleep(leavingDelay) >>
-          nodeStorage.setNodeState(NodeState.Offline) >>
-          Temporal[F].sleep(5.seconds) >>
-          ExitOnFork.exitOnFeature("CL_EXIT_ON_FORK") >>
-          restartService.signalNodeForkedRestart(majorityForkPeers)
-
-        // Fire-and-forget fiber for fork recovery. Must handle all errors to ensure the node
-        // actually restarts — an unhandled error here leaves the node stuck in Offline forever.
-        val safeForkRecovery = forkRecovery.handleErrorWith { err =>
-          logger.error(err)(
-            ConsensusLog.format(
-              Category.Recovery,
-              "n/a",
-              "n/a",
-              LogEvent.ForkRecoveryFailed,
-              "observation" -> observationName
-            )
-          ) >> restartService.signalClusterLeaveRestart()
-        }
-
-        Temporal[F].start(safeForkRecovery).void
+          // Transition to WaitingForDownload so DownloadDaemon triggers incremental
+          // recovery from majority peers, instead of the old Leaving→Offline→restart
+          // path which requires a full process restart and is too slow for tests.
+          // Try from Ready first (normal case), then Observing (if already recovering).
+          nodeStorage.setRecoveryDownload >>
+          tryTransitionToDownload(nodeStorage, logger, observationName) >>
+          ExitOnFork.exitOnFeature("CL_EXIT_ON_FORK")
 
       } else Applicative[F].unit
     }.void
+
+  private def tryTransitionToDownload[F[_]: Async](
+    nodeStorage: NodeStorage[F],
+    logger: org.typelevel.log4cats.Logger[F],
+    observationName: String
+  )(implicit metrics: Metrics[F]): F[Unit] = {
+    val candidateStates = List(
+      NodeState.Ready,
+      NodeState.Observing,
+      NodeState.WaitingForReady
+    )
+
+    def tryStates(remaining: List[NodeState]): F[Option[NodeState]] =
+      remaining match {
+        case Nil => none[NodeState].pure[F]
+        case state :: rest =>
+          nodeStorage.tryModifyStateGetResult(Set(state), NodeState.WaitingForDownload).flatMap {
+            case NodeStateTransition.Success => state.some.pure[F]
+            case _                           => tryStates(rest)
+          }
+      }
+
+    tryStates(candidateStates).flatMap {
+      case Some(fromState) =>
+        logger.warn(
+          ConsensusLog.format(
+            Category.Recovery,
+            "n/a",
+            "n/a",
+            LogEvent.RecoveryStateTransition,
+            "trigger" -> s"fork_detected_$observationName",
+            "from" -> fromState.toString,
+            "to" -> "WaitingForDownload"
+          )
+        )
+      case None =>
+        // Already in WaitingForDownload, DownloadInProgress, or other recovery state.
+        // DownloadDaemon is already handling it.
+        logger.info(
+          ConsensusLog.format(
+            Category.Recovery,
+            "n/a",
+            "n/a",
+            LogEvent.RecoveryStateTransition,
+            "trigger" -> s"fork_detected_$observationName",
+            "action" -> "already_recovering"
+          )
+        )
+    }
+  }
 
   /** Identify peers whose observation hash differs from the local node's (i.e., forked peers).
     *

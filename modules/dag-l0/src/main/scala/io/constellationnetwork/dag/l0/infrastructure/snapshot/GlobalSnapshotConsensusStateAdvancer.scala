@@ -1147,7 +1147,7 @@ object GlobalSnapshotConsensusStateAdvancer {
     private def checkForkByLastSnapshotHash[A](declarations: SortedMap[PeerId, A], ownHash: Hash)(
       implicit extract: A => Hash
     ): F[Unit] =
-      recoverIfForking[F](ownHash, lastSnapshotHashObservationName, restartService, nodeStorage, leavingDelay)(
+      recoverIfForking[F](ownHash, lastSnapshotHashObservationName, nodeStorage)(
         declarations.map { case (pid, decl) => (pid, extract(decl)) }
       )
 
@@ -1165,7 +1165,7 @@ object GlobalSnapshotConsensusStateAdvancer {
       declarations: SortedMap[PeerId, A],
       ownHash: Hash
     )(extractHash: A => Hash): F[Unit] =
-      recoverIfForking[F](ownHash, facilitatorsHashObservationName, restartService, nodeStorage, leavingDelay)(
+      recoverIfForking[F](ownHash, facilitatorsHashObservationName, nodeStorage)(
         declarations.map { case (pid, decl) => (pid, extractHash(decl)) }
       )
 
@@ -1178,7 +1178,7 @@ object GlobalSnapshotConsensusStateAdvancer {
     private def checkForkByConsensusConfigHash(declarations: SortedMap[PeerId, Facility]): F[Unit] = {
       val ownConfigHash = config.deterministicConfigHash
       val peerHashes = declarations.collect { case (pid, f) => f.consensusConfigHash.map(pid -> _) }.flatten.toMap
-      recoverIfForking[F](ownConfigHash, consensusConfigHashObservationName, restartService, nodeStorage, leavingDelay)(
+      recoverIfForking[F](ownConfigHash, consensusConfigHashObservationName, nodeStorage)(
         SortedMap.from(peerHashes)
       )
     }

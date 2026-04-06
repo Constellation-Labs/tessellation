@@ -5,6 +5,8 @@ import cats.effect.std.Random
 import cats.syntax.all._
 import cats.{Eq, Show}
 
+import scala.concurrent.duration._
+
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand._
@@ -117,8 +119,13 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
           log.info(ConsensusLog.format(Category.Lifecycle, key.toString, "n/a", LogEvent.ConsensusFinished)) >>
             roundRunner.afterConsensusFinish(trigger)
         )
-      case WithdrawFromConsensus => pending.setEvent()
-      case _                     => Async[F].unit
+      case WithdrawFromConsensus                    => pending.setEvent()
+      case cmd @ InitializeFromDownload(_, _, _, _) =>
+        // InitializeFromDownload arrived while a stale round is still completing.
+        // Re-queue it so it gets processed after the round finishes and FSM goes Idle.
+        log.info("[CONSENSUS:RECOVERY] InitializeFromDownload received while busy, re-queuing") >>
+          Async[F].sleep(100.millis) >> ctx.queue.offer(cmd)
+      case _ => Async[F].unit
     }
 
   private def startRound(trigger: Option[ConsensusTrigger]): F[Unit] =
