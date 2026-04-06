@@ -221,8 +221,17 @@ object Download {
           _ <- hasherSelector.withCurrent { implicit hs =>
             globalSnapshotConsensusStorage.setHeadForRecovery(lastSnapshot, lastContext)
           }
+          // Sync MptStore to match the downloaded snapshot's state. During network isolation,
+          // the MPT may have accumulated stale mutations (from abandoned rounds that partially
+          // mutated state before savepoint restore, or from ordinals computed against a
+          // different chain). syncFullIfNeeded rebuilds the MPT from the snapshot's state
+          // entries (already available as checkpoint data in the snapshot — no full re-download
+          // needed). This ensures the next consensus round computes the correct state proof.
+          _ <- hasherSelector.withCurrent { implicit hs =>
+            lastContext.allStateEntries[F].flatMap(mptStore.syncFull[Json](_, lastSnapshot.ordinal))
+          }
           _ <- logger.info(
-            s"[RecoveryDownload] Storage reset to ordinal ${lastSnapshot.ordinal.show}, entering observe for $recoveryOffset rounds (random 1-5)"
+            s"[RecoveryDownload] Storage and MPT reset to ordinal ${lastSnapshot.ordinal.show}, entering observe for $recoveryOffset rounds (random 1-5)"
           )
           // Reuse the normal observe path — after setForRecovery, snapshots are sequential.
           // observe updates lastN and lastGlobal storages but NOT the consensus SnapshotStorage head.
@@ -251,19 +260,19 @@ object Download {
 
       nodeStorage
         .tryModifyState(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.WaitingForObserving)(recoveryStart)
+        .flatTap { _ =>
+          // Re-announce to cluster peers BEFORE the observe phase. During recovery, other
+          // nodes may have removed this node from their peer lists (LocalHealthcheck eviction).
+          // Without re-announcing first, the observe phase can't receive snapshot gossip from
+          // peers, causing it to timeout after 5 minutes and re-trigger recovery indefinitely.
+          joining.rejoinAfterRecovery.handleErrorWith { err =>
+            logger.warn(err)("[RecoveryDownload] Cluster rejoin failed, continuing anyway")
+          }
+        }
         .flatMap(recoveryObserve)
         .flatMap { result =>
           val ((snapshot, context), observationLimit) = result
           consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context, isRecovery = true)
-        }
-        .flatTap { _ =>
-          // Re-announce to cluster peers so they re-add us to their peer lists.
-          // During isolation, LocalHealthcheck removes unresponsive peers from cluster storage.
-          // Without this, the recovered node can fetch snapshots but can't participate in
-          // consensus because other nodes don't route gossip declarations to it.
-          joining.rejoinAfterRecovery.handleErrorWith { err =>
-            logger.warn(err)("[RecoveryDownload] Cluster rejoin failed, continuing anyway")
-          }
         }
         .onError(logger.error(_)("[RecoveryDownload] Unexpected failure, will retry"))
         .handleErrorWith { err =>

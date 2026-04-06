@@ -159,10 +159,12 @@ object ConsensusEventLoop {
               // WaitingForDownload/DownloadInProgress/Observing while gossip/stall declarations
               // from the previous round are still arriving. Processing them hits cleared caches
               // and can crash the event loop, preventing InitializeFromDownload from being dequeued.
+              // Note: Observing is intentionally excluded — initFromDownload processes commands
+              // while in Observing state (fetching outcomes from peers). Filtering commands
+              // during Observing can leave the node stuck with no path to WaitingForReady.
               val isRecovering = currentState === NodeState.WaitingForDownload ||
                 currentState === NodeState.DownloadInProgress ||
-                currentState === NodeState.WaitingForObserving ||
-                currentState === NodeState.Observing
+                currentState === NodeState.WaitingForObserving
               val isStaleCommand = cmd match {
                 // Note: ConsensusFinished and RoundCompleted are internal FSM state transitions
                 // (Busy→Idle) and must NEVER be filtered — dropping them leaves the FSM permanently

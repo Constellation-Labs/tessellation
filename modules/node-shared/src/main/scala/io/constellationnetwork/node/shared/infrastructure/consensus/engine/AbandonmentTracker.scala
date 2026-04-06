@@ -110,6 +110,12 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
     */
   private val maxRetriableAtSameKey: Int = config.maxConsecutiveAbandonments * 1
 
+  /** Absolute ceiling: after this many retriable abandonments at the same key, force escalation to recovery regardless of
+    * activeFacilitators. Without this, the "multi-peer stall" suppression path retries indefinitely — the counter climbs past
+    * maxRetriableAtSameKey but never gates anything because escalation is suppressed. In testnet logs, retriableAtSameKey reached 5493.
+    */
+  private val absoluteMaxRetriableAtSameKey: Int = maxRetriableAtSameKey * 3
+
   /** Tracks total recovery download attempts across all keys to detect extended recovery loops. */
   private val totalRecoveryAttemptsRef: Ref[F, Int] = Ref.unsafe(0)
 
@@ -275,9 +281,13 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
                     case other                                        => throw new MatchError(s"Unexpected retriable AbandonReason: $other")
                   }
                   val isIsolated = activeFacilitators <= 1
-                  if (isIsolated)
-                    // Only this node (or nobody) participated — we're isolated from the
-                    // network. Peers have moved on. Trigger recovery download.
+                  val absoluteCeilingReached = retriableCount >= absoluteMaxRetriableAtSameKey
+                  if (isIsolated || absoluteCeilingReached)
+                    // Escalate to recovery when:
+                    // 1. Only this node participated (isolated from the network), OR
+                    // 2. Absolute ceiling reached — multi-peer stall has persisted too long.
+                    //    Without this ceiling, the suppression path retries indefinitely
+                    //    (retriableAtSameKey was observed reaching 5493 in testnet logs).
                     retriableAtSameKeyRef.set((none[Key], 0)) >>
                       trackConsecutiveAbandonments(key).flatMap { consecutiveCount =>
                         ConsensusLog.info(
@@ -287,7 +297,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
                           "n/a",
                           LogEvent.RetriableEscalated,
                           "reason" -> reason.label,
-                          "activeFacilitators" -> activeFacilitators.toString
+                          "activeFacilitators" -> activeFacilitators.toString,
+                          "escalationCause" -> (if (absoluteCeilingReached) "absolute_ceiling" else "isolated")
                         ) >>
                           healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount)) >>
                           triggerRecoveryDownload(key, consecutiveCount)
@@ -296,9 +307,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
                     // Multiple peers participated but couldn't form quorum — cluster-wide
                     // stall (e.g. kill-4). Keep retrying; recovery download would deadlock
                     // with no Ready peers to serve downloads.
-                    // NOTE: If all nodes lose connectivity to each other simultaneously,
-                    // each sees remaining=1 and ALL escalate — same deadlock. This is a
-                    // known limitation; external monitoring restart is the mitigation.
+                    // An absolute ceiling (absoluteMaxRetriableAtSameKey) ensures this path
+                    // cannot loop indefinitely — after enough retries, escalation is forced.
                     ConsensusLog.info(
                       logger,
                       Category.Lifecycle,
@@ -308,7 +318,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
                       "reason" -> reason.label,
                       "detail" -> s"escalation suppressed: multi-peer stall (activeFacilitators=$activeFacilitators)",
                       "retriableAtSameKey" -> retriableCount.toString,
-                      "maxRetriableAtSameKey" -> maxRetriableAtSameKey.toString
+                      "maxRetriableAtSameKey" -> maxRetriableAtSameKey.toString,
+                      "absoluteMax" -> absoluteMaxRetriableAtSameKey.toString
                     ) >>
                       queue.offer(ConsensusCommand.RoundCompleted) >>
                       queue.offer(ConsensusCommand.TimeTick)

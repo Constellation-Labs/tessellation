@@ -122,9 +122,13 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
       case WithdrawFromConsensus                    => pending.setEvent()
       case cmd @ InitializeFromDownload(_, _, _, _) =>
         // InitializeFromDownload arrived while a stale round is still completing.
-        // Re-queue it so it gets processed after the round finishes and FSM goes Idle.
-        log.info("[CONSENSUS:RECOVERY] InitializeFromDownload received while busy, re-queuing") >>
-          Async[F].sleep(100.millis) >> ctx.queue.offer(cmd)
+        // Fire-and-forget re-queue with a longer delay. The old approach (100ms blocking sleep)
+        // caused priority inversion: the sleep ran inside evalMap, blocking the command stream
+        // and preventing ConsensusFinished/RoundCompleted from draining — the very commands
+        // that would free the FSM from Busy state. With fire-and-forget, the event loop
+        // returns immediately so pending commands can be processed.
+        log.info("[CONSENSUS:RECOVERY] InitializeFromDownload received while busy, re-queuing in 1s") >>
+          Async[F].start(Async[F].sleep(1.second) >> ctx.queue.offer(cmd)).void
       case _ => Async[F].unit
     }
 
