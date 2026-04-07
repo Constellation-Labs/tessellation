@@ -80,7 +80,10 @@ object GossipRoundRunner {
             allPeers <- clusterStorage.getResponsivePeers
             _ <- ExitOnFork.exitOnCheck("CL_EXIT_ON_FOLLOWER_GOSSIP", () => allPeers.map(_.id))
             selectedPeers <- selectedPeersR.get
-            availablePeers = allPeers.diff(selectedPeers)
+            // Prefer peers in operational states. Peers in WaitingForDownload/DownloadInProgress
+            // rarely exchange useful rumors and frequently timeout (15s), wasting gossip bandwidth.
+            operationalPeers = allPeers.filter(p => NodeState.gossipActive.contains(p.state))
+            availablePeers = (if (operationalPeers.nonEmpty) operationalPeers else allPeers).diff(selectedPeers)
             drawnPeers <- Random[F].shuffleList(availablePeers.toList).map(_.take(cfg.fanout.value))
             _ <- drawnPeers.traverse { peer =>
               selectedPeersR.modify { selectedPeers =>
