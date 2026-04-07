@@ -81,6 +81,10 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
       resources <- storage.getResources(key)
       facilitated <- creator.tryFacilitateConsensus(key, lastOutcome, trigger, resources)
 
+      // Validators must not produce solo — solo production from multiple validators creates
+      // divergent forks when they restart simultaneously. Abort the round if this is a
+      // validator node and the facilitator set is just self.
+      isValidator <- ctx.nodeStorage.isValidatorMode
       _ <- facilitated match {
         case Some(_) =>
           storage.getState(key).flatMap { maybeState =>
@@ -88,22 +92,36 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
             val count = maybeState.map(_.facilitators.value.size).getOrElse(0)
             val role = maybeState.map(s => ConsensusLog.role(ctx.selfId, s.leader)).getOrElse("n/a")
 
-            Metrics[F].incrementCounter(
-              "dag_consensus_round_facilitated",
-              Seq(unsafeLabelName("outcome") -> "success")
-            ) >>
-              ConsensusLog.info(
+            if (isValidator && count <= 1) {
+              ConsensusLog.warn(
                 logger,
                 Category.Lifecycle,
                 key.toString,
                 role,
-                LogEvent.RoundFacilitated,
-                "leader" -> leaderInfo,
+                LogEvent.RoundBlockedByState,
+                "reason" -> "validator_solo_blocked",
                 "facilitators" -> count.toString
-              )
-          } >>
-            startRoundMonitor(key) >>
-            doInitialCheck(key)
+              ) >>
+                Metrics[F].incrementCounter("dag_consensus_validator_solo_blocked") >>
+                queue.offer(ConsensusCommand.RoundCompleted)
+            } else {
+              Metrics[F].incrementCounter(
+                "dag_consensus_round_facilitated",
+                Seq(unsafeLabelName("outcome") -> "success")
+              ) >>
+                ConsensusLog.info(
+                  logger,
+                  Category.Lifecycle,
+                  key.toString,
+                  role,
+                  LogEvent.RoundFacilitated,
+                  "leader" -> leaderInfo,
+                  "facilitators" -> count.toString
+                ) >>
+                startRoundMonitor(key) >>
+                doInitialCheck(key)
+            }
+          }
 
         case None =>
           handleExistingOrMissingState(key)

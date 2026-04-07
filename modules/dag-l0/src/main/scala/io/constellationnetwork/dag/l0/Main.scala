@@ -207,7 +207,8 @@ object Main
 
       _ <- (method match {
         case m: RunValidator =>
-          gossipDaemon.startAsRegularValidator >>
+          storages.node.setValidatorMode >>
+            gossipDaemon.startAsRegularValidator >>
             storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
             services.restart.setNodeForkedRestartMethod(
               RunValidatorWithJoinAttempt(
@@ -226,7 +227,8 @@ object Main
               )
             )
         case m: RunValidatorWithJoinAttempt =>
-          gossipDaemon.startAsRegularValidator >>
+          storages.node.setValidatorMode >>
+            gossipDaemon.startAsRegularValidator >>
             storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
             programs.joining.joinOneOf(m.peerToJoinPool) >>
             services.restart.setClusterLeaveRestartMethod(
