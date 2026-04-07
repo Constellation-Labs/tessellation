@@ -61,6 +61,7 @@ object artifact {
   case object SpendTransactionNotApplied extends BalanceAdjustmentReason
   case object SpendTransactionSourceNotApplied extends BalanceAdjustmentReason
   case object SpendTransactionDestinationNotApplied extends BalanceAdjustmentReason
+  case object TokenUnlockBugDeduction extends BalanceAdjustmentReason
 
   @derive(decoder, encoder, order, ordering, show)
   case class BalanceAdjustment(
