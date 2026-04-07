@@ -45,4 +45,12 @@ trait NodeStorage[F[_]] {
 
   def isRecoveryDownload: F[Boolean]
 
+  /** When true, the node must have ≥2 facilitators to complete a consensus round. Set by RunValidator at startup — validators must never
+    * produce solo snapshots because solo production from multiple validators creates divergent forks. RunRollback/RunGenesis nodes leave
+    * this false so they can bootstrap solo.
+    */
+  def setValidatorMode: F[Unit]
+
+  def isValidatorMode: F[Boolean]
+
 }

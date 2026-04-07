@@ -28,14 +28,16 @@ object NodeStorage {
       stateTopic <- Topic[F, NodeState]
       graceRef <- Ref.of[F, Int](joiningGraceRounds)
       recoveryRef <- Ref.of[F, Boolean](false)
+      validatorRef <- Ref.of[F, Boolean](false)
       _ <- stateTopic.publish1(NodeState.Initial)
-    } yield make(stateRef, stateTopic, graceRef, recoveryRef)
+    } yield make(stateRef, stateTopic, graceRef, recoveryRef, validatorRef)
 
   def make[F[_]: Concurrent](
     nodeState: Ref[F, NodeState],
     nodeStateTopic: Topic[F, NodeState],
     joiningGracePeriod: Ref[F, Int],
-    recoveryDownloadRef: Ref[F, Boolean]
+    recoveryDownloadRef: Ref[F, Boolean],
+    validatorModeRef: Ref[F, Boolean]
   ): NodeStorage[F] =
     new NodeStorage[F] {
       def getNodeState: F[NodeState] = nodeState.get
@@ -107,5 +109,11 @@ object NodeStorage {
 
       def isRecoveryDownload: F[Boolean] =
         recoveryDownloadRef.get
+
+      def setValidatorMode: F[Unit] =
+        validatorModeRef.set(true)
+
+      def isValidatorMode: F[Boolean] =
+        validatorModeRef.get
     }
 }
