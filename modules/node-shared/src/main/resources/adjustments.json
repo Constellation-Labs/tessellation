@@ -4116,15 +4116,6 @@
         ]
       },
       {
-        "address": "DAG6wNGHp6hAjnAyhkdTJfW62YNMfaGb1sVpsKoR",
-        "reason": "TokenUnlockBugDeduction",
-        "reference": [
-          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
-          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
-        ],
-        "deduct": -3002272560617
-      },
-      {
         "address": "DAG6wyV27YvGGAsixbdhqqmZHMKSMxwbKYAYvgB6",
         "reason": "TokenUnlockBugDeduction",
         "deduct": -3002272560617,
@@ -4627,15 +4618,6 @@
           "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
           "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
         ]
-      },
-      {
-        "address": "DAG8GYFbgQUSYBxf5gWELhrzF6EJ6bZAzZETsXND",
-        "reason": "TokenUnlockBugDeduction",
-        "reference": [
-          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
-          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
-        ],
-        "deduct": -3002272560617
       },
       {
         "address": "DAG8H8JQf8zWEZXGZ5eckNBS3Z3tyuM4zhPeB4iL",
