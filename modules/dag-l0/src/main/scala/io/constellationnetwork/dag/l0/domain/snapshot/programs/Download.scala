@@ -199,6 +199,11 @@ object Download {
           // Reset consensus manager state (observation key, last outcome) so the fresh
           // initFromDownload can set them cleanly.
           _ <- consensus.manager.resetForRecovery
+          // Clear event mempool. Stale events from before recovery (especially
+          // UpdateNodeParameters) change reward calculations and cause validation
+          // failures when the follower includes events the leader doesn't have.
+          _ <- eventMempool.clear
+          _ <- logger.info("[RecoveryDownload] Cleared event mempool")
           // Fetch only the gap: the download() hash-chain walker already stops at persisted snapshots
           result <- download(metadata.hash, metadata.ordinal, none)
           _ <- logger.info(
