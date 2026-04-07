@@ -370,19 +370,26 @@ object ConsensusStorage {
             }
           }.map(c => Candidates(c.toSet))
 
-        def registerPeer(peerId: PeerId, newKey: Key): F[Boolean] =
-          peerRegistrationsR.modify { peerRegistrations =>
-            val result = peerRegistrations
-              .focus()
-              .at(peerId)
-              .modify { maybeKey =>
-                maybeKey
-                  .filter(_ > newKey)
-                  .getOrElse(newKey)
-                  .some
-              }
-            (result, result.get(peerId).exists(_ === newKey))
-          }
+        def registerPeer(peerId: PeerId, newKey: Key): F[Boolean] = {
+          // Register at both key and key.next. The state creator calls getCandidates(key.next)
+          // where key is the ordinal being produced. If a peer registers at N (the last outcome),
+          // the next round produces N+1 and looks for candidates at N+2. Without registering at
+          // N+1, newly-Ready peers are never found as candidates.
+          val keysToRegister = List(newKey, newKey.next)
+          keysToRegister.traverse_ { k =>
+            peerRegistrationsR.update { peerRegistrations =>
+              peerRegistrations
+                .focus()
+                .at(peerId)
+                .modify { maybeKey =>
+                  maybeKey
+                    .filter(_ > k)
+                    .getOrElse(k)
+                    .some
+                }
+            }
+          }.as(true)
+        }
 
         def getPeerRegistrations: F[Map[PeerId, Key]] = peerRegistrationsR.get
 
