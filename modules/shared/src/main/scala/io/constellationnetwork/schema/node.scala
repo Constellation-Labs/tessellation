@@ -70,12 +70,6 @@ object node {
     val toBroadcast: Set[NodeState] =
       Set(WaitingForObserving, Observing, Ready, Leaving, Offline)
 
-    /** Peers in these states are preferred for gossip rounds. Peers in download/recovery states rarely exchange useful rumors and
-      * frequently timeout.
-      */
-    val gossipActive: Set[NodeState] =
-      Set(Ready, WaitingForReady, Observing, WaitingForObserving, Leaving)
-
     def is(states: Set[NodeState])(peer: Peer) = states.contains(peer.state)
 
     def leaving: Set[NodeState] =
