@@ -1485,6 +1485,12 @@
         "reference": []
       },
       {
+        "address": "DAG15MGPwnPqemrgUkZCaYeukC63u1UYaq3WXze1",
+        "reason": "TokenUnlockBugDeduction",
+        "reference": [],
+        "deduct": -1000000000000
+      },
+      {
         "address": "DAG15WU5REVgZTWgMTzKPpeEdQvu8Ct3wDKWG7RA",
         "reason": "TokenUnlockBugDeduction",
         "deduct": -3002272560617,
@@ -1801,6 +1807,12 @@
         "reason": "TokenUnlockBugDeduction",
         "deduct": -3002272560617,
         "reference": []
+      },
+      {
+        "address": "DAG2UuPh5oYwfE5yMTivz1PJGhqfST2Y439DXRBA",
+        "reason": "TokenUnlockBugDeduction",
+        "reference": [],
+        "deduct": -2002272560617
       },
       {
         "address": "DAG2WA5YDY2jWPF81W1DLo37DUj5C9B6oUFznktS",
