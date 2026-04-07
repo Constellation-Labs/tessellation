@@ -84,14 +84,25 @@ object DownloadDaemon {
                 }
                 (peerDiscoveryDelay.waitForPeers >> downloadAction)
                   .flatTap(_ => nodeStorage.clearRecoveryDownload)
-              }
-              .handleErrorWith { err =>
-                val nextBackoff = (backoff * 2).min(maxBackoff)
-                logger.error(err)(
-                  s"[DownloadDaemon] Download attempt $attempt failed, retrying in ${backoff.toSeconds}s"
-                ) >> Async[F].sleep(backoff) >> go(attempt + 1, nextBackoff)
-              // Do NOT clear recoveryDownload flag here — preserve it so retries
-              // still use the incremental recovery path instead of full download.
+                  .handleErrorWith { err =>
+                    val nextBackoff = (backoff * 2).min(maxBackoff)
+                    // If the full download failed because genesis is unavailable (peers don't
+                    // serve it), switch to incremental recovery on the next attempt. This handles
+                    // validators with persisted snapshots but no snapshot_info anchor — the full
+                    // download falls back to genesis which is too old for any peer to serve.
+                    // The recovery path doesn't need snapshot_info; it downloads from the tip.
+                    val errName = err.getClass.getSimpleName
+                    val shouldSwitchToRecovery = !isRecovery &&
+                      (errName.contains("CannotFetchGenesis") || errName.contains("InvalidChain"))
+                    val switchAction =
+                      if (shouldSwitchToRecovery)
+                        logger.warn("[DownloadDaemon] Full download failed (genesis unavailable), switching to recovery path") >>
+                          nodeStorage.setRecoveryDownload
+                      else Async[F].unit
+                    logger.error(err)(
+                      s"[DownloadDaemon] Download attempt $attempt failed, retrying in ${backoff.toSeconds}s"
+                    ) >> switchAction >> Async[F].sleep(backoff) >> go(attempt + 1, nextBackoff)
+                  }
               }
           case other =>
             logger.info(s"[DownloadDaemon] Node no longer in WaitingForDownload (state=$other), aborting retry loop") >>

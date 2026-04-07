@@ -659,117 +659,122 @@ object GlobalSnapshotConsensusStateAdvancer {
         // partial state from cascading to future rounds.
         resources.artifacts.get(leaderProposal.hash) match {
           case Some(leaderArtifact) =>
-            mptStore.savepoint.flatMap { sp =>
-              val validate =
-                ConsensusLog.info(
-                  logger,
-                  Category.Validation,
-                  state.key.show,
-                  "Validator",
-                  Event.ValidatingLeaderArtifact,
-                  "leaderHash" -> leaderProposal.hash.show.take(8),
-                  "ownHash" -> status.proposalArtifactInfo.hash.show.take(8)
-                ) >>
-                  validateLeaderArtifact(state, status, leaderArtifact, leaderProposal.hash).flatMap {
-                    case Right(leaderInfo) =>
-                      // Validation succeeded — MptStore mutations are correct, keep them
-                      ConsensusLog.info(
-                        logger,
-                        Category.Validation,
-                        state.key.show,
-                        role,
-                        Event.ArtifactRevalidated,
-                        "matchesOwn" -> "false",
-                        "leaderHash" -> leaderProposal.hash.show.take(8),
-                        "ownHash" -> status.proposalArtifactInfo.hash.show.take(8),
-                        "trigger" -> status.majorityTrigger.toString,
-                        "leader" -> ConsensusLog.pid(state.leader),
-                        "view" -> state.viewNumber.toString
-                      ) >>
-                        Metrics[F].incrementCounter("dag_consensus_proposal_affinity_mismatch_accepted") >>
-                        buildSignatureTransition(state, status, leaderInfo, List(leaderProposal.hash)).map(_.some)
-                    case Left(invalidArtifact) =>
-                      // Validation failed — restore MptStore to pre-validation state
-                      val diffDetail = describeInvalidArtifact(invalidArtifact)
-                      val ownCtx = status.proposalArtifactInfo.context
-                      val ctxDigest = contextDigest(ownCtx)
-                      sp.restore >>
-                        ConsensusLog.warn(
+            // Restore the proposal savepoint (from line 466) to undo PATH 1's MPT
+            // mutations before re-deriving the leader's artifact. Without this,
+            // PATH 2's sync stacks on top of PATH 1's entries, corrupting the MPT
+            // with a mix of both computations' state changes.
+            proposalSavepointRef.get.flatMap(_.filter(_._1 === state.key).traverse_(_._2.restore)) >>
+              mptStore.savepoint.flatMap { sp =>
+                val validate =
+                  ConsensusLog.info(
+                    logger,
+                    Category.Validation,
+                    state.key.show,
+                    "Validator",
+                    Event.ValidatingLeaderArtifact,
+                    "leaderHash" -> leaderProposal.hash.show.take(8),
+                    "ownHash" -> status.proposalArtifactInfo.hash.show.take(8)
+                  ) >>
+                    validateLeaderArtifact(state, status, leaderArtifact, leaderProposal.hash).flatMap {
+                      case Right(leaderInfo) =>
+                        // Validation succeeded — MptStore mutations are correct, keep them
+                        ConsensusLog.info(
                           logger,
                           Category.Validation,
                           state.key.show,
                           role,
-                          Event.ValidationFailed,
+                          Event.ArtifactRevalidated,
+                          "matchesOwn" -> "false",
                           "leaderHash" -> leaderProposal.hash.show.take(8),
                           "ownHash" -> status.proposalArtifactInfo.hash.show.take(8),
+                          "trigger" -> status.majorityTrigger.toString,
                           "leader" -> ConsensusLog.pid(state.leader),
-                          "view" -> state.viewNumber.toString,
-                          "reason" -> diffDetail
+                          "view" -> state.viewNumber.toString
                         ) >>
-                        ConsensusLog.info(
-                          logger,
-                          Category.Validation,
-                          state.key.show,
-                          role,
-                          Event.OwnContextDigest,
-                          "detail" -> ctxDigest
-                        ) >>
-                        ConsensusLog.info(
-                          logger,
-                          Category.Phase,
-                          state.key.show,
-                          role,
-                          Event.WithdrawValidationFail,
-                          "reason" -> "proposal_validation_failed",
-                          "mptStoreRestored" -> "true"
-                        ) >>
-                        gossip.spread(ConsensusWithdrawPeerDeclaration(state.key, GlobalConsensusKind.Signature: GlobalConsensusKind)) >>
-                        Metrics[F].incrementCounter("dag_consensus_proposal_validation_failure") >>
-                        Metrics[F].incrementCounter("dag_consensus_withdrawal_sent") >>
-                        // Track consecutive validation failures at this ordinal. After repeated
-                        // failures (e.g., divergent MPT from network isolation), trigger full
-                        // download recovery. Use full download (not incremental) because the
-                        // incremental path preserves MptStore state, which is exactly what's wrong.
-                        validationFailureCountRef.modify {
-                          case (Some(k), count) if k === state.key => ((state.key.some, count + 1), count + 1)
-                          case _                                   => ((state.key.some, 1), 1)
-                        }.flatMap { count =>
-                          if (count >= maxConsecutiveValidationFailures)
-                            ConsensusLog.warn(
-                              logger,
-                              Category.Recovery,
-                              state.key.show,
-                              role,
-                              Event.RecoveryStateTransition,
-                              "trigger" -> "consecutive_validation_failures",
-                              "count" -> count.toString,
-                              "action" -> "full_download_recovery"
-                            ) >>
-                              validationFailureCountRef.set((none, 0)) >>
-                              // Set recovery download flag so DownloadDaemon uses the incremental
-                              // recovery path. The incremental path now properly syncs MptStore from
-                              // the downloaded snapshot's checkpoint data (no full rebuild needed).
-                              nodeStorage.setRecoveryDownload >>
-                              nodeStorage
-                                .tryModifyState(Set[NodeState](NodeState.Ready, NodeState.WaitingForReady), NodeState.WaitingForDownload)
-                                .void
-                          else
-                            Async[F].unit
-                        } >>
-                        none[Transition].pure[F]
-                  }
+                          Metrics[F].incrementCounter("dag_consensus_proposal_affinity_mismatch_accepted") >>
+                          buildSignatureTransition(state, status, leaderInfo, List(leaderProposal.hash)).map(_.some)
+                      case Left(invalidArtifact) =>
+                        // Validation failed — restore MptStore to pre-validation state
+                        val diffDetail = describeInvalidArtifact(invalidArtifact)
+                        val ownCtx = status.proposalArtifactInfo.context
+                        val ctxDigest = contextDigest(ownCtx)
+                        sp.restore >>
+                          ConsensusLog.warn(
+                            logger,
+                            Category.Validation,
+                            state.key.show,
+                            role,
+                            Event.ValidationFailed,
+                            "leaderHash" -> leaderProposal.hash.show.take(8),
+                            "ownHash" -> status.proposalArtifactInfo.hash.show.take(8),
+                            "leader" -> ConsensusLog.pid(state.leader),
+                            "view" -> state.viewNumber.toString,
+                            "reason" -> diffDetail
+                          ) >>
+                          ConsensusLog.info(
+                            logger,
+                            Category.Validation,
+                            state.key.show,
+                            role,
+                            Event.OwnContextDigest,
+                            "detail" -> ctxDigest
+                          ) >>
+                          ConsensusLog.info(
+                            logger,
+                            Category.Phase,
+                            state.key.show,
+                            role,
+                            Event.WithdrawValidationFail,
+                            "reason" -> "proposal_validation_failed",
+                            "mptStoreRestored" -> "true"
+                          ) >>
+                          gossip.spread(ConsensusWithdrawPeerDeclaration(state.key, GlobalConsensusKind.Signature: GlobalConsensusKind)) >>
+                          Metrics[F].incrementCounter("dag_consensus_proposal_validation_failure") >>
+                          Metrics[F].incrementCounter("dag_consensus_withdrawal_sent") >>
+                          // Track consecutive validation failures at this ordinal. After repeated
+                          // failures (e.g., divergent MPT from network isolation), trigger full
+                          // download recovery. Use full download (not incremental) because the
+                          // incremental path preserves MptStore state, which is exactly what's wrong.
+                          validationFailureCountRef.modify {
+                            case (Some(k), count) if k === state.key => ((state.key.some, count + 1), count + 1)
+                            case _                                   => ((state.key.some, 1), 1)
+                          }.flatMap { count =>
+                            if (count >= maxConsecutiveValidationFailures)
+                              ConsensusLog.warn(
+                                logger,
+                                Category.Recovery,
+                                state.key.show,
+                                role,
+                                Event.RecoveryStateTransition,
+                                "trigger" -> "consecutive_validation_failures",
+                                "count" -> count.toString,
+                                "action" -> "full_download_recovery"
+                              ) >>
+                                validationFailureCountRef.set((none, 0)) >>
+                                // Set recovery download flag so DownloadDaemon uses the incremental
+                                // recovery path. The incremental path now properly syncs MptStore from
+                                // the downloaded snapshot's checkpoint data (no full rebuild needed).
+                                nodeStorage.setRecoveryDownload >>
+                                nodeStorage
+                                  .tryModifyState(Set[NodeState](NodeState.Ready, NodeState.WaitingForReady), NodeState.WaitingForDownload)
+                                  .void
+                            else
+                              Async[F].unit
+                          } >>
+                          none[Transition].pure[F]
+                    }
 
-              // Use guaranteeCase to restore MptStore on any unexpected exception.
-              // Without this, an IO-level failure in validateLeaderArtifact would skip
-              // sp.restore, leaving partial MptStore state that poisons future rounds.
-              Async[F].guaranteeCase(validate) {
-                case Outcome.Errored(_) | Outcome.Canceled() =>
-                  sp.restore >>
-                    ConsensusLog.error(logger, Category.Lifecycle, state.key.show, role, Event.MptRestoredAfterFailure)
-                case Outcome.Succeeded(_) =>
-                  Applicative[F].unit
+                // Use guaranteeCase to restore MptStore on any unexpected exception.
+                // Without this, an IO-level failure in validateLeaderArtifact would skip
+                // sp.restore, leaving partial MptStore state that poisons future rounds.
+                Async[F].guaranteeCase(validate) {
+                  case Outcome.Errored(_) | Outcome.Canceled() =>
+                    sp.restore >>
+                      ConsensusLog.error(logger, Category.Lifecycle, state.key.show, role, Event.MptRestoredAfterFailure)
+                  case Outcome.Succeeded(_) =>
+                    Applicative[F].unit
+                }
               }
-            }
           case None =>
             // Leader's artifact not yet received via gossip — wait
             none[Transition].pure[F]

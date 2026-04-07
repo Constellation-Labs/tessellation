@@ -93,9 +93,9 @@ object types {
     priceOracle: PriceOracleConfig,
     snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig,
     snapshotTimeoutsConfig: SnapshotTimeoutsConfig,
-    snapshotServingConfig: Option[SnapshotServingConfig] = None,
     clickHouseConfig: ClickHouseAppConfig,
-    mptSnapshotInfoPath: Path
+    mptSnapshotInfoPath: Path,
+    snapshotServingConfig: Option[SnapshotServingConfig] = None
   )
 
   case class SharedTrustConfig(
