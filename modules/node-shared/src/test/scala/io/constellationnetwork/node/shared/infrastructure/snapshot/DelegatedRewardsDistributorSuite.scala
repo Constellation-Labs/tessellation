@@ -428,7 +428,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
 
           } yield
             DelegatedRewardsResult(
-              delegatorRewardsMap = SortedMap.from(rewardsMap),
+              delegatorRewardsMap = SortedMap.from(rewardsMap.view.mapValues(inner => SortedMap.from(inner))),
               updatedCreateDelegatedStakes = updatedStakes,
               updatedWithdrawDelegatedStakes = SortedMap.empty,
               nodeOperatorRewards = SortedSet.empty,
