@@ -218,7 +218,11 @@ object GlobalSnapshotConsensusStateCreator {
           // infinite abandon/retry cycles at the same ordinal.
           val excluded = previouslyRemoved ++ penalizedPeers ++ genuinelyNewCandidates
           val filtered = allEligible.filterNot(excluded.contains)
+          // Bypass only penalties (not deferral) to keep the set functional without
+          // forcing unready nodes in. A 2-node set can still produce rounds.
+          val withoutPenaltiesOnly = allEligible.filterNot((previouslyRemoved ++ penalizedPeers).contains)
           if (filtered.size >= minViableQuorum) filtered
+          else if (withoutPenaltiesOnly.size >= 2 && genuinelyNewCandidates.nonEmpty) withoutPenaltiesOnly
           else if (allEligible.size >= minViableQuorum) allEligible
           else if (allEligible.nonEmpty) allEligible
           else List(selfId)
