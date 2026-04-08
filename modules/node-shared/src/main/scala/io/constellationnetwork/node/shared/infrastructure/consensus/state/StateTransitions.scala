@@ -222,38 +222,31 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
         .ifM(
           ifFalse = new Throwable(s"[DownloadInit] Failed to initialize consensus storage").raiseError[F, Unit],
           ifTrue = ctx.nodeStorage.tryModifyState(NodeState.Observing, NodeState.WaitingForReady) >>
-            ctx.nodeStorage.setJoiningGracePeriod >> {
-              if (isRecoveryEffective) {
-                // Recovery: use the same TimeTrigger deferral as initial join.
-                // The old approach (skipping deferral entirely) caused solo snapshots with a
-                // divergent facilitatorsHash, triggering immediate fork detection and cascading
-                // all nodes into simultaneous recovery. The deferral gives gossip time (~43s)
-                // to propagate cluster state so the node has an accurate facilitator view.
-                // This also prevents mid-round joins that can split the facilitator majority.
+            ctx.nodeStorage.setJoiningGracePeriod >>
+            ctx.nodeStorage.isValidatorMode.flatMap { isValidator =>
+              if (isValidator && isRecoveryEffective) {
+                // Validator recovery: start round immediately. The validator solo block
+                // prevents solo production, and starting immediately avoids the 43s deferral
+                // that caused ordinal mismatch deadlocks with the leader.
                 ConsensusLog.info(
                   log,
                   Category.Lifecycle,
                   key.toString,
                   "n/a",
                   LogEvent.DownloadInitRecoveryImmediate,
-                  "note" -> s"Deferring recovery round by ${ctx.config.timeTriggerInterval.toSeconds}s"
+                  "note" -> "Validator recovery: starting round immediately (solo blocked)"
                 ) >>
-                  Temporal[F].sleep(ctx.config.timeTriggerInterval) >>
                   queue.offer(StartRound(TimeTrigger.some))
               } else {
-                // Initial join: Defer first round to align with the cluster's TimeTrigger cadence.
-                // Without this delay, validators fire StartRound immediately after download while
-                // genesis is still mid-cycle on its 43s TimeTrigger. With N=4, the 3 validators
-                // form a 75% majority and chain ahead without genesis, causing an irrecoverable
-                // ordinal split (validators on N+2, genesis stuck on N+1 with facilitators=4).
-                // Sleeping for timeTriggerInterval synchronizes the validator's first round with
-                // the cluster's existing cadence, ensuring all nodes participate together.
+                // Initial join (all node types) or non-validator recovery: defer to align
+                // with the cluster's TimeTrigger cadence. Without this delay on initial join,
+                // validators form a majority without genesis, causing an irrecoverable split.
                 ConsensusLog.info(
                   log,
                   Category.Lifecycle,
                   key.toString,
                   "n/a",
-                  LogEvent.DownloadInitDeferred,
+                  if (isRecoveryEffective) LogEvent.DownloadInitRecoveryImmediate else LogEvent.DownloadInitDeferred,
                   "deferral" -> s"${ctx.config.timeTriggerInterval.toSeconds}s"
                 ) >>
                   Temporal[F].sleep(ctx.config.timeTriggerInterval) >>

@@ -7,6 +7,8 @@ import cats.effect.std.{Queue, Random, Supervisor}
 import cats.kernel.{Eq, Next, Order}
 import cats.syntax.all._
 
+import scala.concurrent.duration._
+
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
@@ -257,11 +259,23 @@ object ConsensusEventLoop {
   private def collectRegistration[F[_]: Async: Metrics, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
     consensusClient: ConsensusClient[F, Key, Outcome],
     storage: ConsensusStorage[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]
-  )(peer: Peer): F[Unit] =
-    consensusClient.getRegistration.run(peer).flatMap { reg =>
-      reg.maybeKey.traverse_(key =>
-        storage.registerPeer(peer.id, key) >>
-          Metrics[F].incrementCounter("dag_consensus_peer_registered")
-      )
+  )(peer: Peer): F[Unit] = {
+    def attempt: F[Boolean] =
+      consensusClient.getRegistration.run(peer).flatMap { reg =>
+        reg.maybeKey
+          .traverse_(key =>
+            storage.registerPeer(peer.id, key) >>
+              Metrics[F].incrementCounter("dag_consensus_peer_registered")
+          )
+          .as(reg.maybeKey.isDefined)
+      }
+
+    // The peer enters Observing before initFromDownload sets its observationKey.
+    // Without a retry, the registration silently fails (None) and the peer never
+    // joins the facilitator set. One retry after a short delay covers the gap.
+    attempt.flatMap {
+      case true  => Async[F].unit
+      case false => Async[F].sleep(3.seconds) >> attempt.void
     }
+  }
 }
