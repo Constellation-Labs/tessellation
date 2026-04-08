@@ -215,7 +215,9 @@ object CurrencySnapshotConsensusStateCreator {
         eligibleThisRound = {
           val excluded = previouslyRemoved ++ penalizedPeers ++ genuinelyNewCandidates
           val filtered = allEligible.filterNot(excluded.contains)
+          val withoutPenaltiesOnly = allEligible.filterNot((previouslyRemoved ++ penalizedPeers).contains)
           if (filtered.size >= minViableQuorum) filtered
+          else if (withoutPenaltiesOnly.size >= 2 && genuinelyNewCandidates.nonEmpty) withoutPenaltiesOnly
           else if (allEligible.size >= minViableQuorum) allEligible
           else if (allEligible.nonEmpty) allEligible
           else List(selfId)
