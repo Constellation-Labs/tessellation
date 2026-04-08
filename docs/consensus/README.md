@@ -18,7 +18,10 @@ This document provides an in-depth walkthrough of the Tessellation consensus mec
 12. [Fork Detection](#12-fork-detection)
 13. [Recovery Pipeline](#13-recovery-pipeline)
 14. [Recovery Scenarios](#14-recovery-scenarios)
-15. [Key Files Reference](#15-key-files-reference)
+15. [Signature Threshold](#15-signature-threshold)
+16. [MPT Sync Lifecycle](#16-mpt-sync-lifecycle)
+17. [Validator Solo Block](#17-validator-solo-block)
+18. [Key Files Reference](#18-key-files-reference)
 
 ---
 
@@ -577,13 +580,21 @@ Facilitator selection is a multi-stage process that produces a deterministic fac
 
 ### Step-by-Step
 
-1. **Base Set**: Previous eligible facilitators + approved candidates + self
+1. **Base Set**: Previous eligible facilitators + approved candidates (consensus-agreed data only)
 2. **Seedlist Filter**: If seedlist is configured, only include matching peers
 3. **TCA Filter**: Exclude degraded peers based on proof participation in last round
 4. **Collateral Filter**: Apply `facilitatorFilter` (e.g., minimum stake requirements)
-5. **Penalty Exclusion**: Exclude peers with active removal penalties
-6. **Min Quorum Floor**: If exclusions would drop below `minViableQuorum`, bypass penalties
-7. **Subset Selection**: Apply rendezvous hashing if `maxFacilitatorCount` is set
+5. **New Candidate Deferral**: Peers entering consensus for the first time observe one round before actively participating
+6. **Penalty Exclusion**: Exclude peers with active removal penalties and deferred candidates
+7. **Min Quorum Floor**: If exclusions would drop below `minViableQuorum`, bypass penalties and deferral
+8. **Subset Selection**: Apply rendezvous hashing if `maxFacilitatorCount` is set
+
+> **Note:** `selfId` is NOT unconditionally added to the base set. Each node adding
+> its own peerId creates a unique facilitator set per node, causing `facilitatorsHash`
+> divergence and fork eviction. Instead, nodes join via the candidate registration
+> mechanism (see [Candidate Registration](#candidate-registration) below). Genesis
+> ordinal 1 (empty base set) is handled by the `allEligible` fallback:
+> `if (list.isEmpty) List(selfId)`.
 
 ### TCA (Trailing Common Ancestor) Filter
 
@@ -596,17 +607,38 @@ val lastSigners = lastOutcome.finished.signedMajorityArtifact.proofs.map(_.id.to
 val degraded = tcaFilter.degradedPeers(lastFacilitators, lastSigners)
 ```
 
+### Candidate Registration
+
+New nodes join the facilitator set through a multi-round registration pipeline:
+
+1. Peer enters `Observing` state
+2. Other nodes' `peerRegistrationStream` queries the peer's `/consensus/registration` endpoint
+   (with a 3s retry if the first attempt returns `None` -- covers the race between
+   entering Observing and `initFromDownload` setting `observationKeyR`)
+3. Registration stored at both `key` and `key.next` in `peerRegistrationsR`
+4. Next round: `getCandidates(key.next)` includes the peer. Leader's `Facility`
+   declaration carries the candidates list.
+5. Round completes: outcome's `finished.candidates` includes the peer
+6. Next round: `filteredCandidates` includes the peer, enters `fullBase`
+7. `genuinelyNewCandidates` deferral: peer observes one round (unless quorum bypass triggers)
+8. Round after: peer is in `previousEligible`, no longer "new" -- active facilitator
+
+**Timeline:** ~2-3 rounds from registration to active facilitation (~90-130s at default TimeTrigger).
+
 ### Minimum Viable Quorum
 
-> **Note (v2 change):** Penalties can never reduce the facilitator set below the majority threshold. This prevents `PeerQualityTracker` from shrinking the cluster to an unviable size.
+Penalties can never reduce the facilitator set below the majority threshold. This prevents
+`PeerQualityTracker` from shrinking the cluster to an unviable size.
 
 ```scala
 val minViableQuorum = math.max(3, (allEligible.size / 2) + 1)
 val eligibleThisRound = {
-  val excluded = previouslyRemoved ++ penalizedPeers
+  val excluded = previouslyRemoved ++ penalizedPeers ++ genuinelyNewCandidates
   val filtered = allEligible.filterNot(excluded.contains)
   if (filtered.size >= minViableQuorum) filtered
-  else allEligible  // Bypass penalties if would breach quorum
+  else if (allEligible.size >= minViableQuorum) allEligible  // Bypass all exclusions
+  else if (allEligible.nonEmpty) allEligible
+  else List(selfId)  // Last resort
 }
 ```
 
@@ -821,9 +853,14 @@ case class MaxStalls(count) extends AbandonReason
   // retriable = false — stuck after maxStallCycles
 ```
 
-- **Retriable** abandonments (`QuorumInfeasible`) do not count toward the recovery threshold
-- **Non-retriable** abandonments increment the consecutive count
-- After `maxConsecutiveAbandonments` (default: 5), recovery download is triggered
+- **Retriable** abandonments (`QuorumInfeasible`) tracked separately in `retriableAtSameKeyRef`
+- **Non-retriable** abandonments increment the consecutive count in `consecutiveAbandonCountRef`
+- After `maxConsecutiveAbandonments` (default: 5) non-retriable abandonments, recovery download is triggered
+- **Retriable escalation**: After `maxRetriableAtSameKey` (5) retriable abandonments at the same ordinal:
+  - `isIsolated` (activeFacilitators <= 1): escalate to recovery immediately
+  - `quorumImpossible` (activeFacilitators < requiredQuorum): escalate immediately
+  - Otherwise (multi-peer stall): suppress escalation, keep retrying. Absolute ceiling at
+    `maxRetriableAtSameKey + 2` (7) forces escalation to prevent indefinite loops
 
 ---
 
@@ -945,9 +982,14 @@ Recovery can be triggered by:
    (random offset 1-5 per node, staggering re-entry to prevent thundering herd).
    Sync consensus `SnapshotStorage` head after observe completes.
 
-7. **initFromDownload** — `isRecovery=true` skips the 43s TimeTick deferral.
-   Grace period counter set to 3 (suppresses false `FORK_DETECTED` from
-   stale `facilitatorsHash` in PeerQualityTracker).
+7. **initFromDownload** — Fetches consensus outcome from a Ready peer. If the
+   peer returns a newer outcome (cluster moved ahead), accepts it and sets
+   `isRecoveryEffective=true`. Validator nodes with `isRecoveryEffective=true`
+   start the next round immediately (the solo block prevents solo production).
+   All other nodes (initial join or non-validator recovery) defer 43s to align
+   with the cluster's TimeTrigger cadence.
+   Grace period counter set (suppresses false `FORK_DETECTED` from stale
+   `facilitatorsHash` in PeerQualityTracker).
 
 8. **First successful round** — Node transitions `WaitingForReady → Ready`.
    Grace period counts down: 3 → 2 → 1 → 0.
@@ -1092,9 +1134,108 @@ every round with a missing facilitator would be abandoned as
 QUORUM_INFEASIBLE (e.g., 3 facilitators, 1 missing, remaining=2 <
 clusterQuorum=5).
 
+#### Stale Peer Registrations
+
+Peer registrations in `peerRegistrationsR` are only updated when a peer enters
+`Observing` state (via `peerRegistrationStream`). During normal consensus, peers
+remain in `Ready` and their registrations stay at the ordinal when they joined.
+The `LAGGING_NODE_DETECTED` check uses these registrations, so it can fail to
+detect lagging when registrations are stale (e.g., after isolation, all registrations
+show old ordinals, making the node appear "not lagging" even though the network
+has advanced).
+
+**Mitigation:** The gossip fork detector (`ForkRecoveryDetector`) provides a
+secondary lagging detection mechanism. The `quorumImpossible` escalation in
+`AbandonmentTracker` provides a third -- if the node can't form quorum after
+`maxRetriableAtSameKey` rounds, it escalates regardless of peer registration state.
+
 ---
 
-## 15. Key Files Reference
+## 15. Signature Threshold
+
+Rounds require a **majority** of valid signatures before completing:
+
+```scala
+val majorityThreshold = (state.facilitators.value.size / 2) + 1
+if (validSignatures.size >= majorityThreshold) { /* complete round */ }
+else { none[Transition] /* no outcome, round abandoned */ }
+```
+
+This prevents a view-change minority (e.g., 2/5 nodes that followed a view change
+while 3/5 continued with the original leader) from producing a fork snapshot.
+Without this threshold, the minority would complete the round with 2 signatures,
+create a different artifact than the majority's 3-signature snapshot, and the fork
+would persist until gossip fork detection fires (~10-30s later).
+
+The threshold uses `state.facilitators.value.size` (post-eviction). When the
+`ViewChangeManager` evicts unresponsive peers, the facilitator set shrinks and the
+threshold scales down accordingly.
+
+---
+
+## 16. MPT Sync Lifecycle
+
+The Merkle Patricia Trie (MPT) stores the global state proof. Its sync behavior
+differs between normal consensus and recovery:
+
+### Normal Consensus (Incremental)
+
+During each round, `createProposalArtifact` calls:
+```scala
+mptStore.sync(updates, ordinal)  // Only the diff from this snapshot
+```
+This applies balance changes, tx refs, etc. incrementally. Fast and lightweight.
+
+### Recovery Download
+
+After gap download, `recoveryObserve` calls:
+```scala
+mptStore.syncFull[Json](lastContext.allStateEntries[F], lastSnapshot.ordinal)
+```
+Full rebuild from the snapshot's state entries. Ensures MPT matches regardless of
+what was on disk before recovery.
+
+### Pre-Proposal Safety Net
+
+Before each proposal, the advancer calls:
+```scala
+mptStore.syncFullIfNeeded[Json](
+  lastOutcome.finished.context.allStateEntries[F],
+  lastOutcome.key
+)
+```
+This is a **no-op** during normal consensus (`lastSyncedOrdinalRef` matches the
+outcome's ordinal). It only fires after recovery when the MPT ordinal lags behind
+the consensus outcome (e.g., download ended at ordinal N but `fetchOutcomeFromCluster`
+returned N+1). Atomic check-then-act prevents race conditions.
+
+### Savepoint Mechanism
+
+Before proposal mutations, a savepoint is taken. On round retry at the same ordinal,
+the savepoint is restored (undo partial mutations). Wrong-ordinal savepoints (from
+recovery) are discarded rather than restored.
+
+---
+
+## 17. Validator Solo Block
+
+Validator nodes (`run-validator`) are prevented from producing solo snapshots:
+
+```scala
+if (isValidator && count <= 1 && selfIsFacilitator) {
+  // Block: this validator would produce a solo snapshot
+  queue.offer(ConsensusCommand.RoundCompleted)
+}
+```
+
+This prevents validators from creating parallel fork chains when they restart
+simultaneously. The check requires `selfIsFacilitator` -- joining nodes that observe
+a leader's round (facilitators=[leader], self not in set) are NOT blocked, allowing
+them to follow consensus without participating as a facilitator.
+
+---
+
+## 18. Key Files Reference
 
 ### Engine Layer (`consensus/engine/`)
 
