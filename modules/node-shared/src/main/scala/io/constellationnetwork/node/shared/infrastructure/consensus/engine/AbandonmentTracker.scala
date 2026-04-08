@@ -112,9 +112,13 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
 
   /** Absolute ceiling: after this many retriable abandonments at the same key, force escalation to recovery regardless of
     * activeFacilitators. Without this, the "multi-peer stall" suppression path retries indefinitely — the counter climbs past
-    * maxRetriableAtSameKey but never gates anything because escalation is suppressed. In testnet logs, retriableAtSameKey reached 5493.
+    * maxRetriableAtSameKey but never gates anything because escalation is suppressed.
+    *
+    * Set to maxRetriableAtSameKey + 2 to give multi-peer stalls a brief window (2 extra rounds) to self-resolve while still escalating
+    * promptly when the node is genuinely behind the network (e.g., after isolation recovery). The previous value of 3× (15 rounds at ~99s
+    * each = 25 minutes) was too slow for post-isolation recovery.
     */
-  private val absoluteMaxRetriableAtSameKey: Int = maxRetriableAtSameKey * 3
+  private val absoluteMaxRetriableAtSameKey: Int = maxRetriableAtSameKey + 2
 
   /** Tracks total recovery download attempts across all keys to detect extended recovery loops. */
   private val totalRecoveryAttemptsRef: Ref[F, Int] = Ref.unsafe(0)
@@ -276,18 +280,23 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
                 // This is more reliable than peer registrations, which go stale in long-running
                 // clusters (registrations stay at join-time ordinal, far below current).
                 {
-                  val activeFacilitators = reason match {
-                    case AbandonReason.QuorumInfeasible(active, _, _) => active
-                    case other                                        => throw new MatchError(s"Unexpected retriable AbandonReason: $other")
+                  val (activeFacilitators, requiredQuorum) = reason match {
+                    case AbandonReason.QuorumInfeasible(active, required, _) => (active, required)
+                    case other => throw new MatchError(s"Unexpected retriable AbandonReason: $other")
                   }
                   val isIsolated = activeFacilitators <= 1
                   val absoluteCeilingReached = retriableCount >= absoluteMaxRetriableAtSameKey
-                  if (isIsolated || absoluteCeilingReached)
+                  // If active < required, the node is behind the network (peers moved on, not enough
+                  // remain at this ordinal to form quorum). Retrying will never succeed.
+                  // Only suppress when active >= required (cluster-wide stall where all peers are
+                  // present but can't agree - recovery download would deadlock with no Ready peers).
+                  val quorumImpossible = activeFacilitators < requiredQuorum
+                  if (isIsolated || absoluteCeilingReached || quorumImpossible)
                     // Escalate to recovery when:
                     // 1. Only this node participated (isolated from the network), OR
-                    // 2. Absolute ceiling reached — multi-peer stall has persisted too long.
-                    //    Without this ceiling, the suppression path retries indefinitely
-                    //    (retriableAtSameKey was observed reaching 5493 in testnet logs).
+                    // 2. Absolute ceiling reached - multi-peer stall has persisted too long, OR
+                    // 3. Active facilitators can't form quorum - node is behind the network
+                    //    (e.g., after isolation, peers advanced past this ordinal).
                     retriableAtSameKeyRef.set((none[Key], 0)) >>
                       trackConsecutiveAbandonments(key).flatMap { consecutiveCount =>
                         ConsensusLog.info(
@@ -298,17 +307,21 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
                           LogEvent.RetriableEscalated,
                           "reason" -> reason.label,
                           "activeFacilitators" -> activeFacilitators.toString,
-                          "escalationCause" -> (if (absoluteCeilingReached) "absolute_ceiling" else "isolated")
+                          "requiredQuorum" -> requiredQuorum.toString,
+                          "escalationCause" -> {
+                            if (absoluteCeilingReached) "absolute_ceiling"
+                            else if (isIsolated) "isolated"
+                            else "quorum_impossible"
+                          }
                         ) >>
                           healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount)) >>
                           triggerRecoveryDownload(key, consecutiveCount)
                       }
                   else
-                    // Multiple peers participated but couldn't form quorum — cluster-wide
-                    // stall (e.g. kill-4). Keep retrying; recovery download would deadlock
-                    // with no Ready peers to serve downloads.
-                    // An absolute ceiling (absoluteMaxRetriableAtSameKey) ensures this path
-                    // cannot loop indefinitely — after enough retries, escalation is forced.
+                    // Multiple peers participated AND can form quorum - cluster-wide stall
+                    // (e.g. kill-4). Keep retrying; recovery download would deadlock with no
+                    // Ready peers to serve downloads. The absolute ceiling ensures this path
+                    // cannot loop indefinitely.
                     ConsensusLog.info(
                       logger,
                       Category.Lifecycle,
@@ -316,7 +329,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
                       "n/a",
                       LogEvent.RoundAbandonedRetriable,
                       "reason" -> reason.label,
-                      "detail" -> s"escalation suppressed: multi-peer stall (activeFacilitators=$activeFacilitators)",
+                      "detail" -> s"escalation suppressed: multi-peer stall (active=$activeFacilitators >= required=$requiredQuorum)",
                       "retriableAtSameKey" -> retriableCount.toString,
                       "maxRetriableAtSameKey" -> maxRetriableAtSameKey.toString,
                       "absoluteMax" -> absoluteMaxRetriableAtSameKey.toString
