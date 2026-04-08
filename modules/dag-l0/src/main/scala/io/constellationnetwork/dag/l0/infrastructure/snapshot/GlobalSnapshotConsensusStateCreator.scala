@@ -95,10 +95,15 @@ object GlobalSnapshotConsensusStateCreator {
 
         // Full base WITHOUT removal filter — so removed peers can re-enter in future rounds.
         // The removal filter is only applied for active selection THIS round (see eligibleThisRound below).
-        // Note: we do NOT filter by cluster state here because each node has a different local view
-        // of peer states, making such filtering non-deterministic across the network. Instead, the
-        // StallDetector handles unreachable peers via view change (proposal phase) and round abandon.
-        fullBase = (filteredPreviousEligible ++ filteredCandidates :+ selfId).distinct
+        // Note: selfId is NOT unconditionally added here. Each node adding its own selfId creates
+        // a unique facilitator set per node, causing fork detection (facilitatorsHash mismatch) and
+        // permanent divergence. Instead, nodes join via the candidate registration mechanism:
+        //   1. New node registers as candidate → included in next Facility declaration's candidates
+        //   2. Next round: filteredCandidates includes the new node → enters fullBase
+        //   3. genuinelyNewCandidates deferral observes one round → active in subsequent round
+        // Genesis ordinal 1 (empty previousEligible + empty candidates) is handled by the
+        // allEligible fallback below: `if (list.isEmpty) List(selfId)`.
+        fullBase = (filteredPreviousEligible ++ filteredCandidates).distinct
 
         _ <- logger.debug(
           s"Facilitator selection for key=$key: " +

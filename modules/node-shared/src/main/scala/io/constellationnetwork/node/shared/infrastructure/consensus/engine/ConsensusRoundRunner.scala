@@ -84,6 +84,9 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
       // Validators must not produce solo — solo production from multiple validators creates
       // divergent forks when they restart simultaneously. Abort the round if this is a
       // validator node and the facilitator set is just self.
+      // Note: only block when selfId IS in the facilitator set. If selfId is NOT a facilitator
+      // (e.g., a joining node observing rounds before candidate registration), let it follow
+      // the round as an observer - it won't produce its own snapshot.
       isValidator <- ctx.nodeStorage.isValidatorMode
       _ <- facilitated match {
         case Some(_) =>
@@ -91,8 +94,9 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
             val leaderInfo = maybeState.map(s => ConsensusLog.pid(s.leader)).getOrElse("unknown")
             val count = maybeState.map(_.facilitators.value.size).getOrElse(0)
             val role = maybeState.map(s => ConsensusLog.role(ctx.selfId, s.leader)).getOrElse("n/a")
+            val selfIsFacilitator = maybeState.exists(_.facilitators.value.contains(ctx.selfId))
 
-            if (isValidator && count <= 1) {
+            if (isValidator && count <= 1 && selfIsFacilitator) {
               ConsensusLog.warn(
                 logger,
                 Category.Lifecycle,
