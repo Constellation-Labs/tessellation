@@ -11,8 +11,6 @@ services:
       - clickhouse-data:/var/lib/clickhouse
       - ./clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - ./clickhouse/enable_json.xml:/etc/clickhouse-server/users.d/enable_json.xml:ro
-      - ./clickhouse/enable_https.xml:/etc/clickhouse-server/config.d/enable_https.xml:ro
-      - ./clickhouse/certs:/etc/clickhouse-server/certs:ro
     networks:
       tessellation_common:
         ipv4_address: 172.32.0.200

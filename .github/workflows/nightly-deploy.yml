@@ -1,0 +1,286 @@
+name: Nightly Deploy
+
+on:
+  # Deploy on every merge to develop so the nightly cluster always runs the latest code.
+  # cancel-in-progress ensures rapid pushes don't pile up — only the latest deploy runs.
+  push:
+    branches:
+      - develop
+      - nightly_ci_builds
+  workflow_dispatch:
+    inputs:
+      skip_build:
+        type: boolean
+        description: 'Skip build (reuse existing JARs on nodes)'
+        required: false
+        default: false
+      clean:
+        type: boolean
+        description: 'Wipe data and do fresh genesis (vs rollback restart)'
+        required: false
+        default: false
+  workflow_call:
+    inputs:
+      skip_build:
+        type: boolean
+        required: false
+        default: false
+      clean:
+        type: boolean
+        required: false
+        default: false
+
+# Shared with nightly-rebuild.yml — only one deploy/rebuild can run at a time
+concurrency:
+  group: nightly-deploy
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build JARs
+    if: ${{ !inputs.skip_build }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-tags: true
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Cache SBT dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.coursier
+            ~/.cache/coursier
+          key: ${{ runner.os }}-sbt-${{ hashFiles('build.sbt', 'project/*.scala', 'project/*.sbt', 'project/build.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-sbt-
+
+      - name: Install just
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+          echo "/usr/local/bin" >> $GITHUB_PATH
+
+      - name: Install sbt
+        run: |
+          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo gpg --dearmor -o /usr/share/keyrings/sbt-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/sbt-archive-keyring.gpg] https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+          sudo apt-get update
+          sudo apt-get install -y sbt
+
+      - name: Build all JARs
+        run: just build --num-gl0=3 --snapshot-streaming-branch=${{ vars.SNAPSHOT_STREAMING_BRANCH || 'testing' }} --block-explorer-branch=${{ vars.BLOCK_EXPLORER_BRANCH || 'increase_delegated_stakes' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SNAPSHOT_STREAMING_REPO: https://github.com/Constellation-Labs/snapshot-streaming.git
+
+      - name: Upload tessellation JARs
+        uses: actions/upload-artifact@v4
+        with:
+          name: tessellation-jars
+          path: docker/jars/
+          retention-days: 3
+
+      - name: Upload snapshot-streaming JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-streaming-jar
+          path: docker/snapshot-streaming/snapshot-streaming.jar
+          retention-days: 3
+
+      - name: Upload block-explorer prisma
+        uses: actions/upload-artifact@v4
+        with:
+          name: block-explorer-prisma
+          path: docker/snapshot-streaming/block-explorer/prisma/
+          retention-days: 3
+
+  deploy:
+    name: Deploy to nightly cluster
+    needs: build
+    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-tags: true
+
+      - name: Install just
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+          echo "/usr/local/bin" >> $GITHUB_PATH
+
+      - name: Download tessellation JARs
+        if: ${{ !inputs.skip_build }}
+        uses: actions/download-artifact@v4
+        with:
+          name: tessellation-jars
+          path: docker/jars/
+
+      - name: Download snapshot-streaming JAR
+        if: ${{ !inputs.skip_build }}
+        uses: actions/download-artifact@v4
+        with:
+          name: snapshot-streaming-jar
+          path: docker/snapshot-streaming/
+
+      - name: Download block-explorer prisma
+        if: ${{ !inputs.skip_build }}
+        uses: actions/download-artifact@v4
+        with:
+          name: block-explorer-prisma
+          path: docker/snapshot-streaming/block-explorer/prisma/
+
+      - name: Validate configuration
+        run: |
+          if [ -z "${{ vars.NIGHTLY_HOSTS }}" ]; then
+            echo "::error::NIGHTLY_HOSTS repository variable is not configured"
+            exit 1
+          fi
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.NIGHTLY_SSH_KEY }}" > ~/.ssh/nightly_key
+          chmod 600 ~/.ssh/nightly_key
+          touch ~/.ssh/config
+
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          for i in "${!IPS[@]}"; do
+            cat >> ~/.ssh/config <<EOF
+          Host n$i
+              User root
+              Hostname ${IPS[$i]}
+              IdentityFile ~/.ssh/nightly_key
+              StrictHostKeyChecking no
+              UserKnownHostsFile /dev/null
+          EOF
+          done
+          chmod 600 ~/.ssh/config
+
+      - name: Verify SSH connectivity
+        run: |
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          for i in "${!IPS[@]}"; do
+            echo "Testing n$i (${IPS[$i]})..."
+            ssh -o ConnectTimeout=10 "n$i" "hostname"
+          done
+
+      - name: Stop existing cluster
+        run: |
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          NODES=$(printf "n%s," "${!IPS[@]}" | sed 's/,$//')
+          CLEAN="${{ inputs.clean }}"
+          CLEAN="${CLEAN:-false}"
+          if [ "$CLEAN" = "true" ]; then
+            just down --remote="$NODES" --clean
+          else
+            just down --remote="$NODES"
+          fi
+
+      - name: Deploy cluster
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLICKHOUSE_HOST: ${{ secrets.NIGHTLY_CLICKHOUSE_HOST }}
+          CLICKHOUSE_PORT: ${{ secrets.NIGHTLY_CLICKHOUSE_PORT }}
+          CLICKHOUSE_USER: ${{ secrets.NIGHTLY_CLICKHOUSE_USER }}
+          CLICKHOUSE_PASSWORD: ${{ secrets.NIGHTLY_CLICKHOUSE_PASSWORD }}
+          CLICKHOUSE_DATABASE: ${{ secrets.NIGHTLY_CLICKHOUSE_DATABASE }}
+        run: |
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          NODES=$(printf "n%s," "${!IPS[@]}" | sed 's/,$//')
+          just up --skip-assembly --remote="$NODES" --snapshot-streaming-branch=${{ vars.SNAPSHOT_STREAMING_BRANCH || 'testing' }} --block-explorer-branch=${{ vars.BLOCK_EXPLORER_BRANCH || 'increase_delegated_stakes' }}
+
+      - name: Deploy monitoring
+        env:
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.NIGHTLY_GRAFANA_PASSWORD }}
+        run: |
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          NODES=$(printf "n%s," "${!IPS[@]}" | sed 's/,$//')
+          export REMOTE_NODES="$NODES"
+          bash docker/monitoring/deploy-monitoring.sh
+
+      - name: Post-deploy health check
+        run: |
+          GENESIS_IP=$(echo "${{ vars.NIGHTLY_HOSTS }}" | cut -d',' -f1)
+
+          echo "=== GL0 Cluster ==="
+          curl -sf "http://$GENESIS_IP:9000/cluster/info" | python3 -c "
+          import sys,json
+          peers=json.load(sys.stdin)
+          for p in peers: print(f\"  {p['state']:12} {p['ip']}:{p['publicPort']}\")
+          assert len(peers) >= 3, f'Expected 3+ GL0 nodes, got {len(peers)}'
+          "
+
+          echo "=== GL1 Cluster ==="
+          curl -sf "http://$GENESIS_IP:9010/cluster/info" | python3 -c "
+          import sys,json
+          peers=json.load(sys.stdin)
+          for p in peers: print(f\"  {p['state']:12} {p['ip']}:{p['publicPort']}\")
+          assert len(peers) >= 3, f'Expected 3+ GL1 nodes, got {len(peers)}'
+          "
+
+          echo "=== Snapshots ==="
+          curl -sf "http://$GENESIS_IP:9000/global-snapshots/latest" | python3 -c "
+          import sys,json
+          ordinal=json.load(sys.stdin)['value']['ordinal']
+          print(f'Latest ordinal: {ordinal}')
+          assert ordinal > 0, 'No snapshots produced'
+          "
+
+      - name: Collect remote logs on failure
+        if: failure()
+        run: |
+          mkdir -p runner-logs
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          for i in "${!IPS[@]}"; do
+            echo "=== n$i (${IPS[$i]}) ===" >> runner-logs/remote-status.txt
+            ssh "n$i" "docker ps -a 2>/dev/null" >> runner-logs/remote-status.txt 2>&1 || true
+            for svc in gl0 gl1; do
+              ssh "n$i" "docker logs $svc 2>&1 | tail -50" > "runner-logs/n${i}-${svc}.log" 2>&1 || true
+            done
+          done
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-deploy-logs-${{ github.run_number }}
+          path: runner-logs/
+          retention-days: 7
+
+      - name: Notify Slack
+        if: always()
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_NIGHTLY_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "${{ job.status == 'success' && ':large_green_circle: Nightly Deploy succeeded' || ':red_circle: Nightly Deploy failed' }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "${{ job.status == 'success' && ':large_green_circle: *Nightly Deploy succeeded*' || ':red_circle: *Nightly Deploy failed*' }}\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run #${{ github.run_number }}>"
+                  }
+                }
+              ]
+            }

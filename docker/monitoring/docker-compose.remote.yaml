@@ -7,13 +7,13 @@ services:
     environment:
       - CLICKHOUSE_DB=default
       - CLICKHOUSE_USER=default
-      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-clickhouse}
+      - CLICKHOUSE_PASSWORD=clickhouse
     volumes:
       - clickhouse-data:/var/lib/clickhouse
       - ./clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - ./clickhouse/enable_json.xml:/etc/clickhouse-server/users.d/enable_json.xml:ro
     healthcheck:
-      test: ["CMD-SHELL", "clickhouse-client --password $${CLICKHOUSE_PASSWORD:-clickhouse} --query 'SELECT 1'"]
+      test: ["CMD", "clickhouse-client", "--password", "clickhouse", "--query", "SELECT 1"]
       interval: 5s
       timeout: 3s
       retries: 10
