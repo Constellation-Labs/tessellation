@@ -1,5 +1,5 @@
 # Genesis Node (Machine 1)
-# Runs GL0-0, GL1-0, ML0-0, CL1-0 + Grafana/Prometheus
+# Runs GL0-0, GL1-0, ML0-0, CL1-0
 resource "hcloud_server" "genesis" {
   name        = "nightly-${var.environment}-genesis"
   server_type = var.node_server_type
@@ -12,10 +12,7 @@ resource "hcloud_server" "genesis" {
     hostname  = "nightly-genesis"
     ssh_keys  = var.team_ssh_keys
     node_role = "genesis"
-    peer_ips  = concat(
-      [for v in hcloud_server.validators : v.ipv4_address],
-      [hcloud_server.streaming.ipv4_address]
-    )
+    peer_ips  = []
   })
 
   labels = {
@@ -86,7 +83,11 @@ resource "hcloud_server" "streaming" {
     hostname  = "nightly-streaming"
     ssh_keys  = var.team_ssh_keys
     node_role = "streaming"
-    peer_ips  = []
+    peer_ips  = [
+      cidrhost(var.subnet_cidr, 11), # genesis
+      cidrhost(var.subnet_cidr, 12), # validator-1
+      cidrhost(var.subnet_cidr, 13), # validator-2
+    ]
   })
 
   labels = {

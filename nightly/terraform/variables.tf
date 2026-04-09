@@ -45,12 +45,6 @@ variable "streaming_server_type" {
   default     = "cpx21" # 3 AMD vCPU, 4 GB RAM
 }
 
-variable "node_volume_size" {
-  description = "Root volume size in GB for node machines (0 = use default)"
-  type        = number
-  default     = 0
-}
-
 variable "deploy_ssh_public_key" {
   description = "SSH public key for CI/CD deployment access"
   type        = string
