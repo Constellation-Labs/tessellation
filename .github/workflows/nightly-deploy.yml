@@ -6,7 +6,6 @@ on:
   push:
     branches:
       - develop
-      - nightly_ci_builds
   workflow_dispatch:
     inputs:
       skip_build:

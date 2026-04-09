@@ -3,9 +3,6 @@ name: Nightly E2E
 on:
   schedule:
     - cron: '0 * * * *'
-  push:
-    branches:
-      - nightly_ci_builds
   workflow_dispatch:
 
 # Own group so hourly runs cancel each other but don't cancel deploys
@@ -101,6 +98,29 @@ jobs:
           NODES=$(printf "n%s," "${!IPS[@]}" | sed 's/,$//')
           echo "host=http://${GENESIS_IP}" >> "$GITHUB_OUTPUT"
           echo "nodes=${NODES}" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure tx-sender is running on genesis node
+        run: |
+          if ssh n0 "docker ps --filter name=tx-sender --format '{{.Names}}'" 2>/dev/null | grep -q tx-sender; then
+            echo "tx-sender already running"
+          else
+            echo "Starting tx-sender on n0"
+            # tools.jar is deployed to n0 by nightly-deploy; only upload the config
+            DIR="/opt/tessellation"
+            if ! ssh n0 "test -f $DIR/tx-sender/tools.jar"; then
+              echo "::warning::tools.jar not found on n0 — tx-sender cannot start (run nightly-deploy first)"
+            else
+              sed 's|http://gl1-0:9100|http://localhost:9010|' docker/config/tx-sender.conf \
+                | ssh n0 "cat > $DIR/tx-sender/tx-sender.conf"
+              ssh n0 "docker rm -f tx-sender 2>/dev/null; docker run -d --name tx-sender \
+                --network host --restart unless-stopped \
+                -v $DIR/tx-sender/tools.jar:/app/tools.jar:ro \
+                -v $DIR/tx-sender/tx-sender.conf:/app/tx-sender.conf:ro \
+                eclipse-temurin:11-jre \
+                java -jar /app/tools.jar tx-sender --config /app/tx-sender.conf" \
+                && echo "tx-sender started" || echo "::warning::tx-sender failed to start"
+            fi
+          fi
 
       # Tests run sequentially: delegated-staking sets node params,
       # token-lock-replacement depends on that state existing.
