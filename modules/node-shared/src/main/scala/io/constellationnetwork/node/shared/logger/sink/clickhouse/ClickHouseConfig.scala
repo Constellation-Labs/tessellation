@@ -12,6 +12,7 @@ case class ClickHouseConfig(
   password: String,
   tableName: String,
   retentionPeriodInDays: Int,
+  protocol: String = "https",
   // Batching settings
   maxQueueSize: Int = 10000,
   batchSize: Int = 100,
@@ -70,6 +71,7 @@ object ClickHouseConfig {
             password = password,
             tableName = tableName,
             retentionPeriodInDays = config.retentionPeriodInDays,
+            protocol = config.protocol.getOrElse("https"),
             maxQueueSize = config.maxQueueSize,
             batchSize = config.batchSize,
             flushInterval = config.flushInterval,
@@ -103,6 +105,7 @@ object ClickHouseConfig {
             password = password,
             tableName = tableName,
             retentionPeriodInDays = config.retentionPeriodInDays,
+            protocol = config.protocol.getOrElse("https"),
             maxQueueSize = config.maxQueueSize,
             batchSize = config.batchSize,
             flushInterval = config.flushInterval,

@@ -65,7 +65,7 @@ object ClickHouseSink {
   def makeDataSource[F[_]: Async](config: ClickHouseConfig): Resource[F, HikariDataSource] =
     Resource.make(Async[F].blocking {
       val hc = new HConfig()
-      hc.setJdbcUrl(s"jdbc:clickhouse:https://${config.host}:${config.port}/${config.database}")
+      hc.setJdbcUrl(s"jdbc:clickhouse:${config.protocol}://${config.host}:${config.port}/${config.database}")
       hc.setUsername(config.user)
       hc.setPassword(config.password)
       hc.setMinimumIdle(2)
