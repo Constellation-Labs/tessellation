@@ -43,6 +43,9 @@ jobs:
           done
           chmod 600 ~/.ssh/config
 
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Stop all services and wipe data
         run: |
           IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
@@ -66,6 +69,15 @@ jobs:
             ssh "n$i" "rm -rf $DIR/gl0-data $DIR/gl1-data $DIR/gl0-logs $DIR/gl1-logs $DIR/.last-snapshot-hash && mkdir -p $DIR/gl0-data $DIR/gl1-data $DIR/gl0-logs $DIR/gl1-logs" 2>/dev/null || true
             echo "  n$i data wiped"
           done
+
+      - name: Ensure monitoring
+        env:
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.NIGHTLY_GRAFANA_PASSWORD }}
+        run: |
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          NODES=$(printf "n%s," "${!IPS[@]}" | sed 's/,$//')
+          export REMOTE_NODES="$NODES"
+          bash docker/monitoring/deploy-monitoring.sh
 
       - name: Start cluster
         run: |

@@ -107,6 +107,20 @@ CL_DOCKER_INTERNAL_GL1_CLI=9012
 CL_EXTERNAL_IP=${NODE_IPS[$i]}
 ENVEOF
 
+  # ClickHouse logging (optional — enabled when CLICKHOUSE_HOST is set)
+  if [ -n "$CLICKHOUSE_HOST" ]; then
+    cat >> "$STAGING/node$i/.env" <<ENVEOF
+
+CLICKHOUSE_HOST=${CLICKHOUSE_HOST}
+CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
+CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-8443}
+CLICKHOUSE_DATABASE=${CLICKHOUSE_DATABASE:-default}
+CLICKHOUSE_PROTOCOL=${CLICKHOUSE_PROTOCOL:-https}
+CLICKHOUSE_LOGS_TABLE_NAME=nightly_logs
+ENVEOF
+  fi
+
   if [ "$i" -eq 0 ]; then
     # Check if genesis data already exists on n0
     HAS_DATA=$(ssh "${NODES[0]}" "test -f $DIR/gl0-data/snapshot/ordinal/0/0 && echo yes || echo no" 2>/dev/null || echo "no")
