@@ -63,6 +63,19 @@ debug-main:
 	@just _check_deps
 	@bash docker/bin/debug/mn-replicate.sh
 
+# Start local monitoring stack (Prometheus + Grafana + ClickHouse).
+# For ClickHouse logging, start monitoring BEFORE the cluster so nodes can connect at boot:
+#   just monitoring-up && CLICKHOUSE_HOST=172.32.0.200 CLICKHOUSE_PASSWORD=clickhouse CLICKHOUSE_PORT=8123 CLICKHOUSE_PROTOCOL=http just up
+monitoring-up:
+	@docker network create --driver=bridge --subnet=172.32.0.0/24 tessellation_common 2>/dev/null || true
+	@docker compose -f docker/monitoring/docker-compose.local.yaml up -d
+	@echo "Prometheus: http://localhost:9090"
+	@echo "Grafana:    http://localhost:3000  (admin/admin)"
+
+# Stop local monitoring stack. Preserves data volumes.
+monitoring-down:
+	@docker compose -f docker/monitoring/docker-compose.local.yaml down
+
 check:
     @bash sbt --error 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test'
 

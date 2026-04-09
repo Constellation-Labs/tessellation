@@ -294,7 +294,8 @@ object types {
     logsTableName: Option[String],
     metricsTableName: Option[String],
     port: Option[Int],
-    database: Option[String]
+    database: Option[String],
+    protocol: Option[String]
   )
 
   case class SnapshotConfig(

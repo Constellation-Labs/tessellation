@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090
+
+  - job_name: tessellation
+    http_sd_configs:
+      - url: http://${NODE_IP_0}:9000/targets
+      - url: http://${NODE_IP_0}:9010/targets
+      - url: http://${NODE_IP_1}:9000/targets
+      - url: http://${NODE_IP_1}:9010/targets
+      - url: http://${NODE_IP_2}:9000/targets
+      - url: http://${NODE_IP_2}:9010/targets
