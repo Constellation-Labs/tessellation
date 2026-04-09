@@ -18,28 +18,26 @@ There is no long-lived environment where the full hypergraph + metagraph stack r
 │  │  10.0.1.11   │  │  10.0.1.12   │  │  10.0.1.13   │          │
 │  │              │  │              │  │              │          │
 │  │  GL0-0       │  │  GL0-1       │  │  GL0-2       │          │
-│  │  GL1-0       │  │  GL1-2       │  │  GL1-1       │          │
-│  │  ML0-0       │  │  ML0-1       │  │  ML0-2       │          │
-│  │  CL1-0       │  │  CL1-1       │  │  CL1-2       │          │
-│  │              │  │              │  │              │          │
-│  │  Grafana     │  │              │  │              │          │
-│  │  Prometheus  │  │              │  │              │          │
+│  │  GL1-0       │  │  GL1-1       │  │  GL1-2       │          │
 │  └──────────────┘  └──────────────┘  └──────────────┘          │
 │                                                                 │
 │  ┌──────────────┐                                               │
 │  │  Machine 4   │                                               │
 │  │  Streaming   │                                               │
 │  │  10.0.1.14   │                                               │
+│  │              │                                               │
+│  │  Grafana     │                                               │
+│  │  Prometheus  │                                               │
 │  └──────────────┘                                               │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 | Machine | Role | Server Type | vCPU | RAM | ~Cost/month |
 |---------|------|-------------|------|-----|-------------|
-| 1 | Genesis node + monitoring | CPX41 | 8 AMD | 16 GB | €15 |
+| 1 | Genesis node | CPX41 | 8 AMD | 16 GB | €15 |
 | 2 | Validator 1 | CPX41 | 8 AMD | 16 GB | €15 |
 | 3 | Validator 2 | CPX41 | 8 AMD | 16 GB | €15 |
-| 4 | Snapshot streaming | CPX21 | 3 AMD | 4 GB | €5 |
+| 4 | Snapshot streaming + monitoring | CPX21 | 3 AMD | 4 GB | €5 |
 | | **Total** | | | | **~€50** |
 
 All instances run Ubuntu 22.04 with Docker CE and the Docker Compose plugin pre-installed via cloud-init. Inter-node communication uses Hetzner Cloud Network private IPs. Tessellation services run with `--network host` so containers bind directly to the host interface — no Docker overlay networking required.
@@ -62,16 +60,13 @@ nightly/terraform/
 ├── environments/
 │   └── nightly.tfvars             # Environment-specific values (server types, location, CIDRs)
 │
-├── scripts/
-│   └── deploy-nightly.sh          # CLI wrapper for terraform init/plan/apply/destroy
-│
 └── templates/
     └── node-init.tpl              # Cloud-init template: installs Docker, creates working dirs
 ```
 
 ### Key files
 
-**`main.tf`** — Sets up the Hetzner Cloud provider, S3 state backend (shared `ded-terraform` bucket, keyed under `nightly/`), the private Cloud Network + subnet, firewall rules for SSH/tessellation ports/Grafana/Prometheus/node-exporter, SSH key resources, and calls the `cluster` module.
+**`main.tf`** — Sets up the Hetzner Cloud provider, S3 state backend (`tessellation-nightly` bucket, keyed under `nightly/`), the private Cloud Network + subnet, firewall rules for SSH/tessellation ports/Grafana/Prometheus/node-exporter, SSH key resources, and calls the `cluster` module.
 
 **`components/cluster/main.tf`** — Provisions the 4 servers with static private IPs on the Cloud Network: genesis at `10.0.1.11`, validators at `10.0.1.12`–`10.0.1.13`, streaming at `10.0.1.14`. Each server gets the `node-init.tpl` cloud-init script with its hostname and role.
 
@@ -79,12 +74,10 @@ nightly/terraform/
 
 **`environments/nightly.tfvars`** — Defaults for the nightly environment: `hel1` (Helsinki) datacenter, `cpx41` for nodes, `cpx21` for streaming. SSH and API CIDR restrictions are set to `0.0.0.0/0` as placeholders — tighten these before production use.
 
-**`scripts/deploy-nightly.sh`** — Shell wrapper that validates prerequisites (Terraform, Hetzner token, AWS CLI for state backend), creates the S3 state bucket if needed, initializes the backend, selects the `nightly` workspace, and runs plan/apply. Adapted from the DED `deploy-terraform.sh`.
-
 ## Prerequisites
 
 - [Terraform](https://developer.hashicorp.com/terraform/install) >= 1.0
-- [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) configured with access to the `tessellation-nightly` S3 bucket (used for state storage; the deploy script creates this bucket automatically if it doesn't exist)
+- [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) configured with access to the `tessellation-nightly` S3 bucket (used for state storage)
 - A [Hetzner Cloud](https://console.hetzner.cloud/) project with an API token
 - An SSH key pair for CI/CD deployment access
 
@@ -101,31 +94,30 @@ export TF_VAR_deploy_ssh_public_key='ssh-ed25519 AAAA... deploy@ci'
 export TF_VAR_team_ssh_keys='["ssh-ed25519 AAAA... alice", "ssh-ed25519 AAAA... bob"]'
 ```
 
-The Hetzner token can also be passed as `TF_VAR_hcloud_token`. Both forms are checked by the deploy script.
+The Hetzner token can also be passed as `TF_VAR_hcloud_token`.
 
-### 2. Preview changes
+### 2. Initialize and preview changes
 
 ```bash
 cd nightly/terraform
-./scripts/deploy-nightly.sh plan
+terraform init
+terraform plan -var-file=environments/nightly.tfvars
 ```
 
 ### 3. Deploy
 
 ```bash
-./scripts/deploy-nightly.sh deploy
+terraform apply -var-file=environments/nightly.tfvars
 ```
-
-This will show the plan and prompt for confirmation before applying.
 
 ### 4. Get outputs
 
 ```bash
 # Human-readable
-./scripts/deploy-nightly.sh output
+terraform output
 
 # JSON (for scripts and CI)
-./scripts/deploy-nightly.sh output-json
+terraform output -json
 ```
 
 Outputs include public and private IPs for all 4 machines, which are consumed by the GitHub Actions deployment workflows and E2E test scripts.
@@ -133,7 +125,7 @@ Outputs include public and private IPs for all 4 machines, which are consumed by
 ### 5. Destroy
 
 ```bash
-./scripts/deploy-nightly.sh destroy
+terraform destroy -var-file=environments/nightly.tfvars
 ```
 
 ## Networking
@@ -143,7 +135,7 @@ Outputs include public and private IPs for all 4 machines, which are consumed by
 | Port | Protocol | Source | Purpose |
 |------|----------|--------|---------|
 | 22 | TCP | `allowed_ssh_cidrs` | SSH access |
-| 9000–9099 | TCP | Private subnet + `allowed_api_cidrs` | Tessellation services (GL0, GL1, ML0, CL1, DL1) |
+| 9000–9089, 9091–9099 | TCP | Private subnet + `allowed_api_cidrs` | Tessellation services (GL0, GL1, ML0, CL1, DL1) |
 | 3000 | TCP | `allowed_ssh_cidrs` | Grafana dashboard |
 | 9090 | TCP | Private subnet | Prometheus scraping |
 | 9100 | TCP | Private subnet | Node exporter metrics |
@@ -164,7 +156,7 @@ These IPs are used by the docker compose `.env` files on each machine. Validator
 
 ## State management
 
-Terraform state is stored in S3 at `s3://tessellation-nightly/nightly/nightly/terraform.tfstate` in a dedicated bucket separate from other project infrastructure. The deploy script creates this bucket automatically with versioning enabled if it doesn't already exist. The `nightly` Terraform workspace provides isolation from other environments.
+Terraform state is stored in S3 at `s3://tessellation-nightly/nightly/terraform.tfstate` in a dedicated bucket separate from other project infrastructure. The bucket must be created before the first `terraform init`. The `nightly` Terraform workspace provides isolation from other environments.
 
 ## Customization
 

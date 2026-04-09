@@ -52,14 +52,27 @@ ufw default deny incoming
 ufw default allow outgoing
 
 # Base rules — all nodes
+# SSH
 ufw allow 22/tcp
+# GL0: 9000-9002
 ufw allow 9000/tcp
 ufw allow 9001/tcp
+ufw allow 9002/tcp
+# GL1: 9010-9012
 ufw allow 9010/tcp
 ufw allow 9011/tcp
+ufw allow 9012/tcp
+# ML0: 9020-9022
+ufw allow 9020/tcp
+ufw allow 9021/tcp
+ufw allow 9022/tcp
+# CL1: 9030-9032
+ufw allow 9030/tcp
+ufw allow 9031/tcp
+ufw allow 9032/tcp
 
-# Genesis only — Grafana open, Prometheus + ClickHouse restricted to peer nodes
-%{ if node_role == "genesis" ~}
+# Streaming node runs monitoring — Grafana open, Prometheus + ClickHouse restricted to peer nodes
+%{ if node_role == "streaming" ~}
 ufw allow 3000/tcp
 %{ endif ~}
 %{ for ip in peer_ips ~}
