@@ -365,8 +365,11 @@ object ConsensusStorage {
         def getCandidates(key: Key): F[Candidates] =
           peerRegistrationsR.get.map { peerRegistrations =>
             peerRegistrations.toList.mapFilter {
-              case (peerId, at) if key === at => peerId.some
-              case _                          => none[PeerId]
+              // Use <= instead of === so registrations don't expire after 1 ordinal.
+              // A peer registered at key N is found at getCandidates(N), getCandidates(N+1), etc.
+              // Stale peers are cleaned by pruneStalePeerRegistrations after each round.
+              case (peerId, at) if at <= key => peerId.some
+              case _                         => none[PeerId]
             }
           }.map(c => Candidates(c.toSet))
 
