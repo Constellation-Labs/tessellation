@@ -37,7 +37,9 @@ import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcce
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.consensus._
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.StallReport
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, ConsensusEventLoop, _}
+import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorHandler
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.EventGossipClient
@@ -259,7 +261,9 @@ object GlobalSnapshotConsensus {
           consensusClient,
           appConfig.snapshot.consensus,
           facilitatorSelector,
-          peerQualityTracker
+          peerQualityTracker,
+          (key, stallReport, targets) =>
+            gossip.spreadDirect(ConsensusPeerDeclaration[GlobalSnapshotKey, StallReport](key, stallReport), targets)
         )
 
       handler = GlobalConsensusHandler.make(loop.queue)
