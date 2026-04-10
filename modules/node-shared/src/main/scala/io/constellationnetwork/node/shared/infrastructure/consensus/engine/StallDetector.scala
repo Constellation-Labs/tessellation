@@ -127,6 +127,19 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       statusDuration = now - newStatusStartTime
       newStallCount = if (statusChanged) 0 else ms.stallCount
 
+      // Clear votes on phase change (stall reports from a previous phase are stale)
+      _ <- evictionVoteTracker.clearVotes.whenA(statusChanged)
+
+      // Continuously collect remote stall reports on every poll cycle (100-1000ms).
+      // This ensures votes accumulate BETWEEN stall detection cycles, so when handleStall
+      // checks for majority, remote reports that arrived via gossip are already counted.
+      _ <- resources.peerDeclarationsMap.toList.traverse_ {
+        case (peerId, decls) =>
+          decls.stallReport.traverse_ { report =>
+            evictionVoteTracker.registerRemoteVotes(peerId, report.missingPeers)
+          }
+      }
+
       _ <- queue.offer(ConsensusCommand.CheckUpdate(key)).whenA(resourcesChanged || statusChanged)
 
       // --- Timeout calculation ---
@@ -453,18 +466,11 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
             val phaseIndex = ops.phaseIndex(state.status)
             val stallReport = StallReport(missingPeers, phaseIndex, state.entropy, state.entropy)
 
-            // Record local vote and broadcast to all facilitators
+            // Record local vote and broadcast to all facilitators.
+            // Remote votes are collected continuously in runMonitorCycle (every 100-1000ms),
+            // so by the time we check majority here, votes from previous cycles are already accumulated.
             missingPeers.toList.traverse_(target => evictionVoteTracker.voteToEvict(selfId, target)) >>
               spreadStallReportFn(key, stallReport, state.facilitators.value.toSet) >>
-              // Collect remote stall reports from resources and register their votes
-              storage.getResources(key).flatMap { resources =>
-                resources.peerDeclarationsMap.toList.traverse_ {
-                  case (peerId, decls) =>
-                    decls.stallReport.traverse_ { report =>
-                      evictionVoteTracker.registerRemoteVotes(peerId, report.missingPeers)
-                    }
-                }
-              } >>
               // Check if majority of facilitators agree on eviction targets
               evictionVoteTracker.getMajorityEvictionTargets(totalFacilitators).flatMap { majorityTargets =>
                 if (majorityTargets.nonEmpty) {
