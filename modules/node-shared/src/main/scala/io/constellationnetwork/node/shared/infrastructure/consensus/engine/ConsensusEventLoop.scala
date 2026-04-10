@@ -185,8 +185,27 @@ object ConsensusEventLoop {
                     // After a successful consensus round completes, reset recovery counters.
                     // This prevents stale history from causing premature force-leave on future (unrelated) recovery.
                     cmd match {
-                      case _: ConsensusCommand.ConsensusFinished => abandonmentTracker.resetOnSuccessfulRound
-                      case _                                     => Async[F].unit
+                      case _: ConsensusCommand.ConsensusFinished =>
+                        abandonmentTracker.resetOnSuccessfulRound >>
+                          // Re-collect registrations from Ready peers in the background.
+                          // The peerRegistrationStream only fires on state changes, so peers that
+                          // registered before their observation key was set (or whose state change
+                          // was missed) never get re-queried. This ensures every Ready peer's
+                          // registration is refreshed each round, closing the timing gap.
+                          Async[F]
+                            .start(
+                              ctx.clusterStorage.getResponsivePeers.flatMap { peers =>
+                                peers
+                                  .filter(_.state === NodeState.Ready)
+                                  .toList
+                                  .traverse_(peer =>
+                                    collectRegistration(consensusClient, storage)(peer)
+                                      .handleErrorWith(_ => Async[F].unit)
+                                  )
+                              }
+                            )
+                            .void
+                      case _ => Async[F].unit
                     }
                   }
                   .handleErrorWith { err =>
@@ -234,11 +253,20 @@ object ConsensusEventLoop {
             }
         }
 
+      // Register peers when they enter Observing, WaitingForReady, or Ready.
+      // Observing: earliest opportunity (observationKeyR may not be set yet).
+      // WaitingForReady: after initFromDownload sets observationKeyR (reliable).
+      // Ready: after first round completes (fallback if earlier attempts missed).
+      // collectRegistration retries once at Observing; the later state triggers
+      // provide additional chances without relying solely on the retry delay.
+      val registrationStates: Set[NodeState] =
+        Set(NodeState.Observing, NodeState.WaitingForReady, NodeState.Ready)
+
       val peerRegistrationStream: Stream[F, Unit] =
         clusterStorage.peerChanges.mapFilter {
-          case cats.data.Ior.Both(_, peer) if peer.state === NodeState.Observing => Some(peer)
-          case cats.data.Ior.Right(peer) if peer.state === NodeState.Observing   => Some(peer)
-          case _                                                                 => None
+          case cats.data.Ior.Both(_, peer) if registrationStates.contains(peer.state) => Some(peer)
+          case cats.data.Ior.Right(peer) if registrationStates.contains(peer.state)   => Some(peer)
+          case _                                                                      => None
         }
           .filter(_.isResponsive)
           .evalMap(peer =>
