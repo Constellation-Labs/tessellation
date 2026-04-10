@@ -7,6 +7,7 @@ import cats.syntax.all._
 import scala.concurrent.duration._
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.StallReport
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusResources}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
@@ -43,7 +44,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
   viewChangeManager: ViewChangeManager[F, Key, Status, Outcome, Kind],
   abandonmentTracker: AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   healthRef: Ref[F, ConsensusHealthStatus],
-  evictionVoteTracker: EvictionVoteTracker[F]
+  evictionVoteTracker: EvictionVoteTracker[F],
+  spreadStallReportFn: (Key, StallReport, Set[PeerId]) => F[Unit]
 ) {
 
   import ctx.{clusterStorage, config, logger, ops, peerQualityTracker, queue, selfId, storage}
@@ -445,69 +447,97 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
               Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
               StallResult(didStall = true, quorumInfeasible = false).pure[F] // Count as stall but don't evict
           } else {
-            // Second+ timeout — evict missing peers
-            // Record local eviction votes for missing peers (scaffolding for future gossip-based deterministic eviction)
+            // Second+ timeout — broadcast StallReport and gate eviction on majority agreement.
+            // This makes eviction consensus-agreed: all nodes must independently observe the same
+            // missing peers before any node evicts them, preventing non-deterministic facilitator sets.
+            val phaseIndex = ops.phaseIndex(state.status)
+            val stallReport = StallReport(missingPeers, phaseIndex, state.entropy, state.entropy)
+
+            // Record local vote and broadcast to all facilitators
             missingPeers.toList.traverse_(target => evictionVoteTracker.voteToEvict(selfId, target)) >>
-              // Note: Using a conditional event name here. Both paths log to the same category but need different events.
-              // We'll use a custom format call for now since the ADT doesn't have a combined event.
-              (if (quorumInfeasible)
-                 logger.warn(
-                   ConsensusLog.format(
-                     Category.Stall,
-                     key.toString,
-                     selfRole(state),
-                     LogEvent.StallDetected, // Using StallDetected as closest match for quorum infeasible
-                     "phase" -> statusName,
-                     "elapsed" -> s"${statusDuration.toSeconds}s",
-                     "timeout" -> s"${declarationTimeout.toSeconds}s",
-                     "progress" -> s"$declaredCount/$activeCount",
-                     "evicted" -> missingPeers.size.toString,
-                     "remaining" -> remaining.toString,
-                     "minQuorum" -> minQuorum.toString,
-                     "quorumFeasible" -> "false",
-                     "evictedPeers" -> ConsensusLog.pids(missingPeers),
-                     "view" -> state.viewNumber.toString,
-                     "stallCount" -> stallCount.toString,
-                     "reason" -> "QUORUM_INFEASIBLE_AFTER_EVICTION"
-                   )
-                 )
-               else
-                 logger.warn(
-                   ConsensusLog.format(
-                     Category.Stall,
-                     key.toString,
-                     selfRole(state),
-                     LogEvent.StallDetected, // Using StallDetected for peer eviction
-                     "phase" -> statusName,
-                     "elapsed" -> s"${statusDuration.toSeconds}s",
-                     "timeout" -> s"${declarationTimeout.toSeconds}s",
-                     "progress" -> s"$declaredCount/$activeCount",
-                     "evicted" -> missingPeers.size.toString,
-                     "remaining" -> remaining.toString,
-                     "minQuorum" -> minQuorum.toString,
-                     "quorumFeasible" -> "true",
-                     "evictedPeers" -> ConsensusLog.pids(missingPeers),
-                     "view" -> state.viewNumber.toString,
-                     "stallCount" -> stallCount.toString,
-                     "reason" -> "PEER_EVICTION"
-                   )
-                 )) >>
-              Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>
-              Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
-              // If quorum is infeasible after eviction, skip the view change (it can't help)
-              // and propagate quorumInfeasible to the main loop for retriable abandon.
-              viewChangeManager
-                .performViewChangeWithEviction(key, state, missingPeers)
-                .unlessA(quorumInfeasible)
-                .as(
-                  StallResult(
-                    didStall = true,
-                    quorumInfeasible = quorumInfeasible,
-                    activeFacilitators = remaining,
-                    quorumSize = minQuorum,
-                    clusterSize = clusterSize
-                  )
-                )
+              spreadStallReportFn(key, stallReport, state.facilitators.value.toSet) >>
+              // Collect remote stall reports from resources and register their votes
+              storage.getResources(key).flatMap { resources =>
+                resources.peerDeclarationsMap.toList.traverse_ {
+                  case (peerId, decls) =>
+                    decls.stallReport.traverse_ { report =>
+                      evictionVoteTracker.registerRemoteVotes(peerId, report.missingPeers)
+                    }
+                }
+              } >>
+              // Check if majority of facilitators agree on eviction targets
+              evictionVoteTracker.getMajorityEvictionTargets(totalFacilitators).flatMap { majorityTargets =>
+                if (majorityTargets.nonEmpty) {
+                  val majorityRemaining = totalFacilitators - majorityTargets.size
+                  val majorityQuorumInfeasible = majorityRemaining < minQuorum
+
+                  (if (majorityQuorumInfeasible)
+                     logger.warn(
+                       ConsensusLog.format(
+                         Category.Stall,
+                         key.toString,
+                         selfRole(state),
+                         LogEvent.StallDetected,
+                         "phase" -> statusName,
+                         "elapsed" -> s"${statusDuration.toSeconds}s",
+                         "timeout" -> s"${declarationTimeout.toSeconds}s",
+                         "progress" -> s"$declaredCount/$activeCount",
+                         "evicted" -> majorityTargets.size.toString,
+                         "remaining" -> majorityRemaining.toString,
+                         "minQuorum" -> minQuorum.toString,
+                         "quorumFeasible" -> "false",
+                         "evictedPeers" -> ConsensusLog.pids(majorityTargets),
+                         "view" -> state.viewNumber.toString,
+                         "stallCount" -> stallCount.toString,
+                         "reason" -> "QUORUM_INFEASIBLE_AFTER_EVICTION"
+                       )
+                     )
+                   else
+                     logger.warn(
+                       ConsensusLog.format(
+                         Category.Stall,
+                         key.toString,
+                         selfRole(state),
+                         LogEvent.StallDetected,
+                         "phase" -> statusName,
+                         "elapsed" -> s"${statusDuration.toSeconds}s",
+                         "timeout" -> s"${declarationTimeout.toSeconds}s",
+                         "progress" -> s"$declaredCount/$activeCount",
+                         "evicted" -> majorityTargets.size.toString,
+                         "remaining" -> majorityRemaining.toString,
+                         "minQuorum" -> minQuorum.toString,
+                         "quorumFeasible" -> "true",
+                         "evictedPeers" -> ConsensusLog.pids(majorityTargets),
+                         "view" -> state.viewNumber.toString,
+                         "stallCount" -> stallCount.toString,
+                         "reason" -> "PEER_EVICTION"
+                       )
+                     )) >>
+                    Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>
+                    Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
+                    viewChangeManager
+                      .performViewChangeWithEviction(key, state, majorityTargets)
+                      .unlessA(majorityQuorumInfeasible)
+                      .as(
+                        StallResult(
+                          didStall = true,
+                          quorumInfeasible = majorityQuorumInfeasible,
+                          activeFacilitators = majorityRemaining,
+                          quorumSize = minQuorum,
+                          clusterSize = clusterSize
+                        )
+                      )
+                } else {
+                  // No majority yet — stall detected locally but waiting for agreement from other nodes.
+                  // The next monitor cycle will re-check after remote StallReports arrive via gossip.
+                  logger.debug(
+                    s"Stall detected locally for key=$key but no majority agreement yet. " +
+                      s"localMissing=${ConsensusLog.pids(missingPeers)}, waiting for remote stall reports."
+                  ) >>
+                    Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
+                    StallResult(didStall = true, quorumInfeasible = false).pure[F]
+                }
+              }
           }
         }
       } else if (ops.isProposalPhase(state.status)) {

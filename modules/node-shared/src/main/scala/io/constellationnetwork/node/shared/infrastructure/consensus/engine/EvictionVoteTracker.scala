@@ -7,35 +7,34 @@ import io.constellationnetwork.schema.peer.PeerId
 
 /** Tracks eviction votes to coordinate peer removal during stall detection.
   *
-  * Used by [[StallDetector]] to record which peers the local node considers unresponsive. Each vote maps a voter (the detecting node) to a
-  * target (the unresponsive peer). The supermajority check gates eviction decisions — a peer is only evicted when enough facilitators
-  * independently agree it is missing.
+  * Used by [[StallDetector]] to record which peers are considered unresponsive. Votes come from two sources:
+  *   1. '''Local detection''': The local node's StallDetector calls [[voteToEvict]] when it observes missing peers
+  *   1. '''Remote reports''': Other facilitators broadcast `StallReport` declarations via gossip, which are registered via
+  *      [[registerRemoteVotes]]
+  *
+  * Eviction only proceeds when [[getMajorityEvictionTargets]] returns a non-empty set — meaning a majority of facilitators independently
+  * agree a peer is missing. This makes eviction consensus-agreed rather than unilateral.
   *
   * Votes are cleared at the start of each consensus round via [[clearVotes]].
-  *
-  * ==Current Scope==
-  *
-  * Votes are currently local-only (each node tracks its own observations). This is sufficient because stall detection runs independently on
-  * each node against the same gossip state, producing convergent eviction decisions in practice.
-  *
-  * ==Future: Gossip-Based Votes==
-  *
-  * For fully deterministic eviction across all nodes:
-  *   1. Spread eviction votes via gossip (new rumor type) 2. Collect votes from all facilitators, not just local observations 3. Include
-  *      vote tallies in Facility declarations for consensus agreement 4. Only evict when the consensus-agreed tally reaches supermajority
   */
 trait EvictionVoteTracker[F[_]] {
 
   /** Record a local eviction vote for a peer. Called when the local node detects a peer is unresponsive. */
   def voteToEvict(voter: PeerId, target: PeerId): F[Unit]
 
-  /** Get all peers that have received eviction votes, with their vote counts. */
+  /** Register eviction votes from a remote peer's StallReport declaration. */
+  def registerRemoteVotes(voter: PeerId, targets: Set[PeerId]): F[Unit]
+
+  /** Get all peers that have received eviction votes, with their voter sets. */
   def getEvictionVotes: F[Map[PeerId, Set[PeerId]]]
 
   /** Check if a peer has supermajority eviction votes (>= threshold of total facilitators). */
   def hasSupermajorityVotes(target: PeerId, totalFacilitators: Int, threshold: Double): F[Boolean]
 
-  /** Clear all eviction votes. Should be called at the start of each round. */
+  /** Returns peers that have received votes from a strict majority (>50%) of facilitators. */
+  def getMajorityEvictionTargets(totalFacilitators: Int): F[Set[PeerId]]
+
+  /** Clear all eviction votes. Should be called at the start of each round or when phase advances. */
   def clearVotes: F[Unit]
 }
 
@@ -51,6 +50,14 @@ object EvictionVoteTracker {
             votes.updated(target, currentVoters + voter)
           }
 
+        def registerRemoteVotes(voter: PeerId, targets: Set[PeerId]): F[Unit] =
+          votesRef.update { votes =>
+            targets.foldLeft(votes) { (acc, target) =>
+              val currentVoters = acc.getOrElse(target, Set.empty)
+              acc.updated(target, currentVoters + voter)
+            }
+          }
+
         def getEvictionVotes: F[Map[PeerId, Set[PeerId]]] =
           votesRef.get
 
@@ -59,6 +66,14 @@ object EvictionVoteTracker {
             val voterCount = votes.getOrElse(target, Set.empty).size
             val required = math.ceil(totalFacilitators * threshold).toInt
             voterCount >= required
+          }
+
+        def getMajorityEvictionTargets(totalFacilitators: Int): F[Set[PeerId]] =
+          votesRef.get.map { votes =>
+            val required = (totalFacilitators / 2) + 1
+            votes.collect {
+              case (target, voters) if voters.size >= required => target
+            }.toSet
           }
 
         def clearVotes: F[Unit] =

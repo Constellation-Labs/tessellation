@@ -13,6 +13,7 @@ import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.StallReport
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger._
 import io.constellationnetwork.node.shared.infrastructure.consensus.{FacilitatorSelector, _}
@@ -91,7 +92,8 @@ object ConsensusEventLoop {
     consensusClient: ConsensusClient[F, Key, Outcome],
     config: ConsensusConfig,
     facilitatorSelector: FacilitatorSelector,
-    peerQualityTracker: PeerQualityTracker[F]
+    peerQualityTracker: PeerQualityTracker[F],
+    spreadStallReportFn: (Key, StallReport, Set[PeerId]) => F[Unit]
   )(
     implicit _key: monocle.Lens[Outcome, Key],
     _context: monocle.Lens[Outcome, Ctx],
@@ -135,7 +137,8 @@ object ConsensusEventLoop {
         viewChangeManager,
         abandonmentTracker,
         healthRef,
-        evictionVoteTracker
+        evictionVoteTracker,
+        spreadStallReportFn
       )
       roundFibersRef <- Ref.of[F, List[Fiber[F, Throwable, Unit]]](Nil)
       cancelSignalRef <- Ref.of[F, Option[Deferred[F, Unit]]](None)

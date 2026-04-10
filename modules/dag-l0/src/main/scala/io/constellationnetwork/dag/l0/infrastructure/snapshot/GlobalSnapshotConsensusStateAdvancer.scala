@@ -615,7 +615,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                     _ <- checkForkByFacilitatorsHash(
                       SortedMap(leader -> leaderProposal),
                       status.facilitatorsHash
-                    )(_.facilitatorsHash).whenA(state.viewNumber === 0 && !lastSolo && !inGrace)
+                    )(_.facilitatorsHash).whenA(!lastSolo && !inGrace)
                     _ <- checkForkByLastSnapshotHash(
                       SortedMap(leader -> leaderProposal),
                       status.lastSnapshotHash
@@ -1141,7 +1141,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               inGrace2 <- nodeStorage.isInJoiningGracePeriod
               _ <- maybeSignatures
                 .traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
-                .whenA(state.viewNumber === 0 && !lastSolo2 && !inGrace2)
+                .whenA(!lastSolo2 && !inGrace2)
               _ <- maybeSignatures.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
               result <- maybeSignatures.flatTraverse(toFinishedPhase(state, status, _))
             } yield result

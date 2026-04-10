@@ -82,6 +82,7 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
       case p: Proposal          => storage.addProposal(origin, key, p)
       case s: MajoritySignature => storage.addSignature(origin, key, s)
       case b: BinarySignature   => storage.addBinarySignature(origin, key, b)
+      case sr: StallReport      => storage.addStallReport(origin, key, sr)
       case other =>
         new IllegalArgumentException(s"Unexpected declaration: ${other.getClass.getName}").raiseError[F, Option[Any]]
     }
