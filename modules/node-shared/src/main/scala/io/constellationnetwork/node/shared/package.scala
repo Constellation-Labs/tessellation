@@ -48,6 +48,7 @@ package object shared {
       TimeTrigger.getClass -> 531,
       classOf[DataApplicationBlock] -> 532,
       classOf[BinarySignature] -> 533,
-      classOf[GlobalSyncView] -> 534 // Since the genesis snapshot is kryo encoded we need this
+      classOf[GlobalSyncView] -> 534, // Since the genesis snapshot is kryo encoded we need this
+      classOf[StallReport] -> 535
     ).union(sharedKryoRegistrar)
 }
