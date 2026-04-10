@@ -3,11 +3,7 @@ package io.constellationnetwork.node.shared.infrastructure.gossip
 import cats.Applicative
 import cats.effect.std.{Queue, Random, Supervisor}
 import cats.effect.{metrics => _, _}
-import cats.syntax.applicativeError._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.show._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.config.types.GossipRoundConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage

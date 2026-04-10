@@ -197,7 +197,11 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       readyPeerRegs = peerRegs.view.filterKeys(readyPeerIds.contains).toMap
       peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key }
       totalRegisteredPeers = readyPeerRegs.size
-      isLagging = totalRegisteredPeers >= 3 && peersAtHigherKey > totalRegisteredPeers / 2
+      // Gate on stallCount >= 1 so newly-joined nodes get one full stall cycle (~32s)
+      // before being declared lagging. Without this, the observation key refresh causes
+      // peers to appear 1 ordinal ahead immediately, triggering rapid-fire abandon loops
+      // (5 abandonments in <200ms) that force unnecessary recovery downloads.
+      isLagging = totalRegisteredPeers >= 3 && peersAtHigherKey > totalRegisteredPeers / 2 && ms.stallCount >= 1
       totalAllRegs = peerRegs.size
       _ <- (
         ConsensusLog.warn(
