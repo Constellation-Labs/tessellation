@@ -56,7 +56,16 @@ object KryoSerializer {
             Either.catchNonFatal {
               val obj: AnyRef = kryoPool.fromBytes(bytes)
               val migration = migrationsMap.getOrElse((obj.getClass, T.runtimeClass), identity[AnyRef](_))
-              migration(obj).asInstanceOf[T]
+              val result = migration(obj)
+              // Validate the deserialized type matches the expected type at runtime.
+              // Without this check, JVM type erasure allows asInstanceOf[T] to silently succeed
+              // for wrong types (e.g., Map$EmptyMap$ cast to Signed[GlobalSnapshot]), causing
+              // ClassCastExceptions downstream when the value is actually used.
+              if (!T.runtimeClass.isInstance(result))
+                throw new ClassCastException(
+                  s"Kryo deserialized ${result.getClass.getName} but expected ${T.runtimeClass.getName}"
+                )
+              result.asInstanceOf[T]
             }
         }
       }
