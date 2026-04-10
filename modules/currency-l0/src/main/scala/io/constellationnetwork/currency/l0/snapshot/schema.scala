@@ -105,6 +105,7 @@ object schema {
     eligibleFacilitators: EligibleFacilitators,
     finished: Finished,
     removalPenalties: SortedMap[PeerId, Int] = SortedMap.empty,
+    deferralCountdown: SortedMap[PeerId, Int] = SortedMap.empty,
     peerQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.empty
   ) {
     def eligibleOrFacilitators: List[PeerId] =
