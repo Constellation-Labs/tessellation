@@ -142,6 +142,18 @@ object CurrencySnapshotConsensusStateAdvancer {
             val newPenalties = (nonSigners ++ evictedPeers).foldLeft(decrementedPenalties) { (acc, pid) =>
               acc.updated(pid, config.removalPenaltyRounds)
             }
+            // Compute deferral countdown: same pattern as removal penalties.
+            val previousEligibleSet = state.lastOutcome.eligibleOrFacilitators.toSet
+            val currentEligibleSet = state.eligibleFacilitators.value.toSet
+            val newlyEligible = (currentEligibleSet -- previousEligibleSet).filterNot(signers.contains)
+            val previousDeferrals = state.lastOutcome.deferralCountdown
+            val decrementedDeferrals = previousDeferrals.view.mapValues(_ - 1).filter(_._2 > 0).to(SortedMap)
+            val newDeferrals = newlyEligible.foldLeft(decrementedDeferrals) { (acc, pid) =>
+              if (!acc.contains(pid)) acc.updated(pid, config.candidateDeferralRounds)
+              else acc
+            }
+            val finalDeferrals = if (config.candidateDeferralRounds > 0) newDeferrals else SortedMap.empty[PeerId, Int]
+
             val thisRoundQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.from(
               state.facilitators.value.map { pid =>
                 val completed = if (signers.contains(pid)) 1 else 0
@@ -172,6 +184,7 @@ object CurrencySnapshotConsensusStateAdvancer {
               state.eligibleFacilitators,
               f,
               removalPenalties = if (config.removalPenaltyRounds > 0) newPenalties else SortedMap.empty,
+              deferralCountdown = finalDeferrals,
               peerQuality = accumulatedQuality
             )
             (Previous(state.lastOutcome.key), outcome).some
