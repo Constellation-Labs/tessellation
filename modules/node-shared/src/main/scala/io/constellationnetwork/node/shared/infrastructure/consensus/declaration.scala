@@ -3,6 +3,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.signature.Signature
 
@@ -37,4 +38,12 @@ object declaration {
 
   @derive(eqv, show, encoder, decoder)
   case class BinarySignature(signature: Signature, facilitatorsHash: Hash, lastSnapshotHash: Hash) extends PeerDeclaration
+
+  @derive(eqv, show, encoder, decoder)
+  case class StallReport(
+    missingPeers: Set[PeerId],
+    phase: Int,
+    facilitatorsHash: Hash,
+    lastSnapshotHash: Hash
+  ) extends PeerDeclaration
 }

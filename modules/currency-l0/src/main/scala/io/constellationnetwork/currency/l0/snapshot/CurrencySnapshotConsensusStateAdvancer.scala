@@ -455,7 +455,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                 _ <- checkForkByFacilitatorsHash(
                   SortedMap(leader -> leaderProposal),
                   status.facilitatorsHash
-                )(_.facilitatorsHash).whenA(state.viewNumber === 0 && !lastSolo && !inGrace)
+                )(_.facilitatorsHash).whenA(!lastSolo && !inGrace)
                 _ <- checkForkByLastSnapshotHash(
                   SortedMap(leader -> leaderProposal),
                   status.lastSnapshotHash
@@ -625,7 +625,7 @@ object CurrencySnapshotConsensusStateAdvancer {
           inGrace2 <- nodeStorage.isInJoiningGracePeriod
           _ <- maybeSignatures
             .traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
-            .whenA(state.viewNumber === 0 && !lastSolo2 && !inGrace2)
+            .whenA(!lastSolo2 && !inGrace2)
           _ <- maybeSignatures.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
           maybeGlobalOrd = extractGlobalSnapshotOrdinal(maybeFacilities)
           result <- (maybeGlobalOrd, maybeSignatures) match {
@@ -719,7 +719,7 @@ object CurrencySnapshotConsensusStateAdvancer {
           inGrace3 <- nodeStorage.isInJoiningGracePeriod
           _ <- maybeBinarySignatures
             .traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
-            .whenA(state.viewNumber === 0 && !lastSolo3 && !inGrace3)
+            .whenA(!lastSolo3 && !inGrace3)
           _ <- maybeBinarySignatures.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
           result <- maybeBinarySignatures.flatTraverse(toFinishedPhase(state, status, _))
         } yield result

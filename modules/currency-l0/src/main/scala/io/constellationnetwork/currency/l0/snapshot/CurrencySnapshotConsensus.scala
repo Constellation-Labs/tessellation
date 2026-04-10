@@ -24,7 +24,9 @@ import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus._
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.StallReport
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, ConsensusEventLoop}
+import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.EventGossipClient
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
@@ -190,7 +192,9 @@ object CurrencySnapshotConsensus {
           consensusClient,
           snapshotConfig.consensus,
           facilitatorSelector,
-          peerQualityTracker
+          peerQualityTracker,
+          (key, stallReport, targets) =>
+            gossip.spreadDirect(ConsensusPeerDeclaration[CurrencySnapshotKey, StallReport](key, stallReport), targets)
         )
 
       handler = CurrencyConsensusHandler.make(loop.queue)
