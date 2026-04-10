@@ -2,6 +2,7 @@ package io.constellationnetwork.currency.l0.snapshot
 
 import java.security.KeyPair
 
+import cats.Parallel
 import cats.effect.kernel.Async
 import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
@@ -52,7 +53,7 @@ import org.http4s.client.Client
   */
 object CurrencySnapshotConsensus {
 
-  def make[F[_]: Async: Random: SecurityProvider: Metrics](
+  def make[F[_]: Async: Parallel: Random: SecurityProvider: Metrics](
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
