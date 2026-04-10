@@ -193,6 +193,22 @@ object GlobalSnapshotConsensusStateAdvancer {
               acc.updated(pid, config.removalPenaltyRounds)
             }
             val finalPenalties = if (config.removalPenaltyRounds > 0) newPenalties else SortedMap.empty[PeerId, Int]
+
+            // Compute deferral countdown: same pattern as removal penalties.
+            // Decrement previous countdowns, add new entries for peers entering allEligible
+            // for the first time. Peers with countdown > 0 are excluded from eligibleThisRound
+            // in the state creator, giving them time to observe before active participation.
+            val previousEligibleSet = state.lastOutcome.eligibleOrFacilitators.toSet
+            val currentEligibleSet = state.eligibleFacilitators.value.toSet
+            val newlyEligible = (currentEligibleSet -- previousEligibleSet).filterNot(signers.contains)
+            val previousDeferrals = state.lastOutcome.deferralCountdown
+            val decrementedDeferrals = previousDeferrals.view.mapValues(_ - 1).filter(_._2 > 0).to(SortedMap)
+            val newDeferrals = newlyEligible.foldLeft(decrementedDeferrals) { (acc, pid) =>
+              if (!acc.contains(pid)) acc.updated(pid, config.candidateDeferralRounds)
+              else acc
+            }
+            val finalDeferrals = if (config.candidateDeferralRounds > 0) newDeferrals else SortedMap.empty[PeerId, Int]
+
             val thisRoundQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.from(
               state.facilitators.value.map { pid =>
                 val completed = if (signers.contains(pid)) 1 else 0
@@ -226,6 +242,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               state.eligibleFacilitators,
               Finished(f.signedMajorityArtifact, f.context, f.majorityTrigger, f.candidates, f.facilitatorsHash, f.snapshotHash),
               removalPenalties = finalPenalties,
+              deferralCountdown = finalDeferrals,
               peerQuality = accumulatedQuality
             )
             (Previous(state.lastOutcome.key), outcome).some

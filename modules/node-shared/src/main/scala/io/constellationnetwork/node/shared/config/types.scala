@@ -154,6 +154,7 @@ object types {
     maxStallCycles: Int = 3,
     maxRoundDuration: Option[FiniteDuration] = None,
     removalPenaltyRounds: Int = 3,
+    candidateDeferralRounds: Int = 3,
     facilitiesTimeoutMultiplier: Double = 0.75,
     proposalsTimeoutMultiplier: Double = 1.5,
     signaturesTimeoutMultiplier: Double = 0.75,
@@ -178,6 +179,7 @@ object types {
       *   - `maxFacilitatorCount`: determines eligible facilitator list size and rendezvous hashing
       *   - `maxStallCycles`: affects when rounds are abandoned (triggers recovery)
       *   - `removalPenaltyRounds`: affects facilitator eligibility after eviction
+      *   - `candidateDeferralRounds`: affects how long new candidates observe before facilitating
       *
       * '''Non-critical fields''' (excluded — affect timing/performance, not deterministic outcomes):
       *   - `timeTriggerInterval`, `declarationTimeout`, `lockDuration`, `reStallTimeout`, `noProgressTimeout`: timing only
@@ -194,7 +196,8 @@ object types {
       val configString =
         s"maxFacilitatorCount=${maxFacilitatorCount.map(_.value)}," +
           s"maxStallCycles=$maxStallCycles," +
-          s"removalPenaltyRounds=$removalPenaltyRounds"
+          s"removalPenaltyRounds=$removalPenaltyRounds," +
+          s"candidateDeferralRounds=$candidateDeferralRounds"
       Hash.fromBytes(configString.getBytes("UTF-8"))
     }
   }

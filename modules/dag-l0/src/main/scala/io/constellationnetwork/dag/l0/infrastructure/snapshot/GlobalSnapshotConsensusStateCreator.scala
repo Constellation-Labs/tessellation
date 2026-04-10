@@ -100,7 +100,7 @@ object GlobalSnapshotConsensusStateCreator {
         // permanent divergence. Instead, nodes join via the candidate registration mechanism:
         //   1. New node registers as candidate → included in next Facility declaration's candidates
         //   2. Next round: filteredCandidates includes the new node → enters fullBase
-        //   3. genuinelyNewCandidates deferral observes one round → active in subsequent round
+        //   3. deferralCountdown observes for candidateDeferralRounds → active after countdown expires
         // Genesis ordinal 1 (empty previousEligible + empty candidates) is handled by the
         // allEligible fallback below: `if (list.isEmpty) List(selfId)`.
         fullBase = (filteredPreviousEligible ++ filteredCandidates).distinct
@@ -155,12 +155,17 @@ object GlobalSnapshotConsensusStateCreator {
             if (list.isEmpty) List(selfId) else list
           }
 
-        // Genuinely NEW candidates: peers in allEligible (post-collateral) that were NOT already
-        // in the eligible/facilitator set. These are joining consensus for the first time
-        // and must observe for one round before actively participating.
-        // Computed from allEligible (not filteredCandidates) so candidates that fail collateral
-        // are not spuriously logged as deferred.
+        // Multi-round candidate deferral: new peers must observe for candidateDeferralRounds
+        // before actively participating. Uses a countdown carried in the consensus outcome
+        // (same pattern as removalPenalties) for deterministic, consensus-agreed tracking.
+        //
+        // genuinelyNewCandidates: peers appearing in allEligible for the first time this round.
+        // These will have their countdown initialized in the advancer.
+        // deferredByCountdown: peers with an active countdown from previous rounds.
+        // allDeferred: union of both, used for exclusion from eligibleThisRound.
         genuinelyNewCandidates = allEligible.filterNot(previousEligibleSet.contains).toSet - selfId
+        deferredByCountdown = lastOutcome.deferralCountdown.filter(_._2 > 0).keySet.intersect(allEligible.toSet)
+        allDeferred = genuinelyNewCandidates ++ deferredByCountdown
 
         filteredOutByCollateral = fullBase.filterNot(allEligible.contains)
         _ <- filteredOutByCollateral.traverse_ { peerId =>
@@ -211,25 +216,25 @@ object GlobalSnapshotConsensusStateCreator {
         // if they would, bypass them and let StallDetector handle truly unresponsive peers at runtime.
         minViableQuorum = math.max(3, (allEligible.size / 2) + 1)
         eligibleThisRound = {
-          // Exclude: previously removed peers, penalized peers, AND genuinely new candidates
-          // who haven't observed a round yet. New candidates are included in allEligible
-          // (and thus in the outcome's eligibleFacilitators) so they will participate next round.
-          // This prevents a newly-joined but immediately-unresponsive candidate from causing
-          // infinite abandon/retry cycles at the same ordinal.
-          val excluded = previouslyRemoved ++ penalizedPeers ++ genuinelyNewCandidates
+          // Exclude: previously removed peers, penalized peers, AND deferred candidates
+          // (both brand-new and those still in their deferral countdown). Deferred candidates
+          // are included in allEligible (and thus in the outcome's eligibleFacilitators) so
+          // they remain tracked. This prevents newly-joined but unresponsive candidates from
+          // causing infinite abandon/retry cycles.
+          val excluded = previouslyRemoved ++ penalizedPeers ++ allDeferred
           val filtered = allEligible.filterNot(excluded.contains)
           // Bypass only penalties (not deferral) to keep the set functional without
           // forcing unready nodes in. A 2-node set can still produce rounds.
           val withoutPenaltiesOnly = allEligible.filterNot((previouslyRemoved ++ penalizedPeers).contains)
           if (filtered.size >= minViableQuorum) filtered
-          else if (withoutPenaltiesOnly.size >= 2 && genuinelyNewCandidates.nonEmpty) withoutPenaltiesOnly
+          else if (withoutPenaltiesOnly.size >= 2 && allDeferred.nonEmpty) withoutPenaltiesOnly
           else if (allEligible.size >= minViableQuorum) allEligible
           else if (allEligible.nonEmpty) allEligible
           else List(selfId)
         }
 
         penaltyBypassed = {
-          val excluded = previouslyRemoved ++ penalizedPeers ++ genuinelyNewCandidates
+          val excluded = previouslyRemoved ++ penalizedPeers ++ allDeferred
           val filtered = allEligible.filterNot(excluded.contains)
           filtered.size < minViableQuorum && allEligible.size > filtered.size
         }
@@ -242,14 +247,14 @@ object GlobalSnapshotConsensusStateCreator {
             "n/a",
             MinQuorumFloorApplied,
             "filteredCount" -> allEligible
-              .filterNot((previouslyRemoved ++ penalizedPeers ++ genuinelyNewCandidates).contains)
+              .filterNot((previouslyRemoved ++ penalizedPeers ++ allDeferred).contains)
               .size
               .toString,
             "minViableQuorum" -> minViableQuorum.toString,
             "usingAll" -> allEligible.size.toString,
             "penalizedBypassed" -> penalizedPeers.size.toString,
             "removedBypassed" -> previouslyRemoved.size.toString,
-            "deferredBypassed" -> genuinelyNewCandidates.size.toString
+            "deferredBypassed" -> allDeferred.size.toString
           )
           .whenA(penaltyBypassed)
 
@@ -260,13 +265,15 @@ object GlobalSnapshotConsensusStateCreator {
             key.show,
             "n/a",
             CandidateObserving,
-            "deferredCount" -> genuinelyNewCandidates.size.toString,
-            "deferredPeers" -> genuinelyNewCandidates.toList.map(ConsensusLog.pid).mkString(","),
+            "deferredCount" -> allDeferred.size.toString,
+            "deferredPeers" -> allDeferred.toList.map(ConsensusLog.pid).mkString(","),
+            "newThisRound" -> genuinelyNewCandidates.size.toString,
+            "countdownActive" -> deferredByCountdown.size.toString,
             "actuallyDeferred" -> (!penaltyBypassed).toString,
             "eligibleThisRound" -> eligibleThisRound.size.toString,
             "allEligible" -> allEligible.size.toString
           )
-          .whenA(genuinelyNewCandidates.nonEmpty)
+          .whenA(allDeferred.nonEmpty)
 
         // Apply deterministic subset selection using hash-distance ordering
         // Uses the previous round's snapshot hash as entropy for randomization
@@ -368,7 +375,7 @@ object GlobalSnapshotConsensusStateCreator {
               (if (penalizedPeers.nonEmpty) Seq("penalized" -> penalizedPeers.size.toString) else Seq.empty) ++
               (if (previouslyRemoved.nonEmpty) Seq("previouslyRemoved" -> previouslyRemoved.size.toString) else Seq.empty) ++
               (if (abandonedMissing.nonEmpty) Seq("abandonedMissing" -> abandonedMissing.size.toString) else Seq.empty) ++
-              (if (genuinelyNewCandidates.nonEmpty) Seq("deferredCandidates" -> genuinelyNewCandidates.size.toString) else Seq.empty)
+              (if (allDeferred.nonEmpty) Seq("deferredCandidates" -> allDeferred.size.toString) else Seq.empty)
           ConsensusLog.info(logger, Lifecycle, key.show, role, RoundStarted, (basePairs ++ optionalPairs): _*)
         }
 
