@@ -1,5 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
+import cats.Applicative
 import cats.effect.kernel.Async
 import cats.syntax.all._
 
@@ -82,7 +83,7 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
       case p: Proposal          => storage.addProposal(origin, key, p)
       case s: MajoritySignature => storage.addSignature(origin, key, s)
       case b: BinarySignature   => storage.addBinarySignature(origin, key, b)
-      case sr: StallReport      => storage.addStallReport(origin, key, sr)
+      case _: StallReport       => Applicative[F].pure(none[Any]) // Handled by TimeoutAggregator via gossip handler
       case other =>
         new IllegalArgumentException(s"Unexpected declaration: ${other.getClass.getName}").raiseError[F, Option[Any]]
     }
