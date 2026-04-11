@@ -535,13 +535,16 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
                       )
                 } else {
                   // No majority yet — stall detected locally but waiting for agreement from other nodes.
-                  // The next monitor cycle will re-check after remote StallReports arrive via gossip.
+                  // Return didStall=false so this cycle does NOT count toward maxStallCycles abandonment.
+                  // The TC needs time to collect remote votes via gossip — if we count "waiting for majority"
+                  // as a stall cycle, the round gets abandoned before the TC can form.
+                  // The maxRoundDuration safety net still applies as an absolute ceiling.
                   logger.debug(
                     s"Stall detected locally for key=$key but no majority agreement yet. " +
                       s"localMissing=${ConsensusLog.pids(missingPeers)}, waiting for remote stall reports."
                   ) >>
-                    Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
-                    StallResult(didStall = true, quorumInfeasible = false).pure[F]
+                    Metrics[F].incrementCounter("dag_consensus_stall_awaiting_majority") >>
+                    StallResult(didStall = false, quorumInfeasible = false).pure[F]
                 }
               }
           }
