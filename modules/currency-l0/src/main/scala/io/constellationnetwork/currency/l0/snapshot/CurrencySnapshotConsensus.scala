@@ -197,7 +197,7 @@ object CurrencySnapshotConsensus {
             gossip.spreadDirect(ConsensusPeerDeclaration[CurrencySnapshotKey, StallReport](key, stallReport), targets)
         )
 
-      handler = CurrencyConsensusHandler.make(loop.queue)
+      handler = CurrencyConsensusHandler.make(loop.queue, loop.timeoutAggregator)
 
       routes = new ConsensusRoutes[
         F,

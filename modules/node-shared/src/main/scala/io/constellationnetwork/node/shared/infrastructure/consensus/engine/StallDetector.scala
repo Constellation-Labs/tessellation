@@ -11,6 +11,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusResources}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{PeerId, PeerResponsiveness, Unresponsive}
 
@@ -44,7 +45,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
   viewChangeManager: ViewChangeManager[F, Key, Status, Outcome, Kind],
   abandonmentTracker: AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   healthRef: Ref[F, ConsensusHealthStatus],
-  evictionVoteTracker: EvictionVoteTracker[F],
+  timeoutAggregator: TimeoutAggregator[F],
   spreadStallReportFn: (Key, StallReport, Set[PeerId]) => F[Unit]
 ) {
 
@@ -61,7 +62,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     noChangeCount: Int,
     stallCount: Int,
     lastSummaryTime: FiniteDuration,
-    lastScoreLogTime: FiniteDuration
+    lastScoreLogTime: FiniteDuration,
+    stallReportBroadcast: Boolean = false
   )
 
   private val basePollInterval = 100L
@@ -69,11 +71,11 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
 
   private case class ResourcesInfo(hash: Int, declaredCount: Int, activeCount: Int, missingPeerIds: Set[String], missingPeers: Set[PeerId])
 
-  def monitor(key: Key, cancelSignal: Deferred[F, Unit]): F[Unit] =
+  def monitor(key: Key, facilitators: List[PeerId], viewNumber: Int, cancelSignal: Deferred[F, Unit]): F[Unit] =
     for {
       now <- Async[F].monotonic
       _ <- viewChangeManager.resetSkippedEvictions
-      _ <- evictionVoteTracker.clearVotes
+      _ <- timeoutAggregator.setFacilitators(facilitators, key.asInstanceOf[SnapshotOrdinal], viewNumber)
       _ <- Async[F].race(
         cancelSignal.get,
         Async[F].tailRecM(
@@ -127,18 +129,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       statusDuration = now - newStatusStartTime
       newStallCount = if (statusChanged) 0 else ms.stallCount
 
-      // Clear votes on phase change (stall reports from a previous phase are stale)
-      _ <- evictionVoteTracker.clearVotes.whenA(statusChanged)
-
-      // Continuously collect remote stall reports on every poll cycle (100-1000ms).
-      // This ensures votes accumulate BETWEEN stall detection cycles, so when handleStall
-      // checks for majority, remote reports that arrived via gossip are already counted.
-      _ <- resources.peerDeclarationsMap.toList.traverse_ {
-        case (peerId, decls) =>
-          decls.stallReport.traverse_ { report =>
-            evictionVoteTracker.registerRemoteVotes(peerId, report.missingPeers)
-          }
-      }
+      // Reset aggregator on phase change (stall reports from a previous phase are stale)
+      _ <- timeoutAggregator.reset.whenA(statusChanged)
 
       _ <- queue.offer(ConsensusCommand.CheckUpdate(key)).whenA(resourcesChanged || statusChanged)
 
@@ -174,7 +166,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
             activeCount = info.activeCount,
             missingPeerIds = info.missingPeerIds,
             missingPeers = info.missingPeers,
-            stallCount = newStallCount
+            stallCount = newStallCount,
+            alreadyBroadcast = ms.stallReportBroadcast
           )
 
       didStall = stallResult.didStall
@@ -325,7 +318,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
             noChangeCount = newNoChangeCount,
             stallCount = finalStallCount,
             lastSummaryTime = newSummaryTime,
-            lastScoreLogTime = newScoreLogTime
+            lastScoreLogTime = newScoreLogTime,
+            stallReportBroadcast = ms.stallReportBroadcast || stallResult.stallReportBroadcast
           )
         )
 
@@ -394,7 +388,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     quorumInfeasible: Boolean,
     activeFacilitators: Int = 0,
     quorumSize: Int = 0,
-    clusterSize: Int = 0
+    clusterSize: Int = 0,
+    stallReportBroadcast: Boolean = false
   )
 
   private def handleStall(
@@ -406,7 +401,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     activeCount: Int,
     missingPeerIds: Set[String],
     missingPeers: Set[PeerId],
-    stallCount: Int
+    stallCount: Int,
+    alreadyBroadcast: Boolean
   ): F[StallResult] =
     if (statusDuration >= declarationTimeout) {
       val statusName = state.status.getClass.getSimpleName.stripSuffix("$")
@@ -460,93 +456,23 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
               Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
               StallResult(didStall = true, quorumInfeasible = false).pure[F] // Count as stall but don't evict
           } else {
-            // Second+ timeout — broadcast StallReport and gate eviction on majority agreement.
-            // This makes eviction consensus-agreed: all nodes must independently observe the same
-            // missing peers before any node evicts them, preventing non-deterministic facilitator sets.
+            // Second+ timeout — broadcast StallReport to facilitators and add to local aggregator.
+            // The TimeoutAggregator handles TC formation event-driven: when enough facilitators
+            // report the same stall, it fires the onTcFormed callback to ViewChangeManager.
+            // StallDetector does NOT check majority or perform eviction — that's the aggregator's job.
             val phaseIndex = ops.phaseIndex(state.status)
             val stallReport = StallReport(missingPeers, phaseIndex, state.entropy, state.entropy)
 
-            // Record local vote and broadcast to all facilitators.
-            // Remote votes are collected continuously in runMonitorCycle (every 100-1000ms),
-            // so by the time we check majority here, votes from previous cycles are already accumulated.
-            missingPeers.toList.traverse_(target => evictionVoteTracker.voteToEvict(selfId, target)) >>
-              spreadStallReportFn(key, stallReport, state.facilitators.value.toSet) >>
-              // Check if majority of facilitators agree on eviction targets
-              evictionVoteTracker.getMajorityEvictionTargets(totalFacilitators).flatMap { majorityTargets =>
-                if (majorityTargets.nonEmpty) {
-                  val majorityRemaining = totalFacilitators - majorityTargets.size
-                  val majorityQuorumInfeasible = majorityRemaining < minQuorum
-
-                  (if (majorityQuorumInfeasible)
-                     logger.warn(
-                       ConsensusLog.format(
-                         Category.Stall,
-                         key.toString,
-                         selfRole(state),
-                         LogEvent.StallDetected,
-                         "phase" -> statusName,
-                         "elapsed" -> s"${statusDuration.toSeconds}s",
-                         "timeout" -> s"${declarationTimeout.toSeconds}s",
-                         "progress" -> s"$declaredCount/$activeCount",
-                         "evicted" -> majorityTargets.size.toString,
-                         "remaining" -> majorityRemaining.toString,
-                         "minQuorum" -> minQuorum.toString,
-                         "quorumFeasible" -> "false",
-                         "evictedPeers" -> ConsensusLog.pids(majorityTargets),
-                         "view" -> state.viewNumber.toString,
-                         "stallCount" -> stallCount.toString,
-                         "reason" -> "QUORUM_INFEASIBLE_AFTER_EVICTION"
-                       )
-                     )
-                   else
-                     logger.warn(
-                       ConsensusLog.format(
-                         Category.Stall,
-                         key.toString,
-                         selfRole(state),
-                         LogEvent.StallDetected,
-                         "phase" -> statusName,
-                         "elapsed" -> s"${statusDuration.toSeconds}s",
-                         "timeout" -> s"${declarationTimeout.toSeconds}s",
-                         "progress" -> s"$declaredCount/$activeCount",
-                         "evicted" -> majorityTargets.size.toString,
-                         "remaining" -> majorityRemaining.toString,
-                         "minQuorum" -> minQuorum.toString,
-                         "quorumFeasible" -> "true",
-                         "evictedPeers" -> ConsensusLog.pids(majorityTargets),
-                         "view" -> state.viewNumber.toString,
-                         "stallCount" -> stallCount.toString,
-                         "reason" -> "PEER_EVICTION"
-                       )
-                     )) >>
-                    Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>
-                    Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
-                    viewChangeManager
-                      .performViewChangeWithEviction(key, state, majorityTargets)
-                      .unlessA(majorityQuorumInfeasible)
-                      .as(
-                        StallResult(
-                          didStall = true,
-                          quorumInfeasible = majorityQuorumInfeasible,
-                          activeFacilitators = majorityRemaining,
-                          quorumSize = minQuorum,
-                          clusterSize = clusterSize
-                        )
-                      )
-                } else {
-                  // No majority yet — stall detected locally but waiting for agreement from other nodes.
-                  // Return didStall=false so this cycle does NOT count toward maxStallCycles abandonment.
-                  // The TC needs time to collect remote votes via gossip — if we count "waiting for majority"
-                  // as a stall cycle, the round gets abandoned before the TC can form.
-                  // The maxRoundDuration safety net still applies as an absolute ceiling.
-                  logger.debug(
-                    s"Stall detected locally for key=$key but no majority agreement yet. " +
-                      s"localMissing=${ConsensusLog.pids(missingPeers)}, waiting for remote stall reports."
-                  ) >>
-                    Metrics[F].incrementCounter("dag_consensus_stall_awaiting_majority") >>
-                    StallResult(didStall = false, quorumInfeasible = false).pure[F]
-                }
-              }
+            // Broadcast once per stall, add to aggregator every cycle (idempotent)
+            spreadStallReportFn(key, stallReport, state.facilitators.value.toSet)
+              .unlessA(alreadyBroadcast) >>
+              timeoutAggregator.addStallReport(selfId, key, stallReport) >>
+              logger.debug(
+                s"Stall report sent for key=$key, missingPeers=${ConsensusLog.pids(missingPeers)}, " +
+                  s"broadcast=${!alreadyBroadcast}. TC formation handled by TimeoutAggregator."
+              ) >>
+              Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
+              StallResult(didStall = true, quorumInfeasible = false, stallReportBroadcast = true).pure[F]
           }
         }
       } else if (ops.isProposalPhase(state.status)) {

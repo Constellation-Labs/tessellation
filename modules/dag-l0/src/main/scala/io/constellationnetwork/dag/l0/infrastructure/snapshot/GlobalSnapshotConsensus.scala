@@ -266,7 +266,7 @@ object GlobalSnapshotConsensus {
             gossip.spreadDirect(ConsensusPeerDeclaration[GlobalSnapshotKey, StallReport](key, stallReport), targets)
         )
 
-      handler = GlobalConsensusHandler.make(loop.queue)
+      handler = GlobalConsensusHandler.make(loop.queue, loop.timeoutAggregator)
 
       routes = new ConsensusRoutes[
         F,

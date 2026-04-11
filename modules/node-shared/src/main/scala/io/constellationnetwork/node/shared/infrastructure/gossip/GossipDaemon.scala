@@ -146,7 +146,9 @@ object GossipDaemon {
           .run((hashedRumor.signed.value, selfId))
           .semiflatTap(_ => metrics.updateRumorsConsumed("success", hashedRumor))
           .getOrElseF {
-            logger.debug(s"Unhandled rumor {hash=${hashedRumor.hash.show}}") >>
+            logger.debug(
+              s"Unhandled rumor {hash=${hashedRumor.hash.show}, type=${hashedRumor.signed.value.content.getClass.getSimpleName}}"
+            ) >>
               metrics.updateRumorsConsumed("unhandled", hashedRumor)
           }
           .handleErrorWith { err =>

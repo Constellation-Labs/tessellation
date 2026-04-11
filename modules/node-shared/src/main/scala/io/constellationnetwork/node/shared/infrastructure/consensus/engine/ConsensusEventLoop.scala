@@ -66,7 +66,8 @@ object ConsensusEventLoop {
     run: Stream[F, Unit],
     manager: ConsensusManager[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
     queue: Queue[F, ConsensusCommand],
-    healthRef: Ref[F, ConsensusHealthStatus]
+    healthRef: Ref[F, ConsensusHealthStatus],
+    timeoutAggregator: TimeoutAggregator[F]
   )
 
   def build[
@@ -123,7 +124,6 @@ object ConsensusEventLoop {
         peerQualityTracker
       )
       healthRef <- ConsensusHealthStatus.ref[F]
-      evictionVoteTracker <- EvictionVoteTracker.make[F]
       viewChangeManager = new ViewChangeManager[F, Key, Status, Outcome, Kind](
         storage,
         facilitatorSelector,
@@ -131,13 +131,32 @@ object ConsensusEventLoop {
         queue,
         Slf4jLogger.getLogger[F]
       )
+      tcLogger = Slf4jLogger.getLogger[F]
+      timeoutAggregator <- TimeoutAggregator.make[F] { tc =>
+        // TC callback: when majority of facilitators agree on stall, perform deterministic eviction.
+        // This is the HotStuff-aligned path: TC formation triggers view change with agreed missing peers.
+        tcLogger.info(
+          s"TimeoutCertificate formed: round=${tc.roundId}, epoch=${tc.leaderEpoch}, " +
+            s"signers=${tc.signers.size}, evicting=${tc.agreedMissingPeers.size} peers"
+        ) >>
+          storage.getState(tc.roundId.asInstanceOf[Key]).flatMap {
+            case Some(state) =>
+              viewChangeManager.performViewChangeWithEviction(
+                tc.roundId.asInstanceOf[Key],
+                state,
+                tc.agreedMissingPeers
+              )
+            case None =>
+              tcLogger.debug(s"TC received for round ${tc.roundId} but no active state found, ignoring")
+          }
+      }
       abandonmentTracker = new AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](ctx, healthRef)
       stallDetector = new StallDetector[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
         ctx,
         viewChangeManager,
         abandonmentTracker,
         healthRef,
-        evictionVoteTracker,
+        timeoutAggregator,
         spreadStallReportFn
       )
       roundFibersRef <- Ref.of[F, List[Fiber[F, Throwable, Unit]]](Nil)
@@ -284,7 +303,7 @@ object ConsensusEventLoop {
       val run: Stream[F, Unit] =
         Stream(commandStream, peerRegistrationStream, leavingStream).parJoinUnbounded
 
-      BuiltConsensusLoop(run, manager, queue, healthRef)
+      BuiltConsensusLoop(run, manager, queue, healthRef, timeoutAggregator)
     }
 
   private def collectRegistration[F[_]: Async: Metrics, Event, Key, Artifact, Ctx, Status, Outcome, Kind](

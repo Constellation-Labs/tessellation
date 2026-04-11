@@ -12,10 +12,9 @@ case class PeerDeclarations(
   facility: Option[Facility],
   proposal: Option[Proposal],
   signature: Option[MajoritySignature],
-  binarySignature: Option[BinarySignature],
-  stallReport: Option[StallReport] = None
+  binarySignature: Option[BinarySignature]
 )
 
 object PeerDeclarations {
-  val empty: PeerDeclarations = PeerDeclarations(Option.empty, Option.empty, Option.empty, Option.empty, Option.empty)
+  val empty: PeerDeclarations = PeerDeclarations(Option.empty, Option.empty, Option.empty, Option.empty)
 }

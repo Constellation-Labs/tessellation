@@ -57,12 +57,6 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     signature: BinarySignature
   ): F[Option[ConsensusResources[Artifact, Kind]]]
 
-  private[consensus] def addStallReport(
-    peerId: PeerId,
-    key: Key,
-    stallReport: StallReport
-  ): F[Option[ConsensusResources[Artifact, Kind]]]
-
   private[consensus] def addPeerDeclarationAck(
     peerId: PeerId,
     key: Key,
@@ -278,11 +272,6 @@ object ConsensusStorage {
         def addBinarySignature(peerId: PeerId, key: Key, signature: BinarySignature): F[Option[ConsensusResources[Artifact, Kind]]] =
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
             peerDeclaration.focus(_.binarySignature).modify(_.orElse(signature.some))
-          }
-
-        def addStallReport(peerId: PeerId, key: Key, stallReport: StallReport): F[Option[ConsensusResources[Artifact, Kind]]] =
-          updatePeerDeclaration(key, peerId) { peerDeclaration =>
-            peerDeclaration.focus(_.stallReport).modify(_.orElse(stallReport.some))
           }
 
         def addPeerDeclarationAck(
