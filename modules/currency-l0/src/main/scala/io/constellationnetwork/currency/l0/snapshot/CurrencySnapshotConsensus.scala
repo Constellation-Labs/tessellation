@@ -16,6 +16,7 @@ import io.constellationnetwork.currency.l0.snapshot.services.StateChannelSnapsho
 import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
+import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.config.types.SnapshotConfig
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
@@ -66,6 +67,7 @@ object CurrencySnapshotConsensus {
     lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     snapshotConfig: SnapshotConfig,
+    environment: AppEnvironment,
     client: Client[F],
     session: Session[F],
     stateChannelSnapshotService: StateChannelSnapshotService[F],
@@ -126,7 +128,7 @@ object CurrencySnapshotConsensus {
         )
 
       facilitatorSelector = FacilitatorSelector.make(
-        snapshotConfig.consensus.maxFacilitatorCount.map(_.value)
+        snapshotConfig.maxFacilitatorCount.get(environment).map(_.value)
       )
 
       peerQualityTracker <- PeerQualityTracker.make[F]

@@ -133,8 +133,9 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
       continue
     fi
 
-    # Validators must report an ordinal > 5, ALL nodes participating (fac == NUM_GL0)
-    if [ -z "$ord" ] || [ "$ord" -lt 5 ] || [ "${fac:-0}" -lt "$NUM_GL0" ]; then
+    # Validators must report an ordinal > 5 and be participating in multi-node consensus.
+    # With maxFacilitatorCount, fac may be less than NUM_GL0 (subset selection).
+    if [ -z "$ord" ] || [ "$ord" -lt 5 ] || [ "${fac:-0}" -lt 2 ]; then
       all_synced=false
     fi
 
@@ -161,22 +162,21 @@ if [ "$stable" != "true" ]; then
   fail "Validators did not synchronise within ${STABILIZE_WAIT}s"
 fi
 
-# Let the full cluster run several rounds so PeerQualityTracker builds
-# scores for all peers.  Peers that haven't participated in enough rounds
-# get penalized and evicted after reconnection.  Wait for 3 ordinals with
-# all NUM_GL0 facilitators to confirm quality scores are established.
-echo "  Waiting for ${NUM_GL0}-node consensus to stabilize (3+ rounds)..."
+# Let the cluster run several rounds so PeerQualityTracker builds
+# scores for participating peers. With maxFacilitatorCount, only a subset
+# of nodes facilitate — we just need to see multi-node consensus.
+echo "  Waiting for multi-node consensus to stabilize (3+ rounds)..."
 stable_rounds=0
 stab_deadline=$(($(date +%s) + 300))
 while [ "$(date +%s)" -lt "$stab_deadline" ] && [ "$stable_rounds" -lt 3 ]; do
   fac=$(get_facilitator_count "$MONITOR_NODE")
   ord=$(get_ordinal "$MONITOR_NODE")
-  if [ "${fac:-0}" -eq "$NUM_GL0" ]; then
+  if [ "${fac:-0}" -ge 2 ]; then
     stable_rounds=$((stable_rounds + 1))
     echo "    Round $stable_rounds/3 with fac=$fac at ordinal $ord"
   else
     stable_rounds=0
-    echo "    Waiting... fac=${fac:-?} at ordinal ${ord:-?} (need $NUM_GL0)"
+    echo "    Waiting... fac=${fac:-?} at ordinal ${ord:-?} (need >= 2)"
   fi
   sleep 45
 done
@@ -231,7 +231,7 @@ echo "  Waiting for a round boundary on $ISOLATION_NODE before isolating..."
 round_synced=false
 if timeout 120 bash -c '
   docker logs -f --tail=0 "'"$ISOLATION_NODE"'" 2>&1 | while IFS= read -r line; do
-    if echo "$line" | grep -q "ROUND_COMPLETED.*facilitators='"$NUM_GL0"'"; then
+    if echo "$line" | grep -q "ROUND_COMPLETED.*facilitators=[2-9]"; then
       exit 0  # signal: round boundary found
     fi
   done

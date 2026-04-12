@@ -166,6 +166,7 @@ object Services {
           storages.lastSyncGlobalSnapshot,
           maybeRewards,
           cfg.snapshot,
+          cfg.environment,
           client,
           session,
           stateChannelSnapshotService,

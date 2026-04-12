@@ -196,7 +196,7 @@ object GlobalSnapshotConsensus {
         )
 
       facilitatorSelector = FacilitatorSelector.make(
-        appConfig.snapshot.consensus.maxFacilitatorCount.map(_.value)
+        appConfig.snapshot.maxFacilitatorCount.get(appConfig.environment).map(_.value)
       )
 
       peerQualityTracker <- PeerQualityTracker.make[F]
