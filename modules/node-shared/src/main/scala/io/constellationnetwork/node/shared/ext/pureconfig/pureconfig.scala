@@ -24,7 +24,7 @@ import _root_.pureconfig.generic.auto._
 import _root_.pureconfig.module.cats.nonEmptySetReader
 import _root_.pureconfig.{ConfigReader, ConfigWriter}
 import eu.timepit.refined.pureconfig._
-import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
 import fs2.io.file.Path
 
 package object pureconfig {
@@ -53,5 +53,7 @@ package object pureconfig {
     case "DAG::USD" => DAG_USD
   })
   implicit val envToPriceOracleConfigReader: ConfigReader[Map[AppEnvironment, PriceOracleConfig]] =
+    genericMapReader(catchReadError(AppEnvironment.withName))
+  implicit val envToPosIntMapReader: ConfigReader[Map[AppEnvironment, PosInt]] =
     genericMapReader(catchReadError(AppEnvironment.withName))
 }
