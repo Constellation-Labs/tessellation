@@ -472,7 +472,10 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
                   s"broadcast=${!alreadyBroadcast}. TC formation handled by TimeoutAggregator."
               ) >>
               Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
-              StallResult(didStall = true, quorumInfeasible = false, stallReportBroadcast = true).pure[F]
+              // Return didStall=false to freeze stallCount while the TC forms asynchronously.
+              // When the TC triggers a view change, the status change resets stallCount to 0.
+              // maxRoundDuration (5 min) remains as the absolute safety ceiling.
+              StallResult(didStall = false, quorumInfeasible = false, stallReportBroadcast = true).pure[F]
           }
         }
       } else if (ops.isProposalPhase(state.status)) {

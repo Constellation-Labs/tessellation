@@ -254,6 +254,7 @@ object types {
 
   case class SnapshotConfig(
     consensus: ConsensusConfig,
+    maxFacilitatorCount: Map[AppEnvironment, PosInt] = Map.empty,
     inMemoryCapacity: NonNegLong,
     snapshotPath: Path,
     snapshotInfoPath: Path,
