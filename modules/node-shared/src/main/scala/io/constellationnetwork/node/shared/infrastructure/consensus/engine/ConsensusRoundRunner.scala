@@ -239,12 +239,9 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
     for {
       signal <- Deferred[F, Unit]
       _ <- cancelSignalRef.set(Some(signal))
-      maybeState <- storage.getState(key)
-      facilitators = maybeState.map(_.facilitators.value).getOrElse(List.empty)
-      viewNumber = maybeState.map(_.viewNumber).getOrElse(0)
       _ <- spawnTracked {
         stallDetector
-          .monitor(key, facilitators, viewNumber, signal)
+          .monitor(key, signal)
           .handleErrorWith(err => logger.error(err)(s"Error in round monitor for key=$key"))
       }
     } yield ()

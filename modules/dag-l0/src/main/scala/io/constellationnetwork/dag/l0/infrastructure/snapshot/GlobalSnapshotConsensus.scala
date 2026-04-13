@@ -261,12 +261,10 @@ object GlobalSnapshotConsensus {
           consensusClient,
           appConfig.snapshot.consensus,
           facilitatorSelector,
-          peerQualityTracker,
-          (key, stallReport, targets) =>
-            gossip.spreadDirect(ConsensusPeerDeclaration[GlobalSnapshotKey, StallReport](key, stallReport), targets)
+          peerQualityTracker
         )
 
-      handler = GlobalConsensusHandler.make(loop.queue, loop.timeoutAggregator)
+      handler = GlobalConsensusHandler.make(loop.queue)
 
       routes = new ConsensusRoutes[
         F,

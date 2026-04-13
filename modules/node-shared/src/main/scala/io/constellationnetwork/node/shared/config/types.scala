@@ -166,7 +166,8 @@ object types {
     eventTriggerCooldown: FiniteDuration = FiniteDuration(5, "s"),
     eventGossipHeartbeatInterval: FiniteDuration = FiniteDuration(10, "s"),
     eventGossipPullInterval: FiniteDuration = FiniteDuration(20, "s"),
-    forkLagThreshold: Long = 10
+    forkLagThreshold: Long = 10,
+    quorumThresholdFraction: Double = 1.0
   ) {
 
     /** Deterministic hash of consensus-critical config values.
@@ -180,6 +181,7 @@ object types {
       *   - `maxStallCycles`: affects when rounds are abandoned (triggers recovery)
       *   - `removalPenaltyRounds`: affects facilitator eligibility after eviction
       *   - `candidateDeferralRounds`: affects how long new candidates observe before facilitating
+      *   - `quorumThresholdFraction`: determines how many declarations needed to advance phases
       *
       * '''Non-critical fields''' (excluded — affect timing/performance, not deterministic outcomes):
       *   - `timeTriggerInterval`, `declarationTimeout`, `lockDuration`, `reStallTimeout`, `noProgressTimeout`: timing only
@@ -197,7 +199,8 @@ object types {
         s"maxFacilitatorCount=${maxFacilitatorCount.map(_.value)}," +
           s"maxStallCycles=$maxStallCycles," +
           s"removalPenaltyRounds=$removalPenaltyRounds," +
-          s"candidateDeferralRounds=$candidateDeferralRounds"
+          s"candidateDeferralRounds=$candidateDeferralRounds," +
+          s"quorumThresholdFraction=$quorumThresholdFraction"
       Hash.fromBytes(configString.getBytes("UTF-8"))
     }
   }

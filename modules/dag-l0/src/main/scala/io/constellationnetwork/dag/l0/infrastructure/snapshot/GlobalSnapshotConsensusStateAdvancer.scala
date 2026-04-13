@@ -201,9 +201,15 @@ object GlobalSnapshotConsensusStateAdvancer {
             val previousEligibleSet = state.lastOutcome.eligibleOrFacilitators.toSet
             val currentEligibleSet = state.eligibleFacilitators.value.toSet
             val newlyEligible = (currentEligibleSet -- previousEligibleSet).filterNot(signers.contains)
+            // Peers whose penalty just expired (countdown was 1, now 0) must go through
+            // deferral again before re-entering the facilitator set. This is the defensive
+            // liveness check: during deferral, the peer must be reachable for registration
+            // to succeed. No extra messages — reuses existing deferral mechanism.
+            val justUnpenalized = previousPenalties.filter(_._2 == 1).keySet
+            val needsDeferral = newlyEligible ++ justUnpenalized
             val previousDeferrals = state.lastOutcome.deferralCountdown
             val decrementedDeferrals = previousDeferrals.view.mapValues(_ - 1).filter(_._2 > 0).to(SortedMap)
-            val newDeferrals = newlyEligible.foldLeft(decrementedDeferrals) { (acc, pid) =>
+            val newDeferrals = needsDeferral.foldLeft(decrementedDeferrals) { (acc, pid) =>
               if (!acc.contains(pid)) acc.updated(pid, config.candidateDeferralRounds)
               else acc
             }

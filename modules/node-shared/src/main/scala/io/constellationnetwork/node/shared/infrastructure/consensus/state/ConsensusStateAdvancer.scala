@@ -91,10 +91,18 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     val declarationsMap = SortedMap.from(declarations)
     val receivedCount = declarationsMap.size
 
+    // Quorum threshold from config. Default: unanimity (1.0 = all must respond).
+    // Testnet/mainnet use 0.67 (supermajority) so community peers don't block rounds.
+    // Dev uses 1.0 (unanimity) for clean 5-node E2E convergence.
+    val quorumFraction = config.quorumThresholdFraction
+    val quorumThreshold = math.max(1, math.ceil(totalRequired * quorumFraction).toInt)
+
     for {
       result <-
-        if (receivedCount == totalRequired) {
-          logger.debug(s"All ${totalRequired} active facilitators declared for key=${state.key}") >>
+        if (receivedCount >= quorumThreshold) {
+          logger.debug(
+            s"Quorum reached: ${receivedCount}/${totalRequired} declared (need ${quorumThreshold}) for key=${state.key}"
+          ) >>
             declarationsMap.some.pure[F]
         } else {
           none[SortedMap[PeerId, A]].pure[F]
