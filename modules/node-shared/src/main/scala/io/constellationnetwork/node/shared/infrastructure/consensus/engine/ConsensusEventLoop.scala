@@ -13,7 +13,6 @@ import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.StallReport
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger._
 import io.constellationnetwork.node.shared.infrastructure.consensus.{FacilitatorSelector, _}
@@ -66,8 +65,7 @@ object ConsensusEventLoop {
     run: Stream[F, Unit],
     manager: ConsensusManager[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
     queue: Queue[F, ConsensusCommand],
-    healthRef: Ref[F, ConsensusHealthStatus],
-    timeoutAggregator: TimeoutAggregator[F]
+    healthRef: Ref[F, ConsensusHealthStatus]
   )
 
   def build[
@@ -93,8 +91,7 @@ object ConsensusEventLoop {
     consensusClient: ConsensusClient[F, Key, Outcome],
     config: ConsensusConfig,
     facilitatorSelector: FacilitatorSelector,
-    peerQualityTracker: PeerQualityTracker[F],
-    spreadStallReportFn: (Key, StallReport, Set[PeerId]) => F[Unit]
+    peerQualityTracker: PeerQualityTracker[F]
   )(
     implicit _key: monocle.Lens[Outcome, Key],
     _context: monocle.Lens[Outcome, Ctx],
@@ -131,33 +128,12 @@ object ConsensusEventLoop {
         queue,
         Slf4jLogger.getLogger[F]
       )
-      tcLogger = Slf4jLogger.getLogger[F]
-      timeoutAggregator <- TimeoutAggregator.make[F] { tc =>
-        // TC callback: when majority of facilitators agree on stall, perform deterministic eviction.
-        // This is the HotStuff-aligned path: TC formation triggers view change with agreed missing peers.
-        tcLogger.info(
-          s"TimeoutCertificate formed: round=${tc.roundId}, epoch=${tc.leaderEpoch}, " +
-            s"signers=${tc.signers.size}, evicting=${tc.agreedMissingPeers.size} peers"
-        ) >>
-          storage.getState(tc.roundId.asInstanceOf[Key]).flatMap {
-            case Some(state) =>
-              viewChangeManager.performViewChangeWithEviction(
-                tc.roundId.asInstanceOf[Key],
-                state,
-                tc.agreedMissingPeers
-              )
-            case None =>
-              tcLogger.debug(s"TC received for round ${tc.roundId} but no active state found, ignoring")
-          }
-      }
       abandonmentTracker = new AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](ctx, healthRef)
       stallDetector = new StallDetector[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
         ctx,
         viewChangeManager,
         abandonmentTracker,
-        healthRef,
-        timeoutAggregator,
-        spreadStallReportFn
+        healthRef
       )
       roundFibersRef <- Ref.of[F, List[Fiber[F, Throwable, Unit]]](Nil)
       cancelSignalRef <- Ref.of[F, Option[Deferred[F, Unit]]](None)
@@ -303,7 +279,7 @@ object ConsensusEventLoop {
       val run: Stream[F, Unit] =
         Stream(commandStream, peerRegistrationStream, leavingStream).parJoinUnbounded
 
-      BuiltConsensusLoop(run, manager, queue, healthRef, timeoutAggregator)
+      BuiltConsensusLoop(run, manager, queue, healthRef)
     }
 
   private def collectRegistration[F[_]: Async: Metrics, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
