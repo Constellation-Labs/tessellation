@@ -49,7 +49,6 @@ package object shared {
       classOf[DataApplicationBlock] -> 532,
       classOf[BinarySignature] -> 533,
       classOf[GlobalSyncView] -> 534, // Since the genesis snapshot is kryo encoded we need this
-      classOf[StallReport] -> 535,
-      classOf[io.constellationnetwork.node.shared.infrastructure.consensus.engine.TimeoutCertificate] -> 536
+      classOf[StallReport] -> 535
     ).union(sharedKryoRegistrar)
 }

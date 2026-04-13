@@ -146,9 +146,11 @@ object CurrencySnapshotConsensusStateAdvancer {
             val previousEligibleSet = state.lastOutcome.eligibleOrFacilitators.toSet
             val currentEligibleSet = state.eligibleFacilitators.value.toSet
             val newlyEligible = (currentEligibleSet -- previousEligibleSet).filterNot(signers.contains)
+            val justUnpenalized = previousPenalties.filter(_._2 == 1).keySet
+            val needsDeferral = newlyEligible ++ justUnpenalized
             val previousDeferrals = state.lastOutcome.deferralCountdown
             val decrementedDeferrals = previousDeferrals.view.mapValues(_ - 1).filter(_._2 > 0).to(SortedMap)
-            val newDeferrals = newlyEligible.foldLeft(decrementedDeferrals) { (acc, pid) =>
+            val newDeferrals = needsDeferral.foldLeft(decrementedDeferrals) { (acc, pid) =>
               if (!acc.contains(pid)) acc.updated(pid, config.candidateDeferralRounds)
               else acc
             }
