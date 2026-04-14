@@ -129,18 +129,29 @@ object CurrencySnapshotConsensusStateAdvancer {
             // Instead, we use: nonSigners = facilitators - signers (proofs).
             // This is fully deterministic: both facilitators and proofs are consensus-agreed.
             val signers = f.signedMajorityArtifact.proofs.map(p => PeerId.fromId(p.id)).toSortedSet
-            val nonSigners = state.facilitators.value.filterNot(signers.contains).toSet
+            val allNonSigners = state.facilitators.value.filterNot(signers.contains).toSet
 
-            // Compute removal penalties: decrement previous, add penalties for non-signers AND evicted peers.
-            // Both nonSigners (facilitators - signers) and removedFacilitators (evicted mid-round)
-            // should receive penalties. Without penalizing evicted peers, they get re-selected every
-            // round and waste stall detection time before being re-evicted.
-            // Uses SortedMap for deterministic iteration when filtering penalized peers.
+            // Don't penalize deferred peers — see GlobalSnapshotConsensusStateAdvancer for rationale.
+            val deferredInCommittee = state.lastOutcome.deferralCountdown.filter(_._2 > 0).keySet
+            val nonSigners = allNonSigners -- deferredInCommittee
+
             val evictedPeers = state.removedFacilitators.value
             val previousPenalties = state.lastOutcome.removalPenalties
+            val previousCumulative = state.lastOutcome.cumulativeMissCounts
+
+            // Exponential penalty scaling: same mechanism as dag-l0. See that file for detail.
+            val penalizedThisRound = (nonSigners ++ evictedPeers).toSet
+            val newCumulative = penalizedThisRound.foldLeft(previousCumulative) { (acc, pid) =>
+              acc.updated(pid, acc.getOrElse(pid, 0L) + 1L)
+            }
+
             val decrementedPenalties = previousPenalties.view.mapValues(_ - 1).filter(_._2 > 0).to(SortedMap)
-            val newPenalties = (nonSigners ++ evictedPeers).foldLeft(decrementedPenalties) { (acc, pid) =>
-              acc.updated(pid, config.removalPenaltyRounds)
+            val newPenalties = penalizedThisRound.foldLeft(decrementedPenalties) { (acc, pid) =>
+              val repeatCount = newCumulative.getOrElse(pid, 1L) - 1L
+              val base = config.exponentialPenaltyBase.toDouble
+              val scaled = config.removalPenaltyRounds.toDouble * math.pow(base, repeatCount.toDouble)
+              val penalty = math.min(scaled, config.maxRemovalPenaltyRounds.toDouble).toInt
+              acc.updated(pid, math.max(1, penalty))
             }
             // Compute deferral countdown: same pattern as removal penalties.
             val previousEligibleSet = state.lastOutcome.eligibleOrFacilitators.toSet
@@ -187,7 +198,8 @@ object CurrencySnapshotConsensusStateAdvancer {
               f,
               removalPenalties = if (config.removalPenaltyRounds > 0) newPenalties else SortedMap.empty,
               deferralCountdown = finalDeferrals,
-              peerQuality = accumulatedQuality
+              peerQuality = accumulatedQuality,
+              cumulativeMissCounts = newCumulative
             )
             (Previous(state.lastOutcome.key), outcome).some
           case _ =>

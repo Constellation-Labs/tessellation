@@ -106,7 +106,10 @@ object schema {
     finished: Finished,
     removalPenalties: SortedMap[PeerId, Int] = SortedMap.empty,
     deferralCountdown: SortedMap[PeerId, Int] = SortedMap.empty,
-    peerQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.empty
+    peerQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.empty,
+    // Lifetime count of times this peer was evicted. Scales removalPenaltyRounds
+    // exponentially so repeat offenders get progressively longer bans.
+    cumulativeMissCounts: SortedMap[PeerId, Long] = SortedMap.empty
   ) {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value
