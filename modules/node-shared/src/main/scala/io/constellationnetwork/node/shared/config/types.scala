@@ -167,7 +167,9 @@ object types {
     eventGossipHeartbeatInterval: FiniteDuration = FiniteDuration(10, "s"),
     eventGossipPullInterval: FiniteDuration = FiniteDuration(20, "s"),
     forkLagThreshold: Long = 10,
-    quorumThresholdFraction: Double = 1.0
+    quorumThresholdFraction: Double = 1.0,
+    exponentialPenaltyBase: Int = 2,
+    maxRemovalPenaltyRounds: Int = 10000
   ) {
 
     /** Deterministic hash of consensus-critical config values.
@@ -182,6 +184,8 @@ object types {
       *   - `removalPenaltyRounds`: affects facilitator eligibility after eviction
       *   - `candidateDeferralRounds`: affects how long new candidates observe before facilitating
       *   - `quorumThresholdFraction`: determines how many declarations needed to advance phases
+      *   - `exponentialPenaltyBase`: base for scaling removalPenaltyRounds per repeat eviction
+      *   - `maxRemovalPenaltyRounds`: cap on total penalty so it doesn't overflow Int
       *
       * '''Non-critical fields''' (excluded — affect timing/performance, not deterministic outcomes):
       *   - `timeTriggerInterval`, `declarationTimeout`, `lockDuration`, `reStallTimeout`, `noProgressTimeout`: timing only
@@ -200,7 +204,9 @@ object types {
           s"maxStallCycles=$maxStallCycles," +
           s"removalPenaltyRounds=$removalPenaltyRounds," +
           s"candidateDeferralRounds=$candidateDeferralRounds," +
-          s"quorumThresholdFraction=$quorumThresholdFraction"
+          s"quorumThresholdFraction=$quorumThresholdFraction," +
+          s"exponentialPenaltyBase=$exponentialPenaltyBase," +
+          s"maxRemovalPenaltyRounds=$maxRemovalPenaltyRounds"
       Hash.fromBytes(configString.getBytes("UTF-8"))
     }
   }

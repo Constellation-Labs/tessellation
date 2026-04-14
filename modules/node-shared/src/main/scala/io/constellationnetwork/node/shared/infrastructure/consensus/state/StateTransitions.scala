@@ -127,24 +127,35 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
             Seq(unsafeLabelName("trigger_type") -> trigger.toString)
           ) >>
             Metrics[F].updateGauge("dag_consensus_round_facilitator_count", newState.facilitators.value.size) >>
-            Metrics[F].updateGauge("dag_consensus_round_eligible_count", newState.eligibleFacilitators.value.size) >>
-            ConsensusLog.info(
-              log,
-              Category.Lifecycle,
-              key.show,
-              ConsensusLog.role(ctx.selfId, newState.leader),
-              LogEvent.RoundCompleted,
-              (Seq(
-                "trigger" -> trigger.toString,
-                "duration" -> s"${duration.toMillis}ms",
-                "facilitators" -> newState.facilitators.value.size.toString,
-                "leader" -> ConsensusLog.pid(newState.leader),
-                "leaderScore" -> f"$leaderScore%.2f",
-                "view" -> newState.viewNumber.toString
-              ) ++
-                (if (withdrawnCount > 0) Seq("withdrawn" -> withdrawnCount.toString) else Seq.empty) ++
-                (if (removedCount > 0) Seq("removed" -> removedCount.toString) else Seq.empty)): _*
-            ) >>
+            Metrics[F].updateGauge("dag_consensus_round_eligible_count", newState.eligibleFacilitators.value.size) >> {
+              // Diagnostic: include actual signers so we can compare across nodes. Different
+              // nodes completing "same" ordinal with different signer sets is a fork — this
+              // exposes it in logs rather than leaving it invisible.
+              val signedArtifact = outcomeArtifact.get(outcome)
+              val signerIds = signedArtifact.proofs.toList.map(p => ConsensusLog.pid(p.id.toPeerId)).sorted.mkString(",")
+              val facilitatorIds = newState.facilitators.value.toList.map(ConsensusLog.pid).sorted.mkString(",")
+
+              ConsensusLog.info(
+                log,
+                Category.Lifecycle,
+                key.show,
+                ConsensusLog.role(ctx.selfId, newState.leader),
+                LogEvent.RoundCompleted,
+                (Seq(
+                  "trigger" -> trigger.toString,
+                  "duration" -> s"${duration.toMillis}ms",
+                  "facilitators" -> newState.facilitators.value.size.toString,
+                  "facilitatorIds" -> facilitatorIds,
+                  "signerCount" -> signedArtifact.proofs.size.toString,
+                  "signerIds" -> signerIds,
+                  "leader" -> ConsensusLog.pid(newState.leader),
+                  "leaderScore" -> f"$leaderScore%.2f",
+                  "view" -> newState.viewNumber.toString
+                ) ++
+                  (if (withdrawnCount > 0) Seq("withdrawn" -> withdrawnCount.toString) else Seq.empty) ++
+                  (if (removedCount > 0) Seq("removed" -> removedCount.toString) else Seq.empty)): _*
+              )
+            } >>
             ctx.nodeStorage.tryModifyStateGetResult(NodeState.WaitingForReady, NodeState.Ready).void >>
             queue.offer(ConsensusFinished(key, outcome, trigger))
         } else {

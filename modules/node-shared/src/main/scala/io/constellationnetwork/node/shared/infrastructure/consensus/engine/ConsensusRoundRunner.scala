@@ -13,6 +13,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
+import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import monocle.Lens
@@ -33,7 +34,11 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
   stallDetector: StallDetector[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   roundFibersRef: Ref[F, List[Fiber[F, Throwable, Unit]]],
   cancelSignalRef: Ref[F, Option[Deferred[F, Unit]]]
-)(implicit outcomeKey: Lens[Outcome, Key], supervisor: Supervisor[F]) {
+)(
+  implicit outcomeKey: Lens[Outcome, Key],
+  outcomeArtifact: Lens[Outcome, Signed[Artifact]],
+  supervisor: Supervisor[F]
+) {
 
   import ctx.{advancer, config, creator, logger, queue, storage, updater}
 
@@ -62,6 +67,8 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
       case Some(outcome) =>
         val nextKey = outcomeKey.get(outcome).next
         val lastKey = outcomeKey.get(outcome)
+        val lastArtifact = outcomeArtifact.get(outcome)
+        val lastSignerIds = lastArtifact.proofs.toList.map(p => ConsensusLog.pid(p.id.toPeerId)).sorted.mkString(",")
         ConsensusLog.info(
           logger,
           Category.Lifecycle,
@@ -70,6 +77,8 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
           LogEvent.RoundFacilitating,
           "trigger" -> trigger.toString,
           "lastKey" -> lastKey.toString,
+          "lastSigners" -> lastSignerIds,
+          "lastSignerCount" -> lastArtifact.proofs.size.toString,
           "declarationTimeout" -> config.declarationTimeout.toString,
           "timeTriggerInterval" -> config.timeTriggerInterval.toString
         ) >>
