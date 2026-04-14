@@ -179,18 +179,37 @@ object GlobalSnapshotConsensusStateAdvancer {
             // Instead, we use: nonSigners = facilitators - signers (proofs).
             // This is fully deterministic: both facilitators and proofs are consensus-agreed.
             val signers = f.signedMajorityArtifact.proofs.map(_.id.toPeerId).toSortedSet
-            val nonSigners = state.facilitators.value.filterNot(signers.contains).toSet
+            val allNonSigners = state.facilitators.value.filterNot(signers.contains).toSet
 
-            // Compute removal penalties: decrement previous, add penalties for non-signers AND evicted peers.
-            // Both nonSigners (facilitators - signers) and removedFacilitators (evicted mid-round)
-            // should receive penalties. Without penalizing evicted peers, they get re-selected every
-            // round and waste stall detection time before being re-evicted.
-            // Uses SortedMap for deterministic iteration when filtering penalized peers.
+            // Don't penalize peers who were in committee via deferral bypass. They were
+            // KNOWN to be deferred (still in observation period) — the state creator included
+            // them to prevent genesis from racing ahead solo. Punishing them for not signing
+            // during their deferral window locks them out for removalPenaltyRounds, preventing
+            // them from ever completing deferral and joining normally.
+            val deferredInCommittee = state.lastOutcome.deferralCountdown.filter(_._2 > 0).keySet
+            val nonSigners = allNonSigners -- deferredInCommittee
+
             val evictedPeers = state.removedFacilitators.value
             val previousPenalties = state.lastOutcome.removalPenalties
+            val previousCumulative = state.lastOutcome.cumulativeMissCounts
+
+            // Increment cumulative miss count for peers newly evicted/non-signing this round.
+            // This counter persists across rounds in the signed outcome → consensus-agreed.
+            // Base=2, capped to prevent Int overflow: a repeat offender's penalty grows
+            // 5 → 10 → 20 → 40 → ... up to maxRemovalPenaltyRounds.
+            val penalizedThisRound = (nonSigners ++ evictedPeers).toSet
+            val newCumulative = penalizedThisRound.foldLeft(previousCumulative) { (acc, pid) =>
+              acc.updated(pid, acc.getOrElse(pid, 0L) + 1L)
+            }
+
             val decrementedPenalties = previousPenalties.view.mapValues(_ - 1).filter(_._2 > 0).to(SortedMap)
-            val newPenalties = (nonSigners ++ evictedPeers).foldLeft(decrementedPenalties) { (acc, pid) =>
-              acc.updated(pid, config.removalPenaltyRounds)
+            val newPenalties = penalizedThisRound.foldLeft(decrementedPenalties) { (acc, pid) =>
+              val repeatCount = newCumulative.getOrElse(pid, 1L) - 1L // first eviction = exponent 0
+              // penalty = removalPenaltyRounds * base^repeatCount, clamped to maxRemovalPenaltyRounds
+              val base = config.exponentialPenaltyBase.toDouble
+              val scaled = config.removalPenaltyRounds.toDouble * math.pow(base, repeatCount.toDouble)
+              val penalty = math.min(scaled, config.maxRemovalPenaltyRounds.toDouble).toInt
+              acc.updated(pid, math.max(1, penalty))
             }
             val finalPenalties = if (config.removalPenaltyRounds > 0) newPenalties else SortedMap.empty[PeerId, Int]
 
@@ -249,7 +268,8 @@ object GlobalSnapshotConsensusStateAdvancer {
               Finished(f.signedMajorityArtifact, f.context, f.majorityTrigger, f.candidates, f.facilitatorsHash, f.snapshotHash),
               removalPenalties = finalPenalties,
               deferralCountdown = finalDeferrals,
-              peerQuality = accumulatedQuality
+              peerQuality = accumulatedQuality,
+              cumulativeMissCounts = newCumulative
             )
             (Previous(state.lastOutcome.key), outcome).some
           case _ =>
