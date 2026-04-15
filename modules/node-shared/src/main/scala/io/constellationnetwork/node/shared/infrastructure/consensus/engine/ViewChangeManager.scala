@@ -120,8 +120,17 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
     val remainingFacilitators = currentState.facilitators.value.filterNot(peersToEvict.contains)
 
     if (remainingFacilitators.size < 2) {
-      // Can't evict to below minimum viable cluster — track and fall back to normal view change.
-      // After maxSkippedEvictions consecutive skips, callers should escalate to abandonment.
+      // Can't evict to below minimum viable cluster (2) by default — track and fall back to normal
+      // view change. After maxSkippedEvictions consecutive skips, perform the eviction anyway:
+      // the cluster has proven unreachable for at least 3 stall cycles (~9s+), so the only way
+      // forward is for this node to proceed with whoever is left (potentially just self).
+      //
+      // Fork safety: this only fires when NO other facilitator has declared. If other nodes
+      // were reachable and participating, they'd appear as declared and we wouldn't be trying
+      // to evict them. In the case where other nodes are independently ALSO escalating (e.g.,
+      // mutual isolation), multiple nodes may solo-produce competing snapshots for the same
+      // ordinal. ForkRecoveryService's chain-tip sampling converges the cluster to the
+      // majority tip within a few rounds of re-connection.
       skippedEvictionCountRef.updateAndGet(_ + 1).flatMap { skipped =>
         ConsensusLog.warn(
           logger,
@@ -135,57 +144,89 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
           "maxSkippedEvictions" -> maxSkippedEvictions.toString
         ) >> (if (skipped >= maxSkippedEvictions)
                 Metrics[F].incrementCounter("dag_consensus_eviction_loop_escalation") >>
-                  ConsensusLog.error(
+                  ConsensusLog.warn(
                     logger,
                     Category.Phase,
                     key.toString,
                     "n/a",
                     Event.EvictionLoopEscalation,
                     "skippedEvictions" -> skipped.toString,
-                    "reason" -> "repeated eviction skips exhausted, signaling abandon"
-                  )
+                    "remaining" -> remainingFacilitators.size.toString,
+                    "reason" -> "proceeding with solo eviction to break deadlock"
+                  ) >>
+                  // Escalation path: actually perform the eviction even though remaining < 2.
+                  // Call ourselves recursively; since remaining was just updated to include all
+                  // current facilitators minus peersToEvict, the recursion checks the same set
+                  // but this time we force through by treating the floor-of-2 as soft.
+                  performEvictionForced(key, currentState, peersToEvict)
               else
                 performViewChange(key, currentState))
       }
     } else {
       // Successful eviction — reset the skipped counter
-      val newViewNumber = currentState.viewNumber + 1
-      val newLeader = facilitatorSelector.selectLeader(remainingFacilitators, currentState.entropy, newViewNumber)
-
       skippedEvictionCountRef.set(0) >>
-        ConsensusLog.warn(
-          logger,
-          Category.Phase,
-          key.toString,
-          "n/a",
-          Event.ViewChangeWithEviction,
-          "evicted" -> peersToEvict.size.toString,
-          "remaining" -> remainingFacilitators.size.toString,
-          "oldView" -> currentState.viewNumber.toString,
-          "newView" -> newViewNumber.toString,
-          "oldLeader" -> ConsensusLog.pid(currentState.leader),
-          "newLeader" -> ConsensusLog.pid(newLeader),
-          "evictedPeers" -> peersToEvict.toList.map(ConsensusLog.pid).mkString(",")
-        ) >>
-        peersToEvict.toList.traverse_(peerQualityTracker.recordViewChange) >>
-        Metrics[F].updateGauge("dag_consensus_view_number", newViewNumber) >>
-        Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>
-        storage
-          .condModifyState[Unit](key) {
-            case Some(state) if state.viewNumber === currentState.viewNumber =>
-              val updated: ConsensusState[Key, Status, Outcome, Kind] =
-                state.copy(
-                  facilitators = Facilitators(remainingFacilitators),
-                  removedFacilitators = RemovedFacilitators(state.removedFacilitators.value ++ peersToEvict),
-                  viewNumber = newViewNumber,
-                  leader = newLeader
-                )
-              (updated.some, ()).some.pure[F]
-            case _ =>
-              none[(Option[ConsensusState[Key, Status, Outcome, Kind]], Unit)].pure[F]
-          }
-          .void >>
-        queue.offer(ConsensusCommand.CheckUpdate(key))
+        doEviction(key, currentState, remainingFacilitators, peersToEvict)
     }
+  }
+
+  /** Forced eviction path: perform the eviction even if remaining < 2. Used only when the normal path has been blocked for
+    * maxSkippedEvictions cycles and the cluster has proven unreachable. Same side effects as the normal success path but skips the floor
+    * guard. Resets the skipped counter so the next round starts clean.
+    */
+  private def performEvictionForced(
+    key: Key,
+    currentState: ConsensusState[Key, Status, Outcome, Kind],
+    peersToEvict: Set[PeerId]
+  ): F[Unit] = {
+    val remainingFacilitators = currentState.facilitators.value.filterNot(peersToEvict.contains)
+    skippedEvictionCountRef.set(0) >>
+      doEviction(key, currentState, remainingFacilitators, peersToEvict)
+  }
+
+  private def doEviction(
+    key: Key,
+    currentState: ConsensusState[Key, Status, Outcome, Kind],
+    remainingFacilitators: List[PeerId],
+    peersToEvict: Set[PeerId]
+  ): F[Unit] = {
+    val newViewNumber = currentState.viewNumber + 1
+    // If remaining is empty (fully solo-eviction edge case), fall back to self as leader.
+    // selectLeader requires a non-empty list.
+    val candidates = if (remainingFacilitators.nonEmpty) remainingFacilitators else currentState.facilitators.value
+    val newLeader = facilitatorSelector.selectLeader(candidates, currentState.entropy, newViewNumber)
+
+    ConsensusLog.warn(
+      logger,
+      Category.Phase,
+      key.toString,
+      "n/a",
+      Event.ViewChangeWithEviction,
+      "evicted" -> peersToEvict.size.toString,
+      "remaining" -> remainingFacilitators.size.toString,
+      "oldView" -> currentState.viewNumber.toString,
+      "newView" -> newViewNumber.toString,
+      "oldLeader" -> ConsensusLog.pid(currentState.leader),
+      "newLeader" -> ConsensusLog.pid(newLeader),
+      "evictedPeers" -> peersToEvict.toList.map(ConsensusLog.pid).mkString(",")
+    ) >>
+      peersToEvict.toList.traverse_(peerQualityTracker.recordViewChange) >>
+      Metrics[F].updateGauge("dag_consensus_view_number", newViewNumber) >>
+      Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>
+      storage
+        .condModifyState[Unit](key) {
+          case Some(state) if state.viewNumber === currentState.viewNumber =>
+            val updated: ConsensusState[Key, Status, Outcome, Kind] =
+              state.copy(
+                facilitators = Facilitators(remainingFacilitators),
+                removedFacilitators = RemovedFacilitators(state.removedFacilitators.value ++ peersToEvict),
+                viewNumber = newViewNumber,
+                leader = newLeader
+              )
+            (updated.some, ()).some.pure[F]
+          case _ =>
+            none[(Option[ConsensusState[Key, Status, Outcome, Kind]], Unit)].pure[F]
+        }
+        .void >>
+      queue.offer(ConsensusCommand.CheckUpdate(key))
   }
 }
