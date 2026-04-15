@@ -8,6 +8,7 @@ import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapsh
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{CollectingFacilities, GlobalConsensusKind, GlobalConsensusOutcome}
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
+import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.Category._
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.Event._
@@ -44,10 +45,12 @@ object GlobalSnapshotConsensusStateCreator {
     seedlist: Option[Set[SeedlistEntry]],
     facilitatorSelector: FacilitatorSelector,
     consensusConfigHash: Hash,
+    consensusConfig: ConsensusConfig,
     peerQualityTracker: PeerQualityTracker[F],
     tcaFilter: TrailingCommonAncestorFilter[F],
     eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey]
   ): GlobalSnapshotConsensusStateCreator[F] = new GlobalSnapshotConsensusStateCreator[F] {
+    val config: ConsensusConfig = consensusConfig
 
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
@@ -185,6 +188,41 @@ object GlobalSnapshotConsensusStateCreator {
           )
           .whenA(penalizedPeers.nonEmpty)
 
+        // Chronic non-signer filter: exclude peers from the committee if their historical
+        // participation rate is below config.minParticipationRatio AFTER they have been
+        // observed for at least config.minParticipationObservations rounds. Uses the
+        // consensus-agreed peerQuality outcome field (completed, participated), so every
+        // node computes the same chronicNonSigners set. This prevents flaky community peers
+        // from being selected into the committee where they would cause mid-round stalls
+        // and force eviction cascades (the "3-of-4-unresponsive" death spiral).
+        //
+        // Only peers with participated >= minParticipationObservations are subject to the
+        // filter — new peers get a grace period to establish a track record.
+        chronicNonSigners = lastOutcome.peerQuality.collect {
+          case (pid, (completed, participated))
+              if participated >= config.minParticipationObservations &&
+                (completed.toDouble / participated.toDouble) < config.minParticipationRatio =>
+            pid
+        }.toSet
+
+        _ <- ConsensusLog
+          .info(
+            logger,
+            Facilitator,
+            key.show,
+            "n/a",
+            ChronicNonSignersExcluded,
+            "count" -> chronicNonSigners.size.toString,
+            "minObservations" -> config.minParticipationObservations.toString,
+            "minRatio" -> f"${config.minParticipationRatio}%.2f",
+            "peers" -> chronicNonSigners.toList.map { pid =>
+              val (c, p) = lastOutcome.peerQuality.getOrElse(pid, (0, 0))
+              s"${pid.value.value.take(8)}:$c/$p"
+            }
+              .mkString(",")
+          )
+          .whenA(chronicNonSigners.nonEmpty)
+
         // Clear abandoned-missing tracking (but don't use it for exclusion — it's local-only and
         // causes non-deterministic facilitator sets across nodes, leading to fork detection failures).
         // The deterministic mechanisms (previouslyRemoved + penalizedPeers from consensus-agreed
@@ -216,16 +254,19 @@ object GlobalSnapshotConsensusStateCreator {
         // if they would, bypass them and let StallDetector handle truly unresponsive peers at runtime.
         minViableQuorum = math.max(3, (allEligible.size / 2) + 1)
         eligibleThisRound = {
-          // Exclude: previously removed peers, penalized peers, AND deferred candidates
-          // (both brand-new and those still in their deferral countdown). Deferred candidates
-          // are included in allEligible (and thus in the outcome's eligibleFacilitators) so
-          // they remain tracked. This prevents newly-joined but unresponsive candidates from
-          // causing infinite abandon/retry cycles.
-          val excluded = previouslyRemoved ++ penalizedPeers ++ allDeferred
+          // Exclude: previously removed peers, penalized peers, chronic non-signers,
+          // AND deferred candidates (both brand-new and those still in countdown).
+          // Deferred candidates remain in allEligible so they remain tracked.
+          //
+          // chronicNonSigners are kept out even through the withoutPenaltiesOnly bypass:
+          // these are peers with established track records of NOT signing, distinct from
+          // temporary penalties. Admitting them has been shown to stall rounds.
+          val excluded = previouslyRemoved ++ penalizedPeers ++ chronicNonSigners ++ allDeferred
           val filtered = allEligible.filterNot(excluded.contains)
-          // Bypass only penalties (not deferral) to keep the set functional without
-          // forcing unready nodes in. A 2-node set can still produce rounds.
-          val withoutPenaltiesOnly = allEligible.filterNot((previouslyRemoved ++ penalizedPeers).contains)
+          // Bypass only penalties and deferred (not chronic non-signers) to keep the set
+          // functional without forcing chronically-broken nodes in. A 2-node set can still
+          // produce rounds.
+          val withoutPenaltiesOnly = allEligible.filterNot((previouslyRemoved ++ penalizedPeers ++ chronicNonSigners).contains)
           if (filtered.size >= minViableQuorum) filtered
           else if (withoutPenaltiesOnly.size >= 2 && allDeferred.nonEmpty) withoutPenaltiesOnly
           else if (allEligible.size >= minViableQuorum) allEligible
@@ -234,7 +275,7 @@ object GlobalSnapshotConsensusStateCreator {
         }
 
         penaltyBypassed = {
-          val excluded = previouslyRemoved ++ penalizedPeers ++ allDeferred
+          val excluded = previouslyRemoved ++ penalizedPeers ++ chronicNonSigners ++ allDeferred
           val filtered = allEligible.filterNot(excluded.contains)
           filtered.size < minViableQuorum && allEligible.size > filtered.size
         }

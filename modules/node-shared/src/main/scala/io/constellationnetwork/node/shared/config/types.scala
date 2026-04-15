@@ -169,7 +169,16 @@ object types {
     forkLagThreshold: Long = 10,
     quorumThresholdFraction: Double = 1.0,
     exponentialPenaltyBase: Int = 2,
-    maxRemovalPenaltyRounds: Int = 10000
+    maxRemovalPenaltyRounds: Int = 10000,
+    // Chronic non-signer filter: exclude peers from the committee if their
+    // historical participation rate is below `minParticipationRatio` AFTER they have
+    // been observed for at least `minParticipationObservations` rounds. Uses the
+    // consensus-agreed `peerQuality` outcome field, so all nodes compute the same
+    // exclusion set deterministically. Applied in addition to removal penalties and
+    // deferral, as a hard filter that keeps chronic flaky community peers out of the
+    // committee before round start (preventing mid-round eviction cascades).
+    minParticipationObservations: Int = 10,
+    minParticipationRatio: Double = 0.5
   ) {
 
     /** Deterministic hash of consensus-critical config values.
@@ -186,6 +195,8 @@ object types {
       *   - `quorumThresholdFraction`: determines how many declarations needed to advance phases
       *   - `exponentialPenaltyBase`: base for scaling removalPenaltyRounds per repeat eviction
       *   - `maxRemovalPenaltyRounds`: cap on total penalty so it doesn't overflow Int
+      *   - `minParticipationObservations`: threshold at which chronic non-signer filter kicks in
+      *   - `minParticipationRatio`: ratio below which a peer is excluded from the committee
       *
       * '''Non-critical fields''' (excluded — affect timing/performance, not deterministic outcomes):
       *   - `timeTriggerInterval`, `declarationTimeout`, `lockDuration`, `reStallTimeout`, `noProgressTimeout`: timing only
@@ -206,7 +217,9 @@ object types {
           s"candidateDeferralRounds=$candidateDeferralRounds," +
           s"quorumThresholdFraction=$quorumThresholdFraction," +
           s"exponentialPenaltyBase=$exponentialPenaltyBase," +
-          s"maxRemovalPenaltyRounds=$maxRemovalPenaltyRounds"
+          s"maxRemovalPenaltyRounds=$maxRemovalPenaltyRounds," +
+          s"minParticipationObservations=$minParticipationObservations," +
+          s"minParticipationRatio=$minParticipationRatio"
       Hash.fromBytes(configString.getBytes("UTF-8"))
     }
   }
