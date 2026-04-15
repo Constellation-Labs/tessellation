@@ -1,4 +1,4 @@
--- Pre-create tables with 3-day retention for the nightly cluster.
+-- Pre-create tables without TTL — logs are kept indefinitely.
 -- Nodes use CREATE TABLE IF NOT EXISTS, so they will reuse these tables.
 
 CREATE TABLE IF NOT EXISTS nightly_logs (
@@ -9,8 +9,7 @@ CREATE TABLE IF NOT EXISTS nightly_logs (
     data JSON
 ) ENGINE = MergeTree()
 PARTITION BY (network_id, toYYYYMM(timestamp))
-ORDER BY (node_id, timestamp)
-TTL toDateTime(timestamp) + INTERVAL 3 DAY;
+ORDER BY (node_id, timestamp);
 
 CREATE TABLE IF NOT EXISTS nightly_logs_consensus (
     timestamp DateTime64(3),
@@ -23,5 +22,8 @@ CREATE TABLE IF NOT EXISTS nightly_logs_consensus (
     INDEX idx_event_type event_type TYPE set(20) GRANULARITY 1
 ) ENGINE = MergeTree()
 PARTITION BY (network_id, toYYYYMM(timestamp))
-ORDER BY (node_id, ordinal, timestamp)
-TTL toDateTime(timestamp) + INTERVAL 3 DAY;
+ORDER BY (node_id, ordinal, timestamp);
+
+-- Drop any existing TTL on pre-existing tables (idempotent; no-op if no TTL).
+ALTER TABLE nightly_logs REMOVE TTL;
+ALTER TABLE nightly_logs_consensus REMOVE TTL;

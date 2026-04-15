@@ -73,6 +73,7 @@ jobs:
       - name: Ensure monitoring
         env:
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.NIGHTLY_GRAFANA_PASSWORD }}
+          CLICKHOUSE_PASSWORD: ${{ secrets.NIGHTLY_CLICKHOUSE_PASSWORD }}
         run: |
           IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
           NODES=$(printf "n%s," "${!IPS[@]}" | sed 's/,$//')

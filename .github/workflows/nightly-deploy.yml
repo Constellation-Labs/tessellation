@@ -6,9 +6,15 @@ on:
   push:
     branches:
       - develop
-      - nightly_ci_builds
+      - release/testnet
+      - nightly_monitoring
   workflow_dispatch:
     inputs:
+      branch:
+        type: string
+        description: 'Branch to build and deploy'
+        required: false
+        default: 'release/testnet'
       skip_build:
         type: boolean
         description: 'Skip build (reuse existing JARs on nodes)'
@@ -21,6 +27,10 @@ on:
         default: false
   workflow_call:
     inputs:
+      branch:
+        type: string
+        required: false
+        default: 'release/testnet'
       skip_build:
         type: boolean
         required: false
@@ -46,7 +56,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ inputs.branch || 'release/testnet' }}
           fetch-tags: true
 
       - name: Setup Java 21
@@ -115,10 +125,12 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout code
+      # Deploy uses tooling from the triggering ref (monitoring scripts, compose
+      # files, action_scripts) — these may not exist on older release branches.
+      # JARs come from the build job's artifacts, built from inputs.branch.
+      - name: Checkout deploy tooling
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
           fetch-tags: true
 
       - name: Install just
@@ -194,27 +206,78 @@ jobs:
             just down --remote="$NODES"
           fi
 
-      - name: Deploy cluster
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CLICKHOUSE_HOST: ${{ secrets.NIGHTLY_CLICKHOUSE_HOST }}
-          CLICKHOUSE_PORT: ${{ secrets.NIGHTLY_CLICKHOUSE_PORT }}
-          CLICKHOUSE_USER: ${{ secrets.NIGHTLY_CLICKHOUSE_USER }}
-          CLICKHOUSE_PASSWORD: ${{ secrets.NIGHTLY_CLICKHOUSE_PASSWORD }}
-          CLICKHOUSE_DATABASE: ${{ secrets.NIGHTLY_CLICKHOUSE_DATABASE }}
-        run: |
-          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
-          NODES=$(printf "n%s," "${!IPS[@]}" | sed 's/,$//')
-          just up --skip-assembly --remote="$NODES" --snapshot-streaming-branch=${{ vars.SNAPSHOT_STREAMING_BRANCH || 'testing' }} --block-explorer-branch=${{ vars.BLOCK_EXPLORER_BRANCH || 'increase_delegated_stakes' }}
-
       - name: Deploy monitoring
         env:
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.NIGHTLY_GRAFANA_PASSWORD }}
+          CLICKHOUSE_PASSWORD: ${{ secrets.NIGHTLY_CLICKHOUSE_PASSWORD }}
         run: |
           IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
           NODES=$(printf "n%s," "${!IPS[@]}" | sed 's/,$//')
           export REMOTE_NODES="$NODES"
           bash docker/monitoring/deploy-monitoring.sh
+
+      - name: Deploy cluster
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLICKHOUSE_HOST: ${{ secrets.NIGHTLY_CLICKHOUSE_HOST }}
+          CLICKHOUSE_PORT: ${{ secrets.NIGHTLY_CLICKHOUSE_PORT || '8123' }}
+          CLICKHOUSE_PROTOCOL: ${{ secrets.NIGHTLY_CLICKHOUSE_PROTOCOL || 'http' }}
+          CLICKHOUSE_USER: ${{ secrets.NIGHTLY_CLICKHOUSE_USER || 'default' }}
+          CLICKHOUSE_PASSWORD: ${{ secrets.NIGHTLY_CLICKHOUSE_PASSWORD || 'clickhouse' }}
+          CLICKHOUSE_DATABASE: ${{ secrets.NIGHTLY_CLICKHOUSE_DATABASE || 'default' }}
+        run: |
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          # Monitoring ClickHouse runs on the last NIGHTLY_HOSTS node; default to
+          # its IP when the explicit secret isn't set.
+          if [ -z "$CLICKHOUSE_HOST" ]; then
+            export CLICKHOUSE_HOST="${IPS[-1]}"
+          fi
+          NODES=$(printf "n%s," "${!IPS[@]}" | sed 's/,$//')
+          just up --skip-assembly --remote="$NODES" --snapshot-streaming-branch=${{ vars.SNAPSHOT_STREAMING_BRANCH || 'testing' }} --block-explorer-branch=${{ vars.BLOCK_EXPLORER_BRANCH || 'increase_delegated_stakes' }}
+
+      - name: Verify monitoring pipeline
+        env:
+          CH_PASS: ${{ secrets.NIGHTLY_CLICKHOUSE_PASSWORD || 'clickhouse' }}
+        run: |
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          LAST=$((${#IPS[@]} - 1))
+
+          # Prometheus/Grafana listen on host networking on the monitoring node, not
+          # exposed publicly — probe via SSH from inside the node.
+          echo "=== Prometheus ==="
+          ssh "n$LAST" "curl -fsS http://localhost:9090/-/ready"
+
+          echo "=== Grafana ==="
+          ssh "n$LAST" "curl -fsS http://localhost:3000/api/health" | python3 -c "
+          import sys,json
+          h=json.load(sys.stdin)
+          assert h.get('database') == 'ok', f'Grafana unhealthy: {h}'
+          print(f'  version: {h.get(\"version\")}')
+          "
+
+          echo "=== ClickHouse log ingestion ==="
+          # Nodes log asynchronously; allow up to 2 min for the first batch to land.
+          for i in $(seq 1 12); do
+            rows=$(ssh "n$LAST" "docker exec clickhouse clickhouse-client --password '$CH_PASS' -q \"SELECT count() FROM default.nightly_logs WHERE timestamp > now() - INTERVAL 2 MINUTE\"" 2>/dev/null || echo 0)
+            if [ "${rows:-0}" -gt 0 ] 2>/dev/null; then
+              echo "  OK: $rows rows in last 2min"
+              exit 0
+            fi
+            printf "  Waiting for log rows... (%d/12)\n" "$i"
+            sleep 10
+          done
+
+          echo "::error::No rows ingested into nightly_logs within 2 minutes"
+          echo "=== Diagnostics ==="
+          echo "--- n0 /opt/tessellation/.env CLICKHOUSE_* lines ---"
+          ssh n0 "grep ^CLICKHOUSE_ /opt/tessellation/.env 2>&1 || echo '(no .env or no CLICKHOUSE_ lines)'"
+          echo "--- ClickHouse server reachable from n0? ---"
+          ssh n0 "curl -sS -o /dev/null -w 'http_code=%{http_code}\n' --max-time 5 http://\$(grep ^CLICKHOUSE_HOST= /opt/tessellation/.env | cut -d= -f2):8123/ping || true"
+          echo "--- Total rows in nightly_logs (all time) ---"
+          ssh "n$LAST" "docker exec clickhouse clickhouse-client --password '$CH_PASS' -q 'SELECT count() FROM default.nightly_logs'" || true
+          echo "--- gl0 recent log tail on n0 ---"
+          ssh n0 "docker logs gl0 2>&1 | tail -30" || true
+          exit 1
 
       - name: Post-deploy health check
         run: |
@@ -273,13 +336,13 @@ jobs:
           webhook-type: incoming-webhook
           payload: |
             {
-              "text": "${{ job.status == 'success' && ':large_green_circle: Nightly Deploy succeeded' || ':red_circle: Nightly Deploy failed' }}",
+              "text": "${{ job.status == 'success' && ':large_green_circle: Nightly Deploy succeeded' || ':red_circle: Nightly Deploy failed' }} (${{ github.ref_name }})",
               "blocks": [
                 {
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": "${{ job.status == 'success' && ':large_green_circle: *Nightly Deploy succeeded*' || ':red_circle: *Nightly Deploy failed*' }}\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run #${{ github.run_number }}>"
+                    "text": "${{ job.status == 'success' && ':large_green_circle: *Nightly Deploy succeeded*' || ':red_circle: *Nightly Deploy failed*' }}\nBranch: `${{ github.ref_name }}`\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run #${{ github.run_number }}>"
                   }
                 }
               ]

@@ -377,8 +377,10 @@ DCEOF
   # Start postgres
   log "  Starting postgres on $SS_NODE"
   ssh "$SS_NODE" "cd $SS_REMOTE_DIR && docker compose up -d snapshot-streaming-postgres"
+  # Probe TCP — pg_isready over unix socket succeeds against the init-phase
+  # server before it's shut down and restarted for real.
   for attempt in $(seq 1 30); do
-    if ssh "$SS_NODE" "docker exec snapshot-streaming-postgres pg_isready -U snapshot_streaming" >/dev/null 2>&1; then
+    if ssh "$SS_NODE" "docker exec snapshot-streaming-postgres pg_isready -h 127.0.0.1 -U snapshot_streaming" >/dev/null 2>&1; then
       log "  Postgres ready"; break
     fi
     sleep 2
