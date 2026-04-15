@@ -31,7 +31,7 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yaml'
       - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=24h'
+      - '--storage.tsdb.retention.time=0'
       - '--web.listen-address=:9090'
     ports:
       - "9090:9090"

@@ -362,10 +362,15 @@ else
     echo "Starting snapshot-streaming-postgres..."
     docker compose -f "$SS_DIR/docker-compose.yaml" up -d snapshot-streaming-postgres
 
-    # Wait for postgres healthy
+    # Wait for postgres healthy.
+    # Postgres' docker entrypoint starts a temporary unix-socket-only server during
+    # init, then shuts it down, then starts the real server listening on TCP.
+    # `pg_isready` (unix socket) and psql queries will both succeed against the
+    # init-phase server, then race with the shutdown window. Probe TCP instead —
+    # TCP is only enabled after init is fully complete.
     echo "Waiting for snapshot-streaming-postgres to be healthy..."
     for attempt in $(seq 1 60); do
-      if docker exec snapshot-streaming-postgres pg_isready -U snapshot_streaming >/dev/null 2>&1; then
+      if docker exec snapshot-streaming-postgres pg_isready -h 127.0.0.1 -U snapshot_streaming >/dev/null 2>&1; then
         echo "snapshot-streaming-postgres is ready"
         break
       fi

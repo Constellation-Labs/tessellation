@@ -17,3 +17,12 @@ scrape_configs:
       - url: http://${NODE_IP_1}:9010/targets
       - url: http://${NODE_IP_2}:9000/targets
       - url: http://${NODE_IP_2}:9010/targets
+
+  # Per-process CPU/memory/IO metrics from ncabatoff/process-exporter
+  # deployed on each tessellation node by deploy-monitoring.sh.
+  - job_name: process-exporter
+    static_configs:
+      - targets:
+          - ${NODE_IP_0}:9256
+          - ${NODE_IP_1}:9256
+          - ${NODE_IP_2}:9256
