@@ -145,6 +145,7 @@ object CurrencySnapshotConsensus {
           seedlist,
           facilitatorSelector,
           snapshotConfig.consensus.deterministicConfigHash,
+          snapshotConfig.consensus,
           peerQualityTracker,
           tcaFilter,
           eventMempool
