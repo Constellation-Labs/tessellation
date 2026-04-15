@@ -17,7 +17,7 @@ GL0_PORT_PREFIX=${1:-90}
 NUM_GL0=$(docker ps --format "{{.Names}}" | grep -c "^gl0-" 2>/dev/null || echo "3")
 NUM_GL0=$(echo "$NUM_GL0" | tr -d '[:space:]')
 ISOLATION_NODE="gl0-$((NUM_GL0 - 1))"
-MONITOR_NODE="gl0-1"
+MONITOR_NODE="gl0-0"
 # With quorum-threshold=0.67, need ceil(N*0.67) declarations.
 # ceil(3*0.67)=3 (can't lose any), ceil(4*0.67)=3 (can lose 1).
 # Minimum 4 nodes required for this test to work.

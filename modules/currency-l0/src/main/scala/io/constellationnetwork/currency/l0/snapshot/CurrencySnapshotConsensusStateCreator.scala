@@ -162,7 +162,7 @@ object CurrencySnapshotConsensusStateCreator {
         // Multi-round candidate deferral: new peers must observe for candidateDeferralRounds
         // before actively participating. Uses a countdown carried in the consensus outcome
         // (same pattern as removalPenalties) for deterministic, consensus-agreed tracking.
-        genuinelyNewCandidates = allEligible.filterNot(previousEligibleSet.contains).toSet - selfId
+        genuinelyNewCandidates = allEligible.filterNot(previousEligibleSet.contains).toSet
         deferredByCountdown = lastOutcome.deferralCountdown.filter(_._2 > 0).keySet.intersect(allEligible.toSet)
         allDeferred = genuinelyNewCandidates ++ deferredByCountdown
 
