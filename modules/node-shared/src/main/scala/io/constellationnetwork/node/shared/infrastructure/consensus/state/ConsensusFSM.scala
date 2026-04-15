@@ -61,9 +61,15 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
     * infinite tight loop: when a node is in Leaving state, rounds immediately abandon (no peers), try to force-leave (already Leaving →
     * fails), try recovery (not in Ready/Observing → fails), and re-queue TimeTick → creating a CPU-burning spin loop at 21,000+
     * iterations/second.
+    *
+    * Observing is included because once a TimeTrigger slips through during the Observing phase of initFromDownload (HTTP fetch of the last
+    * outcome from peers), startRound would set isRunning=true on a roundless round. Then the InitializeFromDownload command enqueued after
+    * fetch completes hits handleWhileBusy and re-queues every 1s forever — the node never joins consensus. Blocking round starts in
+    * Observing is safe: initFromDownload only uses HTTP during this phase, not the command queue, and it queues its own StartRound AFTER
+    * transitioning Observing → WaitingForReady.
     */
   private val roundBlockedStates: Set[NodeState] =
-    Set(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.Leaving)
+    Set(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.Observing, NodeState.Leaving)
 
   def handle(cmd: ConsensusCommand): F[Unit] =
     Metrics[F].incrementCounter(
