@@ -273,19 +273,22 @@ object Main
                 for {
                   hashedSnapshot <- hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[IO])
                   // Derive Facilitators/EligibleFacilitators from the signed snapshot's proofs so
-                  // every node rolling back to the same hash seeds an IDENTICAL outcome. Using
-                  // List(nodeId) would make each node's previousEligibleSet self-only, causing
-                  // asymmetric genuinelyNewCandidates → divergent deferralCountdown (local outcome
-                  // metadata is not in the signed artifact, so divergence propagates silently).
+                  // every node rolling back to the same hash seeds an IDENTICAL outcome. This
+                  // prevents the asymmetric previousEligibleSet that caused silent deferralCountdown
+                  // drift. However, if this node was NOT a signer of the rollback snapshot, using
+                  // signers-only would lock it out of its own committee. In that case fall back to
+                  // self-only so the node can solo-produce until validators catch up and re-sign
+                  // (this is the rollback-lead case: a non-signer rolling the cluster forward).
                   signers = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
+                  bootstrapFacilitators = if (signers.contains(nodeId)) signers else List(nodeId)
                   result <- services.consensus.manager.startFacilitatingAfterRollback(
                     snapshot.ordinal,
                     GlobalConsensusOutcome(
                       snapshot.ordinal,
-                      Facilitators(signers),
+                      Facilitators(bootstrapFacilitators),
                       RemovedFacilitators.empty,
                       WithdrawnFacilitators.empty,
-                      EligibleFacilitators(signers),
+                      EligibleFacilitators(bootstrapFacilitators),
                       Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty, hashedSnapshot.hash)
                     )
                   )

@@ -373,17 +373,19 @@ abstract class CurrencyL0App(
                       }
                       hashedSnapshot <- currencySnapshot.toHashed[IO]
                       // Derive Facilitators/EligibleFacilitators from the signed snapshot's proofs so
-                      // every node rolling back seeds an IDENTICAL outcome. See dag-l0 Main.scala for
-                      // full rationale.
+                      // every node rolling back seeds an IDENTICAL outcome. If this node was NOT a
+                      // signer, fall back to self-only so it can solo-produce. See dag-l0 Main.scala
+                      // for full rationale.
                       signers = currencySnapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
+                      bootstrapFacilitators = if (signers.contains(nodeId)) signers else List(nodeId)
                       _ <- services.consensus.manager.startFacilitatingAfterRollback(
                         currencySnapshot.ordinal,
                         CurrencyConsensusOutcome(
                           currencySnapshot.ordinal,
-                          Facilitators(signers),
+                          Facilitators(bootstrapFacilitators),
                           RemovedFacilitators.empty,
                           WithdrawnFacilitators.empty,
-                          EligibleFacilitators(signers),
+                          EligibleFacilitators(bootstrapFacilitators),
                           Finished(
                             currencySnapshot,
                             lastBinaryHash,
