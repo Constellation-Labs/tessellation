@@ -163,7 +163,7 @@ object GlobalSnapshotConsensusStateCreator {
         // These will have their countdown initialized in the advancer.
         // deferredByCountdown: peers with an active countdown from previous rounds.
         // allDeferred: union of both, used for exclusion from eligibleThisRound.
-        genuinelyNewCandidates = allEligible.filterNot(previousEligibleSet.contains).toSet - selfId
+        genuinelyNewCandidates = allEligible.filterNot(previousEligibleSet.contains).toSet
         deferredByCountdown = lastOutcome.deferralCountdown.filter(_._2 > 0).keySet.intersect(allEligible.toSet)
         allDeferred = genuinelyNewCandidates ++ deferredByCountdown
 
