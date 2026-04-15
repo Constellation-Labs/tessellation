@@ -372,14 +372,18 @@ abstract class CurrencyL0App(
                         )
                       }
                       hashedSnapshot <- currencySnapshot.toHashed[IO]
+                      // Derive Facilitators/EligibleFacilitators from the signed snapshot's proofs so
+                      // every node rolling back seeds an IDENTICAL outcome. See dag-l0 Main.scala for
+                      // full rationale.
+                      signers = currencySnapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
                       _ <- services.consensus.manager.startFacilitatingAfterRollback(
                         currencySnapshot.ordinal,
                         CurrencyConsensusOutcome(
                           currencySnapshot.ordinal,
-                          Facilitators(List(nodeId)),
+                          Facilitators(signers),
                           RemovedFacilitators.empty,
                           WithdrawnFacilitators.empty,
-                          EligibleFacilitators.empty,
+                          EligibleFacilitators(signers),
                           Finished(
                             currencySnapshot,
                             lastBinaryHash,
@@ -479,14 +483,15 @@ abstract class CurrencyL0App(
                         } yield ()
                       } else IO.unit
                     hashedSnapshot <- currencySnapshot.toHashed[IO]
+                    genesisSigners = currencySnapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
                     _ <- services.consensus.manager.startFacilitatingAfterRollback(
                       currencySnapshot.ordinal,
                       CurrencyConsensusOutcome(
                         currencySnapshot.ordinal,
-                        Facilitators(List(nodeId)),
+                        Facilitators(genesisSigners),
                         RemovedFacilitators.empty,
                         WithdrawnFacilitators.empty,
-                        EligibleFacilitators.empty,
+                        EligibleFacilitators(genesisSigners),
                         Finished(
                           currencySnapshot,
                           hash,

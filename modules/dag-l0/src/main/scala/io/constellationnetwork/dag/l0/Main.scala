@@ -272,14 +272,20 @@ object Main
               case (snapshotInfo, snapshot) =>
                 for {
                   hashedSnapshot <- hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[IO])
+                  // Derive Facilitators/EligibleFacilitators from the signed snapshot's proofs so
+                  // every node rolling back to the same hash seeds an IDENTICAL outcome. Using
+                  // List(nodeId) would make each node's previousEligibleSet self-only, causing
+                  // asymmetric genuinelyNewCandidates → divergent deferralCountdown (local outcome
+                  // metadata is not in the signed artifact, so divergence propagates silently).
+                  signers = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
                   result <- services.consensus.manager.startFacilitatingAfterRollback(
                     snapshot.ordinal,
                     GlobalConsensusOutcome(
                       snapshot.ordinal,
-                      Facilitators(List(nodeId)),
+                      Facilitators(signers),
                       RemovedFacilitators.empty,
                       WithdrawnFacilitators.empty,
-                      EligibleFacilitators.empty,
+                      EligibleFacilitators(signers),
                       Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty, hashedSnapshot.hash)
                     )
                   )
@@ -371,15 +377,16 @@ object Main
                                 )
                                 _ <- sharedStorages.mptStore.syncFull(kvPairs, hashedSnapshot.ordinal)
 
+                                genesisSigners = signedFirstIncrementalSnapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
                                 _ <- services.consensus.manager
                                   .startFacilitatingAfterRollback(
                                     signedFirstIncrementalSnapshot.ordinal,
                                     GlobalConsensusOutcome(
                                       signedFirstIncrementalSnapshot.ordinal,
-                                      Facilitators(List(nodeId)),
+                                      Facilitators(genesisSigners),
                                       RemovedFacilitators.empty,
                                       WithdrawnFacilitators.empty,
-                                      EligibleFacilitators.empty,
+                                      EligibleFacilitators(genesisSigners),
                                       Finished(
                                         signedFirstIncrementalSnapshot,
                                         hashedGenesis.info.toGlobalSnapshotInfo,
