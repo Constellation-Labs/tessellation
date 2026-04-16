@@ -12,8 +12,10 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLo
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{PeerId, PeerResponsiveness, Unresponsive}
+import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
+import monocle.Lens
 
 /** Monitors a consensus round for stalls and manages recovery.
   *
@@ -43,7 +45,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
   viewChangeManager: ViewChangeManager[F, Key, Status, Outcome, Kind],
   abandonmentTracker: AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   healthRef: Ref[F, ConsensusHealthStatus]
-) {
+)(implicit outcomeArtifact: Lens[Outcome, Signed[Artifact]]) {
 
   import ctx.{clusterStorage, config, logger, ops, peerQualityTracker, queue, selfId, storage}
 
@@ -490,25 +492,32 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
               )
             ) >>
               Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>
-              Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
-              viewChangeManager
-                .performViewChangeWithEviction(key, state, missingPeers)
-                .map { escalated =>
-                  // After eviction, the facilitator set shrinks to `remaining` peers who
-                  // have all declared — quorum becomes reachable next cycle. Do NOT set
-                  // quorumInfeasible=true here, otherwise the round is abandoned in the
-                  // same cycle and the eviction is wasted.
-                  // When escalated=true (solo-eviction fired), propagate to the outer
-                  // monitor so it suppresses the maxStallCycles abandonment check.
-                  StallResult(
-                    didStall = true,
-                    quorumInfeasible = false,
-                    activeFacilitators = remaining,
-                    quorumSize = minQuorum,
-                    clusterSize = clusterSize,
-                    evictionEscalated = escalated
-                  )
-                }
+              Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >> {
+                // canEscalateSolo: bootstrap-only gate for solo-eviction. True only if this node
+                // has NOT yet completed a multi-signer round. Once we've signed with other peers,
+                // solo is permanently disallowed — prevents community peers from creating
+                // divergent chains like the Apr 16 testnet 03a24df6 fork.
+                val lastSignerCount = outcomeArtifact.get(state.lastOutcome).proofs.size
+                val canEscalateSolo = lastSignerCount <= 1
+                viewChangeManager
+                  .performViewChangeWithEviction(key, state, missingPeers, canEscalateSolo)
+                  .map { escalated =>
+                    // After eviction, the facilitator set shrinks to `remaining` peers who
+                    // have all declared — quorum becomes reachable next cycle. Do NOT set
+                    // quorumInfeasible=true here, otherwise the round is abandoned in the
+                    // same cycle and the eviction is wasted.
+                    // When escalated=true (solo-eviction fired), propagate to the outer
+                    // monitor so it suppresses the maxStallCycles abandonment check.
+                    StallResult(
+                      didStall = true,
+                      quorumInfeasible = false,
+                      activeFacilitators = remaining,
+                      quorumSize = minQuorum,
+                      clusterSize = clusterSize,
+                      evictionEscalated = escalated
+                    )
+                  }
+              }
           } else {
             // Normal stall with quorum still feasible — just count the cycle.
             // The round will complete at quorum threshold (ceil(N*2/3)) without
