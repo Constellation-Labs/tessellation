@@ -20,6 +20,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.PeerSelect
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{GlobalSnapshotContextFunctions, PeerSelect}
 import io.constellationnetwork.node.shared.modules.{SharedPrograms, SharedStorages}
 import io.constellationnetwork.schema._
@@ -30,7 +31,7 @@ import io.circe.Json
 
 object Programs {
 
-  def make[F[_]: Async: Parallel: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Random, R <: CliMethod](
+  def make[F[_]: Async: Parallel: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Random: Metrics, R <: CliMethod](
     sharedPrograms: SharedPrograms[F, R],
     storages: Storages[F],
     services: Services[F, R],
