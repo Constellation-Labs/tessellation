@@ -46,11 +46,14 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
   logger: SelfAwareStructuredLogger[F]
 ) {
 
-  /** Maximum consecutive eviction-skipped view changes before escalating to abandonment. When the same peers keep failing but can't be
-    * evicted (below minimum 2), cycling view numbers wastes stall cycles. After this many skipped evictions, signal that the round should
-    * be abandoned.
+  /** Maximum consecutive eviction-skipped view changes before escalating to solo-eviction. Set to 2 (not 3) so the escalation fires on
+    * stallCount=1 (the 2nd stall cycle), before maxStallCycles=3 triggers round abandonment. The sequence is:
+    *   - stallCount=0: warning only (no eviction attempted)
+    *   - stallCount=1: eviction attempted, skipped (below floor), skippedCount=1
+    *   - stallCount=1 (2nd tick in same cycle? NO — next cycle): skippedCount=2 >= 2 → ESCALATE Without this, maxSkippedEvictions=3 was
+    *     unreachable because maxStallCycles=3 abandoned first.
     */
-  private val maxSkippedEvictions: Int = 3
+  private val maxSkippedEvictions: Int = 2
 
   /** Tracks consecutive eviction-skipped view changes for the current round. Reset on successful eviction or round completion. */
   private val skippedEvictionCountRef: Ref[F, Int] = Ref.unsafe(0)
@@ -112,11 +115,12 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
     * The CAS guard on `viewNumber` prevents conflicting evictions: if the state has already advanced (e.g., because a late declaration
     * arrived and the phase progressed), the eviction is skipped.
     */
+  /** @return true if solo-eviction escalation fired (caller should suppress stall-cycle abandonment) */
   def performViewChangeWithEviction(
     key: Key,
     currentState: ConsensusState[Key, Status, Outcome, Kind],
     peersToEvict: Set[PeerId]
-  ): F[Unit] = {
+  ): F[Boolean] = {
     val remainingFacilitators = currentState.facilitators.value.filterNot(peersToEvict.contains)
 
     if (remainingFacilitators.size < 2) {
@@ -154,18 +158,14 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
                     "remaining" -> remainingFacilitators.size.toString,
                     "reason" -> "proceeding with solo eviction to break deadlock"
                   ) >>
-                  // Escalation path: actually perform the eviction even though remaining < 2.
-                  // Call ourselves recursively; since remaining was just updated to include all
-                  // current facilitators minus peersToEvict, the recursion checks the same set
-                  // but this time we force through by treating the floor-of-2 as soft.
-                  performEvictionForced(key, currentState, peersToEvict)
+                  performEvictionForced(key, currentState, peersToEvict).as(true)
               else
-                performViewChange(key, currentState))
+                performViewChange(key, currentState).as(false))
       }
     } else {
       // Successful eviction — reset the skipped counter
       skippedEvictionCountRef.set(0) >>
-        doEviction(key, currentState, remainingFacilitators, peersToEvict)
+        doEviction(key, currentState, remainingFacilitators, peersToEvict).as(false)
     }
   }
 
