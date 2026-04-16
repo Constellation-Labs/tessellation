@@ -24,6 +24,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalS
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
 import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.CombinedSnapshotCheckpointFileSystemStorage
 import io.constellationnetwork.schema._
@@ -37,6 +38,7 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.validator.StateProofValidator
 
+import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.Json
@@ -51,7 +53,7 @@ case class ObserveDeadlineExceeded(currentOrdinal: SnapshotOrdinal, targetOrdina
     with NoStackTrace
 
 object Download {
-  def make[F[_]: Async: Parallel: Random: KryoSerializer: JsonSerializer](
+  def make[F[_]: Async: Parallel: Random: KryoSerializer: JsonSerializer: Metrics](
     snapshotStorage: SnapshotDownloadStorage[F],
     p2pClient: P2PClient[F],
     clusterStorage: ClusterStorage[F],
@@ -126,6 +128,16 @@ object Download {
         _ <-
           if (alreadyInitializedStorage.isEmpty) setInitialSnapshots(hashedSnapshot, context)
           else updateSnapshots(hashedSnapshot, context)
+        // Emit fresh metrics when a snapshot is accepted via download, not just via consensus.
+        // Without this, a peer that is catching up via download keeps stale ordinal/signer_count
+        // metrics in Grafana until it completes a full consensus round. Pair with last_updated_epoch
+        // so dashboards can filter stale peers via `time() - last_updated_epoch < freshness`.
+        _ <- Async[F].realTimeInstant.map(_.getEpochSecond.toDouble).flatMap { epochSec =>
+          Metrics[F].updateGauge("dag_global_snapshot_last_updated_epoch", epochSec)
+        }
+        _ <- Metrics[F].updateGauge("dag_global_snapshot_ordinal", snapshot.ordinal.value.value.toDouble)
+        _ <- Metrics[F].updateGauge("dag_global_snapshot_height", snapshot.height.value.value.toDouble)
+        _ <- Metrics[F].updateGauge("dag_global_snapshot_signature_count", snapshot.proofs.size.toDouble)
       } yield ()
 
     def download(implicit hasherSelector: HasherSelector[F]): F[Unit] =

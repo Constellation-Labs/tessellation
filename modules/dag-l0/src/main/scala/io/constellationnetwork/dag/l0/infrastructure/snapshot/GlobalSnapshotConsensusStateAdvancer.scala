@@ -1464,7 +1464,15 @@ object GlobalSnapshotConsensusStateAdvancer {
               }
         }
 
-        Metrics[F].updateGauge("dag_global_snapshot_ordinal", signed.ordinal.value) >>
+        Async[F].realTimeInstant.map(_.getEpochSecond.toDouble).flatMap { snapshotEpochSecond =>
+          // Freshness timestamp: Grafana queries can use this to filter stale metrics.
+          // A peer that stops advancing leaves its _ordinal gauge at the last accepted value
+          // forever, making it look like it's still serving that ordinal. Emit a companion
+          // "last updated" gauge so dashboards can show only peers refreshed within N seconds:
+          //   dag_global_snapshot_ordinal and (time() - dag_global_snapshot_last_updated_epoch < 120)
+          Metrics[F].updateGauge("dag_global_snapshot_last_updated_epoch", snapshotEpochSecond)
+        } >>
+          Metrics[F].updateGauge("dag_global_snapshot_ordinal", signed.ordinal.value) >>
           Metrics[F].updateGauge("dag_global_snapshot_height", signed.height.value) >>
           Metrics[F].updateGauge("dag_global_snapshot_signature_count", signed.proofs.size) >>
           Metrics[F].updateGauge("dag_global_snapshot_tips_count", deprecatedTips, Seq(("tip_type", "deprecated"))) >>
