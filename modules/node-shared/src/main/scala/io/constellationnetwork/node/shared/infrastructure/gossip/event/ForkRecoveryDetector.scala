@@ -99,16 +99,31 @@ object ForkRecoveryDetector {
               // cases once the mini-fork falls behind the canonical chain.
               val isRunningFork = peersAtLocalOrdinal.size >= 2 && peersWithDifferentHash.size > peersAtLocalOrdinal.size / 2
 
-              // NOTE: We intentionally do NOT check "local ahead of majority" (minority fork).
-              // Hash comparison across different ordinals is meaningless — ordinal 11's hash will
-              // never equal ordinal 10's hash regardless of fork status. A node 1 ordinal ahead
-              // is normal (it finished the round first). If a minority-fork node is truly stuck,
-              // the stale-ordinal escalation in AbandonmentTracker handles it (retriable
-              // abandonments at the same key → escalate after maxRetriableAtSameKey attempts).
+              // Check 3: Isolated-minority fork — local is the ONLY peer at its tip, while a
+              // group of >= 2 peers agrees on a different chain at our ordinal or ahead.
+              // This catches the case where forkLagThreshold hasn't been exceeded (lag small or
+              // even zero) but we're clearly on our own branch. Previously undetectable because:
+              //   - isLagging requires lag > 10 (too slow to react for a freshly-diverged node)
+              //   - isRunningFork requires >=2 peers at our exact ordinal (fails when we're alone)
+              // Triggered the Apr 16 testnet incident where community peer 03a24df6 solo-produced
+              // ord 3106299 and stayed on its fork indefinitely while our 3 advanced past.
+              //
+              // Requires majorityOrdinal >= localOrdinal to avoid false positives on leaders
+              // that legitimately advanced first.
+              val peersAtLocalTip = chainTips.count {
+                case (_, tip) => tip.ordinal == localOrdinal && tip.snapshotHash == localHash
+              }
+              val isIsolatedMinority =
+                peersAtLocalTip == 0 &&
+                  majorityGroup.size >= 2 &&
+                  majorityOrdinal.value.value >= localOrdinal.value.value
 
-              if (isLagging || isRunningFork) {
+              if (isLagging || isRunningFork || isIsolatedMinority) {
                 val reason =
-                  if (isRunningFork && !isLagging)
+                  if (isIsolatedMinority && !isLagging && !isRunningFork)
+                    s"isolated_minority local=($localOrdinal,$localHash) alone on this tip vs " +
+                      s"majority=($majorityOrdinal,$majorityHash) with ${majorityGroup.size} peers"
+                  else if (isRunningFork && !isLagging)
                     s"hash_divergence local=($localOrdinal,$localHash) vs majority=($majorityOrdinal,$majorityHash) " +
                       s"peersAtOrdinal=${peersAtLocalOrdinal.size} disagree=${peersWithDifferentHash.size}"
                   else
