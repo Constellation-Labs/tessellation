@@ -115,26 +115,28 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
     * The CAS guard on `viewNumber` prevents conflicting evictions: if the state has already advanced (e.g., because a late declaration
     * arrived and the phase progressed), the eviction is skipped.
     */
-  /** @return true if solo-eviction escalation fired (caller should suppress stall-cycle abandonment) */
+  /** @return
+    *   true if solo-eviction escalation fired (caller should suppress stall-cycle abandonment)
+    *
+    * @param canEscalateSolo
+    *   true only when this node is still in the bootstrap phase (previous round had <= 1 signer). Once the cluster has reached multi-node
+    *   consensus, solo-eviction is permanently disallowed because it would let any node produce a divergent chain (Apr 16 testnet incident:
+    *   community peer 03a24df6 solo-produced its own chain at ord 3106299, creating a persistent fork).
+    */
   def performViewChangeWithEviction(
     key: Key,
     currentState: ConsensusState[Key, Status, Outcome, Kind],
-    peersToEvict: Set[PeerId]
+    peersToEvict: Set[PeerId],
+    canEscalateSolo: Boolean
   ): F[Boolean] = {
     val remainingFacilitators = currentState.facilitators.value.filterNot(peersToEvict.contains)
 
     if (remainingFacilitators.size < 2) {
       // Can't evict to below minimum viable cluster (2) by default — track and fall back to normal
-      // view change. After maxSkippedEvictions consecutive skips, perform the eviction anyway:
-      // the cluster has proven unreachable for at least 3 stall cycles (~9s+), so the only way
-      // forward is for this node to proceed with whoever is left (potentially just self).
-      //
-      // Fork safety: this only fires when NO other facilitator has declared. If other nodes
-      // were reachable and participating, they'd appear as declared and we wouldn't be trying
-      // to evict them. In the case where other nodes are independently ALSO escalating (e.g.,
-      // mutual isolation), multiple nodes may solo-produce competing snapshots for the same
-      // ordinal. ForkRecoveryService's chain-tip sampling converges the cluster to the
-      // majority tip within a few rounds of re-connection.
+      // view change. After maxSkippedEvictions consecutive skips, AND if this node is still in
+      // bootstrap (canEscalateSolo=true), perform the eviction anyway as a last resort.
+      // Otherwise (post-bootstrap), abandon and let ForkRecoveryService reconcile — we do NOT
+      // want arbitrary nodes solo-producing during normal operation.
       skippedEvictionCountRef.updateAndGet(_ + 1).flatMap { skipped =>
         ConsensusLog.warn(
           logger,
@@ -145,8 +147,9 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
           "peersToEvict" -> peersToEvict.size.toString,
           "remaining" -> remainingFacilitators.size.toString,
           "skippedEvictionCount" -> skipped.toString,
-          "maxSkippedEvictions" -> maxSkippedEvictions.toString
-        ) >> (if (skipped >= maxSkippedEvictions)
+          "maxSkippedEvictions" -> maxSkippedEvictions.toString,
+          "canEscalateSolo" -> canEscalateSolo.toString
+        ) >> (if (skipped >= maxSkippedEvictions && canEscalateSolo)
                 Metrics[F].incrementCounter("dag_consensus_eviction_loop_escalation") >>
                   ConsensusLog.warn(
                     logger,
@@ -156,7 +159,7 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
                     Event.EvictionLoopEscalation,
                     "skippedEvictions" -> skipped.toString,
                     "remaining" -> remainingFacilitators.size.toString,
-                    "reason" -> "proceeding with solo eviction to break deadlock"
+                    "reason" -> "bootstrap phase: proceeding with solo eviction to break deadlock"
                   ) >>
                   performEvictionForced(key, currentState, peersToEvict).as(true)
               else
