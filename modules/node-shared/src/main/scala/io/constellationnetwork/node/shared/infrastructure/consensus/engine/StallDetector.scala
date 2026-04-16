@@ -230,7 +230,12 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       roundElapsed = now - ms.roundStartTime
       _ <- Metrics[F].updateGauge("dag_consensus_round_elapsed_seconds", roundElapsed.toSeconds.toInt)
       roundTimedOut = config.maxRoundDuration.exists(roundElapsed >= _)
-      shouldAbandon = finalStallCount >= config.maxStallCycles || roundTimedOut || quorumInfeasible || isLagging || evictionLoopStuck
+      // When solo-eviction just fired (evictionEscalated), suppress the stall-cycle check:
+      // the reduced committee needs at least one more cycle to attempt the round before we
+      // give up. Without this, solo-eviction fires on the same cycle as maxStallCycles
+      // abandonment, wasting the eviction.
+      stallCycleExceeded = finalStallCount >= config.maxStallCycles && !stallResult.evictionEscalated
+      shouldAbandon = stallCycleExceeded || roundTimedOut || quorumInfeasible || isLagging || evictionLoopStuck
 
       abandonReason: AbandonReason =
         if (isLagging) AbandonReason.Lagging(peersAtHigherKey, totalRegisteredPeers, totalAllRegs)
@@ -239,6 +244,17 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
         else if (evictionLoopStuck) AbandonReason.EvictionLoopStuck
         else if (roundTimedOut) AbandonReason.RoundTimeout(roundElapsed.toSeconds, config.maxRoundDuration.map(_.toSeconds))
         else AbandonReason.MaxStalls(finalStallCount)
+
+      _ <- ConsensusLog
+        .info(
+          logger,
+          Category.Stall,
+          key.toString,
+          selfRole(state),
+          LogEvent.EvictionLoopEscalation,
+          "note" -> "solo-eviction suppressed stall-cycle abandonment, giving reduced committee a chance"
+        )
+        .whenA(stallResult.evictionEscalated && finalStallCount >= config.maxStallCycles)
 
       _ <- (
         peerQualityTracker.recordAbandonedMissingPeers(info.missingPeers).whenA(info.missingPeers.nonEmpty) >>
@@ -371,13 +387,17 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     * When all peers have declared but the phase hasn't advanced (e.g., leader hasn't proposed), a normal view change (leader rotation) is
     * performed for proposal phases, or the stall is counted toward abandonment for other phases.
     */
-  /** Result of a stall check: whether a stall was detected and whether quorum is infeasible. */
+  /** Result of a stall check: whether a stall was detected and whether quorum is infeasible. `evictionEscalated` is true when the
+    * ViewChangeManager's solo-eviction escalation fired — suppresses the `finalStallCount >= maxStallCycles` abandonment on this cycle to
+    * give the newly-reduced committee a chance to complete the round.
+    */
   private case class StallResult(
     didStall: Boolean,
     quorumInfeasible: Boolean,
     activeFacilitators: Int = 0,
     quorumSize: Int = 0,
-    clusterSize: Int = 0
+    clusterSize: Int = 0,
+    evictionEscalated: Boolean = false
   )
 
   private def handleStall(
@@ -469,19 +489,23 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
               Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>
               Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
               viewChangeManager
-                .performViewChangeWithEviction(key, state, missingPeers) >>
-              // After eviction, the facilitator set shrinks to `remaining` peers who
-              // have all declared — quorum becomes reachable next cycle. Do NOT set
-              // quorumInfeasible=true here, otherwise the round is abandoned in the
-              // same cycle and the eviction is wasted. If eviction is rejected (below
-              // minimum facilitators), `evictionLoopStuck` handles abandonment later.
-              StallResult(
-                didStall = true,
-                quorumInfeasible = false,
-                activeFacilitators = remaining,
-                quorumSize = minQuorum,
-                clusterSize = clusterSize
-              ).pure[F]
+                .performViewChangeWithEviction(key, state, missingPeers)
+                .map { escalated =>
+                  // After eviction, the facilitator set shrinks to `remaining` peers who
+                  // have all declared — quorum becomes reachable next cycle. Do NOT set
+                  // quorumInfeasible=true here, otherwise the round is abandoned in the
+                  // same cycle and the eviction is wasted.
+                  // When escalated=true (solo-eviction fired), propagate to the outer
+                  // monitor so it suppresses the maxStallCycles abandonment check.
+                  StallResult(
+                    didStall = true,
+                    quorumInfeasible = false,
+                    activeFacilitators = remaining,
+                    quorumSize = minQuorum,
+                    clusterSize = clusterSize,
+                    evictionEscalated = escalated
+                  )
+                }
           } else {
             // Normal stall with quorum still feasible — just count the cycle.
             // The round will complete at quorum threshold (ceil(N*2/3)) without
