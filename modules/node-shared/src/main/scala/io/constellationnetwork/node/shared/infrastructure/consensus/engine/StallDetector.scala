@@ -322,7 +322,10 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
             statusStartTime = adjustedStatusStartTime,
             roundStartTime = ms.roundStartTime,
             noChangeCount = newNoChangeCount,
-            stallCount = finalStallCount,
+            // Reset stall count after solo-eviction so the reduced committee gets a
+            // fresh start. Without this, the next 200ms poll iteration sees stallCount=3,
+            // bumps to 4, and abandons — the suppression only bought one cycle.
+            stallCount = if (stallResult.evictionEscalated) 0 else finalStallCount,
             lastSummaryTime = newSummaryTime,
             lastScoreLogTime = newScoreLogTime
           )
