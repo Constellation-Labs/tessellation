@@ -383,7 +383,8 @@ object EventGossipDaemon {
     config: EventGossipConfig = EventGossipConfig(),
     getLocalChainTip: Option[F[Option[ChainTip]]] = None,
     onForkDetected: Option[ForkRecoveryInfo => F[Unit]] = None,
-    forkLagThreshold: Long = 10
+    forkLagThreshold: Long = 10,
+    verifyHashAt: Option[HashAtOrdinalProbe[F]] = None
   )(implicit S: Supervisor[F]): F[EventGossipDaemon[F, Event, Key]] =
     for {
       seenCache <- SeenHashCache.make[F](config.maxSeenHashes, config.seenHashTtlMs)
@@ -399,7 +400,7 @@ object EventGossipDaemon {
       meshState <- MeshState.make[F](meshConfig)
       gossipClient = EventGossipClient.make[F, Event](client, session)
 
-      maybeForkDetector = getLocalChainTip.map(tip => ForkRecoveryDetector.make(meshState, tip, forkLagThreshold))
+      maybeForkDetector = getLocalChainTip.map(tip => ForkRecoveryDetector.make(meshState, tip, forkLagThreshold, verifyHashAt))
 
       getGossipEligiblePeers: F[Set[Peer]] = clusterStorage.getResponsivePeers.map { peers =>
         peers.filter(p => p.state == NodeState.Ready || p.state == NodeState.Observing)
