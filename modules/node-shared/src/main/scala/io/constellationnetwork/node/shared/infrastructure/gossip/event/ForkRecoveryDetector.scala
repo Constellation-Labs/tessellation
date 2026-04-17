@@ -1,5 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.gossip.event
 
+import cats.Parallel
 import cats.effect.Async
 import cats.syntax.all._
 
@@ -8,6 +9,20 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+
+/** Queries a peer for the snapshot hash at a given ordinal.
+  *
+  * Returns:
+  *   - `Some(hash)` if the peer has a snapshot at that ordinal
+  *   - `None` if the peer doesn't have that ordinal OR the RPC fails (treated as inconclusive)
+  *
+  * This is the primitive used by Tier 2 fork detection: the (ordinal, hash) tuple uniquely identifies a snapshot. If my localHash matches
+  * the peer's hash at my localOrdinal, we're on the same chain — I'm just lagging. If the hashes differ, we're on different chains at that
+  * ordinal — a real fork.
+  */
+trait HashAtOrdinalProbe[F[_]] {
+  def probe(peerId: PeerId, ordinal: SnapshotOrdinal): F[Option[Hash]]
+}
 
 /** Information about a detected fork divergence.
   *
@@ -54,10 +69,15 @@ trait ForkRecoveryDetector[F[_]] {
 
 object ForkRecoveryDetector {
 
-  def make[F[_]: Async](
+  /** Default number of peers to probe in Tier 2 quorum verification. Odd so majority is unambiguous. */
+  val DefaultProbeCount: Int = 3
+
+  def make[F[_]: Async: Parallel](
     meshState: MeshState[F],
     getLocalChainTip: F[Option[ChainTip]],
-    forkLagThreshold: Long = 10
+    forkLagThreshold: Long = 10,
+    verifyHashAt: Option[HashAtOrdinalProbe[F]] = None,
+    probeCount: Int = DefaultProbeCount
   ): ForkRecoveryDetector[F] = new ForkRecoveryDetector[F] {
 
     private val logger = Slf4jLogger.getLogger[F]
@@ -99,31 +119,16 @@ object ForkRecoveryDetector {
               // cases once the mini-fork falls behind the canonical chain.
               val isRunningFork = peersAtLocalOrdinal.size >= 2 && peersWithDifferentHash.size > peersAtLocalOrdinal.size / 2
 
-              // Check 3: Isolated-minority fork — local is the ONLY peer at its tip, while a
-              // group of >= 2 peers agrees on a different chain at our ordinal or ahead.
-              // This catches the case where forkLagThreshold hasn't been exceeded (lag small or
-              // even zero) but we're clearly on our own branch. Previously undetectable because:
-              //   - isLagging requires lag > 10 (too slow to react for a freshly-diverged node)
-              //   - isRunningFork requires >=2 peers at our exact ordinal (fails when we're alone)
-              // Triggered the Apr 16 testnet incident where community peer 03a24df6 solo-produced
-              // ord 3106299 and stayed on its fork indefinitely while our 3 advanced past.
-              //
-              // Requires majorityOrdinal >= localOrdinal to avoid false positives on leaders
-              // that legitimately advanced first.
-              val peersAtLocalTip = chainTips.count {
-                case (_, tip) => tip.ordinal == localOrdinal && tip.snapshotHash == localHash
-              }
-              val isIsolatedMinority =
-                peersAtLocalTip == 0 &&
-                  majorityGroup.size >= 2 &&
-                  majorityOrdinal.value.value >= localOrdinal.value.value
+              // NOTE: We intentionally do NOT check "local ahead of majority" (minority fork).
+              // Hash comparison across different ordinals is meaningless — ordinal 11's hash will
+              // never equal ordinal 10's hash regardless of fork status. A node 1 ordinal ahead
+              // is normal (it finished the round first). If a minority-fork node is truly stuck,
+              // the stale-ordinal escalation in AbandonmentTracker handles it (retriable
+              // abandonments at the same key → escalate after maxRetriableAtSameKey attempts).
 
-              if (isLagging || isRunningFork || isIsolatedMinority) {
+              if (isLagging || isRunningFork) {
                 val reason =
-                  if (isIsolatedMinority && !isLagging && !isRunningFork)
-                    s"isolated_minority local=($localOrdinal,$localHash) alone on this tip vs " +
-                      s"majority=($majorityOrdinal,$majorityHash) with ${majorityGroup.size} peers"
-                  else if (isRunningFork && !isLagging)
+                  if (isRunningFork && !isLagging)
                     s"hash_divergence local=($localOrdinal,$localHash) vs majority=($majorityOrdinal,$majorityHash) " +
                       s"peersAtOrdinal=${peersAtLocalOrdinal.size} disagree=${peersWithDifferentHash.size}"
                   else
@@ -142,10 +147,119 @@ object ForkRecoveryDetector {
                       s"majorityPeers=${majorityGroup.size}/${chainTips.size}"
                   )
                   .as(info.some)
-              } else none[ForkRecoveryInfo].pure[F]
+              } else {
+                // Tier 2: ambiguous case. Local is alone on its tip and majority is ahead but
+                // within forkLagThreshold. Could be either:
+                //   a) legitimately lagging on the canonical chain (peers have my localHash at my
+                //      localOrdinal in their history)
+                //   b) isolated on a minority fork (peers have a DIFFERENT hash at my localOrdinal)
+                //
+                // From chain tips alone this is undecidable — but we can directly verify by
+                // probing majority peers: "what snapshot hash do YOU have at my ordinal?"
+                // (ordinal, hash) tuples uniquely identify snapshots, so the response answers
+                // the question definitively.
+                val ambiguous =
+                  peersAtLocalOrdinal.isEmpty && lag > 0 && majorityGroup.size >= 2
+                if (ambiguous && verifyHashAt.isDefined) {
+                  runQuorumProbe(
+                    verifyHashAt.get,
+                    majorityGroup.keySet,
+                    localOrdinal,
+                    localHash,
+                    majorityOrdinal,
+                    majorityHash,
+                    chainTipsSize = chainTips.size,
+                    lag = lag,
+                    majorityPeers = majorityGroup.keySet
+                  )
+                } else {
+                  none[ForkRecoveryInfo].pure[F]
+                }
+              }
             }
           case _ => none[ForkRecoveryInfo].pure[F]
         }
       } yield result
+
+    /** Tier 2 fork verification via hash-at-ordinal probing.
+      *
+      * Pre-condition (checked by caller): local is alone on its tip AND majority is ahead AND Tier 1 did not fire. We cannot tell from
+      * chain-tip data alone whether we're lagging on the canonical chain or isolated on a minority fork.
+      *
+      * Algorithm:
+      *   1. Sample up to `probeCount` peers from the majority group (those claiming the canonical tip). 2. Probe each in parallel: "what
+      *      hash do you have at MY localOrdinal?" 3. Classify responses into match/mismatch/absent buckets. 4. Decide:
+      *      - match >= majority of (match+mismatch): SAME CHAIN → no fork
+      *      - mismatch with quorum agreement on a single hash: FORK CONFIRMED → return info
+      *      - otherwise (inconclusive): no action, retry next cycle
+      *
+      * BFT property: requires a majority of responding peers to agree. A minority of malicious/stale responders cannot flip the decision.
+      */
+    private def runQuorumProbe(
+      probe: HashAtOrdinalProbe[F],
+      candidatePeers: Set[PeerId],
+      localOrdinal: SnapshotOrdinal,
+      localHash: Hash,
+      majorityOrdinal: SnapshotOrdinal,
+      majorityHash: Hash,
+      chainTipsSize: Int,
+      lag: Long,
+      majorityPeers: Set[PeerId]
+    ): F[Option[ForkRecoveryInfo]] = {
+      val sample = candidatePeers.toList.take(probeCount)
+      sample
+        .parTraverse(peerId => probe.probe(peerId, localOrdinal).attempt.map(_.toOption.flatten))
+        .flatMap { responses =>
+          val present = responses.flatten
+          val matchCount = present.count(_ === localHash)
+          val mismatchHashes = present.filter(_ =!= localHash)
+          val mismatchCount = mismatchHashes.size
+          val totalResponses = matchCount + mismatchCount
+          val absentCount = responses.size - totalResponses
+
+          // Need at least 2 responses to form a quorum decision (avoid acting on a single voice).
+          val hasEnoughResponses = totalResponses >= 2
+          val matchWins = hasEnoughResponses && matchCount > totalResponses / 2
+          val mismatchWins =
+            hasEnoughResponses && mismatchCount > totalResponses / 2 && {
+              // Within mismatch group, require majority to agree on SAME divergent hash.
+              // Mixed-hash mismatches indicate a fractured cluster — inconclusive.
+              val grouped = mismatchHashes.groupBy(identity).view.mapValues(_.size).toMap
+              val topCount = if (grouped.isEmpty) 0 else grouped.values.max
+              topCount > mismatchCount / 2
+            }
+
+          if (matchWins) {
+            logger
+              .debug(
+                s"Tier 2 probe: SAME CHAIN — local=($localOrdinal,$localHash) matches $matchCount/$totalResponses " +
+                  s"probed peers (absent=$absentCount). Treating as lagging, no fork."
+              )
+              .as(none[ForkRecoveryInfo])
+          } else if (mismatchWins) {
+            val info = ForkRecoveryInfo(
+              majorityOrdinal = majorityOrdinal,
+              majorityHash = majorityHash,
+              majorityPeers = majorityPeers,
+              localOrdinal = localOrdinal,
+              lag = lag
+            )
+            logger
+              .warn(
+                s"Fork divergence detected: isolated_minority_probed local=($localOrdinal,$localHash) " +
+                  s"$mismatchCount/$totalResponses probed peers report a DIFFERENT hash at our ordinal " +
+                  s"(match=$matchCount absent=$absentCount). majorityPeers=${majorityPeers.size}/$chainTipsSize"
+              )
+              .as(info.some)
+          } else {
+            logger
+              .debug(
+                s"Tier 2 probe: INCONCLUSIVE — match=$matchCount mismatch=$mismatchCount absent=$absentCount. " +
+                  s"Deferring fork decision to next detector cycle."
+              )
+              .as(none[ForkRecoveryInfo])
+          }
+        }
+    }
   }
 }
