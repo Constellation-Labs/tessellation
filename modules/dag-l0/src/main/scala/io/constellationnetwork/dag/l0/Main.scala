@@ -135,6 +135,20 @@ object Main
         services.recoveryPeerHint
       )
 
+      // Tier 2 fork verification: resolves PeerId → Peer, then asks the peer for its snapshot
+      // hash at the given ordinal via /global-snapshots/{ordinal}/hash. Returns None on any
+      // resolution or RPC failure so the detector treats it as inconclusive (safer than false
+      // positives). Reuses the existing p2pClient.globalSnapshot.getHash primitive.
+      hashAtOrdinalProbe =
+        new io.constellationnetwork.node.shared.infrastructure.gossip.event.HashAtOrdinalProbe[IO] {
+          def probe(peerId: io.constellationnetwork.schema.peer.PeerId, ordinal: SnapshotOrdinal): IO[Option[Hash]] =
+            storages.cluster.getPeer(peerId).flatMap {
+              case None => none[Hash].pure[IO]
+              case Some(peer) =>
+                p2pClient.globalSnapshot.getHash(ordinal).run(peer).attempt.map(_.toOption.flatten)
+            }
+        }
+
       eventGossipDaemon <- EventGossipDaemon
         .make[IO, GlobalSnapshotEvent, GlobalStateKey](
           services.eventMempool,
@@ -148,7 +162,8 @@ object Main
           ),
           getLocalChainTip = Some(forkRecoveryService.getLocalChainTip),
           onForkDetected = Some(forkRecoveryService.onForkDetected),
-          forkLagThreshold = cfg.snapshot.consensus.forkLagThreshold
+          forkLagThreshold = cfg.snapshot.consensus.forkLagThreshold,
+          verifyHashAt = Some(hashAtOrdinalProbe)
         )
         .asResource
 
