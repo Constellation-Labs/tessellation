@@ -82,7 +82,7 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
         // All perfect: (10, 10) → 0 failures → all tier 0 → pure rendezvous
         val scores = facilitators.map(_ -> (10, 10)).toMap
         val standard = selector.selectLeader(facilitators, entropy)
-        val weighted = selector.selectLeaderWeighted(facilitators, entropy, 0, scores, qualityWeight = 0.0)
+        val weighted = selector.selectLeaderWeighted(facilitators, entropy, 0, scores)
         expect.same(standard, weighted)
       }
     }
@@ -91,15 +91,14 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
   test("selectLeaderWeighted prefers high-quality peer (fewer failures)") {
     IO {
       val peers = (1 to 5).map(i => pid(s"peer$i")).toList
-      val entropy = Hash.empty
 
       // Give one peer perfect quality (0 failures), rest very poor (9 out of 10 failed)
       val highQualityPeer = peers.head
       val scores = peers.map(p => p -> (if (p == highQualityPeer) (10, 10) else (1, 10))).toMap
 
-      // With quality weight, high-quality peer (tier=0) should beat poor peers (tier=9) across entropies
+      // High-quality peer (tier=0) should beat poor peers (tier=9) across entropies
       val entropies = (0 until 20).map(i => Hash.fromBytes(s"entropy$i".getBytes("UTF-8")))
-      val selections = entropies.map(e => selector.selectLeaderWeighted(peers, e, 0, scores, qualityWeight = 0.9))
+      val selections = entropies.map(e => selector.selectLeaderWeighted(peers, e, 0, scores))
       val highQualityCount = selections.count(_ == highQualityPeer)
 
       // High-quality peer should be selected more than fair share (1/5 = 4 times out of 20)
@@ -213,6 +212,109 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
       val leaders = entropies.map(e => selector.selectLeader(peers, e))
       // Not all leaders should be the same with different entropy
       expect(leaders.distinct.size > 1)
+    }
+  }
+
+  // === Leader graduation filter tests ===
+  //
+  // These tests exercise the caller-side pattern used in both GlobalSnapshotConsensusStateCreator
+  // and CurrencySnapshotConsensusStateCreator: filter `active` to peers with `participated >=
+  // minParticipationObservations`, fall back to full `active` if nobody qualifies, then pass the
+  // resulting pool to selectLeaderWeighted. The selector itself is unchanged; the filter prevents
+  // untracked peers (tier=0 by default) from tying with proven peers and winning by rendezvous.
+
+  private def selectGraduatedLeader(
+    active: List[PeerId],
+    entropy: Hash,
+    scores: Map[PeerId, (Int, Int)],
+    threshold: Int,
+    viewNumber: Int = 0
+  ): PeerId = {
+    val graduated = active.filter { p =>
+      val (_, participated) = scores.getOrElse(p, (0, 0))
+      participated >= threshold
+    }
+    val pool = if (graduated.nonEmpty) graduated else active
+    selector.selectLeaderWeighted(pool, entropy, viewNumber, scores)
+  }
+
+  test("graduation filter: unproven peer never selected when proven peers exist") {
+    IO {
+      val proven = (1 to 3).map(i => pid(s"proven$i")).toList
+      val unproven = (1 to 2).map(i => pid(s"unproven$i")).toList
+      val active = proven ++ unproven
+      val scores: Map[PeerId, (Int, Int)] =
+        (proven ++ unproven).map(p => p -> (if (proven.contains(p)) (10, 10) else (0, 0))).toMap
+      val threshold = 5
+
+      val entropies = (0 until 50).map(i => Hash.fromBytes(s"entropy$i".getBytes("UTF-8")))
+      val leaders = entropies.map(e => selectGraduatedLeader(active, e, scores, threshold))
+
+      expect(leaders.forall(proven.contains), s"unproven peer selected: ${leaders.filterNot(proven.contains)}")
+    }
+  }
+
+  test("graduation filter: falls back to active when nobody meets threshold (genesis / cold start)") {
+    IO {
+      // All peers have participated < threshold. Filter would return empty. Fallback to active.
+      // Selection should still work and be deterministic across entropies.
+      val active = (1 to 5).map(i => pid(s"peer$i")).toList
+      val scores: Map[PeerId, (Int, Int)] = active.map(_ -> (0, 0)).toMap
+      val threshold = 5
+      val entropy = Hash.fromBytes("cold-start".getBytes("UTF-8"))
+
+      val leader = selectGraduatedLeader(active, entropy, scores, threshold)
+
+      expect(active.contains(leader), s"leader $leader not in active pool")
+    }
+  }
+
+  test("graduation filter: falls back to active when peerQuality map is empty") {
+    IO {
+      val active = (1 to 5).map(i => pid(s"peer$i")).toList
+      val scores = Map.empty[PeerId, (Int, Int)]
+      val threshold = 5
+      val entropy = Hash.fromBytes("empty-quality".getBytes("UTF-8"))
+
+      val leader = selectGraduatedLeader(active, entropy, scores, threshold)
+
+      expect(active.contains(leader), s"leader $leader not in active pool")
+    }
+  }
+
+  test("graduation filter: view-change rotates only through graduated pool") {
+    IO {
+      // Three proven peers, two unproven. View rotation must cycle through proven ONLY.
+      val proven = (1 to 3).map(i => pid(s"proven$i")).toList
+      val unproven = (1 to 2).map(i => pid(s"unproven$i")).toList
+      val active = proven ++ unproven
+      val scores: Map[PeerId, (Int, Int)] =
+        (proven ++ unproven).map(p => p -> (if (proven.contains(p)) (10, 10) else (0, 0))).toMap
+      val threshold = 5
+      val entropy = Hash.fromBytes("rotate".getBytes("UTF-8"))
+
+      val leaders = (0 until 10).map(v => selectGraduatedLeader(active, entropy, scores, threshold, v))
+
+      expect(leaders.forall(proven.contains), "view rotation leaked into unproven pool").and(
+        expect.same(proven.size, leaders.distinct.size)
+      )
+    }
+  }
+
+  test("graduation filter: single graduated peer always wins") {
+    IO {
+      // Only one peer meets threshold. Regardless of entropy, that peer should always lead.
+      val soleProven = pid("sole-proven")
+      val unproven = (1 to 4).map(i => pid(s"unproven$i")).toList
+      val active = soleProven +: unproven
+      val scores: Map[PeerId, (Int, Int)] =
+        active.map(p => p -> (if (p == soleProven) (10, 10) else (0, 0))).toMap
+      val threshold = 5
+
+      val entropies = (0 until 20).map(i => Hash.fromBytes(s"entropy$i".getBytes("UTF-8")))
+      val leaders = entropies.map(e => selectGraduatedLeader(active, e, scores, threshold))
+
+      expect(leaders.forall(_ == soleProven))
     }
   }
 }

@@ -177,7 +177,7 @@ object types {
     // exclusion set deterministically. Applied in addition to removal penalties and
     // deferral, as a hard filter that keeps chronic flaky community peers out of the
     // committee before round start (preventing mid-round eviction cascades).
-    minParticipationObservations: Int = 10,
+    minParticipationObservations: Int = 5,
     minParticipationRatio: Double = 0.5,
     // Phase 2 cold-restart protocol version flag. Included in `deterministicConfigHash` so pre-Phase-2 peers are
     // excluded from facilitator selection via the config-hash check. Set to 2 to enable the quorum-certified
