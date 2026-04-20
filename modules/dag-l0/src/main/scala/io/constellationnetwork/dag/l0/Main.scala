@@ -4,6 +4,8 @@ import cats.Parallel
 import cats.effect._
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedMap
+
 import io.constellationnetwork.BuildInfo
 import io.constellationnetwork.dag.l0.StoragesInitializer.initializeStorages
 import io.constellationnetwork.dag.l0.cli.method._
@@ -296,6 +298,13 @@ object Main
                   // (this is the rollback-lead case: a non-signer rolling the cluster forward).
                   signers = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
                   bootstrapFacilitators = if (signers.contains(nodeId)) signers else List(nodeId)
+                  // Seed the bootstrap-warmup window with the rollback snapshot's proof count.
+                  // If we're rolling back to a healthy multi-node snapshot (proofs.size >= threshold),
+                  // the window classifies as post-bootstrap and penalties apply immediately. If we're
+                  // rolling back to a solo/bootstrap-era snapshot, the window starts in bootstrap mode
+                  // and the cluster re-stabilizes naturally.
+                  rollbackProofSize = snapshot.proofs.size.toInt
+                  seedRecentProofSizes = SortedMap(snapshot.ordinal -> rollbackProofSize)
                   result <- services.consensus.manager.startFacilitatingAfterRollback(
                     snapshot.ordinal,
                     GlobalConsensusOutcome(
@@ -304,7 +313,8 @@ object Main
                       RemovedFacilitators.empty,
                       WithdrawnFacilitators.empty,
                       EligibleFacilitators(bootstrapFacilitators),
-                      Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty, hashedSnapshot.hash)
+                      Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty, hashedSnapshot.hash),
+                      recentProofSizes = seedRecentProofSizes
                     )
                   )
                 } yield result
@@ -396,6 +406,12 @@ object Main
                                 _ <- sharedStorages.mptStore.syncFull(kvPairs, hashedSnapshot.ordinal)
 
                                 genesisSigners = signedFirstIncrementalSnapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
+                                // Genesis path — a fresh chain start, always classify as bootstrap.
+                                // Seed window with the genesis snapshot's proof count (typically 1 for
+                                // genesis, which correctly triggers warmup for the initial cluster bring-up).
+                                genesisRecentProofSizes = SortedMap(
+                                  signedFirstIncrementalSnapshot.ordinal -> signedFirstIncrementalSnapshot.proofs.size.toInt
+                                )
                                 _ <- services.consensus.manager
                                   .startFacilitatingAfterRollback(
                                     signedFirstIncrementalSnapshot.ordinal,
@@ -412,7 +428,8 @@ object Main
                                         Candidates.empty,
                                         Hash.empty,
                                         hashedSnapshot.hash
-                                      )
+                                      ),
+                                      recentProofSizes = genesisRecentProofSizes
                                     )
                                   )
                               } yield ()

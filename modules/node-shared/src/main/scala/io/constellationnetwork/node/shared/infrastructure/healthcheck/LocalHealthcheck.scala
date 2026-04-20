@@ -81,21 +81,26 @@ object LocalHealthcheck {
       def unresponsive = clusterStorage.setPeerResponsiveness(peer.id, Unresponsive)
 
       S.supervise {
-        retryingOnAllErrors(policy = retryPolicy, onError = onError) {
-          check(peer).flatMap {
-            case Some(session) =>
-              clusterStorage.getPeer(peer.id).flatMap {
-                case Some(p) if p.session === session =>
-                  responsive >> cancel(peer.id)
-                case _ =>
-                  logger.info(s"Peer ${peer.id.show} is responsive but found different session.") >>
-                    clusterStorage.removePeer(peer.id) >>
-                    cancel(peer.id)
-              }
-            case _ =>
-              unresponsive >> PeerUnresponsive(peer.id).raiseError[F, Unit]
+        // Eagerly mark Unresponsive so gossip peer selection skips this peer on its
+        // next cycle, instead of waiting for the first check() to time out (which
+        // can take 15s+ per attempt). If the peer is actually healthy, the very
+        // next check() succeeds and restores Responsive via the Some(session) path.
+        unresponsive >>
+          retryingOnAllErrors(policy = retryPolicy, onError = onError) {
+            check(peer).flatMap {
+              case Some(session) =>
+                clusterStorage.getPeer(peer.id).flatMap {
+                  case Some(p) if p.session === session =>
+                    responsive >> cancel(peer.id)
+                  case _ =>
+                    logger.info(s"Peer ${peer.id.show} is responsive but found different session.") >>
+                      clusterStorage.removePeer(peer.id) >>
+                      cancel(peer.id)
+                }
+              case _ =>
+                unresponsive >> PeerUnresponsive(peer.id).raiseError[F, Unit]
+            }
           }
-        }
       }
     }
 

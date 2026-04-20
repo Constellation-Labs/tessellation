@@ -296,12 +296,20 @@ object Download {
           // Recovery failed — transition back to WaitingForDownload so DownloadDaemon retries.
           // Reraise so DownloadDaemon's error handler fires (which does NOT clear the recovery flag)
           // instead of the success path (which clears it via clearRecoveryDownload).
-          logger.warn("[RecoveryDownload] Failed, transitioning to WaitingForDownload for retry") >>
-            nodeStorage.getNodeState.flatMap {
-              case state if state =!= NodeState.WaitingForDownload && state =!= NodeState.Ready =>
-                nodeStorage.setNodeState(NodeState.WaitingForDownload)
-              case _ => Async[F].unit
-            } >> err.raiseError[F, Unit]
+          //
+          // Jittered backoff: if multiple nodes in the cluster simultaneously failed recovery
+          // (e.g. post-cluster-restart or transient network flakiness), retrying without delay
+          // makes them all hammer the same peer in lockstep. A 1–5s random sleep spreads the
+          // retries enough that the serving peer can respond to them sequentially.
+          Random[F].betweenLong(1000L, 5001L).flatMap { jitterMs =>
+            logger.warn(s"[RecoveryDownload] Failed, retrying in ${jitterMs}ms (jittered)") >>
+              Async[F].sleep(jitterMs.millis) >>
+              nodeStorage.getNodeState.flatMap {
+                case state if state =!= NodeState.WaitingForDownload && state =!= NodeState.Ready =>
+                  nodeStorage.setNodeState(NodeState.WaitingForDownload)
+                case _ => Async[F].unit
+              } >> err.raiseError[F, Unit]
+          }
         }
     }
 

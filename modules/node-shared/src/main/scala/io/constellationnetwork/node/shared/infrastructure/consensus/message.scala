@@ -1,7 +1,8 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
-import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.PeerDeclaration
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{PeerDeclaration, ViewChangeVote}
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.security.signature.Signed
 
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
@@ -22,6 +23,12 @@ object message {
 
   @derive(encoder, decoder)
   case class ConsensusArtifact[K, A](key: K, artifact: A)
+
+  /** Signed per-peer view-change vote. Separate from [[ConsensusPeerDeclaration]] because VCC assembly requires the individual [[Signed]]
+    * proof per vote (the envelope signature isn't sufficient — VCCs embedded in proposals must be independently verifiable).
+    */
+  @derive(encoder, decoder)
+  case class ConsensusPeerVote[K](key: K, vote: Signed[ViewChangeVote])
 
   @derive(encoder, decoder)
   case class RegistrationResponse[Key](

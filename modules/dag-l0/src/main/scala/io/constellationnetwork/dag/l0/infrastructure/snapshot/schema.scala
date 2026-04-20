@@ -7,6 +7,7 @@ import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -100,7 +101,16 @@ object schema {
     // `removalPenaltyRounds` exponentially so repeat offenders get progressively
     // longer bans. Persisted in the signed outcome → consensus-agreed → all nodes
     // compute the same penalty. Defaults to empty so old outcomes roll over cleanly.
-    cumulativeMissCounts: SortedMap[PeerId, Long] = SortedMap.empty
+    cumulativeMissCounts: SortedMap[PeerId, Long] = SortedMap.empty,
+    // Sliding window of (ordinal -> proofs.size) for the last ~10 ordinals. Used to
+    // classify whether the chain has completed initial bootstrap (any entry >=
+    // bootstrapCompleteProofsThreshold => post-bootstrap). While in bootstrap,
+    // penalty accrual is suppressed so slow peers aren't ejected during the
+    // solo->multi transition. Chain-derived: seeded from `lastNGlobalSnapshotStorage`
+    // on rollback init, rolls forward one entry per outcome. Non-monotonic by
+    // design — if the cluster degrades to solo for > lookback ordinals, warmup
+    // re-engages, which is appropriate for re-stabilizing after mass peer loss.
+    recentProofSizes: SortedMap[SnapshotOrdinal, Int] = SortedMap.empty
   ) {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value

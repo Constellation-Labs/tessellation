@@ -53,5 +53,13 @@ object CurrencySnapshotConsensusOps {
       case _: CollectingBinarySignatures => 3
       case _: Finished                   => 4
     }
+
+    override def freshCollectingFacilities(status: CurrencySnapshotStatus): Option[CurrencySnapshotStatus] = status match {
+      case CollectingFacilities(_, facHash, lastSnap)             => CollectingFacilities(none, facHash, lastSnap).some
+      case CollectingProposals(_, _, _, facHash, lastSnap)        => CollectingFacilities(none, facHash, lastSnap).some
+      case CollectingSignatures(_, _, _, facHash, lastSnap)       => CollectingFacilities(none, facHash, lastSnap).some
+      case CollectingBinarySignatures(_, _, _, _, _, facHash, ls) => CollectingFacilities(none, facHash, ls).some
+      case _: Finished                                            => none
+    }
   }
 }

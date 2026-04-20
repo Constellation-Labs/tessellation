@@ -78,11 +78,12 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
     ) >>
       isRunning.get.flatMap { running =>
         cmd match {
-          case RumorReceived(r)         => rumorHandler.process(r)
-          case CheckUpdate(key)         => transitions.checkUpdate(key.asInstanceOf[Key])
-          case InternalScheduled(inner) => handle(inner)
-          case PeerObserved(peer)       => transitions.registerPeer(peer)
-          case IgnoreUnexpectedRumor(r) => log.warn(s"Ignoring unexpected rumor: ${r.getClass.getSimpleName}")
+          case RumorReceived(r)             => rumorHandler.process(r)
+          case CheckUpdate(key)             => transitions.checkUpdate(key.asInstanceOf[Key])
+          case CheckViewChangeAssembly(key) => transitions.checkViewChangeAssembly(key.asInstanceOf[Key])
+          case InternalScheduled(inner)     => handle(inner)
+          case PeerObserved(peer)           => transitions.registerPeer(peer)
+          case IgnoreUnexpectedRumor(r)     => log.warn(s"Ignoring unexpected rumor: ${r.getClass.getSimpleName}")
 
           case _ if running => handleWhileBusy(cmd)
           case _            => handleWhileIdle(cmd)
@@ -127,14 +128,49 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
         )
       case WithdrawFromConsensus                    => pending.setEvent()
       case cmd @ InitializeFromDownload(_, _, _, _) =>
-        // InitializeFromDownload arrived while a stale round is still completing.
-        // Fire-and-forget re-queue with a longer delay. The old approach (100ms blocking sleep)
-        // caused priority inversion: the sleep ran inside evalMap, blocking the command stream
-        // and preventing ConsensusFinished/RoundCompleted from draining — the very commands
-        // that would free the FSM from Busy state. With fire-and-forget, the event loop
-        // returns immediately so pending commands can be processed.
-        log.info("[CONSENSUS:RECOVERY] InitializeFromDownload received while busy, re-queuing in 1s") >>
-          Async[F].start(Async[F].sleep(1.second) >> ctx.queue.offer(cmd)).void
+        // Two cases:
+        // (1) A genuinely-in-progress round is finishing right before recovery's
+        //     InitializeFromDownload arrives — it will emit ConsensusFinished shortly
+        //     and the re-queue below will resolve it.
+        // (2) The round is STALE: it was running when the node entered recovery (e.g.
+        //     fork-divergence triggered WaitingForDownload while round N was in its
+        //     CollectingFacilities phase), and no ConsensusFinished / RoundCompleted
+        //     will ever be emitted for it because the recovery path resets storage
+        //     beneath it. Without intervention, the FSM stays Busy forever and
+        //     InitializeFromDownload re-queues indefinitely (observed in fork-recovery
+        //     E2E: re-queue every 1s for 15+ minutes, node never rejoins).
+        //
+        // Distinguishing signal: by the time InitializeFromDownload arrives, the
+        // recovery download + observe phases are complete and the node is in the
+        // Observing state (post-recovery). An in-flight round at that point cannot
+        // legitimately progress — its facilitator set is stale, its peer declarations
+        // were for a key the storage no longer tracks. So we force-complete to
+        // transition the FSM Busy -> Idle and clear pending triggers to avoid
+        // immediately starting a fresh (also-doomed) round before recovery concludes.
+        nodeStorage.getNodeState.flatMap { state =>
+          if (state === NodeState.Observing) {
+            ConsensusLog.warn(
+              log,
+              Category.Lifecycle,
+              "n/a",
+              "n/a",
+              LogEvent.ForcedRoundCompletionOnRecovery,
+              "reason" -> "InitializeFromDownload received while Busy in Observing; stale round blocking recovery"
+            ) >>
+              Metrics[F].incrementCounter("dag_consensus_forced_complete_on_recovery_init") >>
+              pending.clear() >>
+              completeRound(Async[F].unit) >>
+              ctx.queue.offer(cmd)
+          } else {
+            // Fire-and-forget re-queue with a longer delay. The old approach
+            // (100ms blocking sleep) caused priority inversion: the sleep ran inside
+            // evalMap, blocking the command stream and preventing
+            // ConsensusFinished/RoundCompleted from draining — the very commands that
+            // would free the FSM from Busy state.
+            log.info("[CONSENSUS:RECOVERY] InitializeFromDownload received while busy, re-queuing in 1s") >>
+              Async[F].start(Async[F].sleep(1.second) >> ctx.queue.offer(cmd)).void
+          }
+        }
       case _ => Async[F].unit
     }
 

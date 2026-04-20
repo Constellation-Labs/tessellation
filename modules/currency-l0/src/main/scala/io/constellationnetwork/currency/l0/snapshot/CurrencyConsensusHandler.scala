@@ -35,6 +35,7 @@ object CurrencyConsensusHandler {
       all.binarySignatureHandler <+>
       all.ackHandler <+>
       all.artifactHandler <+>
-      all.withdrawHandler
+      all.withdrawHandler <+>
+      all.viewChangeVoteHandler
   }
 }

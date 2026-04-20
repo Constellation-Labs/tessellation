@@ -37,7 +37,6 @@ import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcce
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.consensus._
-import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.StallReport
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, ConsensusEventLoop, _}
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
@@ -238,6 +237,24 @@ object GlobalSnapshotConsensus {
       directPushFn = ConsensusDirectSender.makeDirectPushFn(clusterStorage, consensusClient)
       _ <- gossip.setDirectPushFn(directPushFn)
 
+      viewChangeVoter = new GossipingViewChangeVoter[
+        F,
+        GlobalSnapshotEvent,
+        GlobalSnapshotKey,
+        GlobalSnapshotArtifact,
+        GlobalSnapshotContext,
+        GlobalSnapshotStatus,
+        GlobalConsensusOutcome,
+        GlobalConsensusKind
+      ](
+        selfId,
+        keyPair,
+        gossip,
+        consensusStorage,
+        (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
+        org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F]
+      )
+
       loop <-
         ConsensusEventLoop.build[
           F,
@@ -262,7 +279,8 @@ object GlobalSnapshotConsensus {
           consensusClient,
           appConfig.snapshot.consensus,
           facilitatorSelector,
-          peerQualityTracker
+          peerQualityTracker,
+          viewChangeVoter
         )
 
       handler = GlobalConsensusHandler.make(loop.queue)

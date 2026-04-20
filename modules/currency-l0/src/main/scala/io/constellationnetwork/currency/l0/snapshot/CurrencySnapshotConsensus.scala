@@ -25,7 +25,6 @@ import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus._
-import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.StallReport
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, ConsensusEventLoop}
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
@@ -171,6 +170,24 @@ object CurrencySnapshotConsensus {
       directPushFn = ConsensusDirectSender.makeDirectPushFn(clusterStorage, consensusClient)
       _ <- gossip.setDirectPushFn(directPushFn)
 
+      viewChangeVoter = new io.constellationnetwork.node.shared.infrastructure.consensus.engine.GossipingViewChangeVoter[
+        F,
+        CurrencySnapshotEvent,
+        CurrencySnapshotKey,
+        CurrencySnapshotArtifact,
+        CurrencySnapshotContext,
+        CurrencySnapshotStatus,
+        CurrencyConsensusOutcome,
+        CurrencyConsensusKind
+      ](
+        selfId,
+        keyPair,
+        gossip,
+        consensusStorage,
+        (o: CurrencyConsensusOutcome) => o.finished.snapshotHash,
+        org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F]
+      )
+
       loop <-
         ConsensusEventLoop.build[
           F,
@@ -195,7 +212,8 @@ object CurrencySnapshotConsensus {
           consensusClient,
           snapshotConfig.consensus,
           facilitatorSelector,
-          peerQualityTracker
+          peerQualityTracker,
+          viewChangeVoter
         )
 
       handler = CurrencyConsensusHandler.make(loop.queue)

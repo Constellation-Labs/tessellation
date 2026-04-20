@@ -4,6 +4,8 @@ import cats.Parallel
 import cats.effect.Async
 import cats.syntax.all._
 
+import scala.concurrent.duration._
+
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
@@ -72,12 +74,24 @@ object ForkRecoveryDetector {
   /** Default number of peers to probe in Tier 2 quorum verification. Odd so majority is unambiguous. */
   val DefaultProbeCount: Int = 3
 
+  /** Default per-peer probe timeout. A slow/firewalled peer (e.g. NATed community node reachable only via CloudFront) would otherwise hang
+    * the parTraverse and block the whole Tier 2 decision. On timeout we count the peer as `absent` — existing logic treats absent responses
+    * as inconclusive and defers to the next detector cycle.
+    *
+    * Timeout must be generous enough that a healthy-but-busy peer under contention still responds (observed Apr 18 E2E: gl0-1 detected a
+    * real fork but Tier-2 produced `match=0 mismatch=0 absent=3` because 3s was too tight under 5-JVM docker-compose load — all three
+    * probed peers timed out, leaving the fork undetected). 10s gives peers breathing room while still preventing fiber accumulation from
+    * genuinely unreachable targets.
+    */
+  val DefaultProbeTimeout: FiniteDuration = 10.seconds
+
   def make[F[_]: Async: Parallel](
     meshState: MeshState[F],
     getLocalChainTip: F[Option[ChainTip]],
     forkLagThreshold: Long = 10,
     verifyHashAt: Option[HashAtOrdinalProbe[F]] = None,
-    probeCount: Int = DefaultProbeCount
+    probeCount: Int = DefaultProbeCount,
+    probeTimeout: FiniteDuration = DefaultProbeTimeout
   ): ForkRecoveryDetector[F] = new ForkRecoveryDetector[F] {
 
     private val logger = Slf4jLogger.getLogger[F]
@@ -207,59 +221,64 @@ object ForkRecoveryDetector {
       majorityPeers: Set[PeerId]
     ): F[Option[ForkRecoveryInfo]] = {
       val sample = candidatePeers.toList.take(probeCount)
-      sample
-        .parTraverse(peerId => probe.probe(peerId, localOrdinal).attempt.map(_.toOption.flatten))
-        .flatMap { responses =>
-          val present = responses.flatten
-          val matchCount = present.count(_ === localHash)
-          val mismatchHashes = present.filter(_ =!= localHash)
-          val mismatchCount = mismatchHashes.size
-          val totalResponses = matchCount + mismatchCount
-          val absentCount = responses.size - totalResponses
+      sample.parTraverse { peerId =>
+        // Per-peer timeout: a slow peer must not block the parTraverse. On timeout the
+        // response is None ("absent"), which the classifier treats as inconclusive.
+        Async[F]
+          .timeout(probe.probe(peerId, localOrdinal), probeTimeout)
+          .attempt
+          .map(_.toOption.flatten)
+      }.flatMap { responses =>
+        val present = responses.flatten
+        val matchCount = present.count(_ === localHash)
+        val mismatchHashes = present.filter(_ =!= localHash)
+        val mismatchCount = mismatchHashes.size
+        val totalResponses = matchCount + mismatchCount
+        val absentCount = responses.size - totalResponses
 
-          // Need at least 2 responses to form a quorum decision (avoid acting on a single voice).
-          val hasEnoughResponses = totalResponses >= 2
-          val matchWins = hasEnoughResponses && matchCount > totalResponses / 2
-          val mismatchWins =
-            hasEnoughResponses && mismatchCount > totalResponses / 2 && {
-              // Within mismatch group, require majority to agree on SAME divergent hash.
-              // Mixed-hash mismatches indicate a fractured cluster — inconclusive.
-              val grouped = mismatchHashes.groupBy(identity).view.mapValues(_.size).toMap
-              val topCount = if (grouped.isEmpty) 0 else grouped.values.max
-              topCount > mismatchCount / 2
-            }
-
-          if (matchWins) {
-            logger
-              .debug(
-                s"Tier 2 probe: SAME CHAIN — local=($localOrdinal,$localHash) matches $matchCount/$totalResponses " +
-                  s"probed peers (absent=$absentCount). Treating as lagging, no fork."
-              )
-              .as(none[ForkRecoveryInfo])
-          } else if (mismatchWins) {
-            val info = ForkRecoveryInfo(
-              majorityOrdinal = majorityOrdinal,
-              majorityHash = majorityHash,
-              majorityPeers = majorityPeers,
-              localOrdinal = localOrdinal,
-              lag = lag
-            )
-            logger
-              .warn(
-                s"Fork divergence detected: isolated_minority_probed local=($localOrdinal,$localHash) " +
-                  s"$mismatchCount/$totalResponses probed peers report a DIFFERENT hash at our ordinal " +
-                  s"(match=$matchCount absent=$absentCount). majorityPeers=${majorityPeers.size}/$chainTipsSize"
-              )
-              .as(info.some)
-          } else {
-            logger
-              .debug(
-                s"Tier 2 probe: INCONCLUSIVE — match=$matchCount mismatch=$mismatchCount absent=$absentCount. " +
-                  s"Deferring fork decision to next detector cycle."
-              )
-              .as(none[ForkRecoveryInfo])
+        // Need at least 2 responses to form a quorum decision (avoid acting on a single voice).
+        val hasEnoughResponses = totalResponses >= 2
+        val matchWins = hasEnoughResponses && matchCount > totalResponses / 2
+        val mismatchWins =
+          hasEnoughResponses && mismatchCount > totalResponses / 2 && {
+            // Within mismatch group, require majority to agree on SAME divergent hash.
+            // Mixed-hash mismatches indicate a fractured cluster — inconclusive.
+            val grouped = mismatchHashes.groupBy(identity).view.mapValues(_.size).toMap
+            val topCount = if (grouped.isEmpty) 0 else grouped.values.max
+            topCount > mismatchCount / 2
           }
+
+        if (matchWins) {
+          logger
+            .debug(
+              s"Tier 2 probe: SAME CHAIN — local=($localOrdinal,$localHash) matches $matchCount/$totalResponses " +
+                s"probed peers (absent=$absentCount). Treating as lagging, no fork."
+            )
+            .as(none[ForkRecoveryInfo])
+        } else if (mismatchWins) {
+          val info = ForkRecoveryInfo(
+            majorityOrdinal = majorityOrdinal,
+            majorityHash = majorityHash,
+            majorityPeers = majorityPeers,
+            localOrdinal = localOrdinal,
+            lag = lag
+          )
+          logger
+            .warn(
+              s"Fork divergence detected: isolated_minority_probed local=($localOrdinal,$localHash) " +
+                s"$mismatchCount/$totalResponses probed peers report a DIFFERENT hash at our ordinal " +
+                s"(match=$matchCount absent=$absentCount). majorityPeers=${majorityPeers.size}/$chainTipsSize"
+            )
+            .as(info.some)
+        } else {
+          logger
+            .debug(
+              s"Tier 2 probe: INCONCLUSIVE — match=$matchCount mismatch=$mismatchCount absent=$absentCount. " +
+                s"Deferring fork decision to next detector cycle."
+            )
+            .as(none[ForkRecoveryInfo])
         }
+      }
     }
   }
 }

@@ -91,7 +91,8 @@ object ConsensusEventLoop {
     consensusClient: ConsensusClient[F, Key, Outcome],
     config: ConsensusConfig,
     facilitatorSelector: FacilitatorSelector,
-    peerQualityTracker: PeerQualityTracker[F]
+    peerQualityTracker: PeerQualityTracker[F],
+    viewChangeVoter: ViewChangeVoter[F, Key]
   )(
     implicit _key: monocle.Lens[Outcome, Key],
     _context: monocle.Lens[Outcome, Ctx],
@@ -123,10 +124,10 @@ object ConsensusEventLoop {
       healthRef <- ConsensusHealthStatus.ref[F]
       viewChangeManager = new ViewChangeManager[F, Key, Status, Outcome, Kind](
         storage,
-        facilitatorSelector,
         peerQualityTracker,
         queue,
-        Slf4jLogger.getLogger[F]
+        Slf4jLogger.getLogger[F],
+        viewChangeVoter
       )
       abandonmentTracker = new AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](ctx, healthRef)
       stallDetector = new StallDetector[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](

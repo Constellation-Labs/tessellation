@@ -3,7 +3,7 @@ package io.constellationnetwork.currency.l0
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedSet
+import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataTransaction, L0NodeContext}
 import io.constellationnetwork.currency.l0.StoragesInitializer.initializeCurrencySnapshotStorages
@@ -378,6 +378,11 @@ abstract class CurrencyL0App(
                       // for full rationale.
                       signers = currencySnapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
                       bootstrapFacilitators = if (signers.contains(nodeId)) signers else List(nodeId)
+                      // Seed the bootstrap-warmup window with this rollback snapshot's proof count.
+                      // See dag-l0 mirror for rationale.
+                      rollbackRecentProofSizes = SortedMap(
+                        currencySnapshot.ordinal -> currencySnapshot.proofs.size.toInt
+                      )
                       _ <- services.consensus.manager.startFacilitatingAfterRollback(
                         currencySnapshot.ordinal,
                         CurrencyConsensusOutcome(
@@ -394,7 +399,8 @@ abstract class CurrencyL0App(
                             Candidates.empty,
                             Hash.empty,
                             hashedSnapshot.hash
-                          )
+                          ),
+                          recentProofSizes = rollbackRecentProofSizes
                         )
                       )
                     } yield ()
@@ -486,6 +492,11 @@ abstract class CurrencyL0App(
                       } else IO.unit
                     hashedSnapshot <- currencySnapshot.toHashed[IO]
                     genesisSigners = currencySnapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
+                    // Genesis path — seed window with the genesis snapshot's proof count.
+                    // See dag-l0 mirror for rationale.
+                    genesisRecentProofSizes = SortedMap(
+                      currencySnapshot.ordinal -> currencySnapshot.proofs.size.toInt
+                    )
                     _ <- services.consensus.manager.startFacilitatingAfterRollback(
                       currencySnapshot.ordinal,
                       CurrencyConsensusOutcome(
@@ -502,7 +513,8 @@ abstract class CurrencyL0App(
                           Candidates.empty,
                           Hash.empty,
                           hashedSnapshot.hash
-                        )
+                        ),
+                        recentProofSizes = genesisRecentProofSizes
                       )
                     )
                   } yield ()

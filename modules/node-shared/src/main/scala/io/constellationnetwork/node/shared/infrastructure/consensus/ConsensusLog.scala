@@ -101,6 +101,7 @@ object ConsensusLog {
     case object ChronicNonSignersExcluded extends Event { val show = "CHRONIC_NON_SIGNERS_EXCLUDED" }
     case object TcaFilterApplied extends Event { val show = "TCA_FILTER_APPLIED" }
     case object AbandonedMissingLogged extends Event { val show = "ABANDONED_MISSING_LOGGED" }
+    case object FacilityRetransmit extends Event { val show = "FACILITY_RETRANSMIT" }
 
     // ── Proposal events ───────────────────────────────────────────
     case object ProposalEvents extends Event { val show = "PROPOSAL_EVENTS" }
@@ -170,6 +171,14 @@ object ConsensusLog {
     // ── Recovery events ───────────────────────────────────────────
     case object RecoveryStateTransition extends Event { val show = "RECOVERY_STATE_TRANSITION" }
     case object RecoveryTransitionFailed extends Event { val show = "RECOVERY_TRANSITION_FAILED" }
+    case object ForcedRoundCompletionOnRecovery extends Event { val show = "FORCED_ROUND_COMPLETION_ON_RECOVERY" }
+
+    // ── Declaration-receive events (for cross-node timeline reconstruction) ────
+    // Phase transitions are already captured by STATE_UPDATED (Category.Phase) with
+    // status="X→Y" format — no separate event needed.
+    case object DeclarationReceived extends Event { val show = "DECL_RECEIVED" }
+    case object DeclarationWithdrawn extends Event { val show = "DECL_WITHDRAWN" }
+    case object DeclarationAckReceived extends Event { val show = "DECL_ACK_RECEIVED" }
 
     // ── Force leave events ────────────────────────────────────────
     case object ForceLeaveFromInitFailures extends Event { val show = "FORCE_LEAVE_FROM_INIT_FAILURES" }
