@@ -133,8 +133,12 @@ class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
     * platform-dependent float-to-long conversion differences that could cause different nodes to compute different tiers → different
     * leaders → fork.
     *
+    * Callers should pre-filter `facilitators` to a leader-eligible pool (e.g. by `participated >= minObservations`) so that unproven peers
+    * are not given the leader slot. A peer with no quality history defaults to tier 0 here, which otherwise ties with a peer that has
+    * proven itself — the filtering is the caller's responsibility.
+    *
     * @param facilitators
-    *   The already-selected facilitators for this round
+    *   The already-selected facilitators for this round (or a leader-eligible subset of them)
     * @param entropy
     *   Hash from the last consensus outcome
     * @param viewNumber
@@ -142,8 +146,6 @@ class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
     * @param qualityScores
     *   Map of peer → (completedRounds, participatedRounds) from consensus-agreed outcome. Must be identical across all nodes for
     *   determinism.
-    * @param qualityWeight
-    *   Unused, kept for API compatibility. Tier is derived from integer failure count.
     * @return
     *   The selected leader PeerId
     */
@@ -151,8 +153,7 @@ class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
     facilitators: List[PeerId],
     entropy: Hash,
     viewNumber: Int = 0,
-    qualityScores: Map[PeerId, (Int, Int)] = Map.empty,
-    qualityWeight: Double = 0.3
+    qualityScores: Map[PeerId, (Int, Int)] = Map.empty
   ): PeerId = {
     require(
       facilitators.nonEmpty,

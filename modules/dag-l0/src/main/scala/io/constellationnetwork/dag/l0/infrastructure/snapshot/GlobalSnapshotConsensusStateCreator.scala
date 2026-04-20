@@ -398,7 +398,23 @@ object GlobalSnapshotConsensusStateCreator {
         // Pass raw (completed, participated) integers — the selector uses integer-only
         // tier computation (tier = participated - completed = failure count) to avoid
         // platform-dependent float-to-long conversion differences.
-        leader = facilitatorSelector.selectLeaderWeighted(active, entropy, qualityScores = lastOutcome.peerQuality, qualityWeight = 0.3)
+        //
+        // Graduation filter: restrict the leader pool to peers with `participated >=
+        // minParticipationObservations` in the consensus-agreed peerQuality outcome.
+        // Without this filter, a peer with no history defaults to tier 0 inside the
+        // selector and ties with proven peers, handing the leader slot to unproven
+        // community peers that often cannot fulfill the proposer role (forces a view
+        // change that burns ~2 min of round time). Source nodes accumulate history
+        // quickly and always qualify; fresh community entrants must demonstrate they
+        // can complete rounds as facilitator before they can lead. When no peer meets
+        // the threshold (genesis / cold start), fall back to `active` — same as the
+        // pre-filter behavior, self-healing once rounds start Finishing.
+        graduatedLeaderPool = active.filter { pid =>
+          val (_, participated) = lastOutcome.peerQuality.getOrElse(pid, (0, 0))
+          participated >= config.minParticipationObservations
+        }
+        leaderPool = if (graduatedLeaderPool.nonEmpty) graduatedLeaderPool else active
+        leader = facilitatorSelector.selectLeaderWeighted(leaderPool, entropy, qualityScores = lastOutcome.peerQuality)
 
         _ <- ConsensusLog.info(
           logger,
