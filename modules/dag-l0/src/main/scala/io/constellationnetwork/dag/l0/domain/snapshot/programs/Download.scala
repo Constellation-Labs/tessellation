@@ -57,11 +57,18 @@ object Download {
   /** Per-Ready-peer advertised tip. */
   private[snapshot] final case class PeerTip(ordinal: SnapshotOrdinal, hash: Hash)
 
-  /** Minimum number of Ready peer responses required before trusting a caught-up shortcut. Two responding peers is the floor — a single
-    * responder can be a lying / stale adversary, two independent responses that must ALSO agree make the check resistant to a single
-    * misbehaving or partitioned node. Matches the "present.size >= 2" floor used in ForkRecoveryDetector for similar cross-peer reasoning.
+  /** Minimum number of Ready peer responses required before trusting a caught-up shortcut.
+    *
+    * Set to 1: in a rollback-lead topology (one rollback node + N validators), the validators need to transition through Observing to Ready
+    * before they become Ready peers. Until at least one validator transitions, the only Ready peer the validators can query is the single
+    * rollback-lead. Requiring 2 responses would be an architectural mismatch that deadlocks the exact recovery path this predicate is
+    * supposed to enable.
+    *
+    * Single-peer safety is provided by the hash-identity check at local ordinal (condition 4 of `chooseObservationLimit`). If the single
+    * responding peer is on a different chain at our local ordinal, its hash won't match ours and the shortcut is rejected. A dishonest
+    * rollback-lead peer would be catastrophic regardless — it is the chain's trust root.
     */
-  private[snapshot] val minReadyQuorum: Int = 2
+  private[snapshot] val minReadyQuorum: Int = 1
 
   /** Decide the observe-loop target ordinal.
     *

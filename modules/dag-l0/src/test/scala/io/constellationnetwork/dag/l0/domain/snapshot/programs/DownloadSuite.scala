@@ -10,11 +10,10 @@ import weaver.FunSuite
 
 /** Unit tests for `Download.chooseObservationLimit`.
   *
-  * The predicate decides whether an `Observing` validator caught up to a stable cluster tip
-  * may exit the observe loop early (by targeting `localOrdinal` instead of `localOrdinal + 1`)
-  * or must keep waiting for a new snapshot. Wrong answers have real-world consequences: a
-  * false "caught up" promotes a validator to Ready on a fork; a false "not caught up" keeps
-  * the cluster deadlocked (this was the Apr 20 2026 testnet incident).
+  * The predicate decides whether an `Observing` validator caught up to a stable cluster tip may exit the observe loop early (by targeting
+  * `localOrdinal` instead of `localOrdinal + 1`) or must keep waiting for a new snapshot. Wrong answers have real-world consequences: a
+  * false "caught up" promotes a validator to Ready on a fork; a false "not caught up" keeps the cluster deadlocked (this was the Apr 20
+  * 2026 testnet incident).
   */
 object DownloadSuite extends FunSuite {
 
@@ -36,15 +35,23 @@ object DownloadSuite extends FunSuite {
     expect.same(nextOrd, decide(List.empty))
   }
 
-  test("single Ready peer responding is insufficient: need quorum of 2") {
-    // Even with ordinal == local, 1 responder cannot be a quorum.
-    expect.same(nextOrd, decide(List(PeerTip(localOrd, localHash))))
+  test("single Ready peer at same ord but DIFFERENT hash: running fork — reject shortcut") {
+    // minReadyQuorum=1 allows single-peer decisions, but the hash-identity check still
+    // protects against a peer on a different chain at our ordinal.
+    expect.same(nextOrd, decide(List(PeerTip(localOrd, altHashSameOrd))))
   }
 
   test("two Ready peers at same ord but DIFFERENT hashes: running fork — reject shortcut") {
     // Two responses but they disagree on hash at the "same" ordinal; not majority-safe.
     val tips = List(PeerTip(localOrd, localHash), PeerTip(localOrd, altHashSameOrd))
     expect.same(nextOrd, decide(tips))
+  }
+
+  test("single Ready peer at same (ord, hash) matching local: shortcut (rollback-lead topology)") {
+    // Rollback-lead + validators topology: until the first validator transitions to Ready,
+    // the validators' only Ready peer is the single rollback-lead. This must work.
+    val tips = List(PeerTip(localOrd, localHash))
+    expect.same(localOrd, decide(tips))
   }
 
   test("majority Ready peers strictly ahead: not caught up — do not shortcut") {
