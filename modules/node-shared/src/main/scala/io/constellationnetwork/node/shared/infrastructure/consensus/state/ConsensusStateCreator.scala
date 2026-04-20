@@ -7,6 +7,7 @@ import cats.syntax.all._
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusResources, ConsensusStorage}
+import io.constellationnetwork.schema.peer.PeerId
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -41,6 +42,14 @@ abstract class ConsensusStateCreator[F[_]: Sync, Key: Show, Artifact, Context, S
     maybeTrigger: Option[ConsensusTrigger],
     resources: ConsensusResources[Artifact, Kind]
   ): F[StateCreateResult]
+
+  /** Re-send this node's own, already-stored Facility declaration to the given targets.
+    *
+    * Used by StallDetector to recover from lost Facility rumors when a round is stuck in CollectingFacilities. Reads the stored declaration
+    * from ConsensusStorage — never recomputes from fresh inputs — so retransmits are byte-equivalent to the original. No-op if no Facility
+    * was stored for (selfId, key) yet.
+    */
+  def retransmitOwnFacility(key: Key, targets: Set[PeerId]): F[Unit]
 
   private val logger = Slf4jLogger.getLogger[F]
 

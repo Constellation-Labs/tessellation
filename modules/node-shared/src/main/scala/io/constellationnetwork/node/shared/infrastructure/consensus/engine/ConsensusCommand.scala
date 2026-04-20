@@ -40,6 +40,7 @@ object ConsensusCommand {
   case object TimeTick extends ConsensusCommand
   case object FacilitateByEvent extends ConsensusCommand
   case class CheckUpdate(key: Any) extends ConsensusCommand
+  case class CheckViewChangeAssembly(key: Any) extends ConsensusCommand
   case object RoundCompleted extends ConsensusCommand
   case class InternalScheduled(inner: ConsensusCommand) extends ConsensusCommand
   case class PeerObserved(peer: Peer) extends ConsensusCommand

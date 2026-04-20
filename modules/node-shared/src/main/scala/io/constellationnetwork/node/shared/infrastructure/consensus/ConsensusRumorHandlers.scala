@@ -52,4 +52,10 @@ class ConsensusRumorHandlers[F[
   /** 8. Artifact (Common rumor) */
   val artifactHandler: RumorHandler[F] =
     RumorHandlerWithQueue.common[F, ConsensusArtifact[Key, Artifact]](queue)
+
+  /** 9. ViewChangeVote (signed, routed via ConsensusPeerVote — not ConsensusPeerDeclaration — so the per-vote Signed proof survives to the
+    * VCC assembly stage).
+    */
+  val viewChangeVoteHandler: RumorHandler[F] =
+    RumorHandlerWithQueue.peer[F, ConsensusPeerVote[Key]](queue)
 }

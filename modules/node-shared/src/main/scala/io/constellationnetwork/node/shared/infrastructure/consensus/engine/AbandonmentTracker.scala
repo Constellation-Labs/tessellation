@@ -2,7 +2,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
 import cats.effect.kernel.{Async, Ref}
 import cats.syntax.all._
-import cats.{Eq, Show}
+import cats.{Eq, Order, Show}
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
@@ -90,12 +90,12 @@ object AbandonReason {
   * On every abandonment, stale peer declarations, artifacts, and withdrawal maps are cleared. Without this, abandoned rounds leave
   * resources that poison retries via `.orElse` semantics in `addFacility`.
   */
-class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, Status, Outcome, Kind](
+class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, Ctx, Status, Outcome, Kind](
   ctx: ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   healthRef: Ref[F, ConsensusHealthStatus]
 ) {
 
-  import ctx.{config, logger, peerQualityTracker, queue, storage}
+  import ctx.{clusterStorage, config, logger, peerQualityTracker, queue, storage}
 
   /** Tracks consecutive abandonments at the same key to detect infinite stuck loops. */
   private val consecutiveAbandonCountRef: Ref[F, (Option[Key], Int)] = Ref.unsafe((none[Key], 0))
@@ -251,7 +251,12 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
         }
         .void
         .handleErrorWith(e => logger.warn(e)("condModifyState failed during abandon, proceeding with resource cleanup")) >>
-      storage.clearResources(key) >>
+      // Preserve peerDeclarationsMap across the abandon/retry cycle. Peers with first-write-wins
+      // storage won't re-send their declarations as duplicates, so clearing them permanently
+      // breaks our ability to collect quorum on retry. See fork-recovery E2E analysis: gl0-0
+      // stuck at progress=1/5 after abandon because it wiped gl0-1/2/3's facilities locally
+      // while those nodes retained gl0-0's declaration.
+      storage.clearResourcesPreservingDeclarations(key) >>
       (if (reason.retriable)
          trackRetriableAtSameKey(key).flatMap { retriableCount =>
            val shouldEscalate = retriableCount >= maxRetriableAtSameKey
@@ -341,10 +346,33 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
                   queue.offer(ConsensusCommand.TimeTick))
          }
        else
+         // Non-retriable path (MaxStalls / RoundTimeout / EvictionLoopStuck). Historically this
+         // escalated to recovery unconditionally after maxConsecutiveAbandonments. During fork-recovery
+         // E2E, that produced a cascading-recovery deadlock: the 4 active peers all hit max stalls
+         // on the same ordinal (view-change thrashing), each independently entered Observing, and
+         // then competed to download a snapshot the cluster had not produced — only the one remaining
+         // Ready peer could serve, and it had nothing to serve. Quorum permanently broken.
+         //
+         // Same safety rationale as the retriable QuorumInfeasible path above: only escalate to
+         // recovery when peers have actually advanced past this key. Otherwise, this is a cluster-wide
+         // stall and recovery cascade will make it worse. Keep retrying — when peers do advance,
+         // we'll detect it on a subsequent abandonment.
+         //
+         // `peersAtHigherKey` is read from Ready peers' registered observation keys. Uses the same
+         // signal StallDetector uses for lagging detection (see StallDetector.scala where
+         // `peersAtHigherKey > totalRegisteredPeers / 2` triggers the Lagging AbandonReason).
          trackConsecutiveAbandonments(key).flatMap { consecutiveCount =>
            val shouldRecover = consecutiveCount >= config.maxConsecutiveAbandonments
-           healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount)) >>
-             ConsensusLog.info(
+           for {
+             peerRegs <- storage.getPeerRegistrations
+             responsivePeers <- clusterStorage.getResponsivePeers
+             readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
+             readyPeerRegs = peerRegs.view.filterKeys(readyPeerIds.contains).toMap
+             peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => Order[Key].gt(peerKey, key) }
+             networkAdvanced = peersAtHigherKey > 0
+             willRecover = shouldRecover && networkAdvanced
+             _ <- healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount))
+             _ <- ConsensusLog.info(
                logger,
                Category.Lifecycle,
                key.toString,
@@ -353,13 +381,15 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq, Artifact, Ctx, St
                "reason" -> reason.label,
                "consecutiveAbandonments" -> consecutiveCount.toString,
                "maxConsecutiveAbandonments" -> config.maxConsecutiveAbandonments.toString,
-               "triggerRecovery" -> shouldRecover.toString
-             ) >>
-             (if (shouldRecover)
-                triggerRecoveryDownload(key, consecutiveCount)
-              else
-                queue.offer(ConsensusCommand.RoundCompleted) >>
-                  queue.offer(ConsensusCommand.TimeTick))
+               "peersAtHigherKey" -> peersAtHigherKey.toString,
+               "readyPeers" -> readyPeerRegs.size.toString,
+               "triggerRecovery" -> willRecover.toString,
+               "recoverySuppressed" -> (shouldRecover && !networkAdvanced).toString
+             )
+             _ <-
+               if (willRecover) triggerRecoveryDownload(key, consecutiveCount)
+               else queue.offer(ConsensusCommand.RoundCompleted) >> queue.offer(ConsensusCommand.TimeTick)
+           } yield ()
          })
 
   /** Track consecutive abandonments at the same key. Returns the new count. Resets to 1 when the key changes (different ordinal).

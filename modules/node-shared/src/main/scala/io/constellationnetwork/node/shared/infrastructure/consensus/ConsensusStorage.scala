@@ -18,6 +18,8 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.schema.gossip.Ordinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.Hasher
+import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.signature.Signed
 
 import io.chrisdavenport.mapref.MapRef
 import io.circe.Encoder
@@ -41,7 +43,9 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     implicit hasher: Hasher[F]
   ): F[Option[ConsensusResources[Artifact, Kind]]]
 
-  private[consensus] def addFacility(peerId: PeerId, key: Key, facility: Facility): F[Option[ConsensusResources[Artifact, Kind]]]
+  // Public: state creators call this with `selfId` at round start so self's Facility is present locally
+  // without relying on gossip self-loopback. Rumor handler still uses it for peer-inbound writes.
+  def addFacility(peerId: PeerId, key: Key, facility: Facility): F[Option[ConsensusResources[Artifact, Kind]]]
 
   private[consensus] def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[Option[ConsensusResources[Artifact, Kind]]]
 
@@ -56,6 +60,41 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     key: Key,
     signature: BinarySignature
   ): F[Option[ConsensusResources[Artifact, Kind]]]
+
+  private[consensus] def addViewChangeVote(
+    origin: PeerId,
+    key: Key,
+    fromView: Long,
+    toView: Long,
+    vote: Signed[ViewChangeVote]
+  ): F[Option[ConsensusResources[Artifact, Kind]]]
+
+  private[consensus] def addProposalQc(key: Key, qc: ProposalQC): F[Option[ConsensusResources[Artifact, Kind]]]
+
+  /** Attempt to atomically lock a local vote for (view, proposalHash). Returns Right(VoteLock) on success, or Left(reason) if the lock
+    * would violate the HotStuff-style safety rule.
+    */
+  def tryLockVote(
+    key: Key,
+    view: Long,
+    proposalHash: Hash,
+    effectiveLockedQc: Option[ProposalQC]
+  ): F[Either[String, VoteLock]]
+
+  /** Advance the `lockedQc` inside the VoteLock for a key. No-op if the existing QC is at an equal-or-higher view. */
+  def advanceLockedQc(key: Key, qc: ProposalQC): F[Unit]
+
+  /** Read the current VoteLock for a key. */
+  def getVoteLock(key: Key): F[Option[VoteLock]]
+
+  /** Clear the VoteLock for a key. Called on round cleanup + recovery. */
+  def clearVoteLock(key: Key): F[Unit]
+
+  /** Store an assembled ViewChangeCertificate so the new leader's proposal path can embed it. Cleared on round cleanup + recovery. */
+  def storeAssembledVcc(key: Key, vcc: ViewChangeCertificate): F[Unit]
+
+  /** Read the currently-assembled VCC for a key, if any. */
+  def getAssembledVcc(key: Key): F[Option[ViewChangeCertificate]]
 
   private[consensus] def addPeerDeclarationAck(
     peerId: PeerId,
@@ -74,6 +113,13 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     * stale state from poisoning retries.
     */
   private[consensus] def clearResources(key: Key): F[Unit]
+
+  /** Clear transient round-scoped resources for a key (artifacts, acks, withdrawals, view-change votes, vote locks, assembled VCC) but
+    * PRESERVE `peerDeclarationsMap` — the collected Facility / Proposal / MajoritySignature / BinarySignature entries per peer. Used by
+    * `abandonRound` so the retry attempt can immediately resume with the previously-collected declarations instead of re-fetching them from
+    * peers (which they won't re-send under first-write-wins semantics).
+    */
+  private[consensus] def clearResourcesPreservingDeclarations(key: Key): F[Unit]
 
   private[consensus] def trySetInitialConsensusOutcome(data: Outcome): F[Boolean]
 
@@ -168,6 +214,8 @@ object ConsensusStorage {
       peerRegistrationsR <- Ref.of(Map.empty[PeerId, Key])
       statesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusState[Key, Status, Outcome, Kind]]()
       resourcesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusResources[Artifact, Kind]]()
+      voteLocksR <- MapRef.ofConcurrentHashMap[F, Key, VoteLock]()
+      assembledVccR <- MapRef.ofConcurrentHashMap[F, Key, ViewChangeCertificate]()
     } yield
       new ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind] {
 
@@ -261,13 +309,85 @@ object ConsensusStorage {
 
         def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[Option[ConsensusResources[Artifact, Kind]]] =
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
-            peerDeclaration.focus(_.proposal).modify(_.orElse(proposal.some))
+            peerDeclaration.focus(_.proposal).modify {
+              case None => proposal.some
+              case Some(existing) =>
+                if (existing.view > proposal.view) existing.some
+                else if (existing.view === proposal.view) {
+                  if (existing.hash === proposal.hash) existing.some
+                  else existing.some // conflicting same-view: reject (log at caller site)
+                } else {
+                  // higher view replaces if VCC requirement holds (view 0 = none, view > 0 = VCC present)
+                  if (proposal.view > 0L && proposal.vcc.isEmpty) existing.some
+                  else proposal.some
+                }
+            }
           }
 
         def addSignature(peerId: PeerId, key: Key, signature: MajoritySignature): F[Option[ConsensusResources[Artifact, Kind]]] =
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
-            peerDeclaration.focus(_.signature).modify(_.orElse(signature.some))
+            peerDeclaration.focus(_.signature).modify {
+              case None => signature.some
+              case Some(existing) =>
+                if (existing.view > signature.view) existing.some
+                else if (existing.view === signature.view) existing.some
+                else signature.some
+            }
           }
+
+        def addViewChangeVote(
+          origin: PeerId,
+          key: Key,
+          fromView: Long,
+          toView: Long,
+          vote: Signed[ViewChangeVote]
+        ): F[Option[ConsensusResources[Artifact, Kind]]] =
+          updateResources(key) { resources =>
+            val transitionKey = (fromView, toView)
+            val currentPerTransition = resources.viewChangeVotes.getOrElse(transitionKey, Map.empty)
+            val updatedPerTransition = currentPerTransition.updated(origin, vote)
+            val updatedMap = resources.viewChangeVotes.updated(transitionKey, updatedPerTransition)
+            resources.copy(viewChangeVotes = updatedMap)
+          }
+
+        def addProposalQc(key: Key, qc: ProposalQC): F[Option[ConsensusResources[Artifact, Kind]]] =
+          updateResources(key) { resources =>
+            val qcKey = (qc.view, qc.proposalHash)
+            if (resources.proposalQcs.contains(qcKey)) resources
+            else resources.copy(proposalQcs = resources.proposalQcs.updated(qcKey, qc))
+          }
+
+        def tryLockVote(
+          key: Key,
+          view: Long,
+          proposalHash: Hash,
+          effectiveLockedQc: Option[ProposalQC]
+        ): F[Either[String, VoteLock]] =
+          voteLocksR(key).modify { maybeLock =>
+            val current = maybeLock.getOrElse(VoteLock.empty)
+            current.acceptVote(view, proposalHash, effectiveLockedQc) match {
+              case Right(newLock) => (newLock.some, Right(newLock))
+              case Left(reason)   => (maybeLock, Left(reason))
+            }
+          }
+
+        def advanceLockedQc(key: Key, qc: ProposalQC): F[Unit] =
+          voteLocksR(key).update {
+            case Some(lock) => lock.withAdvancedQc(qc).some
+            case None       => VoteLock.empty.withAdvancedQc(qc).some
+          }
+
+        def getVoteLock(key: Key): F[Option[VoteLock]] =
+          voteLocksR(key).get
+
+        def clearVoteLock(key: Key): F[Unit] =
+          voteLocksR(key).set(none)
+
+        def storeAssembledVcc(key: Key, vcc: ViewChangeCertificate): F[Unit] =
+          assembledVccR(key).set(vcc.some)
+
+        def getAssembledVcc(key: Key): F[Option[ViewChangeCertificate]] =
+          assembledVccR(key).get
 
         def addBinarySignature(peerId: PeerId, key: Key, signature: BinarySignature): F[Option[ConsensusResources[Artifact, Kind]]] =
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
@@ -352,7 +472,19 @@ object ConsensusStorage {
           }
 
         def clearResources(key: Key): F[Unit] =
-          resourcesR(key).set(none)
+          resourcesR(key).set(none) >> voteLocksR(key).set(none) >> assembledVccR(key).set(none)
+
+        def clearResourcesPreservingDeclarations(key: Key): F[Unit] =
+          updateResources(key) { resources =>
+            resources.copy(
+              acksMap = Map.empty,
+              withdrawalsMap = Map.empty,
+              ackKinds = Set.empty,
+              artifacts = Map.empty,
+              viewChangeVotes = Map.empty,
+              proposalQcs = Map.empty
+            )
+          }.void >> voteLocksR(key).set(none) >> assembledVccR(key).set(none)
 
         def getOwnRegistrationKey: F[Option[Key]] = observationKeyR.get.map(_.map(_.next))
 
@@ -418,6 +550,10 @@ object ConsensusStorage {
             _ <- stateKeys.traverse_(k => statesR(k).set(none))
             resourceKeys <- resourcesR.keys
             _ <- resourceKeys.traverse_(k => resourcesR(k).set(none))
+            voteLockKeys <- voteLocksR.keys
+            _ <- voteLockKeys.traverse_(k => voteLocksR(k).set(none))
+            vccKeys <- assembledVccR.keys
+            _ <- vccKeys.traverse_(k => assembledVccR(k).set(none))
           } yield ()
       }
   }

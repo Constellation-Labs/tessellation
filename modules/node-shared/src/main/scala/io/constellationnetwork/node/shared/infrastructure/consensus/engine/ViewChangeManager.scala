@@ -1,82 +1,87 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
-import cats.Eq
-import cats.effect.kernel.{Async, Ref}
+import cats.Applicative
+import cats.effect.kernel.Async
 import cats.effect.std.Queue
 import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event}
 import io.constellationnetwork.node.shared.infrastructure.consensus._
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.ProposalQC
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
-import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
-import io.constellationnetwork.schema.peer.PeerId
 
-import eu.timepit.refined.auto._
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 
-/** Manages deterministic leader re-election and peer eviction when facilitators fail.
+/** Emits (signs, stores locally, gossips) a ViewChangeVote on behalf of this node.
   *
-  * ==View Change Protocol==
-  *
-  * When the leader fails to propose within the timeout (or is detected as unresponsive), the view number is incremented and a new leader is
-  * selected using rendezvous hashing. All nodes use the same entropy + view number, so they deterministically select the same leader.
-  *
-  * {{{
-  *   1. Increment viewNumber
-  *   2. newLeader = selectLeader(facilitators, entropy, newViewNumber)
-  *   3. Update state atomically (CAS on viewNumber)
-  *   4. Trigger CheckUpdate so new leader's proposal is processed
-  * }}}
-  *
-  * ==Peer Eviction==
-  *
-  * When facilitators fail to declare within the timeout, `performViewChangeWithEviction` removes them from the active facilitator set. This
-  * allows the remaining peers to continue with a reduced quorum instead of being stuck waiting forever for an unresponsive peer.
-  *
-  * ==Early View Change==
-  *
-  * If LocalHealthcheck marks the leader as `Unresponsive`, the StallDetector triggers an immediate view change without waiting for the full
-  * timeout. This saves ~15s of stall time when the leader is known to be down.
+  * Abstraction over the layer-specific (dag-l0 / currency-l0) wiring that needs `KeyPair`, `Gossip`, and `HasherSelector` to produce a
+  * properly-signed `Signed[ViewChangeVote]`. The generic engine-level `ViewChangeManager` remains layer-agnostic and dispatches the actual
+  * emission through this trait.
   */
-class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
+trait ViewChangeVoter[F[_], Key] {
+  def emitViewChangeVote(
+    key: Key,
+    fromView: Long,
+    toView: Long,
+    highestKnownQc: Option[ProposalQC]
+  ): F[Unit]
+}
+
+object ViewChangeVoter {
+
+  /** No-op voter: used during transition when layer-specific gossip wiring is not yet available. Preserves existing liveness (local view
+    * increment path) while higher-layer code can still call `performViewChange` without errors.
+    */
+  def noop[F[_]: Applicative, Key]: ViewChangeVoter[F, Key] = new ViewChangeVoter[F, Key] {
+    def emitViewChangeVote(
+      key: Key,
+      fromView: Long,
+      toView: Long,
+      highestKnownQc: Option[ProposalQC]
+    ): F[Unit] = Applicative[F].unit
+  }
+}
+
+/** Manages quorum-certified view-change voting on stall.
+  *
+  * ==View Change Protocol (Phase 2)==
+  *
+  * When the leader fails to propose within the timeout (or is detected as unresponsive), this manager signs and broadcasts a
+  * `ViewChangeVote` for the `(fromView, toView)` transition. The actual advance of `state.viewNumber` is only performed once a quorum of
+  * matching votes assembles into a `ViewChangeCertificate` (see
+  * [[io.constellationnetwork.node.shared.infrastructure.consensus.state.StateTransitions.checkViewChangeAssembly]]).
+  *
+  * This replaces the earlier "local-increment" view-change path (which produced split committees under racing view transitions). Safety is
+  * provided by the `VoteLock` gate at local signing time; liveness by the VCC assembly path.
+  *
+  * Mid-round facilitator eviction is not performed at this layer: if a facilitator is genuinely unreachable, the stall-cycle abandonment
+  * path in [[StallDetector]] handles it (the round is abandoned and retried with the current eligibility set).
+  */
+class ViewChangeManager[F[_]: Async, Key, Status, Outcome, Kind](
   storage: ConsensusStorage[F, _, Key, _, _, Status, Outcome, Kind],
-  facilitatorSelector: FacilitatorSelector,
   peerQualityTracker: PeerQualityTracker[F],
   queue: Queue[F, ConsensusCommand],
-  logger: SelfAwareStructuredLogger[F]
+  logger: SelfAwareStructuredLogger[F],
+  voter: ViewChangeVoter[F, Key]
 ) {
 
-  /** Maximum consecutive eviction-skipped view changes before escalating to solo-eviction. Set to 2 (not 3) so the escalation fires on
-    * stallCount=1 (the 2nd stall cycle), before maxStallCycles=3 triggers round abandonment. The sequence is:
-    *   - stallCount=0: warning only (no eviction attempted)
-    *   - stallCount=1: eviction attempted, skipped (below floor), skippedCount=1
-    *   - stallCount=1 (2nd tick in same cycle? NO — next cycle): skippedCount=2 >= 2 → ESCALATE Without this, maxSkippedEvictions=3 was
-    *     unreachable because maxStallCycles=3 abandoned first.
+  /** Request a Phase 2 quorum-certified view change: record peer quality for the old leader, gossip a signed `ViewChangeVote`, and queue
+    * `CheckViewChangeAssembly` so the generic state-transitions path can assemble a quorum VCC and deterministically advance the round.
+    *
+    * This method does not mutate `state.viewNumber` / `state.leader` locally. Only the `checkViewChangeAssembly` path — triggered once
+    * enough peers have also emitted their own `ViewChangeVote`s — advances the state. If the VCC quorum never assembles (e.g. too few
+    * responsive peers), the existing stall-cycle abandonment path takes over.
+    *
+    * The safety-critical double-sign prevention lives at `storage.tryLockVote` in `buildSignatureTransition` and is unaffected by how view
+    * transitions are driven: even under racing local view-change attempts, neither path can sign two different hashes at the same `(key,
+    * view)` pair.
     */
-  private val maxSkippedEvictions: Int = 2
-
-  /** Tracks consecutive eviction-skipped view changes for the current round. Reset on successful eviction or round completion. */
-  private val skippedEvictionCountRef: Ref[F, Int] = Ref.unsafe(0)
-
-  /** Check if we've exceeded the skipped eviction threshold — callers should abandon the round instead. */
-  def shouldEscalateToAbandon: F[Boolean] =
-    skippedEvictionCountRef.get.map(_ >= maxSkippedEvictions)
-
-  /** Reset the skipped eviction counter (call on round completion or successful eviction). */
-  def resetSkippedEvictions: F[Unit] =
-    skippedEvictionCountRef.set(0)
-
-  /** Perform a view change: increment viewNumber, select new leader, update state. */
   def performViewChange(
     key: Key,
     currentState: ConsensusState[Key, Status, Outcome, Kind]
   ): F[Unit] = {
-    val newViewNumber = currentState.viewNumber + 1
-    val newLeader = facilitatorSelector.selectLeader(
-      currentState.facilitators.value,
-      currentState.entropy,
-      newViewNumber
-    )
+    val fromView = currentState.viewNumber.toLong
+    val toView = fromView + 1L
 
     ConsensusLog.info(
       logger,
@@ -84,152 +89,17 @@ class ViewChangeManager[F[_]: Async: Metrics, Key: Eq, Status, Outcome, Kind](
       key.toString,
       "n/a",
       Event.ViewChange,
-      "oldView" -> currentState.viewNumber.toString,
-      "newView" -> newViewNumber.toString,
+      "oldView" -> fromView.toString,
+      "newView" -> toView.toString,
       "oldLeader" -> ConsensusLog.pid(currentState.leader),
-      "newLeader" -> ConsensusLog.pid(newLeader),
       "facilitators" -> currentState.facilitators.value.size.toString
     ) >>
       peerQualityTracker.recordViewChange(currentState.leader) >>
-      Metrics[F].updateGauge("dag_consensus_view_number", newViewNumber) >>
-      storage
-        .condModifyState[Unit](key) {
-          case Some(state) if state.viewNumber === currentState.viewNumber =>
-            val updated: ConsensusState[Key, Status, Outcome, Kind] =
-              state.copy(viewNumber = newViewNumber, leader = newLeader)
-            (updated.some, ()).some.pure[F]
-          case _ =>
-            none[(Option[ConsensusState[Key, Status, Outcome, Kind]], Unit)].pure[F]
-        }
-        .void >>
-      queue.offer(ConsensusCommand.CheckUpdate(key))
+      storage.getVoteLock(key).flatMap { maybeLock =>
+        val highestKnownQc = maybeLock.flatMap(_.lockedQc)
+        voter.emitViewChangeVote(key, fromView, toView, highestKnownQc)
+      } >>
+      queue.offer(ConsensusCommand.CheckViewChangeAssembly(key))
   }
 
-  /** Perform a view change with peer eviction: remove unresponsive peers, select new leader from remaining.
-    *
-    * When facilitators fail to declare within the timeout, this method removes them from the active set. The remaining peers can then
-    * proceed with a reduced quorum (`ceil(remaining × threshold)`) instead of being stuck waiting for an unresponsive peer.
-    *
-    * Safety: never evicts below 2 facilitators — falls back to normal view change if eviction would leave fewer than 2.
-    *
-    * The CAS guard on `viewNumber` prevents conflicting evictions: if the state has already advanced (e.g., because a late declaration
-    * arrived and the phase progressed), the eviction is skipped.
-    */
-  /** @return
-    *   true if solo-eviction escalation fired (caller should suppress stall-cycle abandonment)
-    *
-    * @param canEscalateSolo
-    *   true only when this node is still in the bootstrap phase (previous round had <= 1 signer). Once the cluster has reached multi-node
-    *   consensus, solo-eviction is permanently disallowed because it would let any node produce a divergent chain (Apr 16 testnet incident:
-    *   community peer 03a24df6 solo-produced its own chain at ord 3106299, creating a persistent fork).
-    */
-  def performViewChangeWithEviction(
-    key: Key,
-    currentState: ConsensusState[Key, Status, Outcome, Kind],
-    peersToEvict: Set[PeerId],
-    canEscalateSolo: Boolean
-  ): F[Boolean] = {
-    val remainingFacilitators = currentState.facilitators.value.filterNot(peersToEvict.contains)
-
-    if (remainingFacilitators.size < 2) {
-      // Can't evict to below minimum viable cluster (2) by default — track and fall back to normal
-      // view change. After maxSkippedEvictions consecutive skips, AND if this node is still in
-      // bootstrap (canEscalateSolo=true), perform the eviction anyway as a last resort.
-      // Otherwise (post-bootstrap), abandon and let ForkRecoveryService reconcile — we do NOT
-      // want arbitrary nodes solo-producing during normal operation.
-      skippedEvictionCountRef.updateAndGet(_ + 1).flatMap { skipped =>
-        ConsensusLog.warn(
-          logger,
-          Category.Phase,
-          key.toString,
-          "n/a",
-          Event.EvictionSkippedMinFacilitators,
-          "peersToEvict" -> peersToEvict.size.toString,
-          "remaining" -> remainingFacilitators.size.toString,
-          "skippedEvictionCount" -> skipped.toString,
-          "maxSkippedEvictions" -> maxSkippedEvictions.toString,
-          "canEscalateSolo" -> canEscalateSolo.toString
-        ) >> (if (skipped >= maxSkippedEvictions && canEscalateSolo)
-                Metrics[F].incrementCounter("dag_consensus_eviction_loop_escalation") >>
-                  ConsensusLog.warn(
-                    logger,
-                    Category.Phase,
-                    key.toString,
-                    "n/a",
-                    Event.EvictionLoopEscalation,
-                    "skippedEvictions" -> skipped.toString,
-                    "remaining" -> remainingFacilitators.size.toString,
-                    "reason" -> "bootstrap phase: proceeding with solo eviction to break deadlock"
-                  ) >>
-                  performEvictionForced(key, currentState, peersToEvict).as(true)
-              else
-                performViewChange(key, currentState).as(false))
-      }
-    } else {
-      // Successful eviction — reset the skipped counter
-      skippedEvictionCountRef.set(0) >>
-        doEviction(key, currentState, remainingFacilitators, peersToEvict).as(false)
-    }
-  }
-
-  /** Forced eviction path: perform the eviction even if remaining < 2. Used only when the normal path has been blocked for
-    * maxSkippedEvictions cycles and the cluster has proven unreachable. Same side effects as the normal success path but skips the floor
-    * guard. Resets the skipped counter so the next round starts clean.
-    */
-  private def performEvictionForced(
-    key: Key,
-    currentState: ConsensusState[Key, Status, Outcome, Kind],
-    peersToEvict: Set[PeerId]
-  ): F[Unit] = {
-    val remainingFacilitators = currentState.facilitators.value.filterNot(peersToEvict.contains)
-    skippedEvictionCountRef.set(0) >>
-      doEviction(key, currentState, remainingFacilitators, peersToEvict)
-  }
-
-  private def doEviction(
-    key: Key,
-    currentState: ConsensusState[Key, Status, Outcome, Kind],
-    remainingFacilitators: List[PeerId],
-    peersToEvict: Set[PeerId]
-  ): F[Unit] = {
-    val newViewNumber = currentState.viewNumber + 1
-    // If remaining is empty (fully solo-eviction edge case), fall back to self as leader.
-    // selectLeader requires a non-empty list.
-    val candidates = if (remainingFacilitators.nonEmpty) remainingFacilitators else currentState.facilitators.value
-    val newLeader = facilitatorSelector.selectLeader(candidates, currentState.entropy, newViewNumber)
-
-    ConsensusLog.warn(
-      logger,
-      Category.Phase,
-      key.toString,
-      "n/a",
-      Event.ViewChangeWithEviction,
-      "evicted" -> peersToEvict.size.toString,
-      "remaining" -> remainingFacilitators.size.toString,
-      "oldView" -> currentState.viewNumber.toString,
-      "newView" -> newViewNumber.toString,
-      "oldLeader" -> ConsensusLog.pid(currentState.leader),
-      "newLeader" -> ConsensusLog.pid(newLeader),
-      "evictedPeers" -> peersToEvict.toList.map(ConsensusLog.pid).mkString(",")
-    ) >>
-      peersToEvict.toList.traverse_(peerQualityTracker.recordViewChange) >>
-      Metrics[F].updateGauge("dag_consensus_view_number", newViewNumber) >>
-      Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>
-      storage
-        .condModifyState[Unit](key) {
-          case Some(state) if state.viewNumber === currentState.viewNumber =>
-            val updated: ConsensusState[Key, Status, Outcome, Kind] =
-              state.copy(
-                facilitators = Facilitators(remainingFacilitators),
-                removedFacilitators = RemovedFacilitators(state.removedFacilitators.value ++ peersToEvict),
-                viewNumber = newViewNumber,
-                leader = newLeader
-              )
-            (updated.some, ()).some.pure[F]
-          case _ =>
-            none[(Option[ConsensusState[Key, Status, Outcome, Kind]], Unit)].pure[F]
-        }
-        .void >>
-      queue.offer(ConsensusCommand.CheckUpdate(key))
-  }
 }

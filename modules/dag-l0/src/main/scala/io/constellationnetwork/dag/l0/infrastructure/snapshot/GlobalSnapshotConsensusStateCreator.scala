@@ -65,6 +65,28 @@ object GlobalSnapshotConsensusStateCreator {
         .flatMap(evalEffect)
         .flatTap(logIfCreated)
 
+    // Reads the stored self-Facility (written at round creation by the effect above) and retransmits
+    // it via the same direct-push path. Returns F.unit if no stored declaration exists, which happens
+    // either pre-creation or after cleanup.
+    def retransmitOwnFacility(key: GlobalSnapshotKey, targets: Set[PeerId]): F[Unit] =
+      consensusStorage.getResources(key).flatMap { resources =>
+        resources.peerDeclarationsMap
+          .get(selfId)
+          .flatMap(_.facility)
+          .fold(Sync[F].unit) { facility =>
+            val declaration = ConsensusPeerDeclaration(key, facility)
+            ConsensusLog.info(
+              logger,
+              Facilitator,
+              key.show,
+              "n/a",
+              FacilityRetransmit,
+              "targets" -> targets.size.toString
+            ) >>
+              gossip.spreadDirect(declaration, targets)
+          }
+      }
+
     private def facilitateConsensus(
       key: GlobalSnapshotKey,
       lastOutcome: GlobalConsensusOutcome,
@@ -86,15 +108,14 @@ object GlobalSnapshotConsensusStateCreator {
         previousEligibleSet = filteredPreviousEligible.toSet
 
         // Peers that failed to participate in the previous round.
-        // Two sources (both from consensus-agreed lastOutcome, so deterministic):
-        // 1. nonSigners = facilitators - signers: peers who remained as facilitators but didn't sign
-        // 2. removedFacilitators: peers evicted by StallDetector view change during the round
-        // Without including removedFacilitators, evicted peers get re-selected every round
-        // and waste ~33s of stall detection before being re-evicted.
-        lastRoundFacilitators = lastOutcome.facilitators.value.toSet
-        lastRoundSigners = lastOutcome.finished.signedMajorityArtifact.proofs.map(_.id.toPeerId).toSortedSet.toSet
+        // Derived only from consensus-agreed lastOutcome.removedFacilitators (peers evicted by the
+        // facility-phase fork-eviction path). Previously we also computed a "non-signers" set via
+        // `lastFacilitators - signedMajorityArtifact.proofs`, but `proofs` is per-node-local —
+        // different nodes see different proof subsets for the same snapshot, so the "non-signers"
+        // set varied per node → divergent `previouslyRemoved` → divergent committees → forks. See
+        // Phase 3 canonical-signers fix for the same bug in outcome-layer penalty derivation.
         lastRoundEvicted = lastOutcome.removedFacilitators.value
-        previouslyRemoved = (lastRoundFacilitators -- lastRoundSigners) ++ lastRoundEvicted
+        previouslyRemoved = lastRoundEvicted
 
         // Full base WITHOUT removal filter — so removed peers can re-enter in future rounds.
         // The removal filter is only applied for active selection THIS round (see eligibleThisRound below).
@@ -116,12 +137,19 @@ object GlobalSnapshotConsensusStateCreator {
             (if (previouslyRemoved.nonEmpty) s", excludedFromPreviousRound=${previouslyRemoved.size}" else "")
         )
 
-        // TCA (Trailing Common Ancestor): exclude degraded peers using proofs-based detection.
-        // Compares lastOutcome.facilitators (who was supposed to sign) with the actual proofs on the
-        // last finalized snapshot (who actually signed). Peers that were facilitators but did NOT sign
-        // are degraded. 100% deterministic: both inputs come from consensus-agreed lastOutcome.
+        // TCA (Trailing Common Ancestor): exclude degraded peers. Degraded = peers who were
+        // facilitators in the previous round but got evicted via the consensus-agreed facility-phase
+        // fork-eviction (stored in `state.removedFacilitators`). Previously this compared against
+        // `signedMajorityArtifact.proofs` (who actually signed), but THAT set is per-node-local:
+        // each node's signed snapshot carries only the proofs it collected before CASing. Fast
+        // finalizers stop at quorum; slower finalizers see more. Using it here caused different
+        // nodes to derive different degraded sets → different committees → cascading divergence.
+        //
+        // Now we derive degraded purely from consensus-agreed state: `lastFacilitators -
+        // removedFacilitators`. A peer that participated and wasn't fork-evicted is "presumed to
+        // have signed" for TCA purposes, matching the Phase 3 canonical-signers philosophy.
         lastFacilitators = lastOutcome.facilitators.value.toSet
-        lastSigners = lastOutcome.finished.signedMajorityArtifact.proofs.map(_.id.toPeerId).toSortedSet.toSet
+        lastSigners = lastFacilitators -- lastOutcome.removedFacilitators.value
         tcaDegraded <- tcaFilter.degradedPeers(lastFacilitators, lastSigners)
         tcaFilteredBase = tcaDegraded match {
           case Some(degraded) =>
@@ -344,23 +372,25 @@ object GlobalSnapshotConsensusStateCreator {
 
         time <- Clock[F].monotonic
 
+        // Build Facility once, then:
+        //   1. Store locally so self-facility is present without depending on gossip self-loopback.
+        //   2. Direct-push to the active facilitator set (same delivery class as Proposal / Signature)
+        //      so peers receive it through the reliable path, not the best-effort broadcast.
+        // `eventHashes` is captured at effect run time (same as before) to reflect the current mempool.
         effect = for {
           eventHashes <- eventMempool.getEventHashes
-
-          _ <- gossip.spread(
-            ConsensusPeerDeclaration(
-              key,
-              Facility(
-                eventHashes,
-                candidates,
-                maybeTrigger,
-                lastOutcome.finished.facilitatorsHash,
-                lastOutcome.key,
-                lastOutcome.finished.snapshotHash,
-                consensusConfigHash = consensusConfigHash.some
-              )
-            )
+          facility = Facility(
+            eventHashes,
+            candidates,
+            maybeTrigger,
+            lastOutcome.finished.facilitatorsHash,
+            lastOutcome.key,
+            lastOutcome.finished.snapshotHash,
+            consensusConfigHash = consensusConfigHash.some
           )
+          declaration = ConsensusPeerDeclaration(key, facility)
+          _ <- consensusStorage.addFacility(selfId, key, facility)
+          _ <- gossip.spreadDirect(declaration, active.toSet)
         } yield ()
 
         // Quality-weighted leader selection: use consensus-agreed quality scores
