@@ -162,26 +162,40 @@ if [ "$stable" != "true" ]; then
   fail "Validators did not synchronise within ${STABILIZE_WAIT}s"
 fi
 
-# Let the cluster run several rounds so PeerQualityTracker builds
-# scores for participating peers. With maxFacilitatorCount, only a subset
-# of nodes facilitate — we just need to see multi-node consensus.
-echo "  Waiting for multi-node consensus to stabilize (3+ rounds)..."
+# Wait for every node to be promoted into the facilitator committee. With
+# candidate-deferral-rounds=3 new peers must observe before facilitating, so
+# early rounds run with fac < NUM_GL0. If we proceed to isolation before all
+# nodes are in the committee, eligibleOrFacilitators differs between nodes
+# (some still have peers on deferral countdown) → different leader election
+# → split-brain rounds that never complete.
+#
+# Require every node to report fac == NUM_GL0 on 3 consecutive checks.
+echo "  Waiting for ALL $NUM_GL0 nodes to be in the facilitator committee (3+ consecutive rounds)..."
 stable_rounds=0
-stab_deadline=$(($(date +%s) + 300))
+stab_deadline=$(($(date +%s) + 600))
 while [ "$(date +%s)" -lt "$stab_deadline" ] && [ "$stable_rounds" -lt 3 ]; do
-  fac=$(get_facilitator_count "$MONITOR_NODE")
+  all_full=true
+  status_line=""
+  for i in $(seq 0 $((NUM_GL0 - 1))); do
+    node="gl0-${i}"
+    fac=$(get_facilitator_count "$node")
+    status_line="${status_line} ${node}:fac=${fac:-?}"
+    if [ "${fac:-0}" -lt "$NUM_GL0" ]; then
+      all_full=false
+    fi
+  done
   ord=$(get_ordinal "$MONITOR_NODE")
-  if [ "${fac:-0}" -ge 2 ]; then
+  if [ "$all_full" = "true" ]; then
     stable_rounds=$((stable_rounds + 1))
-    echo "    Round $stable_rounds/3 with fac=$fac at ordinal $ord"
+    echo "    Round $stable_rounds/3 with all fac=$NUM_GL0 at ordinal ${ord:-?} [${status_line# }]"
   else
     stable_rounds=0
-    echo "    Waiting... fac=${fac:-?} at ordinal ${ord:-?} (need >= 2)"
+    echo "    Waiting for all fac=$NUM_GL0 at ordinal ${ord:-?} [${status_line# }]"
   fi
   sleep 45
 done
 if [ "$stable_rounds" -lt 3 ]; then
-  echo "  WARNING: Only $stable_rounds/3 stable rounds achieved, proceeding anyway"
+  fail "Cluster never reached full committee (fac=$NUM_GL0 on all nodes) within 600s"
 fi
 
 # Record pre-isolation state from monitor (a validator)

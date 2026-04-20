@@ -49,5 +49,12 @@ object GlobalSnapshotConsensusOps {
       case _: CollectingSignatures => 2
       case _: Finished             => 3
     }
+
+    def freshCollectingFacilities(status: GlobalSnapshotStatus): Option[GlobalSnapshotStatus] = status match {
+      case CollectingFacilities(_, facHash, lastSnap)       => CollectingFacilities(none, facHash, lastSnap).some
+      case CollectingProposals(_, _, _, facHash, lastSnap)  => CollectingFacilities(none, facHash, lastSnap).some
+      case CollectingSignatures(_, _, _, facHash, lastSnap) => CollectingFacilities(none, facHash, lastSnap).some
+      case _: Finished                                      => none
+    }
   }
 }

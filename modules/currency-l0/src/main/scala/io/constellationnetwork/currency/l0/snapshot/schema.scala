@@ -10,6 +10,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotArtifact
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -109,7 +110,10 @@ object schema {
     peerQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.empty,
     // Lifetime count of times this peer was evicted. Scales removalPenaltyRounds
     // exponentially so repeat offenders get progressively longer bans.
-    cumulativeMissCounts: SortedMap[PeerId, Long] = SortedMap.empty
+    cumulativeMissCounts: SortedMap[PeerId, Long] = SortedMap.empty,
+    // Sliding window of (ordinal -> proofs.size) for the last ~10 ordinals, used for
+    // bootstrap warmup classification. See dag-l0 mirror for full rationale.
+    recentProofSizes: SortedMap[SnapshotOrdinal, Int] = SortedMap.empty
   ) {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value

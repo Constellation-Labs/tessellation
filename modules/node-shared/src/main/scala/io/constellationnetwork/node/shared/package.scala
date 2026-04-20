@@ -34,6 +34,10 @@ package object shared {
       classOf[Proposal] -> 508,
       classOf[MajoritySignature] -> 509,
       classOf[ConsensusArtifact[_, _]] -> 510,
+      classOf[ProposalQC] -> 511,
+      classOf[ViewChangeVote] -> 512,
+      classOf[ViewChangeCertificate] -> 513,
+      classOf[ConsensusPeerVote[_]] -> 514,
       // classOf[PeerMismatch] -> 520,
       // classOf[PeerCheckTimeouted] -> 521,
       // classOf[PeerCheckUnexpectedError] -> 522,
@@ -48,7 +52,7 @@ package object shared {
       TimeTrigger.getClass -> 531,
       classOf[DataApplicationBlock] -> 532,
       classOf[BinarySignature] -> 533,
-      classOf[GlobalSyncView] -> 534, // Since the genesis snapshot is kryo encoded we need this
-      classOf[StallReport] -> 535
+      classOf[GlobalSyncView] -> 534 // Since the genesis snapshot is kryo encoded we need this
+      // Kryo ID 535 previously registered StallReport (removed with TimeoutAggregator revert)
     ).union(sharedKryoRegistrar)
 }

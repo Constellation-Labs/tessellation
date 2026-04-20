@@ -63,6 +63,14 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     state: ConsensusState[Key, Status, Outcome, Kind]
   ): Option[(Previous[Key], Outcome)]
 
+  /** Whether the chain is still in bootstrap (pre-`bootstrapCompleteProofsThreshold` committee-size history).
+    *
+    * Used by [[io.constellationnetwork.node.shared.infrastructure.consensus.engine.StallDetector]] to apply an adaptive declaration-timeout
+    * multiplier during bootstrap, when fresh-start peers need additional time to respond. Defaults to `false` (post-bootstrap) so
+    * implementations that don't track this state behave as before.
+    */
+  def isBootstrapActive(lastOutcome: Outcome): Boolean = false
+
   def advanceStatus(resources: ConsensusResources[Artifact, Kind]): StateT[F, ConsensusState[Key, Status, Outcome, Kind], F[Unit]]
 
   def logger(implicit async: Async[F]): SelfAwareStructuredLogger[F] =

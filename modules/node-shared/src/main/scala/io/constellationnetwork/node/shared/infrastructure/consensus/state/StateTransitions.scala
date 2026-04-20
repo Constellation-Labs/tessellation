@@ -7,11 +7,12 @@ import cats.{Eq, Show}
 
 import scala.concurrent.duration._
 
-import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand._
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, ViewChangeCertificateBuilder}
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.GetConsensusOutcomeRequest
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger._
+import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusStorage}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
 import io.constellationnetwork.schema.node.NodeState
@@ -74,7 +75,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
   outcomeTrigger: Lens[Outcome, ConsensusTrigger]
 ) {
 
-  import ctx.{advancer, logger => log, queue, remover, storage, updater}
+  import ctx.{advancer, config, facilitatorSelector, logger => log, peerQualityTracker, queue, remover, storage, updater}
 
   def checkUpdate(key: Key): F[Unit] =
     for {
@@ -88,6 +89,119 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
             .getOrElse(log.debug(ConsensusLog.format(Category.Phase, key.show, "n/a", LogEvent.StateUpdated)))
       }
     } yield ()
+
+  /** Handle CheckViewChangeAssembly command.
+    *
+    * When a quorum of ViewChangeVotes has been collected for the current `(fromView, toView)` transition, assemble a valid VCC, store it so
+    * the new leader's proposal path can embed it, deterministically pick the new leader, atomically advance
+    * `state.viewNumber`/`state.leader`, reset the status to `CollectingFacilities` so the FSM re-enters phase 0 for the new view, and queue
+    * `CheckUpdate` so the new leader's proposal flow fires.
+    *
+    * Safety against double-signing is enforced at the VoteLock gate during local signing, independent of how view transitions are driven.
+    * This path is what makes the view transition itself consensus-certified.
+    */
+  def checkViewChangeAssembly(key: Key): F[Unit] =
+    storage.getState(key).flatMap {
+      case None => Async[F].unit
+      case Some(state) =>
+        val fromView = state.viewNumber.toLong
+        val toView = fromView + 1L
+        storage.getResources(key).flatMap { resources =>
+          val votes = resources.viewChangeVotes.getOrElse((fromView, toView), Map.empty)
+          val n = state.facilitators.value.size
+          val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+          if (votes.size >= q) {
+            val facilitatorsHashCandidates = votes.values.map(_.value.facilitatorsHash).toSet
+            facilitatorsHashCandidates.toList match {
+              case singleHash :: Nil =>
+                ViewChangeCertificateBuilder
+                  .build(fromView, toView, singleHash, votes, q) match {
+                  case Left(reason) =>
+                    ConsensusLog.warn(
+                      log,
+                      Category.Phase,
+                      key.show,
+                      "n/a",
+                      LogEvent.ViewChange,
+                      "assembly" -> "vcc_build_failed",
+                      "reason" -> reason,
+                      "fromView" -> fromView.toString,
+                      "toView" -> toView.toString,
+                      "votes" -> votes.size.toString,
+                      "quorum" -> q.toString
+                    )
+                  case Right(vcc) =>
+                    val newLeader =
+                      facilitatorSelector.selectLeader(state.facilitators.value, state.entropy, toView.toInt)
+                    val resetStatus = ctx.ops.freshCollectingFacilities(state.status)
+                    val modify: ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] =
+                      new ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] {
+                        def apply(
+                          maybeState: Option[ConsensusState[Key, Status, Outcome, Kind]]
+                        ): F[Option[(Option[ConsensusState[Key, Status, Outcome, Kind]], Boolean)]] =
+                          maybeState match {
+                            case Some(s) if s.viewNumber === state.viewNumber =>
+                              val updated: ConsensusState[Key, Status, Outcome, Kind] = resetStatus match {
+                                case Some(fresh) => s.copy(viewNumber = toView.toInt, leader = newLeader, status = fresh)
+                                case None        => s.copy(viewNumber = toView.toInt, leader = newLeader)
+                              }
+                              (updated.some, true).some.pure[F]
+                            case _ =>
+                              none[(Option[ConsensusState[Key, Status, Outcome, Kind]], Boolean)].pure[F]
+                          }
+                      }
+                    for {
+                      _ <- storage.storeAssembledVcc(key, vcc)
+                      advanced <- storage.condModifyState[Boolean](key)(modify)
+                      didAdvance = advanced.getOrElse(false)
+                      _ <- ConsensusLog
+                        .info(
+                          log,
+                          Category.Phase,
+                          key.show,
+                          "n/a",
+                          LogEvent.ViewChange,
+                          "assembly" -> "quorum_reached_advanced",
+                          "fromView" -> fromView.toString,
+                          "toView" -> toView.toString,
+                          "votes" -> votes.size.toString,
+                          "quorum" -> q.toString,
+                          "newLeader" -> ConsensusLog.pid(newLeader),
+                          "statusReset" -> resetStatus.isDefined.toString
+                        )
+                        .whenA(didAdvance)
+                      _ <- Metrics[F].updateGauge("dag_consensus_view_number", toView).whenA(didAdvance)
+                      _ <- queue.offer(ConsensusCommand.CheckUpdate(key)).whenA(didAdvance)
+                    } yield ()
+                }
+              case multiple =>
+                ConsensusLog.warn(
+                  log,
+                  Category.Phase,
+                  key.show,
+                  "n/a",
+                  LogEvent.ViewChange,
+                  "assembly" -> "divergent_facilitators_hash",
+                  "hashes" -> multiple.size.toString,
+                  "fromView" -> fromView.toString,
+                  "toView" -> toView.toString
+                )
+            }
+          } else {
+            log.debug(
+              ConsensusLog.format(
+                Category.Phase,
+                key.show,
+                "n/a",
+                LogEvent.ViewChange,
+                "assembly" -> "waiting_for_quorum",
+                "votes" -> votes.size.toString,
+                "quorum" -> q.toString
+              )
+            )
+          }
+        }
+    }
 
   private def finalizeAndNotify(
     newState: ConsensusState[Key, Status, Outcome, Kind],

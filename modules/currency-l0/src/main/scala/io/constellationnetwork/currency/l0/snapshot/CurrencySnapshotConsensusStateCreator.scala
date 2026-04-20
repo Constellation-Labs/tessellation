@@ -69,6 +69,26 @@ object CurrencySnapshotConsensusStateCreator {
         .flatMap(evalEffect)
         .flatTap(logIfCreated)
 
+    // Reads the stored self-Facility and re-sends via direct push. Mirrors dag-l0.
+    def retransmitOwnFacility(key: CurrencySnapshotKey, targets: Set[PeerId]): F[Unit] =
+      consensusStorage.getResources(key).flatMap { resources =>
+        resources.peerDeclarationsMap
+          .get(selfId)
+          .flatMap(_.facility)
+          .fold(Sync[F].unit) { facility =>
+            val declaration = ConsensusPeerDeclaration(key, facility)
+            ConsensusLog.info(
+              logger,
+              Category.Facilitator,
+              key.show,
+              "n/a",
+              Event.FacilityRetransmit,
+              "targets" -> targets.size.toString
+            ) >>
+              gossip.spreadDirect(declaration, targets)
+          }
+      }
+
     private def facilitateConsensus(
       key: CurrencySnapshotKey,
       lastOutcome: CurrencyConsensusOutcome,
@@ -89,16 +109,11 @@ object CurrencySnapshotConsensusStateCreator {
 
         previousEligibleSet = filteredPreviousEligible.toSet
 
-        // Peers that failed to participate in the previous round.
-        // Two sources (both from consensus-agreed lastOutcome, so deterministic):
-        // 1. nonSigners = facilitators - signers: peers who remained as facilitators but didn't sign
-        // 2. removedFacilitators: peers evicted by StallDetector view change during the round
-        // Without including removedFacilitators, evicted peers get re-selected every round
-        // and waste ~33s of stall detection before being re-evicted.
-        lastRoundFacilitators = lastOutcome.facilitators.value.toSet
-        lastRoundSigners = lastOutcome.finished.signedMajorityArtifact.proofs.map(_.id.toPeerId).toSortedSet.toSet
+        // previouslyRemoved from consensus-agreed lastOutcome.removedFacilitators only. See dag-l0
+        // mirror for rationale: `signedMajorityArtifact.proofs` is per-node-local, its use here
+        // caused divergent committees.
         lastRoundEvicted = lastOutcome.removedFacilitators.value
-        previouslyRemoved = (lastRoundFacilitators -- lastRoundSigners) ++ lastRoundEvicted
+        previouslyRemoved = lastRoundEvicted
 
         // Full base WITHOUT removal filter — so removed peers can re-enter in future rounds.
         // The removal filter is only applied for active selection THIS round (see eligibleThisRound below).
@@ -120,12 +135,11 @@ object CurrencySnapshotConsensusStateCreator {
             (if (previouslyRemoved.nonEmpty) s", excludedFromPreviousRound=${previouslyRemoved.size}" else "")
         )
 
-        // TCA (Trailing Common Ancestor): exclude degraded peers using proofs-based detection.
-        // Compares lastOutcome.facilitators (who was supposed to sign) with the actual proofs on the
-        // last finalized snapshot (who actually signed). Peers that were facilitators but did NOT sign
-        // are degraded. 100% deterministic: both inputs come from consensus-agreed lastOutcome.
+        // TCA filter: degraded = consensus-agreed evictions from lastOutcome.removedFacilitators.
+        // See dag-l0 mirror for full rationale. Previously this read `signedMajorityArtifact.proofs`
+        // which is per-node-local and caused divergent committees across nodes.
         lastFacilitators = lastOutcome.facilitators.value.toSet
-        lastSigners = lastOutcome.finished.signedMajorityArtifact.proofs.map(_.id.toPeerId).toSortedSet.toSet
+        lastSigners = lastFacilitators -- lastOutcome.removedFacilitators.value
         tcaDegraded <- tcaFilter.degradedPeers(lastFacilitators, lastSigners)
         tcaFilteredBase = tcaDegraded match {
           case Some(degraded) =>
@@ -324,22 +338,22 @@ object CurrencySnapshotConsensusStateCreator {
         time <- Clock[F].monotonic
         lastGlobalSnapshotOrdinal <- lastGlobalSnapshotStorage.getOrdinal.map(_.getOrElse(SnapshotOrdinal.MinValue))
 
+        // Build Facility once, self-store locally (no reliance on gossip self-loopback), then
+        // direct-push to the active facilitator set. Matches the dag-l0 creator — see rationale there.
         effect = for {
           eventHashes <- eventMempool.getEventHashes
-          _ <- gossip.spread(
-            ConsensusPeerDeclaration(
-              key,
-              Facility(
-                eventHashes,
-                candidates,
-                maybeTrigger,
-                lastOutcome.finished.facilitatorsHash,
-                lastGlobalSnapshotOrdinal,
-                lastOutcome.finished.snapshotHash,
-                consensusConfigHash = consensusConfigHash.some
-              )
-            )
+          facility = Facility(
+            eventHashes,
+            candidates,
+            maybeTrigger,
+            lastOutcome.finished.facilitatorsHash,
+            lastGlobalSnapshotOrdinal,
+            lastOutcome.finished.snapshotHash,
+            consensusConfigHash = consensusConfigHash.some
           )
+          declaration = ConsensusPeerDeclaration(key, facility)
+          _ <- consensusStorage.addFacility(selfId, key, facility)
+          _ <- gossip.spreadDirect(declaration, active.toSet)
         } yield ()
 
         // Quality-weighted leader selection using consensus-agreed integer quality scores

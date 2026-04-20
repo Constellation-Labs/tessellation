@@ -178,7 +178,22 @@ object types {
     // deferral, as a hard filter that keeps chronic flaky community peers out of the
     // committee before round start (preventing mid-round eviction cascades).
     minParticipationObservations: Int = 10,
-    minParticipationRatio: Double = 0.5
+    minParticipationRatio: Double = 0.5,
+    // Phase 2 cold-restart protocol version flag. Included in `deterministicConfigHash` so pre-Phase-2 peers are
+    // excluded from facilitator selection via the config-hash check. Set to 2 to enable the quorum-certified
+    // view-change + local vote-lock protocol.
+    lockOnVoteProtocolVersion: Int = 2,
+    // Bootstrap warmup threshold: minimum proofs.size in any recent snapshot required to classify the chain as
+    // post-bootstrap. While bootstrap is active (no recent snapshot meets this threshold), penalty accrual is
+    // suppressed to avoid ejecting slow peers during the solo->multi transition. Consensus-critical because it
+    // determines `penalizedThisRound` in the outcome; included in `deterministicConfigHash`.
+    bootstrapCompleteProofsThreshold: Int = 3,
+    // Adaptive declaration timeout: during bootstrap (recentProofSizes shows no round >= bootstrapCompleteProofsThreshold),
+    // the `declarationTimeout` is multiplied by this factor so fresh-start peers have more time to respond before
+    // StallDetector fires view change / eviction. Post-bootstrap, the multiplier is 1.0 (tighter liveness).
+    // Consensus-critical because it affects stall-cycle cadence, which in turn affects view-change emission and
+    // abandonment timing — divergent values here would cause nodes to make view transitions at different moments.
+    bootstrapDeclarationTimeoutMultiplier: Double = 2.0
   ) {
 
     /** Deterministic hash of consensus-critical config values.
@@ -197,6 +212,7 @@ object types {
       *   - `maxRemovalPenaltyRounds`: cap on total penalty so it doesn't overflow Int
       *   - `minParticipationObservations`: threshold at which chronic non-signer filter kicks in
       *   - `minParticipationRatio`: ratio below which a peer is excluded from the committee
+      *   - `bootstrapDeclarationTimeoutMultiplier`: affects phase-transition timing during bootstrap
       *
       * '''Non-critical fields''' (excluded — affect timing/performance, not deterministic outcomes):
       *   - `timeTriggerInterval`, `declarationTimeout`, `lockDuration`, `reStallTimeout`, `noProgressTimeout`: timing only
@@ -219,7 +235,10 @@ object types {
           s"exponentialPenaltyBase=$exponentialPenaltyBase," +
           s"maxRemovalPenaltyRounds=$maxRemovalPenaltyRounds," +
           s"minParticipationObservations=$minParticipationObservations," +
-          s"minParticipationRatio=$minParticipationRatio"
+          s"minParticipationRatio=$minParticipationRatio," +
+          s"lockOnVoteProtocolVersion=$lockOnVoteProtocolVersion," +
+          s"bootstrapCompleteProofsThreshold=$bootstrapCompleteProofsThreshold," +
+          s"bootstrapDeclarationTimeoutMultiplier=$bootstrapDeclarationTimeoutMultiplier"
       Hash.fromBytes(configString.getBytes("UTF-8"))
     }
   }
@@ -236,7 +255,12 @@ object types {
 
   case class SnapshotServingConfig(
     maxConcurrentPublic: Int = 20,
-    retryAfterSeconds: Long = 2
+    retryAfterSeconds: Long = 2,
+    // Per-client-IP rate limit. 0 requests or 0s window disables the limit entirely
+    // (preserves legacy behaviour when config omits the new fields).
+    perIpMaxRequestsPerWindow: Int = 0,
+    perIpWindow: FiniteDuration = 1.minute,
+    perIpRetryAfterSeconds: Long = 5
   )
 
   case class SnapshotTimeoutsConfig(

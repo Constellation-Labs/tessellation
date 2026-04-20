@@ -10,7 +10,7 @@ import io.constellationnetwork.node.shared.config.types.{SnapshotServingConfig, 
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.ext.http4s.SnapshotOrdinalVar
-import io.constellationnetwork.node.shared.http.p2p.middlewares.ConcurrencyLimitMiddleware
+import io.constellationnetwork.node.shared.http.p2p.middlewares.{ConcurrencyLimitMiddleware, PerIpRateLimitMiddleware}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
   CombinedSnapshotCheckpointFileSystemStorage,
   SnapshotLocalFileSystemStorage
@@ -41,7 +41,8 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
   snapshotTimeoutsConfig: SnapshotTimeoutsConfig,
   cachedCombinedResponse: CachedCombinedResponse[F, S, SI],
   combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, SI],
-  publicConcurrencyLimit: Option[HttpRoutes[F] => HttpRoutes[F]] = None
+  publicConcurrencyLimit: Option[HttpRoutes[F] => HttpRoutes[F]] = None,
+  publicPerIpRateLimit: Option[HttpRoutes[F] => HttpRoutes[F]] = None
 ) extends Http4sDsl[F]
     with PublicRoutes[F]
     with P2PRoutes[F] {
@@ -193,7 +194,9 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
 
   protected val public: HttpRoutes[F] = {
     val routes = makeRoutes(rejectAboveHead)
-    publicConcurrencyLimit.fold(routes)(_(routes))
+    // Order: rate limit runs first (cheap reject), concurrency limit second. Both are optional.
+    val withConcurrency = publicConcurrencyLimit.fold(routes)(_(routes))
+    publicPerIpRateLimit.fold(withConcurrency)(_(withConcurrency))
   }
   protected val p2p: HttpRoutes[F] = makeRoutes(_ => action => action)
 }
@@ -214,6 +217,10 @@ object SnapshotRoutes {
       concurrencyLimit <- snapshotServingConfig.traverse(cfg =>
         ConcurrencyLimitMiddleware[F](cfg.maxConcurrentPublic, cfg.retryAfterSeconds)
       )
+      // Only build the per-IP rate limiter when both bounds are positive — 0 disables.
+      perIpRateLimit <- snapshotServingConfig
+        .filter(cfg => cfg.perIpMaxRequestsPerWindow > 0 && cfg.perIpWindow.toMillis > 0)
+        .traverse(cfg => PerIpRateLimitMiddleware[F](cfg.perIpMaxRequestsPerWindow, cfg.perIpWindow, cfg.perIpRetryAfterSeconds))
     } yield
       new SnapshotRoutes[F, S, SI](
         snapshotStorage,
@@ -224,7 +231,8 @@ object SnapshotRoutes {
         snapshotTimeoutsConfig,
         cachedCombined,
         combinedSnapshotCheckpointFileSystemStorage,
-        concurrencyLimit
+        concurrencyLimit,
+        perIpRateLimit
       )
 }
 

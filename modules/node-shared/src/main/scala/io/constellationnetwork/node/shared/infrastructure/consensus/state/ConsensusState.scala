@@ -131,6 +131,13 @@ trait ConsensusOps[S, Kind] {
     * CollectingBinarySignatures (currency only), higher = Finished.
     */
   def phaseIndex(status: S): Int
+
+  /** Produce a fresh CollectingFacilities-shape status suitable for re-entering phase 0 after a Phase 2 view change.
+    *
+    * The facilitatorsHash and lastSnapshotHash carried on the current status are preserved (facilitator set is fixed across views in Phase
+    * 2; the snapshot hash reflects the committed tail). The trigger is cleared so the new view re-collects fresh Facility declarations.
+    */
+  def freshCollectingFacilities(status: S): Option[S]
 }
 
 @derive(eqv)

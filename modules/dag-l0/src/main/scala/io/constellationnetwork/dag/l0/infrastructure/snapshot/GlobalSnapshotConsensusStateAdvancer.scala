@@ -160,45 +160,81 @@ object GlobalSnapshotConsensusStateAdvancer {
 
       private case class Transition(newState: GlobalSnapshotConsensusState, sideEffect: F[Unit])
 
+      override def isBootstrapActive(lastOutcome: GlobalConsensusOutcome): Boolean =
+        !lastOutcome.recentProofSizes.values.exists(_ >= config.bootstrapCompleteProofsThreshold)
+
       def getConsensusOutcome(
         state: GlobalSnapshotConsensusState
       ): Option[(Previous[GlobalSnapshotKey], GlobalConsensusOutcome)] =
         state.status match {
           case f: Finished =>
-            // Compute consensus-agreed peer quality and removal penalties from PROOFS ONLY.
-            // CRITICAL: We derive both "completed" and "removed" from the signed artifact's proofs
-            // (who actually signed), NOT from removedFacilitators/withdrawnFacilitators. The proofs
-            // are embedded in the consensus-agreed artifact and are identical across all nodes.
+            // Phase 3: derive penalty/quality state from CONSENSUS-AGREED inputs only.
             //
-            // removedFacilitators includes BOTH:
-            //   1. Fork-evicted peers (deterministic — based on quorum facility declarations)
-            //   2. View-change-evicted peers (NON-deterministic — based on local stall detection timing)
-            // Using removedFacilitators for penalties would cause different nodes to compute different
-            // penalty maps → different facilitator exclusions → different facilitator sets → fork.
+            // Prior implementation derived `signers` from `f.signedMajorityArtifact.proofs`,
+            // but `proofs` varies across nodes for the same artifact/ordinal: each node
+            // finalizes the round the instant it observes quorum's worth of MajoritySignature
+            // declarations (per `maybeGetAllDeclarations`). Fast finalizers stop at exactly
+            // quorum; slow finalizers accumulate extra signatures. `SnapshotStorage.prepend`
+            // does NOT merge proofs from later-arriving gossip copies (see SnapshotStorage.scala
+            // `isNextSnapshot` / head-replace logic). `ForkInfo` gossip only carries
+            // `(ordinal, hash)` — no proofs. So there is no cluster-wide convergence path for
+            // `proofs.size`.
             //
-            // Instead, we use: nonSigners = facilitators - signers (proofs).
-            // This is fully deterministic: both facilitators and proofs are consensus-agreed.
-            val signers = f.signedMajorityArtifact.proofs.map(_.id.toPeerId).toSortedSet
-            val allNonSigners = state.facilitators.value.filterNot(signers.contains).toSet
-
-            // Don't penalize peers who were in committee via deferral bypass. They were
-            // KNOWN to be deferred (still in observation period) — the state creator included
-            // them to prevent genesis from racing ahead solo. Punishing them for not signing
-            // during their deferral window locks them out for removalPenaltyRounds, preventing
-            // them from ever completing deferral and joining normally.
-            val deferredInCommittee = state.lastOutcome.deferralCountdown.filter(_._2 > 0).keySet
-            val nonSigners = allNonSigners -- deferredInCommittee
-
+            // With non-deterministic `signers`, two nodes can compute different
+            // `nonSigners = facilitators - signers` → different `penalizedThisRound` →
+            // divergent `removalPenalties`, `cumulativeMissCounts`, and `peerQuality`
+            // fields in the stored `lastOutcome`. Those fields gate `chronicNonSigners`,
+            // `penalizedPeers`, and deferral filtering in the NEXT round's state creator,
+            // which produces divergent facilitator sets and cascades into `facilitatorsHash`
+            // fork checks.
+            //
+            // Fix: compute `penalizedThisRound` using only `state.removedFacilitators` —
+            // peers evicted by the consensus-agreed facility fork-eviction path (see
+            // `advanceFromFacilities`). That set is deterministic across all nodes that
+            // complete the round (they agree on `facilitatorsHash` or cannot finalize).
+            // The slow-signer penalty signal is dropped deliberately: Phase 2's VoteLock
+            // plus quorum-certified view change already contain the safety consequences
+            // of slow peers; stall-cycle abandonment handles liveness.
+            //
+            // For `peerQuality`, credit every non-evicted facilitator with
+            // `(completed=1, participated=1)`: reaching Finished implies the committee
+            // reached quorum, and the individual signer/non-signer split within the
+            // committee is not consensus-agreed. Evicted facilitators get
+            // `(completed=0, participated=1)` so they remain trackable but don't gain
+            // quality score while out.
             val evictedPeers = state.removedFacilitators.value
             val previousPenalties = state.lastOutcome.removalPenalties
             val previousCumulative = state.lastOutcome.cumulativeMissCounts
 
-            // Increment cumulative miss count for peers newly evicted/non-signing this round.
-            // This counter persists across rounds in the signed outcome → consensus-agreed.
-            // Base=2, capped to prevent Int overflow: a repeat offender's penalty grows
-            // 5 → 10 → 20 → 40 → ... up to maxRemovalPenaltyRounds.
-            val penalizedThisRound = (nonSigners ++ evictedPeers).toSet
-            val newCumulative = penalizedThisRound.foldLeft(previousCumulative) { (acc, pid) =>
+            // Don't penalize peers who were in committee via deferral bypass. They were
+            // KNOWN to be deferred (still in observation period) — the state creator included
+            // them to prevent genesis from racing ahead solo.
+            val deferredInCommittee = state.lastOutcome.deferralCountdown.filter(_._2 > 0).keySet
+
+            // Decay: every non-evicted facilitator earns a 1-unit credit against their
+            // cumulative miss count. Prevents the exponential penalty formula from
+            // trapping nodes forever once they've signed cleanly across enough rounds.
+            val completedFacilitators = state.facilitators.value.toSet -- evictedPeers
+            val decayedCumulative = completedFacilitators.foldLeft(previousCumulative) { (acc, pid) =>
+              acc.get(pid) match {
+                case Some(v) if v > 1L => acc.updated(pid, v - 1L)
+                case Some(_)           => acc - pid // reached 0 — prune so the map stays bounded
+                case None              => acc // no prior miss history, nothing to decay
+              }
+            }
+
+            // Bootstrap warmup: classify the chain as post-bootstrap once a recent round
+            // has committee size >= bootstrapCompleteProofsThreshold. Uses
+            // `state.facilitators.value.size` (consensus-agreed) rather than
+            // `f.signedMajorityArtifact.proofs.size` (local-observed) so all nodes reach
+            // the same bootstrap/post-bootstrap classification deterministically.
+            val isInBootstrap =
+              !state.lastOutcome.recentProofSizes.values.exists(_ >= config.bootstrapCompleteProofsThreshold)
+
+            // Penalize only consensus-agreed evictions (facility fork-eviction).
+            val penalizedThisRound =
+              if (isInBootstrap) Set.empty[PeerId] else (evictedPeers -- deferredInCommittee).toSet
+            val newCumulative = penalizedThisRound.foldLeft(decayedCumulative) { (acc, pid) =>
               acc.updated(pid, acc.getOrElse(pid, 0L) + 1L)
             }
 
@@ -215,15 +251,13 @@ object GlobalSnapshotConsensusStateAdvancer {
 
             // Compute deferral countdown: same pattern as removal penalties.
             // Decrement previous countdowns, add new entries for peers entering allEligible
-            // for the first time. Peers with countdown > 0 are excluded from eligibleThisRound
-            // in the state creator, giving them time to observe before active participation.
+            // for the first time. Deterministic: uses `state.eligibleFacilitators` and
+            // `completedFacilitators` (both consensus-agreed).
             val previousEligibleSet = state.lastOutcome.eligibleOrFacilitators.toSet
             val currentEligibleSet = state.eligibleFacilitators.value.toSet
-            val newlyEligible = (currentEligibleSet -- previousEligibleSet).filterNot(signers.contains)
+            val newlyEligible = (currentEligibleSet -- previousEligibleSet).filterNot(completedFacilitators.contains)
             // Peers whose penalty just expired (countdown was 1, now 0) must go through
-            // deferral again before re-entering the facilitator set. This is the defensive
-            // liveness check: during deferral, the peer must be reachable for registration
-            // to succeed. No extra messages — reuses existing deferral mechanism.
+            // deferral again before re-entering the facilitator set.
             val justUnpenalized = previousPenalties.filter(_._2 == 1).keySet
             val needsDeferral = newlyEligible ++ justUnpenalized
             val previousDeferrals = state.lastOutcome.deferralCountdown
@@ -236,14 +270,11 @@ object GlobalSnapshotConsensusStateAdvancer {
 
             val thisRoundQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.from(
               state.facilitators.value.map { pid =>
-                val completed = if (signers.contains(pid)) 1 else 0
+                val completed = if (completedFacilitators.contains(pid)) 1 else 0
                 pid -> (completed, 1)
               }
             )
-            // Accumulate with previous rounds: merge (completed, participated) tuples.
-            // Apply deterministic decay when any counter exceeds the threshold to prevent unbounded growth.
-            // Halving preserves relative quality ordering while keeping counters bounded.
-            // After decay, prune entries where both counters are 0 (departed peers with no history).
+            // Accumulate with previous rounds; decay/prune as before.
             val rawAccumulated: SortedMap[PeerId, (Int, Int)] = {
               val previous = state.lastOutcome.peerQuality
               val allPeerIds = (previous.keySet.toList ::: thisRoundQuality.keySet.toList).distinct
@@ -259,6 +290,19 @@ object GlobalSnapshotConsensusStateAdvancer {
               else rawAccumulated
             val accumulatedQuality = decayed.filter { case (_, (c, p)) => c > 0 || p > 0 }
 
+            // Roll the proofs-size window forward using the consensus-agreed committee
+            // size for the completed round. Uses `completedFacilitators.size` (consensus
+            // agreed) instead of `f.signedMajorityArtifact.proofs.size` (locally observed).
+            val bootstrapLookbackOrdinals = 10L
+            val currentOrdValue = state.key.value.value
+            val minOrdinalValue = math.max(0L, currentOrdValue - bootstrapLookbackOrdinals)
+            val currentProofsSize: Int = completedFacilitators.size
+            val newRecentProofSizes: SortedMap[SnapshotOrdinal, Int] = {
+              val withCurrent =
+                state.lastOutcome.recentProofSizes.updated(state.key, currentProofsSize)
+              withCurrent.filter { case (ord, _) => ord.value.value >= minOrdinalValue }
+            }
+
             val outcome = GlobalConsensusOutcome(
               state.key,
               state.facilitators,
@@ -269,7 +313,8 @@ object GlobalSnapshotConsensusStateAdvancer {
               removalPenalties = finalPenalties,
               deferralCountdown = finalDeferrals,
               peerQuality = accumulatedQuality,
-              cumulativeMissCounts = newCumulative
+              cumulativeMissCounts = newCumulative,
+              recentProofSizes = newRecentProofSizes
             )
             (Previous(state.lastOutcome.key), outcome).some
           case _ =>
@@ -364,13 +409,32 @@ object GlobalSnapshotConsensusStateAdvancer {
               }
 
               result <- cleanFacilities.flatTraverse { facilities =>
-                // Update state to reflect eviction before proceeding to proposals
-                val evictedPeers = state.facilitators.value.filterNot(facilities.contains).toSet
+                // Only fork-evicted peers (those who declared a Facility with a divergent
+                // `facilitatorsHash`) accumulate into `state.removedFacilitators`. That set is
+                // consensus-agreed because every non-forked node sees the same declarations and
+                // computes the same minority via `identifyForkedPeers`.
+                //
+                // Peers simply missing from the local facility map (didn't declare in time to
+                // hit quorum on this node) are NOT evicted: that set is local-observation-
+                // dependent (a race between gossip arrival and the quorum threshold) and
+                // evicting based on it creates divergent `removedFacilitators` across nodes,
+                // which cascades into divergent `penalizedThisRound`, committee selection,
+                // and ultimately divergent signed outcomes. See ord-5-to-6 divergence
+                // analysis: fast finalizers ejected slow declarers differently than nodes
+                // that waited a few more milliseconds.
+                //
+                // Missing-declaration peers simply don't participate this round. They remain
+                // in `state.facilitators` for future rounds; stall-cycle abandonment + VCC
+                // view change handle liveness if they're persistently unresponsive.
+                val forkEvictedPeers: Set[PeerId] = maybeFacilities match {
+                  case Some(orig) => orig.keySet -- facilities.keySet
+                  case None       => Set.empty
+                }
                 val updatedState: GlobalSnapshotConsensusState =
-                  if (evictedPeers.nonEmpty)
+                  if (forkEvictedPeers.nonEmpty)
                     state.copy[GlobalSnapshotKey, GlobalSnapshotStatus, GlobalConsensusOutcome, GlobalConsensusKind](
-                      facilitators = Facilitators(state.facilitators.value.filter(facilities.contains)),
-                      removedFacilitators = RemovedFacilitators(state.removedFacilitators.value ++ evictedPeers)
+                      facilitators = Facilitators(state.facilitators.value.filter(pid => !forkEvictedPeers.contains(pid))),
+                      removedFacilitators = RemovedFacilitators(state.removedFacilitators.value ++ forkEvictedPeers)
                     )
                   else state
                 toProposalsPhase(updatedState, facilities)
@@ -410,7 +474,7 @@ object GlobalSnapshotConsensusStateAdvancer {
           _ <- syncMissingEvents(missingHashes, hashToPeers).whenA(missingHashes.nonEmpty)
 
           result <- buildProposalTransition(state, unionHashes, candidates, trigger)
-        } yield result.some
+        } yield result
       }
 
       /** Sync missing events from peers who have them.
@@ -477,7 +541,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         commonHashes: Set[Hash],
         candidates: Set[PeerId],
         majorityTrigger: ConsensusTrigger
-      ): F[Transition] =
+      ): F[Option[Transition]] =
         for {
           _ <- clearTimeTriggerIfNeeded(majorityTrigger)
           facilitatorsHash <- hashFacilitators(state)
@@ -572,23 +636,86 @@ object GlobalSnapshotConsensusStateAdvancer {
             Event.ProposalContextDigest,
             "detail" -> contextDigest(context)
           )
+
+          // Leader-side vote-lock safety: if we are locked on a prior QC hash and about to propose
+          // a different hash, abort and let the next view handle it. This prevents the leader from
+          // proposing a new hash while a previous-view proposal commitment still stands.
+          leaderLock <- consensusStorage.getVoteLock(state.key)
+          // For view > 0, fetch the VCC that was assembled by checkViewChangeAssembly. We embed it
+          // in the outgoing proposal so followers can validate the view transition end-to-end.
+          maybeAssembledVcc <-
+            if (state.viewNumber > 0) consensusStorage.getAssembledVcc(state.key) else none[ViewChangeCertificate].pure[F]
+          vccHighestQc = maybeAssembledVcc.flatMap(_.highestQcInVcc)
+          // Highest-QC carry-forward: if the VCC carries a QC, the leader MUST propose that hash.
+          // If our locally-built artifact hash differs, abort and let the next view retry.
+          vccMismatch = isLeader && state.viewNumber > 0 && vccHighestQc.exists(_.proposalHash =!= hash)
+          // Missing VCC at view > 0 is a race (VCC was cleared between assembly and proposal build).
+          vccMissing = isLeader && state.viewNumber > 0 && maybeAssembledVcc.isEmpty
+          aborted = (isLeader && leaderLock.flatMap(_.lockedQc).exists(_.proposalHash =!= hash)) || vccMismatch || vccMissing
+          _ <- ConsensusLog
+            .warn(
+              logger,
+              Category.Validation,
+              state.key.show,
+              role,
+              Event.WithdrawValidationFail,
+              "reason" -> "leader_locked_on_different_qc",
+              "lockedQcHash" -> leaderLock.flatMap(_.lockedQc).map(_.proposalHash.show.take(8)).getOrElse("none"),
+              "proposingHash" -> hash.show.take(8)
+            )
+            .whenA(isLeader && leaderLock.flatMap(_.lockedQc).exists(_.proposalHash =!= hash))
+          _ <- ConsensusLog
+            .warn(
+              logger,
+              Category.Validation,
+              state.key.show,
+              role,
+              Event.WithdrawValidationFail,
+              "reason" -> "vcc_highest_qc_mismatch",
+              "qcHash" -> vccHighestQc.map(_.proposalHash.show.take(8)).getOrElse("none"),
+              "proposingHash" -> hash.show.take(8),
+              "view" -> state.viewNumber.toString
+            )
+            .whenA(vccMismatch)
+          _ <- ConsensusLog
+            .warn(
+              logger,
+              Category.Validation,
+              state.key.show,
+              role,
+              Event.WithdrawValidationFail,
+              "reason" -> "vcc_missing_for_view_gt_0",
+              "view" -> state.viewNumber.toString
+            )
+            .whenA(vccMissing)
         } yield
-          Transition(
-            newState = state.copy(status =
-              CollectingProposals(
-                majorityTrigger,
-                ArtifactInfo(artifact, context, hash),
-                Candidates(candidates),
-                facilitatorsHash,
-                state.lastOutcome.finished.snapshotHash
-              )
-            ),
-            sideEffect =
-              if (isLeader)
-                spreadProposal(state, state.key, hash, facilitatorsHash, artifact, state.lastOutcome.finished.snapshotHash)
-              else
-                Applicative[F].unit
-          )
+          if (aborted) none[Transition]
+          else
+            Transition(
+              newState = state.copy(status =
+                CollectingProposals(
+                  majorityTrigger,
+                  ArtifactInfo(artifact, context, hash),
+                  Candidates(candidates),
+                  facilitatorsHash,
+                  state.lastOutcome.finished.snapshotHash
+                )
+              ),
+              sideEffect =
+                if (isLeader)
+                  spreadProposal(
+                    state,
+                    state.key,
+                    hash,
+                    facilitatorsHash,
+                    artifact,
+                    state.lastOutcome.finished.snapshotHash,
+                    state.viewNumber.toLong,
+                    maybeAssembledVcc
+                  )
+                else
+                  Applicative[F].unit
+            ).some
 
       // =========================================================================
       // COLLECTING PROPOSALS → COLLECTING SIGNATURES
@@ -650,25 +777,31 @@ object GlobalSnapshotConsensusStateAdvancer {
                   } yield result
                 case None =>
                   if (selfId === state.leader)
-                    // Leader (possibly after view change) — spread proposal so peers can advance
-                    ConsensusLog.info(
-                      logger,
-                      Category.Phase,
-                      state.key.show,
-                      "Leader",
-                      Event.ProposalRespread,
-                      "hash" -> status.proposalArtifactInfo.hash.show.take(8),
-                      "targets" -> state.facilitators.value.size.toString,
-                      "view" -> state.viewNumber.toString
-                    ) >>
-                      spreadProposal(
-                        state,
-                        state.key,
-                        status.proposalArtifactInfo.hash,
-                        status.facilitatorsHash,
-                        status.proposalArtifactInfo.artifact,
-                        status.lastSnapshotHash
-                      ).as(none[Transition])
+                    // Leader (possibly after view change) — spread proposal so peers can advance.
+                    // Include any assembled VCC for view > 0 so followers accept the re-spread.
+                    (if (state.viewNumber > 0) consensusStorage.getAssembledVcc(state.key)
+                     else none[ViewChangeCertificate].pure[F]).flatMap { maybeVcc =>
+                      ConsensusLog.info(
+                        logger,
+                        Category.Phase,
+                        state.key.show,
+                        "Leader",
+                        Event.ProposalRespread,
+                        "hash" -> status.proposalArtifactInfo.hash.show.take(8),
+                        "targets" -> state.facilitators.value.size.toString,
+                        "view" -> state.viewNumber.toString
+                      ) >>
+                        spreadProposal(
+                          state,
+                          state.key,
+                          status.proposalArtifactInfo.hash,
+                          status.facilitatorsHash,
+                          status.proposalArtifactInfo.artifact,
+                          status.lastSnapshotHash,
+                          state.viewNumber.toLong,
+                          maybeVcc
+                        ).as(none[Transition])
+                    }
                   else
                     none[Transition].pure[F]
               }
@@ -676,7 +809,94 @@ object GlobalSnapshotConsensusStateAdvancer {
           }
         }
 
+      /** Validate view/VCC invariants on an incoming proposal:
+        *   - view == 0 must NOT carry a VCC
+        *   - view > 0 MUST carry a VCC, with quorum-sized votes and matching facilitatorsHash
+        *   - if VCC carries a highest-QC, the proposal hash MUST equal that QC's proposal hash (highest-QC carry-forward: a leader at V+1
+        *     must re-propose the committed V hash if any voter saw it)
+        */
+      private def validateProposalVcc(
+        state: GlobalSnapshotConsensusState,
+        proposal: Proposal,
+        facilitatorsHash: Hash
+      ): Either[String, Unit] = {
+        val n = state.facilitators.value.size
+        val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+        if (proposal.view === 0L) {
+          if (proposal.vcc.nonEmpty) Left("view0_proposal_must_not_carry_vcc")
+          else Right(())
+        } else {
+          proposal.vcc match {
+            case None => Left(s"view${proposal.view}_proposal_missing_vcc")
+            case Some(vcc) if vcc.votes.size < q =>
+              Left(s"vcc_under_quorum votes=${vcc.votes.size} required=$q")
+            case Some(vcc) if vcc.facilitatorsHash =!= facilitatorsHash =>
+              Left(
+                s"vcc_facilitators_mismatch vccFacHash=${vcc.facilitatorsHash.show.take(8)} ours=${facilitatorsHash.show.take(8)}"
+              )
+            case Some(vcc) =>
+              vcc.highestQcInVcc match {
+                case Some(qc) if qc.proposalHash =!= proposal.hash =>
+                  Left(
+                    s"highest_qc_carry_forward_violation qcHash=${qc.proposalHash.show.take(8)} proposalHash=${proposal.hash.show.take(8)}"
+                  )
+                case _ => Right(())
+              }
+          }
+        }
+      }
+
+      /** Verify that every `Signed[ViewChangeVote]` inside the VCC has a valid cryptographic signature over the voter's actual payload.
+        * Protects against an adversarial leader constructing a VCC with fabricated/unsigned votes. Each vote must have exactly one
+        * signature proof (the voter's) that validates against the canonical-encoded `ViewChangeVote` bytes.
+        */
+      private def verifyVccSignatures(vcc: ViewChangeCertificate)(implicit hasher: Hasher[F]): F[Either[String, Unit]] =
+        vcc.votes.toNonEmptyList.traverse { signedVote =>
+          signedVote.hasValidSignature[F].map {
+            case true  => Right(()): Either[String, Unit]
+            case false => Left(signedVote.proofs.head.id.show.take(8))
+          }
+        }.map { results =>
+          val invalidPeers = results.toList.collect { case Left(pid) => pid }
+          if (invalidPeers.isEmpty) Right(())
+          else Left(s"vcc_invalid_signatures peers=${invalidPeers.mkString(",")}")
+        }
+
       private def resolveLeaderProposal(
+        state: GlobalSnapshotConsensusState,
+        status: CollectingProposals,
+        resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind],
+        leaderProposal: Proposal
+      )(implicit hasher: Hasher[F]): F[Option[Transition]] = {
+        val role = if (selfId === state.leader) "LEADER" else "FOLLOWER"
+        def logVccReject(reason: String): F[Option[Transition]] =
+          ConsensusLog
+            .warn(
+              logger,
+              Category.Validation,
+              state.key.show,
+              role,
+              Event.ValidationFailed,
+              "reason" -> s"vcc_validation: $reason",
+              "leader" -> ConsensusLog.pid(state.leader),
+              "view" -> state.viewNumber.toString
+            )
+            .as(none[Transition])
+        validateProposalVcc(state, leaderProposal, status.facilitatorsHash) match {
+          case Left(reason) => logVccReject(reason)
+          case Right(_) =>
+            leaderProposal.vcc match {
+              case Some(vcc) =>
+                verifyVccSignatures(vcc).flatMap {
+                  case Left(reason) => logVccReject(reason)
+                  case Right(_)     => resolveLeaderProposalInner(state, status, resources, leaderProposal)
+                }
+              case None => resolveLeaderProposalInner(state, status, resources, leaderProposal)
+            }
+        }
+      }
+
+      private def resolveLeaderProposalInner(
         state: GlobalSnapshotConsensusState,
         status: CollectingProposals,
         resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind],
@@ -707,7 +927,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               "view" -> state.viewNumber.toString
             ) >>
             Metrics[F].incrementCounter("dag_consensus_proposal_affinity_match") >>
-            buildSignatureTransition(state, status, status.proposalArtifactInfo, List(leaderProposal.hash)).map(_.some)
+            buildSignatureTransition(state, status, status.proposalArtifactInfo, List(leaderProposal.hash), leaderProposal.vcc)
         } else {
           // HotStuff-inspired leader adoption: when the facilitator set diverges (follower
           // joined with a different view than the leader), accept the leader's artifact
@@ -751,7 +971,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                       validateLeaderArtifact(state, status, leaderArtifact, leaderProposal.hash, leaderFacilitatorSet).flatMap {
                         case Right(leaderInfo) =>
                           Metrics[F].incrementCounter("dag_consensus_leader_adopted_on_mismatch") >>
-                            buildSignatureTransition(state, status, leaderInfo, List(leaderProposal.hash)).map(_.some)
+                            buildSignatureTransition(state, status, leaderInfo, List(leaderProposal.hash), leaderProposal.vcc)
                         case Left(_) =>
                           sp.restore >>
                             gossip.spread(
@@ -809,7 +1029,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                               "view" -> state.viewNumber.toString
                             ) >>
                               Metrics[F].incrementCounter("dag_consensus_proposal_affinity_mismatch_accepted") >>
-                              buildSignatureTransition(state, status, leaderInfo, List(leaderProposal.hash)).map(_.some)
+                              buildSignatureTransition(state, status, leaderInfo, List(leaderProposal.hash), leaderProposal.vcc)
                           case Left(invalidArtifact) =>
                             // Validation failed — restore MptStore to pre-validation state
                             val diffDetail = describeInvalidArtifact(invalidArtifact)
@@ -1118,27 +1338,87 @@ object GlobalSnapshotConsensusStateAdvancer {
         state: GlobalSnapshotConsensusState,
         status: CollectingProposals,
         majorityInfo: ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext],
-        proposalHashes: List[Hash]
-      )(implicit hasher: Hasher[F]): F[Transition] =
+        proposalHashes: List[Hash],
+        leaderVcc: Option[ViewChangeCertificate] = None
+      )(implicit hasher: Hasher[F]): F[Option[Transition]] =
         for {
           facilitatorsHash <- state.facilitators.value.hash
-          signature <- Signature.fromHash(keyPair.getPrivate, majorityInfo.hash)
-          _ <- recordProposalAffinity(proposalHashes, status.proposalArtifactInfo.hash)
-          // Round succeeded — discard the proposal savepoint so it won't be restored on the next ordinal
-          _ <- proposalSavepointRef.set(none)
-        } yield
-          Transition(
-            newState = state.copy(status =
-              CollectingSignatures(
-                majorityInfo,
-                status.majorityTrigger,
-                status.candidates,
-                facilitatorsHash,
-                state.lastOutcome.finished.snapshotHash
-              )
-            ),
-            sideEffect = spreadSignature(state, state.key, signature, facilitatorsHash, state.lastOutcome.finished.snapshotHash)
+          view = state.viewNumber.toLong
+          localLock <- consensusStorage.getVoteLock(state.key)
+          effectiveLockedQc = VoteLock.maxByView(
+            localLock.flatMap(_.lockedQc),
+            leaderVcc.flatMap(_.highestQcInVcc)
           )
+          tryLock <- consensusStorage.tryLockVote(state.key, view, majorityInfo.hash, effectiveLockedQc)
+          result <- tryLock match {
+            case Left(reason) =>
+              ConsensusLog
+                .warn(
+                  logger,
+                  Category.Validation,
+                  state.key.show,
+                  "n/a",
+                  Event.WithdrawValidationFail,
+                  "reason" -> s"vote_lock_rejected: $reason",
+                  "view" -> view.toString,
+                  "hash" -> majorityInfo.hash.show.take(8)
+                )
+                .as(none[Transition])
+            case Right(_) =>
+              for {
+                // Sign the proposal artifact hash directly. The Signed[artifact] downstream expects proofs to
+                // verify against the artifact hash (not a domain-widened canonical byte sequence); widening
+                // breaks toFinishedPhase -> verifySignatureProof(hash, proof). Safety against double-signing
+                // is enforced at the VoteLock gate above (tryLockVote), which already rejects a second vote
+                // at the same (key, view) for a different hash.
+                signature <- Signature.fromHash(keyPair.getPrivate, majorityInfo.hash)
+                _ <- recordProposalAffinity(proposalHashes, status.proposalArtifactInfo.hash)
+                // Round succeeded — discard the proposal savepoint so it won't be restored on the next ordinal
+                _ <- proposalSavepointRef.set(none)
+              } yield
+                Transition(
+                  newState = state.copy(status =
+                    CollectingSignatures(
+                      majorityInfo,
+                      status.majorityTrigger,
+                      status.candidates,
+                      facilitatorsHash,
+                      state.lastOutcome.finished.snapshotHash
+                    )
+                  ),
+                  sideEffect = spreadSignature(
+                    state,
+                    state.key,
+                    signature,
+                    facilitatorsHash,
+                    state.lastOutcome.finished.snapshotHash,
+                    view,
+                    majorityInfo.hash
+                  )
+                ).some
+          }
+        } yield result
+
+      /** Canonical byte encoding of the signing domain for MajoritySignature: `(key, view, proposalHash, facilitatorsHash)`. Deterministic
+        * across nodes so that any node holding a gossiped MajoritySignature can verify the signer.
+        */
+      private def canonicalSignBytes(
+        key: GlobalSnapshotKey,
+        view: Long,
+        proposalHash: Hash,
+        facilitatorsHash: Hash
+      ): Array[Byte] = {
+        val sb = new StringBuilder(128)
+        sb.append("MS|")
+          .append(key.show)
+          .append('|')
+          .append(view)
+          .append('|')
+          .append(proposalHash.value)
+          .append('|')
+          .append(facilitatorsHash.value)
+        sb.toString.getBytes("UTF-8")
+      }
 
       // =========================================================================
       // COLLECTING SIGNATURES → FINISHED
@@ -1298,9 +1578,11 @@ object GlobalSnapshotConsensusStateAdvancer {
         hash: Hash,
         facilitatorsHash: Hash,
         artifact: GlobalSnapshotArtifact,
-        lastSnapshotHash: Hash
+        lastSnapshotHash: Hash,
+        view: Long = 0L,
+        vcc: Option[ViewChangeCertificate] = None
       ): F[Unit] = {
-        val declaration = ConsensusPeerDeclaration(key, Proposal(hash, facilitatorsHash, lastSnapshotHash))
+        val declaration = ConsensusPeerDeclaration(key, Proposal(hash, facilitatorsHash, lastSnapshotHash, view, vcc))
         val targets = state.facilitators.value.toSet
 
         gossip.spreadDirect(declaration, targets) >>
@@ -1312,9 +1594,12 @@ object GlobalSnapshotConsensusStateAdvancer {
         key: GlobalSnapshotKey,
         signature: Signature,
         facilitatorsHash: Hash,
-        lastSnapshotHash: Hash
+        lastSnapshotHash: Hash,
+        view: Long,
+        proposalHash: Hash
       ): F[Unit] = {
-        val declaration = ConsensusPeerDeclaration(key, MajoritySignature(signature, facilitatorsHash, lastSnapshotHash))
+        val declaration =
+          ConsensusPeerDeclaration(key, MajoritySignature(signature, facilitatorsHash, lastSnapshotHash, view, proposalHash))
         gossip.spreadDirect(declaration, state.facilitators.value.toSet)
       }
 

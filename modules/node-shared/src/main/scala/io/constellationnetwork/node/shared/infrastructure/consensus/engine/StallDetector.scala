@@ -12,10 +12,8 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLo
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{PeerId, PeerResponsiveness, Unresponsive}
-import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
-import monocle.Lens
 
 /** Monitors a consensus round for stalls and manages recovery.
   *
@@ -45,7 +43,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
   viewChangeManager: ViewChangeManager[F, Key, Status, Outcome, Kind],
   abandonmentTracker: AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   healthRef: Ref[F, ConsensusHealthStatus]
-)(implicit outcomeArtifact: Lens[Outcome, Signed[Artifact]]) {
+) {
 
   import ctx.{clusterStorage, config, logger, ops, peerQualityTracker, queue, selfId, storage}
 
@@ -60,18 +58,36 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     noChangeCount: Int,
     stallCount: Int,
     lastSummaryTime: FiniteDuration,
-    lastScoreLogTime: FiniteDuration
+    lastScoreLogTime: FiniteDuration,
+    // Bounded Facility retransmit counter: incremented each time we re-broadcast our own stored
+    // Facility during a CollectingFacilities stall. Capped by MaxFacilityRetransmits to avoid spam
+    // when the round is genuinely stuck. Sender-side mitigation for gossip delivery asymmetry —
+    // peers that missed our original Facility via plain `spread` get it via direct push on retry.
+    retransmitCount: Int = 0
   )
 
   private val basePollInterval = 100L
   private val maxPollInterval = 1000L
+
+  /** Hard cap on stored-Facility retransmits per round. Three retransmits * declarationTimeout is enough for real gossip delivery jitter to
+    * resolve; beyond that, the round is likely stuck on issues other than facility-delivery (genuinely-absent peers, network partition,
+    * etc.).
+    */
+  private val MaxFacilityRetransmits: Int = 3
+
+  /** Minimum round-elapsed time before an EARLY_VIEW_CHANGE may fire on an Unresponsive leader. Guards against the interaction between
+    * eager Unresponsive marking in LocalHealthcheck (set on the first failed gossip probe, well before the healthcheck can confirm) and the
+    * proposal-phase leader-liveness check here. 5 seconds is long enough for healthcheck to either confirm genuinely-unresponsive leaders
+    * or clear false positives from transient bootstrap gossip failures, and short enough that a truly dead leader still triggers view
+    * change within the normal declarationTimeout window.
+    */
+  private val EarlyViewChangeMinRoundElapsed: FiniteDuration = 5.seconds
 
   private case class ResourcesInfo(hash: Int, declaredCount: Int, activeCount: Int, missingPeerIds: Set[String], missingPeers: Set[PeerId])
 
   def monitor(key: Key, cancelSignal: Deferred[F, Unit]): F[Unit] =
     for {
       now <- Async[F].monotonic
-      _ <- viewChangeManager.resetSkippedEvictions
       _ <- Async[F].race(
         cancelSignal.get,
         Async[F].tailRecM(
@@ -83,7 +99,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
             noChangeCount = 0,
             stallCount = 0,
             lastSummaryTime = now,
-            lastScoreLogTime = now
+            lastScoreLogTime = now,
+            retransmitCount = 0
           )
         )(monitorStep(key, _))
       )
@@ -131,8 +148,19 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       effectiveTimeout <- calculateTimeout(ms.stallCount, info, state)
 
       // --- Early view change for unresponsive leader ---
+      // Gate on a minimum round-elapsed window so a stale Unresponsive flag carried
+      // over from bootstrap gossip failures (now eagerly set by LocalHealthcheck) does
+      // not trigger an instant view change before the leader has had any real chance
+      // to respond. Without this, a healthy leader that happened to miss a single
+      // gossip probe 100ms earlier can be demoted before its declarations arrive —
+      // observed in fork-recovery E2E at 508ms after round start. With this gate, the
+      // healthcheck recovery has time to clear false positives before the check fires.
+      roundElapsedForViewChange = now - ms.roundStartTime
       leaderUnresponsive <- isLeaderUnresponsive(state.leader)
-      earlyViewChange = leaderUnresponsive && ops.isProposalPhase(state.status) && ms.stallCount == 0
+      earlyViewChange = leaderUnresponsive &&
+        ops.isProposalPhase(state.status) &&
+        ms.stallCount == 0 &&
+        roundElapsedForViewChange >= EarlyViewChangeMinRoundElapsed
       _ <- (
         ConsensusLog.warn(
           logger,
@@ -141,7 +169,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
           selfRole(state),
           LogEvent.EarlyViewChange,
           "leader" -> ConsensusLog.pid(state.leader),
-          "reason" -> "leader_unresponsive"
+          "reason" -> "leader_unresponsive",
+          "roundElapsedMs" -> roundElapsedForViewChange.toMillis.toString
         ) >>
           viewChangeManager.performViewChange(key, state)
       ).whenA(earlyViewChange)
@@ -165,6 +194,30 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       didStall = stallResult.didStall
       adjustedStatusStartTime = if (didStall) now else newStatusStartTime
       finalStallCount = if (didStall) newStallCount + 1 else newStallCount
+
+      // Bounded sender-side retransmit of our own Facility when stalled in CollectingFacilities.
+      // Gated to:
+      //   - this cycle actually triggered a stall (didStall),
+      //   - CollectingFacilities phase (phase index 0),
+      //   - quorum still feasible (don't waste push bandwidth if round is doomed),
+      //   - self is an active (non-withdrawn) facilitator for this round,
+      //   - haven't passed the retransmit cap for this round,
+      //   - local progress is still below the facilitator count (otherwise phase would advance).
+      // The retransmit reads the stored self-Facility and re-sends it via the same direct-push
+      // path used for Proposal/Signature. It does NOT rebuild the declaration — no recomputation
+      // drift, preserves the original `eventHashes`/`candidates`/`trigger`.
+      isFacilitiesPhase = ops.phaseIndex(state.status) == 0
+      selfIsActiveFacilitator = state.facilitators.value.contains(ctx.selfId) &&
+        !state.withdrawnFacilitators.value.contains(ctx.selfId)
+      belowCap = ms.retransmitCount < MaxFacilityRetransmits
+      needsMore = info.declaredCount < info.activeCount
+      shouldRetransmit = didStall && isFacilitiesPhase && !stallResult.quorumInfeasible &&
+        selfIsActiveFacilitator && belowCap && needsMore
+      activeFacilitatorTargets = state.facilitators.value.toSet -- state.withdrawnFacilitators.value - ctx.selfId
+      _ <- ctx.creator
+        .retransmitOwnFacility(key, activeFacilitatorTargets)
+        .whenA(shouldRetransmit && activeFacilitatorTargets.nonEmpty)
+      newRetransmitCount = if (shouldRetransmit && activeFacilitatorTargets.nonEmpty) ms.retransmitCount + 1 else ms.retransmitCount
 
       _ <- Metrics[F].updateGauge("dag_consensus_stall_cycle", finalStallCount)
 
@@ -223,11 +276,6 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // When eviction would breach quorum, it skips the eviction and propagates quorumInfeasible=true.
       quorumInfeasible = stallResult.quorumInfeasible
 
-      // --- View change loop escalation check ---
-      // If repeated eviction attempts are skipped (below minimum facilitators), the view change
-      // loop is cycling view numbers without progress. Escalate to abandonment.
-      evictionLoopStuck <- viewChangeManager.shouldEscalateToAbandon
-
       // --- Round timeout / abandon check ---
       roundElapsed = now - ms.roundStartTime
       _ <- Metrics[F].updateGauge("dag_consensus_round_elapsed_seconds", roundElapsed.toSeconds.toInt)
@@ -237,13 +285,12 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // give up. Without this, solo-eviction fires on the same cycle as maxStallCycles
       // abandonment, wasting the eviction.
       stallCycleExceeded = finalStallCount >= config.maxStallCycles && !stallResult.evictionEscalated
-      shouldAbandon = stallCycleExceeded || roundTimedOut || quorumInfeasible || isLagging || evictionLoopStuck
+      shouldAbandon = stallCycleExceeded || roundTimedOut || quorumInfeasible || isLagging
 
       abandonReason: AbandonReason =
         if (isLagging) AbandonReason.Lagging(peersAtHigherKey, totalRegisteredPeers, totalAllRegs)
         else if (quorumInfeasible)
           AbandonReason.QuorumInfeasible(stallResult.activeFacilitators, stallResult.quorumSize, stallResult.clusterSize)
-        else if (evictionLoopStuck) AbandonReason.EvictionLoopStuck
         else if (roundTimedOut) AbandonReason.RoundTimeout(roundElapsed.toSeconds, config.maxRoundDuration.map(_.toSeconds))
         else AbandonReason.MaxStalls(finalStallCount)
 
@@ -329,7 +376,12 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
             // bumps to 4, and abandons — the suppression only bought one cycle.
             stallCount = if (stallResult.evictionEscalated) 0 else finalStallCount,
             lastSummaryTime = newSummaryTime,
-            lastScoreLogTime = newScoreLogTime
+            lastScoreLogTime = newScoreLogTime,
+            // Reset on status change so re-entering CollectingFacilities (e.g., after a view change
+            // that re-advances into the same phase) starts retransmit budgeting over. Without this,
+            // a round that went through a view-change detour could exhaust the cap before the fresh
+            // phase gets any retransmit attempts.
+            retransmitCount = if (statusChanged || stallResult.evictionEscalated) 0 else newRetransmitCount
           )
         )
 
@@ -341,7 +393,17 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     state: ConsensusState[Key, Status, Outcome, Kind]
   ): F[FiniteDuration] =
     for {
-      declarationTimeout <- getCurrentDeclarationTimeout
+      baseDeclarationTimeout <- getCurrentDeclarationTimeout
+      // Phase 4: during bootstrap, fresh-start peers need extra headroom before StallDetector
+      // fires view change or eviction. Post-bootstrap, we want tighter liveness. The bootstrap
+      // classification is consensus-agreed (derived from `recentProofSizes`, a chain-consensus
+      // field in the outcome), so all nodes apply the same multiplier deterministically.
+      bootstrapActive = ctx.advancer.isBootstrapActive(state.lastOutcome)
+      declarationTimeout =
+        if (bootstrapActive)
+          FiniteDuration((baseDeclarationTimeout.toMillis * config.bootstrapDeclarationTimeoutMultiplier).toLong, MILLISECONDS)
+        else
+          baseDeclarationTimeout
       // noProgressTimeout only applies in facilities phase (phase index 0) where no declarations at all
       // means peers haven't started. In other phases (proposals, signatures), the standard phase timeout
       // should apply — e.g., in proposals phase the leader may be creating a complex artifact.
@@ -472,52 +534,97 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
           } else if (quorumInfeasible) {
             // Quorum unreachable (>1/3 missing) — last resort: evict missing peers to restore quorum.
             // This is the ONLY path that performs mid-round eviction.
-            logger.warn(
-              ConsensusLog.format(
-                Category.Stall,
-                key.toString,
-                selfRole(state),
-                LogEvent.StallDetected,
-                "phase" -> statusName,
-                "elapsed" -> s"${statusDuration.toSeconds}s",
-                "progress" -> s"$declaredCount/$activeCount",
-                "evicted" -> missingPeers.size.toString,
-                "remaining" -> remaining.toString,
-                "minQuorum" -> minQuorum.toString,
-                "quorumFeasible" -> "false",
-                "evictedPeers" -> ConsensusLog.pids(missingPeers),
-                "view" -> state.viewNumber.toString,
-                "stallCount" -> stallCount.toString,
-                "reason" -> "QUORUM_INFEASIBLE_EVICTION"
-              )
-            ) >>
-              Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>
-              Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >> {
-                // canEscalateSolo: bootstrap-only gate for solo-eviction. True only if this node
-                // has NOT yet completed a multi-signer round. Once we've signed with other peers,
-                // solo is permanently disallowed — prevents community peers from creating
-                // divergent chains like the Apr 16 testnet 03a24df6 fork.
-                val lastSignerCount = outcomeArtifact.get(state.lastOutcome).proofs.size
-                val canEscalateSolo = lastSignerCount <= 1
-                viewChangeManager
-                  .performViewChangeWithEviction(key, state, missingPeers, canEscalateSolo)
-                  .map { escalated =>
-                    // After eviction, the facilitator set shrinks to `remaining` peers who
-                    // have all declared — quorum becomes reachable next cycle. Do NOT set
-                    // quorumInfeasible=true here, otherwise the round is abandoned in the
-                    // same cycle and the eviction is wasted.
-                    // When escalated=true (solo-eviction fired), propagate to the outer
-                    // monitor so it suppresses the maxStallCycles abandonment check.
-                    StallResult(
-                      didStall = true,
-                      quorumInfeasible = false,
-                      activeFacilitators = remaining,
-                      quorumSize = minQuorum,
-                      clusterSize = clusterSize,
-                      evictionEscalated = escalated
-                    )
+            //
+            // IMPORTANT gate: only evict peers that are ALSO Unresponsive in cluster storage.
+            // A peer whose Facility declaration is just slow to arrive at THIS node (gossip jitter,
+            // bootstrap stagger) but who is still gossiping and Responsive in clusterStorage is NOT
+            // genuinely missing — they'll declare soon. Evicting them splits the cluster:
+            // each node's `missingPeers` set reflects local receive timing, not cluster-wide
+            // liveness. Different nodes evict different peers → divergent committees
+            // (observed Apr 18 E2E: gl0-0/1/3 evicted gl0-2/4 at round 14 while gl0-2/4 evicted
+            // the other three, producing a permanent 3-vs-2 split).
+            //
+            // Cluster storage responsiveness is the authoritative signal: Unresponsive = failed
+            // gossip probes over a bounded window, NOT a single late declaration.
+            clusterStorage.getResponsivePeers.flatMap { responsivePeersForEviction =>
+              val responsiveIds = responsivePeersForEviction.map(_.id).toSet
+              val unresponsiveMissing = missingPeers.filterNot(responsiveIds.contains)
+              // Bounded patience: skip eviction while missing peers are still Responsive in
+              // cluster storage BUT only for a limited number of stall cycles. After that,
+              // missing declarations despite waiting long enough means the peer is effectively
+              // unreachable FROM THIS NODE — we must allow eviction to preserve liveness.
+              //
+              // Observed Apr 18: with an unbounded gate, a 3-of-5 surviving group froze at ord 13
+              // forever because supermajority requires 4 signers and 2 peers had stopped
+              // declaring, yet clusterStorage still reported them Responsive. Trading deadlock
+              // for fork was the wrong tradeoff. 3 stall cycles (~90-120s of actual wait) is
+              // long enough that a genuinely reachable peer would have sent its declaration.
+              val EvictionSkipMaxStalls = 3
+              val bootstrapAllowsSkip = stallCount < EvictionSkipMaxStalls
+              if (unresponsiveMissing.isEmpty && bootstrapAllowsSkip) {
+                // All missing peers are still Responsive — their declarations haven't arrived at
+                // this node yet but they're alive. Wait another cycle rather than split.
+                ConsensusLog.info(
+                  logger,
+                  Category.Stall,
+                  key.toString,
+                  selfRole(state),
+                  LogEvent.StallDetected,
+                  "phase" -> statusName,
+                  "elapsed" -> s"${statusDuration.toSeconds}s",
+                  "progress" -> s"$declaredCount/$activeCount",
+                  "missing" -> missingPeers.size.toString,
+                  "missingPeers" -> ConsensusLog.pids(missingPeers),
+                  "view" -> state.viewNumber.toString,
+                  "stallCount" -> stallCount.toString,
+                  "reason" -> "WAITING_MISSING_STILL_RESPONSIVE",
+                  "action" -> "skipping eviction — all missing peers still gossiping"
+                ) >>
+                  Metrics[F].incrementCounter("dag_consensus_eviction_skipped_still_responsive") >>
+                  Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
+                  StallResult(didStall = true, quorumInfeasible = false).pure[F]
+              } else {
+                logger.warn(
+                  ConsensusLog.format(
+                    Category.Stall,
+                    key.toString,
+                    selfRole(state),
+                    LogEvent.StallDetected,
+                    "phase" -> statusName,
+                    "elapsed" -> s"${statusDuration.toSeconds}s",
+                    "progress" -> s"$declaredCount/$activeCount",
+                    "evicted" -> missingPeers.size.toString,
+                    "remaining" -> remaining.toString,
+                    "minQuorum" -> minQuorum.toString,
+                    "quorumFeasible" -> "false",
+                    "evictedPeers" -> ConsensusLog.pids(missingPeers),
+                    "unresponsiveMissing" -> ConsensusLog.pids(unresponsiveMissing),
+                    "view" -> state.viewNumber.toString,
+                    "stallCount" -> stallCount.toString,
+                    "reason" -> "QUORUM_INFEASIBLE_EVICTION"
+                  )
+                ) >>
+                  Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>
+                  Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >> {
+                    // Phase 2+: no mid-round eviction. View change here is leader-rotation
+                    // only (gossip a VCV, wait for quorum-certified VCC to advance the view).
+                    // If the round can't complete due to genuinely-unresponsive peers, the
+                    // stall-cycle abandonment path in the outer monitor takes over.
+                    viewChangeManager
+                      .performViewChange(key, state)
+                      .as(
+                        StallResult(
+                          didStall = true,
+                          quorumInfeasible = false,
+                          activeFacilitators = remaining,
+                          quorumSize = minQuorum,
+                          clusterSize = clusterSize,
+                          evictionEscalated = false
+                        )
+                      )
                   }
               }
+            }
           } else {
             // Normal stall with quorum still feasible — just count the cycle.
             // The round will complete at quorum threshold (ceil(N*2/3)) without

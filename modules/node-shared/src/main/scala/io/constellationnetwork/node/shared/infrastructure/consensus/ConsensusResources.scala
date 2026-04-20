@@ -6,8 +6,10 @@ import cats.syntax.all._
 
 import scala.concurrent.duration.FiniteDuration
 
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{ProposalQC, ViewChangeVote}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.signature.Signed
 
 import derevo.cats.{eqv, show}
 import derevo.derive
@@ -21,7 +23,9 @@ case class ConsensusResources[A, Kind](
   withdrawalsMap: Map[PeerId, Kind],
   ackKinds: Set[Kind],
   artifacts: Map[Hash, A],
-  updatedAt: FiniteDuration
+  updatedAt: FiniteDuration,
+  viewChangeVotes: Map[(Long, Long), Map[PeerId, Signed[ViewChangeVote]]] = Map.empty,
+  proposalQcs: Map[(Long, Hash), ProposalQC] = Map.empty
 )
 
 object ConsensusResources {
@@ -33,7 +37,9 @@ object ConsensusResources {
       Map.empty[PeerId, Kind],
       Set.empty[Kind],
       Map.empty[Hash, A],
-      time
+      time,
+      Map.empty[(Long, Long), Map[PeerId, Signed[ViewChangeVote]]],
+      Map.empty[(Long, Hash), ProposalQC]
     )
   } yield consensusResources
 }
