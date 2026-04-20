@@ -53,6 +53,54 @@ case class ObserveDeadlineExceeded(currentOrdinal: SnapshotOrdinal, targetOrdina
     with NoStackTrace
 
 object Download {
+
+  /** Per-Ready-peer advertised tip. */
+  private[snapshot] final case class PeerTip(ordinal: SnapshotOrdinal, hash: Hash)
+
+  /** Minimum number of Ready peer responses required before trusting a caught-up shortcut. Two responding peers is the floor — a single
+    * responder can be a lying / stale adversary, two independent responses that must ALSO agree make the check resistant to a single
+    * misbehaving or partitioned node. Matches the "present.size >= 2" floor used in ForkRecoveryDetector for similar cross-peer reasoning.
+    */
+  private[snapshot] val minReadyQuorum: Int = 2
+
+  /** Decide the observe-loop target ordinal.
+    *
+    * Default behavior: require observing `currentOrdinal + observationOffset` (i.e. one newer snapshot) before exiting observe. This is the
+    * safe catch-up path used whenever peers are ahead of us OR the evidence from peers is inconclusive.
+    *
+    * Shortcut: when the cluster is at a stable tip and we're already caught up, there will never BE a newer snapshot to observe, so the
+    * default path would loop forever. In that case we set the target to `currentOrdinal` so `observeWithLimit` returns immediately and the
+    * downstream `initFromDownload -> WaitingForReady -> Ready` flow can begin.
+    *
+    * Shortcut is taken iff ALL hold:
+    *   1. At least `minReadyQuorum` Ready peers responded with a (ordinal, hash) tip. 2. A strict majority (> N/2 of responders) agree on
+    *      the same (ordinal, hash) pair. 3. The majority ordinal is ≤ our local ordinal. 4. If the majority ordinal equals our local
+    *      ordinal, the majority hash equals our local hash (prevents a running-fork scenario where peers are "at our ordinal" but on a
+    *      different chain).
+    *
+    * Data source for peer tips: `SnapshotRoutes:/global-snapshots/latest/metadata`, which is `whenNodeReady`-gated on the responder — a
+    * response is evidence the responder is actually in `NodeState.Ready`.
+    */
+  private[snapshot] def chooseObservationLimit(
+    currentOrdinal: SnapshotOrdinal,
+    currentHash: Hash,
+    readyPeerTips: List[PeerTip],
+    observationOffset: NonNegLong
+  ): SnapshotOrdinal = {
+    val fallback = SnapshotOrdinal(currentOrdinal.value |+| observationOffset)
+    if (readyPeerTips.size < minReadyQuorum) fallback
+    else {
+      val grouped = readyPeerTips.groupBy(t => (t.ordinal, t.hash))
+      val ((majorityOrdinal, majorityHash), majorityGroup) = grouped.maxBy(_._2.size)
+      val hasStrictMajority = majorityGroup.size > readyPeerTips.size / 2
+      val majorityAtOrBehindUs = majorityOrdinal <= currentOrdinal
+      val hashAgreesWhenMajorityAtOurTip =
+        majorityOrdinal =!= currentOrdinal || majorityHash === currentHash
+      if (hasStrictMajority && majorityAtOrBehindUs && hashAgreesWhenMajorityAtOurTip) currentOrdinal
+      else fallback
+    }
+  }
+
   def make[F[_]: Async: Parallel: Random: KryoSerializer: JsonSerializer: Metrics](
     snapshotStorage: SnapshotDownloadStorage[F],
     p2pClient: P2PClient[F],
@@ -397,8 +445,44 @@ object Download {
 
     def observe(result: DownloadResult)(implicit hasherSelector: HasherSelector[F]): F[(DownloadResult, ObservationLimit)] = {
       val (lastSnapshot, _) = result
-      val observationLimit = SnapshotOrdinal(lastSnapshot.ordinal.value |+| observationOffset)
-      observeWithLimit(result, observationLimit)
+      val perPeerTimeout: FiniteDuration = 3.seconds
+
+      // Query every responsive Ready peer's `/global-snapshots/latest/metadata` in parallel.
+      // Per-peer timeout caps the total observe() latency — a single slow or half-partitioned
+      // Ready peer cannot block the shortcut decision indefinitely. A peer that errors or
+      // times out simply does not vote; the quorum check still requires `minReadyQuorum`
+      // agreeing responders so sparse responses fall through to the safe default.
+      def getReadyPeerTips: F[List[PeerTip]] =
+        clusterStorage.getResponsivePeers
+          .map(NodeState.ready)
+          .map(_.toList)
+          .flatMap(
+            _.parTraverse(peer =>
+              Async[F]
+                .timeout(p2pClient.globalSnapshot.getLatestMetadata.run(peer), perPeerTimeout)
+                .map(m => PeerTip(m.ordinal, m.hash).some)
+                .handleErrorWith(err =>
+                  logger
+                    .warn(err)(s"[Download] Unable to fetch latest metadata from ready peer ${peer.show}")
+                    .as(none[PeerTip])
+                )
+            )
+          )
+          .map(_.flatten)
+
+      for {
+        hashed <- hasherSelector.withCurrent(implicit h => lastSnapshot.toHashed)
+        readyPeerTips <- getReadyPeerTips
+        observationLimit = chooseObservationLimit(hashed.ordinal, hashed.hash, readyPeerTips, observationOffset)
+        isShortcut = observationLimit === hashed.ordinal && readyPeerTips.size >= minReadyQuorum
+        _ <- Applicative[F].whenA(isShortcut)(
+          logger.warn(
+            s"[Download] Caught-up shortcut: local=${hashed.ordinal.show} hash=${hashed.hash.value.take(8)}, " +
+              s"majority of ${readyPeerTips.size} Ready peers at or behind; skipping next-snapshot observe"
+          )
+        )
+        out <- observeWithLimit(result, observationLimit)
+      } yield out
     }
 
     def fetchNextSnapshot(result: DownloadResult)(implicit hasherSelector: HasherSelector[F]): F[DownloadResult] = {
