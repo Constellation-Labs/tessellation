@@ -356,8 +356,17 @@ object CurrencySnapshotConsensusStateCreator {
           _ <- gossip.spreadDirect(declaration, active.toSet)
         } yield ()
 
-        // Quality-weighted leader selection using consensus-agreed integer quality scores
-        leader = facilitatorSelector.selectLeaderWeighted(active, entropy, qualityScores = lastOutcome.peerQuality, qualityWeight = 0.3)
+        // Quality-weighted leader selection using consensus-agreed integer quality scores.
+        // Graduation filter: restrict leader pool to peers with `participated >=
+        // minParticipationObservations`. Prevents handing the leader slot to peers with
+        // no history (who would default to tier=0 inside the selector and tie with
+        // proven peers). See GlobalSnapshotConsensusStateCreator for the full rationale.
+        graduatedLeaderPool = active.filter { pid =>
+          val (_, participated) = lastOutcome.peerQuality.getOrElse(pid, (0, 0))
+          participated >= config.minParticipationObservations
+        }
+        leaderPool = if (graduatedLeaderPool.nonEmpty) graduatedLeaderPool else active
+        leader = facilitatorSelector.selectLeaderWeighted(leaderPool, entropy, qualityScores = lastOutcome.peerQuality)
 
         _ <- ConsensusLog.info(
           logger,
