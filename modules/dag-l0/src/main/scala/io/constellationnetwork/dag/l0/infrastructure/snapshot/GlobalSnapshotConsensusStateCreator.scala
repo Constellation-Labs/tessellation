@@ -406,14 +406,20 @@ object GlobalSnapshotConsensusStateCreator {
         // community peers that often cannot fulfill the proposer role (forces a view
         // change that burns ~2 min of round time). Source nodes accumulate history
         // quickly and always qualify; fresh community entrants must demonstrate they
-        // can complete rounds as facilitator before they can lead. When no peer meets
-        // the threshold (genesis / cold start), fall back to `active` — same as the
-        // pre-filter behavior, self-healing once rounds start Finishing.
+        // can complete rounds as facilitator before they can lead.
+        //
+        // The graduated pool must contain at least 2 peers for view rotation to be
+        // meaningful — with a single peer, `viewNumber % 1 = 0` always returns the
+        // same leader, making view change a no-op and deadlocking the cluster if the
+        // sole graduated peer ever stalls. At genesis / cold start (nobody has
+        // enough history yet), OR in a solo-bootstrap tail (only one peer graduated),
+        // fall back to `active` — same as the pre-filter behavior, self-healing once
+        // more peers reach the threshold.
         graduatedLeaderPool = active.filter { pid =>
           val (_, participated) = lastOutcome.peerQuality.getOrElse(pid, (0, 0))
           participated >= config.minParticipationObservations
         }
-        leaderPool = if (graduatedLeaderPool.nonEmpty) graduatedLeaderPool else active
+        leaderPool = if (graduatedLeaderPool.size >= 2) graduatedLeaderPool else active
         leader = facilitatorSelector.selectLeaderWeighted(leaderPool, entropy, qualityScores = lastOutcome.peerQuality)
 
         _ <- ConsensusLog.info(

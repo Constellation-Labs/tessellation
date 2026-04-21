@@ -358,14 +358,14 @@ object CurrencySnapshotConsensusStateCreator {
 
         // Quality-weighted leader selection using consensus-agreed integer quality scores.
         // Graduation filter: restrict leader pool to peers with `participated >=
-        // minParticipationObservations`. Prevents handing the leader slot to peers with
-        // no history (who would default to tier=0 inside the selector and tie with
-        // proven peers). See GlobalSnapshotConsensusStateCreator for the full rationale.
+        // minParticipationObservations`, but require at least 2 graduated peers so
+        // view rotation can actually rotate. See GlobalSnapshotConsensusStateCreator
+        // for the full rationale.
         graduatedLeaderPool = active.filter { pid =>
           val (_, participated) = lastOutcome.peerQuality.getOrElse(pid, (0, 0))
           participated >= config.minParticipationObservations
         }
-        leaderPool = if (graduatedLeaderPool.nonEmpty) graduatedLeaderPool else active
+        leaderPool = if (graduatedLeaderPool.size >= 2) graduatedLeaderPool else active
         leader = facilitatorSelector.selectLeaderWeighted(leaderPool, entropy, qualityScores = lastOutcome.peerQuality)
 
         _ <- ConsensusLog.info(

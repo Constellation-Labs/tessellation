@@ -234,7 +234,7 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
       val (_, participated) = scores.getOrElse(p, (0, 0))
       participated >= threshold
     }
-    val pool = if (graduated.nonEmpty) graduated else active
+    val pool = if (graduated.size >= 2) graduated else active
     selector.selectLeaderWeighted(pool, entropy, viewNumber, scores)
   }
 
@@ -301,9 +301,12 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
     }
   }
 
-  test("graduation filter: single graduated peer always wins") {
+  test("graduation filter: single graduated peer falls back to active (view rotation needs >= 2)") {
     IO {
-      // Only one peer meets threshold. Regardless of entropy, that peer should always lead.
+      // Only one peer meets the threshold. If we used the graduated pool of size 1, view
+      // rotation would be a no-op (viewNumber % 1 = 0 always). The filter must fall back
+      // to `active` so rotation can actually rotate. Regression test for the ordinal-5
+      // E2E stall where gl0-0 was the sole graduated peer post-solo-bootstrap.
       val soleProven = pid("sole-proven")
       val unproven = (1 to 4).map(i => pid(s"unproven$i")).toList
       val active = soleProven +: unproven
@@ -311,10 +314,31 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
         active.map(p => p -> (if (p == soleProven) (10, 10) else (0, 0))).toMap
       val threshold = 5
 
-      val entropies = (0 until 20).map(i => Hash.fromBytes(s"entropy$i".getBytes("UTF-8")))
-      val leaders = entropies.map(e => selectGraduatedLeader(active, e, scores, threshold))
+      // View rotation across 5 viewNumbers should produce 5 distinct leaders (pool=active=5)
+      val entropy = Hash.fromBytes("bootstrap-tail".getBytes("UTF-8"))
+      val leaders = (0 until active.size).map(v => selectGraduatedLeader(active, entropy, scores, threshold, v))
 
-      expect(leaders.forall(_ == soleProven))
+      expect.same(active.size, leaders.distinct.size)
+    }
+  }
+
+  test("graduation filter: two graduated peers activate the filter (boundary)") {
+    IO {
+      // Exactly two peers meet the threshold: pool size >= 2, filter activates,
+      // view rotation alternates between the two.
+      val proven = List(pid("proven1"), pid("proven2"))
+      val unproven = (1 to 3).map(i => pid(s"unproven$i")).toList
+      val active = proven ++ unproven
+      val scores: Map[PeerId, (Int, Int)] =
+        (proven ++ unproven).map(p => p -> (if (proven.contains(p)) (10, 10) else (0, 0))).toMap
+      val threshold = 5
+
+      val entropy = Hash.fromBytes("two-graduated".getBytes("UTF-8"))
+      val leaders = (0 until 10).map(v => selectGraduatedLeader(active, entropy, scores, threshold, v))
+
+      expect(leaders.forall(proven.contains), "leader escaped graduated pool").and(
+        expect.same(proven.size, leaders.distinct.size)
+      )
     }
   }
 }
