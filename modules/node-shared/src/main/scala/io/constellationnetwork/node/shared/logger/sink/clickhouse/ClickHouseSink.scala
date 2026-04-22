@@ -62,10 +62,11 @@ object ClickHouseSink {
 
   // === DataSource Management ===
 
-  def makeDataSource[F[_]: Async](config: ClickHouseConfig): Resource[F, HikariDataSource] =
-    Resource.make(Async[F].blocking {
+  def makeDataSource[F[_]: Async](config: ClickHouseConfig): Resource[F, HikariDataSource] = {
+    val jdbcUrl = s"jdbc:clickhouse:${config.protocol}://${config.host}:${config.port}/${config.database}"
+    val acquire = Async[F].blocking {
       val hc = new HConfig()
-      hc.setJdbcUrl(s"jdbc:clickhouse:${config.protocol}://${config.host}:${config.port}/${config.database}")
+      hc.setJdbcUrl(jdbcUrl)
       hc.setUsername(config.user)
       hc.setPassword(config.password)
       hc.setMinimumIdle(2)
@@ -74,7 +75,9 @@ object ClickHouseSink {
       hc.setPoolName("clickhouse-logger-pool")
       hc.setConnectionTestQuery("SELECT 1")
       new HikariDataSource(hc)
-    })(ds => Async[F].blocking(ds.close()).handleError(_ => ()))
+    }.adaptError(e => new RuntimeException(s"Failed to connect to ClickHouse at $jdbcUrl: ${e.getMessage}", e))
+    Resource.make(acquire)(ds => Async[F].blocking(ds.close()).handleError(_ => ()))
+  }
 
   private def initTable[F[_]: Async](ds: HikariDataSource, tableName: String, retentionPeriodInDays: Int): F[Unit] =
     Async[F].blocking {
