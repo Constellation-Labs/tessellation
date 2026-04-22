@@ -97,6 +97,13 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
 
   import ctx.{clusterStorage, config, logger, peerQualityTracker, queue, storage}
 
+  /** Emit a `RoundCompleted` tagged with the current attempt id so the FSM can drop it if the round has since advanced. See Bug A in the
+    * 2026-04-21 fork-recovery post-mortem: an abandonment-queued `RoundCompleted` fired after a view change had moved the round forward and
+    * wiped the nearly-finished round.
+    */
+  private def offerRoundCompleted: F[Unit] =
+    storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(Some(id))))
+
   /** Tracks consecutive abandonments at the same key to detect infinite stuck loops. */
   private val consecutiveAbandonCountRef: Ref[F, (Option[Key], Int)] = Ref.unsafe((none[Key], 0))
 
@@ -202,7 +209,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
           totalRecoveryAttemptsRef.set(0) >>
           healthRef.update(_.copy(consecutiveAbandonments = 0, totalRecoveryAttempts = 0)) >>
           ctx.pending.clear() >>
-          queue.offer(ConsensusCommand.RoundCompleted)
+          offerRoundCompleted
       } else {
         tryStates(forceLeaveStates).flatMap {
           case true =>
@@ -218,7 +225,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
               totalRecoveryAttemptsRef.set(0) >>
               healthRef.update(_.copy(consecutiveAbandonments = 0, totalRecoveryAttempts = 0)) >>
               ctx.pending.clear() >>
-              queue.offer(ConsensusCommand.RoundCompleted)
+              offerRoundCompleted
           case false =>
             ConsensusLog.warn(
               logger,
@@ -339,10 +346,10 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
                       "maxRetriableAtSameKey" -> maxRetriableAtSameKey.toString,
                       "absoluteMax" -> absoluteMaxRetriableAtSameKey.toString
                     ) >>
-                      queue.offer(ConsensusCommand.RoundCompleted) >>
+                      offerRoundCompleted >>
                       queue.offer(ConsensusCommand.TimeTick)
                 } else
-                queue.offer(ConsensusCommand.RoundCompleted) >>
+                offerRoundCompleted >>
                   queue.offer(ConsensusCommand.TimeTick))
          }
        else
@@ -364,10 +371,13 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
          trackConsecutiveAbandonments(key).flatMap { consecutiveCount =>
            val shouldRecover = consecutiveCount >= config.maxConsecutiveAbandonments
            for {
-             peerRegs <- storage.getPeerRegistrations
+             // `peerCurrentKeys` = live per-peer tip (max seen via incoming keyed rumors).
+             // Supersedes the old `peerRegistrations` read which was a one-time join-ordinal
+             // and left lagging nodes with peersAtHigherKey=0 forever (Bug B, 2026-04-21).
+             peerCurrentKeys <- storage.getPeerCurrentKeys
              responsivePeers <- clusterStorage.getResponsivePeers
              readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
-             readyPeerRegs = peerRegs.view.filterKeys(readyPeerIds.contains).toMap
+             readyPeerRegs = peerCurrentKeys.view.filterKeys(readyPeerIds.contains).toMap
              peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => Order[Key].gt(peerKey, key) }
              networkAdvanced = peersAtHigherKey > 0
              willRecover = shouldRecover && networkAdvanced
@@ -388,7 +398,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
              )
              _ <-
                if (willRecover) triggerRecoveryDownload(key, consecutiveCount)
-               else queue.offer(ConsensusCommand.RoundCompleted) >> queue.offer(ConsensusCommand.TimeTick)
+               else offerRoundCompleted >> queue.offer(ConsensusCommand.TimeTick)
            } yield ()
          })
 
@@ -497,7 +507,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
           totalRecoveryAttemptsRef.set(0) >>
           healthRef.update(_.copy(consecutiveAbandonments = 0, totalRecoveryAttempts = 0)) >>
           ctx.pending.clear() >>
-          queue.offer(ConsensusCommand.RoundCompleted)
+          offerRoundCompleted
       } else {
         tryStates(forceLeaveStates).flatMap {
           case true =>
@@ -514,7 +524,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
               totalRecoveryAttemptsRef.set(0) >>
               healthRef.update(_.copy(consecutiveAbandonments = 0, totalRecoveryAttempts = 0)) >>
               ctx.pending.clear() >>
-              queue.offer(ConsensusCommand.RoundCompleted)
+              offerRoundCompleted
           case false =>
             // If we can't transition to Leaving from any state, fall back to recovery download
             ConsensusLog.warn(
@@ -576,7 +586,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
             storage.clearTimeTrigger >>
             storage.clearObservationKey >>
             ctx.pending.clear() >>
-            queue.offer(ConsensusCommand.RoundCompleted)
+            offerRoundCompleted
         case None =>
           // Check if node is already in Leaving state — if so, just complete the round and stop.
           // CRITICAL: Do NOT queue TimeTick here. The old code queued RoundCompleted + TimeTick,
@@ -595,7 +605,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
               "nodeState" -> currentState.show
             ) >>
               ctx.pending.clear() >>
-              queue.offer(ConsensusCommand.RoundCompleted)
+              offerRoundCompleted
           }
       }
   }

@@ -64,7 +64,13 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   fns: ConsensusFunctions[F, Event, Key, Artifact, Context],
   consensusClient: ConsensusClient[F, Key, Outcome],
   facilitatorSelector: FacilitatorSelector,
-  peerQualityTracker: PeerQualityTracker[F]
+  peerQualityTracker: PeerQualityTracker[F],
+  // Phase B1 gate: returns true while the cluster has not yet produced a snapshot with committee
+  // size >= config.bootstrapCompleteProofsThreshold (matches Phase 4's warmup-for-penalty-accrual).
+  // All B1 activity (emission, cert assembly, validation, embedding, application) is suppressed
+  // while this returns true — evictions during bootstrap caused cascading committee splits in
+  // the 2026-04-21 E2E failures.
+  isInBootstrap: Outcome => Boolean
 )
 
 object ConsensusEngineContext {
@@ -86,7 +92,8 @@ object ConsensusEngineContext {
     fns: ConsensusFunctions[F, Event, Key, Artifact, Ctx],
     consensusClient: ConsensusClient[F, Key, Outcome],
     facilitatorSelector: FacilitatorSelector,
-    peerQualityTracker: PeerQualityTracker[F]
+    peerQualityTracker: PeerQualityTracker[F],
+    isInBootstrap: Outcome => Boolean
   ): F[ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =
     for {
       running <- Ref.of[F, Boolean](false)
@@ -109,6 +116,7 @@ object ConsensusEngineContext {
         fns,
         consensusClient,
         facilitatorSelector,
-        peerQualityTracker
+        peerQualityTracker,
+        isInBootstrap
       )
 }

@@ -1,6 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
-import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{PeerDeclaration, ViewChangeVote}
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{EvictionVote, PeerDeclaration, ViewChangeVote}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.Signed
 
@@ -29,6 +29,13 @@ object message {
     */
   @derive(encoder, decoder)
   case class ConsensusPeerVote[K](key: K, vote: Signed[ViewChangeVote])
+
+  /** Signed per-peer eviction vote. Same wire-envelope rationale as [[ConsensusPeerVote]] — EvictionCertificate assembly requires the
+    * individual [[Signed]] proof per vote to survive end-to-end so the certificate embedded in a later Proposal remains independently
+    * verifiable by any node reading the Proposal (including peers that never saw the original gossip).
+    */
+  @derive(encoder, decoder)
+  case class ConsensusPeerEvictionVote[K](key: K, vote: Signed[EvictionVote])
 
   @derive(encoder, decoder)
   case class RegistrationResponse[Key](

@@ -92,7 +92,9 @@ object ConsensusEventLoop {
     config: ConsensusConfig,
     facilitatorSelector: FacilitatorSelector,
     peerQualityTracker: PeerQualityTracker[F],
-    viewChangeVoter: ViewChangeVoter[F, Key]
+    viewChangeVoter: ViewChangeVoter[F, Key],
+    evictionVoter: EvictionVoter[F, Key],
+    isInBootstrap: Outcome => Boolean
   )(
     implicit _key: monocle.Lens[Outcome, Key],
     _context: monocle.Lens[Outcome, Ctx],
@@ -119,7 +121,8 @@ object ConsensusEventLoop {
         consensusFunctions,
         consensusClient,
         facilitatorSelector,
-        peerQualityTracker
+        peerQualityTracker,
+        isInBootstrap
       )
       healthRef <- ConsensusHealthStatus.ref[F]
       viewChangeManager = new ViewChangeManager[F, Key, Status, Outcome, Kind](
@@ -134,6 +137,7 @@ object ConsensusEventLoop {
         ctx,
         viewChangeManager,
         abandonmentTracker,
+        evictionVoter,
         healthRef
       )
       roundFibersRef <- Ref.of[F, List[Fiber[F, Throwable, Unit]]](Nil)
@@ -211,9 +215,10 @@ object ConsensusEventLoop {
                     ctx.logger.error(err)(s"Unhandled error processing ${cmd.getClass.getSimpleName}, recovering") >>
                       Metrics[F].incrementCounter("dag_consensus_command_error") >>
                       (cmd match {
-                        case _: ConsensusCommand.ConsensusFinished | ConsensusCommand.RoundCompleted =>
+                        case _: ConsensusCommand.ConsensusFinished | _: ConsensusCommand.RoundCompleted =>
                           // Critical: if round-completion commands fail, FSM stays stuck in BUSY forever.
-                          // Force round completion so the next round can start.
+                          // Force round completion so the next round can start. Unconditional (no attemptId)
+                          // because this is the error-recovery path — must always proceed.
                           // Also offer TimeTick ONLY if node is not in Leaving state: the forced RoundCompleted
                           // calls completeRound without afterConsensusFinish, so no timer is scheduled for the
                           // next round. On solo nodes with no external events, this would deadlock consensus.
@@ -221,7 +226,7 @@ object ConsensusEventLoop {
                           // (rounds immediately abandon, can't force-leave, can't recover, re-queue TimeTick).
                           ctx.logger.warn("Forcing round completion after failed ConsensusFinished/RoundCompleted") >>
                             Metrics[F].incrementCounter("dag_consensus_forced_round_completion") >>
-                            queue.offer(ConsensusCommand.RoundCompleted) >>
+                            queue.offer(ConsensusCommand.RoundCompleted(None)) >>
                             nodeStorage.getNodeState.flatMap { state =>
                               if (state =!= NodeState.Leaving)
                                 queue.offer(ConsensusCommand.TimeTick)

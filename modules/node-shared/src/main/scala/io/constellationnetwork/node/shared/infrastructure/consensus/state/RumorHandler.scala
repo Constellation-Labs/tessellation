@@ -67,10 +67,15 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
     content match {
       case d: ConsensusPeerDeclaration[_, _]         => handleDeclaration(origin, d)
       case v: ConsensusPeerVote[_]                   => handlePeerVote(origin, v)
+      case e: ConsensusPeerEvictionVote[_]           => handleEvictionVote(origin, e)
       case a: ConsensusPeerDeclarationAck[_, _]      => handleDeclarationAck(origin, a)
       case w: ConsensusWithdrawPeerDeclaration[_, _] => handleWithdrawDeclaration(origin, w)
-      case ConsensusArtifact(key, artifact)          => handleArtifact(key.asInstanceOf[Key], artifact.asInstanceOf[Artifact])
-      case other                                     => log.warn(s"Unknown peer rumor content: $other")
+      case ConsensusArtifact(key, artifact)          =>
+        // Artifact gossip is keyed; record the sender at this key before processing so Bug-B
+        // aheadness detection reflects peers circulating artifacts for newer rounds.
+        storage.observePeerAtKey(origin, key.asInstanceOf[Key]) >>
+          handleArtifact(key.asInstanceOf[Key], artifact.asInstanceOf[Artifact])
+      case other => log.warn(s"Unknown peer rumor content: $other")
     }
 
   private def processCommonRumor(rumor: CommonRumor[_]): F[Unit] =
@@ -81,6 +86,10 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
 
   private def handleDeclaration(origin: PeerId, decl: ConsensusPeerDeclaration[_, _]): F[Unit] = {
     val key = decl.key.asInstanceOf[Key]
+    // Record the sender's current tip BEFORE any admission filtering. This is the live "peer is
+    // ahead of me" signal consumed by AbandonmentTracker + StallDetector. See Bug B in the
+    // 2026-04-21 post-mortem: peerRegistrations alone is set-once and goes stale.
+    val observeTip = storage.observePeerAtKey(origin, key)
     val kindLabel = decl.declaration match {
       case _: Facility          => "Facility"
       case _: Proposal          => "Proposal"
@@ -108,43 +117,89 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
         // (signed wire wrapper) via handlePeerVote. Any other unknown declaration is an error.
         new IllegalArgumentException(s"Unexpected declaration: ${other.getClass.getName}").raiseError[F, Option[Any]]
     }
-    logReceipt >> op.flatMap(triggerUpdateIfChanged(queue, key))
+    observeTip >> logReceipt >> op.flatMap(triggerUpdateIfChanged(queue, key))
   }
 
   private def handlePeerVote(origin: PeerId, v: ConsensusPeerVote[_]): F[Unit] = {
     val key = v.key.asInstanceOf[Key]
+    val observeTip = storage.observePeerAtKey(origin, key)
     val signedVote = v.vote
     val fromView = signedVote.value.fromView
     val toView = signedVote.value.toView
-    ConsensusLog.info(
-      log,
-      Category.Facilitator,
-      key.toString,
-      "n/a",
-      LogEvent.DeclarationReceived,
-      "kind" -> "ViewChangeVote",
-      "from" -> ConsensusLog.pid(origin),
-      "fromView" -> fromView.toString,
-      "toView" -> toView.toString
-    ) >>
+    observeTip >>
+      ConsensusLog.info(
+        log,
+        Category.Facilitator,
+        key.toString,
+        "n/a",
+        LogEvent.DeclarationReceived,
+        "kind" -> "ViewChangeVote",
+        "from" -> ConsensusLog.pid(origin),
+        "fromView" -> fromView.toString,
+        "toView" -> toView.toString
+      ) >>
       storage
         .addViewChangeVote(origin, key, fromView, toView, signedVote)
         .flatMap(triggerUpdateIfChanged(queue, key)) >>
       queue.offer(io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand.CheckViewChangeAssembly(key))
   }
 
+  private def handleEvictionVote(origin: PeerId, e: ConsensusPeerEvictionVote[_]): F[Unit] = {
+    val key = e.key.asInstanceOf[Key]
+    val observeTip = storage.observePeerAtKey(origin, key)
+    val signedVote = e.vote
+    val target = signedVote.value.targetPeer
+    val signer = signedVote.proofs.head.id.toPeerId
+    // Only accept the vote if the gossip sender is the signer. Votes arrive via `spreadDirect`
+    // which pushes straight from the signer to each committee member; a peer relaying someone
+    // else's vote is either buggy or adversarial. Rejecting relays here means the storage slot
+    // is keyed by the actual signer PeerId, so duplicate-relay cannot inflate the quorum count
+    // at certificate-assembly time.
+    if (origin =!= signer) {
+      observeTip >> ConsensusLog.warn(
+        log,
+        Category.Facilitator,
+        key.toString,
+        "n/a",
+        LogEvent.DeclarationReceived,
+        "kind" -> "EvictionVote",
+        "rejected" -> "origin_signer_mismatch",
+        "from" -> ConsensusLog.pid(origin),
+        "signer" -> ConsensusLog.pid(signer),
+        "target" -> ConsensusLog.pid(target)
+      )
+    } else {
+      observeTip >> ConsensusLog.info(
+        log,
+        Category.Facilitator,
+        key.toString,
+        "n/a",
+        LogEvent.DeclarationReceived,
+        "kind" -> "EvictionVote",
+        "from" -> ConsensusLog.pid(origin),
+        "target" -> ConsensusLog.pid(target),
+        "reason" -> signedVote.value.reason.toString
+      ) >>
+        storage
+          .addEvictionVote(origin, key, signedVote)
+          .flatMap(triggerUpdateIfChanged(queue, key)) >>
+        queue.offer(io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand.CheckEvictionAssembly(key, target))
+    }
+  }
+
   private def handleDeclarationAck(origin: PeerId, ack: ConsensusPeerDeclarationAck[_, _]): F[Unit] = {
     val key = ack.key.asInstanceOf[Key]
-    ConsensusLog.info(
-      log,
-      Category.Facilitator,
-      key.toString,
-      "n/a",
-      LogEvent.DeclarationAckReceived,
-      "kind" -> ack.kind.getClass.getSimpleName.stripSuffix("$"),
-      "from" -> ConsensusLog.pid(origin),
-      "ack" -> ack.ack.toString
-    ) >>
+    storage.observePeerAtKey(origin, key) >>
+      ConsensusLog.info(
+        log,
+        Category.Facilitator,
+        key.toString,
+        "n/a",
+        LogEvent.DeclarationAckReceived,
+        "kind" -> ack.kind.getClass.getSimpleName.stripSuffix("$"),
+        "from" -> ConsensusLog.pid(origin),
+        "ack" -> ack.ack.toString
+      ) >>
       storage
         .addPeerDeclarationAck(origin, key, ack.kind.asInstanceOf[Kind], ack.ack)
         .flatMap(triggerUpdateIfChanged(queue, key))
@@ -152,15 +207,16 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
 
   private def handleWithdrawDeclaration(origin: PeerId, w: ConsensusWithdrawPeerDeclaration[_, _]): F[Unit] = {
     val key = w.key.asInstanceOf[Key]
-    ConsensusLog.info(
-      log,
-      Category.Facilitator,
-      key.toString,
-      "n/a",
-      LogEvent.DeclarationWithdrawn,
-      "kind" -> w.kind.getClass.getSimpleName.stripSuffix("$"),
-      "from" -> ConsensusLog.pid(origin)
-    ) >>
+    storage.observePeerAtKey(origin, key) >>
+      ConsensusLog.info(
+        log,
+        Category.Facilitator,
+        key.toString,
+        "n/a",
+        LogEvent.DeclarationWithdrawn,
+        "kind" -> w.kind.getClass.getSimpleName.stripSuffix("$"),
+        "from" -> ConsensusLog.pid(origin)
+      ) >>
       storage
         .addWithdrawPeerDeclaration(origin, key, w.kind.asInstanceOf[Kind])
         .flatMap(triggerUpdateIfChanged(queue, key))

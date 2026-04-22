@@ -130,13 +130,93 @@ object declaration {
     }
   }
 
+  // Eviction declarations: sparse negative-evidence mechanism that lets the committee
+  // shrink for persistently-absent peers. Same architecture as VCC — signed votes
+  // accumulate, a deterministic certificate assembles at quorum, the certificate is
+  // embedded in the next Proposal, and on proposal acceptance the advancer adds the
+  // target to `state.removedFacilitators`. The existing penalty + committee-shrink
+  // pipeline fires downstream without further changes.
+  //
+  // EvictionVote, EvictionCertificate, and their codecs are declared BEFORE Proposal
+  // so derevo's magnolia-derived Encoder[Proposal] chain resolves correctly when
+  // Proposal embeds an eviction-cert field. See the ViewChangeVote/VCC comment above
+  // for the specific forward-reference null pattern we are avoiding.
+  @derive(eqv, show, encoder, decoder)
+  sealed trait EvictionReason
+
+  object EvictionReason {
+    case object Silent extends EvictionReason
+    // Extensibility reserved: LaggingTip, BadProposals, etc. Any new variant is a
+    // consensus-critical schema change and requires cluster-wide deploy.
+
+    implicit val ordering: Ordering[EvictionReason] = Ordering.by(_.toString)
+  }
+
+  @derive(eqv, show, encoder, decoder)
+  case class EvictionVote(
+    targetPeer: PeerId,
+    reason: EvictionReason,
+    facilitatorsHash: Hash,
+    lastSnapshotHash: Hash
+  ) extends PeerDeclaration
+
+  object EvictionVote {
+    implicit val ordering: Ordering[EvictionVote] =
+      Ordering.by { v =>
+        (v.targetPeer.value.value, v.reason.toString, v.facilitatorsHash.value, v.lastSnapshotHash.value)
+      }
+    implicit val order: cats.kernel.Order[EvictionVote] = cats.kernel.Order.fromOrdering(ordering)
+  }
+
+  // Explicit codecs for `Signed[EvictionVote]` — same rationale as the VCV codecs above.
+  // Encoder.instance + asJson/as[A] forces implicit resolution at call time rather than
+  // at codec-construction time, which avoids the circe-generic lazy-init null pattern
+  // when Proposal's derived codec chains through an EvictionCertificate field.
+  implicit val signedEvictionVoteEncoder: Encoder[Signed[EvictionVote]] =
+    Encoder.instance { sv =>
+      Json.obj("value" -> sv.value.asJson, "proofs" -> sv.proofs.asJson)
+    }
+  implicit val signedEvictionVoteDecoder: Decoder[Signed[EvictionVote]] =
+    (c: HCursor) =>
+      for {
+        value <- c.downField("value").as[EvictionVote]
+        proofs <- c.downField("proofs").as[NonEmptySet[SignatureProof]]
+      } yield Signed(value, proofs)
+
+  implicit val evictionVotesEncoder: Encoder[NonEmptySet[Signed[EvictionVote]]] =
+    NonEmptySetCodec.encoder[Signed[EvictionVote]]
+  implicit val evictionVotesDecoder: Decoder[NonEmptySet[Signed[EvictionVote]]] =
+    NonEmptySetCodec.decoder[Signed[EvictionVote]]
+
+  @derive(eqv, show, encoder, decoder)
+  case class EvictionCertificate(
+    targetPeer: PeerId,
+    reason: EvictionReason,
+    facilitatorsHash: Hash,
+    votes: NonEmptySet[Signed[EvictionVote]]
+  )
+
+  object EvictionCertificate {
+    implicit val ordering: Ordering[EvictionCertificate] =
+      Ordering.by { c =>
+        (c.targetPeer.value.value, c.reason.toString, c.facilitatorsHash.value)
+      }
+    implicit val order: cats.kernel.Order[EvictionCertificate] = cats.kernel.Order.fromOrdering(ordering)
+  }
+
   @derive(eqv, show, encoder, decoder)
   case class Proposal(
     hash: Hash,
     facilitatorsHash: Hash,
     lastSnapshotHash: Hash,
     view: Long,
-    vcc: Option[ViewChangeCertificate]
+    vcc: Option[ViewChangeCertificate],
+    // Phase B1 facilitator shrinkage: quorum-certified eviction votes for persistently-absent
+    // peers, accumulated and certified before this proposal. Must be sorted for deterministic
+    // proposal-hash agreement across nodes (enforced at the proposer call site via
+    // `EvictionCertificate.ordering`). Empty list is the overwhelmingly common case.
+    // Defaults to empty so old on-disk outcomes (written before B1) round-trip cleanly.
+    evictionCertificates: List[EvictionCertificate] = List.empty
   ) extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)

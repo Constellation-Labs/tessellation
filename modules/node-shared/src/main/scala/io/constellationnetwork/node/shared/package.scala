@@ -52,7 +52,13 @@ package object shared {
       TimeTrigger.getClass -> 531,
       classOf[DataApplicationBlock] -> 532,
       classOf[BinarySignature] -> 533,
-      classOf[GlobalSyncView] -> 534 // Since the genesis snapshot is kryo encoded we need this
+      classOf[GlobalSyncView] -> 534, // Since the genesis snapshot is kryo encoded we need this
       // Kryo ID 535 previously registered StallReport (removed with TimeoutAggregator revert)
+      // Phase B1 EvictionVote mechanism: signed negative-evidence votes, quorum-certified,
+      // embedded in next Proposal to remove persistently-absent peers from the committee.
+      classOf[EvictionVote] -> 535,
+      classOf[EvictionCertificate] -> 536,
+      classOf[ConsensusPeerEvictionVote[_]] -> 537,
+      EvictionReason.Silent.getClass -> 538
     ).union(sharedKryoRegistrar)
 }
