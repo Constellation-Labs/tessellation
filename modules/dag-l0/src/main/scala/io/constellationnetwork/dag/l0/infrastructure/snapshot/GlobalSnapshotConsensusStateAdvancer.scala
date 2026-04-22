@@ -703,16 +703,20 @@ object GlobalSnapshotConsensusStateAdvancer {
               ),
               sideEffect =
                 if (isLeader)
-                  spreadProposal(
-                    state,
-                    state.key,
-                    hash,
-                    facilitatorsHash,
-                    artifact,
-                    state.lastOutcome.finished.snapshotHash,
-                    state.viewNumber.toLong,
-                    maybeAssembledVcc
-                  )
+                  (if (isInBootstrap(state)) Set.empty[EvictionCertificate].pure[F]
+                   else consensusStorage.getAssembledEvictionCertificates(state.key)).flatMap { certs =>
+                    spreadProposal(
+                      state,
+                      state.key,
+                      hash,
+                      facilitatorsHash,
+                      artifact,
+                      state.lastOutcome.finished.snapshotHash,
+                      state.viewNumber.toLong,
+                      maybeAssembledVcc,
+                      certs.toList
+                    )
+                  }
                 else
                   Applicative[F].unit
             ).some
@@ -779,28 +783,38 @@ object GlobalSnapshotConsensusStateAdvancer {
                   if (selfId === state.leader)
                     // Leader (possibly after view change) — spread proposal so peers can advance.
                     // Include any assembled VCC for view > 0 so followers accept the re-spread.
-                    (if (state.viewNumber > 0) consensusStorage.getAssembledVcc(state.key)
-                     else none[ViewChangeCertificate].pure[F]).flatMap { maybeVcc =>
-                      ConsensusLog.info(
-                        logger,
-                        Category.Phase,
-                        state.key.show,
-                        "Leader",
-                        Event.ProposalRespread,
-                        "hash" -> status.proposalArtifactInfo.hash.show.take(8),
-                        "targets" -> state.facilitators.value.size.toString,
-                        "view" -> state.viewNumber.toString
-                      ) >>
-                        spreadProposal(
-                          state,
-                          state.key,
-                          status.proposalArtifactInfo.hash,
-                          status.facilitatorsHash,
-                          status.proposalArtifactInfo.artifact,
-                          status.lastSnapshotHash,
-                          state.viewNumber.toLong,
-                          maybeVcc
-                        ).as(none[Transition])
+                    // Include any assembled EvictionCertificates so persistently-absent peers
+                    // get evicted at proposal acceptance (Phase B1).
+                    (for {
+                      maybeVcc <-
+                        if (state.viewNumber > 0) consensusStorage.getAssembledVcc(state.key)
+                        else none[ViewChangeCertificate].pure[F]
+                      certs <-
+                        if (isInBootstrap(state)) Set.empty[EvictionCertificate].pure[F]
+                        else consensusStorage.getAssembledEvictionCertificates(state.key)
+                    } yield (maybeVcc, certs)).flatMap {
+                      case (maybeVcc, certs) =>
+                        ConsensusLog.info(
+                          logger,
+                          Category.Phase,
+                          state.key.show,
+                          "Leader",
+                          Event.ProposalRespread,
+                          "hash" -> status.proposalArtifactInfo.hash.show.take(8),
+                          "targets" -> state.facilitators.value.size.toString,
+                          "view" -> state.viewNumber.toString
+                        ) >>
+                          spreadProposal(
+                            state,
+                            state.key,
+                            status.proposalArtifactInfo.hash,
+                            status.facilitatorsHash,
+                            status.proposalArtifactInfo.artifact,
+                            status.lastSnapshotHash,
+                            state.viewNumber.toLong,
+                            maybeVcc,
+                            certs.toList
+                          ).as(none[Transition])
                     }
                   else
                     none[Transition].pure[F]
@@ -862,6 +876,89 @@ object GlobalSnapshotConsensusStateAdvancer {
           else Left(s"vcc_invalid_signatures peers=${invalidPeers.mkString(",")}")
         }
 
+      // Phase B1 bootstrap gate. Mirrors Phase 4's penalty-accrual suppression: while the chain
+      // has not yet produced a snapshot with >= bootstrapCompleteProofsThreshold signers, the
+      // cluster is still stabilizing and any B1 activity is unsafe (causes cascading committee
+      // splits as observed in 2026-04-21 E2E runs).
+      private def isInBootstrap(state: GlobalSnapshotConsensusState): Boolean =
+        !state.lastOutcome.recentProofSizes.values.exists(_ >= config.bootstrapCompleteProofsThreshold)
+
+      /** Validate structural invariants on every embedded `EvictionCertificate`:
+        *   - reject entirely if the node is still in bootstrap (honest leaders must not embed certs before the cluster has stabilized)
+        *   - at least `q` votes (quorum at this round's committee)
+        *   - all votes within a cert agree on (targetPeer, reason, facilitatorsHash)
+        *   - cert's facilitatorsHash matches the round's facilitatorsHash
+        *   - target peer is in the current committee
+        *   - no duplicate certs for the same target within a proposal
+        */
+      private def validateProposalEcs(
+        state: GlobalSnapshotConsensusState,
+        proposal: Proposal,
+        facilitatorsHash: Hash
+      ): Either[String, Unit] = {
+        if (isInBootstrap(state) && proposal.evictionCertificates.nonEmpty)
+          return Left(s"ecs_rejected_in_bootstrap count=${proposal.evictionCertificates.size}")
+        val n = state.facilitators.value.size
+        val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+        val committee = state.facilitators.value.toSet
+
+        @scala.annotation.tailrec
+        def loop(remaining: List[EvictionCertificate], seenTargets: Set[PeerId]): Either[String, Unit] =
+          remaining match {
+            case Nil => Right(())
+            case cert :: tail =>
+              if (seenTargets.contains(cert.targetPeer))
+                Left(s"ecs_duplicate_target target=${cert.targetPeer.show.take(8)}")
+              else if (cert.facilitatorsHash =!= facilitatorsHash)
+                Left(
+                  s"ecs_facilitators_mismatch target=${cert.targetPeer.show.take(8)} " +
+                    s"certFacHash=${cert.facilitatorsHash.show.take(8)} ours=${facilitatorsHash.show.take(8)}"
+                )
+              else if (!committee.contains(cert.targetPeer))
+                Left(s"ecs_target_not_in_committee target=${cert.targetPeer.show.take(8)}")
+              else if (cert.votes.size < q)
+                Left(s"ecs_under_quorum target=${cert.targetPeer.show.take(8)} votes=${cert.votes.size} required=$q")
+              else {
+                val mismatched = cert.votes.toList.find { signed =>
+                  signed.value.targetPeer =!= cert.targetPeer ||
+                  signed.value.reason =!= cert.reason ||
+                  signed.value.facilitatorsHash =!= cert.facilitatorsHash
+                }
+                mismatched match {
+                  case Some(bad) =>
+                    Left(s"ecs_vote_field_mismatch target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}")
+                  case None =>
+                    val nonCommitteeVoter = cert.votes.toList.find(sv => !committee.contains(sv.proofs.head.id.toPeerId))
+                    nonCommitteeVoter match {
+                      case Some(bad) =>
+                        Left(s"ecs_voter_not_in_committee target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}")
+                      case None => loop(tail, seenTargets + cert.targetPeer)
+                    }
+                }
+              }
+          }
+        loop(proposal.evictionCertificates, Set.empty)
+      }
+
+      /** Verify every `Signed[EvictionVote]` inside every embedded `EvictionCertificate` has a valid cryptographic signature. Mirrors
+        * `verifyVccSignatures`. Protects against a leader constructing certificates from fabricated/unsigned votes.
+        */
+      private def verifyEcsSignatures(
+        proposal: Proposal
+      )(implicit hasher: Hasher[F]): F[Either[String, Unit]] =
+        proposal.evictionCertificates.flatTraverse { cert =>
+          cert.votes.toNonEmptyList.toList.traverse { signedVote =>
+            signedVote.hasValidSignature[F].map {
+              case true  => Right(()): Either[String, Unit]
+              case false => Left(s"target=${cert.targetPeer.show.take(8)} voter=${signedVote.proofs.head.id.show.take(8)}")
+            }
+          }
+        }.map { results =>
+          val invalid = results.collect { case Left(msg) => msg }
+          if (invalid.isEmpty) Right(())
+          else Left(s"ecs_invalid_signatures [${invalid.mkString("; ")}]")
+        }
+
       private def resolveLeaderProposal(
         state: GlobalSnapshotConsensusState,
         status: CollectingProposals,
@@ -882,16 +979,42 @@ object GlobalSnapshotConsensusStateAdvancer {
               "view" -> state.viewNumber.toString
             )
             .as(none[Transition])
+        def logEcsReject(reason: String): F[Option[Transition]] =
+          ConsensusLog
+            .warn(
+              logger,
+              Category.Validation,
+              state.key.show,
+              role,
+              Event.ValidationFailed,
+              "reason" -> s"ecs_validation: $reason",
+              "leader" -> ConsensusLog.pid(state.leader),
+              "view" -> state.viewNumber.toString
+            )
+            .as(none[Transition])
         validateProposalVcc(state, leaderProposal, status.facilitatorsHash) match {
           case Left(reason) => logVccReject(reason)
           case Right(_) =>
-            leaderProposal.vcc match {
+            val afterVccSig: F[Option[Transition]] = leaderProposal.vcc match {
               case Some(vcc) =>
                 verifyVccSignatures(vcc).flatMap {
                   case Left(reason) => logVccReject(reason)
                   case Right(_)     => resolveLeaderProposalInner(state, status, resources, leaderProposal)
                 }
               case None => resolveLeaderProposalInner(state, status, resources, leaderProposal)
+            }
+            // B1 eviction-certificate validation layered onto the same path. Validation
+            // short-circuits if any cert fails so an adversarial leader cannot smuggle
+            // malformed evictions into proposal acceptance.
+            validateProposalEcs(state, leaderProposal, status.facilitatorsHash) match {
+              case Left(reason) => logEcsReject(reason)
+              case Right(_) =>
+                if (leaderProposal.evictionCertificates.isEmpty) afterVccSig
+                else
+                  verifyEcsSignatures(leaderProposal).flatMap {
+                    case Left(reason) => logEcsReject(reason)
+                    case Right(_)     => afterVccSig
+                  }
             }
         }
       }
@@ -927,7 +1050,14 @@ object GlobalSnapshotConsensusStateAdvancer {
               "view" -> state.viewNumber.toString
             ) >>
             Metrics[F].incrementCounter("dag_consensus_proposal_affinity_match") >>
-            buildSignatureTransition(state, status, status.proposalArtifactInfo, List(leaderProposal.hash), leaderProposal.vcc)
+            buildSignatureTransition(
+              state,
+              status,
+              status.proposalArtifactInfo,
+              List(leaderProposal.hash),
+              leaderProposal.vcc,
+              leaderProposal.evictionCertificates
+            )
         } else {
           // HotStuff-inspired leader adoption: when the facilitator set diverges (follower
           // joined with a different view than the leader), accept the leader's artifact
@@ -971,7 +1101,14 @@ object GlobalSnapshotConsensusStateAdvancer {
                       validateLeaderArtifact(state, status, leaderArtifact, leaderProposal.hash, leaderFacilitatorSet).flatMap {
                         case Right(leaderInfo) =>
                           Metrics[F].incrementCounter("dag_consensus_leader_adopted_on_mismatch") >>
-                            buildSignatureTransition(state, status, leaderInfo, List(leaderProposal.hash), leaderProposal.vcc)
+                            buildSignatureTransition(
+                              state,
+                              status,
+                              leaderInfo,
+                              List(leaderProposal.hash),
+                              leaderProposal.vcc,
+                              leaderProposal.evictionCertificates
+                            )
                         case Left(_) =>
                           sp.restore >>
                             gossip.spread(
@@ -1029,7 +1166,14 @@ object GlobalSnapshotConsensusStateAdvancer {
                               "view" -> state.viewNumber.toString
                             ) >>
                               Metrics[F].incrementCounter("dag_consensus_proposal_affinity_mismatch_accepted") >>
-                              buildSignatureTransition(state, status, leaderInfo, List(leaderProposal.hash), leaderProposal.vcc)
+                              buildSignatureTransition(
+                                state,
+                                status,
+                                leaderInfo,
+                                List(leaderProposal.hash),
+                                leaderProposal.vcc,
+                                leaderProposal.evictionCertificates
+                              )
                           case Left(invalidArtifact) =>
                             // Validation failed — restore MptStore to pre-validation state
                             val diffDetail = describeInvalidArtifact(invalidArtifact)
@@ -1339,10 +1483,29 @@ object GlobalSnapshotConsensusStateAdvancer {
         status: CollectingProposals,
         majorityInfo: ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext],
         proposalHashes: List[Hash],
-        leaderVcc: Option[ViewChangeCertificate] = None
-      )(implicit hasher: Hasher[F]): F[Option[Transition]] =
+        leaderVcc: Option[ViewChangeCertificate] = None,
+        leaderEvictionCerts: List[EvictionCertificate] = List.empty
+      )(implicit hasher: Hasher[F]): F[Option[Transition]] = {
+        // B1 apply: on proposal acceptance, shrink this round's committee by the set of peers
+        // carried in the leader's EvictionCertificates. Validation already verified quorum +
+        // signatures + committee membership, so applying is safe and deterministic (same for
+        // every honest node reading the same proposal).
+        //
+        // Bootstrap gate: during bootstrap, validateProposalEcs already rejected any non-empty
+        // cert list, so `leaderEvictionCerts` is effectively always empty here while
+        // isInBootstrap is true. We leave the filter unchanged — the guard is just defense in
+        // depth in case a future refactor forgets the validation-time check.
+        val evictedTargets: Set[PeerId] =
+          if (isInBootstrap(state)) Set.empty
+          else leaderEvictionCerts.map(_.targetPeer).toSet
+        val postEvictionFacilitators =
+          if (evictedTargets.isEmpty) state.facilitators
+          else Facilitators(state.facilitators.value.filterNot(evictedTargets.contains))
+        val postEvictionRemoved =
+          if (evictedTargets.isEmpty) state.removedFacilitators
+          else RemovedFacilitators(state.removedFacilitators.value ++ evictedTargets)
         for {
-          facilitatorsHash <- state.facilitators.value.hash
+          facilitatorsHash <- postEvictionFacilitators.value.hash
           view = state.viewNumber.toLong
           localLock <- consensusStorage.getVoteLock(state.key)
           effectiveLockedQc = VoteLock.maxByView(
@@ -1375,10 +1538,24 @@ object GlobalSnapshotConsensusStateAdvancer {
                 _ <- recordProposalAffinity(proposalHashes, status.proposalArtifactInfo.hash)
                 // Round succeeded — discard the proposal savepoint so it won't be restored on the next ordinal
                 _ <- proposalSavepointRef.set(none)
+                _ <- ConsensusLog
+                  .info(
+                    logger,
+                    Category.Phase,
+                    state.key.show,
+                    "n/a",
+                    Event.Eviction,
+                    "assembly" -> "evictions_applied",
+                    "targets" -> evictedTargets.toList.map(ConsensusLog.pid).mkString(","),
+                    "count" -> evictedTargets.size.toString
+                  )
+                  .whenA(evictedTargets.nonEmpty)
               } yield
                 Transition(
-                  newState = state.copy(status =
-                    CollectingSignatures(
+                  newState = state.copy(
+                    facilitators = postEvictionFacilitators,
+                    removedFacilitators = postEvictionRemoved,
+                    status = CollectingSignatures(
                       majorityInfo,
                       status.majorityTrigger,
                       status.candidates,
@@ -1398,6 +1575,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                 ).some
           }
         } yield result
+      }
 
       /** Canonical byte encoding of the signing domain for MajoritySignature: `(key, view, proposalHash, facilitatorsHash)`. Deterministic
         * across nodes so that any node holding a gossiped MajoritySignature can verify the signer.
@@ -1580,9 +1758,14 @@ object GlobalSnapshotConsensusStateAdvancer {
         artifact: GlobalSnapshotArtifact,
         lastSnapshotHash: Hash,
         view: Long = 0L,
-        vcc: Option[ViewChangeCertificate] = None
+        vcc: Option[ViewChangeCertificate] = None,
+        evictionCertificates: List[EvictionCertificate] = List.empty
       ): F[Unit] = {
-        val declaration = ConsensusPeerDeclaration(key, Proposal(hash, facilitatorsHash, lastSnapshotHash, view, vcc))
+        // Deterministic order is required — two leaders building from the same storage state
+        // must produce the same proposal-hash payload, and `Set` iteration order is not guaranteed.
+        val sortedCerts = evictionCertificates.sorted(EvictionCertificate.ordering)
+        val declaration =
+          ConsensusPeerDeclaration(key, Proposal(hash, facilitatorsHash, lastSnapshotHash, view, vcc, sortedCerts))
         val targets = state.facilitators.value.toSet
 
         gossip.spreadDirect(declaration, targets) >>

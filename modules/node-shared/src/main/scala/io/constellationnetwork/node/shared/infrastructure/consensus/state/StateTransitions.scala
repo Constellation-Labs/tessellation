@@ -9,14 +9,18 @@ import scala.concurrent.duration._
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand._
-import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, ViewChangeCertificateBuilder}
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{
+  ConsensusCommand,
+  EvictionCertificateBuilder,
+  ViewChangeCertificateBuilder
+}
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.GetConsensusOutcomeRequest
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger._
 import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusStorage}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
 import io.constellationnetwork.schema.node.NodeState
-import io.constellationnetwork.schema.peer.Peer
+import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
@@ -195,6 +199,126 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                 "n/a",
                 LogEvent.ViewChange,
                 "assembly" -> "waiting_for_quorum",
+                "votes" -> votes.size.toString,
+                "quorum" -> q.toString
+              )
+            )
+          }
+        }
+    }
+
+  /** Handle `CheckEvictionAssembly(key, target)` command.
+    *
+    * Try to assemble an `EvictionCertificate` for the given target from the `EvictionVote`s collected so far in the round. Storage-side
+    * accumulation is first-write-wins per (voter, target). If the votes reach quorum AND all agree on `facilitatorsHash`, build and store
+    * the certificate so the next proposer can embed it in its Proposal.
+    *
+    * No side effects on `state.facilitators` or `state.removedFacilitators` from this path — those mutations happen at advancer
+    * proposal-acceptance time (Phase 6 of the B1 rollout). Keeping certificate assembly and committee mutation on opposite sides of the
+    * round boundary is what makes B1 safer than the mid-round eviction path the protocol deliberately removed.
+    */
+  def checkEvictionAssembly(key: Key, target: PeerId): F[Unit] =
+    storage.getState(key).flatMap {
+      case None                                                => Async[F].unit
+      case Some(state) if ctx.isInBootstrap(state.lastOutcome) =>
+        // Phase B1 gate: no certificate assembly during bootstrap. Even if eviction votes
+        // arrived in storage (from peers running older/different logic), we refuse to build
+        // a certificate until the cluster has produced a stable committee. Prevents cascading
+        // splits observed in E2E.
+        ConsensusLog.debug(
+          log,
+          Category.Phase,
+          key.show,
+          "n/a",
+          LogEvent.Eviction,
+          "assembly" -> "skipped_in_bootstrap",
+          "target" -> ConsensusLog.pid(target)
+        )
+      case Some(state) =>
+        storage.getResources(key).flatMap { resources =>
+          val votes = resources.evictionVotes.getOrElse(target, Map.empty)
+          val n = state.facilitators.value.size
+          val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+          if (votes.size >= q) {
+            // All votes for a given target must agree on facilitatorsHash; otherwise some
+            // voter was signing against a different committee view and the certificate
+            // would be invalid. Pick the hash with the most votes (tie: reject and wait).
+            val byHash: Map[_root_.io.constellationnetwork.security.hash.Hash, Int] =
+              votes.values.groupBy(_.value.facilitatorsHash).view.mapValues(_.size).toMap
+            byHash.toList.sortBy(-_._2) match {
+              case (facHash, voteCount) :: _ if voteCount >= q =>
+                // All votes with this hash share the same reason? For the current single-variant
+                // Silent reason, this is trivially true. When more reasons land, select the
+                // dominant (reason, hash) tuple similarly.
+                val matchingVotes = votes.filter {
+                  case (_, signed) => signed.value.facilitatorsHash == facHash
+                }
+                val reasons = matchingVotes.values.map(_.value.reason).toSet
+                reasons.toList match {
+                  case singleReason :: Nil =>
+                    val committee = state.facilitators.value.toSet
+                    EvictionCertificateBuilder.build(target, singleReason, facHash, matchingVotes, q, committee) match {
+                      case Left(reason) =>
+                        ConsensusLog.warn(
+                          log,
+                          Category.Phase,
+                          key.show,
+                          "n/a",
+                          LogEvent.Eviction,
+                          "assembly" -> "ecs_build_failed",
+                          "target" -> ConsensusLog.pid(target),
+                          "reason" -> reason,
+                          "votes" -> matchingVotes.size.toString,
+                          "quorum" -> q.toString
+                        )
+                      case Right(cert) =>
+                        storage.storeAssembledEvictionCertificate(key, cert) >>
+                          ConsensusLog.info(
+                            log,
+                            Category.Phase,
+                            key.show,
+                            "n/a",
+                            LogEvent.Eviction,
+                            "assembly" -> "quorum_reached_cert_stored",
+                            "target" -> ConsensusLog.pid(target),
+                            "votes" -> matchingVotes.size.toString,
+                            "quorum" -> q.toString,
+                            "reason" -> singleReason.toString
+                          )
+                    }
+                  case multiReasons =>
+                    ConsensusLog.warn(
+                      log,
+                      Category.Phase,
+                      key.show,
+                      "n/a",
+                      LogEvent.Eviction,
+                      "assembly" -> "divergent_reasons",
+                      "target" -> ConsensusLog.pid(target),
+                      "reasons" -> multiReasons.size.toString
+                    )
+                }
+              case _ =>
+                ConsensusLog.debug(
+                  log,
+                  Category.Phase,
+                  key.show,
+                  "n/a",
+                  LogEvent.Eviction,
+                  "assembly" -> "divergent_facilitators_hash",
+                  "target" -> ConsensusLog.pid(target),
+                  "hashes" -> byHash.size.toString
+                )
+            }
+          } else {
+            log.debug(
+              ConsensusLog.format(
+                Category.Phase,
+                key.show,
+                "n/a",
+                LogEvent.Eviction,
+                "assembly" -> "waiting_for_quorum",
+                "target" -> ConsensusLog.pid(target),
                 "votes" -> votes.size.toString,
                 "quorum" -> q.toString
               )

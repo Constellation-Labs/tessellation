@@ -41,7 +41,16 @@ object ConsensusCommand {
   case object FacilitateByEvent extends ConsensusCommand
   case class CheckUpdate(key: Any) extends ConsensusCommand
   case class CheckViewChangeAssembly(key: Any) extends ConsensusCommand
-  case object RoundCompleted extends ConsensusCommand
+  // EvictionVote assembly is per-target: different targets accumulate quorums independently,
+  // so this command carries both the round key and the target peer whose votes should be
+  // checked. Dispatched from the event loop to StateTransitions.checkEvictionAssembly.
+  case class CheckEvictionAssembly(key: Any, target: Any) extends ConsensusCommand
+
+  /** Round ended without producing an outcome. `expectedAttemptId = Some(n)` causes the FSM to drop the command if the round has advanced
+    * past attempt `n` (state mutation bumped `ConsensusStorage.roundAttemptId`). `None` means unconditional — reserved for force-recovery
+    * paths where the round must always complete.
+    */
+  case class RoundCompleted(expectedAttemptId: Option[Long] = None) extends ConsensusCommand
   case class InternalScheduled(inner: ConsensusCommand) extends ConsensusCommand
   case class PeerObserved(peer: Peer) extends ConsensusCommand
   case class InitializeFromDownload(key: Any, artifact: Any, context: Any, isRecovery: Boolean = false) extends ConsensusCommand

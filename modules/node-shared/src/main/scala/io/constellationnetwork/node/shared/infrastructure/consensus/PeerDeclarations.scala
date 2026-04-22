@@ -14,6 +14,12 @@ object PeerDeclarationsArbitraries {
   // in production-code test fixtures we rarely need a random VCC.
   implicit val vccOptionArb: Arbitrary[Option[ViewChangeCertificate]] =
     Arbitrary(Gen.const(None))
+
+  // Same rationale for EvictionCertificate list: the cert wraps a NonEmptySet[Signed[EvictionVote]]
+  // that needs full crypto generators. Property-based test fixtures almost never need random
+  // eviction certificates; tests that need a real cert build one explicitly.
+  implicit val evictionCertsListArb: Arbitrary[List[EvictionCertificate]] =
+    Arbitrary(Gen.const(List.empty))
 }
 
 import PeerDeclarationsArbitraries._

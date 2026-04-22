@@ -7,6 +7,7 @@ import cats.syntax.all._
 import scala.concurrent.duration._
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.EvictionReason
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusResources}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
@@ -42,6 +43,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
   ctx: ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   viewChangeManager: ViewChangeManager[F, Key, Status, Outcome, Kind],
   abandonmentTracker: AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
+  evictionVoter: EvictionVoter[F, Key],
   healthRef: Ref[F, ConsensusHealthStatus]
 ) {
 
@@ -63,7 +65,13 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     // Facility during a CollectingFacilities stall. Capped by MaxFacilityRetransmits to avoid spam
     // when the round is genuinely stuck. Sender-side mitigation for gossip delivery asymmetry —
     // peers that missed our original Facility via plain `spread` get it via direct push on retry.
-    retransmitCount: Int = 0
+    retransmitCount: Int = 0,
+    // Tracks the view number at which roundStartTime was most recently set. Used to reset the
+    // round-duration clock when the view advances, so the maxRoundDuration safety net applies
+    // per-view, not to the entire life of the round. Without this, a round that view-changes
+    // late in the 300s window runs out of budget in view-1 CollectingSignatures even though
+    // the new view is making steady progress — observed 2026-04-22 in fork-recovery E2E.
+    lastView: Int = 0
   )
 
   private val basePollInterval = 100L
@@ -137,6 +145,12 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       info = getResourcesInfo(state, resources)
       statusChanged = !ms.lastStatus.contains(state.status)
       resourcesChanged = info.hash != ms.lastResourcesHash
+
+      // Reset round-duration clock when the view advances. The per-view deadline scales with
+      // the view number so later views (which run under worse conditions) get more slack,
+      // capped to prevent runaway. See maxRoundDurationForView(view) below.
+      viewAdvanced = state.viewNumber > ms.lastView
+      newRoundStartTime = if (viewAdvanced) now else ms.roundStartTime
 
       newStatusStartTime = if (statusChanged) now else ms.statusStartTime
       statusDuration = now - newStatusStartTime
@@ -244,10 +258,14 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // TODO: These two Ref reads are non-atomic — peer registrations and responsive peers
       // could observe inconsistent state. The race is benign: worst case is one extra round
       // of lagging detection before self-correcting on the next monitor cycle.
-      peerRegs <- storage.getPeerRegistrations
+      // Live per-peer tip keys (from incoming keyed rumors). Replaces the old peerRegistrations
+      // read which was a one-time join ordinal — see Bug B (2026-04-21): a node that had joined
+      // earlier than its current round would never observe "peer ahead" even after the cluster
+      // advanced, so isLagging stayed false forever.
+      peerCurrentKeys <- storage.getPeerCurrentKeys
       responsivePeers <- clusterStorage.getResponsivePeers
       readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
-      readyPeerRegs = peerRegs.view.filterKeys(readyPeerIds.contains).toMap
+      readyPeerRegs = peerCurrentKeys.view.filterKeys(readyPeerIds.contains).toMap
       peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key }
       totalRegisteredPeers = readyPeerRegs.size
       // Gate on stallCount >= 1 so newly-joined nodes get one full stall cycle (~32s)
@@ -255,7 +273,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // peers to appear 1 ordinal ahead immediately, triggering rapid-fire abandon loops
       // (5 abandonments in <200ms) that force unnecessary recovery downloads.
       isLagging = totalRegisteredPeers >= 3 && peersAtHigherKey > totalRegisteredPeers / 2 && ms.stallCount >= 1
-      totalAllRegs = peerRegs.size
+      totalAllRegs = peerCurrentKeys.size
       _ <- (
         ConsensusLog.warn(
           logger,
@@ -277,9 +295,12 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       quorumInfeasible = stallResult.quorumInfeasible
 
       // --- Round timeout / abandon check ---
-      roundElapsed = now - ms.roundStartTime
+      // roundElapsed is measured from the current view's start (reset on view change above),
+      // and the deadline scales linearly per view with a hard cap — see maxRoundDurationForView.
+      roundElapsed = now - newRoundStartTime
       _ <- Metrics[F].updateGauge("dag_consensus_round_elapsed_seconds", roundElapsed.toSeconds.toInt)
-      roundTimedOut = config.maxRoundDuration.exists(roundElapsed >= _)
+      effectiveRoundDeadline = config.maxRoundDuration.map(maxRoundDurationForView(_, state.viewNumber))
+      roundTimedOut = effectiveRoundDeadline.exists(roundElapsed >= _)
       // When solo-eviction just fired (evictionEscalated), suppress the stall-cycle check:
       // the reduced committee needs at least one more cycle to attempt the round before we
       // give up. Without this, solo-eviction fires on the same cycle as maxStallCycles
@@ -291,7 +312,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
         if (isLagging) AbandonReason.Lagging(peersAtHigherKey, totalRegisteredPeers, totalAllRegs)
         else if (quorumInfeasible)
           AbandonReason.QuorumInfeasible(stallResult.activeFacilitators, stallResult.quorumSize, stallResult.clusterSize)
-        else if (roundTimedOut) AbandonReason.RoundTimeout(roundElapsed.toSeconds, config.maxRoundDuration.map(_.toSeconds))
+        else if (roundTimedOut) AbandonReason.RoundTimeout(roundElapsed.toSeconds, effectiveRoundDeadline.map(_.toSeconds))
         else AbandonReason.MaxStalls(finalStallCount)
 
       _ <- ConsensusLog
@@ -369,7 +390,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
             lastResourcesHash = info.hash,
             lastStatus = Some(state.status),
             statusStartTime = adjustedStatusStartTime,
-            roundStartTime = ms.roundStartTime,
+            roundStartTime = newRoundStartTime,
             noChangeCount = newNoChangeCount,
             // Reset stall count after solo-eviction so the reduced committee gets a
             // fresh start. Without this, the next 200ms poll iteration sees stallCount=3,
@@ -381,11 +402,21 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
             // that re-advances into the same phase) starts retransmit budgeting over. Without this,
             // a round that went through a view-change detour could exhaust the cap before the fresh
             // phase gets any retransmit attempts.
-            retransmitCount = if (statusChanged || stallResult.evictionEscalated) 0 else newRetransmitCount
+            retransmitCount = if (statusChanged || stallResult.evictionEscalated) 0 else newRetransmitCount,
+            lastView = state.viewNumber
           )
         )
 
   // ── Timeout Calculation ───────────────────────────────────────────
+
+  /** Per-view effective round deadline: `base + view * 90s`, capped at `2 * base`.
+    *
+    * Scales up with view so later views (which run in worse conditions) get more slack. Capped so that if the cluster really is stuck,
+    * `maxConsecutiveAbandonments` fires via the normal recovery path instead of this safety net running for tens of minutes. Combined with
+    * `roundStartTime` resetting on view change, this means each view gets a fresh budget that grows modestly per view.
+    */
+  private def maxRoundDurationForView(base: FiniteDuration, view: Int): FiniteDuration =
+    (base + StallDetector.PerViewRoundDurationIncrement * view.toLong).min(base * 2)
 
   private def calculateTimeout(
     stallCount: Int,
@@ -606,22 +637,59 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
                 ) >>
                   Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>
                   Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >> {
-                    // Phase 2+: no mid-round eviction. View change here is leader-rotation
-                    // only (gossip a VCV, wait for quorum-certified VCC to advance the view).
-                    // If the round can't complete due to genuinely-unresponsive peers, the
-                    // stall-cycle abandonment path in the outer monitor takes over.
-                    viewChangeManager
-                      .performViewChange(key, state)
-                      .as(
-                        StallResult(
-                          didStall = true,
-                          quorumInfeasible = false,
-                          activeFacilitators = remaining,
-                          quorumSize = minQuorum,
-                          clusterSize = clusterSize,
-                          evictionEscalated = false
+                    // Phase B1 EvictionVote emission. Entering this branch already implies:
+                    //   - stallCount > 0 (stallCount == 0 short-circuited to PEER_STALL_WARNING above)
+                    //   - quorumInfeasible (the outer condition)
+                    //   - NOT (unresponsiveMissing.isEmpty && bootstrapAllowsSkip) — so
+                    //     unresponsiveMissing has at least one peer, or we waited past the
+                    //     `EvictionSkipMaxStalls` window for slow-but-responsive peers.
+                    // Those conditions are sufficient evidence to emit eviction votes for the
+                    // peers that are both missing AND Unresponsive in clusterStorage. Per-target
+                    // gates (per-voter cap, not-already-voted, committee membership) are applied
+                    // by `selectEvictionTargets`.
+                    val committeeSet: Set[PeerId] = state.facilitators.value.toSet
+                    val inBootstrap = ctx.isInBootstrap(state.lastOutcome)
+                    val evictionEmission = if (inBootstrap) {
+                      // Phase B1 gate: no emission during bootstrap. Peers flicker Ready/Unresponsive
+                      // during initial sync and recovery, and clusterStorage's view of who is
+                      // unresponsive is unreliable until at least one full-committee snapshot
+                      // exists. Emitting here produced cascading committee splits in the
+                      // 2026-04-21 E2E failures. Matches Phase 4's penalty-suppression pattern.
+                      Async[F].unit
+                    } else
+                      storage.getResources(key).flatMap { resources =>
+                        val alreadyVotedBySelf: Set[PeerId] =
+                          resources.evictionVotes.collect {
+                            case (target, voters) if voters.contains(selfId) => target
+                          }.toSet
+                        val newTargets: List[PeerId] = StallDetector.selectEvictionTargets(
+                          selfId = selfId,
+                          unresponsiveMissing = unresponsiveMissing,
+                          committee = committeeSet,
+                          alreadyVotedBySelf = alreadyVotedBySelf
                         )
-                      )
+                        newTargets.traverse_ { target =>
+                          evictionVoter.emitEvictionVote(key, target, EvictionReason.Silent) >>
+                            queue.offer(ConsensusCommand.CheckEvictionAssembly(key, target))
+                        }
+                      }
+                    evictionEmission >>
+                      // Phase 2+: no mid-round eviction. View change here is leader-rotation
+                      // only (gossip a VCV, wait for quorum-certified VCC to advance the view).
+                      // If the round can't complete due to genuinely-unresponsive peers, the
+                      // stall-cycle abandonment path in the outer monitor takes over.
+                      viewChangeManager
+                        .performViewChange(key, state)
+                        .as(
+                          StallResult(
+                            didStall = true,
+                            quorumInfeasible = false,
+                            activeFacilitators = remaining,
+                            quorumSize = minQuorum,
+                            clusterSize = clusterSize,
+                            evictionEscalated = false
+                          )
+                        )
                   }
               }
             }
@@ -772,4 +840,50 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
         ConsensusLog
           .debug(logger, Category.Facilitator, key.toString, role, LogEvent.PeerQuality, "trackedPeers" -> "0")
     }
+}
+
+object StallDetector {
+
+  /** Linear increment applied to `maxRoundDuration` per view number when computing the per-view effective round deadline. Combined with
+    * resetting `roundStartTime` on view change, this gives each view a fresh budget that grows slightly with view to reflect progressively
+    * worse network conditions. Capped at `2 * base` by `maxRoundDurationForView`. 90s matches ~1.5 stall cycles — one full stall-detect
+    * round plus slack for gossip jitter.
+    */
+  private[consensus] val PerViewRoundDurationIncrement: FiniteDuration = 90.seconds
+
+  /** Deterministic selection of eviction-vote targets for a single node emission pass.
+    *
+    * Extracted as a pure helper so the correctness property (same subset chosen by every honest node when `unresponsiveMissing.size >
+    * remainingSlots`) is testable without running the full stall-detector monitor.
+    *
+    * Invariants the caller relies on:
+    *
+    *   1. Result is a subset of `unresponsiveMissing ∩ committee`, minus `alreadyVotedBySelf`, minus `{selfId}`. 2. `selfId` is NEVER in
+    *      the result — clusterStorage does not track self as Responsive, so `missingPeers - responsivePeers` ALWAYS includes self when self
+    *      hasn't yet posted the declaration for the current phase. Without excluding self here, a node would emit a vote to evict itself
+    *      whenever a phase-transition stall detector fires before the node has locally posted its declaration. Observed in E2E at round 5
+    *      bootstrap: gl0-0 emitted `Signed[EvictionVote(targetPeer=gl0-0)]` to 3 gossip targets. 3. Result size is at most
+    *      `ceil(committee.size / 3) - alreadyVotedBySelf.size`, bounded below by 0 (per-voter cap to prevent a single Byzantine voter from
+    *      evicting the honest majority). 4. Ordering is stable: for the same inputs (as Sets), this function returns the same list in the
+    *      same order every invocation. This is what lets different honest nodes vote for the same subset when more peers are missing than
+    *      any one voter's cap allows — otherwise cert quorum would starve (codex review finding #2).
+    */
+  private[consensus] def selectEvictionTargets(
+    selfId: io.constellationnetwork.schema.peer.PeerId,
+    unresponsiveMissing: Set[io.constellationnetwork.schema.peer.PeerId],
+    committee: Set[io.constellationnetwork.schema.peer.PeerId],
+    alreadyVotedBySelf: Set[io.constellationnetwork.schema.peer.PeerId]
+  ): List[io.constellationnetwork.schema.peer.PeerId] = {
+    val cap = math.max(1, math.ceil(committee.size.toDouble / 3.0).toInt)
+    val remainingSlots = (cap - alreadyVotedBySelf.size).max(0)
+    if (remainingSlots == 0) List.empty
+    else
+      unresponsiveMissing
+        .filter(committee.contains)
+        .filterNot(alreadyVotedBySelf.contains)
+        .filterNot(_ === selfId) // never vote to evict ourselves
+        .toList
+        .sortBy(_.value.value) // canonical hex identity — same on every node
+        .take(remainingSlots)
+  }
 }

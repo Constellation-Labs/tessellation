@@ -140,6 +140,10 @@ object ConsensusLog {
     case object EarlyViewChange extends Event { val show = "EARLY_VIEW_CHANGE" }
     case object EvictionLoopEscalation extends Event { val show = "EVICTION_LOOP_ESCALATION" }
     case object EvictionSkippedMinFacilitators extends Event { val show = "EVICTION_SKIPPED_MIN_FACILITATORS" }
+    // Phase B1 EvictionVote mechanism (see codex-handoff-facilitator-set-shrinkage.md):
+    // signed negative-evidence votes for persistently-absent facilitators, assembled into
+    // an EvictionCertificate at quorum and embedded in the next Proposal.
+    case object Eviction extends Event { val show = "EVICTION" }
 
     // ── Stall detection events ────────────────────────────────────
     case object StallDetected extends Event { val show = "STALL_DETECTED" }

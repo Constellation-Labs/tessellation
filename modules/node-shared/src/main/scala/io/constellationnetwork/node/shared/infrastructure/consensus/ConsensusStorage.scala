@@ -3,11 +3,10 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 import cats.Order
 import cats.effect.Clock
 import cats.effect.kernel.{Async, Ref}
-import cats.effect.std.Semaphore
 import cats.kernel.Next
 import cats.syntax.all._
 
-import scala.concurrent.duration.{DurationInt, FiniteDuration}
+import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.ext.crypto._
@@ -96,6 +95,23 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
   /** Read the currently-assembled VCC for a key, if any. */
   def getAssembledVcc(key: Key): F[Option[ViewChangeCertificate]]
 
+  /** Add an `EvictionVote` to the current round's accumulator. First-write-wins per (voter, target): a peer cannot replace their earlier
+    * vote with a later one for the same target. Multiple targets per voter are allowed (up to the per-round cap enforced by the emitter).
+    */
+  private[consensus] def addEvictionVote(
+    origin: PeerId,
+    key: Key,
+    vote: Signed[EvictionVote]
+  ): F[Option[ConsensusResources[Artifact, Kind]]]
+
+  /** Store an assembled `EvictionCertificate` so the next proposer can embed it in the Proposal. Multiple certificates can be stored per
+    * key (one per evicted target). Cleared on round cleanup + recovery.
+    */
+  def storeAssembledEvictionCertificate(key: Key, cert: EvictionCertificate): F[Unit]
+
+  /** Read all currently-assembled EvictionCertificates for a key. Empty set if none. */
+  def getAssembledEvictionCertificates(key: Key): F[Set[EvictionCertificate]]
+
   private[consensus] def addPeerDeclarationAck(
     peerId: PeerId,
     key: Key,
@@ -169,6 +185,24 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     */
   private[consensus] def clearAllPeerRegistrations: F[Unit]
 
+  /** Current monotonic round-attempt id. Bumped on every successful state mutation through `condModifyState`. Emitters of
+    * `ConsensusCommand.RoundCompleted` snapshot this value and tag the command so the FSM can drop the command if the round has since
+    * advanced (view change / phase transition / new attempt).
+    */
+  private[consensus] def getRoundAttemptId: F[Long]
+
+  /** Record that `peer` has produced or relayed a consensus declaration at `key`. Monotonic: stored key is `max(existing, seen)`. Unlike
+    * `registerPeer`, which records a peer's one-time join ordinal, this map is continuously refreshed from every keyed rumor and gives a
+    * live read of where each peer is in consensus. Consumed by lagging/recovery logic to tell whether the cluster has advanced past this
+    * node.
+    */
+  private[consensus] def observePeerAtKey(peerId: PeerId, key: Key): F[Unit]
+
+  /** Snapshot of the observed per-peer tip keys (`max(seen)`). Populated by `observePeerAtKey` on every incoming keyed rumor. Cleared by
+    * `clearAllPeerRegistrations`; entries pruned by `pruneStalePeerRegistrations` to match the active peer set.
+    */
+  private[consensus] def getPeerCurrentKeys: F[Map[PeerId, Key]]
+
   /** Clean up state and resources for a key whose outcome conflicted with a concurrent finalization.
     *
     * When tryUpdateLastConsensusOutcomeWithCleanup returns false (another round's outcome was already stored), the finished state for the
@@ -207,7 +241,6 @@ object ConsensusStorage {
     }
 
     for {
-      stateUpdateSemaphore <- Semaphore[F](1)
       lastOutcomeR <- Ref.of(none[ConsensusOutcomeWrapper])
       timeTriggerR <- Ref.of(none[FiniteDuration])
       observationKeyR <- Ref.of(Option.empty[Key])
@@ -216,6 +249,20 @@ object ConsensusStorage {
       resourcesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusResources[Artifact, Kind]]()
       voteLocksR <- MapRef.ofConcurrentHashMap[F, Key, VoteLock]()
       assembledVccR <- MapRef.ofConcurrentHashMap[F, Key, ViewChangeCertificate]()
+      assembledEvictionCertsR <- MapRef.ofConcurrentHashMap[F, Key, Set[EvictionCertificate]]()
+      // Monotonic counter bumped on every successful state mutation via condModifyState. Used by
+      // the FSM to drop stale ConsensusCommand.RoundCompleted commands — one queued before a
+      // subsequent view change / phase transition would otherwise wipe the newly-advanced round.
+      // Observed in the 2026-04-21 fork-recovery E2E: abandonment at T=0 queued RoundCompleted,
+      // view change at T+165s advanced the round to view=1 CollectingSignatures, the stale
+      // RoundCompleted fired 104ms before the final signature arrived and dropped the round.
+      roundAttemptIdR <- Ref.of[F, Long](0L)
+      // Per-peer highest observed key from incoming keyed rumors (declarations, votes, acks,
+      // withdraws, artifacts). Feeds live "peer is ahead of me" detection in AbandonmentTracker
+      // and StallDetector. Distinct from peerRegistrationsR which records one-time join keys
+      // (see Bug B in the 2026-04-21 fork-recovery post-mortem: peersAtHigherKey=0 forever
+      // because registered keys never advance as peers progress).
+      peerCurrentKeysR <- Ref.of(Map.empty[PeerId, Key])
     } yield
       new ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind] {
 
@@ -237,37 +284,21 @@ object ConsensusStorage {
         def clearTimeTrigger: F[Unit] =
           timeTriggerR.set(none)
 
-        /** Maximum time to wait for the state update semaphore before failing. Prevents deadlock if a modify function hangs — the semaphore
-          * would block all subsequent state updates indefinitely without this timeout.
-          */
-        private val semaphoreTimeout: FiniteDuration = 30.seconds
-
+        // All writers to `statesR(key)` arrive through the FSM command loop (ConsensusFSM.handle),
+        // which processes one command at a time. `clearAllConsensusState` — the only other writer —
+        // is also FSM-driven (StateTransitions + AbandonmentTracker). There is no concurrent writer
+        // to serialize against, so no semaphore is needed here. The earlier Semaphore + 30s timeout
+        // wrapper caused 259 testnet stalls on 2026-04-21 under load (heavy work inside the critical
+        // section backed up the queue); removing the lock eliminates that stall class.
         def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[F, Key, Status, Outcome, Kind, B]): F[Option[B]] =
-          Async[F].timeoutTo(
-            stateUpdateSemaphore.permit.use { _ =>
-              for {
-                (maybeState, setter) <- statesR(key).access
-                maybeResult <- modifyStateFn(maybeState)
-
-                maybeB <- maybeResult.traverse {
-                  case (maybeState, b) =>
-                    setter(maybeState)
-                      .ifM(
-                        b.pure[F],
-                        new Throwable(
-                          "Failed consensus state update, all consensus state updates should be sequenced with a semaphore"
-                        ).raiseError[F, B]
-                      )
-                }
-              } yield maybeB
-            },
-            semaphoreTimeout,
-            Async[F].raiseError(
-              new java.util.concurrent.TimeoutException(
-                s"Consensus state update semaphore acquisition timed out after ${semaphoreTimeout.toSeconds}s"
-              )
-            )
-          )
+          for {
+            maybeState <- statesR(key).get
+            maybeResult <- modifyStateFn(maybeState)
+            maybeB <- maybeResult.traverse {
+              case (newMaybeState, b) =>
+                statesR(key).set(newMaybeState) >> roundAttemptIdR.update(_ + 1).as(b)
+            }
+          } yield maybeB
 
         def trySetInitialConsensusOutcome(initialOutcome: Outcome): F[Boolean] =
           lastOutcomeR.modify {
@@ -389,6 +420,34 @@ object ConsensusStorage {
         def getAssembledVcc(key: Key): F[Option[ViewChangeCertificate]] =
           assembledVccR(key).get
 
+        def addEvictionVote(
+          origin: PeerId,
+          key: Key,
+          vote: Signed[EvictionVote]
+        ): F[Option[ConsensusResources[Artifact, Kind]]] =
+          updateResources(key) { resources =>
+            val target = vote.value.targetPeer
+            val currentPerTarget = resources.evictionVotes.getOrElse(target, Map.empty)
+            // First-write-wins per (voter, target): if the voter has already cast a vote
+            // for this target in this round, keep the original. Prevents a late retransmit
+            // or replay from overwriting the original signed commitment.
+            val updatedPerTarget = currentPerTarget.get(origin) match {
+              case Some(_) => currentPerTarget
+              case None    => currentPerTarget.updated(origin, vote)
+            }
+            val updatedMap = resources.evictionVotes.updated(target, updatedPerTarget)
+            resources.copy(evictionVotes = updatedMap)
+          }
+
+        def storeAssembledEvictionCertificate(key: Key, cert: EvictionCertificate): F[Unit] =
+          assembledEvictionCertsR(key).update {
+            case Some(existing) => (existing + cert).some
+            case None           => Set(cert).some
+          }
+
+        def getAssembledEvictionCertificates(key: Key): F[Set[EvictionCertificate]] =
+          assembledEvictionCertsR(key).get.map(_.getOrElse(Set.empty))
+
         def addBinarySignature(peerId: PeerId, key: Key, signature: BinarySignature): F[Option[ConsensusResources[Artifact, Kind]]] =
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
             peerDeclaration.focus(_.binarySignature).modify(_.orElse(signature.some))
@@ -472,9 +531,17 @@ object ConsensusStorage {
           }
 
         def clearResources(key: Key): F[Unit] =
-          resourcesR(key).set(none) >> voteLocksR(key).set(none) >> assembledVccR(key).set(none)
+          resourcesR(key).set(none) >>
+            voteLocksR(key).set(none) >>
+            assembledVccR(key).set(none) >>
+            assembledEvictionCertsR(key).set(none)
 
         def clearResourcesPreservingDeclarations(key: Key): F[Unit] =
+          // evictionVotes and assembledEvictionCerts are preserved across abandonment
+          // retries because they are round-scoped (keyed by `key`), not view-scoped.
+          // A peer's vote to evict a target at round N is still valid on round N retry;
+          // clearing would force the voter to re-accumulate N stall cycles each retry,
+          // defeating the purpose of the mechanism on unstable rounds.
           updateResources(key) { resources =>
             resources.copy(
               acksMap = Map.empty,
@@ -528,16 +595,29 @@ object ConsensusStorage {
 
         def getPeerRegistrations: F[Map[PeerId, Key]] = peerRegistrationsR.get
 
+        def getRoundAttemptId: F[Long] = roundAttemptIdR.get
+
+        def observePeerAtKey(peerId: PeerId, key: Key): F[Unit] =
+          peerCurrentKeysR.update { m =>
+            m.updatedWith(peerId) {
+              case Some(existing) if Order[Key].gteqv(existing, key) => existing.some
+              case _                                                 => key.some
+            }
+          }
+
+        def getPeerCurrentKeys: F[Map[PeerId, Key]] = peerCurrentKeysR.get
+
         def pruneStaleResources(activeKey: Key): F[Unit] =
           resourcesR.keys.flatMap { keys =>
             keys.filterNot(_ === activeKey).traverse_(k => resourcesR(k).set(none))
           }
 
         def pruneStalePeerRegistrations(activePeers: Set[PeerId]): F[Unit] =
-          peerRegistrationsR.update(_.view.filterKeys(activePeers.contains).toMap)
+          peerRegistrationsR.update(_.view.filterKeys(activePeers.contains).toMap) >>
+            peerCurrentKeysR.update(_.view.filterKeys(activePeers.contains).toMap)
 
         def clearAllPeerRegistrations: F[Unit] =
-          peerRegistrationsR.set(Map.empty)
+          peerRegistrationsR.set(Map.empty) >> peerCurrentKeysR.set(Map.empty)
 
         def cleanupConflictedRound(key: Key): F[Unit] =
           condModifyState[Unit](key) { _ =>
@@ -554,6 +634,8 @@ object ConsensusStorage {
             _ <- voteLockKeys.traverse_(k => voteLocksR(k).set(none))
             vccKeys <- assembledVccR.keys
             _ <- vccKeys.traverse_(k => assembledVccR(k).set(none))
+            ecsKeys <- assembledEvictionCertsR.keys
+            _ <- ecsKeys.traverse_(k => assembledEvictionCertsR(k).set(none))
           } yield ()
       }
   }
