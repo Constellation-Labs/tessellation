@@ -97,11 +97,16 @@ object DeterministicPenaltiesSuite extends FunSuite {
     val finalPenalties = if (removalPenaltyRounds > 0) newPenalties else SortedMap.empty[PeerId, Int]
     val _ = candidateDeferralRounds // not exercised directly here; deferral uses same pattern
 
+    // Grace window: peers with active deferralCountdown don't accrue (participated, completed).
+    // Symmetric suppression prevents a freshly-Ready peer from being penalized for the
+    // startup-latency races in its first rounds as a facilitator.
     val thisRoundQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.from(
-      facilitators.toList.map { pid =>
-        val completed = if (completedFacilitators.contains(pid)) 1 else 0
-        pid -> (completed, 1)
-      }
+      facilitators.toList
+        .filterNot(deferredInCommittee.contains)
+        .map { pid =>
+          val completed = if (completedFacilitators.contains(pid)) 1 else 0
+          pid -> (completed, 1)
+        }
     )
     val rawAccumulated: SortedMap[PeerId, (Int, Int)] = {
       val allPeerIds = (previousPeerQuality.keySet.toList ::: thisRoundQuality.keySet.toList).distinct
@@ -266,6 +271,98 @@ object DeterministicPenaltiesSuite extends FunSuite {
     expect(
       result.recentProofSizes.get(ord(2L)).contains(4),
       s"recentProofSizes should record committee size (4 = 5 facilitators - 1 evicted), got ${result.recentProofSizes}"
+    )
+  }
+
+  test("grace window: peer in deferralCountdown does NOT accrue peerQuality this round") {
+    // p5 was selected into the committee but is in its post-Ready observation period.
+    // The local advancer's Facility/Proposal/Signature pipeline is cold — it may miss
+    // the signature window for this first round even though the committee did reach
+    // quorum. peerQuality must not record that as a (0,1) failure, because doing so
+    // triggers `chronicNonSigners` classification once participated >= threshold.
+    val deferredPrev: SortedMap[PeerId, Int] = SortedMap(p5 -> 2)
+    val result = computeOutcomeFields(
+      key = ord(2L),
+      facilitators = allFacilitators,
+      removedFacilitators = noEvicted,
+      previousPenalties = SortedMap.empty,
+      previousCumulative = SortedMap.empty,
+      previousPeerQuality = SortedMap.empty,
+      previousRecentProofSizes = postBootstrapProofSizes,
+      previousDeferrals = deferredPrev
+    )
+    expect(
+      !result.peerQuality.contains(p5),
+      s"deferred peer p5 should NOT appear in peerQuality during grace; got ${result.peerQuality.get(p5)}"
+    ).and(
+      expect(
+        result.peerQuality.get(p1).contains((1, 1)),
+        s"non-deferred facilitators should still accrue (1,1); got ${result.peerQuality.get(p1)}"
+      )
+    )
+  }
+
+  test("grace window: peer graduating out of deferral starts fresh at (1,1) with no retro-blame") {
+    // Round N: p5 is in grace (deferralCountdown=1), facilitator, round completes.
+    // After this round, p5's countdown decrements to 0 — next round p5 will accrue.
+    // This round's peerQuality must not carry any (_, _) entry for p5.
+    val deferredPrev: SortedMap[PeerId, Int] = SortedMap(p5 -> 1)
+    val previousQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.empty
+    val result = computeOutcomeFields(
+      key = ord(2L),
+      facilitators = allFacilitators,
+      removedFacilitators = noEvicted,
+      previousPenalties = SortedMap.empty,
+      previousCumulative = SortedMap.empty,
+      previousPeerQuality = previousQuality,
+      previousRecentProofSizes = postBootstrapProofSizes,
+      previousDeferrals = deferredPrev
+    )
+    expect(
+      !result.peerQuality.contains(p5),
+      s"p5 in grace should have NO peerQuality entry, got ${result.peerQuality.get(p5)}"
+    )
+  }
+
+  test("grace window: non-deferred + deferred mix — only non-deferred accrue") {
+    // 5 facilitators, p4 and p5 both in grace, rest fresh. Round completes cleanly.
+    val deferredPrev: SortedMap[PeerId, Int] = SortedMap(p4 -> 3, p5 -> 2)
+    val result = computeOutcomeFields(
+      key = ord(2L),
+      facilitators = allFacilitators,
+      removedFacilitators = noEvicted,
+      previousPenalties = SortedMap.empty,
+      previousCumulative = SortedMap.empty,
+      previousPeerQuality = SortedMap.empty,
+      previousRecentProofSizes = postBootstrapProofSizes,
+      previousDeferrals = deferredPrev
+    )
+    expect(result.peerQuality.get(p1).contains((1, 1)), "p1 accrues (1,1)")
+      .and(expect(result.peerQuality.get(p2).contains((1, 1)), "p2 accrues (1,1)"))
+      .and(expect(result.peerQuality.get(p3).contains((1, 1)), "p3 accrues (1,1)"))
+      .and(expect(!result.peerQuality.contains(p4), s"p4 in grace: no entry, got ${result.peerQuality.get(p4)}"))
+      .and(expect(!result.peerQuality.contains(p5), s"p5 in grace: no entry, got ${result.peerQuality.get(p5)}"))
+  }
+
+  test("grace window: pre-existing peerQuality for a peer is preserved, not mutated during grace") {
+    // Scenario: peer rejoined after penalty, is now in deferral. They already have
+    // accumulated (2,3) from earlier rounds. During grace they shouldn't accumulate
+    // further, but the prior history must remain intact.
+    val priorQuality: SortedMap[PeerId, (Int, Int)] = SortedMap(p5 -> (2, 3))
+    val deferredPrev: SortedMap[PeerId, Int] = SortedMap(p5 -> 2)
+    val result = computeOutcomeFields(
+      key = ord(2L),
+      facilitators = allFacilitators,
+      removedFacilitators = noEvicted,
+      previousPenalties = SortedMap.empty,
+      previousCumulative = SortedMap.empty,
+      previousPeerQuality = priorQuality,
+      previousRecentProofSizes = postBootstrapProofSizes,
+      previousDeferrals = deferredPrev
+    )
+    expect(
+      result.peerQuality.get(p5).contains((2, 3)),
+      s"p5 prior quality should persist unchanged during grace; got ${result.peerQuality.get(p5)}"
     )
   }
 

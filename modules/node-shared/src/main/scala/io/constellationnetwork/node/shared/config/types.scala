@@ -179,6 +179,14 @@ object types {
     // committee before round start (preventing mid-round eviction cascades).
     minParticipationObservations: Int = 5,
     minParticipationRatio: Double = 0.5,
+    // Periodic reinstatement: every N ordinals, one chronic non-signer is rotated back into
+    // the eligible committee pool for a single round to test whether they have recovered.
+    // Necessary because once a peer is classified chronic they are excluded from the committee,
+    // so their peerQuality.participated count stops growing — without reinstatement they
+    // would stay chronic forever. Deterministic: all honest nodes compute the same
+    // reinstatement round from the consensus-agreed key value and sort chronic set.
+    // 0 disables reinstatement (peers stay chronic until manual intervention).
+    chronicReinstatementInterval: Int = 100,
     // Phase 2 cold-restart protocol version flag. Included in `deterministicConfigHash` so pre-Phase-2 peers are
     // excluded from facilitator selection via the config-hash check. Set to 2 to enable the quorum-certified
     // view-change + local vote-lock protocol.
@@ -236,6 +244,7 @@ object types {
           s"maxRemovalPenaltyRounds=$maxRemovalPenaltyRounds," +
           s"minParticipationObservations=$minParticipationObservations," +
           s"minParticipationRatio=$minParticipationRatio," +
+          s"chronicReinstatementInterval=$chronicReinstatementInterval," +
           s"lockOnVoteProtocolVersion=$lockOnVoteProtocolVersion," +
           s"bootstrapCompleteProofsThreshold=$bootstrapCompleteProofsThreshold," +
           s"bootstrapDeclarationTimeoutMultiplier=$bootstrapDeclarationTimeoutMultiplier"
