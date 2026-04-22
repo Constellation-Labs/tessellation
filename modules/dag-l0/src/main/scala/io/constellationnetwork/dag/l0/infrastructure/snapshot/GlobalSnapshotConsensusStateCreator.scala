@@ -274,36 +274,76 @@ object GlobalSnapshotConsensusStateCreator {
         // NOTE: abandonedMissing is intentionally NOT included — it's a local-only tracker that
         // can diverge between nodes, causing different facilitator sets → fork detection → Leaving state.
         //
-        // MINIMUM VIABLE QUORUM: If excluding penalized peers would drop below majority,
-        // bypass penalties and use all eligible peers. This prevents PeerQualityTracker from
-        // reducing the facilitator set below viable consensus.
-        // Dynamic majority: floor(N/2) + 1, matching StallDetector's quorum floor.
-        // Penalties can never reduce the facilitator set below the majority threshold —
-        // if they would, bypass them and let StallDetector handle truly unresponsive peers at runtime.
-        minViableQuorum = math.max(3, (allEligible.size / 2) + 1)
+        // MINIMUM VIABLE QUORUM — fork safety invariant:
+        // Two independent cohorts both forming a valid quorum is the fork scenario we must prevent.
+        // Historically this floor used (allEligible.size / 2) + 1 so a minority partition could never
+        // shrink its committee enough to finalize on its own. But that over-counted: chronic
+        // non-signers — by definition of their classification — cannot form a competing quorum.
+        // They are consensus-agreed (derived from lastOutcome.peerQuality) as peers that do not sign,
+        // so every honest node excludes the same chronic set, and the "minority that could compete"
+        // is exactly `allEligible - chronicNonSigners`. Computing majority over that set lets the
+        // reliable cohort keep running when chronic peers outnumber them, while still preventing
+        // a real partition-and-both-sides-shrink fork.
+        //
+        // 2026-04-22 testnet: committee=9, 5 chronic, 4 reliable. Old floor=5, filtered=4 → fallback
+        // to allEligible(9), re-admit chronic → QUORUM_INFEASIBLE_EVICTION loop. New floor (majority
+        // of potentiallyCompeting=4) = 3, filtered=4 ≥ 3 → use the 4 reliable, q=3, progress.
+        potentiallyCompeting = allEligible.filterNot(chronicNonSigners.contains)
+        minViableQuorum = math.max(3, (potentiallyCompeting.size / 2) + 1)
+
+        // Periodic reinstatement (Option A): every chronicReinstatementInterval ordinals, rotate
+        // ONE chronic non-signer back into the eligible pool for a single round so they can
+        // re-enter peerQuality's completed/participated accounting. Without this the `participated`
+        // counter stops growing once a peer is excluded → chronic classification is effectively
+        // permanent even if the peer recovers. Deterministic: every honest node computes the
+        // same (isReinstatementRound, rotation index) from consensus-agreed data.
+        reinstatedThisRound = {
+          val interval = config.chronicReinstatementInterval
+          val ordinalValue = key.value.value
+          val isReinstatementRound = interval > 0 && ordinalValue % interval == 0L
+          if (!isReinstatementRound || chronicNonSigners.isEmpty) Set.empty[PeerId]
+          else {
+            val sorted = chronicNonSigners.toList.sortBy(_.value.value)
+            val idx = ((ordinalValue / interval) % sorted.size.toLong).toInt
+            Set(sorted(idx))
+          }
+        }
+        effectiveChronic = chronicNonSigners -- reinstatedThisRound
+
+        _ <- ConsensusLog
+          .info(
+            logger,
+            Facilitator,
+            key.show,
+            "n/a",
+            ChronicNonSignersExcluded,
+            "reinstated" -> reinstatedThisRound.toList.map(_.value.value.take(8)).mkString(","),
+            "interval" -> config.chronicReinstatementInterval.toString
+          )
+          .whenA(reinstatedThisRound.nonEmpty)
+
         eligibleThisRound = {
-          // Exclude: previously removed peers, penalized peers, chronic non-signers,
-          // AND deferred candidates (both brand-new and those still in countdown).
+          // Exclude: previously removed peers, penalized peers, chronic non-signers (minus any
+          // reinstated for this round), AND deferred candidates (brand-new or in countdown).
           // Deferred candidates remain in allEligible so they remain tracked.
-          //
-          // chronicNonSigners are kept out even through the withoutPenaltiesOnly bypass:
-          // these are peers with established track records of NOT signing, distinct from
-          // temporary penalties. Admitting them has been shown to stall rounds.
-          val excluded = previouslyRemoved ++ penalizedPeers ++ chronicNonSigners ++ allDeferred
+          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred
           val filtered = allEligible.filterNot(excluded.contains)
-          // Bypass only penalties and deferred (not chronic non-signers) to keep the set
-          // functional without forcing chronically-broken nodes in. A 2-node set can still
-          // produce rounds.
-          val withoutPenaltiesOnly = allEligible.filterNot((previouslyRemoved ++ penalizedPeers ++ chronicNonSigners).contains)
+          // Bypass chain for liveness when filtering would drop below minViableQuorum:
+          //   1. withoutPenaltiesOnly — lift penalties + deferral, keep chronic + reinstatement rotation
+          //   2. filtered itself (even below floor) — accept degraded committee over re-admitting chronic peers
+          //   3. allEligible — last-resort full re-admit, only when filtered is empty
+          // This is the fork-safety critical path: we never re-admit `chronicNonSigners` except as
+          // the absolute last resort when even the reliable cohort is empty (selfId fallback).
+          val withoutPenaltiesOnly = allEligible.filterNot((previouslyRemoved ++ penalizedPeers ++ effectiveChronic).contains)
           if (filtered.size >= minViableQuorum) filtered
           else if (withoutPenaltiesOnly.size >= 2 && allDeferred.nonEmpty) withoutPenaltiesOnly
-          else if (allEligible.size >= minViableQuorum) allEligible
+          else if (filtered.nonEmpty) filtered
           else if (allEligible.nonEmpty) allEligible
           else List(selfId)
         }
 
         penaltyBypassed = {
-          val excluded = previouslyRemoved ++ penalizedPeers ++ chronicNonSigners ++ allDeferred
+          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred
           val filtered = allEligible.filterNot(excluded.contains)
           filtered.size < minViableQuorum && allEligible.size > filtered.size
         }

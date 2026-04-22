@@ -24,13 +24,11 @@ object EvictionCertificateBuilder {
     *
     *   - Filter votes to those matching (target, reason, facilitatorsHash).
     *   - Reject any vote whose voter is not in the current committee.
-    *   - Count UNIQUE SIGNERS (by `proofs.head.id`) — not storage keys — for the quorum check.
-    *     The `votes` map is keyed by the gossip sender, which is not necessarily the signer: a
-    *     single signed vote can be relayed through multiple peers and end up stored under
-    *     different keys. Without signer-level deduplication, a Byzantine relay can inflate the
-    *     apparent quorum, get a cert assembled, and then see it rejected at proposal-acceptance
-    *     time (where `validateProposalEcs` re-checks against the deduplicated `cert.votes` set).
-    *     Deduplicating here ensures the cert is only built from distinct signers.
+    *   - Count UNIQUE SIGNERS (by `proofs.head.id`) — not storage keys — for the quorum check. The `votes` map is keyed by the gossip
+    *     sender, which is not necessarily the signer: a single signed vote can be relayed through multiple peers and end up stored under
+    *     different keys. Without signer-level deduplication, a Byzantine relay can inflate the apparent quorum, get a cert assembled, and
+    *     then see it rejected at proposal-acceptance time (where `validateProposalEcs` re-checks against the deduplicated `cert.votes`
+    *     set). Deduplicating here ensures the cert is only built from distinct signers.
     *   - Use a SortedSet for the resulting votes so serialization order is stable.
     *
     * Returns `Right(cert)` on success, or `Left(reason)` with a stable code-like string.
