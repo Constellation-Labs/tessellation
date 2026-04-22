@@ -70,11 +70,13 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       quorumSize = 3,
       committee = committee
     )
-    expect(result.isRight, s"expected Right(cert), got: $result").and(
-      expect(result.exists(_.votes.length === 3), s"expected 3 votes, got: $result")
-    ).and(
-      expect(result.exists(_.targetPeer === targetA), s"expected target=$targetA, got: $result")
-    )
+    expect(result.isRight, s"expected Right(cert), got: $result")
+      .and(
+        expect(result.exists(_.votes.length === 3), s"expected 3 votes, got: $result")
+      )
+      .and(
+        expect(result.exists(_.targetPeer === targetA), s"expected target=$targetA, got: $result")
+      )
   }
 
   // === Under quorum ===
@@ -245,7 +247,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
     val votes: Map[PeerId, Signed[EvictionVote]] = Map(
       voter1 -> theVote,
       voter2 -> theVote, // same signed bytes relayed with different storage key
-      voter3 -> theVote  // and again
+      voter3 -> theVote // and again
     )
     val result = EvictionCertificateBuilder.build(
       target = targetA,
@@ -273,7 +275,8 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       voter2 -> vote1, // relay of voter1's vote
       voter3 -> vote3
     )
-    val underQuorum = EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, votes, quorumSize = 3, committee = committee)
+    val underQuorum =
+      EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, votes, quorumSize = 3, committee = committee)
     val exactlyMet = EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, votes, quorumSize = 2, committee = committee)
     expect(
       underQuorum.swap.exists(_.startsWith("under_quorum")),

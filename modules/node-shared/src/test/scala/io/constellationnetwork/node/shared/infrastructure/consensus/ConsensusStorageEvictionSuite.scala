@@ -15,18 +15,16 @@ import io.constellationnetwork.security.signature.signature.{Signature, Signatur
 import io.chrisdavenport.mapref.MapRef
 import weaver.SimpleIOSuite
 
-/** Behavioural tests for the eviction-vote and eviction-certificate storage accessors added in
-  * B1. Full ConsensusStorage requires many type-class witnesses that make a direct test
-  * prohibitively boilerplate-heavy; this suite follows the same pattern as
-  * `ConsensusStorageLockSuite` — exercises the same invariants against the MapRef /
-  * map-manipulation shape that ConsensusStorage uses internally.
+/** Behavioural tests for the eviction-vote and eviction-certificate storage accessors added in B1. Full ConsensusStorage requires many
+  * type-class witnesses that make a direct test prohibitively boilerplate-heavy; this suite follows the same pattern as
+  * `ConsensusStorageLockSuite` — exercises the same invariants against the MapRef / map-manipulation shape that ConsensusStorage uses
+  * internally.
   *
   * Covers:
   *
-  *   - `addEvictionVote` semantics: first-write-wins per (voter, target); multiple voters and
-  *     multiple targets accumulate independently
-  *   - `storeAssembledEvictionCertificate` / `getAssembledEvictionCertificates`: Set-growing
-  *     semantics, empty-default read, multi-target accumulation
+  *   - `addEvictionVote` semantics: first-write-wins per (voter, target); multiple voters and multiple targets accumulate independently
+  *   - `storeAssembledEvictionCertificate` / `getAssembledEvictionCertificates`: Set-growing semantics, empty-default read, multi-target
+  *     accumulation
   */
 object ConsensusStorageEvictionSuite extends SimpleIOSuite {
 

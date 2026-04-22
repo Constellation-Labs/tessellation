@@ -202,6 +202,17 @@ object GlobalSnapshotConsensusStateAdvancer {
             // committee is not consensus-agreed. Evicted facilitators get
             // `(completed=0, participated=1)` so they remain trackable but don't gain
             // quality score while out.
+            //
+            // Grace window: peers whose `deferralCountdown > 0` are in the post-Ready
+            // observation period. Their local advancer can lag by seconds on the first
+            // rounds they're selected into (MPT warmup, acceptance pipeline cold start),
+            // which caused a cascade where a freshly-Ready peer misses round N's
+            // signature window, gets penalized, sits out rounds N+1..N+2, then
+            // re-enters round N+3 still behind — stalling the whole cluster. Symmetric
+            // suppression: they don't accrue `participated` OR `completed` during grace.
+            // This uses the same consensus-agreed `deferralCountdown` infrastructure
+            // that already gates active facilitation (state creator), so every node
+            // arrives at the same peerQuality map.
             val evictedPeers = state.removedFacilitators.value
             val previousPenalties = state.lastOutcome.removalPenalties
             val previousCumulative = state.lastOutcome.cumulativeMissCounts
@@ -269,10 +280,12 @@ object GlobalSnapshotConsensusStateAdvancer {
             val finalDeferrals = if (config.candidateDeferralRounds > 0) newDeferrals else SortedMap.empty[PeerId, Int]
 
             val thisRoundQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.from(
-              state.facilitators.value.map { pid =>
-                val completed = if (completedFacilitators.contains(pid)) 1 else 0
-                pid -> (completed, 1)
-              }
+              state.facilitators.value
+                .filterNot(deferredInCommittee.contains)
+                .map { pid =>
+                  val completed = if (completedFacilitators.contains(pid)) 1 else 0
+                  pid -> (completed, 1)
+                }
             )
             // Accumulate with previous rounds; decay/prune as before.
             val rawAccumulated: SortedMap[PeerId, (Int, Int)] = {

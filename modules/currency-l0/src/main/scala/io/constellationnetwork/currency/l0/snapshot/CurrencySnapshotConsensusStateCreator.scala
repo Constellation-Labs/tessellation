@@ -253,24 +253,44 @@ object CurrencySnapshotConsensusStateCreator {
         // NOTE: abandonedMissing is intentionally NOT included — it's a local-only tracker that
         // can diverge between nodes, causing different facilitator sets → fork detection → Leaving state.
         //
-        // MINIMUM VIABLE QUORUM: If excluding penalized peers would drop below majority,
-        // bypass penalties and use all eligible peers. This prevents PeerQualityTracker from
-        // reducing the facilitator set below viable consensus.
-        // Dynamic majority: floor(N/2) + 1, matching StallDetector's quorum floor.
-        minViableQuorum = math.max(3, (allEligible.size / 2) + 1)
+        // MINIMUM VIABLE QUORUM — fork safety invariant (mirror of dag-l0 rationale).
+        // Majority floor is computed over potentiallyCompeting (allEligible minus chronic
+        // non-signers), not raw allEligible. Chronic non-signers are consensus-agreed peers
+        // that cannot form a competing quorum by definition, so they don't count toward the
+        // partition-shrink fork threshold. Lets the reliable cohort keep running when chronic
+        // peers outnumber them, while still preventing a real partition-both-sides-shrink fork.
+        potentiallyCompeting = allEligible.filterNot(chronicNonSigners.contains)
+        minViableQuorum = math.max(3, (potentiallyCompeting.size / 2) + 1)
+
+        // Periodic reinstatement (Option A): every chronicReinstatementInterval ordinals,
+        // rotate one chronic non-signer back into the eligible pool for a single round
+        // so their peerQuality counters can resume accumulating. Deterministic rotation.
+        reinstatedThisRound = {
+          val interval = config.chronicReinstatementInterval
+          val ordinalValue = key.value.value
+          val isReinstatementRound = interval > 0 && ordinalValue % interval == 0L
+          if (!isReinstatementRound || chronicNonSigners.isEmpty) Set.empty[PeerId]
+          else {
+            val sorted = chronicNonSigners.toList.sortBy(_.value.value)
+            val idx = ((ordinalValue / interval) % sorted.size.toLong).toInt
+            Set(sorted(idx))
+          }
+        }
+        effectiveChronic = chronicNonSigners -- reinstatedThisRound
+
         eligibleThisRound = {
-          val excluded = previouslyRemoved ++ penalizedPeers ++ chronicNonSigners ++ allDeferred
+          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred
           val filtered = allEligible.filterNot(excluded.contains)
-          val withoutPenaltiesOnly = allEligible.filterNot((previouslyRemoved ++ penalizedPeers ++ chronicNonSigners).contains)
+          val withoutPenaltiesOnly = allEligible.filterNot((previouslyRemoved ++ penalizedPeers ++ effectiveChronic).contains)
           if (filtered.size >= minViableQuorum) filtered
           else if (withoutPenaltiesOnly.size >= 2 && allDeferred.nonEmpty) withoutPenaltiesOnly
-          else if (allEligible.size >= minViableQuorum) allEligible
+          else if (filtered.nonEmpty) filtered
           else if (allEligible.nonEmpty) allEligible
           else List(selfId)
         }
 
         penaltyBypassed = {
-          val excluded = previouslyRemoved ++ penalizedPeers ++ chronicNonSigners ++ allDeferred
+          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred
           val filtered = allEligible.filterNot(excluded.contains)
           filtered.size < minViableQuorum && allEligible.size > filtered.size
         }

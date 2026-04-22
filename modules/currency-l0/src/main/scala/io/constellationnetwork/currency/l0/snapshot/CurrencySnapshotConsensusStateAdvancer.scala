@@ -173,11 +173,17 @@ object CurrencySnapshotConsensusStateAdvancer {
             }
             val finalDeferrals = if (config.candidateDeferralRounds > 0) newDeferrals else SortedMap.empty[PeerId, Int]
 
+            // Grace window: peers with active deferralCountdown don't accrue participated
+            // or completed. Symmetric suppression prevents the "freshly-Ready peer misses
+            // first round, gets penalized, sits out, re-enters still behind" cascade.
+            // See GlobalSnapshotConsensusStateAdvancer for full rationale.
             val thisRoundQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.from(
-              state.facilitators.value.map { pid =>
-                val completed = if (completedFacilitators.contains(pid)) 1 else 0
-                pid -> (completed, 1)
-              }
+              state.facilitators.value
+                .filterNot(deferredInCommittee.contains)
+                .map { pid =>
+                  val completed = if (completedFacilitators.contains(pid)) 1 else 0
+                  pid -> (completed, 1)
+                }
             )
             // Accumulate with previous rounds, apply deterministic decay and pruning
             val rawAccumulated: SortedMap[PeerId, (Int, Int)] = {

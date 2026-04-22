@@ -7,9 +7,8 @@ import io.constellationnetwork.security.hex.Hex
 
 import weaver.FunSuite
 
-/** Regression coverage for `StallDetector.selectEvictionTargets` — the per-emission target
-  * selection that needs to converge across honest nodes when missing peers exceed the per-voter
-  * cap. Codex review finding #2: prior code used `Set.take(N)` which iterates in unspecified
+/** Regression coverage for `StallDetector.selectEvictionTargets` — the per-emission target selection that needs to converge across honest
+  * nodes when missing peers exceed the per-voter cap. Codex review finding #2: prior code used `Set.take(N)` which iterates in unspecified
   * order, so two honest nodes could vote for different subsets and cert quorum would starve.
   */
 object StallDetectorEvictionTargetSelectionSuite extends FunSuite {
@@ -88,9 +87,12 @@ object StallDetectorEvictionTargetSelectionSuite extends FunSuite {
     val r0 = StallDetector.selectEvictionTargets(p01, missing, committee10, Set.empty)
     val r1 = StallDetector.selectEvictionTargets(p01, permutation1, committee10, Set.empty)
     val r2 = StallDetector.selectEvictionTargets(p01, permutation2, committee10, Set.empty)
-    expect.same(r0, r1).and(expect.same(r0, r2)).and(
-      expect(r0.size === math.ceil(committee10.size.toDouble / 3.0).toInt, s"expected cap=4 selections, got $r0")
-    )
+    expect
+      .same(r0, r1)
+      .and(expect.same(r0, r2))
+      .and(
+        expect(r0.size === math.ceil(committee10.size.toDouble / 3.0).toInt, s"expected cap=4 selections, got $r0")
+      )
   }
 
   test("sorted output: first-K targets by hex identity") {
@@ -156,12 +158,15 @@ object StallDetectorEvictionTargetSelectionSuite extends FunSuite {
     val nodeAResult = StallDetector.selectEvictionTargets(p01, missing, committee10, Set(p05))
     val nodeBResult = StallDetector.selectEvictionTargets(p01, missing, committee10, Set.empty)
     // Node A: remainingSlots = 4 - 1 = 3 (already voted for 1). Excluded p05.
-    expect.same(List(p06, p07, p08), nodeAResult).and(
-      expect.same(List(p05, p06, p07, p08), nodeBResult)
-    ).and(
-      // Overlap: {p06, p07, p08} — three peers that BOTH nodes vote on, guaranteeing
-      // quorum-forming progress even with per-voter caps.
-      expect((nodeAResult.toSet intersect nodeBResult.toSet).size === 3, "overlap insufficient for quorum progress")
-    )
+    expect
+      .same(List(p06, p07, p08), nodeAResult)
+      .and(
+        expect.same(List(p05, p06, p07, p08), nodeBResult)
+      )
+      .and(
+        // Overlap: {p06, p07, p08} — three peers that BOTH nodes vote on, guaranteeing
+        // quorum-forming progress even with per-voter caps.
+        expect(nodeAResult.toSet.intersect(nodeBResult.toSet).size === 3, "overlap insufficient for quorum progress")
+      )
   }
 }
