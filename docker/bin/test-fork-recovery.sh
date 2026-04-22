@@ -169,33 +169,53 @@ fi
 # (some still have peers on deferral countdown) → different leader election
 # → split-brain rounds that never complete.
 #
-# Require every node to report fac == NUM_GL0 on 3 consecutive checks.
-echo "  Waiting for ALL $NUM_GL0 nodes to be in the facilitator committee (3+ consecutive rounds)..."
+# Require every node to report fac == NUM_GL0 AND be at the same ordinal
+# (spread <= 1) on 3 consecutive checks. The ordinal check catches the case
+# where a node is known to the committee but has not yet finished catching up
+# to the cluster's current tip — observed 2026-04-22: ISOLATION_NODE was at
+# ord=3 while the rest were at ord=8 when isolation fired, leaving it 5+ behind
+# from the start and causing the post-rejoin recovery to miss the 900s window.
+echo "  Waiting for ALL $NUM_GL0 nodes to be in the committee AND at the same ordinal (spread<=1, 3+ consecutive rounds)..."
 stable_rounds=0
 stab_deadline=$(($(date +%s) + 600))
 while [ "$(date +%s)" -lt "$stab_deadline" ] && [ "$stable_rounds" -lt 3 ]; do
   all_full=true
+  min_ord=999999
+  max_ord=0
   status_line=""
   for i in $(seq 0 $((NUM_GL0 - 1))); do
     node="gl0-${i}"
     fac=$(get_facilitator_count "$node")
-    status_line="${status_line} ${node}:fac=${fac:-?}"
+    ord=$(get_ordinal "$node")
+    status_line="${status_line} ${node}:ord=${ord:-?}/fac=${fac:-?}"
     if [ "${fac:-0}" -lt "$NUM_GL0" ]; then
       all_full=false
     fi
+    if [ -n "$ord" ]; then
+      [ "$ord" -lt "$min_ord" ] && min_ord=$ord
+      [ "$ord" -gt "$max_ord" ] && max_ord=$ord
+    else
+      # Missing ordinal is treated as not-synced for this check.
+      all_full=false
+    fi
   done
+  spread=$((max_ord - min_ord))
+  in_sync=false
+  if [ "$all_full" = "true" ] && [ "$spread" -le 1 ]; then
+    in_sync=true
+  fi
   ord=$(get_ordinal "$MONITOR_NODE")
-  if [ "$all_full" = "true" ]; then
+  if [ "$in_sync" = "true" ]; then
     stable_rounds=$((stable_rounds + 1))
-    echo "    Round $stable_rounds/3 with all fac=$NUM_GL0 at ordinal ${ord:-?} [${status_line# }]"
+    echo "    Round $stable_rounds/3 fac=$NUM_GL0 spread=$spread at ordinal ${ord:-?} [${status_line# }]"
   else
     stable_rounds=0
-    echo "    Waiting for all fac=$NUM_GL0 at ordinal ${ord:-?} [${status_line# }]"
+    echo "    Waiting for full committee + ordinal sync (spread=$spread) at ordinal ${ord:-?} [${status_line# }]"
   fi
   sleep 45
 done
 if [ "$stable_rounds" -lt 3 ]; then
-  fail "Cluster never reached full committee (fac=$NUM_GL0 on all nodes) within 600s"
+  fail "Cluster never reached full committee with ordinal spread<=1 within 600s"
 fi
 
 # Record pre-isolation state from monitor (a validator)

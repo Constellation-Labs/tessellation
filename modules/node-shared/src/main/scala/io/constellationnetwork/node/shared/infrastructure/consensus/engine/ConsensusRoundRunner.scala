@@ -60,9 +60,11 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
   def runRound(trigger: Option[ConsensusTrigger]): F[Unit] =
     storage.getLastConsensusOutcome.flatMap {
       case None =>
+        // No outcome exists yet — round cannot run. Unconditional (no attempt-id): the queue is
+        // already quiescent and the FSM must Idle cleanly.
         ConsensusLog.warn(logger, Category.Lifecycle, "n/a", "n/a", LogEvent.NoPreviousOutcome) >>
           Metrics[F].incrementCounter("dag_consensus_round_no_outcome") >>
-          queue.offer(ConsensusCommand.RoundCompleted)
+          queue.offer(ConsensusCommand.RoundCompleted(None))
 
       case Some(outcome) =>
         val nextKey = outcomeKey.get(outcome).next
@@ -106,6 +108,8 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
             val selfIsFacilitator = maybeState.exists(_.facilitators.value.contains(ctx.selfId))
 
             if (isValidator && count <= 1 && selfIsFacilitator) {
+              // Validator refused to facilitate solo: snapshot current attemptId so the FSM drops
+              // this RoundCompleted if another node's gossip advances our round before dequeue.
               ConsensusLog.warn(
                 logger,
                 Category.Lifecycle,
@@ -116,7 +120,7 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
                 "facilitators" -> count.toString
               ) >>
                 Metrics[F].incrementCounter("dag_consensus_validator_solo_blocked") >>
-                queue.offer(ConsensusCommand.RoundCompleted)
+                storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(Some(id))))
             } else {
               Metrics[F].incrementCounter(
                 "dag_consensus_round_facilitated",
@@ -161,12 +165,14 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
           doInitialCheck(key)
 
       case None =>
+        // No state for this key — state may have been wiped mid-facilitate, or the creator never
+        // produced one. Snapshot attemptId; a concurrent advance should override this completion.
         Metrics[F].incrementCounter(
           "dag_consensus_round_facilitated",
           Seq(unsafeLabelName("outcome") -> "no_state")
         ) >>
           ConsensusLog.warn(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.NoState) >>
-          queue.offer(ConsensusCommand.RoundCompleted)
+          storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(Some(id))))
     }
 
   private def doInitialCheck(key: Key): F[Unit] =

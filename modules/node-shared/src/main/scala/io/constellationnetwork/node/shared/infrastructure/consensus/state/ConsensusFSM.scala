@@ -55,7 +55,7 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
   private val rumorHandler = new RumorHandler[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](ctx)
   private val transitions = new StateTransitions[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](ctx)
 
-  import ctx.{isRoundRunning => isRunning, logger => log, nodeStorage, pending}
+  import ctx.{isRoundRunning => isRunning, logger => log, nodeStorage, pending, storage}
 
   /** Node states where consensus rounds must NOT start (recovery / download / leaving in progress). Leaving is included to prevent an
     * infinite tight loop: when a node is in Leaving state, rounds immediately abandon (no peers), try to force-leave (already Leaving →
@@ -81,9 +81,11 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
           case RumorReceived(r)             => rumorHandler.process(r)
           case CheckUpdate(key)             => transitions.checkUpdate(key.asInstanceOf[Key])
           case CheckViewChangeAssembly(key) => transitions.checkViewChangeAssembly(key.asInstanceOf[Key])
-          case InternalScheduled(inner)     => handle(inner)
-          case PeerObserved(peer)           => transitions.registerPeer(peer)
-          case IgnoreUnexpectedRumor(r)     => log.warn(s"Ignoring unexpected rumor: ${r.getClass.getSimpleName}")
+          case CheckEvictionAssembly(key, target) =>
+            transitions.checkEvictionAssembly(key.asInstanceOf[Key], target.asInstanceOf[io.constellationnetwork.schema.peer.PeerId])
+          case InternalScheduled(inner) => handle(inner)
+          case PeerObserved(peer)       => transitions.registerPeer(peer)
+          case IgnoreUnexpectedRumor(r) => log.warn(s"Ignoring unexpected rumor: ${r.getClass.getSimpleName}")
 
           case _ if running => handleWhileBusy(cmd)
           case _            => handleWhileIdle(cmd)
@@ -95,7 +97,7 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
       case StartRound(trigger) => startRound(trigger)
       case TimeTick            => startRound(Some(TimeTrigger))
       case FacilitateByEvent   => startRound(Some(EventTrigger))
-      case RoundCompleted      => log.warn(ConsensusLog.format(Category.Lifecycle, "n/a", "n/a", LogEvent.IdleRoundCompleted))
+      case RoundCompleted(_)   => log.warn(ConsensusLog.format(Category.Lifecycle, "n/a", "n/a", LogEvent.IdleRoundCompleted))
       case ConsensusFinished(_, _, _) =>
         log.warn(ConsensusLog.format(Category.Lifecycle, "n/a", "n/a", LogEvent.IdleConsensusFinished))
       case InitializeFromDownload(key, art, c, isRecovery) =>
@@ -119,8 +121,27 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
       case StartRound(_) =>
         Metrics[F].incrementCounter("dag_consensus_fsm_pending_deferred", Seq(unsafeLabelName("trigger_type") -> "event")) >>
           pending.setEvent()
-      case RoundCompleted =>
-        completeRound(log.debug(ConsensusLog.format(Category.Lifecycle, "n/a", "n/a", LogEvent.RoundCompletedNoOutcome)))
+      case RoundCompleted(expectedAttemptId) =>
+        // Drop stale RoundCompleted if the round advanced since this command was queued. Prevents
+        // the Bug A race where an abandonment-queued RoundCompleted fires AFTER a view change has
+        // moved the round to CollectingSignatures view=1, wiping the nearly-finished round.
+        // `None` (unconditional) preserves force-completion paths in ConsensusEventLoop's error handler.
+        storage.getRoundAttemptId.flatMap { currentId =>
+          if (expectedAttemptId.exists(_ != currentId))
+            ConsensusLog.info(
+              log,
+              Category.Lifecycle,
+              "n/a",
+              "n/a",
+              LogEvent.RoundCompletedNoOutcome,
+              "reason" -> "stale_attempt_id",
+              "expected" -> expectedAttemptId.map(_.toString).getOrElse("none"),
+              "current" -> currentId.toString,
+              "action" -> "dropped"
+            ) >> Metrics[F].incrementCounter("dag_consensus_round_completed_stale_dropped")
+          else
+            completeRound(log.debug(ConsensusLog.format(Category.Lifecycle, "n/a", "n/a", LogEvent.RoundCompletedNoOutcome)))
+        }
       case ConsensusFinished(key, _, trigger) =>
         completeRound(
           log.info(ConsensusLog.format(Category.Lifecycle, key.toString, "n/a", LogEvent.ConsensusFinished)) >>

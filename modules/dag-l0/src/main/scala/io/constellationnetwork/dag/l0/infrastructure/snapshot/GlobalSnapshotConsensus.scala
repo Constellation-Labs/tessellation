@@ -255,6 +255,24 @@ object GlobalSnapshotConsensus {
         org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F]
       )
 
+      evictionVoter = new GossipingEvictionVoter[
+        F,
+        GlobalSnapshotEvent,
+        GlobalSnapshotKey,
+        GlobalSnapshotArtifact,
+        GlobalSnapshotContext,
+        GlobalSnapshotStatus,
+        GlobalConsensusOutcome,
+        GlobalConsensusKind
+      ](
+        selfId,
+        keyPair,
+        gossip,
+        consensusStorage,
+        (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
+        org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F]
+      )
+
       loop <-
         ConsensusEventLoop.build[
           F,
@@ -280,7 +298,10 @@ object GlobalSnapshotConsensus {
           appConfig.snapshot.consensus,
           facilitatorSelector,
           peerQualityTracker,
-          viewChangeVoter
+          viewChangeVoter,
+          evictionVoter,
+          (o: GlobalConsensusOutcome) =>
+            !o.recentProofSizes.values.exists(_ >= appConfig.snapshot.consensus.bootstrapCompleteProofsThreshold)
         )
 
       handler = GlobalConsensusHandler.make(loop.queue)
