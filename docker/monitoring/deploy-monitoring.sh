@@ -118,10 +118,37 @@ log "Initializing ClickHouse tables"
 ssh "$SERVER_NODE" "docker exec -i clickhouse clickhouse-client --password '$CH_PASS'" \
   < "$SCRIPT_DIR/clickhouse/init.sql" 2>&1
 
+# --- Deploy network_process_exporter on each tessellation node ---
+# Custom eBPF (BCC) exporter that emits per-PID TCP/UDP send/recv byte counters
+# on :9435. Runs as a host systemd unit (eBPF kprobes need host kernel access;
+# running this in a container would require --privileged + kernel-header mounts).
+# BCC compiles BPF at runtime against kernel headers, so we install headers
+# matching the currently-booted kernel. If a node is running a deprecated kernel
+# whose headers are no longer in apt, the install fails and the service stays
+# down — reboot the node onto a current kernel and re-run this script.
+# Prometheus scrapes these via the network-process-exporter job in prometheus.yaml.
+for h in "${NODES[@]}"; do
+  log "Deploying network_process_exporter on $h"
+  ssh "$h" "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+              bpfcc-tools python3-bpfcc python3-prometheus-client \
+              linux-headers-\$(uname -r) >/dev/null" \
+    || { log "  $h: header/BCC install failed (running kernel may need a reboot); skipping service start"; continue; }
+  scp -q "$SCRIPT_DIR/network-process-exporter/network_process_exporter.py" \
+         "$h:/usr/local/bin/network_process_exporter.py"
+  ssh "$h" "chmod +x /usr/local/bin/network_process_exporter.py"
+  scp -q "$SCRIPT_DIR/network-process-exporter/network-process-exporter.service" \
+         "$h:/etc/systemd/system/network-process-exporter.service"
+  ssh "$h" "systemctl daemon-reload && systemctl enable --now network-process-exporter.service" \
+    && log "  $h: network-process-exporter running on :9435" \
+    || log "  $h: network-process-exporter failed to start (non-fatal)"
+done
+
 log "Monitoring deployed on $SERVER_NODE"
-log "  Prometheus:  http://$SERVER_IP:9090"
-log "  Grafana:     http://$SERVER_IP:3000"
-log "  ClickHouse:  $SERVER_IP:8123 (HTTP)"
+log "  Prometheus:               http://$SERVER_IP:9090"
+log "  Grafana:                  http://$SERVER_IP:3000"
+log "  ClickHouse:               $SERVER_IP:8123 (HTTP)"
+log "  process-exporter:         ${NODES[*]} on :9256"
+log "  network-process-exporter: ${NODES[*]} on :9435"
 log ""
 log "To enable ClickHouse logging on tessellation nodes, redeploy with:"
 log "  CLICKHOUSE_HOST=$SERVER_IP CLICKHOUSE_PORT=8123 CLICKHOUSE_PROTOCOL=http CLICKHOUSE_PASSWORD=<secret>"
