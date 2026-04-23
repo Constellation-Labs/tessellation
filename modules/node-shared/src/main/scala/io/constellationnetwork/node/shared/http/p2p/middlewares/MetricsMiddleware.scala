@@ -17,7 +17,8 @@ import org.http4s.headers.`X-Forwarded-For`
 object MetricsMiddleware {
 
   def isHistogramRoute(path: String): Boolean =
-    path.contains("rumor")
+    // allow all routes to send metrics
+    true
 
   def bucketName: Metrics.LabelName = Metrics.unsafeLabelName("time_bucket")
 
