@@ -70,7 +70,36 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // All B1 activity (emission, cert assembly, validation, embedding, application) is suppressed
   // while this returns true — evictions during bootstrap caused cascading committee splits in
   // the 2026-04-21 E2E failures.
-  isInBootstrap: Outcome => Boolean
+  isInBootstrap: Outcome => Boolean,
+  // Binds B1/B2 certs to the current tip. Codex review 2026-04-23: without this binding a leader
+  // could replay an older quorum of signed votes that matched the current facilitators hash but
+  // referenced a stale tip, and honest followers would accept the cert. Every cert is now required
+  // to carry `lastSnapshotHash == lastSnapshotHashOf(state.lastOutcome)`; mixed-tip vote sets are
+  // rejected at build time and the advancer validates the cert's tip at proposal-acceptance time.
+  lastSnapshotHashOf: Outcome => io.constellationnetwork.security.hash.Hash,
+  // Set of peers currently on B2 probation per the carried outcome. A peer is on probation while
+  // its `readmissionCountdown` is positive — it was previously evicted via B1 and is awaiting a
+  // quorum-witnessed `AdmissionCertificate` from the cluster before it can re-enter the committee.
+  // Codex review 2026-04-24: recovery (`StateTransitions.initFromDownload`) must respect this set
+  // and decline to facilitate while self is still in probation. Otherwise a recovering peer would
+  // emit Facility/Proposal/Signature against a committee the cluster has already rebuilt without
+  // it, producing a split-brain consensus state where rounds appear stalled at `progress=1/5`
+  // forever (gl0-4 2026-04-24 fork-recovery E2E). Same wiring source as `StallDetector`'s B2
+  // admission emission — see the ConsensusEventLoop construction site.
+  probationPeersOf: Outcome => Set[PeerId],
+  // Local-only marker: the consensus key at which this node most recently completed
+  // `initFromDownload` (recovery path). Read by layer-specific advancers — when this node is
+  // elected leader within `recoveryLeaderCooldownRounds` of recovery completion, the advancer
+  // should emit a ViewChangeVote instead of attempting to propose, because the just-recovered
+  // node's storage / gossip mesh / proposal-build pipeline isn't primed yet (gl0-4 2026-04-27 E2E:
+  // recovered, won leader lottery for the next round, wedged the round for 98s on `progress=1/5`
+  // before the cluster's stall detector forced the view change). Self-deferred view change makes
+  // that wedge a ~5s rotation instead of a 98s timeout.
+  //
+  // Local-only because the deferral is a self-defense decision, not a consensus rule. Other peers
+  // still elect this node deterministically; this node refuses and emits a VCV. The view-change
+  // certificate then assembles deterministically across the cluster as designed.
+  recoveredAtKeyRef: Ref[F, Option[Key]]
 )
 
 object ConsensusEngineContext {
@@ -93,10 +122,13 @@ object ConsensusEngineContext {
     consensusClient: ConsensusClient[F, Key, Outcome],
     facilitatorSelector: FacilitatorSelector,
     peerQualityTracker: PeerQualityTracker[F],
-    isInBootstrap: Outcome => Boolean
+    isInBootstrap: Outcome => Boolean,
+    lastSnapshotHashOf: Outcome => io.constellationnetwork.security.hash.Hash,
+    probationPeersOf: Outcome => Set[PeerId]
   ): F[ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =
     for {
       running <- Ref.of[F, Boolean](false)
+      recoveredAtKey <- Ref.of[F, Option[Key]](None)
     } yield
       ConsensusEngineContext(
         selfId,
@@ -117,6 +149,9 @@ object ConsensusEngineContext {
         consensusClient,
         facilitatorSelector,
         peerQualityTracker,
-        isInBootstrap
+        isInBootstrap,
+        lastSnapshotHashOf,
+        probationPeersOf,
+        recoveredAtKey
       )
 }

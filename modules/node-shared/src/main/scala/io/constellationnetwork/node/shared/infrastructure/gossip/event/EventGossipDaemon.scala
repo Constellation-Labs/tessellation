@@ -66,6 +66,15 @@ trait EventGossipDaemon[F[_], Event, Key] {
     * storage.
     */
   def clearMesh: F[Unit]
+
+  /** Snapshot of every mesh peer's most recently reported `(ordinal, hash)` chain tip.
+    *
+    * Populated by the heartbeat + pull loops via `meshState.updateChainTip`. Used by the B2 re-admission gate as the witness channel: a
+    * peer currently in `readmissionCountdown` whose gossiped chain tip matches the committee's current tip is a candidate for
+    * `AdmissionVote` emission. This is the only consensus-independent signal of peer liveness at tip — probation peers are excluded from
+    * the committee so they cannot be witnessed via in-round `Facility` declarations.
+    */
+  def getPeerChainTips: F[Map[PeerId, ChainTip]]
 }
 
 /** Information about the current mesh state for monitoring.
@@ -518,6 +527,9 @@ private class EventGossipDaemonImpl[F[_]: Async: Parallel, Event, Key](
 
   override def clearMesh: F[Unit] =
     meshState.clear >> logger.info("Mesh state cleared for fork recovery")
+
+  override def getPeerChainTips: F[Map[PeerId, ChainTip]] =
+    meshState.getChainTips
 
   private def startHeartbeatLoop: F[Unit] =
     S.supervise {

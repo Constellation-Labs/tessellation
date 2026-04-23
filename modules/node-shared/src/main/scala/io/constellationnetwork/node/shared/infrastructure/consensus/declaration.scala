@@ -188,20 +188,105 @@ object declaration {
   implicit val evictionVotesDecoder: Decoder[NonEmptySet[Signed[EvictionVote]]] =
     NonEmptySetCodec.decoder[Signed[EvictionVote]]
 
+  // Codex review 2026-04-23: `lastSnapshotHash` field binds the cert to a specific tip.
+  // Without it, a leader could replay an older quorum of signed votes that matched the
+  // current `facilitatorsHash` but referenced a stale tip — followers would accept it.
+  // Builders reject mixed-tip vote sets; advancers validate the cert's hash against the
+  // current `lastOutcome.finished.snapshotHash` at proposal acceptance.
   @derive(eqv, show, encoder, decoder)
   case class EvictionCertificate(
     targetPeer: PeerId,
     reason: EvictionReason,
     facilitatorsHash: Hash,
+    lastSnapshotHash: Hash,
     votes: NonEmptySet[Signed[EvictionVote]]
   )
 
   object EvictionCertificate {
     implicit val ordering: Ordering[EvictionCertificate] =
       Ordering.by { c =>
-        (c.targetPeer.value.value, c.reason.toString, c.facilitatorsHash.value)
+        (c.targetPeer.value.value, c.reason.toString, c.facilitatorsHash.value, c.lastSnapshotHash.value)
       }
     implicit val order: cats.kernel.Order[EvictionCertificate] = cats.kernel.Order.fromOrdering(ordering)
+  }
+
+  // Phase B2: re-admission of previously-removed peers into the committee.
+  //
+  // Codex-approved design (2026-04-23) — mirrors B1 eviction-cert semantics. The
+  // motivating failure was post-isolation re-admission: peers whose removalPenalty
+  // expires rejoin `eligibleFacilitators` immediately, even if they have not caught
+  // up to cluster tip. Committee then stalls because those peers cannot contribute
+  // facility declarations, yet they are counted toward the quorum floor.
+  //
+  // Symmetric mechanism: healthy facilitators sign an `AdmissionVote` when they
+  // observe the target participating at tip, votes accumulate in ConsensusResources,
+  // `AdmissionCertificateBuilder` assembles at quorum, the cert is embedded in the
+  // next Proposal, and on acceptance the advancer removes the target from
+  // `readmissionCountdown` and returns them to `eligibleFacilitators`.
+  //
+  // Must be declared BEFORE Proposal for the same circe-derivation forward-reference
+  // reason as EvictionCertificate above.
+  @derive(eqv, show, encoder, decoder)
+  sealed trait AdmissionReason
+
+  object AdmissionReason {
+    case object ReadyAtTip extends AdmissionReason
+    // Extensibility reserved — new variants are consensus-critical schema changes.
+
+    implicit val ordering: Ordering[AdmissionReason] = Ordering.by(_.toString)
+  }
+
+  @derive(eqv, show, encoder, decoder)
+  case class AdmissionVote(
+    targetPeer: PeerId,
+    reason: AdmissionReason,
+    facilitatorsHash: Hash,
+    lastSnapshotHash: Hash
+  ) extends PeerDeclaration
+
+  object AdmissionVote {
+    implicit val ordering: Ordering[AdmissionVote] =
+      Ordering.by { v =>
+        (v.targetPeer.value.value, v.reason.toString, v.facilitatorsHash.value, v.lastSnapshotHash.value)
+      }
+    implicit val order: cats.kernel.Order[AdmissionVote] = cats.kernel.Order.fromOrdering(ordering)
+  }
+
+  // Explicit codecs for `Signed[AdmissionVote]` — same rationale as the VCV/EV codecs above.
+  implicit val signedAdmissionVoteEncoder: Encoder[Signed[AdmissionVote]] =
+    Encoder.instance { sv =>
+      Json.obj("value" -> sv.value.asJson, "proofs" -> sv.proofs.asJson)
+    }
+  implicit val signedAdmissionVoteDecoder: Decoder[Signed[AdmissionVote]] =
+    (c: HCursor) =>
+      for {
+        value <- c.downField("value").as[AdmissionVote]
+        proofs <- c.downField("proofs").as[NonEmptySet[SignatureProof]]
+      } yield Signed(value, proofs)
+
+  implicit val admissionVotesEncoder: Encoder[NonEmptySet[Signed[AdmissionVote]]] =
+    NonEmptySetCodec.encoder[Signed[AdmissionVote]]
+  implicit val admissionVotesDecoder: Decoder[NonEmptySet[Signed[AdmissionVote]]] =
+    NonEmptySetCodec.decoder[Signed[AdmissionVote]]
+
+  // Codex review 2026-04-23: `lastSnapshotHash` binds the cert to a specific tip — see
+  // EvictionCertificate above for the same rationale. Without it, a stale quorum of signed
+  // admission votes at an older tip could be replayed as if fresh.
+  @derive(eqv, show, encoder, decoder)
+  case class AdmissionCertificate(
+    targetPeer: PeerId,
+    reason: AdmissionReason,
+    facilitatorsHash: Hash,
+    lastSnapshotHash: Hash,
+    votes: NonEmptySet[Signed[AdmissionVote]]
+  )
+
+  object AdmissionCertificate {
+    implicit val ordering: Ordering[AdmissionCertificate] =
+      Ordering.by { c =>
+        (c.targetPeer.value.value, c.reason.toString, c.facilitatorsHash.value, c.lastSnapshotHash.value)
+      }
+    implicit val order: cats.kernel.Order[AdmissionCertificate] = cats.kernel.Order.fromOrdering(ordering)
   }
 
   @derive(eqv, show, encoder, decoder)
@@ -216,7 +301,14 @@ object declaration {
     // proposal-hash agreement across nodes (enforced at the proposer call site via
     // `EvictionCertificate.ordering`). Empty list is the overwhelmingly common case.
     // Defaults to empty so old on-disk outcomes (written before B1) round-trip cleanly.
-    evictionCertificates: List[EvictionCertificate] = List.empty
+    evictionCertificates: List[EvictionCertificate] = List.empty,
+    // Phase B2 re-admission: quorum-certified readmission votes for previously-removed
+    // peers that are now observed at tip. Applied at the advancer: removes the target
+    // from `state.readmissionCountdown` (if present) and returns them to
+    // `state.eligibleFacilitators`. Same sorting + determinism requirements as
+    // evictionCertificates. Defaults empty for forward compatibility — old proposals
+    // written before B2 round-trip with an empty admission list.
+    admissionCertificates: List[AdmissionCertificate] = List.empty
   ) extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)

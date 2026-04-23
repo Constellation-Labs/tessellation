@@ -78,6 +78,19 @@ object Main
       cfg = method.appConfig(cfgR, sharedConfig)
       queues <- Queues.make[IO](sharedQueues).asResource
 
+      // B2 witness channel: the mesh-gossip peer-chain-tip Ref is created here so it can be
+      // closed over by Services (which builds consensus) before EventGossipDaemon exists.
+      // Default getter returns Map.empty → no admission votes fire pre-daemon (safe). Once
+      // eventGossipDaemon is up below, we `.set(eventGossipDaemon.getPeerChainTips)` so
+      // subsequent reads through the thunk return fresh mesh tips.
+      peerChainTipsGetterRef <-
+        Ref
+          .of[IO, IO[Map[io.constellationnetwork.schema.peer.PeerId, ChainTip]]](
+            Map.empty[io.constellationnetwork.schema.peer.PeerId, ChainTip].pure[IO]
+          )
+          .asResource
+      getPeerChainTips = peerChainTipsGetterRef.get.flatten
+
       p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session, sharedConfig.snapshotTimeoutsConfig)
       storages <- Storages
         .make[IO](
@@ -107,7 +120,8 @@ object Main
           keyPair,
           cfg,
           Hasher.forKryo[IO],
-          nodeShared.loggerBundle
+          nodeShared.loggerBundle,
+          getPeerChainTips
         )
         .asResource
 
@@ -168,6 +182,11 @@ object Main
           verifyHashAt = Some(hashAtOrdinalProbe)
         )
         .asResource
+      // B2 witness channel: publish eventGossipDaemon's chain-tip getter into the Ref we
+      // created pre-services. Before this runs, the consensus StallDetector sees an empty
+      // map (no admission votes fire). After this, mesh chain tips flow into admission
+      // emission decisions.
+      _ <- Resource.eval(peerChainTipsGetterRef.set(eventGossipDaemon.getPeerChainTips))
 
       _ <- Daemons
         .start(

@@ -68,6 +68,7 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
       case d: ConsensusPeerDeclaration[_, _]         => handleDeclaration(origin, d)
       case v: ConsensusPeerVote[_]                   => handlePeerVote(origin, v)
       case e: ConsensusPeerEvictionVote[_]           => handleEvictionVote(origin, e)
+      case av: ConsensusPeerAdmissionVote[_]         => handleAdmissionVote(origin, av)
       case a: ConsensusPeerDeclarationAck[_, _]      => handleDeclarationAck(origin, a)
       case w: ConsensusWithdrawPeerDeclaration[_, _] => handleWithdrawDeclaration(origin, w)
       case ConsensusArtifact(key, artifact)          =>
@@ -184,6 +185,47 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
           .addEvictionVote(origin, key, signedVote)
           .flatMap(triggerUpdateIfChanged(queue, key)) >>
         queue.offer(io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand.CheckEvictionAssembly(key, target))
+    }
+  }
+
+  private def handleAdmissionVote(origin: PeerId, a: ConsensusPeerAdmissionVote[_]): F[Unit] = {
+    val key = a.key.asInstanceOf[Key]
+    val observeTip = storage.observePeerAtKey(origin, key)
+    val signedVote = a.vote
+    val target = signedVote.value.targetPeer
+    val signer = signedVote.proofs.head.id.toPeerId
+    // Same origin==signer gate as B1 — see handleEvictionVote for the relay-rejection rationale.
+    if (origin =!= signer) {
+      observeTip >> ConsensusLog.warn(
+        log,
+        Category.Facilitator,
+        key.toString,
+        "n/a",
+        LogEvent.DeclarationReceived,
+        "kind" -> "AdmissionVote",
+        "rejected" -> "origin_signer_mismatch",
+        "from" -> ConsensusLog.pid(origin),
+        "signer" -> ConsensusLog.pid(signer),
+        "target" -> ConsensusLog.pid(target)
+      )
+    } else {
+      observeTip >> ConsensusLog.info(
+        log,
+        Category.Facilitator,
+        key.toString,
+        "n/a",
+        LogEvent.DeclarationReceived,
+        "kind" -> "AdmissionVote",
+        "from" -> ConsensusLog.pid(origin),
+        "target" -> ConsensusLog.pid(target),
+        "reason" -> signedVote.value.reason.toString
+      ) >>
+        storage
+          .addAdmissionVote(origin, key, signedVote)
+          .flatMap(triggerUpdateIfChanged(queue, key)) >>
+        queue.offer(
+          io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand.CheckAdmissionAssembly(key, target)
+        )
     }
   }
 

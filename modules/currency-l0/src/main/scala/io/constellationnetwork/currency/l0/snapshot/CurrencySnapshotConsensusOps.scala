@@ -46,6 +46,16 @@ object CurrencySnapshotConsensusOps {
       case _                      => false
     }
 
+    // Currency-l0 has both MajoritySignature (CollectingSignatures) and BinarySignature
+    // (CollectingBinarySignatures) phases where the round waits on peer signatures before
+    // finalization. Both need StallDetector heartbeat pumping for the same reason as dag-l0
+    // (quorum-but-not-full grace paths return none without self-re-trigger).
+    override def isSignaturesPhase(status: CurrencySnapshotStatus): Boolean = status match {
+      case _: CollectingSignatures       => true
+      case _: CollectingBinarySignatures => true
+      case _                             => false
+    }
+
     override def phaseIndex(status: CurrencySnapshotStatus): Int = status match {
       case _: CollectingFacilities       => 0
       case _: CollectingProposals        => 1

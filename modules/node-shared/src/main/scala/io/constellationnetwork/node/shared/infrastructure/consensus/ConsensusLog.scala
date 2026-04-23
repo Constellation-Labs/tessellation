@@ -144,6 +144,10 @@ object ConsensusLog {
     // signed negative-evidence votes for persistently-absent facilitators, assembled into
     // an EvictionCertificate at quorum and embedded in the next Proposal.
     case object Eviction extends Event { val show = "EVICTION" }
+    // Phase B2 AdmissionVote mechanism: symmetric counterpart — signed positive-evidence
+    // votes for previously-removed peers observed at tip, assembled into an
+    // AdmissionCertificate at quorum and embedded in the next Proposal.
+    case object Admission extends Event { val show = "ADMISSION" }
 
     // ── Stall detection events ────────────────────────────────────
     case object StallDetected extends Event { val show = "STALL_DETECTED" }

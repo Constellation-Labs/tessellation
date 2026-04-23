@@ -66,6 +66,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       target = targetA,
       reason = EvictionReason.Silent,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       votes = votes,
       quorumSize = 3,
       committee = committee
@@ -92,6 +93,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       target = targetA,
       reason = EvictionReason.Silent,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       votes = votes,
       quorumSize = 3,
       committee = committee
@@ -104,6 +106,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       target = targetA,
       reason = EvictionReason.Silent,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       votes = Map.empty,
       quorumSize = 1,
       committee = committee
@@ -125,11 +128,30 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       target = targetA,
       reason = EvictionReason.Silent,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       votes = votes,
       quorumSize = 2,
       committee = committee
     )
     expect(result.swap.exists(_.startsWith("target_mismatch")), s"expected Left(target_mismatch...), got: $result")
+  }
+
+  test("build: one vote has wrong lastSnapshotHash -> Left(last_snapshot_hash_mismatch)") {
+    // Codex-flagged replay hazard: even when facilitatorsHash matches, a vote from an earlier
+    // tip must not be stitched into a fresh-looking cert.
+    val staleSnap: Hash = Hash.fromBytes("STALE".getBytes("UTF-8"))
+    val votes = votesFromMap(
+      Map(
+        voter1 -> signedVote(voter1),
+        voter2 -> signedVote(voter2, lastSnapOverride = staleSnap),
+        voter3 -> signedVote(voter3)
+      )
+    )
+    val result = EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, lastSnap, votes, 3, committee)
+    expect(
+      result.swap.exists(_.startsWith("last_snapshot_hash_mismatch")),
+      s"expected Left(last_snapshot_hash_mismatch...), got: $result"
+    )
   }
 
   test("build: one vote has wrong facilitatorsHash -> Left(facilitators_mismatch)") {
@@ -144,6 +166,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       target = targetA,
       reason = EvictionReason.Silent,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       votes = votes,
       quorumSize = 3,
       committee = committee
@@ -166,6 +189,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       target = targetA,
       reason = EvictionReason.Silent,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       votes = votes,
       quorumSize = 3,
       committee = committee
@@ -187,8 +211,8 @@ object EvictionCertificateBuilderSuite extends FunSuite {
         voter4 -> signedVote(voter4)
       )
     )
-    val r1 = EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, votes, 3, committee)
-    val r2 = EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, votes, 3, committee)
+    val r1 = EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, lastSnap, votes, 3, committee)
+    val r2 = EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, lastSnap, votes, 3, committee)
     expect(r1 === r2, s"expected identical results, got: $r1 vs $r2")
   }
 
@@ -209,8 +233,8 @@ object EvictionCertificateBuilderSuite extends FunSuite {
         voter1 -> signedVote(voter1)
       )
     )
-    val r1 = EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, votesAsc, 3, committee)
-    val r2 = EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, votesDesc, 3, committee)
+    val r1 = EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, lastSnap, votesAsc, 3, committee)
+    val r2 = EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, lastSnap, votesDesc, 3, committee)
     expect(r1 === r2, s"expected identical certs regardless of input Map ordering, got: $r1 vs $r2")
   }
 
@@ -227,6 +251,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       target = targetA,
       reason = EvictionReason.Silent,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       votes = votes,
       quorumSize = 2,
       committee = committee
@@ -253,6 +278,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       target = targetA,
       reason = EvictionReason.Silent,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       votes = votes,
       quorumSize = 3,
       committee = committee
@@ -276,8 +302,9 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       voter3 -> vote3
     )
     val underQuorum =
-      EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, votes, quorumSize = 3, committee = committee)
-    val exactlyMet = EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, votes, quorumSize = 2, committee = committee)
+      EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, lastSnap, votes, quorumSize = 3, committee = committee)
+    val exactlyMet =
+      EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, lastSnap, votes, quorumSize = 2, committee = committee)
     expect(
       underQuorum.swap.exists(_.startsWith("under_quorum")),
       s"quorum=3 with 2 unique signers must fail, got: $underQuorum"

@@ -48,13 +48,23 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
 
   private[consensus] def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[Option[ConsensusResources[Artifact, Kind]]]
 
-  private[consensus] def addSignature(
+  // Public (not private[consensus]) because the advancer's buildSignatureTransition
+  // calls addSignature(selfId, ...) to locally self-store the node's own MajoritySignature
+  // immediately after signing, mirroring the Facility self-store pattern. Without this
+  // the local signature only reaches resources.signatures via the gossip round-trip,
+  // which produces a 1-3ms race window at the fast-path quorum threshold (see
+  // 2026-04-23 ord-10 failure analysis).
+  def addSignature(
     peerId: PeerId,
     key: Key,
     signature: MajoritySignature
   ): F[Option[ConsensusResources[Artifact, Kind]]]
 
-  private[consensus] def addBinarySignature(
+  // Public for the same self-store reason as addSignature — see comment above.
+  // currency-l0's buildBinaryTransition calls addBinarySignature(selfId, ...) locally
+  // right after signing, closing the race where the local BinarySignature only enters
+  // resources via gossip round-trip after quorum from peers has already finalized the round.
+  def addBinarySignature(
     peerId: PeerId,
     key: Key,
     signature: BinarySignature
@@ -111,6 +121,21 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
 
   /** Read all currently-assembled EvictionCertificates for a key. Empty set if none. */
   def getAssembledEvictionCertificates(key: Key): F[Set[EvictionCertificate]]
+
+  /** Add an `AdmissionVote` to the current round's accumulator (B2). First-write-wins per (voter, target), same as eviction votes. */
+  private[consensus] def addAdmissionVote(
+    origin: PeerId,
+    key: Key,
+    vote: Signed[AdmissionVote]
+  ): F[Option[ConsensusResources[Artifact, Kind]]]
+
+  /** Store an assembled `AdmissionCertificate` so the next proposer can embed it in the Proposal. Multiple certs per key (one per
+    * re-admitted target). Cleared on round cleanup.
+    */
+  def storeAssembledAdmissionCertificate(key: Key, cert: AdmissionCertificate): F[Unit]
+
+  /** Read all currently-assembled AdmissionCertificates for a key. Empty set if none. */
+  def getAssembledAdmissionCertificates(key: Key): F[Set[AdmissionCertificate]]
 
   private[consensus] def addPeerDeclarationAck(
     peerId: PeerId,
@@ -250,6 +275,7 @@ object ConsensusStorage {
       voteLocksR <- MapRef.ofConcurrentHashMap[F, Key, VoteLock]()
       assembledVccR <- MapRef.ofConcurrentHashMap[F, Key, ViewChangeCertificate]()
       assembledEvictionCertsR <- MapRef.ofConcurrentHashMap[F, Key, Set[EvictionCertificate]]()
+      assembledAdmissionCertsR <- MapRef.ofConcurrentHashMap[F, Key, Set[AdmissionCertificate]]()
       // Monotonic counter bumped on every successful state mutation via condModifyState. Used by
       // the FSM to drop stale ConsensusCommand.RoundCompleted commands — one queued before a
       // subsequent view change / phase transition would otherwise wipe the newly-advanced round.
@@ -448,6 +474,32 @@ object ConsensusStorage {
         def getAssembledEvictionCertificates(key: Key): F[Set[EvictionCertificate]] =
           assembledEvictionCertsR(key).get.map(_.getOrElse(Set.empty))
 
+        def addAdmissionVote(
+          origin: PeerId,
+          key: Key,
+          vote: Signed[AdmissionVote]
+        ): F[Option[ConsensusResources[Artifact, Kind]]] =
+          updateResources(key) { resources =>
+            val target = vote.value.targetPeer
+            val currentPerTarget = resources.admissionVotes.getOrElse(target, Map.empty)
+            // First-write-wins per (voter, target) — same semantics as eviction votes.
+            val updatedPerTarget = currentPerTarget.get(origin) match {
+              case Some(_) => currentPerTarget
+              case None    => currentPerTarget.updated(origin, vote)
+            }
+            val updatedMap = resources.admissionVotes.updated(target, updatedPerTarget)
+            resources.copy(admissionVotes = updatedMap)
+          }
+
+        def storeAssembledAdmissionCertificate(key: Key, cert: AdmissionCertificate): F[Unit] =
+          assembledAdmissionCertsR(key).update {
+            case Some(existing) => (existing + cert).some
+            case None           => Set(cert).some
+          }
+
+        def getAssembledAdmissionCertificates(key: Key): F[Set[AdmissionCertificate]] =
+          assembledAdmissionCertsR(key).get.map(_.getOrElse(Set.empty))
+
         def addBinarySignature(peerId: PeerId, key: Key, signature: BinarySignature): F[Option[ConsensusResources[Artifact, Kind]]] =
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
             peerDeclaration.focus(_.binarySignature).modify(_.orElse(signature.some))
@@ -534,14 +586,25 @@ object ConsensusStorage {
           resourcesR(key).set(none) >>
             voteLocksR(key).set(none) >>
             assembledVccR(key).set(none) >>
-            assembledEvictionCertsR(key).set(none)
+            assembledEvictionCertsR(key).set(none) >>
+            assembledAdmissionCertsR(key).set(none)
 
         def clearResourcesPreservingDeclarations(key: Key): F[Unit] =
           // evictionVotes and assembledEvictionCerts are preserved across abandonment
           // retries because they are round-scoped (keyed by `key`), not view-scoped.
           // A peer's vote to evict a target at round N is still valid on round N retry;
           // clearing would force the voter to re-accumulate N stall cycles each retry,
-          // defeating the purpose of the mechanism on unstable rounds.
+          // defeating the purpose of the mechanism on unstable rounds. (The `cb2031286`
+          // tip-binding check in the cert builder filters stale votes at assembly time
+          // anyway, so preserving them is safe even if later retries run at a different
+          // tip.)
+          //
+          // admissionVotes and assembledAdmissionCerts are NOT preserved. Admission votes
+          // are based on an instantaneous mesh-chain-tip observation and become stale
+          // immediately — preserving them would mean "peer was seen at tip once during
+          // this round" rather than "peer is currently at tip" (codex review 2026-04-23,
+          // non-blocker correctness item #1). Clearing forces fresh witness evidence for
+          // each retry, which keeps the B2 semantics honest.
           updateResources(key) { resources =>
             resources.copy(
               acksMap = Map.empty,
@@ -549,9 +612,13 @@ object ConsensusStorage {
               ackKinds = Set.empty,
               artifacts = Map.empty,
               viewChangeVotes = Map.empty,
-              proposalQcs = Map.empty
+              proposalQcs = Map.empty,
+              admissionVotes = Map.empty
             )
-          }.void >> voteLocksR(key).set(none) >> assembledVccR(key).set(none)
+          }.void >>
+            voteLocksR(key).set(none) >>
+            assembledVccR(key).set(none) >>
+            assembledAdmissionCertsR(key).set(none)
 
         def getOwnRegistrationKey: F[Option[Key]] = observationKeyR.get.map(_.map(_.next))
 
@@ -609,7 +676,20 @@ object ConsensusStorage {
 
         def pruneStaleResources(activeKey: Key): F[Unit] =
           resourcesR.keys.flatMap { keys =>
-            keys.filterNot(_ === activeKey).traverse_(k => resourcesR(k).set(none))
+            // Only prune keys STRICTLY LESS THAN activeKey. Pre-arrived declarations for future
+            // rounds (within the `declarationRangeLimit` window) are already admitted by
+            // `updateResources` and must survive completion of earlier rounds; wiping them here
+            // on every `activeKey` advance erased legitimate pipelined state. Observed 2026-04-24
+            // E2E: Facility declarations for round N+1 arriving ~100ms before round N's local
+            // finalization were stored in resourcesR(N+1), then deleted when round N completed,
+            // leaving the new round N+1 with `progress=3/5 missing=2` forever because the two
+            // "missing" peers never retransmitted. StallDetector logged them as missing for 2+
+            // minutes despite DECL_RECEIVED entries for all 5 facilities on the same node.
+            //
+            // The acceptance window in `updateResources` (`[lastOutcome.key, lastOutcome.key +
+            // declarationRangeLimit]`) bounds memory growth; preserving future keys here is
+            // consistent with that contract.
+            keys.filter(Order[Key].lt(_, activeKey)).traverse_(k => resourcesR(k).set(none))
           }
 
         def pruneStalePeerRegistrations(activePeers: Set[PeerId]): F[Unit] =
@@ -636,6 +716,8 @@ object ConsensusStorage {
             _ <- vccKeys.traverse_(k => assembledVccR(k).set(none))
             ecsKeys <- assembledEvictionCertsR.keys
             _ <- ecsKeys.traverse_(k => assembledEvictionCertsR(k).set(none))
+            acsKeys <- assembledAdmissionCertsR.keys
+            _ <- acsKeys.traverse_(k => assembledAdmissionCertsR(k).set(none))
           } yield ()
       }
   }

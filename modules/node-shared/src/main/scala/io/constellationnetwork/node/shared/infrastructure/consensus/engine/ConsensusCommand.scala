@@ -45,6 +45,10 @@ object ConsensusCommand {
   // so this command carries both the round key and the target peer whose votes should be
   // checked. Dispatched from the event loop to StateTransitions.checkEvictionAssembly.
   case class CheckEvictionAssembly(key: Any, target: Any) extends ConsensusCommand
+  // B2 admission assembly — symmetric to CheckEvictionAssembly. Dispatched when a new
+  // AdmissionVote has been locally stored and the state transition should attempt
+  // certificate assembly for `target` at round `key`.
+  case class CheckAdmissionAssembly(key: Any, target: Any) extends ConsensusCommand
 
   /** Round ended without producing an outcome. `expectedAttemptId = Some(n)` causes the FSM to drop the command if the round has advanced
     * past attempt `n` (state mutation bumped `ConsensusStorage.roundAttemptId`). `None` means unconditional — reserved for force-recovery

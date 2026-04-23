@@ -6,7 +6,7 @@ import cats.syntax.all._
 
 import scala.concurrent.duration.FiniteDuration
 
-import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{EvictionVote, ProposalQC, ViewChangeVote}
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -30,7 +30,12 @@ case class ConsensusResources[A, Kind](
   // cluster is considering evicting), inner key = voter (who cast the vote). Round-scoped
   // (not view-scoped), preserved across abandonment retries so eviction progress is not
   // lost when a round loops on stall cycles.
-  evictionVotes: Map[PeerId, Map[PeerId, Signed[EvictionVote]]] = Map.empty
+  evictionVotes: Map[PeerId, Map[PeerId, Signed[EvictionVote]]] = Map.empty,
+  // AdmissionVotes collected for the current round (B2). Same shape as evictionVotes:
+  // outer key = target peer (previously-removed peer now being re-admitted), inner key
+  // = voter (a current facilitator who observes the target at tip). Round-scoped,
+  // preserved across abandonment retries.
+  admissionVotes: Map[PeerId, Map[PeerId, Signed[AdmissionVote]]] = Map.empty
 )
 
 object ConsensusResources {

@@ -162,60 +162,94 @@ if [ "$stable" != "true" ]; then
   fail "Validators did not synchronise within ${STABILIZE_WAIT}s"
 fi
 
-# Wait for every node to be promoted into the facilitator committee. With
-# candidate-deferral-rounds=3 new peers must observe before facilitating, so
-# early rounds run with fac < NUM_GL0. If we proceed to isolation before all
-# nodes are in the committee, eligibleOrFacilitators differs between nodes
-# (some still have peers on deferral countdown) → different leader election
-# → split-brain rounds that never complete.
+# Phase 1 readiness check. The test's real hypothesis is: "an in-committee,
+# caught-up peer (ISOLATION_NODE) can be isolated for 270s and rejoin within
+# 900s." The arithmetic of supermajority quorum (ceil(fac * 2/3)) forces a
+# strict constraint: after isolating 1 peer, the remaining (fac-1) peers must
+# all be healthy and at tip, because any shortfall drops us below quorum.
 #
-# Require every node to report fac == NUM_GL0 AND be at the same ordinal
-# (spread <= 1) on 3 consecutive checks. The ordinal check catches the case
-# where a node is known to the committee but has not yet finished catching up
-# to the cluster's current tip — observed 2026-04-22: ISOLATION_NODE was at
-# ord=3 while the rest were at ord=8 when isolation fired, leaving it 5+ behind
-# from the start and causing the post-rejoin recovery to miss the 900s window.
-echo "  Waiting for ALL $NUM_GL0 nodes to be in the committee AND at the same ordinal (spread<=1, 3+ consecutive rounds)..."
+#   fac=5 → quorum=4, isolate 1 → need 4-of-4 remaining all healthy
+#   fac=4 → quorum=3, isolate 1 → need 3-of-3 remaining all healthy
+#   fac=3 → quorum=2, isolate 1 → need 2-of-2 remaining all healthy
+#
+# A single lagging non-target peer is fatal: observed 2026-04-23 run with
+# fac=5, gl0-1 at ord=10 while others at ord=15, gl0-4 isolated → quorum=4
+# unreachable (only 3 healthy signers) → cluster stuck at ord=15 the whole
+# 270s isolation window. B1 can't bail out because EvictionCert also needs
+# quorum=4 votes, same deadlock boundary.
+#
+# So the precondition is: ISOLATION_NODE + every other in-committee peer must
+# be at tip. Committee size doesn't have to be N — if B1 evicted one peer
+# pre-test and the cluster is running cleanly at fac=N-1, that's fine as long
+# as ISOLATION_NODE is still in that committee. What matters is that every
+# CURRENTLY-IN-COMMITTEE peer is at tip.
+#
+# We approximate "in committee" by "reports a non-zero fac that matches the
+# monitor's fac AND is reachable (ord is defined)". Peers that B1 has evicted
+# typically drop off the cluster/info endpoint or report fac=0.
+echo "  Waiting for $ISOLATION_NODE + all committee peers to agree on tip (fac>=3, spread<=1 across committee, 3+ consecutive rounds)..."
 stable_rounds=0
 stab_deadline=$(($(date +%s) + 600))
+MIN_COMMITTEE=3
 while [ "$(date +%s)" -lt "$stab_deadline" ] && [ "$stable_rounds" -lt 3 ]; do
-  all_full=true
-  min_ord=999999
-  max_ord=0
+  iso_ord=$(get_ordinal "$ISOLATION_NODE")
+  iso_fac=$(get_facilitator_count "$ISOLATION_NODE")
+  mon_ord=$(get_ordinal "$MONITOR_NODE")
+  mon_fac=$(get_facilitator_count "$MONITOR_NODE")
+
+  # Build full status line + find the set of peers currently in the committee
+  # (fac matches monitor's fac AND ordinal is reachable).
   status_line=""
+  committee_min_ord=""
+  committee_max_ord=""
+  committee_size=0
+  committee_view_agrees=true
   for i in $(seq 0 $((NUM_GL0 - 1))); do
     node="gl0-${i}"
-    fac=$(get_facilitator_count "$node")
-    ord=$(get_ordinal "$node")
-    status_line="${status_line} ${node}:ord=${ord:-?}/fac=${fac:-?}"
-    if [ "${fac:-0}" -lt "$NUM_GL0" ]; then
-      all_full=false
-    fi
-    if [ -n "$ord" ]; then
-      [ "$ord" -lt "$min_ord" ] && min_ord=$ord
-      [ "$ord" -gt "$max_ord" ] && max_ord=$ord
-    else
-      # Missing ordinal is treated as not-synced for this check.
-      all_full=false
+    nf=$(get_facilitator_count "$node")
+    no=$(get_ordinal "$node")
+    status_line="${status_line} ${node}:ord=${no:-?}/fac=${nf:-?}"
+    # A peer is "in this committee" if it's reachable AND agrees with monitor
+    # on the facilitator set size.
+    if [ -n "$no" ] && [ -n "$nf" ] && [ "$nf" = "${mon_fac:-0}" ] && [ "$nf" -gt 0 ]; then
+      committee_size=$((committee_size + 1))
+      if [ -z "$committee_min_ord" ] || [ "$no" -lt "$committee_min_ord" ]; then
+        committee_min_ord=$no
+      fi
+      if [ -z "$committee_max_ord" ] || [ "$no" -gt "$committee_max_ord" ]; then
+        committee_max_ord=$no
+      fi
+    elif [ -n "$nf" ] && [ "$nf" != "${mon_fac:-0}" ] && [ "$nf" -gt 0 ]; then
+      # Peer has a fac view that disagrees with monitor — that's a split.
+      committee_view_agrees=false
     fi
   done
-  spread=$((max_ord - min_ord))
+
   in_sync=false
-  if [ "$all_full" = "true" ] && [ "$spread" -le 1 ]; then
+  spread="?"
+  if [ -n "$committee_min_ord" ] && [ -n "$committee_max_ord" ]; then
+    spread=$((committee_max_ord - committee_min_ord))
+  fi
+  if [ -n "$iso_ord" ] && [ -n "$mon_ord" ] \
+     && [ "${iso_fac:-0}" -ge "$MIN_COMMITTEE" ] \
+     && [ "${iso_fac:-0}" = "${mon_fac:-0}" ] \
+     && [ "$committee_view_agrees" = "true" ] \
+     && [ "$committee_size" = "${mon_fac:-0}" ] \
+     && [ "$spread" != "?" ] && [ "$spread" -le 1 ]; then
     in_sync=true
   fi
-  ord=$(get_ordinal "$MONITOR_NODE")
+
   if [ "$in_sync" = "true" ]; then
     stable_rounds=$((stable_rounds + 1))
-    echo "    Round $stable_rounds/3 fac=$NUM_GL0 spread=$spread at ordinal ${ord:-?} [${status_line# }]"
+    echo "    Round $stable_rounds/3 committee=${committee_size} at tip (spread=$spread) iso=${iso_ord}/${iso_fac} mon=${mon_ord}/${mon_fac} [${status_line# }]"
   else
     stable_rounds=0
-    echo "    Waiting for full committee + ordinal sync (spread=$spread) at ordinal ${ord:-?} [${status_line# }]"
+    echo "    Waiting (committee_size=${committee_size}/${mon_fac:-?} spread=$spread iso_fac=${iso_fac:-?} mon_fac=${mon_fac:-?} view_agrees=$committee_view_agrees) [${status_line# }]"
   fi
   sleep 45
 done
 if [ "$stable_rounds" -lt 3 ]; then
-  fail "Cluster never reached full committee with ordinal spread<=1 within 600s"
+  fail "Cluster never reached committee-tip sync within 600s (every in-committee peer must be at tip for isolation to work with supermajority quorum)"
 fi
 
 # Record pre-isolation state from monitor (a validator)
