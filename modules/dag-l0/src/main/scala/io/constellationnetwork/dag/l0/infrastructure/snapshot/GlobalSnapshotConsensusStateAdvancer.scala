@@ -147,6 +147,16 @@ object GlobalSnapshotConsensusStateAdvancer {
         */
       private val proposalSavepointRef: Ref[F, Option[(GlobalSnapshotKey, MptStoreSavepoint[F])]] = Ref.unsafe(none)
 
+      // Tracks the monotonic timestamp at which majority-signature quorum was first
+      // reached for each round key. Consumed by `buildFinishedTransition` to delay
+      // finalization by `config.signatureGracePeriod` when the quorum set is smaller
+      // than the full committee — catches late signatures that would otherwise be
+      // dropped from `signedArtifact.proofs`. Entries are cleared at finalize; map
+      // growth is bounded by the active round cone since abandoned rounds shed
+      // entries on the next finalize at or past their key (and resources are
+      // otherwise reset on round cleanup).
+      private val signatureQuorumFirstSeenRef: Ref[F, Map[GlobalSnapshotKey, FiniteDuration]] = Ref.unsafe(Map.empty)
+
       /** Tracks consecutive validation failures (stateProofDiffers) at the same ordinal. When a node's local state diverges (e.g., after
         * network isolation), every validation attempt fails with the same MPT root mismatch. Neither consensus fork detection (requires
         * completed round) nor gossip fork detection (compares hashes at same ordinal, but node is 1 behind) catches this. After
@@ -225,7 +235,13 @@ object GlobalSnapshotConsensusStateAdvancer {
             // Decay: every non-evicted facilitator earns a 1-unit credit against their
             // cumulative miss count. Prevents the exponential penalty formula from
             // trapping nodes forever once they've signed cleanly across enough rounds.
-            val completedFacilitators = state.facilitators.value.toSet -- evictedPeers
+            //
+            // Uses roundStartFacilitators (canonical) not state.facilitators (mutable):
+            // mid-round withdrawals mutate state.facilitators on nodes that observed the
+            // withdrawal pre-finish, diverging completedFacilitators across nodes and
+            // ultimately the deferralCountdown in lastOutcome. That was the 2026-04-23
+            // ord-4→5 fork (see .workspace/codex-response-ord5-facilitator-fork-apr23.md).
+            val completedFacilitators = state.roundStartFacilitators.value.toSet -- evictedPeers
             val decayedCumulative = completedFacilitators.foldLeft(previousCumulative) { (acc, pid) =>
               acc.get(pid) match {
                 case Some(v) if v > 1L => acc.updated(pid, v - 1L)
@@ -267,10 +283,15 @@ object GlobalSnapshotConsensusStateAdvancer {
             val previousEligibleSet = state.lastOutcome.eligibleOrFacilitators.toSet
             val currentEligibleSet = state.eligibleFacilitators.value.toSet
             val newlyEligible = (currentEligibleSet -- previousEligibleSet).filterNot(completedFacilitators.contains)
-            // Peers whose penalty just expired (countdown was 1, now 0) must go through
-            // deferral again before re-entering the facilitator set.
+            // B2 codex corrective #3: rejoiners (peers whose removalPenalty just expired)
+            // take the re-admission path, NOT the deferral path. First-time joiners
+            // (`newlyEligible`) keep using `deferralCountdown`; `justUnpenalized` peers
+            // enter `readmissionCountdown` and wait for a quorum-witnessed
+            // `AdmissionCertificate` to re-enter the committee. This separation prevents
+            // a rejoiner from silently re-entering via the deferral countdown while the
+            // cluster has no evidence they've resynced to the current tip.
             val justUnpenalized = previousPenalties.filter(_._2 == 1).keySet
-            val needsDeferral = newlyEligible ++ justUnpenalized
+            val needsDeferral = newlyEligible // rejoiners no longer funnel here
             val previousDeferrals = state.lastOutcome.deferralCountdown
             val decrementedDeferrals = previousDeferrals.view.mapValues(_ - 1).filter(_._2 > 0).to(SortedMap)
             val newDeferrals = needsDeferral.foldLeft(decrementedDeferrals) { (acc, pid) =>
@@ -280,7 +301,9 @@ object GlobalSnapshotConsensusStateAdvancer {
             val finalDeferrals = if (config.candidateDeferralRounds > 0) newDeferrals else SortedMap.empty[PeerId, Int]
 
             val thisRoundQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.from(
-              state.facilitators.value
+              // Iterate canonical committee — mid-round withdrawals must not change
+              // which peers have a peerQuality row for this round.
+              state.roundStartFacilitators.value
                 .filterNot(deferredInCommittee.contains)
                 .map { pid =>
                   val completed = if (completedFacilitators.contains(pid)) 1 else 0
@@ -316,9 +339,37 @@ object GlobalSnapshotConsensusStateAdvancer {
               withCurrent.filter { case (ord, _) => ord.value.value >= minOrdinalValue }
             }
 
+            // B2 readmissionCountdown maintenance:
+            //   1) Decrement any active probation counters by 1 (peers still observing).
+            //   2) Seed entries for `justUnpenalized` (peers whose removalPenalty expired
+            //      this round) at `readmissionProbationRounds`. Codex corrective #3: these
+            //      peers take the B2 re-admission path, not the B1 deferral path.
+            //   3) Clear entries for peers admitted via AdmissionCertificate this round
+            //      (state.admittedFacilitators populated at buildSignatureTransition).
+            // Order matters: decrement-then-clear-then-seed avoids decrementing a freshly
+            // seeded entry in the same step. Admitted peers are removed last so an edge
+            // case where the same peer is both admitted AND newly-unpenalized (shouldn't
+            // happen but defended against) does not re-enter probation.
+            val admittedThisRound = state.admittedFacilitators.value
+            val decrementedReadmission =
+              state.lastOutcome.readmissionCountdown.view.mapValues(_ - 1).filter(_._2 > 0).to(SortedMap)
+            val seededReadmission =
+              if (config.readmissionProbationRounds <= 0) decrementedReadmission
+              else
+                justUnpenalized.foldLeft(decrementedReadmission) { (acc, pid) =>
+                  if (!acc.contains(pid)) acc.updated(pid, config.readmissionProbationRounds)
+                  else acc
+                }
+            val finalReadmission =
+              (seededReadmission -- admittedThisRound).to(SortedMap)
             val outcome = GlobalConsensusOutcome(
               state.key,
-              state.facilitators,
+              // Canonical committee in the persisted outcome — not post-withdrawal
+              // state.facilitators — so every node writes the same lastOutcome and
+              // next-round committee derivation (eligibleOrFacilitators,
+              // deferralCountdown derivation via completedFacilitators above) stays
+              // deterministic across the cluster.
+              state.roundStartFacilitators,
               state.removedFacilitators,
               state.withdrawnFacilitators,
               state.eligibleFacilitators,
@@ -327,7 +378,8 @@ object GlobalSnapshotConsensusStateAdvancer {
               deferralCountdown = finalDeferrals,
               peerQuality = accumulatedQuality,
               cumulativeMissCounts = newCumulative,
-              recentProofSizes = newRecentProofSizes
+              recentProofSizes = newRecentProofSizes,
+              readmissionCountdown = finalReadmission
             )
             (Previous(state.lastOutcome.key), outcome).some
           case _ =>
@@ -716,19 +768,27 @@ object GlobalSnapshotConsensusStateAdvancer {
               ),
               sideEffect =
                 if (isLeader)
-                  (if (isInBootstrap(state)) Set.empty[EvictionCertificate].pure[F]
-                   else consensusStorage.getAssembledEvictionCertificates(state.key)).flatMap { certs =>
-                    spreadProposal(
-                      state,
-                      state.key,
-                      hash,
-                      facilitatorsHash,
-                      artifact,
-                      state.lastOutcome.finished.snapshotHash,
-                      state.viewNumber.toLong,
-                      maybeAssembledVcc,
-                      certs.toList
-                    )
+                  (for {
+                    ecs <-
+                      if (isInBootstrap(state)) Set.empty[EvictionCertificate].pure[F]
+                      else consensusStorage.getAssembledEvictionCertificates(state.key)
+                    acs <-
+                      if (isInBootstrap(state)) Set.empty[AdmissionCertificate].pure[F]
+                      else consensusStorage.getAssembledAdmissionCertificates(state.key)
+                  } yield (ecs, acs)).flatMap {
+                    case (ecs, acs) =>
+                      spreadProposal(
+                        state,
+                        state.key,
+                        hash,
+                        facilitatorsHash,
+                        artifact,
+                        state.lastOutcome.finished.snapshotHash,
+                        state.viewNumber.toLong,
+                        maybeAssembledVcc,
+                        ecs.toList,
+                        acs.toList
+                      )
                   }
                 else
                   Applicative[F].unit
@@ -759,13 +819,17 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): F[Option[Transition]] =
         loggerBundle.app.withOrdinal(status.proposalArtifactInfo.artifact.ordinal) {
           HasherSelector[F].withCurrent { implicit hasher =>
-            // Guard: if we already withdrew from this round, don't re-enter validation.
+            // Guard: if we already withdrew from this round-and-view, don't re-enter validation.
             // Without this, a validation failure (which returns none[Transition]) causes a hot loop:
             // the leader's proposal stays in resources, so every checkUpdate re-enters here,
             // re-validates, re-fails, and re-withdraws (7+/sec observed in production).
-            val alreadyWithdrawn =
-              resources.withdrawalsMap.get(selfId).contains(GlobalConsensusKind.Signature: GlobalConsensusKind) ||
-                state.withdrawnFacilitators.value.contains(selfId)
+            //
+            // Read only from state.withdrawnFacilitators (view-scoped, cleared by the VCC-driven
+            // view-change reset in StateTransitions). Previously this OR-merged with
+            // resources.withdrawalsMap.get(selfId), which is round-scoped and never cleared across
+            // views — a view-0 withdrawal would keep this predicate true forever, wedging the node
+            // permanently (observed gl0-4 ord-3 stuck for 11 min).
+            val alreadyWithdrawn = state.withdrawnFacilitators.value.contains(selfId)
 
             if (alreadyWithdrawn)
               none[Transition].pure[F]
@@ -797,16 +861,21 @@ object GlobalSnapshotConsensusStateAdvancer {
                     // Leader (possibly after view change) — spread proposal so peers can advance.
                     // Include any assembled VCC for view > 0 so followers accept the re-spread.
                     // Include any assembled EvictionCertificates so persistently-absent peers
-                    // get evicted at proposal acceptance (Phase B1).
+                    // get evicted at proposal acceptance (Phase B1). Symmetrically, include any
+                    // assembled AdmissionCertificates so probation peers ready at tip get
+                    // re-admitted (Phase B2).
                     (for {
                       maybeVcc <-
                         if (state.viewNumber > 0) consensusStorage.getAssembledVcc(state.key)
                         else none[ViewChangeCertificate].pure[F]
-                      certs <-
+                      ecs <-
                         if (isInBootstrap(state)) Set.empty[EvictionCertificate].pure[F]
                         else consensusStorage.getAssembledEvictionCertificates(state.key)
-                    } yield (maybeVcc, certs)).flatMap {
-                      case (maybeVcc, certs) =>
+                      acs <-
+                        if (isInBootstrap(state)) Set.empty[AdmissionCertificate].pure[F]
+                        else consensusStorage.getAssembledAdmissionCertificates(state.key)
+                    } yield (maybeVcc, ecs, acs)).flatMap {
+                      case (maybeVcc, ecs, acs) =>
                         ConsensusLog.info(
                           logger,
                           Category.Phase,
@@ -826,7 +895,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                             status.lastSnapshotHash,
                             state.viewNumber.toLong,
                             maybeVcc,
-                            certs.toList
+                            ecs.toList,
+                            acs.toList
                           ).as(none[Transition])
                     }
                   else
@@ -911,9 +981,13 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): Either[String, Unit] = {
         if (isInBootstrap(state) && proposal.evictionCertificates.nonEmpty)
           return Left(s"ecs_rejected_in_bootstrap count=${proposal.evictionCertificates.size}")
-        val n = state.facilitators.value.size
+        // Canonical round-start committee — voter/target membership and quorum threshold must be
+        // computed against the fixed committee so cert validation is bit-identical across nodes
+        // that observed mid-round withdrawals at different times.
+        val n = state.roundStartFacilitators.value.size
         val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
-        val committee = state.facilitators.value.toSet
+        val committee = state.roundStartFacilitators.value.toSet
+        val expectedLastSnap: Hash = state.lastOutcome.finished.snapshotHash
 
         @scala.annotation.tailrec
         def loop(remaining: List[EvictionCertificate], seenTargets: Set[PeerId]): Either[String, Unit] =
@@ -927,6 +1001,13 @@ object GlobalSnapshotConsensusStateAdvancer {
                   s"ecs_facilitators_mismatch target=${cert.targetPeer.show.take(8)} " +
                     s"certFacHash=${cert.facilitatorsHash.show.take(8)} ours=${facilitatorsHash.show.take(8)}"
                 )
+              // Codex review 2026-04-23: bind cert to current tip. Prevents replay of stale
+              // signed-vote quorums from earlier tips that happened to share facilitatorsHash.
+              else if (cert.lastSnapshotHash =!= expectedLastSnap)
+                Left(
+                  s"ecs_last_snap_mismatch target=${cert.targetPeer.show.take(8)} " +
+                    s"certLastSnap=${cert.lastSnapshotHash.show.take(8)} ours=${expectedLastSnap.show.take(8)}"
+                )
               else if (!committee.contains(cert.targetPeer))
                 Left(s"ecs_target_not_in_committee target=${cert.targetPeer.show.take(8)}")
               else if (cert.votes.size < q)
@@ -935,7 +1016,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                 val mismatched = cert.votes.toList.find { signed =>
                   signed.value.targetPeer =!= cert.targetPeer ||
                   signed.value.reason =!= cert.reason ||
-                  signed.value.facilitatorsHash =!= cert.facilitatorsHash
+                  signed.value.facilitatorsHash =!= cert.facilitatorsHash ||
+                  signed.value.lastSnapshotHash =!= cert.lastSnapshotHash
                 }
                 mismatched match {
                   case Some(bad) =>
@@ -972,6 +1054,96 @@ object GlobalSnapshotConsensusStateAdvancer {
           else Left(s"ecs_invalid_signatures [${invalid.mkString("; ")}]")
         }
 
+      /** Validate structural invariants on every embedded `AdmissionCertificate`. Mirrors `validateProposalEcs` with symmetric checks for
+        * re-admission targets:
+        *   - reject during bootstrap (no B2 activity until cluster stabilizes)
+        *   - at least `q` votes (quorum at this round's committee)
+        *   - all votes within a cert agree on (targetPeer, reason, facilitatorsHash)
+        *   - cert's facilitatorsHash matches the round's facilitatorsHash
+        *   - target peer is currently in `readmissionCountdown` (the only legitimate B2 re-admission target)
+        *   - target peer is NOT currently in the committee (re-admitting an active facilitator is nonsensical)
+        *   - voters are all members of the current committee
+        *   - no duplicate certs for the same target within a proposal
+        */
+      private def validateProposalAcs(
+        state: GlobalSnapshotConsensusState,
+        proposal: Proposal,
+        facilitatorsHash: Hash
+      ): Either[String, Unit] = {
+        if (isInBootstrap(state) && proposal.admissionCertificates.nonEmpty)
+          return Left(s"acs_rejected_in_bootstrap count=${proposal.admissionCertificates.size}")
+        // Canonical round-start committee — see validateProposalEcs for rationale.
+        val n = state.roundStartFacilitators.value.size
+        val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+        val committee = state.roundStartFacilitators.value.toSet
+        val probation = state.lastOutcome.readmissionCountdown.keySet
+        val expectedLastSnap: Hash = state.lastOutcome.finished.snapshotHash
+
+        @scala.annotation.tailrec
+        def loop(remaining: List[AdmissionCertificate], seenTargets: Set[PeerId]): Either[String, Unit] =
+          remaining match {
+            case Nil => Right(())
+            case cert :: tail =>
+              if (seenTargets.contains(cert.targetPeer))
+                Left(s"acs_duplicate_target target=${cert.targetPeer.show.take(8)}")
+              else if (cert.facilitatorsHash =!= facilitatorsHash)
+                Left(
+                  s"acs_facilitators_mismatch target=${cert.targetPeer.show.take(8)} " +
+                    s"certFacHash=${cert.facilitatorsHash.show.take(8)} ours=${facilitatorsHash.show.take(8)}"
+                )
+              else if (cert.lastSnapshotHash =!= expectedLastSnap)
+                Left(
+                  s"acs_last_snap_mismatch target=${cert.targetPeer.show.take(8)} " +
+                    s"certLastSnap=${cert.lastSnapshotHash.show.take(8)} ours=${expectedLastSnap.show.take(8)}"
+                )
+              else if (committee.contains(cert.targetPeer))
+                Left(s"acs_target_already_in_committee target=${cert.targetPeer.show.take(8)}")
+              else if (!probation.contains(cert.targetPeer))
+                Left(s"acs_target_not_in_probation target=${cert.targetPeer.show.take(8)}")
+              else if (cert.votes.size < q)
+                Left(s"acs_under_quorum target=${cert.targetPeer.show.take(8)} votes=${cert.votes.size} required=$q")
+              else {
+                val mismatched = cert.votes.toList.find { signed =>
+                  signed.value.targetPeer =!= cert.targetPeer ||
+                  signed.value.reason =!= cert.reason ||
+                  signed.value.facilitatorsHash =!= cert.facilitatorsHash ||
+                  signed.value.lastSnapshotHash =!= cert.lastSnapshotHash
+                }
+                mismatched match {
+                  case Some(bad) =>
+                    Left(s"acs_vote_field_mismatch target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}")
+                  case None =>
+                    val nonCommitteeVoter = cert.votes.toList.find(sv => !committee.contains(sv.proofs.head.id.toPeerId))
+                    nonCommitteeVoter match {
+                      case Some(bad) =>
+                        Left(s"acs_voter_not_in_committee target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}")
+                      case None => loop(tail, seenTargets + cert.targetPeer)
+                    }
+                }
+              }
+          }
+        loop(proposal.admissionCertificates, Set.empty)
+      }
+
+      /** Verify every `Signed[AdmissionVote]` inside every embedded `AdmissionCertificate` has a valid cryptographic signature. Mirrors
+        * `verifyEcsSignatures`.
+        */
+      private def verifyAcsSignatures(
+        proposal: Proposal
+      )(implicit hasher: Hasher[F]): F[Either[String, Unit]] =
+        proposal.admissionCertificates.flatTraverse { cert =>
+          cert.votes.toNonEmptyList.toList.traverse { signedVote =>
+            signedVote.hasValidSignature[F].map {
+              case true  => Right(()): Either[String, Unit]
+              case false => Left(s"target=${cert.targetPeer.show.take(8)} voter=${signedVote.proofs.head.id.show.take(8)}")
+            }
+          }
+        }.map { results =>
+          val invalid = results.collect { case Left(msg) => msg }
+          if (invalid.isEmpty) Right(())
+          else Left(s"acs_invalid_signatures [${invalid.mkString("; ")}]")
+        }
+
       private def resolveLeaderProposal(
         state: GlobalSnapshotConsensusState,
         status: CollectingProposals,
@@ -1005,6 +1177,19 @@ object GlobalSnapshotConsensusStateAdvancer {
               "view" -> state.viewNumber.toString
             )
             .as(none[Transition])
+        def logAcsReject(reason: String): F[Option[Transition]] =
+          ConsensusLog
+            .warn(
+              logger,
+              Category.Validation,
+              state.key.show,
+              role,
+              Event.ValidationFailed,
+              "reason" -> s"acs_validation: $reason",
+              "leader" -> ConsensusLog.pid(state.leader),
+              "view" -> state.viewNumber.toString
+            )
+            .as(none[Transition])
         validateProposalVcc(state, leaderProposal, status.facilitatorsHash) match {
           case Left(reason) => logVccReject(reason)
           case Right(_) =>
@@ -1018,15 +1203,28 @@ object GlobalSnapshotConsensusStateAdvancer {
             }
             // B1 eviction-certificate validation layered onto the same path. Validation
             // short-circuits if any cert fails so an adversarial leader cannot smuggle
-            // malformed evictions into proposal acceptance.
-            validateProposalEcs(state, leaderProposal, status.facilitatorsHash) match {
-              case Left(reason) => logEcsReject(reason)
+            // malformed evictions into proposal acceptance. B2 admission-certificate
+            // validation layers on top with the same short-circuit semantics: VCC → ECS
+            // → ACS → innerResolve. Any failure at any tier aborts acceptance.
+            val afterEcs: F[Option[Transition]] =
+              validateProposalEcs(state, leaderProposal, status.facilitatorsHash) match {
+                case Left(reason) => logEcsReject(reason)
+                case Right(_) =>
+                  if (leaderProposal.evictionCertificates.isEmpty) afterVccSig
+                  else
+                    verifyEcsSignatures(leaderProposal).flatMap {
+                      case Left(reason) => logEcsReject(reason)
+                      case Right(_)     => afterVccSig
+                    }
+              }
+            validateProposalAcs(state, leaderProposal, status.facilitatorsHash) match {
+              case Left(reason) => logAcsReject(reason)
               case Right(_) =>
-                if (leaderProposal.evictionCertificates.isEmpty) afterVccSig
+                if (leaderProposal.admissionCertificates.isEmpty) afterEcs
                 else
-                  verifyEcsSignatures(leaderProposal).flatMap {
-                    case Left(reason) => logEcsReject(reason)
-                    case Right(_)     => afterVccSig
+                  verifyAcsSignatures(leaderProposal).flatMap {
+                    case Left(reason) => logAcsReject(reason)
+                    case Right(_)     => afterEcs
                   }
             }
         }
@@ -1069,7 +1267,8 @@ object GlobalSnapshotConsensusStateAdvancer {
               status.proposalArtifactInfo,
               List(leaderProposal.hash),
               leaderProposal.vcc,
-              leaderProposal.evictionCertificates
+              leaderProposal.evictionCertificates,
+              leaderProposal.admissionCertificates
             )
         } else {
           // HotStuff-inspired leader adoption: when the facilitator set diverges (follower
@@ -1120,7 +1319,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                               leaderInfo,
                               List(leaderProposal.hash),
                               leaderProposal.vcc,
-                              leaderProposal.evictionCertificates
+                              leaderProposal.evictionCertificates,
+                              leaderProposal.admissionCertificates
                             )
                         case Left(_) =>
                           sp.restore >>
@@ -1185,7 +1385,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                                 leaderInfo,
                                 List(leaderProposal.hash),
                                 leaderProposal.vcc,
-                                leaderProposal.evictionCertificates
+                                leaderProposal.evictionCertificates,
+                                leaderProposal.admissionCertificates
                               )
                           case Left(invalidArtifact) =>
                             // Validation failed — restore MptStore to pre-validation state
@@ -1288,7 +1489,11 @@ object GlobalSnapshotConsensusStateAdvancer {
         artifact: GlobalSnapshotArtifact,
         hash: Hash
       )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext]]] =
-        validateLeaderArtifact(state, status, artifact, hash, state.facilitators.value.toSet)
+        // Use canonical round-start committee so every validator reaches the same accept/reject
+        // decision regardless of the order in which they observed mid-round withdrawals. Using the
+        // mutable state.facilitators allowed artifact validation to diverge across nodes (same
+        // class as the 2026-04-23 ord-5 facilitatorsHash fork, but in the artifact plane).
+        validateLeaderArtifact(state, status, artifact, hash, state.roundStartFacilitators.value.toSet)
 
       private def validateLeaderArtifact(
         state: GlobalSnapshotConsensusState,
@@ -1497,7 +1702,8 @@ object GlobalSnapshotConsensusStateAdvancer {
         majorityInfo: ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext],
         proposalHashes: List[Hash],
         leaderVcc: Option[ViewChangeCertificate] = None,
-        leaderEvictionCerts: List[EvictionCertificate] = List.empty
+        leaderEvictionCerts: List[EvictionCertificate] = List.empty,
+        leaderAdmissionCerts: List[AdmissionCertificate] = List.empty
       )(implicit hasher: Hasher[F]): F[Option[Transition]] = {
         // B1 apply: on proposal acceptance, shrink this round's committee by the set of peers
         // carried in the leader's EvictionCertificates. Validation already verified quorum +
@@ -1517,6 +1723,19 @@ object GlobalSnapshotConsensusStateAdvancer {
         val postEvictionRemoved =
           if (evictedTargets.isEmpty) state.removedFacilitators
           else RemovedFacilitators(state.removedFacilitators.value ++ evictedTargets)
+        // B2 apply: on proposal acceptance, stash the set of re-admission targets on the
+        // round state so the outcome-extraction step (buildFinishedTransition) can clear
+        // those peers from lastOutcome.readmissionCountdown. Unlike evictions, admissions
+        // do not mutate this round's `facilitators` — the target is not in the current
+        // committee (validateProposalAcs already enforced that). The effect is visible in
+        // the NEXT round's state creation, where the cleared peer is no longer filtered
+        // out of fullBase via readmissionCountdown.
+        val admittedTargets: Set[PeerId] =
+          if (isInBootstrap(state)) Set.empty
+          else leaderAdmissionCerts.map(_.targetPeer).toSet
+        val postAdmissionAdmitted =
+          if (admittedTargets.isEmpty) state.admittedFacilitators
+          else AdmittedFacilitators(state.admittedFacilitators.value ++ admittedTargets)
         for {
           facilitatorsHash <- postEvictionFacilitators.value.hash
           view = state.viewNumber.toLong
@@ -1548,6 +1767,24 @@ object GlobalSnapshotConsensusStateAdvancer {
                 // is enforced at the VoteLock gate above (tryLockVote), which already rejects a second vote
                 // at the same (key, view) for a different hash.
                 signature <- Signature.fromHash(keyPair.getPrivate, majorityInfo.hash)
+                // Self-store our MajoritySignature into the local resources immediately. Mirrors
+                // the Fix-2 self-store-of-Facility pattern (commit 82179f2ec) for the signature
+                // phase. Without this, our own signature only enters `resources.signatures` via
+                // the gossip round-trip through RumorHandler; if three other peers' signatures
+                // cross quorum in ~1-3ms (the 2026-04-23 ord-10 fast-path race), our node
+                // finalizes its own round without its own signature and drops off `lastSigners`
+                // in the next round's state creator. The complementary defence is the
+                // `signatureGracePeriod` in buildFinishedTransition that also catches late
+                // peer signatures; self-store closes the local-race half deterministically
+                // at zero added latency.
+                selfMajoritySig = MajoritySignature(
+                  signature,
+                  facilitatorsHash,
+                  state.lastOutcome.finished.snapshotHash,
+                  view,
+                  majorityInfo.hash
+                )
+                _ <- consensusStorage.addSignature(selfId, state.key, selfMajoritySig).void
                 _ <- recordProposalAffinity(proposalHashes, status.proposalArtifactInfo.hash)
                 // Round succeeded — discard the proposal savepoint so it won't be restored on the next ordinal
                 _ <- proposalSavepointRef.set(none)
@@ -1563,11 +1800,24 @@ object GlobalSnapshotConsensusStateAdvancer {
                     "count" -> evictedTargets.size.toString
                   )
                   .whenA(evictedTargets.nonEmpty)
+                _ <- ConsensusLog
+                  .info(
+                    logger,
+                    Category.Phase,
+                    state.key.show,
+                    "n/a",
+                    Event.Admission,
+                    "assembly" -> "admissions_applied",
+                    "targets" -> admittedTargets.toList.map(ConsensusLog.pid).mkString(","),
+                    "count" -> admittedTargets.size.toString
+                  )
+                  .whenA(admittedTargets.nonEmpty)
               } yield
                 Transition(
                   newState = state.copy(
                     facilitators = postEvictionFacilitators,
                     removedFacilitators = postEvictionRemoved,
+                    admittedFacilitators = postAdmissionAdmitted,
                     status = CollectingSignatures(
                       majorityInfo,
                       status.majorityTrigger,
@@ -1681,10 +1931,31 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): F[Option[Transition]] =
         loggerBundle.app.withOrdinal(status.majorityArtifactInfo.artifact.ordinal) {
           HasherSelector[F].withCurrent { implicit hasher =>
-            val majorityThreshold = (state.facilitators.value.size / 2) + 1
+            // Finalization threshold: strict majority of the canonical round-start committee.
+            //
+            // Denominator uses `roundStartFacilitators.value.size` (not the mutable
+            // `state.facilitators.value.size`) so the threshold stays stable across the round —
+            // mid-round withdrawals cannot lower the bar. This is the canonical-committee
+            // invariant from fix #2 applied to the threshold calculation.
+            //
+            // Formula is `(n/2)+1` rather than `ceil(n * quorumThresholdFraction)` for liveness
+            // reasons: at n=5 with fraction=0.67, supermajority=4 leaves zero headroom (any one
+            // peer drop wedges the round, and the B1/VCC paths also need 4 so nothing can
+            // auto-recover — observed 2026-04-24 E2E ord-10 wedge). Majority=3 gives slack.
+            // The forking risk that supermajority addresses (two disjoint finalized sets under
+            // view-change splits) is protected against elsewhere via VoteLock + VCC; finalization
+            // threshold is a liveness lever, not the primary safety lever.
+            val canonicalCommitteeSize = state.roundStartFacilitators.value.size
+            val quorumThreshold = (canonicalCommitteeSize / 2) + 1
+            val fullCommittee = canonicalCommitteeSize
             for {
-              facilitatorsHash <- state.facilitators.value.hash
-              facilitators = state.facilitators.value
+              // Hash over canonical committee: this hash lands in Finished (and
+              // thus lastOutcome.finished.facilitatorsHash), which fork detection
+              // compares across peers. Deriving from state.facilitators (mutable)
+              // would produce divergent hashes on nodes that observed a withdrawal
+              // at different phases — exactly the 2026-04-23 ord-5 fork trigger.
+              facilitatorsHash <- state.roundStartFacilitators.value.hash
+              facilitators = state.roundStartFacilitators.value
               _ <- loggerBundle.consensus.roundFinished(facilitators)
               // Require majority of facilitators to sign before completing the round.
               // Without this, a view-change minority (e.g., 2/5) can complete a round with a
@@ -1699,33 +1970,71 @@ object GlobalSnapshotConsensusStateAdvancer {
                   Event.RoundBlockedByState,
                   "reason" -> "insufficient_signatures",
                   "valid" -> validSignatures.size.toString,
-                  "required" -> majorityThreshold.toString,
+                  "required" -> quorumThreshold.toString,
                   "facilitators" -> state.facilitators.value.size.toString
                 )
-                .whenA(validSignatures.size < majorityThreshold)
-              result <-
-                if (validSignatures.size >= majorityThreshold) {
-                  NonEmptySet.fromSet(validSignatures.toSortedSet).traverse { signaturesNes =>
-                    val signedArtifact = Signed(status.majorityArtifactInfo.artifact, signaturesNes)
-                    // Use the artifact hash (agreed upon during Proposals phase) instead of signedArtifact.hash.
-                    // signedArtifact.hash includes signatures, which can differ across nodes when quorum < total
-                    // (e.g., some nodes collect 3 signatures, others 4), causing non-deterministic snapshotHash
-                    // and deadlocking the next round's Facility phase.
-                    val snapshotHash = status.majorityArtifactInfo.hash
-                    Transition(
-                      newState = state.copy(status =
-                        Finished(
-                          signedArtifact,
-                          status.majorityArtifactInfo.context,
-                          status.majorityTrigger,
-                          status.candidates,
-                          facilitatorsHash,
-                          snapshotHash
-                        )
-                      ),
-                      sideEffect = persistAndGossip(signedArtifact, status.majorityArtifactInfo.context)
-                    ).pure[F]
+                .whenA(validSignatures.size < quorumThreshold)
+              // Signature grace period: if we've met quorum but don't have the FULL
+              // committee yet, delay finalization by `config.signatureGracePeriod` to
+              // catch late arrivals. Mirrors the pattern in `recoveryObserve` where we
+              // wait for peer convergence before committing. Without this, a round
+              // that crosses quorum in 1-3ms on a small cluster can finalize a round
+              // missing 1-2 signers that arrive a few ms later — noisy signer sets,
+              // missed rewards, divergent peerQuality on downstream rounds.
+              now <- Async[F].monotonic
+              waitMore <-
+                if (validSignatures.size < quorumThreshold) false.pure[F]
+                else if (validSignatures.size >= fullCommittee) {
+                  // Full committee signed — no reason to wait; clear tracker and commit.
+                  signatureQuorumFirstSeenRef.update(_ - state.key).as(false)
+                } else {
+                  // Quorum met but not full — stamp first-seen time and evaluate grace.
+                  signatureQuorumFirstSeenRef.modify { m =>
+                    m.get(state.key) match {
+                      case Some(t) => (m, t)
+                      case None    => (m + (state.key -> now), now)
+                    }
                   }
+                    .map(firstSeen => (now - firstSeen) < config.signatureGracePeriod)
+                }
+              _ <- ConsensusLog
+                .debug(
+                  logger,
+                  Category.Phase,
+                  state.key.show,
+                  ConsensusLog.role(selfId, state.leader),
+                  Event.SignaturesToFinished,
+                  "grace" -> "waiting",
+                  "signatures" -> s"${validSignatures.size}/$fullCommittee",
+                  "required" -> quorumThreshold.toString,
+                  "gracePeriodMs" -> config.signatureGracePeriod.toMillis.toString
+                )
+                .whenA(waitMore)
+              result <-
+                if (waitMore) none[Transition].pure[F]
+                else if (validSignatures.size >= quorumThreshold) {
+                  signatureQuorumFirstSeenRef.update(_ - state.key) >>
+                    NonEmptySet.fromSet(validSignatures.toSortedSet).traverse { signaturesNes =>
+                      val signedArtifact = Signed(status.majorityArtifactInfo.artifact, signaturesNes)
+                      // Use the artifact hash (agreed upon during Proposals phase) instead of signedArtifact.hash.
+                      // signedArtifact.hash includes signatures, which can differ across nodes when quorum < total
+                      // (e.g., some nodes collect 3 signatures, others 4), causing non-deterministic snapshotHash
+                      // and deadlocking the next round's Facility phase.
+                      val snapshotHash = status.majorityArtifactInfo.hash
+                      Transition(
+                        newState = state.copy(status =
+                          Finished(
+                            signedArtifact,
+                            status.majorityArtifactInfo.context,
+                            status.majorityTrigger,
+                            status.candidates,
+                            facilitatorsHash,
+                            snapshotHash
+                          )
+                        ),
+                        sideEffect = persistAndGossip(signedArtifact, status.majorityArtifactInfo.context)
+                      ).pure[F]
+                    }
                 } else {
                   none[Transition].pure[F]
                 }
@@ -1733,8 +2042,12 @@ object GlobalSnapshotConsensusStateAdvancer {
           }
         }
 
+      // Hash over the canonical round-start committee. Used for Proposal declarations
+      // and downstream facilitator-hash comparisons. Must be deterministic across all
+      // nodes for a given round, so state.roundStartFacilitators (not the mutable set)
+      // is the source.
       private def hashFacilitators(state: GlobalSnapshotConsensusState): F[Hash] =
-        HasherSelector[F].withCurrent(implicit h => state.facilitators.value.hash)
+        HasherSelector[F].withCurrent(implicit h => state.roundStartFacilitators.value.hash)
 
       private def hashArtifact(artifact: GlobalSnapshotArtifact): F[Hash] =
         HasherSelector[F].withCurrent(implicit h => artifact.hash)
@@ -1754,7 +2067,9 @@ object GlobalSnapshotConsensusStateAdvancer {
               HasherSelector[F].getForOrdinal(lastArtifact.ordinal),
               trigger,
               events,
-              state.facilitators.value.toSet,
+              // Canonical round-start committee — matches validateLeaderArtifact's read so leader
+              // and validators build/accept against the same facilitator set.
+              state.roundStartFacilitators.value.toSet,
               getGlobalSnapshotByOrdinal
             )
           }
@@ -1772,13 +2087,15 @@ object GlobalSnapshotConsensusStateAdvancer {
         lastSnapshotHash: Hash,
         view: Long = 0L,
         vcc: Option[ViewChangeCertificate] = None,
-        evictionCertificates: List[EvictionCertificate] = List.empty
+        evictionCertificates: List[EvictionCertificate] = List.empty,
+        admissionCertificates: List[AdmissionCertificate] = List.empty
       ): F[Unit] = {
         // Deterministic order is required — two leaders building from the same storage state
         // must produce the same proposal-hash payload, and `Set` iteration order is not guaranteed.
-        val sortedCerts = evictionCertificates.sorted(EvictionCertificate.ordering)
+        val sortedEcs = evictionCertificates.sorted(EvictionCertificate.ordering)
+        val sortedAcs = admissionCertificates.sorted(AdmissionCertificate.ordering)
         val declaration =
-          ConsensusPeerDeclaration(key, Proposal(hash, facilitatorsHash, lastSnapshotHash, view, vcc, sortedCerts))
+          ConsensusPeerDeclaration(key, Proposal(hash, facilitatorsHash, lastSnapshotHash, view, vcc, sortedEcs, sortedAcs))
         val targets = state.facilitators.value.toSet
 
         gossip.spreadDirect(declaration, targets) >>

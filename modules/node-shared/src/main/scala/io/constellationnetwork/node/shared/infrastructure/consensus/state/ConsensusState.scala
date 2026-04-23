@@ -79,6 +79,17 @@ object WithdrawnFacilitators {
   def empty: WithdrawnFacilitators = WithdrawnFacilitators(Set.empty)
 }
 
+/** B2 admissions applied this round via the leader's accepted `AdmissionCertificate`s. Populated at `buildSignatureTransition` time after
+  * ACS validation; consumed at outcome-extraction time to clear these peer IDs from the carried-forward `readmissionCountdown`.
+  *
+  * Parallels [[RemovedFacilitators]] (B1) — same flow, opposite direction: B1 removes from committee, B2 removes from probation.
+  */
+@derive(eqv, encoder, decoder)
+case class AdmittedFacilitators(value: Set[PeerId])
+object AdmittedFacilitators {
+  def empty: AdmittedFacilitators = AdmittedFacilitators(Set.empty)
+}
+
 @derive(eqv, encoder, decoder, show)
 case class Candidates(value: Set[PeerId])
 object Candidates {
@@ -90,11 +101,33 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   key: Key,
   lastOutcome: Outcome,
   facilitators: Facilitators,
+  // Canonical committee frozen at round creation. Unlike `facilitators` (which
+  // `ConsensusStateUpdater.updateFacilitators` mutates when peers withdraw
+  // mid-round based on local `withdrawalsMap`), this field is set once by the
+  // state creator from the deterministic committee selection and never changes
+  // for the lifetime of the round.
+  //
+  // Why: nodes observe `DECL_WITHDRAWN kind=Signature` at different phases,
+  // producing divergent `state.facilitators` at round finish. If the outcome's
+  // `facilitators` / `completedFacilitators` / `facilitatorsHash` are derived
+  // from the mutable set, nodes write divergent `lastOutcome` → divergent
+  // next-round committees → fork. Deriving those from `roundStartFacilitators`
+  // restores cross-node determinism. Observed 2026-04-23 at ord 4→5 where
+  // gl0-4's withdrawal was captured by half the cluster pre-finish and half
+  // post-finish; see `.workspace/codex-response-ord5-facilitator-fork-apr23.md`.
+  //
+  // Read-sites that MUST use this field: outcome.facilitators construction,
+  // completedFacilitators derivation, Finished.facilitatorsHash, VCV/eviction
+  // vote facilitatorsHash. Read-sites that MUST keep `facilitators`: in-round
+  // liveness (StallDetector, gossip spread targets, quorum-threshold calc,
+  // active-committee validation).
+  roundStartFacilitators: Facilitators,
   status: Status,
   createdAt: FiniteDuration,
   removedFacilitators: RemovedFacilitators = RemovedFacilitators.empty,
   withdrawnFacilitators: WithdrawnFacilitators = WithdrawnFacilitators.empty,
   eligibleFacilitators: EligibleFacilitators = EligibleFacilitators.empty,
+  admittedFacilitators: AdmittedFacilitators = AdmittedFacilitators.empty,
   leader: PeerId,
   viewNumber: Int = 0,
   entropy: Hash
@@ -126,6 +159,13 @@ trait ConsensusOps[S, Kind] {
   def kindGetter: Kind => PeerDeclarations => Option[PeerDeclaration]
   def isFinished(status: S): Boolean
   def isProposalPhase(status: S): Boolean
+
+  /** True while the round is collecting MajoritySignature declarations. Consumed by StallDetector to pump periodic CheckUpdate commands —
+    * the signature-grace path in the advancer returns `none[Transition]` when quorum is met but the committee isn't full yet, and that
+    * decision only re-evaluates on subsequent `checkUpdate` invocations. Without a heartbeat in this phase, a round that met quorum and
+    * received no further peer signatures would wedge until an unrelated resource event fired (observed 2026-04-24 E2E, 14.7s wedge).
+    */
+  def isSignaturesPhase(status: S): Boolean
 
   /** Phase index for adaptive timeout multipliers. 0 = CollectingFacilities, 1 = CollectingProposals, 2 = CollectingSignatures, 3 =
     * CollectingBinarySignatures (currency only), higher = Finished.

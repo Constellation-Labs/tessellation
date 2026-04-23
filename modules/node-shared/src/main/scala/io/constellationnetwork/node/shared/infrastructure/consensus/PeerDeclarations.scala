@@ -20,6 +20,10 @@ object PeerDeclarationsArbitraries {
   // eviction certificates; tests that need a real cert build one explicitly.
   implicit val evictionCertsListArb: Arbitrary[List[EvictionCertificate]] =
     Arbitrary(Gen.const(List.empty))
+
+  // Same rationale for AdmissionCertificate list (B2).
+  implicit val admissionCertsListArb: Arbitrary[List[AdmissionCertificate]] =
+    Arbitrary(Gen.const(List.empty))
 }
 
 import PeerDeclarationsArbitraries._

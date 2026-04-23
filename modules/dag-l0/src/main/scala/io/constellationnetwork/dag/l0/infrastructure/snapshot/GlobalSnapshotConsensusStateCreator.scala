@@ -207,6 +207,14 @@ object GlobalSnapshotConsensusStateCreator {
         // for removalPenaltyRounds rounds. Deterministic: derived from agreed-upon lastOutcome.
         penalizedPeers = lastOutcome.removalPenalties.filter(_._2 > 0).keySet
 
+        // B2 re-admission probation: peers whose `removalPenalty` just expired sit in
+        // `readmissionCountdown` for `readmissionProbationRounds` before they can re-enter
+        // the committee. Excluded from the round NON-BYPASSABLY: even the `withoutPenaltiesOnly`
+        // escape below cannot drag them back in, because re-admission requires a
+        // consensus-witnessed AdmissionCertificate embedded in a Proposal (cleared at
+        // round-finish in the advancer). Deterministic: derived from agreed-upon lastOutcome.
+        probationPeers = lastOutcome.readmissionCountdown.filter(_._2 > 0).keySet
+
         _ <- logger
           .debug(
             s"Removal penalties for key=$key: ${penalizedPeers.size} penalized peers" +
@@ -215,6 +223,15 @@ object GlobalSnapshotConsensusStateCreator {
                else "")
           )
           .whenA(penalizedPeers.nonEmpty)
+
+        _ <- logger
+          .debug(
+            s"Readmission probation for key=$key: ${probationPeers.size} probation peers" +
+              (if (probationPeers.nonEmpty)
+                 s" [${lastOutcome.readmissionCountdown.filter(_._2 > 0).map(kv => s"${kv._1.value.value.take(8)}:${kv._2}").mkString(",")}]"
+               else "")
+          )
+          .whenA(probationPeers.nonEmpty)
 
         // Chronic non-signer filter: exclude peers from the committee if their historical
         // participation rate is below config.minParticipationRatio AFTER they have been
@@ -288,7 +305,11 @@ object GlobalSnapshotConsensusStateCreator {
         // 2026-04-22 testnet: committee=9, 5 chronic, 4 reliable. Old floor=5, filtered=4 → fallback
         // to allEligible(9), re-admit chronic → QUORUM_INFEASIBLE_EVICTION loop. New floor (majority
         // of potentiallyCompeting=4) = 3, filtered=4 ≥ 3 → use the 4 reliable, q=3, progress.
-        potentiallyCompeting = allEligible.filterNot(chronicNonSigners.contains)
+        // B2: probation peers are excluded BEFORE minViableQuorum is computed. Without
+        // this, the quorum floor would be derived from a pool that includes probation
+        // peers, producing a false-high floor that the escape hatch would then have to
+        // bypass by re-admitting them — defeating the whole point of the probation gate.
+        potentiallyCompeting = allEligible.filterNot(pid => chronicNonSigners.contains(pid) || probationPeers.contains(pid))
         minViableQuorum = math.max(3, (potentiallyCompeting.size / 2) + 1)
 
         // Periodic reinstatement (Option A): every chronicReinstatementInterval ordinals, rotate
@@ -324,26 +345,33 @@ object GlobalSnapshotConsensusStateCreator {
 
         eligibleThisRound = {
           // Exclude: previously removed peers, penalized peers, chronic non-signers (minus any
-          // reinstated for this round), AND deferred candidates (brand-new or in countdown).
-          // Deferred candidates remain in allEligible so they remain tracked.
-          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred
+          // reinstated for this round), deferred candidates (brand-new or in countdown),
+          // AND B2 probation peers (waiting for AdmissionCertificate re-admission).
+          // Deferred/probation candidates remain in allEligible so they remain tracked.
+          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers
           val filtered = allEligible.filterNot(excluded.contains)
           // Bypass chain for liveness when filtering would drop below minViableQuorum:
-          //   1. withoutPenaltiesOnly — lift penalties + deferral, keep chronic + reinstatement rotation
-          //   2. filtered itself (even below floor) — accept degraded committee over re-admitting chronic peers
-          //   3. allEligible — last-resort full re-admit, only when filtered is empty
-          // This is the fork-safety critical path: we never re-admit `chronicNonSigners` except as
-          // the absolute last resort when even the reliable cohort is empty (selfId fallback).
-          val withoutPenaltiesOnly = allEligible.filterNot((previouslyRemoved ++ penalizedPeers ++ effectiveChronic).contains)
+          //   1. withoutPenaltiesOnly — lift penalties + deferral, keep chronic, reinstatement
+          //      rotation, AND probation. Probation is NON-BYPASSABLE: the only way out of
+          //      probation is a quorum-witnessed AdmissionCertificate embedded in a Proposal.
+          //   2. filtered itself (even below floor) — accept degraded committee over re-admitting chronic/probation peers
+          //   3. allEligible MINUS probation — last-resort full re-admit of chronic peers, but never probation
+          //   4. allEligible — only if even step 3 is empty (pathological case, falls through to selfId)
+          // This is the fork-safety critical path: we never re-admit `chronicNonSigners` or
+          // `probationPeers` except via their respective re-entry gates.
+          val withoutPenaltiesOnly =
+            allEligible.filterNot((previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ probationPeers).contains)
+          val allEligibleMinusProbation = allEligible.filterNot(probationPeers.contains)
           if (filtered.size >= minViableQuorum) filtered
           else if (withoutPenaltiesOnly.size >= 2 && allDeferred.nonEmpty) withoutPenaltiesOnly
           else if (filtered.nonEmpty) filtered
+          else if (allEligibleMinusProbation.nonEmpty) allEligibleMinusProbation
           else if (allEligible.nonEmpty) allEligible
           else List(selfId)
         }
 
         penaltyBypassed = {
-          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred
+          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers
           val filtered = allEligible.filterNot(excluded.contains)
           filtered.size < minViableQuorum && allEligible.size > filtered.size
         }
@@ -477,6 +505,9 @@ object GlobalSnapshotConsensusStateCreator {
         state = ConsensusState[GlobalSnapshotKey, GlobalSnapshotStatus, GlobalConsensusOutcome, GlobalConsensusKind](
           key,
           lastOutcome,
+          Facilitators(active),
+          // Canonical round-start committee — same set as `facilitators` at creation,
+          // but frozen for the lifetime of the round even when peers withdraw.
           Facilitators(active),
           CollectingFacilities(
             maybeTrigger,

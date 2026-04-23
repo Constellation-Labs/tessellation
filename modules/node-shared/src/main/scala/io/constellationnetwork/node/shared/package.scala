@@ -59,6 +59,13 @@ package object shared {
       classOf[EvictionVote] -> 535,
       classOf[EvictionCertificate] -> 536,
       classOf[ConsensusPeerEvictionVote[_]] -> 537,
-      EvictionReason.Silent.getClass -> 538
+      EvictionReason.Silent.getClass -> 538,
+      // Phase B2 AdmissionVote mechanism: signed positive-evidence votes, quorum-certified,
+      // embedded in next Proposal to re-admit previously-removed peers that have demonstrated
+      // current-tip participation. Symmetric to B1 eviction.
+      classOf[AdmissionVote] -> 539,
+      classOf[AdmissionCertificate] -> 540,
+      classOf[ConsensusPeerAdmissionVote[_]] -> 541,
+      AdmissionReason.ReadyAtTip.getClass -> 542
     ).union(sharedKryoRegistrar)
 }

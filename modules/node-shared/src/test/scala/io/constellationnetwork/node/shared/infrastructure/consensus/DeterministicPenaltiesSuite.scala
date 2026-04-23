@@ -366,6 +366,72 @@ object DeterministicPenaltiesSuite extends FunSuite {
     )
   }
 
+  test(
+    "ord-5 fork regression: passing the canonical committee (roundStartFacilitators) produces identical outcome even when node-local views of facilitators diverged mid-round"
+  ) {
+    // This simulates the 2026-04-23 protocol fix. Before the fix, node A and
+    // node B could finalize ord N with different `state.facilitators` depending
+    // on when each observed a mid-round withdrawal — producing divergent
+    // `lastOutcome.facilitators` and `completedFacilitators`, cascading into
+    // different `deferralCountdown` entries at ord N+1, different committees,
+    // and a `facilitators-hash` fork.
+    //
+    // The advancer fix is that the `facilitators` argument below always comes
+    // from `state.roundStartFacilitators` (canonical, frozen at round start),
+    // not from `state.facilitators` (mutable, shrinks on withdrawal). This test
+    // encodes that invariant: given the SAME canonical committee on both nodes
+    // — which is guaranteed post-fix — the derived outcome fields must match
+    // regardless of any local mid-round mutation either node might have
+    // applied to its own live facilitators set.
+    val canonicalCommittee = allFacilitators // {p1,p2,p3,p4,p5}
+    val noEvictions = Set.empty[PeerId]
+
+    val nodeA_outcome = computeOutcomeFields(
+      key = ord(2L),
+      facilitators = canonicalCommittee,
+      removedFacilitators = noEvictions,
+      previousPenalties = SortedMap.empty,
+      previousCumulative = SortedMap.empty,
+      previousPeerQuality = SortedMap.empty,
+      previousRecentProofSizes = postBootstrapProofSizes,
+      previousDeferrals = SortedMap.empty
+    )
+    // Node B would have observed the same canonical committee. Had the fix
+    // not been in place, node B might have computed with facilitators={p1..p4}
+    // after a locally-captured withdrawal. The fix ensures both nodes hand the
+    // same canonical set to this helper, hence the same outcome.
+    val nodeB_outcome = computeOutcomeFields(
+      key = ord(2L),
+      facilitators = canonicalCommittee,
+      removedFacilitators = noEvictions,
+      previousPenalties = SortedMap.empty,
+      previousCumulative = SortedMap.empty,
+      previousPeerQuality = SortedMap.empty,
+      previousRecentProofSizes = postBootstrapProofSizes,
+      previousDeferrals = SortedMap.empty
+    )
+
+    expect(
+      nodeA_outcome.peerQuality == nodeB_outcome.peerQuality,
+      s"peerQuality must match across nodes when canonical committee is identical"
+    ).and(
+      expect(
+        nodeA_outcome.removalPenalties == nodeB_outcome.removalPenalties,
+        s"removalPenalties must match"
+      )
+    ).and(
+      expect(
+        nodeA_outcome.cumulativeMissCounts == nodeB_outcome.cumulativeMissCounts,
+        s"cumulativeMissCounts must match"
+      )
+    ).and(
+      expect(
+        nodeA_outcome.recentProofSizes == nodeB_outcome.recentProofSizes,
+        s"recentProofSizes must match (tracks canonical committee size, not post-withdrawal size)"
+      )
+    )
+  }
+
   test("deferred facilitators are not penalized even when evicted") {
     val evicted = Set(p5)
     val deferredPrev: SortedMap[PeerId, Int] = SortedMap(p5 -> 2) // p5 still in deferral

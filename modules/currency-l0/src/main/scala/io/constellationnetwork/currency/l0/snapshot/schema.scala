@@ -113,7 +113,11 @@ object schema {
     cumulativeMissCounts: SortedMap[PeerId, Long] = SortedMap.empty,
     // Sliding window of (ordinal -> proofs.size) for the last ~10 ordinals, used for
     // bootstrap warmup classification. See dag-l0 mirror for full rationale.
-    recentProofSizes: SortedMap[SnapshotOrdinal, Int] = SortedMap.empty
+    recentProofSizes: SortedMap[SnapshotOrdinal, Int] = SortedMap.empty,
+    // B2 re-admission gate: peers whose `removalPenalty` expired enter this map
+    // at `readmissionProbationRounds` and count down one per finished round. See
+    // dag-l0 mirror for full rationale.
+    readmissionCountdown: SortedMap[PeerId, Int] = SortedMap.empty
   ) {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value

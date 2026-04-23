@@ -37,6 +37,7 @@ object EvictionCertificateBuilder {
     target: PeerId,
     reason: EvictionReason,
     facilitatorsHash: Hash,
+    lastSnapshotHash: Hash,
     votes: Map[PeerId, Signed[EvictionVote]],
     quorumSize: Int,
     committee: Set[PeerId]
@@ -54,6 +55,16 @@ object EvictionCertificateBuilder {
             && signed.value.facilitatorsHash != facilitatorsHash =>
         pid
     }
+    // Codex review 2026-04-23: reject mixed-tip vote sets — prevents a leader from replaying
+    // older signed votes that matched the current facilitators hash but referenced a prior tip.
+    val wrongLastSnapHash = votes.toList.collect {
+      case (pid, signed)
+          if signed.value.targetPeer == target
+            && signed.value.reason == reason
+            && signed.value.facilitatorsHash == facilitatorsHash
+            && signed.value.lastSnapshotHash != lastSnapshotHash =>
+        pid
+    }
     val nonCommitteeVoter = votes.toList.collect {
       case (voter, _) if !committee.contains(voter) => voter
     }
@@ -64,6 +75,8 @@ object EvictionCertificateBuilder {
       Left(s"reason_mismatch peers=${wrongReason.size}")
     else if (wrongFacHash.nonEmpty)
       Left(s"facilitators_mismatch peers=${wrongFacHash.size}")
+    else if (wrongLastSnapHash.nonEmpty)
+      Left(s"last_snapshot_hash_mismatch peers=${wrongLastSnapHash.size}")
     else if (nonCommitteeVoter.nonEmpty)
       Left(s"voter_not_in_committee peers=${nonCommitteeVoter.size}")
     else {
@@ -75,6 +88,7 @@ object EvictionCertificateBuilder {
           signed.value.targetPeer == target
             && signed.value.reason == reason
             && signed.value.facilitatorsHash == facilitatorsHash
+            && signed.value.lastSnapshotHash == lastSnapshotHash
         )
         .toList
         .groupBy(_.proofs.head.id.toPeerId)
@@ -93,7 +107,7 @@ object EvictionCertificateBuilder {
         NonEmptySet
           .fromSet(sortedSet)
           .toRight("empty_votes_after_filter")
-          .map(nes => EvictionCertificate(target, reason, facilitatorsHash, nes))
+          .map(nes => EvictionCertificate(target, reason, facilitatorsHash, lastSnapshotHash, nes))
       }
     }
   }

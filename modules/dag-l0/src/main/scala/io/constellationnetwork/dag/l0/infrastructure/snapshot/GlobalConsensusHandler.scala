@@ -32,6 +32,8 @@ object GlobalConsensusHandler {
       all.ackHandler <+>
       all.artifactHandler <+>
       all.withdrawHandler <+>
-      all.viewChangeVoteHandler
+      all.viewChangeVoteHandler <+>
+      all.evictionVoteHandler <+>
+      all.admissionVoteHandler
   }
 }

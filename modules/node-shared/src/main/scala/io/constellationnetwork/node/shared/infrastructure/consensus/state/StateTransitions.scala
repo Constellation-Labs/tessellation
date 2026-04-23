@@ -9,11 +9,7 @@ import scala.concurrent.duration._
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand._
-import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{
-  ConsensusCommand,
-  EvictionCertificateBuilder,
-  ViewChangeCertificateBuilder
-}
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine._
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.GetConsensusOutcomeRequest
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger._
 import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusStorage}
@@ -145,9 +141,26 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                         ): F[Option[(Option[ConsensusState[Key, Status, Outcome, Kind]], Boolean)]] =
                           maybeState match {
                             case Some(s) if s.viewNumber === state.viewNumber =>
+                              // Clear withdrawnFacilitators on view change. A withdrawal is scoped to
+                              // the (key, view) pair at which it was emitted; a fresh view is logically
+                              // a new commitment window. Without this reset, a view-0 withdrawal keeps
+                              // `alreadyWithdrawn` tripping in all subsequent views and the node bails
+                              // out of every proposal validation forever (the gl0-4 ord-3 stuck-for-11-min
+                              // pattern). Peers that still want to withdraw in the new view will re-emit.
                               val updated: ConsensusState[Key, Status, Outcome, Kind] = resetStatus match {
-                                case Some(fresh) => s.copy(viewNumber = toView.toInt, leader = newLeader, status = fresh)
-                                case None        => s.copy(viewNumber = toView.toInt, leader = newLeader)
+                                case Some(fresh) =>
+                                  s.copy(
+                                    viewNumber = toView.toInt,
+                                    leader = newLeader,
+                                    status = fresh,
+                                    withdrawnFacilitators = WithdrawnFacilitators.empty
+                                  )
+                                case None =>
+                                  s.copy(
+                                    viewNumber = toView.toInt,
+                                    leader = newLeader,
+                                    withdrawnFacilitators = WithdrawnFacilitators.empty
+                                  )
                               }
                               (updated.some, true).some.pure[F]
                             case _ =>
@@ -257,7 +270,8 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                 reasons.toList match {
                   case singleReason :: Nil =>
                     val committee = state.facilitators.value.toSet
-                    EvictionCertificateBuilder.build(target, singleReason, facHash, matchingVotes, q, committee) match {
+                    val expectedLastSnap = ctx.lastSnapshotHashOf(state.lastOutcome)
+                    EvictionCertificateBuilder.build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, committee) match {
                       case Left(reason) =>
                         ConsensusLog.warn(
                           log,
@@ -317,6 +331,111 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                 key.show,
                 "n/a",
                 LogEvent.Eviction,
+                "assembly" -> "waiting_for_quorum",
+                "target" -> ConsensusLog.pid(target),
+                "votes" -> votes.size.toString,
+                "quorum" -> q.toString
+              )
+            )
+          }
+        }
+    }
+
+  /** Handle `CheckAdmissionAssembly(key, target)` command. Mirrors [[checkEvictionAssembly]]. Attempts to assemble an
+    * `AdmissionCertificate` for `target` once the `AdmissionVote` store holds at least quorum votes agreeing on `facilitatorsHash`.
+    *
+    * Like B1, certificate assembly is side-effect free for `state.facilitators` / `state.admittedFacilitators` — those mutations happen at
+    * advancer proposal-acceptance time (Phase 6 of the B2 rollout).
+    */
+  def checkAdmissionAssembly(key: Key, target: PeerId): F[Unit] =
+    storage.getState(key).flatMap {
+      case None => Async[F].unit
+      case Some(state) if ctx.isInBootstrap(state.lastOutcome) =>
+        ConsensusLog.debug(
+          log,
+          Category.Phase,
+          key.show,
+          "n/a",
+          LogEvent.Admission,
+          "assembly" -> "skipped_in_bootstrap",
+          "target" -> ConsensusLog.pid(target)
+        )
+      case Some(state) =>
+        storage.getResources(key).flatMap { resources =>
+          val votes = resources.admissionVotes.getOrElse(target, Map.empty)
+          val n = state.facilitators.value.size
+          val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+          if (votes.size >= q) {
+            val byHash: Map[_root_.io.constellationnetwork.security.hash.Hash, Int] =
+              votes.values.groupBy(_.value.facilitatorsHash).view.mapValues(_.size).toMap
+            byHash.toList.sortBy(-_._2) match {
+              case (facHash, voteCount) :: _ if voteCount >= q =>
+                val matchingVotes = votes.filter { case (_, signed) => signed.value.facilitatorsHash == facHash }
+                val reasons = matchingVotes.values.map(_.value.reason).toSet
+                reasons.toList match {
+                  case singleReason :: Nil =>
+                    val committee = state.facilitators.value.toSet
+                    val expectedLastSnap = ctx.lastSnapshotHashOf(state.lastOutcome)
+                    AdmissionCertificateBuilder.build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, committee) match {
+                      case Left(reason) =>
+                        ConsensusLog.warn(
+                          log,
+                          Category.Phase,
+                          key.show,
+                          "n/a",
+                          LogEvent.Admission,
+                          "assembly" -> "acs_build_failed",
+                          "target" -> ConsensusLog.pid(target),
+                          "reason" -> reason,
+                          "votes" -> matchingVotes.size.toString,
+                          "quorum" -> q.toString
+                        )
+                      case Right(cert) =>
+                        storage.storeAssembledAdmissionCertificate(key, cert) >>
+                          ConsensusLog.info(
+                            log,
+                            Category.Phase,
+                            key.show,
+                            "n/a",
+                            LogEvent.Admission,
+                            "assembly" -> "quorum_reached_cert_stored",
+                            "target" -> ConsensusLog.pid(target),
+                            "votes" -> matchingVotes.size.toString,
+                            "quorum" -> q.toString,
+                            "reason" -> singleReason.toString
+                          )
+                    }
+                  case multiReasons =>
+                    ConsensusLog.warn(
+                      log,
+                      Category.Phase,
+                      key.show,
+                      "n/a",
+                      LogEvent.Admission,
+                      "assembly" -> "divergent_reasons",
+                      "target" -> ConsensusLog.pid(target),
+                      "reasons" -> multiReasons.size.toString
+                    )
+                }
+              case _ =>
+                ConsensusLog.debug(
+                  log,
+                  Category.Phase,
+                  key.show,
+                  "n/a",
+                  LogEvent.Admission,
+                  "assembly" -> "divergent_facilitators_hash",
+                  "target" -> ConsensusLog.pid(target),
+                  "hashes" -> byHash.size.toString
+                )
+            }
+          } else {
+            log.debug(
+              ConsensusLog.format(
+                Category.Phase,
+                key.show,
+                "n/a",
+                LogEvent.Admission,
                 "assembly" -> "waiting_for_quorum",
                 "target" -> ConsensusLog.pid(target),
                 "votes" -> votes.size.toString,
@@ -466,6 +585,37 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
               ).raiseError[F, (Outcome, Boolean)]
           }
         }
+      // B2 readmission gate: refuse to facilitate while self is on probation per the carried
+      // outcome. Codex review 2026-04-24: a peer that was B1-evicted during isolation comes back
+      // via recovery with a downloaded snapshot containing `readmissionCountdown[selfId] > 0`. The
+      // cluster's state creator excludes probation peers from `state.facilitators`; if we
+      // ignore that and emit Facility/Proposal/Signature anyway, our declarations land in nobody's
+      // expected committee and the round wedges at `progress=1/5` until the whole 90s phase
+      // timeout fires (gl0-4 fork-recovery E2E).
+      //
+      // Instead, raise `SelfStillInProbation` so the outer event-loop retry path re-issues
+      // initFromDownload after backoff. The next attempt re-fetches the outcome from the cluster;
+      // once the cluster has emitted a quorum-witnessed AdmissionCertificate clearing self from
+      // probation, the check passes and recovery proceeds normally.
+      _ <-
+        if (ctx.probationPeersOf(outcome).contains(ctx.selfId)) {
+          ConsensusLog
+            .warn(
+              log,
+              Category.Lifecycle,
+              key.toString,
+              "n/a",
+              LogEvent.DownloadInitStart,
+              "gate" -> "self_in_readmission_probation",
+              "action" -> "deferring_facilitation_until_b2_clears_probation"
+            ) >> new SelfStillInProbation(ctx.selfId, key.toString)
+            .raiseError[F, Unit]
+        } else Async[F].unit
+      // Mark recovery completion at this key. Layer-specific advancers consult this when self is
+      // elected leader: if `state.key - recoveredAtKey <= recoveryLeaderCooldownRounds`, they
+      // self-defer into a view change instead of attempting to propose. See
+      // ConsensusEngineContext.recoveredAtKeyRef docstring for full rationale.
+      _ <- ctx.recoveredAtKeyRef.set(Some(key))
       _ <- storage
         .trySetInitialConsensusOutcome(outcome)
         .ifM(
@@ -649,4 +799,15 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
   }
 
   class NoValidPeersException(message: String) extends RuntimeException(message)
+
+  /** Raised when `initFromDownload` resolves an outcome that still lists `selfId` in `readmissionCountdown` (B2 probation). The outer
+    * event-loop retry path catches this, backs off, and re-issues initFromDownload — by which time the cluster may have emitted an
+    * `AdmissionCertificate` clearing the probation, allowing recovery to proceed.
+    */
+  class SelfStillInProbation(val selfId: PeerId, val keyShow: String)
+      extends RuntimeException(
+        s"[DownloadInit] self ${selfId.value.value.take(8)} still in B2 readmission probation at key=$keyShow; " +
+          s"deferring facilitation until cluster clears probation."
+      )
+      with scala.util.control.NoStackTrace
 }

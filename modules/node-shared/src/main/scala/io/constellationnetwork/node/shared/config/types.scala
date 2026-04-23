@@ -155,9 +155,26 @@ object types {
     maxRoundDuration: Option[FiniteDuration] = None,
     removalPenaltyRounds: Int = 3,
     candidateDeferralRounds: Int = 3,
+    // B2 re-admission probation: when a removed peer's `removalPenalty` expires, they enter
+    // `readmissionCountdown` at this value (instead of returning directly to the committee),
+    // and are excluded from the round until an AdmissionCertificate for them is embedded in
+    // a finished proposal. Symmetric to `candidateDeferralRounds` (first-time joiner probation),
+    // but sourced from a different lifecycle event (penalty expiry vs. fresh eligibility).
+    readmissionProbationRounds: Int = 3,
     facilitiesTimeoutMultiplier: Double = 0.75,
     proposalsTimeoutMultiplier: Double = 1.5,
     signaturesTimeoutMultiplier: Double = 0.75,
+    // Grace delay after reaching the majority-signatures quorum, before finalizing
+    // the round. Catches late-arriving signatures from all facilitators so the final
+    // `signedArtifact.proofs` set matches the full committee rather than dropping
+    // the last 1-2 peers that crossed quorum by milliseconds. Complements the local
+    // self-store of the signer's own signature (which closes the self-race
+    // deterministically). Timing-only: NOT included in deterministicConfigHash
+    // because nodes with different grace periods still produce the same downstream
+    // snapshotHash (the artifact hash, not the signed-artifact hash, is used
+    // canonically — see buildFinishedTransition). Tune down if round throughput
+    // becomes a bottleneck; tune up if network jitter routinely drops late signers.
+    signatureGracePeriod: FiniteDuration = FiniteDuration(500, "ms"),
     maxConsecutiveAbandonments: Int = 5,
     monitorSummaryInterval: FiniteDuration = FiniteDuration(10, "s"),
     peerScoreLogInterval: FiniteDuration = FiniteDuration(60, "s"),
@@ -201,7 +218,38 @@ object types {
     // StallDetector fires view change / eviction. Post-bootstrap, the multiplier is 1.0 (tighter liveness).
     // Consensus-critical because it affects stall-cycle cadence, which in turn affects view-change emission and
     // abandonment timing — divergent values here would cause nodes to make view transitions at different moments.
-    bootstrapDeclarationTimeoutMultiplier: Double = 2.0
+    bootstrapDeclarationTimeoutMultiplier: Double = 2.0,
+    // Local-only LIVENESS/TIMING knob (NOT a safety knob) for B2 admission voting. A probation
+    // peer must be observed at the committed tip on this many consecutive StallDetector monitor
+    // ticks before this node will emit an AdmissionVote. Prevents premature re-admission of
+    // peers whose recovery download transiently presents the committed tip but that are not yet
+    // stably participating.
+    //
+    // NOT in `deterministicConfigHash`: two honest nodes may have different streak counts for
+    // the same peer due to local tick timing. Cert assembly still requires quorum-agreed signed
+    // votes, so streak drift only shifts WHEN a given node emits its vote, not the eventual
+    // cert-assembly outcome. Mixed values across operators therefore change the timing of when
+    // an AdmissionCertificate becomes available for embedding in proposals — a liveness
+    // consequence, not a safety one.
+    //
+    // Values <= 0 are clamped to 1 at the read-site in StallDetector. Default 2 means two
+    // consecutive monitor ticks (~500ms-1s of sustained at-tip correctness at typical polling
+    // intervals).
+    b2AdmissionAtTipStreak: Int = 2,
+    // Local-only: number of rounds after a successful `initFromDownload` during which this node
+    // refuses to lead, immediately self-deferring into a view change if elected. Codex review
+    // 2026-04-27: a peer that just finished recovery has a freshly initialized consensus storage
+    // and gossip mesh; if it's elected leader of the next round, it can't propose in time and
+    // wedges the round for the full proposal-phase timeout (98s observed in 2026-04-27 E2E).
+    // Self-deferring into view change converts that 98s wedge into a ~5s rotation.
+    //
+    // NOT in `deterministicConfigHash`: deferral is a self-defense decision, not a consensus
+    // rule. Other peers still elect this node deterministically; this node refuses and emits a
+    // ViewChangeVote, after which the standard quorum-certified VCC mechanism takes over.
+    //
+    // Default 3: at ~22s/round that's ~66s of cooldown, enough to fully prime fresh consensus
+    // state without materially eating recovery budget. K=1 is too optimistic; K=10 is too long.
+    recoveryLeaderCooldownRounds: Int = 3
   ) {
 
     /** Deterministic hash of consensus-critical config values.
@@ -215,6 +263,7 @@ object types {
       *   - `maxStallCycles`: affects when rounds are abandoned (triggers recovery)
       *   - `removalPenaltyRounds`: affects facilitator eligibility after eviction
       *   - `candidateDeferralRounds`: affects how long new candidates observe before facilitating
+      *   - `readmissionProbationRounds`: affects B2 re-admission cadence for peers whose penalty expired
       *   - `quorumThresholdFraction`: determines how many declarations needed to advance phases
       *   - `exponentialPenaltyBase`: base for scaling removalPenaltyRounds per repeat eviction
       *   - `maxRemovalPenaltyRounds`: cap on total penalty so it doesn't overflow Int
@@ -239,6 +288,7 @@ object types {
           s"maxStallCycles=$maxStallCycles," +
           s"removalPenaltyRounds=$removalPenaltyRounds," +
           s"candidateDeferralRounds=$candidateDeferralRounds," +
+          s"readmissionProbationRounds=$readmissionProbationRounds," +
           s"quorumThresholdFraction=$quorumThresholdFraction," +
           s"exponentialPenaltyBase=$exponentialPenaltyBase," +
           s"maxRemovalPenaltyRounds=$maxRemovalPenaltyRounds," +

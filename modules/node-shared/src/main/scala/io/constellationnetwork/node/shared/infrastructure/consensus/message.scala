@@ -1,6 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
-import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{EvictionVote, PeerDeclaration, ViewChangeVote}
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.Signed
 
@@ -36,6 +36,10 @@ object message {
     */
   @derive(encoder, decoder)
   case class ConsensusPeerEvictionVote[K](key: K, vote: Signed[EvictionVote])
+
+  /** Signed per-peer admission vote (B2). Same wire-envelope rationale as [[ConsensusPeerEvictionVote]]. */
+  @derive(encoder, decoder)
+  case class ConsensusPeerAdmissionVote[K](key: K, vote: Signed[AdmissionVote])
 
   @derive(encoder, decoder)
   case class RegistrationResponse[Key](
