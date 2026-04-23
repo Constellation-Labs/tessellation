@@ -1,0 +1,13 @@
+[Unit]
+Description=Per-process network bytes exporter (eBPF)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/network_process_exporter.py
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
