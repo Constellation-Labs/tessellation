@@ -94,7 +94,11 @@ object ConsensusEventLoop {
     peerQualityTracker: PeerQualityTracker[F],
     viewChangeVoter: ViewChangeVoter[F, Key],
     evictionVoter: EvictionVoter[F, Key],
-    isInBootstrap: Outcome => Boolean
+    admissionVoter: AdmissionVoter[F, Key],
+    isInBootstrap: Outcome => Boolean,
+    probationPeersOf: Outcome => Set[PeerId],
+    lastSnapshotHashOf: Outcome => io.constellationnetwork.security.hash.Hash,
+    getPeerChainTips: F[Map[PeerId, io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip]]
   )(
     implicit _key: monocle.Lens[Outcome, Key],
     _context: monocle.Lens[Outcome, Ctx],
@@ -122,7 +126,9 @@ object ConsensusEventLoop {
         consensusClient,
         facilitatorSelector,
         peerQualityTracker,
-        isInBootstrap
+        isInBootstrap,
+        lastSnapshotHashOf,
+        probationPeersOf
       )
       healthRef <- ConsensusHealthStatus.ref[F]
       viewChangeManager = new ViewChangeManager[F, Key, Status, Outcome, Kind](
@@ -133,12 +139,18 @@ object ConsensusEventLoop {
         viewChangeVoter
       )
       abandonmentTracker = new AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](ctx, healthRef)
+      b2AtTipStreakRef <- Ref.of[F, Map[PeerId, Int]](Map.empty)
       stallDetector = new StallDetector[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
         ctx,
         viewChangeManager,
         abandonmentTracker,
         evictionVoter,
-        healthRef
+        admissionVoter,
+        probationPeersOf,
+        lastSnapshotHashOf,
+        getPeerChainTips,
+        healthRef,
+        b2AtTipStreakRef
       )
       roundFibersRef <- Ref.of[F, List[Fiber[F, Throwable, Unit]]](Nil)
       cancelSignalRef <- Ref.of[F, Option[Deferred[F, Unit]]](None)

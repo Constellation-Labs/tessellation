@@ -52,6 +52,21 @@ case class ObserveDeadlineExceeded(currentOrdinal: SnapshotOrdinal, targetOrdina
     )
     with NoStackTrace
 
+/** Raised when recovery cannot converge to within the target lag of the cluster tip before exhausting the iteration or wall-clock budget.
+  * Re-raised so the outer handler transitions the node back to `WaitingForDownload` and `DownloadDaemon` schedules a fresh attempt.
+  */
+case class RecoveryConvergenceFailed(
+  observed: SnapshotOrdinal,
+  clusterTip: SnapshotOrdinal,
+  lag: Long,
+  iterations: Int,
+  elapsed: FiniteDuration
+) extends RuntimeException(
+      s"Recovery did not converge: observed=$observed, clusterTip=$clusterTip, lag=$lag ordinals after " +
+        s"$iterations iterations / ${elapsed.toSeconds}s. Re-triggering recovery."
+    )
+    with NoStackTrace
+
 object Download {
 
   /** Per-Ready-peer advertised tip. */
@@ -302,22 +317,41 @@ object Download {
           _ <- hasherSelector.withCurrent { implicit hs =>
             lastContext.allStateEntries[F].flatMap(mptStore.syncFull[Json](_, lastSnapshot.ordinal))
           }
-          _ <- logger.info(
-            s"[RecoveryDownload] Storage and MPT reset to ordinal ${lastSnapshot.ordinal.show}, entering observe for $recoveryOffset rounds (random 1-5)"
+          // Stable-tip shortcut (mirror of observe()): if a strict-majority of Ready peers
+          // shows the cluster is already at (or behind) our recovered tip with matching hash,
+          // skip the forward-observe loop entirely. Without this, a cluster that is stalled at
+          // tip N makes us loop forever asking for N+1 (which never exists), because the
+          // hardcoded `lastSnapshot.ordinal + recoveryOffset` target is unreachable. Codex
+          // diagnosis 2026-04-23: this is the tip-plus-one recovery loop, separate from B2.
+          readyPeerTips <- getReadyPeerTips
+          recoveryObservationLimit = chooseObservationLimit(
+            hashedSnapshot.ordinal,
+            hashedSnapshot.hash,
+            readyPeerTips,
+            recoveryOffset
           )
-          // Reuse the normal observe path — after setForRecovery, snapshots are sequential.
-          // observe updates lastN and lastGlobal storages but NOT the consensus SnapshotStorage head.
-          // Override observationOffset for this call by computing the limit ourselves.
+          isShortcut = recoveryObservationLimit === hashedSnapshot.ordinal && readyPeerTips.size >= minReadyQuorum
+          _ <- Applicative[F].whenA(isShortcut)(
+            logger.info(
+              s"[RecoveryDownload] Caught-up shortcut: local=${hashedSnapshot.ordinal.show} " +
+                s"hash=${hashedSnapshot.hash.value.take(8)}, majority of ${readyPeerTips.size} Ready peers " +
+                s"at or behind; skipping forward observe"
+            )
+          )
+          _ <- Applicative[F].unlessA(isShortcut)(
+            logger.info(
+              s"[RecoveryDownload] Storage and MPT reset to ordinal ${hashedSnapshot.ordinal.show}, " +
+                s"observing to ${recoveryObservationLimit.show} (peers=${readyPeerTips.size}, offset=$recoveryOffset)"
+            )
+          )
           // Deadline: if observe doesn't complete within 5 minutes, the observe loop is stuck
           // (peers moved too far ahead for sequential fetch). Abandon and re-trigger recovery.
-          observeResult <- {
-            val recoveryObservationLimit = SnapshotOrdinal(lastSnapshot.ordinal.value |+| recoveryOffset)
-            Async[F].timeoutTo(
-              observeWithLimit(result, recoveryObservationLimit),
-              5.minutes,
-              Async[F].raiseError(ObserveDeadlineExceeded(lastSnapshot.ordinal, recoveryObservationLimit))
-            )
-          }
+          // Shortcut path (lastSnapshot.ordinal === recoveryObservationLimit) returns immediately.
+          observeResult <- Async[F].timeoutTo(
+            observeWithLimit(result, recoveryObservationLimit),
+            5.minutes,
+            Async[F].raiseError(ObserveDeadlineExceeded(lastSnapshot.ordinal, recoveryObservationLimit))
+          )
           (observedResult, observationLimit) = observeResult
           (observedSnapshot, observedContext) = observedResult
           // Sync consensus SnapshotStorage head to observed tip so prepend works on the next round
@@ -330,22 +364,88 @@ object Download {
         } yield observeResult
       }
 
-      nodeStorage
-        .tryModifyState(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.WaitingForObserving)(recoveryStart)
-        .flatTap { _ =>
-          // Re-announce to cluster peers BEFORE the observe phase. During recovery, other
-          // nodes may have removed this node from their peer lists (LocalHealthcheck eviction).
-          // Without re-announcing first, the observe phase can't receive snapshot gossip from
-          // peers, causing it to timeout after 5 minutes and re-trigger recovery indefinitely.
-          joining.rejoinAfterRecovery.handleErrorWith { err =>
-            logger.warn(err)("[RecoveryDownload] Cluster rejoin failed, continuing anyway")
-          }
-        }
-        .flatMap(recoveryObserve)
-        .flatMap { result =>
-          val ((snapshot, context), observationLimit) = result
-          consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context, isRecovery = true)
-        }
+      // Bounded convergence loop (codex 2026-04-24): a single pass of recoveryStart + observe
+      // can finish while the cluster has already moved past the observed tip because the observe
+      // step uses a random 1-5 round offset. A peer that rejoins while still materially behind
+      // immediately becomes a leader candidate with a stale view, wedging the round it leads
+      // and forcing additional stall-cycle → recovery bounces ("whack-a-mole").
+      //
+      // Iterate recoveryStart + rejoin + recoveryObserve until the observed tip is within
+      // `recoveryTargetLagOrdinals` of the cluster's freshly-fetched tip. Bounded by
+      // `recoveryMaxIterations` and `recoveryMaxWallClock`; on exhaustion we raise and let the
+      // outer handler transition the node back to `WaitingForDownload` for a fresh attempt.
+      //
+      // K=2 because one additional ordinal of drift is normal between the observe exit and the
+      // fresh metadata fetch. K=1 would produce spurious retries under healthy cluster activity.
+      val recoveryTargetLagOrdinals: Long = 2L
+      val recoveryMaxIterations: Int = 5
+      val recoveryMaxWallClock: FiniteDuration = 10.minutes
+
+      def convergingRecoveryCycle: F[(DownloadResult, ObservationLimit)] = {
+        def attempt(
+          iteration: Int,
+          startMs: FiniteDuration
+        ): F[(DownloadResult, ObservationLimit)] =
+          for {
+            _ <- logger.info(s"[RecoveryDownload] Convergence iteration ${iteration + 1}/$recoveryMaxIterations")
+            // Iterations > 0: force state back to WaitingForDownload so `tryModifyState(WaitingForDownload, ...)`
+            // below can succeed again. `recoveryObserve` advances state to `Observing` internally, and the
+            // normal path would continue from there to `WaitingForReady`. When we decide to iterate instead
+            // of accept recovery, we reset. setNodeState is the same forcing mechanism used in the outer
+            // error handler at ~line 381 for recovery-failure retries.
+            _ <- Async[F].whenA(iteration > 0)(nodeStorage.setNodeState(NodeState.WaitingForDownload))
+            // Keep recoveryStart wrapped in its own state transition so the contract (state ends in
+            // WaitingForObserving before recoveryObserve runs) is preserved on every iteration. The prior
+            // attempt at wrapping the whole convergence loop broke this — `recoveryObserve`'s internal
+            // `trySetObservationKey` expects `WaitingForObserving`, but the state sat at `DownloadInProgress`
+            // for the duration of the cycle.
+            initial <- nodeStorage.tryModifyState(
+              NodeState.WaitingForDownload,
+              NodeState.DownloadInProgress,
+              NodeState.WaitingForObserving
+            )(recoveryStart)
+            _ <- joining.rejoinAfterRecovery.handleErrorWith { err =>
+              logger.warn(err)("[RecoveryDownload] Cluster rejoin failed, continuing anyway")
+            }
+            observed <- recoveryObserve(initial)
+            observedOrdinal = observed._1._1.ordinal
+            freshTip <- getLatestMetadata
+            lag = freshTip.ordinal.value.value - observedOrdinal.value.value
+            nowMs <- Async[F].monotonic
+            elapsed = nowMs - startMs
+            result <-
+              if (lag <= recoveryTargetLagOrdinals)
+                logger
+                  .info(
+                    s"[RecoveryDownload] Converged at ordinal ${observedOrdinal.show} (cluster tip ${freshTip.ordinal.show}, " +
+                      s"lag=$lag, iterations=${iteration + 1}, elapsed=${elapsed.toSeconds}s)"
+                  )
+                  .as(observed)
+              else if (iteration + 1 >= recoveryMaxIterations || elapsed >= recoveryMaxWallClock)
+                logger.warn(
+                  s"[RecoveryDownload] Budget exhausted: observed=${observedOrdinal.show} clusterTip=${freshTip.ordinal.show} " +
+                    s"lag=$lag iterations=${iteration + 1} elapsed=${elapsed.toSeconds}s — failing recovery to trigger retry"
+                ) >>
+                  RecoveryConvergenceFailed(
+                    observedOrdinal,
+                    freshTip.ordinal,
+                    lag,
+                    iteration + 1,
+                    elapsed
+                  ).raiseError[F, (DownloadResult, ObservationLimit)]
+              else
+                logger.info(
+                  s"[RecoveryDownload] Observed=${observedOrdinal.show}, cluster tip ${freshTip.ordinal.show}, " +
+                    s"lag=$lag > $recoveryTargetLagOrdinals — iterating to catch up further"
+                ) >> attempt(iteration + 1, startMs)
+          } yield result
+        Async[F].monotonic.flatMap(start => attempt(0, start))
+      }
+
+      convergingRecoveryCycle.flatMap { result =>
+        val ((snapshot, context), observationLimit) = result
+        consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context, isRecovery = true)
+      }
         .onError(logger.error(_)("[RecoveryDownload] Unexpected failure, will retry"))
         .handleErrorWith { err =>
           // Recovery failed — transition back to WaitingForDownload so DownloadDaemon retries.
@@ -450,33 +550,33 @@ object Download {
         go(result).map((_, observationLimit))
     }
 
+    // Per-peer timeout for metadata probes. A single slow or half-partitioned Ready peer cannot
+    // block the shortcut decision indefinitely; one that errors or times out simply doesn't vote.
+    private val perPeerTipTimeout: FiniteDuration = 3.seconds
+
+    /** Query every responsive Ready peer's `/global-snapshots/latest/metadata` in parallel. Used by both the normal observe path and the
+      * recovery observe path to decide whether the cluster is already at our tip (shortcut) or ahead (fetch forward).
+      */
+    private def getReadyPeerTips: F[List[PeerTip]] =
+      clusterStorage.getResponsivePeers
+        .map(NodeState.ready)
+        .map(_.toList)
+        .flatMap(
+          _.parTraverse(peer =>
+            Async[F]
+              .timeout(p2pClient.globalSnapshot.getLatestMetadata.run(peer), perPeerTipTimeout)
+              .map(m => PeerTip(m.ordinal, m.hash).some)
+              .handleErrorWith(err =>
+                logger
+                  .warn(err)(s"[Download] Unable to fetch latest metadata from ready peer ${peer.show}")
+                  .as(none[PeerTip])
+              )
+          )
+        )
+        .map(_.flatten)
+
     def observe(result: DownloadResult)(implicit hasherSelector: HasherSelector[F]): F[(DownloadResult, ObservationLimit)] = {
       val (lastSnapshot, _) = result
-      val perPeerTimeout: FiniteDuration = 3.seconds
-
-      // Query every responsive Ready peer's `/global-snapshots/latest/metadata` in parallel.
-      // Per-peer timeout caps the total observe() latency — a single slow or half-partitioned
-      // Ready peer cannot block the shortcut decision indefinitely. A peer that errors or
-      // times out simply does not vote; the quorum check still requires `minReadyQuorum`
-      // agreeing responders so sparse responses fall through to the safe default.
-      def getReadyPeerTips: F[List[PeerTip]] =
-        clusterStorage.getResponsivePeers
-          .map(NodeState.ready)
-          .map(_.toList)
-          .flatMap(
-            _.parTraverse(peer =>
-              Async[F]
-                .timeout(p2pClient.globalSnapshot.getLatestMetadata.run(peer), perPeerTimeout)
-                .map(m => PeerTip(m.ordinal, m.hash).some)
-                .handleErrorWith(err =>
-                  logger
-                    .warn(err)(s"[Download] Unable to fetch latest metadata from ready peer ${peer.show}")
-                    .as(none[PeerTip])
-                )
-            )
-          )
-          .map(_.flatten)
-
       for {
         hashed <- hasherSelector.withCurrent(implicit h => lastSnapshot.toHashed)
         readyPeerTips <- getReadyPeerTips

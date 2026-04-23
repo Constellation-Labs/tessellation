@@ -192,6 +192,9 @@ object CurrencySnapshotConsensusStateCreator {
         // for removalPenaltyRounds rounds. Deterministic: derived from agreed-upon lastOutcome.
         penalizedPeers = lastOutcome.removalPenalties.filter(_._2 > 0).keySet
 
+        // B2 re-admission probation: see dag-l0 mirror for full rationale.
+        probationPeers = lastOutcome.readmissionCountdown.filter(_._2 > 0).keySet
+
         _ <- logger
           .debug(
             s"Removal penalties for key=$key: ${penalizedPeers.size} penalized peers" +
@@ -200,6 +203,15 @@ object CurrencySnapshotConsensusStateCreator {
                else "")
           )
           .whenA(penalizedPeers.nonEmpty)
+
+        _ <- logger
+          .debug(
+            s"Readmission probation for key=$key: ${probationPeers.size} probation peers" +
+              (if (probationPeers.nonEmpty)
+                 s" [${lastOutcome.readmissionCountdown.filter(_._2 > 0).map(kv => s"${kv._1.value.value.take(8)}:${kv._2}").mkString(",")}]"
+               else "")
+          )
+          .whenA(probationPeers.nonEmpty)
 
         // Chronic non-signer filter: exclude peers from the committee if their historical
         // participation rate is below config.minParticipationRatio AFTER they have been
@@ -259,7 +271,8 @@ object CurrencySnapshotConsensusStateCreator {
         // that cannot form a competing quorum by definition, so they don't count toward the
         // partition-shrink fork threshold. Lets the reliable cohort keep running when chronic
         // peers outnumber them, while still preventing a real partition-both-sides-shrink fork.
-        potentiallyCompeting = allEligible.filterNot(chronicNonSigners.contains)
+        // B2: probation peers excluded BEFORE minViableQuorum is computed. See dag-l0 mirror.
+        potentiallyCompeting = allEligible.filterNot(pid => chronicNonSigners.contains(pid) || probationPeers.contains(pid))
         minViableQuorum = math.max(3, (potentiallyCompeting.size / 2) + 1)
 
         // Periodic reinstatement (Option A): every chronicReinstatementInterval ordinals,
@@ -279,18 +292,23 @@ object CurrencySnapshotConsensusStateCreator {
         effectiveChronic = chronicNonSigners -- reinstatedThisRound
 
         eligibleThisRound = {
-          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred
+          // B2 probation is included in the excluded set AND the withoutPenaltiesOnly escape,
+          // making it non-bypassable. See dag-l0 mirror for full rationale.
+          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers
           val filtered = allEligible.filterNot(excluded.contains)
-          val withoutPenaltiesOnly = allEligible.filterNot((previouslyRemoved ++ penalizedPeers ++ effectiveChronic).contains)
+          val withoutPenaltiesOnly =
+            allEligible.filterNot((previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ probationPeers).contains)
+          val allEligibleMinusProbation = allEligible.filterNot(probationPeers.contains)
           if (filtered.size >= minViableQuorum) filtered
           else if (withoutPenaltiesOnly.size >= 2 && allDeferred.nonEmpty) withoutPenaltiesOnly
           else if (filtered.nonEmpty) filtered
+          else if (allEligibleMinusProbation.nonEmpty) allEligibleMinusProbation
           else if (allEligible.nonEmpty) allEligible
           else List(selfId)
         }
 
         penaltyBypassed = {
-          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred
+          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers
           val filtered = allEligible.filterNot(excluded.contains)
           filtered.size < minViableQuorum && allEligible.size > filtered.size
         }
@@ -403,6 +421,8 @@ object CurrencySnapshotConsensusStateCreator {
         state = ConsensusState[CurrencySnapshotKey, CurrencySnapshotStatus, CurrencyConsensusOutcome, CurrencyConsensusKind](
           key,
           lastOutcome,
+          Facilitators(active),
+          // Canonical round-start committee — frozen at creation, never mutated by withdrawals.
           Facilitators(active),
           CollectingFacilities(
             maybeTrigger,

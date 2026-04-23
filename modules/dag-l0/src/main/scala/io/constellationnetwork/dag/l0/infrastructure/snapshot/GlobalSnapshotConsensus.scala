@@ -105,7 +105,13 @@ object GlobalSnapshotConsensus {
     eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey],
     eventGossipClient: EventGossipClient[F, GlobalSnapshotEvent],
     loggerBundle: LoggerBundle[F],
-    rumorQueue: Queue[F, Hashed[RumorRaw]]
+    rumorQueue: Queue[F, Hashed[RumorRaw]],
+    // B2 witness channel: probation-peer chain tips from the mesh gossip layer. See
+    // StallDetector.maybeEmitAdmissionVotes for usage. Injected as a thunk because
+    // EventGossipDaemon is constructed after consensus in Main.scala — the Ref pattern in
+    // Main.scala populates the real getter once the daemon is up; before that it returns
+    // Map.empty and no admission votes fire (safe default).
+    getPeerChainTips: F[Map[PeerId, io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip]]
   )(implicit supervisor: Supervisor[F], globalStateProofSelector: GlobalStateProofSelector): F[GlobalSnapshotConsensus[F]] =
     for {
       globalStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
@@ -273,6 +279,24 @@ object GlobalSnapshotConsensus {
         org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F]
       )
 
+      admissionVoter = new io.constellationnetwork.node.shared.infrastructure.consensus.engine.GossipingAdmissionVoter[
+        F,
+        GlobalSnapshotEvent,
+        GlobalSnapshotKey,
+        GlobalSnapshotArtifact,
+        GlobalSnapshotContext,
+        GlobalSnapshotStatus,
+        GlobalConsensusOutcome,
+        GlobalConsensusKind
+      ](
+        selfId,
+        keyPair,
+        gossip,
+        consensusStorage,
+        (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
+        org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F]
+      )
+
       loop <-
         ConsensusEventLoop.build[
           F,
@@ -300,8 +324,12 @@ object GlobalSnapshotConsensus {
           peerQualityTracker,
           viewChangeVoter,
           evictionVoter,
+          admissionVoter,
           (o: GlobalConsensusOutcome) =>
-            !o.recentProofSizes.values.exists(_ >= appConfig.snapshot.consensus.bootstrapCompleteProofsThreshold)
+            !o.recentProofSizes.values.exists(_ >= appConfig.snapshot.consensus.bootstrapCompleteProofsThreshold),
+          (o: GlobalConsensusOutcome) => o.readmissionCountdown.filter(_._2 > 0).keySet,
+          (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
+          getPeerChainTips
         )
 
       handler = GlobalConsensusHandler.make(loop.queue)

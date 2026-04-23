@@ -1,6 +1,6 @@
 package io.constellationnetwork.currency.l0
 
-import cats.effect.{IO, Resource}
+import cats.effect.{IO, Ref, Resource}
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
@@ -109,6 +109,17 @@ abstract class CurrencyL0App(
       hasherSelectorAlwaysCurrent = HasherSelector.forSyncAlwaysCurrent[IO](hasherSelector.getCurrent)
 
       queues <- Queues.make[IO](sharedQueues).asResource
+
+      // B2 witness channel ref: see dag-l0 Main for full rationale. Default Map.empty —
+      // admission votes don't fire until eventGossipDaemon populates this post-startup.
+      peerChainTipsGetterRef <-
+        Ref
+          .of[IO, IO[Map[io.constellationnetwork.schema.peer.PeerId, ChainTip]]](
+            Map.empty[io.constellationnetwork.schema.peer.PeerId, ChainTip].pure[IO]
+          )
+          .asResource
+      getPeerChainTips = peerChainTipsGetterRef.get.flatten
+
       storages <- Storages
         .make[IO](sharedConfig, sharedStorages, cfg.snapshot, method.globalL0Peer, dataApplicationService, hasherSelectorAlwaysCurrent)
         .asResource
@@ -147,7 +158,8 @@ abstract class CurrencyL0App(
           nodeShared.customAllowanceList,
           mkCell,
           Some(customArtifacts),
-          queues
+          queues,
+          getPeerChainTips
         )
         .asResource
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext
@@ -204,6 +216,8 @@ abstract class CurrencyL0App(
           )
           .asResource
       }
+      // B2 witness channel: publish peer chain tips into the Ref that consensus reads from.
+      _ <- Resource.eval(peerChainTipsGetterRef.set(eventGossipDaemon.getPeerChainTips))
 
       _ <- Daemons
         .start(storages, services, programs, queues, keyPair, services.dataApplication, eventGossipDaemon, cfg, hasherSelectorAlwaysCurrent)

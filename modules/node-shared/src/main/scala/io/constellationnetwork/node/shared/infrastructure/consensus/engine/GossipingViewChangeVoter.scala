@@ -59,10 +59,15 @@ class GossipingViewChangeVoter[F[
         )
       case Some(state) =>
         HasherSelector[F].withCurrent { implicit hasher =>
-          state.facilitators.value.hash.flatMap { facilitatorsHash =>
+          // Canonical committee hash: every node signs the VCV with the same
+          // facilitatorsHash, so the ViewChangeCertificateBuilder can match
+          // votes from nodes that observed different mid-round withdrawals.
+          state.roundStartFacilitators.value.hash.flatMap { facilitatorsHash =>
             val lastSnapshotHash = lastSnapshotHashOf(state.lastOutcome)
             val vote = ViewChangeVote(fromView, toView, facilitatorsHash, lastSnapshotHash, highestKnownQc)
             vote.sign(keyPair).flatMap { signedVote =>
+              // Spread to the live (mutable) set — we want VCV delivered to
+              // currently-active peers, not to peers who've withdrawn.
               val targets = state.facilitators.value.toSet - selfId
               storage.addViewChangeVote(selfId, key, fromView, toView, signedVote) >>
                 gossip.spreadDirect(ConsensusPeerVote[Key](key, signedVote), targets) >>

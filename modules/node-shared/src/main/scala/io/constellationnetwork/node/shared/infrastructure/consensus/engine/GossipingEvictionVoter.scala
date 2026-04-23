@@ -41,6 +41,12 @@ class GossipingEvictionVoter[F[
   logger: SelfAwareStructuredLogger[F]
 ) extends EvictionVoter[F, Key] {
 
+  // Codex corrective #4 (B2 re-admission design): probation peers are NOT B1-evictable
+  // because the state creator excludes `readmissionCountdown` peers from `state.facilitators`
+  // at committee-formation time (see GlobalSnapshotConsensusStateCreator / its currency-l0
+  // mirror). `candidates` in StallDetector is constrained to the committee; a peer not in
+  // the committee can never be a target. No explicit guard is needed here — the invariant
+  // is upheld at the state-creator layer.
   def emitEvictionVote(
     key: Key,
     target: PeerId,
@@ -59,10 +65,15 @@ class GossipingEvictionVoter[F[
         )
       case Some(state) =>
         HasherSelector[F].withCurrent { implicit hasher =>
-          state.facilitators.value.hash.flatMap { facilitatorsHash =>
+          // Canonical committee hash for vote content so every voter signs the
+          // same hash value — EvictionCertificateBuilder matches votes by this
+          // field. Using mutable state.facilitators would block cert assembly
+          // when different voters captured different withdrawal timings.
+          state.roundStartFacilitators.value.hash.flatMap { facilitatorsHash =>
             val lastSnapshotHash = lastSnapshotHashOf(state.lastOutcome)
             val vote = EvictionVote(target, reason, facilitatorsHash, lastSnapshotHash)
             vote.sign(keyPair).flatMap { signedVote =>
+              // Spread to live peers only — gossip delivery target, not vote content.
               val targets = state.facilitators.value.toSet - selfId
               storage.addEvictionVote(selfId, key, signedVote) >>
                 gossip.spreadDirect(ConsensusPeerEvictionVote[Key](key, signedVote), targets) >>

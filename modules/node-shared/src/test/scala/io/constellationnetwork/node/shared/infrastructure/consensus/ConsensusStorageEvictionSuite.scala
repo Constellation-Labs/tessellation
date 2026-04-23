@@ -118,6 +118,7 @@ object ConsensusStorageEvictionSuite extends SimpleIOSuite {
       targetPeer = targetA,
       reason = EvictionReason.Silent,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       votes = NonEmptySet.of(signedVote("v1", targetA))
     )
     MapRef.ofConcurrentHashMap[IO, Long, Set[EvictionCertificate]]().flatMap { ref =>
@@ -132,8 +133,8 @@ object ConsensusStorageEvictionSuite extends SimpleIOSuite {
   }
 
   test("storeAssembledEvictionCertificate: multiple targets accumulate in Set") {
-    val certA = EvictionCertificate(targetA, EvictionReason.Silent, facHash, NonEmptySet.of(signedVote("a1", targetA)))
-    val certB = EvictionCertificate(targetB, EvictionReason.Silent, facHash, NonEmptySet.of(signedVote("b1", targetB)))
+    val certA = EvictionCertificate(targetA, EvictionReason.Silent, facHash, lastSnap, NonEmptySet.of(signedVote("a1", targetA)))
+    val certB = EvictionCertificate(targetB, EvictionReason.Silent, facHash, lastSnap, NonEmptySet.of(signedVote("b1", targetB)))
     MapRef.ofConcurrentHashMap[IO, Long, Set[EvictionCertificate]]().flatMap { ref =>
       val addOne = (c: EvictionCertificate) =>
         ref(1L).update {
@@ -149,8 +150,8 @@ object ConsensusStorageEvictionSuite extends SimpleIOSuite {
   }
 
   test("storeAssembledEvictionCertificate: separate keys are independent") {
-    val certA = EvictionCertificate(targetA, EvictionReason.Silent, facHash, NonEmptySet.of(signedVote("a1", targetA)))
-    val certB = EvictionCertificate(targetB, EvictionReason.Silent, facHash, NonEmptySet.of(signedVote("b1", targetB)))
+    val certA = EvictionCertificate(targetA, EvictionReason.Silent, facHash, lastSnap, NonEmptySet.of(signedVote("a1", targetA)))
+    val certB = EvictionCertificate(targetB, EvictionReason.Silent, facHash, lastSnap, NonEmptySet.of(signedVote("b1", targetB)))
     MapRef.ofConcurrentHashMap[IO, Long, Set[EvictionCertificate]]().flatMap { ref =>
       for {
         _ <- ref(1L).update {
@@ -168,7 +169,7 @@ object ConsensusStorageEvictionSuite extends SimpleIOSuite {
   }
 
   test("storeAssembledEvictionCertificate: clearing a key removes all certs") {
-    val cert = EvictionCertificate(targetA, EvictionReason.Silent, facHash, NonEmptySet.of(signedVote("a1", targetA)))
+    val cert = EvictionCertificate(targetA, EvictionReason.Silent, facHash, lastSnap, NonEmptySet.of(signedVote("a1", targetA)))
     MapRef.ofConcurrentHashMap[IO, Long, Set[EvictionCertificate]]().flatMap { ref =>
       for {
         _ <- ref(1L).update {

@@ -110,7 +110,16 @@ object schema {
     // on rollback init, rolls forward one entry per outcome. Non-monotonic by
     // design — if the cluster degrades to solo for > lookback ordinals, warmup
     // re-engages, which is appropriate for re-stabilizing after mass peer loss.
-    recentProofSizes: SortedMap[SnapshotOrdinal, Int] = SortedMap.empty
+    recentProofSizes: SortedMap[SnapshotOrdinal, Int] = SortedMap.empty,
+    // B2 re-admission gate: peers whose `removalPenalty` expired enter this map
+    // at `readmissionProbationRounds` and count down one per finished round. While
+    // the entry exists, the peer is excluded from both `fullBase` and
+    // `potentiallyCompeting` in state creation (non-bypassable, even on the
+    // withoutPenaltiesOnly path). Removal from this map happens when the advancer
+    // observes the peer in a quorum-certified AdmissionCertificate embedded in a
+    // proposal (re-admitted via consensus-witnessed current-tip participation).
+    // Consensus-agreed → deterministic across all peers.
+    readmissionCountdown: SortedMap[PeerId, Int] = SortedMap.empty
   ) {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value

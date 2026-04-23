@@ -79,7 +79,9 @@ object CurrencySnapshotConsensus {
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
     eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey],
-    rumorQueue: Queue[F, Hashed[RumorRaw]]
+    rumorQueue: Queue[F, Hashed[RumorRaw]],
+    // B2 witness channel — see GlobalSnapshotConsensus for the full rationale.
+    getPeerChainTips: F[Map[PeerId, io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip]]
   )(implicit supervisor: Supervisor[F]): F[CurrencySnapshotConsensus[F]] = {
     implicit val daDecoder: Decoder[DataTransaction] = DataTransactionCodecs.decoder(maybeDataApplication)
     implicit val daEncoder: Encoder[DataTransaction] = DataTransactionCodecs.encoder(maybeDataApplication)
@@ -206,6 +208,24 @@ object CurrencySnapshotConsensus {
         org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F]
       )
 
+      admissionVoter = new io.constellationnetwork.node.shared.infrastructure.consensus.engine.GossipingAdmissionVoter[
+        F,
+        CurrencySnapshotEvent,
+        CurrencySnapshotKey,
+        CurrencySnapshotArtifact,
+        CurrencySnapshotContext,
+        CurrencySnapshotStatus,
+        CurrencyConsensusOutcome,
+        CurrencyConsensusKind
+      ](
+        selfId,
+        keyPair,
+        gossip,
+        consensusStorage,
+        (o: CurrencyConsensusOutcome) => o.finished.snapshotHash,
+        org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F]
+      )
+
       loop <-
         ConsensusEventLoop.build[
           F,
@@ -233,7 +253,12 @@ object CurrencySnapshotConsensus {
           peerQualityTracker,
           viewChangeVoter,
           evictionVoter,
-          (o: CurrencyConsensusOutcome) => !o.recentProofSizes.values.exists(_ >= snapshotConfig.consensus.bootstrapCompleteProofsThreshold)
+          admissionVoter,
+          (o: CurrencyConsensusOutcome) =>
+            !o.recentProofSizes.values.exists(_ >= snapshotConfig.consensus.bootstrapCompleteProofsThreshold),
+          (o: CurrencyConsensusOutcome) => o.readmissionCountdown.filter(_._2 > 0).keySet,
+          (o: CurrencyConsensusOutcome) => o.finished.snapshotHash,
+          getPeerChainTips
         )
 
       handler = CurrencyConsensusHandler.make(loop.queue)

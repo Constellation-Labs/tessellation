@@ -78,7 +78,8 @@ object Services {
     customPeersAllowanceList: Option[Set[AllowanceListEntry]],
     mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
     maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
-    queues: Queues[F]
+    queues: Queues[F],
+    getPeerChainTips: F[Map[PeerId, io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip]]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector,
     currencyStateProofSelector: CurrencyStateProofSelector
@@ -179,7 +180,8 @@ object Services {
           globalL0Service.pullGlobalSnapshot,
           maybeCustomArtifacts,
           storages.eventMempool,
-          queues.rumor
+          queues.rumor,
+          getPeerChainTips
         )
     } yield
       new Services[F, R](

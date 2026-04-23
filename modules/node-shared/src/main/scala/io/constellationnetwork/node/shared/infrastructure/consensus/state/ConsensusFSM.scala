@@ -83,6 +83,8 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
           case CheckViewChangeAssembly(key) => transitions.checkViewChangeAssembly(key.asInstanceOf[Key])
           case CheckEvictionAssembly(key, target) =>
             transitions.checkEvictionAssembly(key.asInstanceOf[Key], target.asInstanceOf[io.constellationnetwork.schema.peer.PeerId])
+          case CheckAdmissionAssembly(key, target) =>
+            transitions.checkAdmissionAssembly(key.asInstanceOf[Key], target.asInstanceOf[io.constellationnetwork.schema.peer.PeerId])
           case InternalScheduled(inner) => handle(inner)
           case PeerObserved(peer)       => transitions.registerPeer(peer)
           case IgnoreUnexpectedRumor(r) => log.warn(s"Ignoring unexpected rumor: ${r.getClass.getSimpleName}")

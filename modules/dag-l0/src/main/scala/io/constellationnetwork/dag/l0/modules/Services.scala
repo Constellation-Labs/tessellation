@@ -67,7 +67,8 @@ object Services {
     keyPair: KeyPair,
     cfg: AppConfig,
     txHasher: Hasher[F],
-    loggerBundle: LoggerBundle[F]
+    loggerBundle: LoggerBundle[F],
+    getPeerChainTips: F[Map[PeerId, io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip]]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): F[Services[F, R]] =
@@ -139,7 +140,8 @@ object Services {
             eventMempoolService,
             eventGossipClient,
             loggerBundle,
-            queues.rumor
+            queues.rumor,
+            getPeerChainTips
           )
       }
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](

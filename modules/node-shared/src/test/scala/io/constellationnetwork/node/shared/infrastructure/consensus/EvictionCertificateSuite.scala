@@ -64,6 +64,7 @@ object EvictionCertificateSuite extends FunSuite {
       targetPeer = targetA,
       reason = EvictionReason.Silent,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       votes = NonEmptySet.of(
         vote(targetA, EvictionReason.Silent, "v1"),
         vote(targetA, EvictionReason.Silent, "v2"),
@@ -105,6 +106,7 @@ object EvictionCertificateSuite extends FunSuite {
       targetPeer = targetA,
       reason = EvictionReason.Silent,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       votes = NonEmptySet.of(vote(targetA, EvictionReason.Silent, "diag"))
     )
     val json = cert.asJson
@@ -146,12 +148,14 @@ object EvictionCertificateSuite extends FunSuite {
       targetPeer = targetA,
       reason = EvictionReason.Silent,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       votes = NonEmptySet.of(vote(targetA, EvictionReason.Silent, "v1"))
     )
     val c2 = EvictionCertificate(
       targetPeer = targetB,
       reason = EvictionReason.Silent,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       votes = NonEmptySet.of(vote(targetB, EvictionReason.Silent, "v2"))
     )
     val o1 = EvictionCertificate.ordering.compare(c1, c2)
@@ -172,6 +176,7 @@ object EvictionCertificateSuite extends FunSuite {
       targetPeer = target,
       reason = EvictionReason.Silent,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       votes = NonEmptySet.of(
         vote(target, EvictionReason.Silent, s"${target.value.value.take(4)}-v1"),
         (2 to voters).toList.map(i => vote(target, EvictionReason.Silent, s"${target.value.value.take(4)}-v$i")): _*
