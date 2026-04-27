@@ -4,7 +4,7 @@ import java.security.KeyPair
 
 import cats.Applicative
 import cats.data.{NonEmptySet, StateT}
-import cats.effect.Async
+import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
@@ -107,6 +107,12 @@ object CurrencySnapshotConsensusStateAdvancer {
 
       protected val clusterStorage: ClusterStorage[F] = clusterStorageInstance
       protected val config: ConsensusConfig = consensusConfig
+
+      /** Tracks the most recent divergent majority hash observed against this node's own hash, keyed by observation type. Read by
+        * `recoverIfForking` to enforce a `forkConfirmationWindow` persistence requirement before flipping to `WaitingForDownload`. See
+        * `recoverIfForking` docstring for the full state machine.
+        */
+      private val forkObservationsRef: Ref[F, Map[String, (Hash, FiniteDuration)]] = Ref.unsafe(Map.empty)
 
       private case class Transition(newState: CurrencySnapshotConsensusState, sideEffect: F[Unit])
 
@@ -290,7 +296,9 @@ object CurrencySnapshotConsensusStateAdvancer {
           // instead of killing this node). Do NOT call checkForkByFacilitatorsHash here — after stall-based
           // eviction, different nodes may legitimately have different facilitator sets, which would cause
           // cascading false-positive fork detections and kill all nodes.
-          _ <- maybeFacilities.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
+          _ <- maybeFacilities.traverse_(
+            checkForkByLastSnapshotHash(_, status.lastSnapshotHash, config.forkConfirmationMinObservations)
+          )
           _ <- maybeFacilities.traverse_(checkForkByConsensusConfigHash)
 
           // Evict peers with minority facilitatorsHash — deterministic since all healthy nodes
@@ -566,13 +574,16 @@ object CurrencySnapshotConsensusStateAdvancer {
                 // or during joining grace period (peer quality scores haven't converged yet).
                 lastSolo <- wasLastRoundSolo
                 inGrace <- nodeStorage.isInJoiningGracePeriod
+                // Single-source authoritative comparison: leader-vs-self. minObservations=1.
                 _ <- checkForkByFacilitatorsHash(
                   SortedMap(leader -> leaderProposal),
-                  status.facilitatorsHash
+                  status.facilitatorsHash,
+                  minObservations = 1
                 )(_.facilitatorsHash).whenA(!lastSolo && !inGrace)
                 _ <- checkForkByLastSnapshotHash(
                   SortedMap(leader -> leaderProposal),
-                  status.lastSnapshotHash
+                  status.lastSnapshotHash,
+                  minObservations = 1
                 )
                 result <- resolveLeaderProposal(state, status, resources, leaderProposal)
               } yield result
@@ -1129,9 +1140,13 @@ object CurrencySnapshotConsensusStateAdvancer {
           lastSolo2 <- wasLastRoundSolo
           inGrace2 <- nodeStorage.isInJoiningGracePeriod
           _ <- maybeSignatures
-            .traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
+            .traverse_(
+              checkForkByFacilitatorsHash(_, status.facilitatorsHash, config.forkConfirmationMinObservations)(_.facilitatorsHash)
+            )
             .whenA(!lastSolo2 && !inGrace2)
-          _ <- maybeSignatures.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
+          _ <- maybeSignatures.traverse_(
+            checkForkByLastSnapshotHash(_, status.lastSnapshotHash, config.forkConfirmationMinObservations)
+          )
           maybeGlobalOrd = extractGlobalSnapshotOrdinal(maybeFacilities)
           result <- (maybeGlobalOrd, maybeSignatures) match {
             case (Some(globalOrd), Some(signatures)) =>
@@ -1241,9 +1256,13 @@ object CurrencySnapshotConsensusStateAdvancer {
           lastSolo3 <- wasLastRoundSolo
           inGrace3 <- nodeStorage.isInJoiningGracePeriod
           _ <- maybeBinarySignatures
-            .traverse_(checkForkByFacilitatorsHash(_, status.facilitatorsHash)(_.facilitatorsHash))
+            .traverse_(
+              checkForkByFacilitatorsHash(_, status.facilitatorsHash, config.forkConfirmationMinObservations)(_.facilitatorsHash)
+            )
             .whenA(!lastSolo3 && !inGrace3)
-          _ <- maybeBinarySignatures.traverse_(checkForkByLastSnapshotHash(_, status.lastSnapshotHash))
+          _ <- maybeBinarySignatures.traverse_(
+            checkForkByLastSnapshotHash(_, status.lastSnapshotHash, config.forkConfirmationMinObservations)
+          )
           result <- maybeBinarySignatures.flatTraverse(toFinishedPhase(state, status, _))
         } yield result
 
@@ -1507,10 +1526,17 @@ object CurrencySnapshotConsensusStateAdvancer {
           HasherSelector[F].withCurrent(implicit h => signedArtifact.toHashed) >>= da.onSnapshotConsensusResult
         }.handleErrorWith(logger.error(_)("Unhandled exception during onSnapshotConsensusResult"))
 
-      private def checkForkByLastSnapshotHash[A](declarations: SortedMap[PeerId, A], ownHash: Hash)(
+      private def checkForkByLastSnapshotHash[A](declarations: SortedMap[PeerId, A], ownHash: Hash, minObservations: Int)(
         implicit extract: A => Hash
       ): F[Unit] =
-        recoverIfForking[F](ownHash, lastSnapshotHashObservationName, nodeStorage)(
+        recoverIfForking[F](
+          ownHash,
+          lastSnapshotHashObservationName,
+          nodeStorage,
+          forkObservationsRef,
+          config.forkConfirmationWindow,
+          minObservations
+        )(
           declarations.map { case (pid, decl) => (pid, extract(decl)) }
         )
 
@@ -1525,19 +1551,34 @@ object CurrencySnapshotConsensusStateAdvancer {
 
       private def checkForkByFacilitatorsHash[A](
         declarations: SortedMap[PeerId, A],
-        ownHash: Hash
+        ownHash: Hash,
+        minObservations: Int
       )(extractHash: A => Hash): F[Unit] =
-        recoverIfForking[F](ownHash, facilitatorsHashObservationName, nodeStorage)(
+        recoverIfForking[F](
+          ownHash,
+          facilitatorsHashObservationName,
+          nodeStorage,
+          forkObservationsRef,
+          config.forkConfirmationWindow,
+          minObservations
+        )(
           declarations.map { case (pid, decl) => (pid, extractHash(decl)) }
         )
 
       private def checkForkByConsensusConfigHash(facilities: SortedMap[PeerId, Facility]): F[Unit] = {
+        // Codex review 2026-04-27: a `consensusConfigHash` divergence cannot be repaired by recovery
+        // download. Surface it via metric + structured log so operators can fix the misconfigured
+        // peer; consensus continues but the divergence is visible. See dag-l0 advancer for the full
+        // rationale.
         val ownConfigHash = config.deterministicConfigHash
         val peerConfigHashes = facilities.flatMap {
           case (pid, f) => f.consensusConfigHash.map(pid -> _)
         }
         if (peerConfigHashes.nonEmpty)
-          recoverIfForking[F](ownConfigHash, consensusConfigHashObservationName, nodeStorage)(
+          logRecoveryUnsuitableMismatch[F](
+            ownConfigHash,
+            consensusConfigHashObservationName
+          )(
             SortedMap.from(peerConfigHashes)
           )
         else Applicative[F].unit

@@ -259,7 +259,12 @@ object Download {
           onError = (err: Throwable, details: RetryDetails) =>
             logger.error(err)(s"[RecoveryDownload] Error fetching metadata (attempt=${details.retriesSoFar})")
         ) {
-          peerSelect.select.flatMap(p2pClient.globalSnapshot.getLatestMetadata.run(_))
+          // selectForRecovery widens the candidate pool to include Observing peers when no Ready peer is
+          // available (codex review 2026-04-27). Mirrors the Ready -> Observing fallback used by
+          // StateTransitions.fetchOutcomeFromCluster. Doesn't fully solve the alpha.40 cascade where ALL
+          // peers were in WaitingForDownload, but covers the partial case where some peers reached
+          // Observing while others were still in download.
+          peerSelect.selectForRecovery.flatMap(p2pClient.globalSnapshot.getLatestMetadata.run(_))
         }
       }
 
