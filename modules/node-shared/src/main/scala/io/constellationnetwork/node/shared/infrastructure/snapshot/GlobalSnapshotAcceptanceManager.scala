@@ -175,6 +175,9 @@ object GlobalSnapshotAcceptanceManager {
       val fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
         .getOrElse(environment, SnapshotOrdinal.MinValue)
 
+      val removingProcessedDelegatedStakeWithdrawalsOrdinal = fieldsAddedOrdinals.removingProcessedDelegatedStakeWithdrawals
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
+
       for {
         acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips, ordinal)
         delegatedStakeAcceptanceResult <- updateDelegatedStakeAcceptanceManager.accept(
@@ -417,12 +420,51 @@ object GlobalSnapshotAcceptanceManager {
           lastSnapshotContext
         )
 
-        generatedTokenUnlocks = generateTokenUnlocks(
-          expiredWithdrawalsDelegatedStaking,
+        expiredWithdrawalsForUnlock =
+          if (ordinal >= removingProcessedDelegatedStakeWithdrawalsOrdinal) {
+            expiredWithdrawalsDelegatedStaking.map {
+              case (address, withdrawals) =>
+                address -> withdrawals.filter(w => globalActiveTokenLocksByRef.contains(w.event.value.tokenLockRef))
+            }.filter { case (_, withdrawals) => withdrawals.nonEmpty }
+          } else expiredWithdrawalsDelegatedStaking
+
+        _ <-
+          if (ordinal >= removingProcessedDelegatedStakeWithdrawalsOrdinal) {
+            val orphans = expiredWithdrawalsDelegatedStaking.flatMap {
+              case (address, withdrawals) =>
+                withdrawals.toList.collect {
+                  case w if !globalActiveTokenLocksByRef.contains(w.event.value.tokenLockRef) =>
+                    (address, w.event.value.tokenLockRef)
+                }
+            }
+            if (orphans.nonEmpty)
+              logger.warn(
+                s"[ORDINAL=$ordinal] Skipping token unlock generation for orphan delegated stake withdrawals " +
+                  s"(token lock already removed in a prior snapshot). Pairs: ${orphans.toList}"
+              )
+            else Async[F].unit
+          } else Async[F].unit
+
+        generatedTokenUnlocks <- generateTokenUnlocks(
+          expiredWithdrawalsForUnlock,
           globalActiveTokenLocksByRef
         ) match {
-          case Right(tokenUnlocks) => tokenUnlocks
-          case Left(error)         => throw new RuntimeException(s"Error when generating token unlocks: $error")
+          case Right(tokenUnlocks) => tokenUnlocks.pure[F]
+          case Left(error) =>
+            val orphans = expiredWithdrawalsForUnlock.flatMap {
+              case (address, withdrawals) =>
+                withdrawals.toList.collect {
+                  case w if !globalActiveTokenLocksByRef.contains(w.event.value.tokenLockRef) =>
+                    (address, w.event.value.tokenLockRef)
+                }
+            }
+            logger.error(
+              s"[ORDINAL=$ordinal] Error when generating token unlocks: $error. " +
+                s"Orphan (address -> missing tokenLockRef) pairs: ${orphans.toList}"
+            ) >>
+              MonadThrow[F].raiseError[Map[Address, List[TokenUnlock]]](
+                new RuntimeException(s"Error when generating token unlocks: $error")
+              )
         }
 
         updatedGlobalTokenLocks <- acceptTokenLocks(
@@ -549,7 +591,17 @@ object GlobalSnapshotAcceptanceManager {
           case (_, createDelegatedStakeRecords) =>
             createDelegatedStakeRecords.nonEmpty
         }
-        updatedWithdrawDelegatedStakesCleaned = updatedWithdrawDelegatedStakes.filter {
+        processedWithdrawalRefsByAddress =
+          if (ordinal >= removingProcessedDelegatedStakeWithdrawalsOrdinal)
+            expiredWithdrawalsDelegatedStaking.view.mapValues(_.toList.map(_.event.value.tokenLockRef).toSet).toMap
+          else Map.empty[Address, Set[Hash]]
+
+        updatedWithdrawDelegatedStakesCleaned = updatedWithdrawDelegatedStakes.map {
+          case (address, withdrawals) =>
+            val processedRefs = processedWithdrawalRefsByAddress.getOrElse(address, Set.empty[Hash])
+            if (processedRefs.isEmpty) address -> withdrawals
+            else address -> withdrawals.filterNot(w => processedRefs.contains(w.event.value.tokenLockRef))
+        }.filter {
           case (_, updatedDelegatedStakeRecords) =>
             updatedDelegatedStakeRecords.nonEmpty
         }
