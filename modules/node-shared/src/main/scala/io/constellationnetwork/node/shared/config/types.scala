@@ -249,7 +249,39 @@ object types {
     //
     // Default 3: at ~22s/round that's ~66s of cooldown, enough to fully prime fresh consensus
     // state without materially eating recovery budget. K=1 is too optimistic; K=10 is too long.
-    recoveryLeaderCooldownRounds: Int = 3
+    recoveryLeaderCooldownRounds: Int = 3,
+    // Local-only LIVENESS knob: time the same divergent majority hash must persist before
+    // `recoverIfForking` flips this node from Ready/Observing/WaitingForReady -> WaitingForDownload.
+    // A first observation only RECORDS the divergence; recovery is triggered on a subsequent
+    // observation if (now - firstSeenAt) >= forkConfirmationWindow.
+    //
+    // Why this exists: alpha.40 testnet 2026-04-27, all three internal nodes detected the same
+    // facilitators-hash divergence within 25s and ALL three flipped to WaitingForDownload
+    // simultaneously. None remained as a metadata source for the others, so every recovery
+    // download returned 503 -- a circular deadlock that wedged the cluster for 7+ minutes until
+    // operator intervention. With a confirmation window, the first node to observe pauses long
+    // enough that EITHER (a) the divergence resolves on its own (transient committee asymmetry
+    // around eviction/admission cert application, the most likely root cause), OR (b) one node
+    // confirms first and starts recovery while peers stay Ready to serve metadata.
+    //
+    // NOT in `deterministicConfigHash`: this is a per-node WHEN-to-recover decision, not a WHAT
+    // is the cluster's view decision. Cluster-wide safety is unaffected; a divergent peer still
+    // recovers, just after a gating delay.
+    //
+    // Default 30s: long enough that transient hash asymmetries (typically resolved within one
+    // round-finalize, ~22-30s) don't trigger recovery, short enough that real forks are picked
+    // up promptly. 0s disables the gate (legacy single-sample behaviour).
+    forkConfirmationWindow: FiniteDuration = 30.seconds,
+    // Local-only LIVENESS knob: minimum number of peer observations required before
+    // `recoverIfForking` will treat a majority sample as authoritative. Below this threshold the
+    // function logs and waits without updating its tracker. Prevents a sample of size 1
+    // (totalObservations=1 in older log entries) from triggering recovery.
+    //
+    // NOT in `deterministicConfigHash`: same reason as forkConfirmationWindow.
+    //
+    // Default 2: requires at least one peer plus self before considering majority. For
+    // single-peer / genesis topologies the value should be set to 1 via env-specific config.
+    forkConfirmationMinObservations: Int = 2
   ) {
 
     /** Deterministic hash of consensus-critical config values.
