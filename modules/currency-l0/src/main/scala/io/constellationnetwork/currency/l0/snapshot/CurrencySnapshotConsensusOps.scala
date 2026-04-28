@@ -14,7 +14,7 @@ object CurrencySnapshotConsensusOps {
     override def collectedKinds(status: CurrencySnapshotStatus): Set[CurrencyConsensusKind] =
       status match {
         case CollectingFacilities(_, _, _)                   => Set.empty
-        case CollectingProposals(_, _, _, _, _)              => Set(Facility)
+        case CollectingProposals(_, _, _, _, _, _)           => Set(Facility)
         case CollectingSignatures(_, _, _, _, _)             => Set(Facility, Proposal)
         case CollectingBinarySignatures(_, _, _, _, _, _, _) => Set(Facility, Proposal, Signature)
         case Finished(_, _, _, _, _, _, _)                   => Set(Facility, Proposal, Signature, BinarySignature)
@@ -23,7 +23,7 @@ object CurrencySnapshotConsensusOps {
     override def maybeCollectingKind(status: CurrencySnapshotStatus): Option[CurrencyConsensusKind] =
       status match {
         case CollectingFacilities(_, _, _)                   => Facility.some
-        case CollectingProposals(_, _, _, _, _)              => Proposal.some
+        case CollectingProposals(_, _, _, _, _, _)           => Proposal.some
         case CollectingSignatures(_, _, _, _, _)             => Signature.some
         case CollectingBinarySignatures(_, _, _, _, _, _, _) => BinarySignature.some
         case Finished(_, _, _, _, _, _, _)                   => none
@@ -66,7 +66,7 @@ object CurrencySnapshotConsensusOps {
 
     override def freshCollectingFacilities(status: CurrencySnapshotStatus): Option[CurrencySnapshotStatus] = status match {
       case CollectingFacilities(_, facHash, lastSnap)             => CollectingFacilities(none, facHash, lastSnap).some
-      case CollectingProposals(_, _, _, facHash, lastSnap)        => CollectingFacilities(none, facHash, lastSnap).some
+      case CollectingProposals(_, _, _, facHash, lastSnap, _)     => CollectingFacilities(none, facHash, lastSnap).some
       case CollectingSignatures(_, _, _, facHash, lastSnap)       => CollectingFacilities(none, facHash, lastSnap).some
       case CollectingBinarySignatures(_, _, _, _, _, facHash, ls) => CollectingFacilities(none, facHash, ls).some
       case _: Finished                                            => none

@@ -90,6 +90,24 @@ object AdmittedFacilitators {
   def empty: AdmittedFacilitators = AdmittedFacilitators(Set.empty)
 }
 
+/** v7 (flaky-byzantine): leader's positive observation of which round-start facilitators sent a Facility declaration during this round's
+  * facility-collection window. Carried on the round's accepted Proposal and persisted here for the duration of the round so that the
+  * outcome-extraction step can credit `peerQuality.completed` only for peers who actually participated, not for any non-fork-evicted
+  * facilitator (the v3-codex-flagged "silent peers score (1,1)" blindness).
+  *
+  * '''REPLACE semantics on accept''', NOT union (codex turn 2 review 2026-04-28). The field is canonically the latest accepted proposal's
+  * observedResponders; view-N accepting a new proposal must REPLACE state.observedResponders, never `++`. Otherwise an honest view change
+  * would over-credit late peers from view-K-1.
+  *
+  * Determinism source: leader's signed rumor envelope (RumorValidator.scala:50 enforces signers.contains(rumor.origin)) cryptographically
+  * binds the leader to their stated set under the trusted-allowlist + flaky-byzantine threat model.
+  */
+@derive(eqv, encoder, decoder)
+case class ObservedResponders(value: Set[PeerId])
+object ObservedResponders {
+  def empty: ObservedResponders = ObservedResponders(Set.empty)
+}
+
 @derive(eqv, encoder, decoder, show)
 case class Candidates(value: Set[PeerId])
 object Candidates {
@@ -128,6 +146,7 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   withdrawnFacilitators: WithdrawnFacilitators = WithdrawnFacilitators.empty,
   eligibleFacilitators: EligibleFacilitators = EligibleFacilitators.empty,
   admittedFacilitators: AdmittedFacilitators = AdmittedFacilitators.empty,
+  observedResponders: ObservedResponders = ObservedResponders.empty,
   leader: PeerId,
   viewNumber: Int = 0,
   entropy: Hash
