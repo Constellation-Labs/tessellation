@@ -125,6 +125,24 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
         }
     }
 
+  /** Wrap a cached `Array[Byte]` as a chunked fs2 stream so http4s/netty can flush each segment as the socket drains rather than queueing
+    * the entire response in the outbound buffer. The chunks are views into the same underlying array (no copying), so the cache benefit is
+    * preserved.
+    *
+    * Background (2026-04-28 testnet): with state sizes ~58 MB, the prior single-chunk pattern caused the netty outbound buffer to hold the
+    * full response for slow consumers, manifesting as multi-GB direct-buffer pressure (8.99 GB observed on the rollback validator under
+    * steady 1.4 req/s traffic at this endpoint). Chunked emission caps per-stream buffer pressure to roughly `chunkSize ×
+    * in-flight-responses`.
+    */
+  private def chunkedBodyStream(bytes: Array[Byte]): Stream[F, Byte] =
+    Stream.unfoldChunk(0) { offset =>
+      if (offset >= bytes.length) None
+      else {
+        val len = math.min(64 * 1024, bytes.length - offset)
+        Some((fs2.Chunk.array(bytes, offset, len), offset + len))
+      }
+    }
+
   def getAsHttpResponse(ordinal: SnapshotOrdinal): F[Option[Response[F]]] =
     readBytesWithCache(ordinal).map(_.map { bytes =>
       Response[F](
@@ -133,14 +151,12 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
           `Content-Type`(MediaType.application.json),
           `Content-Length`(bytes.length.toLong)
         ),
-        body = Stream.chunk[F, Byte](fs2.Chunk.array(bytes))
+        body = chunkedBodyStream(bytes)
       )
     })
 
   def getAsStream(ordinal: SnapshotOrdinal): F[Option[Stream[F, Byte]]] =
-    readBytesWithCache(ordinal).map(_.map { bytes =>
-      Stream.chunk[F, Byte](fs2.Chunk.array(bytes))
-    })
+    readBytesWithCache(ordinal).map(_.map(chunkedBodyStream))
 
   def exists(ordinal: SnapshotOrdinal): F[Boolean] =
     exists(toOrdinalName(ordinal))
