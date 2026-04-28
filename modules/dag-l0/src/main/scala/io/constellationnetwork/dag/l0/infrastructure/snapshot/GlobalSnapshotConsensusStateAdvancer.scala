@@ -552,6 +552,13 @@ object GlobalSnapshotConsensusStateAdvancer {
         val observedResponders: List[PeerId] =
           if (isInBootstrap(state)) List.empty
           else (facilities.keySet + selfId).toList.sorted
+        // Surface participation visibility for stall-prevention dashboards: leader's
+        // observed responder count + ratio against the canonical committee size at this
+        // round. Low ratios indicate Facility-phase delivery issues even when consensus
+        // ultimately finalizes.
+        val committeeSize = state.roundStartFacilitators.value.size
+        val responderRatio: Double =
+          if (committeeSize > 0) observedResponders.size.toDouble / committeeSize.toDouble else 0.0
 
         // Build map of hash -> all peers who have it (try in order until one responds)
         val hashToPeers: Map[Hash, List[PeerId]] = facilities.toList.flatMap {
@@ -570,6 +577,9 @@ object GlobalSnapshotConsensusStateAdvancer {
 
           // Sync missing events from peers before building proposal
           _ <- syncMissingEvents(missingHashes, hashToPeers).whenA(missingHashes.nonEmpty)
+
+          _ <- Metrics[F].updateGauge("dag_consensus_observed_responders_count", observedResponders.size.toLong)
+          _ <- Metrics[F].updateGauge("dag_consensus_facility_quorum_ratio", responderRatio)
 
           result <- buildProposalTransition(state, unionHashes, candidates, trigger, observedResponders)
         } yield result
