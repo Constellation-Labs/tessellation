@@ -19,11 +19,13 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.message.Cons
 import io.constellationnetwork.node.shared.infrastructure.consensus.state.{ConsensusStateCreator, _}
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 
+import eu.timepit.refined.auto._
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -40,7 +42,7 @@ abstract class CurrencySnapshotConsensusStateCreator[F[_]: Sync]
 
 object CurrencySnapshotConsensusStateCreator {
 
-  def make[F[_]: Async](
+  def make[F[_]: Async: Metrics](
     consensusFns: CurrencySnapshotConsensusFunctions[F],
     consensusStorage: CurrencyConsensusStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
@@ -223,6 +225,18 @@ object CurrencySnapshotConsensusStateCreator {
                 (completed.toDouble / participated.toDouble) < config.minParticipationRatio =>
             pid
         }.toSet
+
+        // Expose chronic-classification state via Prometheus — see dag-l0 mirror.
+        _ <- Metrics[F].updateGauge("dag_currency_consensus_chronic_non_signers_count", chronicNonSigners.size.toLong)
+        peerIdLabel = Metrics.unsafeLabelName("peer_id")
+        _ <- lastOutcome.peerQuality.toList.traverse_ {
+          case (pid, (completed, participated)) =>
+            val ratio = if (participated > 0) completed.toDouble / participated.toDouble else 1.0
+            val pidTag: Metrics.TagSeq = Seq((peerIdLabel, pid.value.value.take(8)))
+            Metrics[F].updateGauge("dag_currency_consensus_peer_quality_ratio", ratio, pidTag) >>
+              Metrics[F].updateGauge("dag_currency_consensus_peer_quality_participated", participated.toLong, pidTag) >>
+              Metrics[F].updateGauge("dag_currency_consensus_peer_quality_completed", completed.toLong, pidTag)
+        }
 
         _ <- ConsensusLog
           .info(

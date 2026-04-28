@@ -374,6 +374,9 @@ object CurrencySnapshotConsensusStateAdvancer {
         val observedResponders: List[PeerId] =
           if (isInBootstrap(state)) List.empty
           else (facilities.keySet + selfId).toList.sorted
+        val committeeSize = state.roundStartFacilitators.value.size
+        val responderRatio: Double =
+          if (committeeSize > 0) observedResponders.size.toDouble / committeeSize.toDouble else 0.0
 
         // Build map of hash -> ALL peers who have it (for resilient fetching).
         // Previously used toMap which kept only the last peer per hash — if that peer was
@@ -391,6 +394,9 @@ object CurrencySnapshotConsensusStateAdvancer {
 
           // Sync missing events from peers before building proposal
           _ <- syncMissingEvents(missingHashes, hashToPeers).whenA(missingHashes.nonEmpty)
+
+          _ <- Metrics[F].updateGauge("dag_currency_consensus_observed_responders_count", observedResponders.size.toLong)
+          _ <- Metrics[F].updateGauge("dag_currency_consensus_facility_quorum_ratio", responderRatio)
 
           result <- buildProposalTransition(state, unionHashes, candidates, trigger, observedResponders)
         } yield result
