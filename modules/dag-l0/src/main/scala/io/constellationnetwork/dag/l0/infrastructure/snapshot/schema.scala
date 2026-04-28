@@ -36,8 +36,8 @@ object schema {
     implicit val show: Show[GlobalConsensusStep] = Show.show {
       case CollectingFacilities(maybeTrigger, facilitatorsHash, lastSnapshotHash) =>
         s"CollectingFacilities{maybeTrigger=${maybeTrigger.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}"
-      case CollectingProposals(majorityTrigger, proposalArtifactInfo, candidates, facilitatorsHash, lastSnapshotHash) =>
-        s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, proposalArtifactInfo=${proposalArtifactInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
+      case CollectingProposals(majorityTrigger, proposalArtifactInfo, candidates, facilitatorsHash, lastSnapshotHash, observedResponders) =>
+        s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, proposalArtifactInfo=${proposalArtifactInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}, observedRespondersCount=${observedResponders.size}}"
       case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, facilitatorsHash, lastSnapshotHash) =>
         s"CollectingSignatures{majorityArtifactInfo=${majorityArtifactInfo.show}, ${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
       case Finished(_, _, majorityTrigger, candidates, facilitatorsHash, snapshotHash) =>
@@ -56,7 +56,12 @@ object schema {
     proposalArtifactInfo: ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext],
     candidates: Candidates,
     facilitatorsHash: Hash,
-    lastSnapshotHash: Hash
+    lastSnapshotHash: Hash,
+    // v7 (codex turn 2 fix #2): leader's observedResponders frozen at proposal-build time
+    // so leader re-spread (advancer:889 → spreadProposal:2098) reads from this immutable
+    // status field instead of recomputing from current resources. Without this, every
+    // re-spread could produce a different observedResponders set, breaking determinism.
+    observedResponders: List[PeerId]
   ) extends GlobalConsensusStep
 
   final case class CollectingSignatures(

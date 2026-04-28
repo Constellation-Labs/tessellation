@@ -307,13 +307,24 @@ object GlobalSnapshotConsensusStateAdvancer {
             }
             val finalDeferrals = if (config.candidateDeferralRounds > 0) newDeferrals else SortedMap.empty[PeerId, Int]
 
+            // v7 (flaky-byzantine): the peerQuality "completed" signal now reflects ACTUAL
+            // facility-phase participation, not "non-fork-evicted" as it did before. Source is
+            // the leader's signed observedResponders carried on the accepted Proposal and
+            // plumbed onto state via REPLACE-on-accept at buildSignatureTransition. Bound to
+            // the leader by the rumor envelope's signature (RumorValidator.scala:50). Under
+            // flaky-byzantine, leaders honestly report; under bootstrap, fall back to today's
+            // "non-evicted = completed" semantic to avoid falsely classifying cold-start peers
+            // as chronic before they've had a chance to participate.
+            val responderSet: Set[PeerId] =
+              if (isInBootstrap) completedFacilitators
+              else state.observedResponders.value
             val thisRoundQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.from(
               // Iterate canonical committee — mid-round withdrawals must not change
               // which peers have a peerQuality row for this round.
               state.roundStartFacilitators.value
                 .filterNot(deferredInCommittee.contains)
                 .map { pid =>
-                  val completed = if (completedFacilitators.contains(pid)) 1 else 0
+                  val completed = if (responderSet.contains(pid)) 1 else 0
                   pid -> (completed, 1)
                 }
             )
@@ -529,6 +540,19 @@ object GlobalSnapshotConsensusStateAdvancer {
 
         val trigger = pickMajority(triggers).getOrElse(EventTrigger)
 
+        // v7: leader's positive observation of which round-start facilitators sent a Facility
+        // declaration this round. Includes self because the leader's own Facility is implicit
+        // (`maybeGetAllDeclarations` returned the cleaned post-fork-eviction set, which excludes
+        // self by convention; self is always a responder for its own proposal). Sorted at
+        // construction for deterministic proposal-hash agreement (mirrors evictionCertificates
+        // / admissionCertificates ordering pattern). Bootstrap gate: emit empty during
+        // isInBootstrap so leader-build aligns with validation gate (codex turn 2 fix #1) —
+        // peerQuality update site falls back to today's "non-evicted = completed" semantic
+        // during bootstrap.
+        val observedResponders: List[PeerId] =
+          if (isInBootstrap(state)) List.empty
+          else (facilities.keySet + selfId).toList.sorted
+
         // Build map of hash -> all peers who have it (try in order until one responds)
         val hashToPeers: Map[Hash, List[PeerId]] = facilities.toList.flatMap {
           case (peerId, facility) => facility.eventHashes.map(_ -> peerId)
@@ -547,7 +571,7 @@ object GlobalSnapshotConsensusStateAdvancer {
           // Sync missing events from peers before building proposal
           _ <- syncMissingEvents(missingHashes, hashToPeers).whenA(missingHashes.nonEmpty)
 
-          result <- buildProposalTransition(state, unionHashes, candidates, trigger)
+          result <- buildProposalTransition(state, unionHashes, candidates, trigger, observedResponders)
         } yield result
       }
 
@@ -614,7 +638,8 @@ object GlobalSnapshotConsensusStateAdvancer {
         state: GlobalSnapshotConsensusState,
         commonHashes: Set[Hash],
         candidates: Set[PeerId],
-        majorityTrigger: ConsensusTrigger
+        majorityTrigger: ConsensusTrigger,
+        observedResponders: List[PeerId]
       ): F[Option[Transition]] =
         for {
           _ <- clearTimeTriggerIfNeeded(majorityTrigger)
@@ -772,7 +797,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                   ArtifactInfo(artifact, context, hash),
                   Candidates(candidates),
                   facilitatorsHash,
-                  state.lastOutcome.finished.snapshotHash
+                  state.lastOutcome.finished.snapshotHash,
+                  observedResponders
                 )
               ),
               sideEffect =
@@ -796,7 +822,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                         state.viewNumber.toLong,
                         maybeAssembledVcc,
                         ecs.toList,
-                        acs.toList
+                        acs.toList,
+                        observedResponders
                       )
                   }
                 else
@@ -909,7 +936,11 @@ object GlobalSnapshotConsensusStateAdvancer {
                             state.viewNumber.toLong,
                             maybeVcc,
                             ecs.toList,
-                            acs.toList
+                            acs.toList,
+                            // v7 codex turn 2 fix #2: re-spread MUST read observedResponders
+                            // from the immutable status, not recompute. Otherwise honest re-spread
+                            // could emit a different set than the original first-spread.
+                            status.observedResponders
                           ).as(none[Transition])
                     }
                   else
@@ -1138,6 +1169,25 @@ object GlobalSnapshotConsensusStateAdvancer {
         loop(proposal.admissionCertificates, Set.empty)
       }
 
+      /** v7 (flaky-byzantine): validate the leader's observedResponders payload. The set is bound to the leader by the rumor envelope's
+        * signature (RumorValidator.scala:50 — signers.contains(rumor.origin)); we only need a deterministic subset check here. Codex turn 2
+        * fix #1: bootstrap is empty-only. Below-quorum count is a warning metric, NOT a hard reject — honest withdrawals between facility-
+        * acceptance and proposal-build can shrink state.facilitators legitimately, and rejecting on count would falsely fail valid rounds.
+        */
+      private def validateProposalObservedResponders(
+        state: GlobalSnapshotConsensusState,
+        proposal: Proposal
+      ): Either[String, Unit] = {
+        if (isInBootstrap(state) && proposal.observedResponders.nonEmpty)
+          return Left(s"obs_resp_rejected_in_bootstrap count=${proposal.observedResponders.size}")
+        val committee = state.roundStartFacilitators.value.toSet
+        val notInCommittee = proposal.observedResponders.toSet -- committee
+        if (notInCommittee.nonEmpty)
+          Left(s"obs_resp_not_in_committee count=${notInCommittee.size} sample=${notInCommittee.take(3).map(_.show.take(8)).mkString(",")}")
+        else
+          Right(())
+      }
+
       /** Verify every `Signed[AdmissionVote]` inside every embedded `AdmissionCertificate` has a valid cryptographic signature. Mirrors
         * `verifyEcsSignatures`.
         */
@@ -1230,15 +1280,51 @@ object GlobalSnapshotConsensusStateAdvancer {
                       case Right(_)     => afterVccSig
                     }
               }
-            validateProposalAcs(state, leaderProposal, status.facilitatorsHash) match {
-              case Left(reason) => logAcsReject(reason)
+            val afterAcs: F[Option[Transition]] =
+              validateProposalAcs(state, leaderProposal, status.facilitatorsHash) match {
+                case Left(reason) => logAcsReject(reason)
+                case Right(_) =>
+                  if (leaderProposal.admissionCertificates.isEmpty) afterEcs
+                  else
+                    verifyAcsSignatures(leaderProposal).flatMap {
+                      case Left(reason) => logAcsReject(reason)
+                      case Right(_)     => afterEcs
+                    }
+              }
+            // v7 (flaky-byzantine): observedResponders subset validation. No signed-vote layer
+            // here — the rumor envelope binds the set to the leader; only deterministic subset
+            // check is needed. Below-quorum count emits a warning log but does NOT reject.
+            validateProposalObservedResponders(state, leaderProposal) match {
+              case Left(reason) =>
+                ConsensusLog
+                  .warn(
+                    logger,
+                    Category.Validation,
+                    state.key.show,
+                    role,
+                    Event.ValidationFailed,
+                    "reason" -> s"obs_resp_validation: $reason",
+                    "leader" -> ConsensusLog.pid(state.leader),
+                    "view" -> state.viewNumber.toString
+                  )
+                  .as(none[Transition])
               case Right(_) =>
-                if (leaderProposal.admissionCertificates.isEmpty) afterEcs
-                else
-                  verifyAcsSignatures(leaderProposal).flatMap {
-                    case Left(reason) => logAcsReject(reason)
-                    case Right(_)     => afterEcs
-                  }
+                val n = state.roundStartFacilitators.value.size
+                val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+                val below = leaderProposal.observedResponders.size < q && !isInBootstrap(state)
+                ConsensusLog
+                  .warn(
+                    logger,
+                    Category.Validation,
+                    state.key.show,
+                    role,
+                    Event.ValidationFailed,
+                    "reason" -> "obs_resp_below_quorum",
+                    "size" -> leaderProposal.observedResponders.size.toString,
+                    "quorum" -> q.toString,
+                    "view" -> state.viewNumber.toString
+                  )
+                  .whenA(below) >> afterAcs
             }
         }
       }
@@ -1281,7 +1367,8 @@ object GlobalSnapshotConsensusStateAdvancer {
               List(leaderProposal.hash),
               leaderProposal.vcc,
               leaderProposal.evictionCertificates,
-              leaderProposal.admissionCertificates
+              leaderProposal.admissionCertificates,
+              leaderProposal.observedResponders
             )
         } else {
           // HotStuff-inspired leader adoption: when the facilitator set diverges (follower
@@ -1333,7 +1420,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                               List(leaderProposal.hash),
                               leaderProposal.vcc,
                               leaderProposal.evictionCertificates,
-                              leaderProposal.admissionCertificates
+                              leaderProposal.admissionCertificates,
+                              leaderProposal.observedResponders
                             )
                         case Left(_) =>
                           sp.restore >>
@@ -1399,7 +1487,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                                 List(leaderProposal.hash),
                                 leaderProposal.vcc,
                                 leaderProposal.evictionCertificates,
-                                leaderProposal.admissionCertificates
+                                leaderProposal.admissionCertificates,
+                                leaderProposal.observedResponders
                               )
                           case Left(invalidArtifact) =>
                             // Validation failed — restore MptStore to pre-validation state
@@ -1716,7 +1805,8 @@ object GlobalSnapshotConsensusStateAdvancer {
         proposalHashes: List[Hash],
         leaderVcc: Option[ViewChangeCertificate] = None,
         leaderEvictionCerts: List[EvictionCertificate] = List.empty,
-        leaderAdmissionCerts: List[AdmissionCertificate] = List.empty
+        leaderAdmissionCerts: List[AdmissionCertificate] = List.empty,
+        leaderObservedResponders: List[PeerId] = List.empty
       )(implicit hasher: Hasher[F]): F[Option[Transition]] = {
         // B1 apply: on proposal acceptance, shrink this round's committee by the set of peers
         // carried in the leader's EvictionCertificates. Validation already verified quorum +
@@ -1831,6 +1921,10 @@ object GlobalSnapshotConsensusStateAdvancer {
                     facilitators = postEvictionFacilitators,
                     removedFacilitators = postEvictionRemoved,
                     admittedFacilitators = postAdmissionAdmitted,
+                    // v7 codex turn 2 fix #5: REPLACE on accept (not union). Each accepted
+                    // proposal canonically replaces state.observedResponders. View-N's set
+                    // does NOT bleed into view-N+1 accounting after an honest view change.
+                    observedResponders = ObservedResponders(leaderObservedResponders.toSet),
                     status = CollectingSignatures(
                       majorityInfo,
                       status.majorityTrigger,
@@ -2105,14 +2199,18 @@ object GlobalSnapshotConsensusStateAdvancer {
         view: Long = 0L,
         vcc: Option[ViewChangeCertificate] = None,
         evictionCertificates: List[EvictionCertificate] = List.empty,
-        admissionCertificates: List[AdmissionCertificate] = List.empty
+        admissionCertificates: List[AdmissionCertificate] = List.empty,
+        observedResponders: List[PeerId] = List.empty
       ): F[Unit] = {
         // Deterministic order is required — two leaders building from the same storage state
         // must produce the same proposal-hash payload, and `Set` iteration order is not guaranteed.
         val sortedEcs = evictionCertificates.sorted(EvictionCertificate.ordering)
         val sortedAcs = admissionCertificates.sorted(AdmissionCertificate.ordering)
+        // observedResponders is sorted at the toProposalsPhase site; defensive re-sort here
+        // ensures deterministic encoding regardless of caller path.
+        val sortedObs = observedResponders.distinct.sorted
         val declaration =
-          ConsensusPeerDeclaration(key, Proposal(hash, facilitatorsHash, lastSnapshotHash, view, vcc, sortedEcs, sortedAcs))
+          ConsensusPeerDeclaration(key, Proposal(hash, facilitatorsHash, lastSnapshotHash, view, vcc, sortedEcs, sortedAcs, sortedObs))
         val targets = state.facilitators.value.toSet
 
         gossip.spreadDirect(declaration, targets) >>

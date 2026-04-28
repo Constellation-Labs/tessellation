@@ -31,8 +31,8 @@ object schema {
     implicit val show: Show[CurrencyConsensusStep] = Show.show {
       case CollectingFacilities(maybeTrigger, facilitatorsHash, lastSnapshotHash) =>
         s"CollectingFacilities{maybeTrigger=${maybeTrigger.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
-      case CollectingProposals(majorityTrigger, proposalArtifactInfo, candidates, facilitatorsHash, lastSnapshotHash) =>
-        s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, proposalArtifactInfo=${proposalArtifactInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
+      case CollectingProposals(majorityTrigger, proposalArtifactInfo, candidates, facilitatorsHash, lastSnapshotHash, observedResponders) =>
+        s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, proposalArtifactInfo=${proposalArtifactInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}, observedRespondersCount=${observedResponders.size}}"
       case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, facilitatorsHash, lastSnapshotHash) =>
         s"CollectingSignatures{majorityArtifactInfo=${majorityArtifactInfo.show}, ${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
       case CollectingBinarySignatures(_, _, _, majorityTrigger, candidates, facilitatorsHash, lastSnapshotHash) =>
@@ -53,7 +53,11 @@ object schema {
     proposalArtifactInfo: ArtifactInfo[CurrencySnapshotArtifact, CurrencySnapshotContext],
     candidates: Candidates,
     facilitatorsHash: Hash,
-    lastSnapshotHash: Hash
+    lastSnapshotHash: Hash,
+    // v7 (codex turn 2 fix #2): leader's observedResponders frozen at proposal-build time —
+    // see dag-l0 mirror for full rationale. Re-spread reads from this immutable status field
+    // instead of recomputing from current resources.
+    observedResponders: List[PeerId]
   ) extends CurrencyConsensusStep
 
   final case class CollectingSignatures(
