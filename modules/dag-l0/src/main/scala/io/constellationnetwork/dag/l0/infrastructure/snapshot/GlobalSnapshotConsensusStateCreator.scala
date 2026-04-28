@@ -18,10 +18,12 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.message.Cons
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 
+import eu.timepit.refined.auto._
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -37,7 +39,7 @@ abstract class GlobalSnapshotConsensusStateCreator[F[_]: Sync]
     ]
 
 object GlobalSnapshotConsensusStateCreator {
-  def make[F[_]: Async](
+  def make[F[_]: Async: Metrics](
     consensusFns: GlobalSnapshotConsensusFunctions[F],
     consensusStorage: GlobalConsensusStorage[F],
     gossip: Gossip[F],
@@ -249,6 +251,22 @@ object GlobalSnapshotConsensusStateCreator {
                 (completed.toDouble / participated.toDouble) < config.minParticipationRatio =>
             pid
         }.toSet
+
+        // Expose chronic-classification state to Prometheus so operators can correlate
+        // peer-quality data with snapshot-rate dashboards. One gauge for the total
+        // count, plus per-peer ratio gauges for any peer that's currently in
+        // lastOutcome.peerQuality with at least one participated round (cardinality
+        // is bounded by the historical-facilitator set, which is small).
+        _ <- Metrics[F].updateGauge("dag_consensus_chronic_non_signers_count", chronicNonSigners.size.toLong)
+        peerIdLabel = Metrics.unsafeLabelName("peer_id")
+        _ <- lastOutcome.peerQuality.toList.traverse_ {
+          case (pid, (completed, participated)) =>
+            val ratio = if (participated > 0) completed.toDouble / participated.toDouble else 1.0
+            val pidTag: Metrics.TagSeq = Seq((peerIdLabel, pid.value.value.take(8)))
+            Metrics[F].updateGauge("dag_consensus_peer_quality_ratio", ratio, pidTag) >>
+              Metrics[F].updateGauge("dag_consensus_peer_quality_participated", participated.toLong, pidTag) >>
+              Metrics[F].updateGauge("dag_consensus_peer_quality_completed", completed.toLong, pidTag)
+        }
 
         _ <- ConsensusLog
           .info(
