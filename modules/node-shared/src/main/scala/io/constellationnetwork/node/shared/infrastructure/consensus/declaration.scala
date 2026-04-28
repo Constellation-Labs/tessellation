@@ -308,7 +308,21 @@ object declaration {
     // `state.eligibleFacilitators`. Same sorting + determinism requirements as
     // evictionCertificates. Defaults empty for forward compatibility — old proposals
     // written before B2 round-trip with an empty admission list.
-    admissionCertificates: List[AdmissionCertificate] = List.empty
+    admissionCertificates: List[AdmissionCertificate] = List.empty,
+    // v7 (flaky-byzantine threat model): leader's positive observation of which
+    // round-start facilitators sent a Facility declaration during this round's
+    // facility-collection window. Bound by the leader's signed rumor envelope
+    // (RumorValidator.scala:50 — signers.contains(rumor.origin)). Followers
+    // validate that observedResponders ⊆ roundStartFacilitators. Consumed at
+    // round-finalize to update lastOutcome.peerQuality with positive
+    // participation evidence — fixes the v3-codex-flagged "silent peers score
+    // (1,1)" blindness where any non-fork-evicted facilitator was credited
+    // regardless of whether they actually sent a Facility. List[PeerId] sorted
+    // at proposal-build time (mirrors evictionCertificates / admissionCertificates
+    // sort-at-construction pattern) for deterministic proposal-hash agreement.
+    // Defaults empty for old-format compatibility (cold-restart hard fork in
+    // practice).
+    observedResponders: List[PeerId] = List.empty
   ) extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)

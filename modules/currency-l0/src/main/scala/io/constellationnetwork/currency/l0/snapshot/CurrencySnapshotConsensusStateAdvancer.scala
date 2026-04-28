@@ -187,12 +187,19 @@ object CurrencySnapshotConsensusStateAdvancer {
             // or completed. Symmetric suppression prevents the "freshly-Ready peer misses
             // first round, gets penalized, sits out, re-enters still behind" cascade.
             // See GlobalSnapshotConsensusStateAdvancer for full rationale.
+            //
+            // v7 (flaky-byzantine): see dag-l0 mirror — peerQuality "completed" reflects
+            // actual facility-phase participation via state.observedResponders (replaced
+            // at proposal-acceptance time). Bootstrap fallback to "non-evicted" semantic.
+            val responderSet: Set[PeerId] =
+              if (isInBootstrap) completedFacilitators
+              else state.observedResponders.value
             val thisRoundQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.from(
               // Canonical committee iteration — see dag-l0 mirror.
               state.roundStartFacilitators.value
                 .filterNot(deferredInCommittee.contains)
                 .map { pid =>
-                  val completed = if (completedFacilitators.contains(pid)) 1 else 0
+                  val completed = if (responderSet.contains(pid)) 1 else 0
                   pid -> (completed, 1)
                 }
             )
@@ -361,6 +368,13 @@ object CurrencySnapshotConsensusStateAdvancer {
 
         val trigger = pickMajority(triggers).getOrElse(EventTrigger)
 
+        // v7 (mirror of dag-l0 `toProposalsPhase`): leader's positive observation of which
+        // round-start facilitators sent a Facility this round, sorted at construction.
+        // Bootstrap gate: empty during isInBootstrap so leader-build aligns with validation.
+        val observedResponders: List[PeerId] =
+          if (isInBootstrap(state)) List.empty
+          else (facilities.keySet + selfId).toList.sorted
+
         // Build map of hash -> ALL peers who have it (for resilient fetching).
         // Previously used toMap which kept only the last peer per hash — if that peer was
         // unavailable the event was silently dropped. Now we retain all candidates and try
@@ -378,7 +392,7 @@ object CurrencySnapshotConsensusStateAdvancer {
           // Sync missing events from peers before building proposal
           _ <- syncMissingEvents(missingHashes, hashToPeers).whenA(missingHashes.nonEmpty)
 
-          result <- buildProposalTransition(state, unionHashes, candidates, trigger)
+          result <- buildProposalTransition(state, unionHashes, candidates, trigger, observedResponders)
         } yield result
       }
 
@@ -434,7 +448,8 @@ object CurrencySnapshotConsensusStateAdvancer {
         state: CurrencySnapshotConsensusState,
         commonHashes: Set[Hash],
         candidates: Set[PeerId],
-        majorityTrigger: ConsensusTrigger
+        majorityTrigger: ConsensusTrigger,
+        observedResponders: List[PeerId]
       ): F[Option[Transition]] =
         HasherSelector[F].withCurrent { implicit hasher =>
           for {
@@ -508,7 +523,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                     ArtifactInfo(artifact, context, hash),
                     Candidates(candidates),
                     facilitatorsHash,
-                    state.lastOutcome.finished.snapshotHash
+                    state.lastOutcome.finished.snapshotHash,
+                    observedResponders
                   )
                 ),
                 sideEffect =
@@ -532,7 +548,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                           state.viewNumber.toLong,
                           maybeAssembledVcc,
                           ecs.toList,
-                          acs.toList
+                          acs.toList,
+                          observedResponders
                         )
                     }
                   else
@@ -621,7 +638,10 @@ object CurrencySnapshotConsensusStateAdvancer {
                         state.viewNumber.toLong,
                         maybeVcc,
                         ecs.toList,
-                        acs.toList
+                        acs.toList,
+                        // v7 codex turn 2 fix #2: re-spread reads observedResponders from the
+                        // immutable status, not recomputed from current resources.
+                        status.observedResponders
                       ).as(none[Transition])
                 }
               else
@@ -807,6 +827,21 @@ object CurrencySnapshotConsensusStateAdvancer {
       }
 
       /** Verify every `Signed[AdmissionVote]` inside every embedded `AdmissionCertificate` has a valid crypto signature. Mirrors dag-l0. */
+      /** v7 (flaky-byzantine): observedResponders subset validation. See dag-l0 mirror for full rationale. */
+      private def validateProposalObservedResponders(
+        state: CurrencySnapshotConsensusState,
+        proposal: Proposal
+      ): Either[String, Unit] = {
+        if (isInBootstrap(state) && proposal.observedResponders.nonEmpty)
+          return Left(s"obs_resp_rejected_in_bootstrap count=${proposal.observedResponders.size}")
+        val committee = state.roundStartFacilitators.value.toSet
+        val notInCommittee = proposal.observedResponders.toSet -- committee
+        if (notInCommittee.nonEmpty)
+          Left(s"obs_resp_not_in_committee count=${notInCommittee.size}")
+        else
+          Right(())
+      }
+
       private def verifyAcsSignatures(
         proposal: Proposal
       )(implicit hasher: Hasher[F]): F[Either[String, Unit]] =
@@ -875,15 +910,28 @@ object CurrencySnapshotConsensusStateAdvancer {
                       case Right(_)     => afterVccSig
                     }
               }
-            validateProposalAcs(state, leaderProposal, status.facilitatorsHash) match {
-              case Left(reason) => logAcsReject(reason)
+            val afterAcs: F[Option[Transition]] =
+              validateProposalAcs(state, leaderProposal, status.facilitatorsHash) match {
+                case Left(reason) => logAcsReject(reason)
+                case Right(_) =>
+                  if (leaderProposal.admissionCertificates.isEmpty) afterEcs
+                  else
+                    verifyAcsSignatures(leaderProposal).flatMap {
+                      case Left(reason) => logAcsReject(reason)
+                      case Right(_)     => afterEcs
+                    }
+              }
+            // v7 (flaky-byzantine): observedResponders subset validation. See dag-l0 mirror.
+            validateProposalObservedResponders(state, leaderProposal) match {
+              case Left(reason) =>
+                logger.warn(s"[CONSENSUS] obs_resp_validation failed key=${state.key.show} reason=$reason").as(none[Transition])
               case Right(_) =>
-                if (leaderProposal.admissionCertificates.isEmpty) afterEcs
-                else
-                  verifyAcsSignatures(leaderProposal).flatMap {
-                    case Left(reason) => logAcsReject(reason)
-                    case Right(_)     => afterEcs
-                  }
+                val n = state.roundStartFacilitators.value.size
+                val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+                val below = leaderProposal.observedResponders.size < q && !isInBootstrap(state)
+                logger
+                  .warn(s"[CONSENSUS] obs_resp_below_quorum key=${state.key.show} size=${leaderProposal.observedResponders.size} quorum=$q")
+                  .whenA(below) >> afterAcs
             }
         }
       }
@@ -909,7 +957,8 @@ object CurrencySnapshotConsensusStateAdvancer {
               List(leaderProposal.hash),
               leaderProposal.vcc,
               leaderProposal.evictionCertificates,
-              leaderProposal.admissionCertificates
+              leaderProposal.admissionCertificates,
+              leaderProposal.observedResponders
             )
         } else {
           // Leader proposed a different artifact — validate theirs
@@ -930,7 +979,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                       List(leaderProposal.hash),
                       leaderProposal.vcc,
                       leaderProposal.evictionCertificates,
-                      leaderProposal.admissionCertificates
+                      leaderProposal.admissionCertificates,
+                      leaderProposal.observedResponders
                     )
                 case Left(invalidArtifact) =>
                   val diffDetail = describeInvalidArtifact(invalidArtifact)
@@ -1013,7 +1063,8 @@ object CurrencySnapshotConsensusStateAdvancer {
         proposalHashes: List[Hash],
         leaderVcc: Option[ViewChangeCertificate] = None,
         leaderEvictionCerts: List[EvictionCertificate] = List.empty,
-        leaderAdmissionCerts: List[AdmissionCertificate] = List.empty
+        leaderAdmissionCerts: List[AdmissionCertificate] = List.empty,
+        leaderObservedResponders: List[PeerId] = List.empty
       )(implicit hasher: Hasher[F]): F[Option[Transition]] = {
         val evictedTargets: Set[PeerId] =
           if (isInBootstrap(state)) Set.empty
@@ -1082,6 +1133,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                     facilitators = postEvictionFacilitators,
                     removedFacilitators = postEvictionRemoved,
                     admittedFacilitators = postAdmissionAdmitted,
+                    // v7 codex turn 2 fix #5: REPLACE on accept (not union). See dag-l0 mirror.
+                    observedResponders = ObservedResponders(leaderObservedResponders.toSet),
                     status = CollectingSignatures(
                       majorityInfo,
                       status.majorityTrigger,
@@ -1359,12 +1412,14 @@ object CurrencySnapshotConsensusStateAdvancer {
         view: Long = 0L,
         vcc: Option[ViewChangeCertificate] = None,
         evictionCertificates: List[EvictionCertificate] = List.empty,
-        admissionCertificates: List[AdmissionCertificate] = List.empty
+        admissionCertificates: List[AdmissionCertificate] = List.empty,
+        observedResponders: List[PeerId] = List.empty
       ): F[Unit] = {
         val sortedEcs = evictionCertificates.sorted(EvictionCertificate.ordering)
         val sortedAcs = admissionCertificates.sorted(AdmissionCertificate.ordering)
+        val sortedObs = observedResponders.distinct.sorted
         val declaration =
-          ConsensusPeerDeclaration(key, Proposal(hash, facilitatorsHash, lastSnapshotHash, view, vcc, sortedEcs, sortedAcs))
+          ConsensusPeerDeclaration(key, Proposal(hash, facilitatorsHash, lastSnapshotHash, view, vcc, sortedEcs, sortedAcs, sortedObs))
         val targets = state.facilitators.value.toSet
 
         gossip.spreadDirect(declaration, targets) >>

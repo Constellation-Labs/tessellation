@@ -281,7 +281,13 @@ object types {
     //
     // Default 2: requires at least one peer plus self before considering majority. For
     // single-peer / genesis topologies the value should be set to 1 via env-specific config.
-    forkConfirmationMinObservations: Int = 2
+    forkConfirmationMinObservations: Int = 2,
+    // v7 schema-version anchor (codex turn 2 fix #G). Bumped on any consensus-protocol-level
+    // wire-format change that requires a cluster-wide cold restart. Included in
+    // `deterministicConfigHash` so old-version nodes (default `consensusSchemaVersion=6` if
+    // absent in their config) compute a different hash and cannot form a cluster with v7
+    // nodes. Future schema bumps just increment this field.
+    consensusSchemaVersion: Int = 7
   ) {
 
     /** Deterministic hash of consensus-critical config values.
@@ -308,7 +314,12 @@ object types {
       *   - `facilitiesTimeoutMultiplier`, `proposalsTimeoutMultiplier`, `signaturesTimeoutMultiplier`: timing multipliers only
       *   - `maxRoundDuration`: safety net, not consensus logic
       *   - `declarationRangeLimit`, `eventCutter`: event filtering, not consensus decisions
-      *   - `qualityDecayThreshold`: local peer quality tracking, no consensus effect
+      *
+      * '''v7 (2026-04-28) — qualityDecayThreshold reclassified.''' Previously documented as local-only and excluded from this hash. In
+      * reality it mutates the consensus-agreed `lastOutcome.peerQuality` field at advancer:330 (decay halves both completed and
+      * participated counters when any peer's participated exceeds threshold). Two nodes with different threshold values would compute
+      * different `peerQuality` after any decay event, producing latent divergence. Now included in the hash. Pre-existing latent bug fix
+      * bundled with v7's schema bump.
       *
       * IMPORTANT: When adding new fields to ConsensusConfig, evaluate whether they affect consensus determinism. If the field changes what
       * peers decide (facilitator selection, quorum logic, voting thresholds), add it to the hash string below. If it only affects timing or
@@ -329,7 +340,13 @@ object types {
           s"chronicReinstatementInterval=$chronicReinstatementInterval," +
           s"lockOnVoteProtocolVersion=$lockOnVoteProtocolVersion," +
           s"bootstrapCompleteProofsThreshold=$bootstrapCompleteProofsThreshold," +
-          s"bootstrapDeclarationTimeoutMultiplier=$bootstrapDeclarationTimeoutMultiplier"
+          s"bootstrapDeclarationTimeoutMultiplier=$bootstrapDeclarationTimeoutMultiplier," +
+          // v7 (codex turn 2 fix): qualityDecayThreshold mutates consensus-agreed peerQuality
+          // (advancer:330 decay path); must be in the hash so divergent operator values can't
+          // produce silently-divergent peerQuality maps.
+          s"qualityDecayThreshold=$qualityDecayThreshold," +
+          // v7 schema-version anchor; explicit fence against mixed-wire-version cluster joins.
+          s"consensusSchemaVersion=$consensusSchemaVersion"
       Hash.fromBytes(configString.getBytes("UTF-8"))
     }
   }
