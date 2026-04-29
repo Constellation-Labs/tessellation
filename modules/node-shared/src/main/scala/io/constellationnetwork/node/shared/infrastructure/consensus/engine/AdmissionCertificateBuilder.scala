@@ -23,8 +23,9 @@ object AdmissionCertificateBuilder {
 
   /** Build a valid AdmissionCertificate for a specific (target, reason) pair.
     *
-    * Invariant checks are identical to the eviction path — filter by (target, reason, facilitatorsHash), reject non-committee voters, count
-    * UNIQUE SIGNERS for the quorum check. See `EvictionCertificateBuilder` for the full rationale on relay-duplicate deduplication.
+    * Invariant checks are identical to the eviction path — filter by (target, reason, facilitatorsHash), reject voters outside the
+    * `witnessPool`, count UNIQUE SIGNERS for the quorum check. See `EvictionCertificateBuilder` for the full rationale on relay-duplicate
+    * deduplication and on the v9 widening of the witness pool from committee to `state.eligibleFacilitators - target`.
     */
   def build(
     target: PeerId,
@@ -33,7 +34,7 @@ object AdmissionCertificateBuilder {
     lastSnapshotHash: Hash,
     votes: Map[PeerId, Signed[AdmissionVote]],
     quorumSize: Int,
-    committee: Set[PeerId]
+    witnessPool: Set[PeerId]
   ): Either[String, AdmissionCertificate] = {
     val wrongTarget = votes.toList.collect {
       case (pid, signed) if signed.value.targetPeer != target => pid
@@ -59,8 +60,8 @@ object AdmissionCertificateBuilder {
             && signed.value.lastSnapshotHash != lastSnapshotHash =>
         pid
     }
-    val nonCommitteeVoter = votes.toList.collect {
-      case (voter, _) if !committee.contains(voter) => voter
+    val nonWitnessPoolVoter = votes.toList.collect {
+      case (voter, _) if !witnessPool.contains(voter) => voter
     }
 
     if (wrongTarget.nonEmpty)
@@ -71,8 +72,8 @@ object AdmissionCertificateBuilder {
       Left(s"facilitators_mismatch peers=${wrongFacHash.size}")
     else if (wrongLastSnapHash.nonEmpty)
       Left(s"last_snapshot_hash_mismatch peers=${wrongLastSnapHash.size}")
-    else if (nonCommitteeVoter.nonEmpty)
-      Left(s"voter_not_in_committee peers=${nonCommitteeVoter.size}")
+    else if (nonWitnessPoolVoter.nonEmpty)
+      Left(s"voter_not_in_committee peers=${nonWitnessPoolVoter.size}")
     else {
       // Deduplicate by signer BEFORE checking quorum — see EvictionCertificateBuilder for rationale.
       val bySigner: Map[PeerId, Signed[AdmissionVote]] = votes.values
@@ -87,9 +88,9 @@ object AdmissionCertificateBuilder {
         .view
         .mapValues(_.head)
         .toMap
-      val nonCommitteeSigner = bySigner.keys.filterNot(committee.contains).toList
-      if (nonCommitteeSigner.nonEmpty)
-        Left(s"signer_not_in_committee peers=${nonCommitteeSigner.size}")
+      val nonWitnessPoolSigner = bySigner.keys.filterNot(witnessPool.contains).toList
+      if (nonWitnessPoolSigner.nonEmpty)
+        Left(s"signer_not_in_committee peers=${nonWitnessPoolSigner.size}")
       else if (bySigner.size < quorumSize)
         Left(s"under_quorum votes=${bySigner.size} required=$quorumSize")
       else {

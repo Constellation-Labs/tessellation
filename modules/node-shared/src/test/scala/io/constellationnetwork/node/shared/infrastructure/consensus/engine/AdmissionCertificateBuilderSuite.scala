@@ -64,7 +64,7 @@ object AdmissionCertificateBuilderSuite extends FunSuite {
       lastSnapshotHash = lastSnap,
       votes = votes,
       quorumSize = 3,
-      committee = committee
+      witnessPool = committee
     )
     expect(result.isRight, s"expected Right(cert), got: $result")
       .and(expect(result.exists(_.votes.length === 3), s"expected 3 votes, got: $result"))
@@ -186,6 +186,61 @@ object AdmissionCertificateBuilderSuite extends FunSuite {
     expect(
       result.swap.exists(_.startsWith("under_quorum")),
       s"expected Left(under_quorum...) for 3 relayed duplicates of 1 signed vote, got: $result"
+    )
+  }
+
+  // === v9 (2026-04-29): witness pool widened from committee to eligibleFacilitators ===
+
+  test("v9: voter in wider witness pool but outside committee subset is accepted") {
+    // B2 mirror of the apr29 wedge regression. Symmetric with B1: when the cluster has chronic-
+    // classified peers in eligibleFacilitators but not in committee, those peers' admission
+    // votes count toward quorum.
+    val committeeSubset: Set[PeerId] = Set(voter1, voter2, voter3, voter4)
+    val eligibleNonCommittee: Set[PeerId] = Set(voter5)
+    val widerPool: Set[PeerId] = committeeSubset ++ eligibleNonCommittee
+    val votes: Map[PeerId, Signed[AdmissionVote]] = Map(
+      voter1 -> signedVote(voter1),
+      voter2 -> signedVote(voter2),
+      voter3 -> signedVote(voter3),
+      voter4 -> signedVote(voter4),
+      voter5 -> signedVote(voter5) // eligible-but-non-committee — must count under v9
+    )
+    val result =
+      AdmissionCertificateBuilder.build(
+        targetA,
+        AdmissionReason.ReadyAtTip,
+        facHash,
+        lastSnap,
+        votes,
+        quorumSize = 5,
+        witnessPool = widerPool
+      )
+    expect(result.isRight, s"v9: eligible-but-non-committee voter should count, got: $result").and(
+      expect(result.exists(_.votes.length === 5), s"cert must carry 5 votes, got: $result")
+    )
+  }
+
+  test("v9: voter outside witness pool is still rejected") {
+    val outsider: PeerId = PeerId(Hex("ee" * 64))
+    val widerPool: Set[PeerId] = Set(voter1, voter2, voter3, voter4, voter5)
+    val votes: Map[PeerId, Signed[AdmissionVote]] = Map(
+      voter1 -> signedVote(voter1),
+      voter2 -> signedVote(voter2),
+      outsider -> signedVote(outsider)
+    )
+    val result =
+      AdmissionCertificateBuilder.build(
+        targetA,
+        AdmissionReason.ReadyAtTip,
+        facHash,
+        lastSnap,
+        votes,
+        quorumSize = 3,
+        witnessPool = widerPool
+      )
+    expect(
+      result.swap.exists(_.startsWith("voter_not_in_committee")),
+      s"v9: outside-pool voter must still be rejected, got: $result"
     )
   }
 }

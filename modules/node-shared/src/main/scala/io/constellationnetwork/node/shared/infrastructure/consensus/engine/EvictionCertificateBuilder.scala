@@ -23,13 +23,19 @@ object EvictionCertificateBuilder {
   /** Build a valid EvictionCertificate for a specific (target, reason) pair.
     *
     *   - Filter votes to those matching (target, reason, facilitatorsHash).
-    *   - Reject any vote whose voter is not in the current committee.
+    *   - Reject any vote whose voter is not in `witnessPool`.
     *   - Count UNIQUE SIGNERS (by `proofs.head.id`) — not storage keys — for the quorum check. The `votes` map is keyed by the gossip
     *     sender, which is not necessarily the signer: a single signed vote can be relayed through multiple peers and end up stored under
     *     different keys. Without signer-level deduplication, a Byzantine relay can inflate the apparent quorum, get a cert assembled, and
     *     then see it rejected at proposal-acceptance time (where `validateProposalEcs` re-checks against the deduplicated `cert.votes`
     *     set). Deduplicating here ensures the cert is only built from distinct signers.
     *   - Use a SortedSet for the resulting votes so serialization order is stable.
+    *
+    * v9 (2026-04-29): `witnessPool` widened from the round-start committee to `state.eligibleFacilitators - target`. Caller responsibility
+    * to compute the deterministic witness set; this function just gates voters/signers against it. Quorum is still passed as a separate
+    * `quorumSize` so the caller pegs it to committee size, not witness pool size. Rejection strings still say `voter_not_in_committee` /
+    * `signer_not_in_committee` to preserve log-grep compatibility — the semantic is now "not in witness pool" but the operational filter is
+    * unchanged.
     *
     * Returns `Right(cert)` on success, or `Left(reason)` with a stable code-like string.
     */
@@ -40,7 +46,7 @@ object EvictionCertificateBuilder {
     lastSnapshotHash: Hash,
     votes: Map[PeerId, Signed[EvictionVote]],
     quorumSize: Int,
-    committee: Set[PeerId]
+    witnessPool: Set[PeerId]
   ): Either[String, EvictionCertificate] = {
     val wrongTarget = votes.toList.collect {
       case (pid, signed) if signed.value.targetPeer != target => pid
@@ -65,8 +71,8 @@ object EvictionCertificateBuilder {
             && signed.value.lastSnapshotHash != lastSnapshotHash =>
         pid
     }
-    val nonCommitteeVoter = votes.toList.collect {
-      case (voter, _) if !committee.contains(voter) => voter
+    val nonWitnessPoolVoter = votes.toList.collect {
+      case (voter, _) if !witnessPool.contains(voter) => voter
     }
 
     if (wrongTarget.nonEmpty)
@@ -77,8 +83,8 @@ object EvictionCertificateBuilder {
       Left(s"facilitators_mismatch peers=${wrongFacHash.size}")
     else if (wrongLastSnapHash.nonEmpty)
       Left(s"last_snapshot_hash_mismatch peers=${wrongLastSnapHash.size}")
-    else if (nonCommitteeVoter.nonEmpty)
-      Left(s"voter_not_in_committee peers=${nonCommitteeVoter.size}")
+    else if (nonWitnessPoolVoter.nonEmpty)
+      Left(s"voter_not_in_committee peers=${nonWitnessPoolVoter.size}")
     else {
       // Deduplicate by signer BEFORE checking quorum. A relayed duplicate of the same signed
       // vote must not count twice, otherwise an adversary can fabricate under-quorum certs
@@ -97,9 +103,9 @@ object EvictionCertificateBuilder {
         .view
         .mapValues(_.head)
         .toMap
-      val nonCommitteeSigner = bySigner.keys.filterNot(committee.contains).toList
-      if (nonCommitteeSigner.nonEmpty)
-        Left(s"signer_not_in_committee peers=${nonCommitteeSigner.size}")
+      val nonWitnessPoolSigner = bySigner.keys.filterNot(witnessPool.contains).toList
+      if (nonWitnessPoolSigner.nonEmpty)
+        Left(s"signer_not_in_committee peers=${nonWitnessPoolSigner.size}")
       else if (bySigner.size < quorumSize)
         Left(s"under_quorum votes=${bySigner.size} required=$quorumSize")
       else {

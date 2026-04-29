@@ -269,9 +269,14 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                 val reasons = matchingVotes.values.map(_.value.reason).toSet
                 reasons.toList match {
                   case singleReason :: Nil =>
-                    val committee = state.facilitators.value.toSet
+                    // v9 (2026-04-29): widen witness pool from committee to eligibleFacilitators - target.
+                    // Phase A of the apr29 wedge (round 3110065) had committee=9, eligibleFacilitators=12,
+                    // and 3 chronic-excluded peers signed valid eviction votes that the committee gate threw
+                    // away — leaving 4 of 7 needed votes. The wider pool admits those eligible-but-not-active
+                    // signatures while quorum stays pegged to committee size below.
+                    val witnessPool = state.eligibleFacilitators.value.toSet - target
                     val expectedLastSnap = ctx.lastSnapshotHashOf(state.lastOutcome)
-                    EvictionCertificateBuilder.build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, committee) match {
+                    EvictionCertificateBuilder.build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, witnessPool) match {
                       case Left(reason) =>
                         ConsensusLog.warn(
                           log,
@@ -374,9 +379,12 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                 val reasons = matchingVotes.values.map(_.value.reason).toSet
                 reasons.toList match {
                   case singleReason :: Nil =>
-                    val committee = state.facilitators.value.toSet
+                    // v9 (2026-04-29): symmetric widening with B1 — use eligibleFacilitators - target as
+                    // the witness pool. Quorum stays committee-sized.
+                    val witnessPool = state.eligibleFacilitators.value.toSet - target
                     val expectedLastSnap = ctx.lastSnapshotHashOf(state.lastOutcome)
-                    AdmissionCertificateBuilder.build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, committee) match {
+                    AdmissionCertificateBuilder
+                      .build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, witnessPool) match {
                       case Left(reason) =>
                         ConsensusLog.warn(
                           log,

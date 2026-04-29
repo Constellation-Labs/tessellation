@@ -308,7 +308,12 @@ object types {
     //     CollectingProposals; qualityDecayThreshold pulled into the hash as a latent fix).
     //   - 8 (2026-04-29): v8 chronic-classification minimum-history floor
     //     (`minObservationHistoryFloor`); changes the agreed chronicNonSigners set.
-    consensusSchemaVersion: Int = 8
+    //   - 9 (2026-04-29): v9 B1/B2 cert witness-pool widened from committee to
+    //     `state.eligibleFacilitators - target`. v8 nodes would reject certs that v9 nodes
+    //     accept (the eligible-but-non-committee signers), so cluster-wide cold restart is
+    //     required. Fixes the apr29 wedge where 7-9 valid eviction votes were rejected as
+    //     `voter_not_in_committee` when only 4 came from the 9-member committee.
+    consensusSchemaVersion: Int = 9
   ) {
 
     /** Deterministic hash of consensus-critical config values.
