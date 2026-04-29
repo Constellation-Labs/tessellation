@@ -14,19 +14,29 @@ services:
       - CL_TIME_TRIGGER_INTERVAL
       - CL_MAX_ROUND_DURATION
       - CL_EVENT_TRIGGER_COOLDOWN
-      # Chronic-non-signer thresholds: production defaults are now safe in tests.
+      # Chronic-non-signer thresholds — disabled for fork-recovery test.
       #
-      # Pre-v8 (2026-04-29) the E2E test had to override these (20 obs / 0.30 ratio)
-      # because a 270s isolation accumulated ~14 absent rounds against only ~15-20
-      # rounds of pre-outage credit, putting the ratio at ~0.42 — false-positive
-      # chronic classification driven by the test's accelerated timeline rather than
-      # actual chronic behavior.
+      # Background: the chronic-non-signer filter classifies a peer as silent if
+      # `participated >= floor` AND `(completed/participated) < ratio`. `participated`
+      # counts FACILITATOR-INCLUSION rounds, not wall-clock time. In production
+      # (~25-30s/round) the floor=30 default = ~12-15 min of cluster activity. But
+      # in local E2E (~10-12s/round, no real network latency) floor=30 fires after
+      # ~6 minutes — well inside Phase 1 stabilization.
       #
-      # v8 added `minObservationHistoryFloor=30`. The chronic predicate now also
-      # requires `participated >= 30` before classification can fire, so test peers
-      # (which see ~30 rounds total) can no longer cross the floor inside the test
-      # window. Production defaults exercise fork-recovery cleanly. Operators can
-      # still override via CL_MIN_OBSERVATION_HISTORY_FLOOR for targeted experiments.
+      # The 2026-04-29 local E2E run reproduced this: gl0-4 had a slow JVM warmup +
+      # fork-divergence cycle at ord 4, accumulated participated=30 with completed=1,
+      # got chronic-classified at ord 34, committee shrank to 4. Then gl0-0 itself
+      # entered recovery, returned with ratio=34/69=0.493 (0.7pp under threshold),
+      # got self-classified at ord 71, committee shrank to 3, deadlocked.
+      #
+      # The fork-recovery test verifies cluster recovery from network ISOLATION,
+      # not chronic classification. Setting the floor very high keeps chronic
+      # dormant for the entire test window so the test exercises only its own
+      # subject. Chronic-classification dynamics belong in a dedicated test suite.
+      #
+      # Floor 10000 = effectively infinite for any conceivable test runtime
+      # (cluster would need to run 10000 facilitator-rounds = >24h at local cadence).
+      - CL_MIN_OBSERVATION_HISTORY_FLOOR=${CL_MIN_OBSERVATION_HISTORY_FLOOR:-10000}
     # merge in an extra network just for tests
     networks:
       tessellation_common:
