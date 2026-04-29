@@ -69,7 +69,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       lastSnapshotHash = lastSnap,
       votes = votes,
       quorumSize = 3,
-      committee = committee
+      witnessPool = committee
     )
     expect(result.isRight, s"expected Right(cert), got: $result")
       .and(
@@ -96,7 +96,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       lastSnapshotHash = lastSnap,
       votes = votes,
       quorumSize = 3,
-      committee = committee
+      witnessPool = committee
     )
     expect(result.swap.exists(_.startsWith("under_quorum")), s"expected Left(under_quorum...), got: $result")
   }
@@ -109,7 +109,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       lastSnapshotHash = lastSnap,
       votes = Map.empty,
       quorumSize = 1,
-      committee = committee
+      witnessPool = committee
     )
     expect(result.swap.exists(_.startsWith("under_quorum")), s"expected Left(under_quorum...), got: $result")
   }
@@ -131,7 +131,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       lastSnapshotHash = lastSnap,
       votes = votes,
       quorumSize = 2,
-      committee = committee
+      witnessPool = committee
     )
     expect(result.swap.exists(_.startsWith("target_mismatch")), s"expected Left(target_mismatch...), got: $result")
   }
@@ -169,7 +169,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       lastSnapshotHash = lastSnap,
       votes = votes,
       quorumSize = 3,
-      committee = committee
+      witnessPool = committee
     )
     expect(result.swap.exists(_.startsWith("facilitators_mismatch")), s"expected Left(facilitators_mismatch...), got: $result")
   }
@@ -192,7 +192,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       lastSnapshotHash = lastSnap,
       votes = votes,
       quorumSize = 3,
-      committee = committee
+      witnessPool = committee
     )
     expect(
       result.swap.exists(_.startsWith("voter_not_in_committee")),
@@ -254,7 +254,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       lastSnapshotHash = lastSnap,
       votes = votes,
       quorumSize = 2,
-      committee = committee
+      witnessPool = committee
     )
     expect(result.isRight, s"exactly-quorum should succeed, got: $result")
   }
@@ -281,7 +281,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       lastSnapshotHash = lastSnap,
       votes = votes,
       quorumSize = 3,
-      committee = committee
+      witnessPool = committee
     )
     expect(
       result.swap.exists(_.startsWith("under_quorum")),
@@ -302,9 +302,9 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       voter3 -> vote3
     )
     val underQuorum =
-      EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, lastSnap, votes, quorumSize = 3, committee = committee)
+      EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, lastSnap, votes, quorumSize = 3, witnessPool = committee)
     val exactlyMet =
-      EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, lastSnap, votes, quorumSize = 2, committee = committee)
+      EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, lastSnap, votes, quorumSize = 2, witnessPool = committee)
     expect(
       underQuorum.swap.exists(_.startsWith("under_quorum")),
       s"quorum=3 with 2 unique signers must fail, got: $underQuorum"
@@ -312,6 +312,53 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       expect(exactlyMet.isRight, s"quorum=2 with 2 unique signers must succeed, got: $exactlyMet")
     ).and(
       expect(exactlyMet.exists(_.votes.length === 2), s"cert must carry exactly 2 deduplicated votes, got: $exactlyMet")
+    )
+  }
+
+  // === v9 (2026-04-29): witness pool widened from committee to eligibleFacilitators ===
+
+  test("v9: voter in witness pool but outside committee subset is accepted (apr29 wedge regression)") {
+    // Apr 29 testnet wedge regression. At round 3110065 the cluster had committee=9 but
+    // eligibleFacilitators=12. Three chronic-classified peers (in eligibleFacilitators, not in
+    // committee) emitted valid eviction votes against cd6362ae. The OLD builder rejected them
+    // as voter_not_in_committee even though they were structurally legitimate. Under the v9
+    // widening, those votes count.
+    //
+    // Setup: 9-member "committee" subset + 3 peers in the wider witness pool. Quorum is
+    // committee-sized (q=ceil(9*0.67)=7). Votes from 4 committee + 3 eligible-but-not-committee
+    // = 7 distinct signers ≥ q=7 → cert assembles.
+    val committeeSubset: Set[PeerId] = Set(voter1, voter2, voter3, voter4)
+    val eligibleNonCommittee: Set[PeerId] = Set(voter5)
+    val widerPool: Set[PeerId] = committeeSubset ++ eligibleNonCommittee + targetA + targetB
+    val votes: Map[PeerId, Signed[EvictionVote]] = Map(
+      voter1 -> signedVote(voter1),
+      voter2 -> signedVote(voter2),
+      voter3 -> signedVote(voter3),
+      voter4 -> signedVote(voter4),
+      voter5 -> signedVote(voter5) // eligible-but-non-committee — must count under v9
+    )
+    val result =
+      EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, lastSnap, votes, quorumSize = 5, witnessPool = widerPool)
+    expect(result.isRight, s"v9: eligible-but-non-committee voter should count, got: $result").and(
+      expect(result.exists(_.votes.length === 5), s"cert must carry 5 votes including the eligible non-committee one, got: $result")
+    )
+  }
+
+  test("v9: voter outside witness pool is rejected") {
+    // Symmetric guarantee: a peer that is in NEITHER the committee nor the wider eligible set
+    // must still be rejected. Otherwise any random gossiper could spam votes.
+    val outsider: PeerId = PeerId(Hex("ee" * 64))
+    val widerPool: Set[PeerId] = Set(voter1, voter2, voter3, voter4, voter5)
+    val votes: Map[PeerId, Signed[EvictionVote]] = Map(
+      voter1 -> signedVote(voter1),
+      voter2 -> signedVote(voter2),
+      outsider -> signedVote(outsider) // outside even the eligible pool
+    )
+    val result =
+      EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, lastSnap, votes, quorumSize = 3, witnessPool = widerPool)
+    expect(
+      result.swap.exists(_.startsWith("voter_not_in_committee")),
+      s"v9: outside-pool voter must still be rejected, got: $result"
     )
   }
 }
