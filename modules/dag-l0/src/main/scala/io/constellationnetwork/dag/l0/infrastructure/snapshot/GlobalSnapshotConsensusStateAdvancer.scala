@@ -1035,9 +1035,14 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): Either[String, Unit] = {
         if (isInBootstrap(state) && proposal.evictionCertificates.nonEmpty)
           return Left(s"ecs_rejected_in_bootstrap count=${proposal.evictionCertificates.size}")
-        // Canonical round-start committee — voter/target membership and quorum threshold must be
-        // computed against the fixed committee so cert validation is bit-identical across nodes
-        // that observed mid-round withdrawals at different times.
+        // Canonical round-start committee — quorum threshold and target-membership are computed
+        // against the fixed committee so validation is bit-identical across nodes that observed
+        // mid-round withdrawals at different times.
+        //
+        // v9 (2026-04-29): voter/signer membership widened from `roundStartFacilitators` to
+        // `eligibleFacilitators - target`. See StateTransitions.scala assembly site for full
+        // rationale. Both the assembly site and this re-validation must agree on the witness
+        // pool, otherwise leaders would assemble certs that followers reject.
         val n = state.roundStartFacilitators.value.size
         val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
         val committee = state.roundStartFacilitators.value.toSet
@@ -1077,8 +1082,10 @@ object GlobalSnapshotConsensusStateAdvancer {
                   case Some(bad) =>
                     Left(s"ecs_vote_field_mismatch target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}")
                   case None =>
-                    val nonCommitteeVoter = cert.votes.toList.find(sv => !committee.contains(sv.proofs.head.id.toPeerId))
-                    nonCommitteeVoter match {
+                    // v9: voter must be in the widened witness pool, not the committee.
+                    val witnessPool = state.eligibleFacilitators.value.toSet - cert.targetPeer
+                    val nonWitnessPoolVoter = cert.votes.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
+                    nonWitnessPoolVoter match {
                       case Some(bad) =>
                         Left(s"ecs_voter_not_in_committee target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}")
                       case None => loop(tail, seenTargets + cert.targetPeer)
@@ -1167,8 +1174,10 @@ object GlobalSnapshotConsensusStateAdvancer {
                   case Some(bad) =>
                     Left(s"acs_vote_field_mismatch target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}")
                   case None =>
-                    val nonCommitteeVoter = cert.votes.toList.find(sv => !committee.contains(sv.proofs.head.id.toPeerId))
-                    nonCommitteeVoter match {
+                    // v9: voter must be in the widened witness pool, not the committee.
+                    val witnessPool = state.eligibleFacilitators.value.toSet - cert.targetPeer
+                    val nonWitnessPoolVoter = cert.votes.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
+                    nonWitnessPoolVoter match {
                       case Some(bad) =>
                         Left(s"acs_voter_not_in_committee target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}")
                       case None => loop(tail, seenTargets + cert.targetPeer)

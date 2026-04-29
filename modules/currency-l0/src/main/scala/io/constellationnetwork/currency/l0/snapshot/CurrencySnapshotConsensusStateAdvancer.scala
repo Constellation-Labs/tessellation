@@ -740,8 +740,10 @@ object CurrencySnapshotConsensusStateAdvancer {
                   case Some(bad) =>
                     Left(s"ecs_vote_field_mismatch target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}")
                   case None =>
-                    val nonCommitteeVoter = cert.votes.toList.find(sv => !committee.contains(sv.proofs.head.id.toPeerId))
-                    nonCommitteeVoter match {
+                    // v9 (2026-04-29): voter must be in the widened witness pool. See dag-l0 mirror.
+                    val witnessPool = state.eligibleFacilitators.value.toSet - cert.targetPeer
+                    val nonWitnessPoolVoter = cert.votes.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
+                    nonWitnessPoolVoter match {
                       case Some(bad) =>
                         Left(s"ecs_voter_not_in_committee target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}")
                       case None => loop(tail, seenTargets + cert.targetPeer)
@@ -820,8 +822,10 @@ object CurrencySnapshotConsensusStateAdvancer {
                   case Some(bad) =>
                     Left(s"acs_vote_field_mismatch target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}")
                   case None =>
-                    val nonCommitteeVoter = cert.votes.toList.find(sv => !committee.contains(sv.proofs.head.id.toPeerId))
-                    nonCommitteeVoter match {
+                    // v9 (2026-04-29): voter must be in the widened witness pool. See dag-l0 mirror.
+                    val witnessPool = state.eligibleFacilitators.value.toSet - cert.targetPeer
+                    val nonWitnessPoolVoter = cert.votes.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
+                    nonWitnessPoolVoter match {
                       case Some(bad) =>
                         Left(s"acs_voter_not_in_committee target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}")
                       case None => loop(tail, seenTargets + cert.targetPeer)
