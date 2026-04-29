@@ -196,6 +196,21 @@ object types {
     // committee before round start (preventing mid-round eviction cascades).
     minParticipationObservations: Int = 5,
     minParticipationRatio: Double = 0.5,
+    // v8 (2026-04-29) minimum-history floor for chronic classification. Codex-recommended
+    // separate knob: the existing `minParticipationObservations` is reused as the leader-
+    // graduation gate (state-creator:470), so bumping it to 30 would also delay leader
+    // eligibility — a different policy decision. Keeping the two knobs split lets us require
+    // a long observation window before chronic classification (where false positives wedge
+    // the cluster) without restricting which peers can lead.
+    //
+    // Effect: a peer needs `>= minObservationHistoryFloor` rounds of evidence before the
+    // chronic filter can fire. At ~25-30s/round on testnet, 30 observations = ~12-15 minutes
+    // of cluster activity per peer. Truly chronic peers (40% participation) reach the floor
+    // after ~75 rounds (~30 minutes) — still classified, just with more evidence.
+    //
+    // Included in `deterministicConfigHash` because it changes the agreed-upon
+    // chronicNonSigners set and therefore the committee composition.
+    minObservationHistoryFloor: Int = 30,
     // Periodic reinstatement: every N ordinals, one chronic non-signer is rotated back into
     // the eligible committee pool for a single round to test whether they have recovered.
     // Necessary because once a peer is classified chronic they are excluded from the committee,
@@ -282,12 +297,18 @@ object types {
     // Default 2: requires at least one peer plus self before considering majority. For
     // single-peer / genesis topologies the value should be set to 1 via env-specific config.
     forkConfirmationMinObservations: Int = 2,
-    // v7 schema-version anchor (codex turn 2 fix #G). Bumped on any consensus-protocol-level
-    // wire-format change that requires a cluster-wide cold restart. Included in
-    // `deterministicConfigHash` so old-version nodes (default `consensusSchemaVersion=6` if
-    // absent in their config) compute a different hash and cannot form a cluster with v7
-    // nodes. Future schema bumps just increment this field.
-    consensusSchemaVersion: Int = 7
+    // Schema-version anchor. Bumped on any consensus-protocol-level change that requires
+    // a cluster-wide cold restart. Included in `deterministicConfigHash` so old-version
+    // nodes (any node whose config omits this field defaults to a different value) compute
+    // a different hash and cannot form a cluster with new-version nodes. Future schema bumps
+    // just increment this field.
+    //
+    // History:
+    //   - 7 (2026-04-28): v7 wire-format additions (observedResponders on Proposal +
+    //     CollectingProposals; qualityDecayThreshold pulled into the hash as a latent fix).
+    //   - 8 (2026-04-29): v8 chronic-classification minimum-history floor
+    //     (`minObservationHistoryFloor`); changes the agreed chronicNonSigners set.
+    consensusSchemaVersion: Int = 8
   ) {
 
     /** Deterministic hash of consensus-critical config values.
@@ -307,6 +328,7 @@ object types {
       *   - `maxRemovalPenaltyRounds`: cap on total penalty so it doesn't overflow Int
       *   - `minParticipationObservations`: threshold at which chronic non-signer filter kicks in
       *   - `minParticipationRatio`: ratio below which a peer is excluded from the committee
+      *   - `minObservationHistoryFloor`: v8 (2026-04-29) minimum participated count before chronic classification can fire
       *   - `bootstrapDeclarationTimeoutMultiplier`: affects phase-transition timing during bootstrap
       *
       * '''Non-critical fields''' (excluded — affect timing/performance, not deterministic outcomes):
@@ -337,6 +359,9 @@ object types {
           s"maxRemovalPenaltyRounds=$maxRemovalPenaltyRounds," +
           s"minParticipationObservations=$minParticipationObservations," +
           s"minParticipationRatio=$minParticipationRatio," +
+          // v8 (2026-04-29): chronic-classification floor. Changes the agreed chronicNonSigners
+          // set; divergent operator values would produce silently-divergent committee composition.
+          s"minObservationHistoryFloor=$minObservationHistoryFloor," +
           s"chronicReinstatementInterval=$chronicReinstatementInterval," +
           s"lockOnVoteProtocolVersion=$lockOnVoteProtocolVersion," +
           s"bootstrapCompleteProofsThreshold=$bootstrapCompleteProofsThreshold," +
