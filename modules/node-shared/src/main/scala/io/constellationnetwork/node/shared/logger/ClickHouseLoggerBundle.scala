@@ -1,7 +1,10 @@
 package io.constellationnetwork.node.shared.logger
 
 import cats.effect._
+import cats.effect.syntax.all._
 import cats.syntax.all._
+
+import scala.concurrent.duration._
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.config.types.ClickHouseAppConfig
@@ -62,6 +65,8 @@ object ClickHouseLoggerBundle {
       )
     } yield LoggerBundle(appLogger, consensusLogger)
 
+  // 15s timeout matches ClickHouseSink.connectTimeout — guards against `getConnection`
+  // or DDL execution stalling indefinitely.
   private def initTables[F[_]: Async](
     ds: com.zaxxer.hikari.HikariDataSource,
     config: ClickHouseConfig
@@ -77,4 +82,5 @@ object ClickHouseLoggerBundle {
         } finally stmt.close()
       } finally conn.close()
     }
+      .timeout(15.seconds)
 }
