@@ -245,9 +245,17 @@ object GlobalSnapshotConsensusStateCreator {
         //
         // Only peers with participated >= minParticipationObservations are subject to the
         // filter — new peers get a grace period to establish a track record.
+        //
+        // v8 (2026-04-29) minimum-history floor: also require participated >= minObservationHistoryFloor.
+        // The existing minParticipationObservations knob double-duties as the leader-graduation gate
+        // (selectLeaderWeighted below), so it can't be raised to a "high evidence" value without also
+        // delaying leader eligibility — a different policy decision. The floor lets us require a long
+        // observation window before chronic exclusion kicks in (where false positives wedge the cluster)
+        // without restricting the leader pool. See codex-followups-apr28.md Design B.
         chronicNonSigners = lastOutcome.peerQuality.collect {
           case (pid, (completed, participated))
               if participated >= config.minParticipationObservations &&
+                participated >= config.minObservationHistoryFloor &&
                 (completed.toDouble / participated.toDouble) < config.minParticipationRatio =>
             pid
         }.toSet
@@ -277,6 +285,7 @@ object GlobalSnapshotConsensusStateCreator {
             ChronicNonSignersExcluded,
             "count" -> chronicNonSigners.size.toString,
             "minObservations" -> config.minParticipationObservations.toString,
+            "historyFloor" -> config.minObservationHistoryFloor.toString,
             "minRatio" -> f"${config.minParticipationRatio}%.2f",
             "peers" -> chronicNonSigners.toList.map { pid =>
               val (c, p) = lastOutcome.peerQuality.getOrElse(pid, (0, 0))

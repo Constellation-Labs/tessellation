@@ -14,29 +14,19 @@ services:
       - CL_TIME_TRIGGER_INTERVAL
       - CL_MAX_ROUND_DURATION
       - CL_EVENT_TRIGGER_COOLDOWN
-      # Chronic-non-signer thresholds — TEST DEVIATION from production defaults.
+      # Chronic-non-signer thresholds: production defaults are now safe in tests.
       #
-      # Production defaults are 10 observations / 0.50 ratio. These are tuned for
-      # long-running clusters where peers accumulate thousands of `participated`
-      # events before any outage, plus the qualityDecayThreshold=100 sliding
-      # window keeps the ratio meaningful over time.
+      # Pre-v8 (2026-04-29) the E2E test had to override these (20 obs / 0.30 ratio)
+      # because a 270s isolation accumulated ~14 absent rounds against only ~15-20
+      # rounds of pre-outage credit, putting the ratio at ~0.42 — false-positive
+      # chronic classification driven by the test's accelerated timeline rather than
+      # actual chronic behavior.
       #
-      # E2E tests run in ~20-30 minutes total. Phase 1 stabilization gives the
-      # isolation target only ~15-20 rounds of pre-outage credit. A 270s
-      # isolation = ~14 absent rounds, which against ~10 prior credits puts the
-      # ratio at ~0.42 — false-positive chronic classification driven by the
-      # test's accelerated timeline, not by actual chronic behavior.
-      #
-      # Override is more permissive (0.30 ratio, 20 observations minimum) so
-      # the test exercises fork-recovery without tripping a classification that
-      # in production would never fire for this access pattern.
-      #
-      # Architectural follow-up (v8): add a "minimum recent history" prerequisite
-      # so chronic classification can't fire before a peer has had at least one
-      # decay-window of opportunity. That eliminates the test-vs-production
-      # threshold split entirely.
-      - CL_MIN_PARTICIPATION_OBSERVATIONS=${CL_MIN_PARTICIPATION_OBSERVATIONS:-20}
-      - CL_MIN_PARTICIPATION_RATIO=${CL_MIN_PARTICIPATION_RATIO:-0.30}
+      # v8 added `minObservationHistoryFloor=30`. The chronic predicate now also
+      # requires `participated >= 30` before classification can fire, so test peers
+      # (which see ~30 rounds total) can no longer cross the floor inside the test
+      # window. Production defaults exercise fork-recovery cleanly. Operators can
+      # still override via CL_MIN_OBSERVATION_HISTORY_FLOOR for targeted experiments.
     # merge in an extra network just for tests
     networks:
       tessellation_common:
