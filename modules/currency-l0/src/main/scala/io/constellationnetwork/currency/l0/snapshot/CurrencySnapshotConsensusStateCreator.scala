@@ -417,9 +417,13 @@ object CurrencySnapshotConsensusStateCreator {
         // minParticipationObservations`, but require at least 2 graduated peers so
         // view rotation can actually rotate. See GlobalSnapshotConsensusStateCreator
         // for the full rationale.
+        // v11 (2026-04-30): kick-fast leader graduation. Mirror of dag-l0; see
+        // GlobalSnapshotConsensusStateCreator for full rationale. Adds `completed >= 1` so a
+        // peer that has never finalized a round cannot lead — closes the same chronic-flaky
+        // leader trap on metagraph layer.
         graduatedLeaderPool = active.filter { pid =>
-          val (_, participated) = lastOutcome.peerQuality.getOrElse(pid, (0, 0))
-          participated >= config.minParticipationObservations
+          val (completed, participated) = lastOutcome.peerQuality.getOrElse(pid, (0, 0))
+          participated >= config.minParticipationObservations && completed >= 1
         }
         leaderPool = if (graduatedLeaderPool.size >= 2) graduatedLeaderPool else active
         leader = facilitatorSelector.selectLeaderWeighted(leaderPool, entropy, qualityScores = lastOutcome.peerQuality)
