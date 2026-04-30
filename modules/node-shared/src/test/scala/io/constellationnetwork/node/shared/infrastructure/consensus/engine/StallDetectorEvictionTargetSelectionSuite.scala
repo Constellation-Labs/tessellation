@@ -30,13 +30,21 @@ object StallDetectorEvictionTargetSelectionSuite extends FunSuite {
 
   private val committee10: Set[PeerId] = Set(p01, p02, p03, p04, p05, p06, p07, p08, p09, p10)
 
+  // BFT n=3f+1 with quorum 2f+1: for n=10 the closest valid is f=3, quorum=7 → cap = 10-7 = 3.
+  // For n=9 (committee9 below) f=2, quorum=7 → cap = 9-7 = 2.
+  private val quorum10: Int = 7
+
+  private val committee9: Set[PeerId] = committee10 - p10
+  private val quorum9: Int = 7
+
   test("returns empty when per-voter cap is already exhausted") {
-    // cap = ceil(10/3) = 4. alreadyVoted = 4 → remainingSlots = 0.
+    // committee=10, minQuorum=7 → cap = 3. alreadyVoted = 3 → remainingSlots = 0.
     val result = StallDetector.selectEvictionTargets(
       selfId = p01,
       unresponsiveMissing = Set(p05, p06, p07, p08),
       committee = committee10,
-      alreadyVotedBySelf = Set(p01, p02, p03, p04)
+      alreadyVotedBySelf = Set(p02, p03, p04),
+      minQuorum = quorum10
     )
     expect.same(List.empty[PeerId], result)
   }
@@ -47,7 +55,8 @@ object StallDetectorEvictionTargetSelectionSuite extends FunSuite {
       selfId = p01,
       unresponsiveMissing = Set(outsider, p05),
       committee = committee10,
-      alreadyVotedBySelf = Set.empty
+      alreadyVotedBySelf = Set.empty,
+      minQuorum = quorum10
     )
     expect.same(List(p05), result)
   }
@@ -57,22 +66,24 @@ object StallDetectorEvictionTargetSelectionSuite extends FunSuite {
       selfId = p01,
       unresponsiveMissing = Set(p05, p06, p07),
       committee = committee10,
-      alreadyVotedBySelf = Set(p06)
+      alreadyVotedBySelf = Set(p06),
+      minQuorum = quorum10
     )
-    // p06 excluded via already-voted filter; p05 and p07 remain, sorted.
+    // p06 excluded via already-voted filter; p05 and p07 remain (cap=3, 1 already used → slots=2), sorted.
     expect.same(List(p05, p07), result)
   }
 
   test("applies per-voter cap when unresponsiveMissing exceeds remaining slots") {
-    // cap = ceil(10/3) = 4. None voted yet → remainingSlots = 4.
-    // 5 missing peers present; only 4 selected.
+    // committee=10, minQuorum=7 → cap = 3. None voted yet → remainingSlots = 3.
+    // 5 missing peers present; only 3 selected by canonical hex order.
     val result = StallDetector.selectEvictionTargets(
       selfId = p01,
       unresponsiveMissing = Set(p05, p06, p07, p08, p09),
       committee = committee10,
-      alreadyVotedBySelf = Set.empty
+      alreadyVotedBySelf = Set.empty,
+      minQuorum = quorum10
     )
-    expect.same(List(p05, p06, p07, p08), result)
+    expect.same(List(p05, p06, p07), result)
   }
 
   test("deterministic ordering under Set-input permutation (codex review #2)") {
@@ -80,32 +91,30 @@ object StallDetectorEvictionTargetSelectionSuite extends FunSuite {
     // must pick the SAME subset under the cap, even if their in-memory Set iteration order
     // differs. The function must sort before applying `.take`.
     val missing = Set(p05, p06, p07, p08, p09, p10)
-    // Scala standard-library Sets iterate in a predictable order for small hash sets, but
-    // this test encodes the contract: insertion-order variants must yield identical outputs.
     val permutation1 = Set(p10, p09, p08, p07, p06, p05) // reverse insertion
     val permutation2 = Set(p07, p10, p05, p08, p09, p06) // scrambled
-    val r0 = StallDetector.selectEvictionTargets(p01, missing, committee10, Set.empty)
-    val r1 = StallDetector.selectEvictionTargets(p01, permutation1, committee10, Set.empty)
-    val r2 = StallDetector.selectEvictionTargets(p01, permutation2, committee10, Set.empty)
+    val r0 = StallDetector.selectEvictionTargets(p01, missing, committee10, Set.empty, quorum10)
+    val r1 = StallDetector.selectEvictionTargets(p01, permutation1, committee10, Set.empty, quorum10)
+    val r2 = StallDetector.selectEvictionTargets(p01, permutation2, committee10, Set.empty, quorum10)
     expect
       .same(r0, r1)
       .and(expect.same(r0, r2))
       .and(
-        expect(r0.size === math.ceil(committee10.size.toDouble / 3.0).toInt, s"expected cap=4 selections, got $r0")
+        expect(r0.size === (committee10.size - quorum10), s"expected cap=${committee10.size - quorum10} selections, got $r0")
       )
   }
 
   test("sorted output: first-K targets by hex identity") {
-    // Deterministic order = canonical PeerId hex. Verify result matches expected prefix.
     val missing = Set(p10, p05, p08, p03, p07, p09)
     val result = StallDetector.selectEvictionTargets(
       selfId = p01,
       unresponsiveMissing = missing,
       committee = committee10,
-      alreadyVotedBySelf = Set.empty
+      alreadyVotedBySelf = Set.empty,
+      minQuorum = quorum10
     )
-    // Sorted by hex: p03, p05, p07, p08, p09, p10 → cap=4 → take first 4
-    expect.same(List(p03, p05, p07, p08), result)
+    // Sorted by hex: p03, p05, p07, p08, p09, p10 → cap=3 → take first 3
+    expect.same(List(p03, p05, p07), result)
   }
 
   test("empty missing set returns empty") {
@@ -113,22 +122,19 @@ object StallDetectorEvictionTargetSelectionSuite extends FunSuite {
       selfId = p01,
       unresponsiveMissing = Set.empty,
       committee = committee10,
-      alreadyVotedBySelf = Set.empty
+      alreadyVotedBySelf = Set.empty,
+      minQuorum = quorum10
     )
     expect.same(List.empty[PeerId], result)
   }
 
   test("self-exclusion: never emits a vote targeting selfId (E2E regression)") {
-    // Regression for the 2026-04-21 E2E failure in Phase 1 sync. `clusterStorage.getResponsivePeers`
-    // does not list selfId (clusterStorage tracks other peers, not this node), so during a phase
-    // transition when self has not yet posted a declaration, self ends up in both `missingPeers`
-    // and (consequently) `unresponsiveMissing`. Prior to this guard, the node would emit
-    // `Signed[EvictionVote(targetPeer=selfId)]` — a self-eviction vote, which is nonsensical.
     val result = StallDetector.selectEvictionTargets(
       selfId = p01,
       unresponsiveMissing = Set(p01, p05, p06),
       committee = committee10,
-      alreadyVotedBySelf = Set.empty
+      alreadyVotedBySelf = Set.empty,
+      minQuorum = quorum10
     )
     expect(!result.contains(p01), s"result must never include selfId, got: $result").and(
       expect.same(List(p05, p06), result)
@@ -136,37 +142,107 @@ object StallDetectorEvictionTargetSelectionSuite extends FunSuite {
   }
 
   test("self-exclusion: selfId-only in unresponsiveMissing returns empty") {
-    // Edge case of the self-exclusion regression. If the ONLY candidate is selfId, we emit
-    // nothing. Previously this would emit a single self-eviction vote.
     val result = StallDetector.selectEvictionTargets(
       selfId = p01,
       unresponsiveMissing = Set(p01),
       committee = committee10,
-      alreadyVotedBySelf = Set.empty
+      alreadyVotedBySelf = Set.empty,
+      minQuorum = quorum10
     )
     expect.same(List.empty[PeerId], result)
   }
 
   test("multi-node agreement: different alreadyVoted sets still converge on prefix") {
     // Honest node A has voted for {p05}, node B has voted for {} — but neither is near cap.
-    // Missing peers exceed either's remaining slots. Each must pick a sorted prefix;
-    // because p05 is already-voted-by-A, A's remaining candidates differ — that's fine
-    // AS LONG AS both agree on the sorted ORDER, so that overlap between selections is
-    // maximized. We check that node A selects {p06, p07, p08, p09} (skipping p05 it already
-    // voted on) and node B selects {p05, p06, p07, p08} — the first 4 by hex-order.
+    // Each must pick a sorted prefix; because p05 is already-voted-by-A, A's remaining
+    // candidates differ — that's fine AS LONG AS both agree on the sorted ORDER.
+    // committee=10, minQuorum=7 → cap=3.
     val missing = Set(p05, p06, p07, p08, p09, p10)
-    val nodeAResult = StallDetector.selectEvictionTargets(p01, missing, committee10, Set(p05))
-    val nodeBResult = StallDetector.selectEvictionTargets(p01, missing, committee10, Set.empty)
-    // Node A: remainingSlots = 4 - 1 = 3 (already voted for 1). Excluded p05.
+    val nodeAResult = StallDetector.selectEvictionTargets(p01, missing, committee10, Set(p05), quorum10)
+    val nodeBResult = StallDetector.selectEvictionTargets(p01, missing, committee10, Set.empty, quorum10)
+    // Node A: cap=3, alreadyVoted={p05} → remainingSlots=2. Excluded p05 → {p06, p07}.
     expect
-      .same(List(p06, p07, p08), nodeAResult)
+      .same(List(p06, p07), nodeAResult)
       .and(
-        expect.same(List(p05, p06, p07, p08), nodeBResult)
+        // Node B: cap=3, no prior votes → first 3 in canonical order = {p05, p06, p07}.
+        expect.same(List(p05, p06, p07), nodeBResult)
       )
       .and(
-        // Overlap: {p06, p07, p08} — three peers that BOTH nodes vote on, guaranteeing
-        // quorum-forming progress even with per-voter caps.
-        expect(nodeAResult.toSet.intersect(nodeBResult.toSet).size === 3, "overlap insufficient for quorum progress")
+        // Overlap: {p06, p07} — peers BOTH nodes vote on, guaranteeing quorum-forming progress.
+        expect(nodeAResult.toSet.intersect(nodeBResult.toSet).size === 2, "overlap insufficient for quorum progress")
       )
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 2026-04-30 regression suite: quorum-aware cap prevents over-eviction
+  // ─────────────────────────────────────────────────────────────────────────
+
+  test("quorum-aware cap: 9-committee with 7-quorum caps at 2 (BFT f=2)") {
+    // The testnet deadlock pattern: post-restart 9-committee with 5+ silent peers.
+    // Pre-fix cap was ceil(9/3)=3, so honest voters agreed on 3 canonical-prefix
+    // targets. Cert-finalization shrunk committee 9→6, but minQuorum on a 6-committee
+    // (0.78 fraction) = 5 — and with 5+ silent peers, only 4 honest remained, breaking
+    // quorum. Quorum-aware cap = 9-7 = 2, leaving committee=7 which can still form 7-quorum.
+    val missing = Set(p03, p04, p05, p06, p07, p08, p09)
+    val result = StallDetector.selectEvictionTargets(
+      selfId = p01,
+      unresponsiveMissing = missing,
+      committee = committee9,
+      alreadyVotedBySelf = Set.empty,
+      minQuorum = quorum9
+    )
+    expect
+      .same(List(p03, p04), result)
+      .and(
+        expect(result.size <= committee9.size - quorum9, s"cap must respect committee_size - minQuorum bound, got $result")
+      )
+  }
+
+  test("quorum-aware cap: cap becomes 0 when committee is exactly at minQuorum") {
+    // 7-committee with 7-quorum: any eviction breaks quorum, so cap=0.
+    val committee7 = Set(p01, p02, p03, p04, p05, p06, p07)
+    val result = StallDetector.selectEvictionTargets(
+      selfId = p01,
+      unresponsiveMissing = Set(p05, p06),
+      committee = committee7,
+      alreadyVotedBySelf = Set.empty,
+      minQuorum = 7
+    )
+    expect.same(List.empty[PeerId], result)
+  }
+
+  test("quorum-aware cap: aggregate evictions across all honest voters bounded by cap") {
+    // Across a round, ALL honest voters together select the same canonical-prefix subset
+    // because of the deterministic sort. Even if 4 honest voters each call the function
+    // independently, the union of their selections has size <= cap. This test simulates
+    // that scenario: voters with empty alreadyVoted converge on the same cap-sized prefix.
+    val missing = Set(p03, p04, p05, p06, p07, p08, p09)
+    val voterA = StallDetector.selectEvictionTargets(p01, missing, committee9, Set.empty, quorum9)
+    val voterB = StallDetector.selectEvictionTargets(p02, missing, committee9, Set.empty, quorum9)
+    // Different selfId, but neither is in `missing` so the result depends only on the
+    // canonical sort of (missing - {selfId}). Both voters agree on {p03, p04}.
+    expect
+      .same(voterA, voterB)
+      .and(
+        expect(voterA.toSet.union(voterB.toSet).size <= committee9.size - quorum9, "aggregate selection must not exceed cap")
+      )
+  }
+
+  test("quorum-aware cap: large committee preserves f-fault tolerance") {
+    // BFT n=16, f=5, quorum=11 → cap = 16-11 = 5.
+    val pids = (1 to 16).map(i => pid(f"$i%02x" * 64)).toSet
+    val committee16 = pids
+    val missing = pids.toList.sortBy(_.value.value).take(8).toSet
+    val self = pids.toList.sortBy(_.value.value).head
+    val result = StallDetector.selectEvictionTargets(
+      selfId = self,
+      unresponsiveMissing = missing,
+      committee = committee16,
+      alreadyVotedBySelf = Set.empty,
+      minQuorum = 11
+    )
+    expect(result.size === 5, s"expected cap=5 for 16-committee/11-quorum, got ${result.size}").and(
+      expect(result.forall(committee16.contains), "all targets must be in committee")
+    )
   }
 }

@@ -313,7 +313,15 @@ object types {
     //     accept (the eligible-but-non-committee signers), so cluster-wide cold restart is
     //     required. Fixes the apr29 wedge where 7-9 valid eviction votes were rejected as
     //     `voter_not_in_committee` when only 4 came from the 9-member committee.
-    consensusSchemaVersion: Int = 9
+    //   - 10 (2026-04-30): two bundled changes — (a) BFT-correct eviction cap at
+    //     StallDetector.selectEvictionTargets (ceil(n/3) → committee.size - minQuorum,
+    //     equals f for n=3f+1); (b) testnet `min-observation-history-floor` lowered 30 → 10
+    //     so the chronic-non-signer classifier kicks in within ~10 rounds instead of ~30.
+    //     Combined fix for the apr30 post-restart deadlock where 5+ silent FACILITY_FOREVER
+    //     peers stayed in the 9-member committee, blocking 7-of-9 quorum on every round.
+    //     v9 nodes have a different floor and cap arithmetic, so cluster-wide cold restart
+    //     required.
+    consensusSchemaVersion: Int = 10
   ) {
 
     /** Deterministic hash of consensus-critical config values.

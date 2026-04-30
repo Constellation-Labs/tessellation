@@ -780,7 +780,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
                             selfId = selfId,
                             unresponsiveMissing = candidates,
                             committee = committeeSet,
-                            alreadyVotedBySelf = alreadyVotedBySelf
+                            alreadyVotedBySelf = alreadyVotedBySelf,
+                            minQuorum = minQuorum
                           )
                           newTargets.traverse_ { target =>
                             evictionVoter.emitEvictionVote(key, target, EvictionReason.Silent) >>
@@ -1045,19 +1046,30 @@ object StallDetector {
     *      the result — clusterStorage does not track self as Responsive, so `missingPeers - responsivePeers` ALWAYS includes self when self
     *      hasn't yet posted the declaration for the current phase. Without excluding self here, a node would emit a vote to evict itself
     *      whenever a phase-transition stall detector fires before the node has locally posted its declaration. Observed in E2E at round 5
-    *      bootstrap: gl0-0 emitted `Signed[EvictionVote(targetPeer=gl0-0)]` to 3 gossip targets. 3. Result size is at most
-    *      `ceil(committee.size / 3) - alreadyVotedBySelf.size`, bounded below by 0 (per-voter cap to prevent a single Byzantine voter from
-    *      evicting the honest majority). 4. Ordering is stable: for the same inputs (as Sets), this function returns the same list in the
-    *      same order every invocation. This is what lets different honest nodes vote for the same subset when more peers are missing than
-    *      any one voter's cap allows — otherwise cert quorum would starve (codex review finding #2).
+    *      bootstrap: gl0-0 emitted `Signed[EvictionVote(targetPeer=gl0-0)]` to 3 gossip targets. 3. Result size is at most `max(0,
+    *      committee.size - minQuorum) - alreadyVotedBySelf.size`, bounded below by 0. The cap equals the byzantine fault tolerance `f = n -
+    *      quorum`: for n=3f+1, quorum=2f+1, the cap is exactly f. Earlier versions used `ceil(committee.size / 3)` which slightly
+    *      over-counts (allows f+1 evictions on n=9), letting the aggregate of honest-voter agreed targets exceed `committee - quorum` and
+    *      driving the round into `QUORUM_INFEASIBLE_EVICTION` even when honest voters only emitted within their per-voter caps. The
+    *      quorum-derived cap guarantees that no aggregate set of cert-finalized evictions can shrink the committee below quorum. Observed
+    *      2026-04-30: post-restart 9-committee deadlocked when 5+ FACILITY_FOREVER cohort peers in the committee triggered eviction votes;
+    *      with the old cap of 3 every honest voter agreed on the same 3 canonical-prefix targets, drove cert assembly to shrink committee
+    *      below the 7-of-9 quorum, and broke liveness for hours. 4. Ordering is stable: for the same inputs (as Sets), this function
+    *      returns the same list in the same order every invocation. This is what lets different honest nodes vote for the same subset when
+    *      more peers are missing than any one voter's cap allows — otherwise cert quorum would starve (codex review finding #2).
     */
   private[consensus] def selectEvictionTargets(
     selfId: io.constellationnetwork.schema.peer.PeerId,
     unresponsiveMissing: Set[io.constellationnetwork.schema.peer.PeerId],
     committee: Set[io.constellationnetwork.schema.peer.PeerId],
-    alreadyVotedBySelf: Set[io.constellationnetwork.schema.peer.PeerId]
+    alreadyVotedBySelf: Set[io.constellationnetwork.schema.peer.PeerId],
+    minQuorum: Int
   ): List[io.constellationnetwork.schema.peer.PeerId] = {
-    val cap = math.max(1, math.ceil(committee.size.toDouble / 3.0).toInt)
+    // Quorum-aware cap: at most (committee.size - minQuorum) evictions can be
+    // certified before the next-round committee falls below quorum. With the
+    // canonical sort, all honest voters select the same prefix of length cap,
+    // so cert assembly converges on exactly that prefix and no more.
+    val cap = math.max(0, committee.size - minQuorum)
     val remainingSlots = (cap - alreadyVotedBySelf.size).max(0)
     if (remainingSlots == 0) List.empty
     else
