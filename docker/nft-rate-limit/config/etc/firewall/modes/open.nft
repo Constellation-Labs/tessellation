@@ -1,0 +1,36 @@
+# Atomic replace (see steady.nft).
+flush ruleset
+
+table inet firewall {
+    set pub_out_dst {
+        type ipv4_addr
+        flags dynamic
+        counter
+    }
+    set p2p_out_dst {
+        type ipv4_addr
+        flags dynamic
+        counter
+    }
+
+    counter pub_traffic { }
+    counter p2p_traffic { }
+    counter pub_out     { }
+    counter p2p_out     { }
+
+    chain input {
+        type filter hook input priority 0; policy accept;
+        tcp dport { @PUBLIC_PORTS@ } counter name pub_traffic accept
+        tcp dport { @P2P_PORTS@ }    counter name p2p_traffic accept
+    }
+
+    # Output observation only - no filtering, just counters per port group +
+    # per-destination-IP via dynamic counter sets.
+    chain output {
+        type filter hook output priority 0; policy accept;
+        tcp sport { @PUBLIC_PORTS@ } update @pub_out_dst { ip daddr } \
+            counter name pub_out accept
+        tcp sport { @P2P_PORTS@ }    update @p2p_out_dst { ip daddr } \
+            counter name p2p_out accept
+    }
+}
