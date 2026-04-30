@@ -51,7 +51,14 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
   path: Path,
   lastSnapshotInfo: SignallingRef[F, LastCheckpointInfo],
   concurrentStreams: Semaphore[F],
-  byteCache: Cache[SnapshotOrdinal, Array[Byte]]
+  byteCache: Cache[SnapshotOrdinal, Array[Byte]],
+  // Parallel cache populated at write time so per-ordinal requests can emit a strong-validator
+  // ETag of `<ordinal>-<snapshotHash>` rather than ordinal-only. The ordinal-only form would be
+  // a lying validator: ord-N can map to different bytes on different forks, and a peer holding
+  // stale (N, H₁) querying with `If-None-Match: "N"` would falsely 304 against the canonical
+  // (N, H₂). Snapshots loaded from disk after a restart that aren't in this cache fall back to
+  // emitting no ETag — strictly correct (always 200), just no optimization for that ordinal.
+  hashCache: Cache[SnapshotOrdinal, Hash]
 )(
   implicit encSigned: Encoder[Signed[S]],
   encState: Encoder[SI]
@@ -143,23 +150,27 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
       }
     }
 
-  /** ETag value for a given ordinal. Ordinals are immutable once finalized, so the ordinal value works as a strong validator: if a client's
-    * `If-None-Match` matches the current latest ordinal, the snapshot has not advanced and we can return 304.
+  /** ETag value for the immutable identity `(ordinal, snapshotHash)`. The HTTP strong-validator semantics demand that distinct bytes
+    * produce distinct ETag values; ordinal alone is insufficient because the same ordinal can carry different bytes across forks. Encoding
+    * both halves ensures a stale (ord, H₁) cache cannot 304 against the canonical (ord, H₂).
     */
-  def etagFor(ordinal: SnapshotOrdinal): EntityTag =
-    EntityTag(ordinal.value.value.toString, EntityTag.Strong)
+  def etagFor(ordinal: SnapshotOrdinal, snapshotHash: Hash): EntityTag =
+    EntityTag(s"${ordinal.value.value}-${snapshotHash.value}", EntityTag.Strong)
 
   def getAsHttpResponse(ordinal: SnapshotOrdinal): F[Option[Response[F]]] =
     readBytesWithCache(ordinal).map(_.map { bytes =>
-      Response[F](
-        status = Status.Ok,
-        headers = Headers(
-          `Content-Type`(MediaType.application.json),
-          `Content-Length`(bytes.length.toLong),
-          ETag(etagFor(ordinal))
-        ),
-        body = chunkedBodyStream(bytes)
+      // Emit ETag only when we have a cached hash for this ordinal (populated at write time).
+      // Cold-restart historical reads have no cached hash; we fall back to no-ETag → server
+      // always returns 200, client gets the body. Strictly correct, just no optimization for
+      // that single request — and the rarely-fetched-historical case is tolerant of that.
+      val baseHeaders = Headers(
+        `Content-Type`(MediaType.application.json),
+        `Content-Length`(bytes.length.toLong)
       )
+      val headers = hashCache
+        .getIfPresent(ordinal)
+        .fold(baseHeaders)(hash => baseHeaders.put(ETag(etagFor(ordinal, hash))))
+      Response[F](status = Status.Ok, headers = headers, body = chunkedBodyStream(bytes))
     })
 
   def getAsStream(ordinal: SnapshotOrdinal): F[Option[Stream[F, Byte]]] =
@@ -187,6 +198,10 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
       if (shouldUpdate) {
         writeJsonTupleStream(ordinal, snapshot, state) >>
           cleanupOldCombinedSnapshots() >>
+          // Populate hashCache so per-ordinal HTTP responses can emit the (ord, hash) ETag.
+          // Cleanup may evict entries older than `maxCheckpointsStored`; the cache's own
+          // capacity bound mirrors that retention so memory stays bounded.
+          Async[F].delay(hashCache.put(ordinal, snapshotHash)) >>
           lastSnapshotInfo.set(LastCheckpointInfo(ordinal, snapshot.epochProgress, snapshotHash))
       } else {
         Concurrent[F].unit
@@ -234,6 +249,12 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
   def getLatestCheckpointInfo: F[LastCheckpointInfo] =
     lastSnapshotInfo.get
 
+  /** Look up the cached snapshot-hash for a given ordinal. Populated at write time; returns `None` for ordinals not in the retention window
+    * (e.g. cold-restart historical reads). Used by the route layer to construct an `(ord, hash)` ETag when available.
+    */
+  def getCachedHash(ordinal: SnapshotOrdinal): F[Option[Hash]] =
+    Async[F].delay(hashCache.getIfPresent(ordinal))
+
   private def toOrdinalName(ordinal: SnapshotOrdinal): String =
     ordinal.value.value.toString
 }
@@ -249,6 +270,16 @@ object CombinedSnapshotCheckpointFileSystemStorage {
       .maximumSize(4)
       .build[SnapshotOrdinal, Array[Byte]]()
 
+  /** Hash cache keyed by ordinal. Populated at write time so the per-ordinal HTTP route can emit a strong-validator ETag of `(ordinal,
+    * snapshotHash)`. Capacity matches `maxCheckpointsStored` (default 2) plus a small slack — historical reads beyond that window fall back
+    * to no-ETag emission.
+    */
+  private def mkHashCache: Cache[SnapshotOrdinal, Hash] =
+    Scaffeine()
+      .expireAfterWrite(5.minutes)
+      .maximumSize(8)
+      .build[SnapshotOrdinal, Hash]()
+
   def make[
     F[_]: Async: Files,
     S <: Snapshot,
@@ -259,7 +290,8 @@ object CombinedSnapshotCheckpointFileSystemStorage {
     lastCheckpointInfo <- SignallingRef.of[F, LastCheckpointInfo](LastCheckpointInfo.empty())
     concurrentStreams <- Semaphore[F](5)
     cache = mkByteCache
-    storage = new CombinedSnapshotCheckpointFileSystemStorage[F, S, SI](path, lastCheckpointInfo, concurrentStreams, cache)
+    hashes = mkHashCache
+    storage = new CombinedSnapshotCheckpointFileSystemStorage[F, S, SI](path, lastCheckpointInfo, concurrentStreams, cache, hashes)
     _ <- storage.createDirectoryIfNotExists().rethrowT
   } yield storage
 }

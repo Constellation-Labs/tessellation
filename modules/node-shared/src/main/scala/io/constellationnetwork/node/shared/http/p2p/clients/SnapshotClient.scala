@@ -51,18 +51,28 @@ abstract class SnapshotClient[
       decodeCombinedBody(body)
     }
 
-  /** Conditional variant of [[getLatest]]. The client sends `If-None-Match: "<localOrdinal>"`; the server returns 304 NotModified (no body)
-    * when its tip equals `localOrdinal` and 200 with a fresh combined-snapshot stream otherwise.
+  /** Conditional variant of [[getLatest]]. The client sends `If-None-Match: "<localOrdinal>-<localHash>"`; the server returns 304
+    * NotModified (no body) when its tip matches the immutable identity `(ordinal, snapshotHash)` and 200 with a fresh combined-snapshot
+    * stream otherwise.
+    *
+    * The ETag value encodes the FULL immutable identity, not just the ordinal — different forks can produce different bytes at the same
+    * ordinal, so an ordinal-only validator could falsely 304 against canonical (N, H₂) when the client cached stale (N, H₁). Bundling the
+    * hash makes the conditional path correct under fork-recovery.
     *
     * Saves the ~60 MB body when a metagraph is already aligned with the L0 cluster's tip, which is the common case during steady-state. The
     * server-side ETag/304 path lives at `SnapshotRoutes.scala:137`. The 304-vs-200 distinction is encoded in the result type so the caller
     * can short-circuit its apply pipeline without needing to compare ordinals after-the-fact.
     *
     * Wire-format note: `If-None-Match` is purely additive — old servers ignore the header and always return 200, so this is
-    * forward+backward compatible across mixed-version clusters. New servers (alpha.46+) honour the conditional.
+    * forward+backward compatible across mixed-version clusters. v10.x ETag value format `"<ord>-<hash>"` is also strictly compatible: an
+    * old client sending `"<ord>"` to a new server gets a hash mismatch and returns 200 (correct fallback); a new client sending the full
+    * format to an old server also gets a mismatch and returns 200.
     */
-  def getLatestConditional(localOrdinal: SnapshotOrdinal): PeerResponse[F, Either[SnapshotClient.NotModified.type, (Signed[S], SI)]] = {
-    val tag = EntityTag(localOrdinal.value.value.toString, EntityTag.Strong)
+  def getLatestConditional(
+    localOrdinal: SnapshotOrdinal,
+    localHash: Hash
+  ): PeerResponse[F, Either[SnapshotClient.NotModified.type, (Signed[S], SI)]] = {
+    val tag = EntityTag(s"${localOrdinal.value.value}-${localHash.value}", EntityTag.Strong)
     val ifNoneMatch = `If-None-Match`(Some(cats.data.NonEmptyList.one(tag)))
 
     Kleisli { peer =>

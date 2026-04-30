@@ -147,22 +147,24 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
 
         case req @ GET -> Root / "latest" / "combined" / "stream" =>
           whenNodeReady {
-            // v9 (2026-04-29) ETag/304: well-behaved clients send `If-None-Match: <ordinal>` and
-            // get 304 instead of a fresh 72 MB body when the chain hasn't advanced. Resolves the
-            // observed pattern of external clients pulling combined-stream every 30-90s for the
-            // same snapshot. The cheap `getLatestOrdinal` directory listing replaces an expensive
-            // bytes-into-heap read for those cases.
-            combinedSnapshotCheckpointFileSystemStorage.getLatestOrdinal.flatMap {
-              case None => NotFound()
-              case Some(ordinal) =>
-                val expectedTag = combinedSnapshotCheckpointFileSystemStorage.etagFor(ordinal)
+            // v9 ETag/304 + v10.x correctness fix (2026-04-30): the strong validator now encodes
+            // the full immutable identity `(ordinal, snapshotHash)`. Ordinal alone is insufficient —
+            // ord-N can carry different bytes on different forks, so a stale-(N, H₁) cache claiming
+            // `If-None-Match: "N"` against the canonical (N, H₂) would falsely 304. Including the
+            // hash makes the 304 path correct under fork-recovery.
+            combinedSnapshotCheckpointFileSystemStorage.getLatestCheckpointInfo.flatMap { info =>
+              if (info.ordinal === SnapshotOrdinal.MinValue)
+                NotFound()
+              else {
+                val expectedTag = combinedSnapshotCheckpointFileSystemStorage.etagFor(info.ordinal, info.hash)
                 if (matchesIfNoneMatch(req, expectedTag))
                   Response[F](status = Status.NotModified, headers = Headers(ETag(expectedTag))).pure[F]
                 else
-                  combinedSnapshotCheckpointFileSystemStorage.getAsHttpResponse(ordinal).flatMap {
+                  combinedSnapshotCheckpointFileSystemStorage.getAsHttpResponse(info.ordinal).flatMap {
                     case Some(resp) => resp.pure[F]
                     case None       => NotFound()
                   }
+              }
             }
           }
 
@@ -174,17 +176,28 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
         case req @ GET -> Root / "latest" / "combined" / "checkpoint" / SnapshotOrdinalVar(ordinal) =>
           whenNodeReady {
             ordinalGuard(ordinal) {
-              // v9 ETag/304 mirror: per-ordinal endpoint. Ordinal in the URL is itself the
-              // ETag value (snapshots are immutable once finalized), so the conditional-request
-              // shortcut is even more straightforward here.
-              val expectedTag = combinedSnapshotCheckpointFileSystemStorage.etagFor(ordinal)
-              if (matchesIfNoneMatch(req, expectedTag))
-                Response[F](status = Status.NotModified, headers = Headers(ETag(expectedTag))).pure[F]
-              else
-                combinedSnapshotCheckpointFileSystemStorage.getAsHttpResponse(ordinal).flatMap {
-                  case Some(resp) => resp.pure[F]
-                  case None       => NotFound()
-                }
+              // v10.x (2026-04-30): per-ordinal ETag now encodes (ordinal, snapshotHash) for the
+              // same fork-correctness reason as the latest-stream variant above. We can only
+              // emit the ETag when the hash is in our cache (populated at write time, retained
+              // via the storage's bounded-size hashCache). Cold-restart historical reads with
+              // no cached hash bypass the conditional check entirely — strictly correct, just
+              // no optimization for that single request.
+              combinedSnapshotCheckpointFileSystemStorage.getCachedHash(ordinal).flatMap {
+                case Some(hash) =>
+                  val expectedTag = combinedSnapshotCheckpointFileSystemStorage.etagFor(ordinal, hash)
+                  if (matchesIfNoneMatch(req, expectedTag))
+                    Response[F](status = Status.NotModified, headers = Headers(ETag(expectedTag))).pure[F]
+                  else
+                    combinedSnapshotCheckpointFileSystemStorage.getAsHttpResponse(ordinal).flatMap {
+                      case Some(resp) => resp.pure[F]
+                      case None       => NotFound()
+                    }
+                case None =>
+                  combinedSnapshotCheckpointFileSystemStorage.getAsHttpResponse(ordinal).flatMap {
+                    case Some(resp) => resp.pure[F]
+                    case None       => NotFound()
+                  }
+              }
             }
           }
 
