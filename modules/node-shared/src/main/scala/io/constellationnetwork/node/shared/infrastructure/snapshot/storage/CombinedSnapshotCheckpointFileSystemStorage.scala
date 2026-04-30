@@ -143,13 +143,20 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
       }
     }
 
+  /** ETag value for a given ordinal. Ordinals are immutable once finalized, so the ordinal value works as a strong validator: if a client's
+    * `If-None-Match` matches the current latest ordinal, the snapshot has not advanced and we can return 304.
+    */
+  def etagFor(ordinal: SnapshotOrdinal): EntityTag =
+    EntityTag(ordinal.value.value.toString, EntityTag.Strong)
+
   def getAsHttpResponse(ordinal: SnapshotOrdinal): F[Option[Response[F]]] =
     readBytesWithCache(ordinal).map(_.map { bytes =>
       Response[F](
         status = Status.Ok,
         headers = Headers(
           `Content-Type`(MediaType.application.json),
-          `Content-Length`(bytes.length.toLong)
+          `Content-Length`(bytes.length.toLong),
+          ETag(etagFor(ordinal))
         ),
         body = chunkedBodyStream(bytes)
       )

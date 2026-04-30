@@ -398,7 +398,17 @@ object types {
     // (preserves legacy behaviour when config omits the new fields).
     perIpMaxRequestsPerWindow: Int = 0,
     perIpWindow: FiniteDuration = 1.minute,
-    perIpRetryAfterSeconds: Long = 5
+    perIpRetryAfterSeconds: Long = 5,
+    // Per-client-IP BANDWIDTH limit applied only to heavyweight snapshot routes
+    // (combined-stream + per-ordinal checkpoint stream). 0 bytes disables the limit.
+    //
+    // Default 300 MB / 1 minute = 5 MiB/s sustained per IP. A legitimate snapshot streamer
+    // pulls one 72 MB combined snapshot per round (~22-50s/round) ≈ 1.5 MiB/s, so this
+    // gives ~3-4× headroom for legitimate parallel reads while throttling bulk pollers.
+    //
+    // See PerIpBandwidthLimitMiddleware for mechanism + caveats. v9 (2026-04-29) addition.
+    perIpMaxBytesPerWindow: Long = 0L,
+    perIpBandwidthRetryAfterSeconds: Long = 5
   )
 
   case class SnapshotTimeoutsConfig(
