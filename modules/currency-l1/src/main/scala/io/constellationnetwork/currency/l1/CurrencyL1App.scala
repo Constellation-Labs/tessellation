@@ -180,7 +180,7 @@ abstract class CurrencyL1App(
         )
 
       rumorHandler = RumorHandlers
-        .make[IO](storages.cluster, services.localHealthcheck, sharedStorages.forkInfo)
+        .make[IO](storages.cluster, services.localHealthcheck)
         .handlers <+>
         blockRumorHandler[IO](queues.peerBlock) <+>
         allowSpendBlockRumorHandler[IO](queues.allowSpendBlocks) <+>

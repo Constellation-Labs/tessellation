@@ -33,7 +33,6 @@ import io.constellationnetwork.node.shared.infrastructure.gossip.event.{EventGos
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
-import io.constellationnetwork.node.shared.infrastructure.snapshot.SnapshotConsensusFunctions.gossipForkInfo
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{
   CurrencyArtifactMismatch,
   SnapshotDifferentThanExpected,
@@ -1474,7 +1473,6 @@ object CurrencySnapshotConsensusStateAdvancer {
           context
         ) >>
           recordMetrics(signedArtifact, hashedBinary, context) >>
-          gossipForkInfo(gossip, signedArtifact) >>
           notifyDataApplication(signedArtifact)
 
       private def recordMetrics(

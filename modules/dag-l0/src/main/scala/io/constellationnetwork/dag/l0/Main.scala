@@ -141,7 +141,7 @@ object Main
       )
 
       rumorHandler = RumorHandlers
-        .make[IO](storages.cluster, services.localHealthcheck, sharedStorages.forkInfo)
+        .make[IO](storages.cluster, services.localHealthcheck)
         .handlers <+>
         trustHandler(storages.trust) <+> ordinalTrustHandler(storages.trust) <+> services.consensus.handler
 
