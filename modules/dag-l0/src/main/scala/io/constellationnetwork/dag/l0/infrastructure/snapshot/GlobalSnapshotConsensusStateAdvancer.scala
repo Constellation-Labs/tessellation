@@ -35,7 +35,6 @@ import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalArtifactMismatch
-import io.constellationnetwork.node.shared.infrastructure.snapshot.SnapshotConsensusFunctions.gossipForkInfo
 import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.schema.gossip.Ordinal
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
@@ -2260,10 +2259,8 @@ object GlobalSnapshotConsensusStateAdvancer {
           } yield ok
         }
 
-        val gossipFork = HasherSelector[F].withCurrent(implicit h => gossipForkInfo(gossip, signedArtifact))
-
         persist.ifM(
-          recordMetrics(signedArtifact) >> gossipFork,
+          recordMetrics(signedArtifact),
           ConsensusLog.error(logger, Category.Lifecycle, signedArtifact.ordinal.show, "n/a", Event.PersistFailed) >> MonadThrow[F]
             .raiseError(
               new RuntimeException("Persist failed")

@@ -9,7 +9,6 @@ import cats.syntax.applicative._
 import cats.syntax.list._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
-import scala.reflect.runtime.universe.TypeTag
 
 import io.constellationnetwork.currency.schema.currency.SnapshotFee
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
@@ -32,8 +31,6 @@ import io.constellationnetwork.node.shared.domain.delegatedStake.{
   UpdateDelegatedStakeAcceptanceResult,
   UpdateDelegatedStakeValidator
 }
-import io.constellationnetwork.node.shared.domain.fork.ForkInfo
-import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.{UpdateNodeParametersAcceptanceManager, UpdateNodeParametersValidator}
 import io.constellationnetwork.node.shared.domain.nodeCollateral.{UpdateNodeCollateralAcceptanceManager, UpdateNodeCollateralValidator}
 import io.constellationnetwork.node.shared.domain.priceOracle.{PriceStateUpdater, PricingUpdateValidator}
@@ -82,19 +79,6 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
 
   type Res = (Supervisor[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO])
-
-  def mkMockGossip[B](spreadRef: Ref[IO, List[B]]): Gossip[IO] =
-    new Gossip[IO] {
-      override def spread[A: TypeTag: Encoder](rumorContent: A): IO[Unit] =
-        spreadRef.update(rumorContent.asInstanceOf[B] :: _)
-
-      override def spreadCommon[A: TypeTag: Encoder](rumorContent: A): IO[Unit] =
-        IO.raiseError(new Exception("spreadCommon: Unexpected call"))
-
-      override def spreadDirect[A: TypeTag: Encoder](rumorContent: A, targets: Set[PeerId]): IO[Unit] = IO.unit
-
-      override def setDirectPushFn(fn: Gossip.DirectPushFn[IO]): IO[Unit] = IO.unit
-    }
 
   def mkSignedArtifacts()(
     implicit sp: SecurityProvider[IO],
@@ -476,27 +460,6 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         _ => None.pure[IO]
       )
     } yield expect.same(true, result.isLeft)
-  }
-
-  test("gossip signed artifacts") { res =>
-    implicit val (_, j, h, sp, m) = res
-
-    for {
-      gossiped <- Ref.of(List.empty[ForkInfo])
-      mockGossip = mkMockGossip(gossiped)
-
-      (signedLastArtifact, _) <- mkSignedArtifacts()
-
-      _ <- SnapshotConsensusFunctions.gossipForkInfo(mockGossip, signedLastArtifact)
-
-      expected <- h
-        .hash(signedLastArtifact)
-        .map { h =>
-          List(ForkInfo(signedLastArtifact.value.ordinal, h))
-        }
-        .handleError(_ => List.empty)
-      actual <- gossiped.get
-    } yield expect.eql(expected, actual)
   }
 
   test("shouldUseDelegatedRewards - verifies reward selection logic based on ordinal and epoch thresholds") { res =>
