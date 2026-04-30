@@ -41,11 +41,12 @@ trait GlobalL0Service[F[_]] {
   def pullLatestSnapshot: F[LatestSnapshotTuple]
   def pullLatestSnapshotFromRandomPeer: F[LatestSnapshotTuple]
 
-  /** Conditional variant: returns `None` when the chosen L0 peer reports the same tip ordinal as `localOrdinal` (304 NotModified at the
-    * HTTP layer); returns `Some(tuple)` when the peer has advanced. Eliminates the redundant ~60 MB combined-snapshot body when a metagraph
-    * or follower is already aligned with the L0 cluster's tip — the steady-state case.
+  /** Conditional variant: returns `None` when the chosen L0 peer reports the same immutable identity `(ordinal, hash)` as the caller's
+    * local snapshot (304 NotModified at the HTTP layer); returns `Some(tuple)` when the peer has advanced or has a different content at the
+    * same ordinal (fork-recovery). Eliminates the redundant ~60 MB combined-snapshot body when a metagraph or follower is already aligned
+    * with the L0 cluster's tip — the steady-state case.
     */
-  def pullLatestSnapshotIfNewer(localOrdinal: SnapshotOrdinal): F[Option[LatestSnapshotTuple]]
+  def pullLatestSnapshotIfNewer(localOrdinal: SnapshotOrdinal, localHash: Hash): F[Option[LatestSnapshotTuple]]
 
   /** Cheap "what's the latest epoch progress?" query for sync-check loops that don't need the snapshot body. Hits the tiny
     * `/global-snapshots/latest/metadata` endpoint (~232 bytes) and returns the `epochProgress` field added in v10.x.
@@ -97,12 +98,14 @@ object GlobalL0Service {
       def pullLatestSnapshotFromRandomPeer: F[LatestSnapshotTuple] =
         globalL0ClusterStorage.getRandomPeer >>= pullLatestSnapshotFromPeer
 
-      def pullLatestSnapshotIfNewer(localOrdinal: SnapshotOrdinal): F[Option[LatestSnapshotTuple]] =
+      def pullLatestSnapshotIfNewer(localOrdinal: SnapshotOrdinal, localHash: Hash): F[Option[LatestSnapshotTuple]] =
         globalL0ClusterStorage.getRandomPeer.flatMap { l0Peer =>
-          l0GlobalSnapshotClient.getLatestConditional(localOrdinal).run(l0Peer).flatMap {
+          l0GlobalSnapshotClient.getLatestConditional(localOrdinal, localHash).run(l0Peer).flatMap {
             case Left(_) =>
               logger
-                .debug(s"L0 peer ${l0Peer.id.show} reports same tip ordinal=${localOrdinal.show}; skipping combined-snapshot fetch")
+                .debug(
+                  s"L0 peer ${l0Peer.id.show} matches our identity (ord=${localOrdinal.show}, hash=${localHash.show}); skipping combined-snapshot fetch"
+                )
                 .as(none)
             case Right((snapshot, state)) =>
               HasherSelector[F]
