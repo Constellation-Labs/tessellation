@@ -152,19 +152,33 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
             // ord-N can carry different bytes on different forks, so a stale-(N, H₁) cache claiming
             // `If-None-Match: "N"` against the canonical (N, H₂) would falsely 304. Including the
             // hash makes the 304 path correct under fork-recovery.
-            combinedSnapshotCheckpointFileSystemStorage.getLatestCheckpointInfo.flatMap { info =>
-              if (info.ordinal === SnapshotOrdinal.MinValue)
-                NotFound()
-              else {
-                val expectedTag = combinedSnapshotCheckpointFileSystemStorage.etagFor(info.ordinal, info.hash)
-                if (matchesIfNoneMatch(req, expectedTag))
-                  Response[F](status = Status.NotModified, headers = Headers(ETag(expectedTag))).pure[F]
-                else
-                  combinedSnapshotCheckpointFileSystemStorage.getAsHttpResponse(info.ordinal).flatMap {
-                    case Some(resp) => resp.pure[F]
-                    case None       => NotFound()
-                  }
-              }
+            //
+            // "Anything stored?" comes from `getLatestOrdinal` (a directory listing on disk). Using
+            // the in-memory `getLatestCheckpointInfo` Ref instead would 404 on cold-restart until
+            // the first new write — that Ref is reset to `empty()` on startup and only repopulated
+            // by `tryWrite`. The hash cache is allowed to miss; we just skip ETag emission in that
+            // case rather than 404. This matches the per-ord checkpoint route's behavior below.
+            combinedSnapshotCheckpointFileSystemStorage.getLatestOrdinal.flatMap {
+              case None => NotFound()
+              case Some(ordinal) =>
+                combinedSnapshotCheckpointFileSystemStorage.getCachedHash(ordinal).flatMap {
+                  case Some(hash) =>
+                    val expectedTag = combinedSnapshotCheckpointFileSystemStorage.etagFor(ordinal, hash)
+                    if (matchesIfNoneMatch(req, expectedTag))
+                      Response[F](status = Status.NotModified, headers = Headers(ETag(expectedTag))).pure[F]
+                    else
+                      combinedSnapshotCheckpointFileSystemStorage.getAsHttpResponse(ordinal).flatMap {
+                        case Some(resp) => resp.pure[F]
+                        case None       => NotFound()
+                      }
+                  case None =>
+                    // Cold-restart historical: hash unknown, skip the conditional check and serve
+                    // the body. Strictly correct, just no optimization for this single request.
+                    combinedSnapshotCheckpointFileSystemStorage.getAsHttpResponse(ordinal).flatMap {
+                      case Some(resp) => resp.pure[F]
+                      case None       => NotFound()
+                    }
+                }
             }
           }
 
