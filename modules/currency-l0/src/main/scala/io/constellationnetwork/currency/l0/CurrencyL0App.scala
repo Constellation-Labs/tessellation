@@ -184,7 +184,7 @@ abstract class CurrencyL0App(
         dataApplicationService.zip(storages.calculatedStateStorage)
       )
       rumorHandler = RumorHandlers
-        .make[IO](storages.cluster, services.localHealthcheck, sharedStorages.forkInfo)
+        .make[IO](storages.cluster, services.localHealthcheck)
         .handlers <+>
         services.consensus.handler
 

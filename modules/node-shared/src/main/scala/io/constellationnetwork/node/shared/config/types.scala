@@ -48,7 +48,6 @@ object types {
     trust: SharedTrustConfig,
     snapshot: SharedSnapshotConfig,
     feeConfigs: Map[AppEnvironment, Map[SnapshotOrdinal, FeeCalculatorConfig]],
-    forkInfoStorage: ForkInfoStorageConfig,
     priorityPeerIds: Map[AppEnvironment, NonEmptySet[PeerId]],
     lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal],
     lastLegacyStateProofOrdinal: Map[AppEnvironment, SnapshotOrdinal],
@@ -78,7 +77,6 @@ object types {
     priorityPeerIds: Option[NonEmptySet[PeerId]],
     snapshotSize: SnapshotSizeConfig,
     feeConfigs: SortedMap[SnapshotOrdinal, FeeCalculatorConfig],
-    forkInfoStorage: ForkInfoStorageConfig,
     lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal],
     lastLegacyStateProofOrdinal: Map[AppEnvironment, SnapshotOrdinal],
     incrementalDelegatedStakingStartingOrdinal: Map[AppEnvironment, SnapshotOrdinal],
@@ -561,10 +559,6 @@ object types {
     checkPeersMaxDelay: FiniteDuration,
     additionalDiscoveryDelay: FiniteDuration,
     minPeers: PosInt
-  )
-
-  case class ForkInfoStorageConfig(
-    maxSize: PosInt
   )
 
   case class AddressesConfig(locked: Set[Address])
