@@ -510,9 +510,20 @@ object GlobalSnapshotConsensusStateCreator {
         // enough history yet), OR in a solo-bootstrap tail (only one peer graduated),
         // fall back to `active` — same as the pre-filter behavior, self-healing once
         // more peers reach the threshold.
+        // v11 (2026-04-30): kick-fast leader graduation. Two conditions, both required:
+        //   (a) participated >= minParticipationObservations — peer has enough history that
+        //       quality stats are meaningful (rejects unproven new peers)
+        //   (b) completed >= 1 — peer has ACTUALLY FINALIZED at least one round as a member
+        //       of `roundStartFacilitators`. Closes the apr30 trap where chronic-flaky peers
+        //       (890a641e, c96c3a41) accumulated `participated` counts in past rounds but had
+        //       `completed == 0`, kept getting elected leader, never delivered a proposal, and
+        //       stalled rounds indefinitely. Under the operator's kick-fast policy: a peer that
+        //       has NEVER finalized a round is not lead-eligible, regardless of how long they
+        //       have been around. Recovery path: if the peer comes back and finalizes a single
+        //       round (as a non-leader follower), they become lead-eligible again.
         graduatedLeaderPool = active.filter { pid =>
-          val (_, participated) = lastOutcome.peerQuality.getOrElse(pid, (0, 0))
-          participated >= config.minParticipationObservations
+          val (completed, participated) = lastOutcome.peerQuality.getOrElse(pid, (0, 0))
+          participated >= config.minParticipationObservations && completed >= 1
         }
         leaderPool = if (graduatedLeaderPool.size >= 2) graduatedLeaderPool else active
         leader = facilitatorSelector.selectLeaderWeighted(leaderPool, entropy, qualityScores = lastOutcome.peerQuality)
