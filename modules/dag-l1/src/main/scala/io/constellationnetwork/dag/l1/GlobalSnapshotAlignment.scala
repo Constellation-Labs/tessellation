@@ -69,11 +69,18 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
     for {
       _ <- logger.info("Checking global snapshot alignment")
       maybeLastSnapshotOnStorage <- sharedStorages.lastGlobalSnapshot.get
-      lastCombinedGlobalSnapshotFromNetwork <- services.globalL0.pullLatestSnapshot
+      // Conditional fetch: when we have a local snapshot, send `If-None-Match: <localOrdinal>`.
+      // 304 means the L0 peer is at the same ordinal we are — no possible TooFarEpochProgress
+      // sync issue, no body to apply, no work needed. 200 means the peer has advanced; do the
+      // existing epoch-progress comparison. Saves the ~60 MB combined-snapshot body on every
+      // alignment cycle when the L1 is already aligned with L0 (the common steady-state).
       _ <- maybeLastSnapshotOnStorage match {
         case Some(lastSnapshotOnStorage) =>
-          val (lastGlobalSnapshotFromNetwork, _) = lastCombinedGlobalSnapshotFromNetwork
-          checkSynchronization(lastSnapshotOnStorage, lastGlobalSnapshotFromNetwork)
+          services.globalL0.pullLatestSnapshotIfNewer(lastSnapshotOnStorage.ordinal).flatMap {
+            case None => Async[F].unit // 304 — already aligned, comparison redundant
+            case Some((lastGlobalSnapshotFromNetwork, _)) =>
+              checkSynchronization(lastSnapshotOnStorage, lastGlobalSnapshotFromNetwork)
+          }
         case None =>
           val message = "Last snapshot not found on storage, forcing re-download!"
           logger.info(message) >>
