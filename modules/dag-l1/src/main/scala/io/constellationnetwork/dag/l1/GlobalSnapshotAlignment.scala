@@ -107,11 +107,13 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
               // Tier 2 fallback: peer's metadata endpoint omitted epochProgress → older
               // server. Use the 304-conditional combined-stream so we still avoid the
               // body when aligned, while remaining correct against pre-v10.x peers.
-              services.globalL0.pullLatestSnapshotIfNewer(lastSnapshotOnStorage.ordinal).flatMap {
-                case None => Async[F].unit // 304 — aligned
-                case Some((lastGlobalSnapshotFromNetwork, _)) =>
-                  checkSynchronization(lastSnapshotOnStorage, lastGlobalSnapshotFromNetwork)
-              }
+              services.globalL0
+                .pullLatestSnapshotIfNewer(lastSnapshotOnStorage.ordinal, lastSnapshotOnStorage.hash)
+                .flatMap {
+                  case None => Async[F].unit // 304 — aligned by full (ord, hash) identity
+                  case Some((lastGlobalSnapshotFromNetwork, _)) =>
+                    checkSynchronization(lastSnapshotOnStorage, lastGlobalSnapshotFromNetwork)
+                }
           }
         case None =>
           val message = "Last snapshot not found on storage, forcing re-download!"
