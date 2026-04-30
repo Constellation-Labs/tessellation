@@ -10,7 +10,11 @@ import io.constellationnetwork.node.shared.config.types.{SnapshotServingConfig, 
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.ext.http4s.SnapshotOrdinalVar
-import io.constellationnetwork.node.shared.http.p2p.middlewares.{ConcurrencyLimitMiddleware, PerIpRateLimitMiddleware}
+import io.constellationnetwork.node.shared.http.p2p.middlewares.{
+  ConcurrencyLimitMiddleware,
+  PerIpBandwidthLimitMiddleware,
+  PerIpRateLimitMiddleware
+}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
   CombinedSnapshotCheckpointFileSystemStorage,
   SnapshotLocalFileSystemStorage
@@ -27,7 +31,7 @@ import io.circe.{Encoder, Printer}
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
-import org.http4s.headers.`Content-Type`
+import org.http4s.headers.{ETag, `Content-Type`, `If-None-Match`}
 import org.http4s.server.middleware.Timeout
 import shapeless.HNil
 import shapeless.syntax.singleton._
@@ -42,7 +46,8 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
   cachedCombinedResponse: CachedCombinedResponse[F, S, SI],
   combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, SI],
   publicConcurrencyLimit: Option[HttpRoutes[F] => HttpRoutes[F]] = None,
-  publicPerIpRateLimit: Option[HttpRoutes[F] => HttpRoutes[F]] = None
+  publicPerIpRateLimit: Option[HttpRoutes[F] => HttpRoutes[F]] = None,
+  publicPerIpBandwidthLimit: Option[HttpRoutes[F] => HttpRoutes[F]] = None
 ) extends Http4sDsl[F]
     with PublicRoutes[F]
     with P2PRoutes[F] {
@@ -55,6 +60,15 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
 
   private val serviceUnavailableNodeNotReady: F[Response[F]] =
     ServiceUnavailable(("message" ->> "Node is not ready yet") :: HNil)
+
+  /** True iff the request's `If-None-Match` header indicates the client already holds the resource at `expectedTag`. Honours the RFC-7232
+    * wildcard form (`If-None-Match: *`) and the multi-tag list form. Comparison is by tag value (strong validators).
+    */
+  private def matchesIfNoneMatch(req: Request[F], expectedTag: EntityTag): Boolean =
+    req.headers.get[`If-None-Match`].exists {
+      case `If-None-Match`(None)       => true // wildcard `*`
+      case `If-None-Match`(Some(tags)) => tags.exists(_.tag == expectedTag.tag)
+    }
 
   private def validStateForSnapshotReturn(state: NodeState): Boolean = state === NodeState.Ready
 
@@ -120,11 +134,24 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
             }
           }
 
-        case GET -> Root / "latest" / "combined" / "stream" =>
+        case req @ GET -> Root / "latest" / "combined" / "stream" =>
           whenNodeReady {
-            combinedSnapshotCheckpointFileSystemStorage.getLatestAsHttpResponse.flatMap {
-              case Some(resp) => resp.pure[F]
-              case None       => NotFound()
+            // v9 (2026-04-29) ETag/304: well-behaved clients send `If-None-Match: <ordinal>` and
+            // get 304 instead of a fresh 72 MB body when the chain hasn't advanced. Resolves the
+            // observed pattern of external clients pulling combined-stream every 30-90s for the
+            // same snapshot. The cheap `getLatestOrdinal` directory listing replaces an expensive
+            // bytes-into-heap read for those cases.
+            combinedSnapshotCheckpointFileSystemStorage.getLatestOrdinal.flatMap {
+              case None => NotFound()
+              case Some(ordinal) =>
+                val expectedTag = combinedSnapshotCheckpointFileSystemStorage.etagFor(ordinal)
+                if (matchesIfNoneMatch(req, expectedTag))
+                  Response[F](status = Status.NotModified, headers = Headers(ETag(expectedTag))).pure[F]
+                else
+                  combinedSnapshotCheckpointFileSystemStorage.getAsHttpResponse(ordinal).flatMap {
+                    case Some(resp) => resp.pure[F]
+                    case None       => NotFound()
+                  }
             }
           }
 
@@ -133,15 +160,19 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
             combinedSnapshotCheckpointFileSystemStorage.getLatestCheckpointInfo.flatMap(latestCheckpointInfo => Ok(latestCheckpointInfo))
           }
 
-        case GET -> Root / "latest" / "combined" / "checkpoint" / SnapshotOrdinalVar(ordinal) =>
+        case req @ GET -> Root / "latest" / "combined" / "checkpoint" / SnapshotOrdinalVar(ordinal) =>
           whenNodeReady {
             ordinalGuard(ordinal) {
-              combinedSnapshotCheckpointFileSystemStorage
-                .getAsStream(ordinal)
-                .flatMap {
-                  case Some(byteStream) =>
-                    Ok(byteStream, org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
-                  case None => NotFound()
+              // v9 ETag/304 mirror: per-ordinal endpoint. Ordinal in the URL is itself the
+              // ETag value (snapshots are immutable once finalized), so the conditional-request
+              // shortcut is even more straightforward here.
+              val expectedTag = combinedSnapshotCheckpointFileSystemStorage.etagFor(ordinal)
+              if (matchesIfNoneMatch(req, expectedTag))
+                Response[F](status = Status.NotModified, headers = Headers(ETag(expectedTag))).pure[F]
+              else
+                combinedSnapshotCheckpointFileSystemStorage.getAsHttpResponse(ordinal).flatMap {
+                  case Some(resp) => resp.pure[F]
+                  case None       => NotFound()
                 }
             }
           }
@@ -194,9 +225,20 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
 
   protected val public: HttpRoutes[F] = {
     val routes = makeRoutes(rejectAboveHead)
-    // Order: rate limit runs first (cheap reject), concurrency limit second. Both are optional.
+    // Composition order (innermost first):
+    //   handler
+    //   ──> ConcurrencyLimitMiddleware    (semaphore acquire — cheapest "is server busy?")
+    //   ──> PerIpBandwidthLimitMiddleware (post-handler peek at Content-Length, pre-egress reject)
+    //   ──> PerIpRateLimitMiddleware      (counter check, cheapest reject — outermost)
+    //
+    // v9 (2026-04-29) added the bandwidth middleware to address the apr29 observation that
+    // request-rate caps (30 req/min) miss the actual cost dimension when each request is 72 MB.
+    // The bandwidth middleware applies only to heavyweight snapshot routes via its `appliesTo`
+    // predicate; cheap probes (`/latest/ordinal`, `/latest/metadata`) bypass it so a single
+    // big fetch doesn't starve the same client's lightweight polls.
     val withConcurrency = publicConcurrencyLimit.fold(routes)(_(routes))
-    publicPerIpRateLimit.fold(withConcurrency)(_(withConcurrency))
+    val withBandwidth = publicPerIpBandwidthLimit.fold(withConcurrency)(_(withConcurrency))
+    publicPerIpRateLimit.fold(withBandwidth)(_(withBandwidth))
   }
   protected val p2p: HttpRoutes[F] = makeRoutes(_ => action => action)
 }
@@ -221,6 +263,20 @@ object SnapshotRoutes {
       perIpRateLimit <- snapshotServingConfig
         .filter(cfg => cfg.perIpMaxRequestsPerWindow > 0 && cfg.perIpWindow.toMillis > 0)
         .traverse(cfg => PerIpRateLimitMiddleware[F](cfg.perIpMaxRequestsPerWindow, cfg.perIpWindow, cfg.perIpRetryAfterSeconds))
+      // Only build the bandwidth limiter when the byte cap is positive. Restricted to heavyweight
+      // routes only via the appliesTo predicate. The cheap probes (/latest/ordinal,
+      // /latest/metadata, /latest/combined/checkpoint/info) MUST bypass so an IP that just
+      // burned its budget on combined/stream can still ETag-check via /checkpoint/info.
+      perIpBandwidthLimit <- snapshotServingConfig
+        .filter(cfg => cfg.perIpMaxBytesPerWindow > 0L && cfg.perIpWindow.toMillis > 0)
+        .traverse { cfg =>
+          PerIpBandwidthLimitMiddleware[F](
+            maxBytesPerWindow = cfg.perIpMaxBytesPerWindow,
+            windowDuration = cfg.perIpWindow,
+            retryAfterSeconds = cfg.perIpBandwidthRetryAfterSeconds,
+            appliesTo = (req: Request[F]) => isHeavyweightSnapshotRoute(req)
+          )
+        }
     } yield
       new SnapshotRoutes[F, S, SI](
         snapshotStorage,
@@ -232,8 +288,23 @@ object SnapshotRoutes {
         cachedCombined,
         combinedSnapshotCheckpointFileSystemStorage,
         concurrencyLimit,
-        perIpRateLimit
+        perIpRateLimit,
+        perIpBandwidthLimit
       )
+
+  /** Predicate identifying heavyweight snapshot routes that PerIpBandwidthLimitMiddleware should enforce on. Scope is intentionally narrow:
+    * only the routes that materialize multi-MB snapshot bodies. Lightweight metadata routes (`/latest/ordinal`, `/latest/metadata`,
+    * `/latest/combined/checkpoint/info`) bypass so they remain available to a client that just burned its bandwidth budget — those are the
+    * very probes a well-behaved client should use to back off.
+    */
+  def isHeavyweightSnapshotRoute[F[_]](req: Request[F]): Boolean = {
+    val path = req.uri.path.segments.map(_.encoded).toList
+    path match {
+      case "latest" :: "combined" :: "stream" :: Nil                             => true
+      case "latest" :: "combined" :: "checkpoint" :: ord :: Nil if ord != "info" => true
+      case _                                                                     => false
+    }
+  }
 }
 
 trait CachedCombinedResponse[F[_], S <: Snapshot, SI <: SnapshotInfo[_]] {
