@@ -230,9 +230,13 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
     threshold: Int,
     viewNumber: Int = 0
   ): PeerId = {
+    // v11 (2026-04-30): kick-fast leader graduation. Mirrors production at
+    // GlobalSnapshotConsensusStateCreator.scala:513 — a peer must have BOTH enough history
+    // AND at least one completed round to be lead-eligible. Closes the chronic-flaky leader
+    // trap where peers accumulated participated counts but had completed=0.
     val graduated = active.filter { p =>
-      val (_, participated) = scores.getOrElse(p, (0, 0))
-      participated >= threshold
+      val (completed, participated) = scores.getOrElse(p, (0, 0))
+      participated >= threshold && completed >= 1
     }
     val pool = if (graduated.size >= 2) graduated else active
     selector.selectLeaderWeighted(pool, entropy, viewNumber, scores)
@@ -339,6 +343,93 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
       expect(leaders.forall(proven.contains), "leader escaped graduated pool").and(
         expect.same(proven.size, leaders.distinct.size)
       )
+    }
+  }
+
+  // === v11 (2026-04-30) kick-fast leader graduation tests ===
+  //
+  // Regression coverage for the apr30 testnet deadlock: chronic-flaky peers (890a641e,
+  // c96c3a41) had `participated >= minObservations` but `completed == 0` because they
+  // never finalized any round. Pre-v11 graduation filter ONLY checked `participated`,
+  // letting them lead → no proposal → infinite stall. The fix adds `completed >= 1`.
+
+  test("kick-fast: peer with high participated but zero completions is rejected as leader") {
+    IO {
+      // Models 890a641e exactly: in committee for 12 rounds, finalized 0.
+      val flaky = pid("flaky-with-high-participation-zero-completed")
+      val proven = (1 to 3).map(i => pid(s"proven$i")).toList
+      val active = flaky +: proven
+      val scores: Map[PeerId, (Int, Int)] = Map(
+        flaky -> (0, 12) // participated=12 (well above threshold), completed=0 (never delivered)
+      ) ++ proven.map(p => p -> (10, 10)).toMap
+      val threshold = 5
+
+      val entropies = (0 until 50).map(i => Hash.fromBytes(s"entropy$i".getBytes("UTF-8")))
+      val leaders = entropies.map(e => selectGraduatedLeader(active, e, scores, threshold))
+
+      expect(
+        !leaders.contains(flaky),
+        s"chronic-flaky peer (participated=12, completed=0) was elected leader: ${leaders.count(_ == flaky)} times in 50 entropies"
+      ).and(
+        expect(leaders.forall(proven.contains), "every leader must come from proven set")
+      )
+    }
+  }
+
+  test("kick-fast: peer with one completion graduates back to lead-eligible") {
+    IO {
+      // Recovery path: a peer that previously never completed now has completed=1.
+      // It SHOULD be lead-eligible — the rule is "at least one win", not "perfect record".
+      val recovered = pid("recovered-one-win")
+      val proven = (1 to 2).map(i => pid(s"proven$i")).toList
+      val active = recovered +: proven
+      val scores: Map[PeerId, (Int, Int)] = Map(
+        recovered -> (1, 12) // 1 success out of 12 — bad ratio but at least demonstrated capability
+      ) ++ proven.map(p => p -> (10, 10)).toMap
+      val threshold = 5
+
+      // With recovered+proven all eligible (3 in graduatedLeaderPool >= 2), view rotation
+      // should be able to land on `recovered` for at least some viewNumbers.
+      val entropy = Hash.fromBytes("rotation-includes-recovered".getBytes("UTF-8"))
+      val leaders = (0 until 3).map(v => selectGraduatedLeader(active, entropy, scores, threshold, v))
+
+      expect(leaders.contains(recovered) || leaders.toSet.size == 3, s"recovered peer never reached leader slot: $leaders")
+    }
+  }
+
+  test("kick-fast: deterministic across nodes — same (active, scores, threshold, view) → same leader") {
+    IO {
+      // Critical for fork safety: two honest nodes with identical inputs MUST select the same
+      // leader. The graduation filter must be a pure function of consensus-agreed state.
+      val flaky = pid("flaky")
+      val proven = (1 to 5).map(i => pid(s"proven$i")).toList
+      val active = flaky +: proven
+      val scores: Map[PeerId, (Int, Int)] = Map(flaky -> (0, 15)) ++ proven.map(p => p -> (8, 10)).toMap
+      val threshold = 5
+
+      val entropy = Hash.fromBytes("determinism".getBytes("UTF-8"))
+      val nodeA = selectGraduatedLeader(active, entropy, scores, threshold, viewNumber = 2)
+      val nodeB = selectGraduatedLeader(active, entropy, scores, threshold, viewNumber = 2)
+
+      expect.same(nodeA, nodeB)
+    }
+  }
+
+  test("kick-fast: all-flaky cluster falls back to active (cluster of zero-completion peers)") {
+    IO {
+      // Edge case: nobody has any completions yet. This shouldn't happen in steady state, but
+      // could occur on cold genesis or after a catastrophic restart with cleared peerQuality.
+      // The size>=2 fallback rule still applies — pool is `active` so cluster can bootstrap.
+      val active = (1 to 5).map(i => pid(s"unproven$i")).toList
+      val scores: Map[PeerId, (Int, Int)] = active.map(_ -> (0, 12)).toMap // all participated=12, completed=0
+      val threshold = 5
+      val entropy = Hash.fromBytes("all-flaky".getBytes("UTF-8"))
+
+      val leader = selectGraduatedLeader(active, entropy, scores, threshold)
+
+      // Filter rejects everyone (completed >= 1 fails for all). Falls back to `active`. Leader
+      // chosen from active — could be any of them, just must be valid.
+      expect(active.contains(leader), s"leader $leader not in active fallback pool")
     }
   }
 }

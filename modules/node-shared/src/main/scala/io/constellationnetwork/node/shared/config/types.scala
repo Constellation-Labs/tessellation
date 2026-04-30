@@ -321,7 +321,17 @@ object types {
     //     peers stayed in the 9-member committee, blocking 7-of-9 quorum on every round.
     //     v9 nodes have a different floor and cap arithmetic, so cluster-wide cold restart
     //     required.
-    consensusSchemaVersion: Int = 10
+    //   - 11 (2026-04-30): kick-fast leader graduation. Adds `completed >= 1` to the
+    //     leader-eligibility filter at GlobalSnapshotConsensusStateCreator (and currency-l0
+    //     mirror). Pre-v11 the filter only checked `participated >= minObservations`, letting
+    //     chronic-flaky peers with high participated counts but zero completed rounds keep
+    //     getting elected leader → no proposal → indefinite stall (the apr30 18:00 UTC
+    //     wedge: 890a641e and c96c3a41 stuck round 3110992 for 36+ minutes). Under the
+    //     operator's "kick-fast, recover-slow" policy, peers must demonstrate at least one
+    //     completed round before they can lead. Recovery: complete one round as follower →
+    //     re-enter lead-eligible pool. v10 nodes select different leaders, so cluster-wide
+    //     cold restart required.
+    consensusSchemaVersion: Int = 11
   ) {
 
     /** Deterministic hash of consensus-critical config values.
