@@ -39,6 +39,12 @@ trait GlobalL0Service[F[_]] {
   type LatestSnapshotTuple = (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)
   def pullLatestSnapshot: F[LatestSnapshotTuple]
   def pullLatestSnapshotFromRandomPeer: F[LatestSnapshotTuple]
+
+  /** Conditional variant: returns `None` when the chosen L0 peer reports the same tip ordinal as `localOrdinal` (304 NotModified at the
+    * HTTP layer); returns `Some(tuple)` when the peer has advanced. Eliminates the redundant ~60 MB combined-snapshot body when a metagraph
+    * or follower is already aligned with the L0 cluster's tip — the steady-state case.
+    */
+  def pullLatestSnapshotIfNewer(localOrdinal: SnapshotOrdinal): F[Option[LatestSnapshotTuple]]
   def pullGlobalSnapshots: F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]]
   def pullGlobalSnapshots(ordinal: SnapshotOrdinal): F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]]
   def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalIncrementalSnapshot]]]
@@ -81,6 +87,21 @@ object GlobalL0Service {
 
       def pullLatestSnapshotFromRandomPeer: F[LatestSnapshotTuple] =
         globalL0ClusterStorage.getRandomPeer >>= pullLatestSnapshotFromPeer
+
+      def pullLatestSnapshotIfNewer(localOrdinal: SnapshotOrdinal): F[Option[LatestSnapshotTuple]] =
+        globalL0ClusterStorage.getRandomPeer.flatMap { l0Peer =>
+          l0GlobalSnapshotClient.getLatestConditional(localOrdinal).run(l0Peer).flatMap {
+            case Left(_) =>
+              logger
+                .debug(s"L0 peer ${l0Peer.id.show} reports same tip ordinal=${localOrdinal.show}; skipping combined-snapshot fetch")
+                .as(none)
+            case Right((snapshot, state)) =>
+              HasherSelector[F]
+                .withCurrent(implicit hasher => snapshot.toHashedWithSignatureCheck)
+                .flatMap(_.liftTo[F])
+                .map(hashed => (hashed, state).some)
+          }
+        }
 
       def pullGlobalSnapshot(hash: Hash): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
         pullGlobalSnapshot(l0GlobalSnapshotClient.get(hash)).handleErrorWith { e =>
