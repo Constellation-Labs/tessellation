@@ -34,9 +34,10 @@ object SnapshotClientConditionalSuite extends SimpleIOSuite {
       resp = Response[IO](status = Status.NotModified)
       result <- SnapshotClient.handleConditionalResponse[IO, StubSnapshot, StubSnapshotInfo](resp, countingDecoder)
       decoderCalls <- callCount.get
-    } yield expect(result == Left(SnapshotClient.NotModified), s"304 should produce Left(NotModified), got $result").and(
-      expect(decoderCalls == 0, s"decoder must not be invoked on 304, but was called $decoderCalls times")
-    )
+    } yield
+      expect(result == Left(SnapshotClient.NotModified), s"304 should produce Left(NotModified), got $result").and(
+        expect(decoderCalls == 0, s"decoder must not be invoked on 304, but was called $decoderCalls times")
+      )
   }
 
   test("non-200/304 status raises an error so the caller can surface a hard failure") {
