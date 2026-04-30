@@ -28,19 +28,18 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
   * Pre-flight reservation. The middleware lets the inner route produce its `Response` (which sets `Content-Length` for the heavyweight
   * snapshot routes that the bandwidth fix at commit `910864f7f` hardened), then atomically:
   *
-  *   1. trims per-IP timestamp/byte tuples older than `windowDuration`
-  *   2. if `sum(kept) + Content-Length > maxBytesPerWindow` → reject with 429 + Retry-After (and drain the unused inner body)
-  *   3. else → record `(now, Content-Length)` and serve the inner response
+  *   1. trims per-IP timestamp/byte tuples older than `windowDuration` 2. if `sum(kept) + Content-Length > maxBytesPerWindow` → reject with
+  *      429 + Retry-After (and drain the unused inner body) 3. else → record `(now, Content-Length)` and serve the inner response
   *
   * Caveats:
   *
-  *   - Rejection happens AFTER the inner route handler ran (which for `combined/stream` reads bytes into memory via the Scaffeine
-  *     cache). The middleware avoids EGRESS bytes but not the heap allocation per cache miss. The Scaffeine cache amortizes that
-  *     cost across requests for the same ordinal, which is the common case.
-  *   - When `Content-Length` is missing (chunked routes that don't pre-compute size), the request passes through with `0` cost
-  *     accounted. Use this middleware only on routes that set `Content-Length`.
-  *   - Like `PerIpRateLimitMiddleware`, the per-IP map is keyed by client IP and not actively GC'd. Stale entries are pruned on the
-  *     next request from the same IP. Bounded under the small-distinct-callers assumption.
+  *   - Rejection happens AFTER the inner route handler ran (which for `combined/stream` reads bytes into memory via the Scaffeine cache).
+  *     The middleware avoids EGRESS bytes but not the heap allocation per cache miss. The Scaffeine cache amortizes that cost across
+  *     requests for the same ordinal, which is the common case.
+  *   - When `Content-Length` is missing (chunked routes that don't pre-compute size), the request passes through with `0` cost accounted.
+  *     Use this middleware only on routes that set `Content-Length`.
+  *   - Like `PerIpRateLimitMiddleware`, the per-IP map is keyed by client IP and not actively GC'd. Stale entries are pruned on the next
+  *     request from the same IP. Bounded under the small-distinct-callers assumption.
   *
   * Composition order recommendation when stacked with the others:
   *
@@ -68,8 +67,8 @@ object PerIpBandwidthLimitMiddleware {
     * @param retryAfterSeconds
     *   value for the `Retry-After` header on 429 responses.
     * @param appliesTo
-    *   predicate selecting which requests this middleware enforces on. Requests for which this returns `false` are passed through
-    *   without any bandwidth accounting. Defaults to "all requests."
+    *   predicate selecting which requests this middleware enforces on. Requests for which this returns `false` are passed through without
+    *   any bandwidth accounting. Defaults to "all requests."
     */
   def apply[F[_]: Async](
     maxBytesPerWindow: Long,
@@ -95,7 +94,7 @@ object PerIpBandwidthLimitMiddleware {
               .orElse(req.remote.map(_.host.toString))
 
           clientIpOpt match {
-            case None => routes(req)
+            case None     => routes(req)
             case Some(ip) =>
               // Cheap pre-check: if this IP is ALREADY at the cap (sum of in-window kept bytes
               // already >= cap), reject without invoking the inner route. This avoids the heap-
@@ -121,23 +120,25 @@ object PerIpBandwidthLimitMiddleware {
                         // Return type encodes the decision: None = accepted, Some(observed) = rejected.
                         // Keeps the `sumNow` value out of the modify closure so the post-modify
                         // branches can report the observed total in the rejection log.
-                        stateRef.modify[Option[Long]] { m =>
-                          val prev = m.getOrElse(ip, IpState(Nil))
-                          val keptNow = prev.timestampedBytesDesc.takeWhile(_._1 >= cutoff2)
-                          val sumNow = keptNow.iterator.map(_._2).sum
-                          if (sumNow + responseBytes > maxBytesPerWindow) {
-                            // Don't record — we're rejecting. Trimmed list is preserved.
-                            (m.updated(ip, IpState(keptNow)), Some(sumNow + responseBytes))
-                          } else {
-                            (m.updated(ip, IpState((nowMs2, responseBytes) :: keptNow)), None)
+                        stateRef
+                          .modify[Option[Long]] { m =>
+                            val prev = m.getOrElse(ip, IpState(Nil))
+                            val keptNow = prev.timestampedBytesDesc.takeWhile(_._1 >= cutoff2)
+                            val sumNow = keptNow.iterator.map(_._2).sum
+                            if (sumNow + responseBytes > maxBytesPerWindow) {
+                              // Don't record — we're rejecting. Trimmed list is preserved.
+                              (m.updated(ip, IpState(keptNow)), Some(sumNow + responseBytes))
+                            } else {
+                              (m.updated(ip, IpState((nowMs2, responseBytes) :: keptNow)), None)
+                            }
                           }
-                        }.flatMap {
-                          case None => Async[F].pure(resp)
-                          case Some(observed) =>
-                            // Drain the unused inner body so any held resources release. Then return 429.
-                            resp.body.compile.drain.attempt.void >>
-                              rejectFast(ip, maxBytesPerWindow, observed, retryAfterSeconds, logger)
-                        }
+                          .flatMap {
+                            case None           => Async[F].pure(resp)
+                            case Some(observed) =>
+                              // Drain the unused inner body so any held resources release. Then return 429.
+                              resp.body.compile.drain.attempt.void >>
+                                rejectFast(ip, maxBytesPerWindow, observed, retryAfterSeconds, logger)
+                          }
                       }
                     }
                   }
