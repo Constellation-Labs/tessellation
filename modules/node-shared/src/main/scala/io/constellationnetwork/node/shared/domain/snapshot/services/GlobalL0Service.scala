@@ -22,6 +22,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotS
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.http.p2p.clients.L0GlobalSnapshotClient
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.peer.{L0Peer, PeerId}
@@ -45,6 +46,14 @@ trait GlobalL0Service[F[_]] {
     * or follower is already aligned with the L0 cluster's tip — the steady-state case.
     */
   def pullLatestSnapshotIfNewer(localOrdinal: SnapshotOrdinal): F[Option[LatestSnapshotTuple]]
+
+  /** Cheap "what's the latest epoch progress?" query for sync-check loops that don't need the snapshot body. Hits the tiny
+    * `/global-snapshots/latest/metadata` endpoint (~232 bytes) and returns the `epochProgress` field added in v10.x.
+    *
+    * Returns `None` when the responding L0 peer is on an older version that doesn't include `epochProgress` in `SnapshotMetadata` — callers
+    * should fall back to `pullLatestSnapshotIfNewer` (304-conditional) or `pullLatestSnapshot` for those mixed-version cases.
+    */
+  def queryLatestEpochProgress: F[Option[EpochProgress]]
   def pullGlobalSnapshots: F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]]
   def pullGlobalSnapshots(ordinal: SnapshotOrdinal): F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]]
   def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalIncrementalSnapshot]]]
@@ -101,6 +110,11 @@ object GlobalL0Service {
                 .flatMap(_.liftTo[F])
                 .map(hashed => (hashed, state).some)
           }
+        }
+
+      def queryLatestEpochProgress: F[Option[EpochProgress]] =
+        globalL0ClusterStorage.getRandomPeer.flatMap { l0Peer =>
+          l0GlobalSnapshotClient.getLatestMetadata.run(l0Peer).map(_.epochProgress)
         }
 
       def pullGlobalSnapshot(hash: Hash): F[Option[Hashed[GlobalIncrementalSnapshot]]] =

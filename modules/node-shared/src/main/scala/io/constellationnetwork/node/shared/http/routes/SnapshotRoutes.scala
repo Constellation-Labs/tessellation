@@ -103,7 +103,18 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
           whenNodeReady {
             snapshotStorage.headSnapshot
               .flatMap(_.traverse(snapshot => hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[F])))
-              .map(_.map(snapshot => SnapshotMetadata(snapshot.ordinal, snapshot.hash, snapshot.lastSnapshotHash)))
+              .map(
+                _.map(snapshot =>
+                  // v10.x (2026-04-30): include epochProgress so the L1 alignment loop and other
+                  // cheap consumers can read it without pulling the ~60 MB combined-snapshot body.
+                  SnapshotMetadata(
+                    snapshot.ordinal,
+                    snapshot.hash,
+                    snapshot.lastSnapshotHash,
+                    Some(snapshot.signed.value.epochProgress)
+                  )
+                )
+              )
               .flatMap {
                 case Some(metadata) => Ok(metadata)
                 case None           => NotFound()

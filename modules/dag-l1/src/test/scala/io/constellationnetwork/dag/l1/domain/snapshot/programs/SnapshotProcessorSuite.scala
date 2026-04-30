@@ -327,6 +327,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   override def pullLatestSnapshotIfNewer(localOrdinal: SnapshotOrdinal)
                     : IO[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
 
+                  override def queryLatestEpochProgress: IO[Option[io.constellationnetwork.schema.epoch.EpochProgress]] = ???
+
                   override def pullGlobalSnapshots
                     : IO[Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]] = ???
 

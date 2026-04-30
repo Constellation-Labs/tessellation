@@ -11,6 +11,7 @@ import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.security._
@@ -66,20 +67,51 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
         ().pure
       }
 
+    // Sync-check that mirrors `checkSynchronization` but operates on the bare epoch-progress
+    // numbers from the cheap metadata endpoint, without ever materialising the full snapshot.
+    // The threshold and trigger are identical to the body-bearing path so the two routes
+    // produce equivalent redownload decisions.
+    def checkSynchronizationByEpoch(
+      localEpochProgress: EpochProgress,
+      networkEpochProgress: EpochProgress
+    ): F[Unit] =
+      if (localEpochProgress.value.value + maxEpochProgressesBehind < networkEpochProgress.value.value) {
+        val message = "Detected synchronization issue: TooFarEpochProgress. Forcing re-download"
+        logger.info(message) >>
+          storages.globalL0Alignment.updateShouldRedownload(value = true, reasons = List(message))
+      } else {
+        ().pure
+      }
+
     for {
       _ <- logger.info("Checking global snapshot alignment")
       maybeLastSnapshotOnStorage <- sharedStorages.lastGlobalSnapshot.get
-      // Conditional fetch: when we have a local snapshot, send `If-None-Match: <localOrdinal>`.
-      // 304 means the L0 peer is at the same ordinal we are — no possible TooFarEpochProgress
-      // sync issue, no body to apply, no work needed. 200 means the peer has advanced; do the
-      // existing epoch-progress comparison. Saves the ~60 MB combined-snapshot body on every
-      // alignment cycle when the L1 is already aligned with L0 (the common steady-state).
+      // v10.x bandwidth optimisation: the L1 alignment loop only needs the epoch-progress
+      // delta, not the full snapshot body. Three-tier strategy:
+      //   1. Hit the tiny `/global-snapshots/latest/metadata` endpoint (~232 bytes) and
+      //      pluck epochProgress out. Cheapest path; the dominant case once all L0 servers
+      //      run v10.x+.
+      //   2. If the metadata response omits epochProgress (older L0 server, mixed-version
+      //      rollout), fall back to the 304-conditional combined-stream fetch — that yields
+      //      a 304 (no body) when aligned and a 200 (~60 MB body) when not.
+      //   3. (Implicit) If the local snapshot is missing entirely, force re-download
+      //      regardless of network state — this branch is unchanged from before v10.x.
+      // Defense-in-depth: each tier is correct on its own; tier 1 is the cheap path,
+      // tier 2 is the safety net for old peers, tier 3 is the cold-start trigger.
       _ <- maybeLastSnapshotOnStorage match {
         case Some(lastSnapshotOnStorage) =>
-          services.globalL0.pullLatestSnapshotIfNewer(lastSnapshotOnStorage.ordinal).flatMap {
-            case None => Async[F].unit // 304 — already aligned, comparison redundant
-            case Some((lastGlobalSnapshotFromNetwork, _)) =>
-              checkSynchronization(lastSnapshotOnStorage, lastGlobalSnapshotFromNetwork)
+          services.globalL0.queryLatestEpochProgress.flatMap {
+            case Some(networkEpochProgress) =>
+              checkSynchronizationByEpoch(lastSnapshotOnStorage.epochProgress, networkEpochProgress)
+            case None =>
+              // Tier 2 fallback: peer's metadata endpoint omitted epochProgress → older
+              // server. Use the 304-conditional combined-stream so we still avoid the
+              // body when aligned, while remaining correct against pre-v10.x peers.
+              services.globalL0.pullLatestSnapshotIfNewer(lastSnapshotOnStorage.ordinal).flatMap {
+                case None => Async[F].unit // 304 — aligned
+                case Some((lastGlobalSnapshotFromNetwork, _)) =>
+                  checkSynchronization(lastSnapshotOnStorage, lastGlobalSnapshotFromNetwork)
+              }
           }
         case None =>
           val message = "Last snapshot not found on storage, forcing re-download!"
