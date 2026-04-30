@@ -47,9 +47,10 @@ object PerIpBandwidthLimitMiddlewareSuite extends SimpleIOSuite {
       wrapped = mw(fixedSizeRoute(responseSize))
       r1 <- wrapped(reqFromIp("203.0.113.20")).getOrElse(Response.notFound[IO])
       r2 <- wrapped(reqFromIp("203.0.113.20")).getOrElse(Response.notFound[IO])
-    } yield expect(r1.status == Status.Ok, "first request fits in cap").and(
-      expect(r2.status == Status.TooManyRequests, s"second request must be 429, got ${r2.status}")
-    )
+    } yield
+      expect(r1.status == Status.Ok, "first request fits in cap").and(
+        expect(r2.status == Status.TooManyRequests, s"second request must be 429, got ${r2.status}")
+      )
   }
 
   test("different IPs have independent budgets") {
@@ -62,11 +63,14 @@ object PerIpBandwidthLimitMiddlewareSuite extends SimpleIOSuite {
       a1 <- wrapped(reqFromIp("203.0.113.30")).getOrElse(Response.notFound[IO])
       a2 <- wrapped(reqFromIp("203.0.113.30")).getOrElse(Response.notFound[IO])
       b1 <- wrapped(reqFromIp("203.0.113.31")).getOrElse(Response.notFound[IO])
-    } yield expect(a1.status == Status.Ok, "IP A first request OK").and(
-      expect(a2.status == Status.TooManyRequests, "IP A second request rejected")
-    ).and(
-      expect(b1.status == Status.Ok, "IP B unaffected by IP A's overrun")
-    )
+    } yield
+      expect(a1.status == Status.Ok, "IP A first request OK")
+        .and(
+          expect(a2.status == Status.TooManyRequests, "IP A second request rejected")
+        )
+        .and(
+          expect(b1.status == Status.Ok, "IP B unaffected by IP A's overrun")
+        )
   }
 
   test("appliesTo predicate: routes excluded from bandwidth limit pass through unconstrained") {
@@ -79,8 +83,9 @@ object PerIpBandwidthLimitMiddlewareSuite extends SimpleIOSuite {
       wrapped = mw(fixedSizeRoute(responseSize))
       light <- wrapped(reqFromIp("203.0.113.40", "/light")).getOrElse(Response.notFound[IO])
       heavy <- wrapped(reqFromIp("203.0.113.40", "/heavy")).getOrElse(Response.notFound[IO])
-    } yield expect(light.status == Status.Ok, "light route bypasses bandwidth limit").and(
-      expect(heavy.status == Status.TooManyRequests, "heavy route is bandwidth-limited")
-    )
+    } yield
+      expect(light.status == Status.Ok, "light route bypasses bandwidth limit").and(
+        expect(heavy.status == Status.TooManyRequests, "heavy route is bandwidth-limited")
+      )
   }
 }
