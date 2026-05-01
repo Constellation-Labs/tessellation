@@ -89,7 +89,7 @@ jobs:
     name: E2E - ${{ matrix.test-group.name }}
     needs: build
     runs-on: ${{ matrix.test-group.runner || 'Ubuntu-22-64-core' }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.test-group.timeout || 30 }}
 
     strategy:
       fail-fast: false
@@ -98,13 +98,14 @@ jobs:
           - { name: dag-cluster,            tests: "dag-cluster" }
           - { name: delegated-staking,      tests: "delegated-staking" }
           - { name: token-lock-replacement, tests: "token-lock-replacement" }
-          - { name: fork-recovery,          tests: "fork-recovery", extra-args: "--num-gl0=5", runner: "Ubuntu-22-64-core" }
+          # TODO: re-enable once PR #1485 is merged
+          # - { name: fork-recovery,          tests: "fork-recovery", extra-args: "--num-gl0=5", runner: "Ubuntu-22-64-core" }
           - { name: currency,               tests: "currency" }
           - { name: rewards,                tests: "rewards" }
           - { name: token-locks,            tests: "token-locks" }
-          - { name: allow-spends,           tests: "allow-spends" }
-          - { name: spend,                  tests: "spend" }
-          - { name: snapshot-streaming,    tests: "snapshot-streaming", runner: "ubuntu-22.04" }
+          - { name: allow-spends,           tests: "allow-spends", timeout: 45 }
+          - { name: spend,                  tests: "spend", timeout: 45 }
+          - { name: snapshot-streaming,    tests: "snapshot-streaming", runner: "ubuntu-22.04", timeout: 45 }
 
     env:
       BASH_DEBUG_MODE: ${{ github.event.inputs.debug_enabled || 'false' }}

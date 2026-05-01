@@ -348,13 +348,23 @@ const testMultipleSequentialReplacements = async (urls, account, currentLockHash
     amount = newAmount
     logWorkflow.info(`  Sequential replacement ${i} verified ✓`)
     
-    // Wait for ordinal progression + L1 sync before next replacement
+    // Wait for 2 ordinal progressions + L1 sync before next replacement.
+    // One progression isn't enough: GL0 has the new lock at ordinal N, but the
+    // global snapshot for N still needs to reach L1 and be processed before L1
+    // will accept a replacement referencing the new lock. Otherwise L1 returns
+    // NothingToReplace.
     if (i < 3) {
-      logWorkflow.info('  Waiting for ordinal progression before next replacement...')
+      logWorkflow.info('  Waiting for 2 ordinal progressions before next replacement...')
+      let startOrdinal = null
       await withRetryOrdinal(
-        async ({ ordinal, prevOrdinal }) => {
-          if (!prevOrdinal) throw new Error('Waiting for first ordinal')
-          if (ordinal - prevOrdinal < 1) throw new Error(`Waiting for ordinal progression: ${ordinal}`)
+        async ({ ordinal }) => {
+          if (startOrdinal === null) {
+            startOrdinal = ordinal
+            throw new Error(`Captured start ordinal: ${ordinal}`)
+          }
+          if (ordinal - startOrdinal < 2) {
+            throw new Error(`Waiting for 2 ordinal progressions from ${startOrdinal}: at ${ordinal}`)
+          }
           return true
         },
         { globalL0Url: urls.globalL0Url, name: `waitBeforeReplacement${i + 1}`, maxOrdinalMisses: 10, maxStalledChecks: 30 }
@@ -617,10 +627,16 @@ const testTokenLockReplacementEdgeCases = async (urls) => {
     // the global snapshot for N needs to reach L1, and L1 needs to process it.
     // Two progressions guarantees the lock's snapshot has been accepted and L1 is current.
     logWorkflow.info('Waiting for 2 ordinal progressions before sequential replacements...')
+    let startOrdinal = null
     await withRetryOrdinal(
-      async ({ ordinal, prevOrdinal }) => {
-        if (!prevOrdinal) throw new Error('Waiting for first ordinal')
-        if (ordinal - prevOrdinal < 2) throw new Error(`Waiting for 2 ordinal progressions: ${ordinal}`)
+      async ({ ordinal }) => {
+        if (startOrdinal === null) {
+          startOrdinal = ordinal
+          throw new Error(`Captured start ordinal: ${ordinal}`)
+        }
+        if (ordinal - startOrdinal < 2) {
+          throw new Error(`Waiting for 2 ordinal progressions from ${startOrdinal}: at ${ordinal}`)
+        }
         return true
       },
       { globalL0Url: urls.globalL0Url, name: 'waitForLockPropagation', maxOrdinalMisses: 10, maxStalledChecks: 60 }
