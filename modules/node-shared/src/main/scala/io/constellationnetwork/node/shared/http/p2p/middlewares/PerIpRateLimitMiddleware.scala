@@ -43,13 +43,17 @@ object PerIpRateLimitMiddleware {
     *   the sliding-window length.
     * @param retryAfterSeconds
     *   value for the Retry-After header on 429 responses.
+    * @param allowlist
+    *   client IPs that bypass the counter entirely. Used for trusted infra (snapshot streaming, monitoring, peer-to-peer recovery) that
+    *   legitimately exceeds the per-IP cap. Match is exact-string against the resolved IP (X-Forwarded-For first hop or remote address).
     * @return
     *   a function that wraps `HttpRoutes[F]` with the rate limiter.
     */
   def apply[F[_]: Async](
     maxRequestsPerWindow: Int,
     windowDuration: FiniteDuration,
-    retryAfterSeconds: Long = 5
+    retryAfterSeconds: Long = 5,
+    allowlist: Set[String] = Set.empty
   ): F[HttpRoutes[F] => HttpRoutes[F]] = {
     val logger = Slf4jLogger.getLogger[F]
     val windowMillis = windowDuration.toMillis
@@ -59,13 +63,18 @@ object PerIpRateLimitMiddleware {
         val clientIpOpt: Option[String] =
           req.headers
             .get[`X-Forwarded-For`]
-            .map(_.values.head.toString.split(",").head.trim)
+            .flatMap(_.values.head)
+            .map(_.toString.split(",").head.trim)
             .filter(_.nonEmpty)
             .orElse(req.remote.map(_.host.toString))
 
         clientIpOpt match {
           case None =>
             // No identifiable source; pass through. Avoids blocking loopback or misconfigured probes.
+            routes(req)
+
+          case Some(ip) if allowlist.contains(ip) =>
+            // Trusted infra IP — skip the counter check entirely.
             routes(req)
 
           case Some(ip) =>

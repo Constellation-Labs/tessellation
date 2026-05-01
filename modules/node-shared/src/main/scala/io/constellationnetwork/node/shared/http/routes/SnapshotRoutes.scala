@@ -300,7 +300,14 @@ object SnapshotRoutes {
       // Only build the per-IP rate limiter when both bounds are positive — 0 disables.
       perIpRateLimit <- snapshotServingConfig
         .filter(cfg => cfg.perIpMaxRequestsPerWindow > 0 && cfg.perIpWindow.toMillis > 0)
-        .traverse(cfg => PerIpRateLimitMiddleware[F](cfg.perIpMaxRequestsPerWindow, cfg.perIpWindow, cfg.perIpRetryAfterSeconds))
+        .traverse(cfg =>
+          PerIpRateLimitMiddleware[F](
+            cfg.perIpMaxRequestsPerWindow,
+            cfg.perIpWindow,
+            cfg.perIpRetryAfterSeconds,
+            cfg.perIpAllowlist.split(",").iterator.map(_.trim).filter(_.nonEmpty).toSet
+          )
+        )
       // Only build the bandwidth limiter when the byte cap is positive. Restricted to heavyweight
       // routes only via the appliesTo predicate. The cheap probes (/latest/ordinal,
       // /latest/metadata, /latest/combined/checkpoint/info) MUST bypass so an IP that just
