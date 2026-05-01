@@ -415,6 +415,12 @@ object types {
     perIpMaxRequestsPerWindow: Int = 0,
     perIpWindow: FiniteDuration = 1.minute,
     perIpRetryAfterSeconds: Long = 5,
+    // IPs that bypass the per-IP rate AND bandwidth limits. Comma-separated string for env-var
+    // ergonomics (CL_SNAPSHOT_PER_IP_ALLOWLIST="ip1,ip2"). Used for trusted infra such as the
+    // snapshot streaming consumer, internal monitoring, and known source nodes that legitimately
+    // exceed the per-IP cap. Empty string disables the allowlist (default behaviour: every IP
+    // is rate-limited).
+    perIpAllowlist: String = "",
     // Per-client-IP BANDWIDTH limit applied only to heavyweight snapshot routes
     // (combined-stream + per-ordinal checkpoint stream). 0 bytes disables the limit.
     //
