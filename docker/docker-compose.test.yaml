@@ -43,6 +43,11 @@ services:
       # so any future E2E debug can rule it out without grep-checking logs. Operators can
       # still set CL_SNAPSHOT_PER_IP_MAX_BYTES_PER_WINDOW>0 via shell to exercise it.
       - CL_SNAPSHOT_PER_IP_MAX_BYTES_PER_WINDOW=${CL_SNAPSHOT_PER_IP_MAX_BYTES_PER_WINDOW:-0}
+      # Per-IP request-count limiter: same rationale as the bandwidth limiter above.
+      # E2E harnesses and the snapshot-streaming consumer poll public snapshot routes
+      # from a single host IP at sub-second intervals, which trips the production 10/60s
+      # cap immediately. 0 disables the middleware (predicate at SnapshotRoutes.scala:302).
+      - CL_SNAPSHOT_PER_IP_MAX_REQUESTS_PER_WINDOW=${CL_SNAPSHOT_PER_IP_MAX_REQUESTS_PER_WINDOW:-0}
     # merge in an extra network just for tests
     networks:
       tessellation_common:
