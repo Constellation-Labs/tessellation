@@ -229,20 +229,17 @@ object CurrencySnapshotConsensusStateAdvancer {
               withCurrent.filter { case (ord, _) => ord.value.value >= minOrdinalValue }
             }
 
-            // B2 readmissionCountdown maintenance: see dag-l0 mirror for full rationale.
-            // decrement → seed justUnpenalized → clear admitted.
+            // B2 readmissionCountdown maintenance (v12 sticky-probation, see dag-l0 mirror for
+            // full rationale). decrement (clamped at 0) → seed justUnpenalized → clear admitted.
+            // Pre-v12 auto-cleared the entry when countdown hit 0; v12 keeps the key so only
+            // an AdmissionCertificate (via the `-- admittedThisRound` step below) can clear it.
             val admittedThisRound = state.admittedFacilitators.value
-            val decrementedReadmission =
-              state.lastOutcome.readmissionCountdown.view.mapValues(_ - 1).filter(_._2 > 0).to(SortedMap)
-            val seededReadmission =
-              if (config.readmissionProbationRounds <= 0) decrementedReadmission
-              else
-                justUnpenalized.foldLeft(decrementedReadmission) { (acc, pid) =>
-                  if (!acc.contains(pid)) acc.updated(pid, config.readmissionProbationRounds)
-                  else acc
-                }
-            val finalReadmission =
-              (seededReadmission -- admittedThisRound).to(SortedMap)
+            val finalReadmission = ReadmissionMaintenance.step(
+              prev = state.lastOutcome.readmissionCountdown,
+              justUnpenalized = justUnpenalized,
+              admittedThisRound = admittedThisRound,
+              probationRounds = config.readmissionProbationRounds
+            )
             val outcome = CurrencyConsensusOutcome(
               state.key,
               // Canonical committee persists in lastOutcome — see dag-l0 mirror.

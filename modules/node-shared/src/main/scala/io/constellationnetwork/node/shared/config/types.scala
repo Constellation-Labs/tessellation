@@ -329,7 +329,15 @@ object types {
     //     completed round before they can lead. Recovery: complete one round as follower →
     //     re-enter lead-eligible pool. v10 nodes select different leaders, so cluster-wide
     //     cold restart required.
-    consensusSchemaVersion: Int = 11
+    //   v12 (2026-05-02): B2 sticky-probation. readmissionCountdown clamps at 0 instead of
+    //     auto-clearing when it expires; only AdmissionCertificate can remove a peer from
+    //     probation. Empirical motivation: alpha.50 produced ZERO admission certs in 14 hours
+    //     because peers exited probation via auto-clear before the StallDetector emission gate's
+    //     consecutive-streak threshold fired. v12 closes the bypass — eviction becomes naturally
+    //     sticky and the ACS path becomes load-bearing instead of decorative. v12 nodes carry
+    //     readmissionCountdown values that v11 nodes would auto-drop, producing different
+    //     `lastOutcome` evolution → cluster-wide cold restart required.
+    consensusSchemaVersion: Int = 12
   ) {
 
     /** Deterministic hash of consensus-critical config values.
