@@ -26,7 +26,7 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.node.UpdateNodeParameters
-import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.peer.{PeerCommitteeView, PeerId}
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -154,9 +154,61 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
       )
       .apply(L0CellInput.HandleNodeCollateral(data))
 
+  // Per-request committee-view lookup. Builds a PeerCommitteeView for every peer present in the
+  // latest ConsensusOutcome's peerQuality OR readmissionCountdown maps. Read at HTTP-handler
+  // time → reflects the most recently finalized round. Returns empty map until the first round
+  // finalizes.
+  //
+  // TODO(cleanup-pass): extract the chronic-classifier predicate to a shared helper called by
+  // BOTH GlobalSnapshotConsensusStateCreator:255 AND this lookup. Today the threshold logic is
+  // duplicated here as hard-coded defaults to avoid plumbing ConsensusConfig through
+  // HttpApi.make. The defaults below match the production ConsensusConfig defaults (see
+  // node-shared/.../config/types.scala — minObservationHistoryFloor=30, minParticipationRatio=0.5).
+  // If an operator tunes consensus thresholds away from defaults, the served `status` field
+  // drifts from the consensus-side decision until the refactor lands. `completed`,
+  // `participated`, `ratio`, `probationRoundsRemaining` are always authoritative regardless.
+  // Shape of the cleanup: PeerQualityClassifier.isChronic(completed, participated, config),
+  // plus passing ConsensusConfig through HttpApi.make → Main.scala wires cfg.snapshot.consensus.
+  private val ChronicMinObservationHistoryFloor: Int = 30
+  private val ChronicMinParticipationRatio: Double = 0.5
+
+  private val getCommitteeView: F[Map[PeerId, PeerCommitteeView]] =
+    services.consensus.storage.getLastConsensusOutcome.map {
+      case None => Map.empty[PeerId, PeerCommitteeView]
+      case Some(outcome) =>
+        val probation = outcome.readmissionCountdown
+        val all = outcome.peerQuality.keySet ++ probation.keySet
+        all.iterator.map { pid =>
+          val (completed, participated) = outcome.peerQuality.getOrElse(pid, (0, 0))
+          val ratio = if (participated > 0) completed.toDouble / participated.toDouble else 1.0
+          val isChronic =
+            participated >= ChronicMinObservationHistoryFloor &&
+              ratio < ChronicMinParticipationRatio
+          val onProbation = probation.contains(pid)
+          val status =
+            if (onProbation) "probation"
+            else if (isChronic) "chronic"
+            else "active"
+          pid -> PeerCommitteeView(
+            status = status,
+            completed = completed,
+            participated = participated,
+            ratio = ratio,
+            probationRoundsRemaining = if (onProbation) probation.get(pid) else None
+          )
+        }.toMap
+    }
+
   private val clusterRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>
-      ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
+      ClusterRoutes[F](
+        programs.joining,
+        programs.peerDiscovery,
+        storages.cluster,
+        services.cluster,
+        services.collateral,
+        getCommitteeView = Some(getCommitteeView)
+      )
     }
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
 

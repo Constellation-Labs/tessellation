@@ -119,6 +119,31 @@ object peer {
     def isResponsive: Boolean = value.responsiveness === Responsive
   }
 
+  /** Server-computed view of a peer's committee-participation status, exposed via `/cluster/info`.
+    *
+    * Distinct from `NodeState` — a peer can be `state=Ready` (chain-synced) yet `status="chronic"` because the chronic-classifier is
+    * excluding it from the active committee. Computed at request time from the latest `ConsensusOutcome.peerQuality` and
+    * `readmissionCountdown` on the serving node. Same threshold logic as the consensus-side chronic-classifier, so the value is in lockstep
+    * with the node's actual committee decision.
+    *
+    * Field reference:
+    *   - `status`: "active" (passing chronic threshold AND not on probation), "chronic" (peerQuality ratio below `minParticipationRatio`
+    *     after `minObservationHistoryFloor` observations), "probation" (entry in `readmissionCountdown`, awaiting an AdmissionCertificate).
+    *   - `completed` / `participated`: raw counts from `peerQuality`. `participated` is the number of rounds where this peer was a
+    *     committee member; `completed` is the count of those where the peer's signature actually landed in the finalized snapshot.
+    *   - `ratio`: `completed / participated` if `participated > 0`, else `1.0`.
+    *   - `probationRoundsRemaining`: when `status="probation"`, the v12 sticky countdown value (0 means "minimum probation served, awaiting
+    *     AdmissionCertificate"). `None` for non-probation.
+    */
+  @derive(encoder, decoder, show)
+  case class PeerCommitteeView(
+    status: String,
+    completed: Int,
+    participated: Int,
+    ratio: Double,
+    probationRoundsRemaining: Option[Int]
+  )
+
   @derive(encoder, decoder, show)
   case class PeerInfo(
     id: PeerId,
@@ -128,7 +153,11 @@ object peer {
     clusterSession: String,
     session: String,
     state: NodeState,
-    jar: Hash
+    jar: Hash,
+    // Optional per-peer committee view. Only populated by the dag-l0 `/cluster/info` endpoint
+    // (other modules omit it, leaving `None`). Backwards-compat additive field — circe leniently
+    // ignores unknown fields, so old clients with old PeerInfo decoders still parse this response.
+    peerCommittee: Option[PeerCommitteeView] = None
   )
 
   object PeerInfo {
@@ -141,7 +170,8 @@ object peer {
         peer.clusterSession.toString,
         peer.session.value.toString,
         peer.state,
-        peer.jar
+        peer.jar,
+        peerCommittee = None
       )
   }
 
