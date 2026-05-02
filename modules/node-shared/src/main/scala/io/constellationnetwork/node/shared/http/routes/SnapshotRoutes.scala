@@ -319,7 +319,8 @@ object SnapshotRoutes {
             maxBytesPerWindow = cfg.perIpMaxBytesPerWindow,
             windowDuration = cfg.perIpWindow,
             retryAfterSeconds = cfg.perIpBandwidthRetryAfterSeconds,
-            appliesTo = (req: Request[F]) => isHeavyweightSnapshotRoute(req)
+            appliesTo = (req: Request[F]) => isHeavyweightSnapshotRoute(req),
+            allowlist = cfg.perIpAllowlist.split(",").iterator.map(_.trim).filter(_.nonEmpty).toSet
           )
         }
     } yield

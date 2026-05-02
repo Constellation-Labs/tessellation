@@ -73,6 +73,37 @@ object PerIpBandwidthLimitMiddlewareSuite extends SimpleIOSuite {
         )
   }
 
+  test("allowlist: matching IP bypasses the bandwidth cap, never gets 429") {
+    val streaming = "13.57.169.30"
+    val cap = 100L * 1024L * 1024L
+    val window = 1.minute
+    val responseSize = 80L * 1024L * 1024L // single response < cap; two would exceed
+    for {
+      mw <- PerIpBandwidthLimitMiddleware[IO](cap, window, allowlist = Set(streaming))
+      wrapped = mw(fixedSizeRoute(responseSize))
+      r1 <- wrapped(reqFromIp(streaming)).getOrElse(Response.notFound[IO])
+      r2 <- wrapped(reqFromIp(streaming)).getOrElse(Response.notFound[IO])
+      r3 <- wrapped(reqFromIp(streaming)).getOrElse(Response.notFound[IO])
+    } yield
+      expect(r1.status == Status.Ok, "allowlisted r1 accepted")
+        .and(expect(r2.status == Status.Ok, "allowlisted r2 accepted (would normally be 429)"))
+        .and(expect(r3.status == Status.Ok, "allowlisted r3 accepted"))
+  }
+
+  test("allowlist: non-matching IP still rate-limited normally") {
+    val cap = 100L * 1024L * 1024L
+    val window = 1.minute
+    val responseSize = 80L * 1024L * 1024L
+    for {
+      mw <- PerIpBandwidthLimitMiddleware[IO](cap, window, allowlist = Set("13.57.169.30"))
+      wrapped = mw(fixedSizeRoute(responseSize))
+      a1 <- wrapped(reqFromIp("198.51.100.50")).getOrElse(Response.notFound[IO])
+      a2 <- wrapped(reqFromIp("198.51.100.50")).getOrElse(Response.notFound[IO])
+    } yield
+      expect(a1.status == Status.Ok, "first request fits in cap")
+        .and(expect(a2.status == Status.TooManyRequests, "second exceeds; allowlist does not apply to this IP"))
+  }
+
   test("appliesTo predicate: routes excluded from bandwidth limit pass through unconstrained") {
     val cap = 1L // 1 byte cap — would reject anything ≥ 1 byte
     val window = 1.minute

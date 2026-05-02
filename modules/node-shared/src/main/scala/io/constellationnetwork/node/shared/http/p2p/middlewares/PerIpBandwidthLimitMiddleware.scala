@@ -69,12 +69,18 @@ object PerIpBandwidthLimitMiddleware {
     * @param appliesTo
     *   predicate selecting which requests this middleware enforces on. Requests for which this returns `false` are passed through without
     *   any bandwidth accounting. Defaults to "all requests."
+    * @param allowlist
+    *   client IPs that bypass the bandwidth check entirely. Used for trusted infra (snapshot streaming, monitoring, peer-to-peer recovery)
+    *   that legitimately exceeds the per-IP byte cap. Match is exact-string against the resolved IP (X-Forwarded-For first hop or remote
+    *   address). Mirrors [[PerIpRateLimitMiddleware]]'s allowlist so a single `CL_SNAPSHOT_PER_IP_ALLOWLIST` env value bypasses both
+    *   limiters in lockstep.
     */
   def apply[F[_]: Async](
     maxBytesPerWindow: Long,
     windowDuration: FiniteDuration,
     retryAfterSeconds: Long = 5,
-    appliesTo: Request[F] => Boolean = (_: Request[F]) => true
+    appliesTo: Request[F] => Boolean = (_: Request[F]) => true,
+    allowlist: Set[String] = Set.empty
   ): F[HttpRoutes[F] => HttpRoutes[F]] = {
     val logger = Slf4jLogger.getLogger[F]
     val windowMillis = windowDuration.toMillis
@@ -85,17 +91,20 @@ object PerIpBandwidthLimitMiddleware {
         else {
           // Match PerIpRateLimitMiddleware's IP extraction: first hop of X-Forwarded-For
           // takes priority, fall back to TCP remote. Requests with no identifiable source pass
-          // through unconditionally.
+          // through unconditionally. The .flatMap(_.values.head) correctly unwraps the Option[Node]
+          // before .toString — calling .toString on the Option directly produces "Some(<ip>)" keys.
           val clientIpOpt: Option[String] =
             req.headers
               .get[`X-Forwarded-For`]
-              .map(_.values.head.toString.split(",").head.trim)
+              .flatMap(_.values.head)
+              .map(_.toString.split(",").head.trim)
               .filter(_.nonEmpty)
               .orElse(req.remote.map(_.host.toString))
 
           clientIpOpt match {
-            case None     => routes(req)
-            case Some(ip) =>
+            case None                               => routes(req)
+            case Some(ip) if allowlist.contains(ip) => routes(req) // trusted infra bypasses bandwidth
+            case Some(ip)                           =>
               // Cheap pre-check: if this IP is ALREADY at the cap (sum of in-window kept bytes
               // already >= cap), reject without invoking the inner route. This avoids the heap-
               // allocation cost for every excess request from a freeloader once they're throttled.
