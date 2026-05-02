@@ -1,51 +1,11 @@
-diff --git a/src/main/scala/org/constellation/snapshotstreaming/db/SnapshotDAO.scala b/src/main/scala/org/constellation/snapshotstreaming/db/SnapshotDAO.scala
-index 6cda50a..90a5c8e 100644
---- a/src/main/scala/org/constellation/snapshotstreaming/db/SnapshotDAO.scala
-+++ b/src/main/scala/org/constellation/snapshotstreaming/db/SnapshotDAO.scala
-@@ -92,9 +92,10 @@ object SnapshotDAO {
-         ordinal,
-         block_hash,
-         snapshot_hash,
-+        snapshot_ordinal,
-         transaction_original,
-         created_at
--      ) VALUES ($varchar, $varchar, $varchar, $int8, $int8, $int8, $int8, $varchar, $int8, $varchar, $varchar, $jsonb, $timestamp)
-+      ) VALUES ($varchar, $varchar, $varchar, $int8, $int8, $int8, $int8, $varchar, $int8, $varchar, $varchar, $int8, $jsonb, $timestamp)
-       ON CONFLICT (hash) DO NOTHING;
-     """.command.contramap { tx: STransaction =>
-       (
-@@ -109,6 +110,7 @@ object SnapshotDAO {
-         tx.ordinal,
-         tx.blockHash,
-         tx.snapshotHash,
-+        tx.snapshotOrdinal,
-         tx.transactionOriginal,
-         tx.timestamp
-       )
-diff --git a/src/main/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorage.scala b/src/main/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorage.scala
-index a4683f3..b639670 100644
---- a/src/main/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorage.scala
-+++ b/src/main/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorage.scala
-@@ -117,6 +117,22 @@ object FileBasedLastGlobalIncrementalSnapshotStorage {
- 
-       def getHeight: F[Option[Height]] = get.map(_.map(_.height))
- 
-+      def setForRecovery(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] = {
-+        val snapshotWithState = SnapshotWithState(snapshot, state)
-+        saveSnapshotWithStateJson(path, snapshotWithState) >> cachedSnapshot.set(Some(snapshotWithState))
-+      }
-+
-+      def clear: F[Unit] = {
-+        val backupPath = Path(path.toString + ".bk")
-+        val deleteFile = (p: Path) =>
-+          Files[F].deleteIfExists(p).void.handleErrorWith {
-+            case _: java.nio.file.NoSuchFileException => Async[F].unit
-+            case e                                    => Async[F].raiseError(e)
-+          }
-+        cachedSnapshot.set(None) >> deleteFile(path) >> deleteFile(backupPath)
-+      }
-+
-+
-     }
- 
- }
+diff --git a/src/main/scala/org/constellation/snapshotstreaming/Configuration.scala b/src/main/scala/org/constellation/snapshotstreaming/Configuration.scala
+--- a/src/main/scala/org/constellation/snapshotstreaming/Configuration.scala
++++ b/src/main/scala/org/constellation/snapshotstreaming/Configuration.scala
+@@ -116,7 +116,6 @@ object Configuration {
+       c.priorityPeerIds.get(env),
+       c.snapshot.size,
+       c.feeConfigs.get(env).map(SortedMap.from(_)).getOrElse(SortedMap.empty),
+-      c.forkInfoStorage,
+       c.lastKryoHashOrdinal,
+       c.lastLegacyStateProofOrdinal,
+       c.incrementalDelegatedStakingStartingOrdinal,
