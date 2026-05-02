@@ -1016,7 +1016,36 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
             !alreadyVotedBySelf.contains(pid) &&
             streaks.getOrElse(pid, 0) >= minStreak
           }
-          readyAtTip.toList.traverse_ { target =>
+          // v12 (2026-05-02): admission-gate diagnostic log per probation peer per tick. Codex
+          // turn-2 follow-up to the alpha.50 ZERO-admission-certs finding: lets operators verify
+          // which gate is the actual blocker — empty probation, atTip false, streak < minStreak,
+          // or already-voted-by-self. One INFO line per call when probation is non-empty.
+          val atTipPerPeer = probation.iterator.map { pid =>
+            val atTip = chainTips.get(pid).exists(_.snapshotHash === expectedTip)
+            val streak = streaks.getOrElse(pid, 0)
+            val voted = alreadyVotedBySelf.contains(pid)
+            (pid, atTip, streak, voted)
+          }.toList.sortBy(_._1.toString)
+          val atTipCount = atTipPerPeer.count(_._2)
+          val details = atTipPerPeer.map {
+            case (pid, atTip, streak, voted) =>
+              s"${pid.show.take(8)}:atTip=$atTip,streak=$streak,votedBySelf=$voted"
+          }
+            .mkString(",")
+          ConsensusLog
+            .info(
+              logger,
+              Category.Facilitator,
+              key.toString,
+              "n/a",
+              LogEvent.Admission,
+              "stage" -> "gate",
+              "probation" -> probation.size.toString,
+              "atTip" -> atTipCount.toString,
+              "ready" -> readyAtTip.size.toString,
+              "minStreak" -> minStreak.toString,
+              "details" -> details
+            ) >> readyAtTip.toList.traverse_ { target =>
             admissionVoter.emitAdmissionVote(key, target, AdmissionReason.ReadyAtTip) >>
               queue.offer(ConsensusCommand.CheckAdmissionAssembly(key, target))
           }

@@ -356,29 +356,33 @@ object GlobalSnapshotConsensusStateAdvancer {
               withCurrent.filter { case (ord, _) => ord.value.value >= minOrdinalValue }
             }
 
-            // B2 readmissionCountdown maintenance:
-            //   1) Decrement any active probation counters by 1 (peers still observing).
+            // B2 readmissionCountdown maintenance (v12 sticky-probation, codex turn-2 2026-05-02):
+            //   1) Decrement any active probation counters by 1 — but CLAMP at 0 instead of
+            //      auto-clearing the entry. Pre-v12 had `.filter(_._2 > 0)` here, which dropped
+            //      the key when the countdown ran out. That made the AdmissionCertificate path
+            //      semantically optional: a peer would auto-leave probation after N rounds
+            //      regardless of whether quorum had ever witnessed its catch-up. Empirical
+            //      consequence: ZERO admission certs assembled across 14 hours of alpha.50,
+            //      because the StallDetector emission gate (probation ∩ atTip-streak) only
+            //      considers peers still in the probation set, but those peers exited probation
+            //      via auto-clear before the streak threshold could fire.
             //   2) Seed entries for `justUnpenalized` (peers whose removalPenalty expired
             //      this round) at `readmissionProbationRounds`. Codex corrective #3: these
             //      peers take the B2 re-admission path, not the B1 deferral path.
             //   3) Clear entries for peers admitted via AdmissionCertificate this round
             //      (state.admittedFacilitators populated at buildSignatureTransition).
+            //      Post-v12, this is the ONLY path that removes a peer from probation.
             // Order matters: decrement-then-clear-then-seed avoids decrementing a freshly
             // seeded entry in the same step. Admitted peers are removed last so an edge
             // case where the same peer is both admitted AND newly-unpenalized (shouldn't
             // happen but defended against) does not re-enter probation.
             val admittedThisRound = state.admittedFacilitators.value
-            val decrementedReadmission =
-              state.lastOutcome.readmissionCountdown.view.mapValues(_ - 1).filter(_._2 > 0).to(SortedMap)
-            val seededReadmission =
-              if (config.readmissionProbationRounds <= 0) decrementedReadmission
-              else
-                justUnpenalized.foldLeft(decrementedReadmission) { (acc, pid) =>
-                  if (!acc.contains(pid)) acc.updated(pid, config.readmissionProbationRounds)
-                  else acc
-                }
-            val finalReadmission =
-              (seededReadmission -- admittedThisRound).to(SortedMap)
+            val finalReadmission = ReadmissionMaintenance.step(
+              prev = state.lastOutcome.readmissionCountdown,
+              justUnpenalized = justUnpenalized,
+              admittedThisRound = admittedThisRound,
+              probationRounds = config.readmissionProbationRounds
+            )
             val outcome = GlobalConsensusOutcome(
               state.key,
               // Canonical committee in the persisted outcome — not post-withdrawal
