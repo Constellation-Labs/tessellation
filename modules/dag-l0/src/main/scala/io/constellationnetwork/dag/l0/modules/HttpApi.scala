@@ -69,7 +69,8 @@ object HttpApi {
         HasherSelector[F],
         sharedConfig.snapshotTimeoutsConfig,
         combinedSnapshotCheckpointFileSystemStorage,
-        sharedConfig.snapshotServingConfig
+        sharedConfig.snapshotServingConfig,
+        httpCfg.externalIp.toString.some
       )
       .map { snapshotRoutes =>
         new HttpApi[F, R](
