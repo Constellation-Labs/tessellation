@@ -78,11 +78,16 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
     stallCount: Int,
     lastSummaryTime: FiniteDuration,
     lastScoreLogTime: FiniteDuration,
-    // Bounded Facility retransmit counter: incremented each time we re-broadcast our own stored
-    // Facility during a CollectingFacilities stall. Capped by MaxFacilityRetransmits to avoid spam
-    // when the round is genuinely stuck. Sender-side mitigation for gossip delivery asymmetry —
-    // peers that missed our original Facility via plain `spread` get it via direct push on retry.
-    retransmitCount: Int = 0,
+    // Bounded Facility retransmit attempt counter (0-indexed). Incremented each time we re-broadcast
+    // our own stored Facility while in CollectingFacilities. Capped by MaxFacilityRetransmits to
+    // avoid spam when the round is genuinely stuck. Sender-side mitigation for gossip delivery
+    // asymmetry — peers that missed our original Facility via plain `spread` get it via direct push
+    // on retry. v13 (2026-05-02): the delay between successive retransmits follows a capped
+    // exponential backoff rather than a fixed cadence (see StallDetector.nextRetransmitDelay).
+    retransmitAttempt: Int = 0,
+    // Wall-clock of the last retransmit, used to gate the next attempt against the exponential
+    // backoff schedule. None until the first retransmit fires.
+    lastRetransmitAt: Option[FiniteDuration] = None,
     // Tracks the view number at which roundStartTime was most recently set. Used to reset the
     // round-duration clock when the view advances, so the maxRoundDuration safety net applies
     // per-view, not to the entire life of the round. Without this, a round that view-changes
@@ -94,11 +99,9 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
   private val basePollInterval = 100L
   private val maxPollInterval = 1000L
 
-  /** Hard cap on stored-Facility retransmits per round. Three retransmits * declarationTimeout is enough for real gossip delivery jitter to
-    * resolve; beyond that, the round is likely stuck on issues other than facility-delivery (genuinely-absent peers, network partition,
-    * etc.).
-    */
-  private val MaxFacilityRetransmits: Int = 3
+  // Facility-retransmit tunables and the backoff schedule live on the companion object
+  // (StallDetector.MaxFacilityRetransmits etc.) so they are unit-testable as pure values
+  // independent of the class instance.
 
   /** Minimum round-elapsed time before an EARLY_VIEW_CHANGE may fire on an Unresponsive leader. Guards against the interaction between
     * eager Unresponsive marking in LocalHealthcheck (set on the first failed gossip probe, well before the healthcheck can confirm) and the
@@ -125,7 +128,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
             stallCount = 0,
             lastSummaryTime = now,
             lastScoreLogTime = now,
-            retransmitCount = 0
+            retransmitAttempt = 0,
+            lastRetransmitAt = None
           )
         )(monitorStep(key, _))
       )
@@ -300,28 +304,45 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
       finalStallCount = if (didStall) newStallCount + 1 else newStallCount
 
       // Bounded sender-side retransmit of our own Facility when stalled in CollectingFacilities.
-      // Gated to:
-      //   - this cycle actually triggered a stall (didStall),
+      // v13 (2026-05-02): switched from "fire on every stall cycle" to capped exponential backoff.
+      //   Pre-v13: retransmit fired on each `didStall` (~30s cadence determined by declarationTimeout)
+      //            so 3 retransmits took ~90s; the May 2 E2E ord-6 stall ate ~3 minutes because
+      //            gossip-mesh-dropped Facility decls weren't pushed back into the network fast
+      //            enough during the high-jitter cold-start window.
+      //   v13: retransmit fires when `(now - lastRetransmitAt) >= nextRetransmitDelay(attempt)`,
+      //        producing schedule 5s → 10s → 20s → 30s → 30s. First three attempts within ~35s,
+      //        bounded steady-state at 30s for the remaining attempts; cap is now 5 (raised from 3)
+      //        to keep the same ~95s total budget while landing the early attempts much sooner.
+      // Gates retained (all still required for retransmit to fire):
       //   - CollectingFacilities phase (phase index 0),
       //   - quorum still feasible (don't waste push bandwidth if round is doomed),
       //   - self is an active (non-withdrawn) facilitator for this round,
-      //   - haven't passed the retransmit cap for this round,
-      //   - local progress is still below the facilitator count (otherwise phase would advance).
+      //   - haven't passed MaxFacilityRetransmits for this round,
+      //   - local progress is still below the facilitator count.
       // The retransmit reads the stored self-Facility and re-sends it via the same direct-push
       // path used for Proposal/Signature. It does NOT rebuild the declaration — no recomputation
       // drift, preserves the original `eventHashes`/`candidates`/`trigger`.
       isFacilitiesPhase = ops.phaseIndex(state.status) == 0
       selfIsActiveFacilitator = state.facilitators.value.contains(ctx.selfId) &&
         !state.withdrawnFacilitators.value.contains(ctx.selfId)
-      belowCap = ms.retransmitCount < MaxFacilityRetransmits
+      belowCap = ms.retransmitAttempt < StallDetector.MaxFacilityRetransmits
       needsMore = info.declaredCount < info.activeCount
-      shouldRetransmit = didStall && isFacilitiesPhase && !stallResult.quorumInfeasible &&
+      // First retransmit fires once `FacilityRetransmitInitialDelay` has elapsed since round start.
+      // Subsequent retransmits gate on the per-attempt backoff schedule.
+      retransmitDue = ms.lastRetransmitAt.fold(
+        (now - ms.roundStartTime) >= StallDetector.FacilityRetransmitInitialDelay
+      ) { last =>
+        (now - last) >= StallDetector.nextRetransmitDelay(ms.retransmitAttempt)
+      }
+      shouldRetransmit = retransmitDue && isFacilitiesPhase && !stallResult.quorumInfeasible &&
         selfIsActiveFacilitator && belowCap && needsMore
       activeFacilitatorTargets = state.facilitators.value.toSet -- state.withdrawnFacilitators.value - ctx.selfId
+      retransmitFired = shouldRetransmit && activeFacilitatorTargets.nonEmpty
       _ <- ctx.creator
         .retransmitOwnFacility(key, activeFacilitatorTargets)
-        .whenA(shouldRetransmit && activeFacilitatorTargets.nonEmpty)
-      newRetransmitCount = if (shouldRetransmit && activeFacilitatorTargets.nonEmpty) ms.retransmitCount + 1 else ms.retransmitCount
+        .whenA(retransmitFired)
+      newRetransmitAttempt = if (retransmitFired) ms.retransmitAttempt + 1 else ms.retransmitAttempt
+      newLastRetransmitAt = if (retransmitFired) Some(now) else ms.lastRetransmitAt
 
       _ <- Metrics[F].updateGauge("dag_consensus_stall_cycle", finalStallCount)
 
@@ -492,7 +513,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
             // that re-advances into the same phase) starts retransmit budgeting over. Without this,
             // a round that went through a view-change detour could exhaust the cap before the fresh
             // phase gets any retransmit attempts.
-            retransmitCount = if (statusChanged || stallResult.evictionEscalated) 0 else newRetransmitCount,
+            retransmitAttempt = if (statusChanged || stallResult.evictionEscalated) 0 else newRetransmitAttempt,
+            lastRetransmitAt = if (statusChanged || stallResult.evictionEscalated) None else newLastRetransmitAt,
             lastView = state.viewNumber
           )
         )
@@ -1063,6 +1085,41 @@ object StallDetector {
     * round plus slack for gossip jitter.
     */
   private[consensus] val PerViewRoundDurationIncrement: FiniteDuration = 90.seconds
+
+  /** Hard cap on stored-Facility retransmits per round. Past this count the round is likely stuck on issues other than facility-delivery
+    * (genuinely-absent peers, network partition, etc.) and additional retransmits are wasted.
+    *
+    * v13 (2026-05-02) raised 3 → 5 to match the new capped-exponential cadence (see `nextRetransmitDelay`). The first 5 retransmits fire
+    * within 5+10+20+30+30 = 95s, which is the same wall-time budget as the pre-v13 fixed-30s × 3 = 90s but lands the early attempts an
+    * order of magnitude sooner — catching gossip-jitter Facility drops in the first 35s instead of waiting 90s.
+    */
+  private[consensus] val MaxFacilityRetransmits: Int = 5
+
+  /** Initial delay before the first Facility retransmit, and the exponential base for subsequent attempts. Chosen at 5s to fire fast enough
+    * to catch the common case (gossip-mesh drop during cold-start round 1-10 on docker compose) without piling on bandwidth when peers are
+    * healthy.
+    */
+  private[consensus] val FacilityRetransmitInitialDelay: FiniteDuration = 5.seconds
+
+  /** Cap on the exponential backoff. Once the schedule reaches this value it stays here for the remaining attempts. Matches the pre-v13
+    * fixed cadence (~declarationTimeout) so steady-state behaviour is unchanged when the issue persists past the first few retries.
+    */
+  private[consensus] val FacilityRetransmitMaxDelay: FiniteDuration = 30.seconds
+
+  /** Compute the wall-clock delay required between attempt `n` and attempt `n+1` of a Facility retransmit. Capped exponential: 5s → 10s →
+    * 20s → 30s → 30s → ...
+    *
+    * Pure function, exposed for unit-tests.
+    */
+  private[consensus] def nextRetransmitDelay(attempt: Int): FiniteDuration =
+    if (attempt < 0) FacilityRetransmitInitialDelay
+    else {
+      // Bound the doubling exponent to avoid overflow. Once raw exceeds the cap we clamp anyway.
+      val safeExponent = math.min(attempt.toLong, 20L)
+      val rawMillis = FacilityRetransmitInitialDelay.toMillis * (1L << safeExponent)
+      val capMillis = FacilityRetransmitMaxDelay.toMillis
+      FiniteDuration(math.min(rawMillis, capMillis), MILLISECONDS)
+    }
 
   /** Deterministic selection of eviction-vote targets for a single node emission pass.
     *
