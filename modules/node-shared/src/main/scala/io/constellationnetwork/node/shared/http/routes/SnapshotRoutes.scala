@@ -290,7 +290,13 @@ object SnapshotRoutes {
     hasherSelector: HasherSelector[F],
     snapshotTimeoutsConfig: SnapshotTimeoutsConfig,
     combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, SI],
-    snapshotServingConfig: Option[SnapshotServingConfig] = None
+    snapshotServingConfig: Option[SnapshotServingConfig] = None,
+    // The local node's external IP. Plumbed into the per-IP rate/bandwidth limiters so they can
+    // detect the XFF-self-injection case (LB injecting our own IP into X-Forwarded-For) and fall
+    // back to the TCP remote. Without this guard, all LB-injected requests share a single counter
+    // under our own IP, which on bootstrap-source nodes saturates within seconds and starts 429ing
+    // healthcheck probes — observed 2026-05-02 on testnet .193.
+    selfExternalIp: Option[String] = None
   ): F[SnapshotRoutes[F, S, SI]] =
     for {
       cachedCombined <- CachedCombinedResponse.make[F, S, SI]
@@ -305,7 +311,8 @@ object SnapshotRoutes {
             cfg.perIpMaxRequestsPerWindow,
             cfg.perIpWindow,
             cfg.perIpRetryAfterSeconds,
-            cfg.perIpAllowlist.split(",").iterator.map(_.trim).filter(_.nonEmpty).toSet
+            cfg.perIpAllowlist.split(",").iterator.map(_.trim).filter(_.nonEmpty).toSet,
+            selfExternalIp
           )
         )
       // Only build the bandwidth limiter when the byte cap is positive. Restricted to heavyweight
@@ -320,7 +327,8 @@ object SnapshotRoutes {
             windowDuration = cfg.perIpWindow,
             retryAfterSeconds = cfg.perIpBandwidthRetryAfterSeconds,
             appliesTo = (req: Request[F]) => isHeavyweightSnapshotRoute(req),
-            allowlist = cfg.perIpAllowlist.split(",").iterator.map(_.trim).filter(_.nonEmpty).toSet
+            allowlist = cfg.perIpAllowlist.split(",").iterator.map(_.trim).filter(_.nonEmpty).toSet,
+            selfExternalIp = selfExternalIp
           )
         }
     } yield

@@ -74,13 +74,18 @@ object PerIpBandwidthLimitMiddleware {
     *   that legitimately exceeds the per-IP byte cap. Match is exact-string against the resolved IP (X-Forwarded-For first hop or remote
     *   address). Mirrors [[PerIpRateLimitMiddleware]]'s allowlist so a single `CL_SNAPSHOT_PER_IP_ALLOWLIST` env value bypasses both
     *   limiters in lockstep.
+    * @param selfExternalIp
+    *   the local node's external IP. When provided, the middleware detects the XFF-self-injection case (LB injected our own IP into
+    *   `X-Forwarded-For`) and falls back to the TCP remote address. Mirrors [[PerIpRateLimitMiddleware]]'s guard; see that header doc for
+    *   the full rationale (.193 self-loop SIGTERM cascade observed 2026-05-02).
     */
   def apply[F[_]: Async](
     maxBytesPerWindow: Long,
     windowDuration: FiniteDuration,
     retryAfterSeconds: Long = 5,
     appliesTo: Request[F] => Boolean = (_: Request[F]) => true,
-    allowlist: Set[String] = Set.empty
+    allowlist: Set[String] = Set.empty,
+    selfExternalIp: Option[String] = None
   ): F[HttpRoutes[F] => HttpRoutes[F]] = {
     val logger = Slf4jLogger.getLogger[F]
     val windowMillis = windowDuration.toMillis
@@ -93,12 +98,18 @@ object PerIpBandwidthLimitMiddleware {
           // takes priority, fall back to TCP remote. Requests with no identifiable source pass
           // through unconditionally. The .flatMap(_.values.head) correctly unwraps the Option[Node]
           // before .toString — calling .toString on the Option directly produces "Some(<ip>)" keys.
-          val clientIpOpt: Option[String] =
+          // Self-injection guard mirrors PerIpRateLimitMiddleware: if XFF first-hop matches our
+          // own external IP, treat as LB injection and fall back to the TCP remote.
+          val xffFirstHop: Option[String] =
             req.headers
               .get[`X-Forwarded-For`]
               .flatMap(_.values.head)
               .map(_.toString.split(",").head.trim)
               .filter(_.nonEmpty)
+          val xffIsSelfInjection: Boolean =
+            (selfExternalIp, xffFirstHop).mapN(_ == _).getOrElse(false)
+          val clientIpOpt: Option[String] =
+            (if (xffIsSelfInjection) None else xffFirstHop)
               .orElse(req.remote.map(_.host.toString))
 
           clientIpOpt match {

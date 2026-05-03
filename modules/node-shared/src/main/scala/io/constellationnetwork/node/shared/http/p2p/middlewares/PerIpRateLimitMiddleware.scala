@@ -46,6 +46,13 @@ object PerIpRateLimitMiddleware {
     * @param allowlist
     *   client IPs that bypass the counter entirely. Used for trusted infra (snapshot streaming, monitoring, peer-to-peer recovery) that
     *   legitimately exceeds the per-IP cap. Match is exact-string against the resolved IP (X-Forwarded-For first hop or remote address).
+    * @param selfExternalIp
+    *   the local node's external IP (typically `cfg.http.externalIp`). When provided, the middleware detects the XFF-self-injection case —
+    *   i.e. the load-balancer or upstream proxy injected the LOCAL node's own IP into `X-Forwarded-For` — and falls back to the TCP remote
+    *   address instead. Without this guard, all LB-injected requests share a single counter under our own IP, which on bootstrap-source
+    *   nodes (RunRollback) saturates within seconds and starts 429ing healthcheck probes — an external supervisor then treats the probe
+    *   failures as liveness failure and SIGTERMs the JVM, producing a 5-7 minute restart loop. Observed 2026-05-02 on alpha.51 testnet
+    *   `.193`.
     * @return
     *   a function that wraps `HttpRoutes[F]` with the rate limiter.
     */
@@ -53,19 +60,29 @@ object PerIpRateLimitMiddleware {
     maxRequestsPerWindow: Int,
     windowDuration: FiniteDuration,
     retryAfterSeconds: Long = 5,
-    allowlist: Set[String] = Set.empty
+    allowlist: Set[String] = Set.empty,
+    selfExternalIp: Option[String] = None
   ): F[HttpRoutes[F] => HttpRoutes[F]] = {
     val logger = Slf4jLogger.getLogger[F]
     val windowMillis = windowDuration.toMillis
 
     Ref.of[F, Map[String, IpState]](Map.empty).map { stateRef => routes: HttpRoutes[F] =>
       Kleisli { req =>
-        val clientIpOpt: Option[String] =
+        // Resolve the client IP. The .flatMap(_.values.head) correctly unwraps the Option[Node]
+        // before .toString — calling .toString on the Option directly produces "Some(<ip>)" keys.
+        // Self-injection guard: when XFF first-hop matches our own external IP, treat the header as
+        // LB injection rather than a true upstream client identity, and fall back to the connection
+        // remote address. Prevents the .193 self-loop SIGTERM cascade.
+        val xffFirstHop: Option[String] =
           req.headers
             .get[`X-Forwarded-For`]
             .flatMap(_.values.head)
             .map(_.toString.split(",").head.trim)
             .filter(_.nonEmpty)
+        val xffIsSelfInjection: Boolean =
+          (selfExternalIp, xffFirstHop).mapN(_ == _).getOrElse(false)
+        val clientIpOpt: Option[String] =
+          (if (xffIsSelfInjection) None else xffFirstHop)
             .orElse(req.remote.map(_.host.toString))
 
         clientIpOpt match {

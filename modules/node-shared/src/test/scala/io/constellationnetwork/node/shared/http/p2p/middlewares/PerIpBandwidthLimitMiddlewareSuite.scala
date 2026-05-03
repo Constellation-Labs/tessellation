@@ -104,6 +104,38 @@ object PerIpBandwidthLimitMiddlewareSuite extends SimpleIOSuite {
         .and(expect(a2.status == Status.TooManyRequests, "second exceeds; allowlist does not apply to this IP"))
   }
 
+  test("selfExternalIp guard: XFF first-hop matching self IP is dropped, falls back to remote (here: None → pass-through)") {
+    val selfIp = "52.8.132.193"
+    val cap = 100L * 1024L * 1024L
+    val window = 1.minute
+    val responseSize = 80L * 1024L * 1024L // single response < cap; two would normally exceed
+    for {
+      mw <- PerIpBandwidthLimitMiddleware[IO](cap, window, selfExternalIp = Some(selfIp))
+      wrapped = mw(fixedSizeRoute(responseSize))
+      r1 <- wrapped(reqFromIp(selfIp)).getOrElse(Response.notFound[IO])
+      r2 <- wrapped(reqFromIp(selfIp)).getOrElse(Response.notFound[IO])
+      r3 <- wrapped(reqFromIp(selfIp)).getOrElse(Response.notFound[IO])
+    } yield
+      expect(r1.status == Status.Ok, "self-XFF r1 passes (guard dropped it, no remote → unkeyed)")
+        .and(expect(r2.status == Status.Ok, "self-XFF r2 passes (would be 429 without guard)"))
+        .and(expect(r3.status == Status.Ok, "self-XFF r3 passes (would be 429 without guard)"))
+  }
+
+  test("selfExternalIp guard: non-self XFF is still bandwidth-capped") {
+    val selfIp = "52.8.132.193"
+    val cap = 100L * 1024L * 1024L
+    val window = 1.minute
+    val responseSize = 80L * 1024L * 1024L
+    for {
+      mw <- PerIpBandwidthLimitMiddleware[IO](cap, window, selfExternalIp = Some(selfIp))
+      wrapped = mw(fixedSizeRoute(responseSize))
+      r1 <- wrapped(reqFromIp("198.51.100.77")).getOrElse(Response.notFound[IO])
+      r2 <- wrapped(reqFromIp("198.51.100.77")).getOrElse(Response.notFound[IO])
+    } yield
+      expect(r1.status == Status.Ok, "external r1 accepted")
+        .and(expect(r2.status == Status.TooManyRequests, "external r2 rejected — guard didn't disable normal limiting"))
+  }
+
   test("appliesTo predicate: routes excluded from bandwidth limit pass through unconstrained") {
     val cap = 1L // 1 byte cap — would reject anything ≥ 1 byte
     val window = 1.minute
