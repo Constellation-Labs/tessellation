@@ -87,4 +87,44 @@ object PerIpRateLimitMiddlewareSuite extends SimpleIOSuite {
       expect(a1.status == Status.Ok, "first request accepted")
         .and(expect(a2.status == Status.TooManyRequests, "second request rejected — allowlist does not apply"))
   }
+
+  test("selfExternalIp guard: XFF first-hop matching self IP is ignored, falls back to remote (here: None → pass-through)") {
+    // Reproduces the .193 self-loop bug: when the LB injects our own external IP into XFF,
+    // every healthcheck would otherwise share a single counter under our own IP and saturate.
+    // With the guard, XFF matching self is dropped and we fall through to req.remote — which
+    // in this synthetic test is empty, so requests pass through unconditionally rather than
+    // accumulating against a self-keyed counter.
+    val selfIp = "52.8.132.193"
+    for {
+      mw <- PerIpRateLimitMiddleware[IO](
+        maxRequestsPerWindow = 1,
+        windowDuration = 1.minute,
+        selfExternalIp = Some(selfIp)
+      )
+      wrapped = mw(okRoute)
+      r1 <- wrapped(reqFromIp(selfIp)).getOrElse(Response.notFound[IO])
+      r2 <- wrapped(reqFromIp(selfIp)).getOrElse(Response.notFound[IO])
+      r3 <- wrapped(reqFromIp(selfIp)).getOrElse(Response.notFound[IO])
+    } yield
+      expect(r1.status == Status.Ok, "self-XFF r1 passes (guard dropped it, no remote → unkeyed)")
+        .and(expect(r2.status == Status.Ok, "self-XFF r2 passes (would be 429 without guard)"))
+        .and(expect(r3.status == Status.Ok, "self-XFF r3 passes (would be 429 without guard)"))
+  }
+
+  test("selfExternalIp guard: non-self XFF still rate-limits normally") {
+    // Sanity check — the guard only kicks in for self-IP XFF; other clients must still be capped.
+    val selfIp = "52.8.132.193"
+    for {
+      mw <- PerIpRateLimitMiddleware[IO](
+        maxRequestsPerWindow = 1,
+        windowDuration = 1.minute,
+        selfExternalIp = Some(selfIp)
+      )
+      wrapped = mw(okRoute)
+      r1 <- wrapped(reqFromIp("198.51.100.77")).getOrElse(Response.notFound[IO])
+      r2 <- wrapped(reqFromIp("198.51.100.77")).getOrElse(Response.notFound[IO])
+    } yield
+      expect(r1.status == Status.Ok, "external r1 accepted")
+        .and(expect(r2.status == Status.TooManyRequests, "external r2 rejected — guard didn't disable normal limiting"))
+  }
 }

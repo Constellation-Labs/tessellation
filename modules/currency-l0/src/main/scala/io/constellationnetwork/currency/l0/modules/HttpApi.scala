@@ -70,7 +70,8 @@ object HttpApi {
           HasherSelector.alwaysCurrent[F],
           sharedConfig.snapshotTimeoutsConfig,
           combinedSnapshotCheckpointFileSystemStorage,
-          sharedConfig.snapshotServingConfig
+          sharedConfig.snapshotServingConfig,
+          httpCfg.externalIp.toString.some
         )
     } yield
       new HttpApi[F](
