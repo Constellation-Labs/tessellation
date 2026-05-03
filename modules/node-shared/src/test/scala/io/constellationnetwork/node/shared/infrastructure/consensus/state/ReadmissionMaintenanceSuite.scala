@@ -7,13 +7,11 @@ import io.constellationnetwork.security.hex.Hex
 
 import weaver.FunSuite
 
-/** Verifies the v12 sticky-probation invariant: a peer's readmissionCountdown ENTRY persists across
-  * rounds even after the counter clamps to 0. The only path that removes the entry is an accepted
-  * `AdmissionCertificate` (passed in here as `admittedThisRound`).
+/** Verifies the v12 sticky-probation invariant: a peer's readmissionCountdown ENTRY persists across rounds even after the counter clamps to
+  * 0. The only path that removes the entry is an accepted `AdmissionCertificate` (passed in here as `admittedThisRound`).
   *
-  * Pre-v12 had `.filter(_._2 > 0)` after the decrement, which dropped the entry on the round it
-  * reached 0 — making the AdmissionCertificate path semantically optional and the StallDetector
-  * emission gate (probation ∩ atTip ∩ streak) starve for candidates.
+  * Pre-v12 had `.filter(_._2 > 0)` after the decrement, which dropped the entry on the round it reached 0 — making the AdmissionCertificate
+  * path semantically optional and the StallDetector emission gate (probation ∩ atTip ∩ streak) starve for candidates.
   */
 object ReadmissionMaintenanceSuite extends FunSuite {
 
@@ -28,27 +26,24 @@ object ReadmissionMaintenanceSuite extends FunSuite {
     var current: SortedMap[PeerId, Int] = SortedMap(pA -> 2)
     // Round 1 — countdown 2 → 1
     current = ReadmissionMaintenance.step(current, Set.empty, Set.empty, 5)
-    expect(current.get(pA).contains(1), s"after round 1 expected pA=1, got ${current.get(pA)}").and(
+    expect(current.get(pA).contains(1), s"after round 1 expected pA=1, got ${current.get(pA)}").and
       // Round 2 — countdown 1 → 0
       {
         current = ReadmissionMaintenance.step(current, Set.empty, Set.empty, 5)
         expect(current.get(pA).contains(0), s"after round 2 expected pA=0, got ${current.get(pA)}")
-      }
-    ).and(
+      }.and
       // Round 3 — pre-v12 would have dropped this; v12 keeps it pinned at 0
       {
         current = ReadmissionMaintenance.step(current, Set.empty, Set.empty, 5)
         expect(current.contains(pA), s"v12 invariant: pA must still be in probation map (key present)").and(
           expect(current.get(pA).contains(0), s"clamped at 0, got ${current.get(pA)}")
         )
-      }
-    ).and(
+      }.and
       // Round 4 — still stuck at 0 with no ACS
       {
         current = ReadmissionMaintenance.step(current, Set.empty, Set.empty, 5)
         expect(current.contains(pA), "still in probation 4 rounds after countdown started")
       }
-    )
   }
 
   test("only an AdmissionCertificate (admittedThisRound) clears a probation entry") {

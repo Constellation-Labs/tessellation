@@ -6,29 +6,24 @@ import io.constellationnetwork.schema.peer.PeerId
 
 /** Per-round maintenance of `readmissionCountdown` — the B2 probation map.
   *
-  * v12 (2026-05-02) sticky-probation: a peer's countdown decrements every round but **clamps at 0**
-  * instead of auto-clearing the entry. The only path that removes a peer from probation is an
-  * accepted `AdmissionCertificate` (passed in here as `admittedThisRound`).
+  * v12 (2026-05-02) sticky-probation: a peer's countdown decrements every round but **clamps at 0** instead of auto-clearing the entry. The
+  * only path that removes a peer from probation is an accepted `AdmissionCertificate` (passed in here as `admittedThisRound`).
   *
-  * Pre-v12 used `.filter(_._2 > 0)` here, which dropped the entry when the countdown ran out.
-  * Empirical motivation for v12: alpha.50 produced ZERO admission certs in 14 hours, because the
-  * StallDetector emission gate (probation ∩ atTip ∩ consecutive-streak) only considers peers
-  * still in the probation set, but those peers exited probation via auto-clear before the streak
-  * threshold could fire.
+  * Pre-v12 used `.filter(_._2 > 0)` here, which dropped the entry when the countdown ran out. Empirical motivation for v12: alpha.50
+  * produced ZERO admission certs in 14 hours, because the StallDetector emission gate (probation ∩ atTip ∩ consecutive-streak) only
+  * considers peers still in the probation set, but those peers exited probation via auto-clear before the streak threshold could fire.
   *
-  * Extracted as a pure function so the v11 → v12 semantic shift is unit-testable independent of
-  * the full advancer.
+  * Extracted as a pure function so the v11 → v12 semantic shift is unit-testable independent of the full advancer.
   */
 object ReadmissionMaintenance {
 
   /** Apply one round of probation maintenance.
     *
-    *   1. Decrement every active counter by 1, clamped at 0.
-    *   2. Seed entries for peers in `justUnpenalized` at `probationRounds` (only if not already present).
-    *   3. Remove entries for peers in `admittedThisRound` (the only path out of probation).
+    *   1. Decrement every active counter by 1, clamped at 0. 2. Seed entries for peers in `justUnpenalized` at `probationRounds` (only if
+    *      not already present). 3. Remove entries for peers in `admittedThisRound` (the only path out of probation).
     *
-    * Invariant: `admittedThisRound ∩ justUnpenalized = ∅` is enforced by upstream code; if a peer is
-    * both, the admit step wins (entry removed) because admission applies last.
+    * Invariant: `admittedThisRound ∩ justUnpenalized = ∅` is enforced by upstream code; if a peer is both, the admit step wins (entry
+    * removed) because admission applies last.
     */
   def step(
     prev: SortedMap[PeerId, Int],
