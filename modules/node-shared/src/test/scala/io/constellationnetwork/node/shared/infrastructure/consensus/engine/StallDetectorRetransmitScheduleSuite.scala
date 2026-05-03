@@ -6,11 +6,10 @@ import weaver.FunSuite
 
 /** v13 Facility retransmit schedule — pure-function tests for `StallDetector.nextRetransmitDelay`.
   *
-  * Pre-v13 retransmit fired on every stall cycle (~30s cadence determined by `declarationTimeout`),
-  * so 3 retries took ~90s. The May 2 fork-recovery E2E ord-6 stall ate ~3 minutes because
-  * gossip-mesh-dropped Facility decls weren't pushed back into the network fast enough during the
-  * high-jitter cold-start window. v13 switches to capped exponential backoff: 5s, 10s, 20s, 30s,
-  * 30s, ... — the first three attempts fire in ~35s instead of ~90s.
+  * Pre-v13 retransmit fired on every stall cycle (~30s cadence determined by `declarationTimeout`), so 3 retries took ~90s. The May 2
+  * fork-recovery E2E ord-6 stall ate ~3 minutes because gossip-mesh-dropped Facility decls weren't pushed back into the network fast enough
+  * during the high-jitter cold-start window. v13 switches to capped exponential backoff: 5s, 10s, 20s, 30s, 30s, ... — the first three
+  * attempts fire in ~35s instead of ~90s.
   */
 object StallDetectorRetransmitScheduleSuite extends FunSuite {
 
