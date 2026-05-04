@@ -212,9 +212,9 @@ object ConsensusStateUpdater {
     */
   def recoverIfForking[F[_]: Async](
     ownObservationHash: Hash,
-    observationName: String,
+    observation: ForkObservation,
     nodeStorage: NodeStorage[F],
-    forkObservationsRef: Ref[F, Map[String, (Hash, FiniteDuration)]],
+    forkObservationsRef: Ref[F, Map[ForkObservation, (Hash, FiniteDuration)]],
     confirmationWindow: FiniteDuration,
     minObservations: Int
   )(
@@ -233,16 +233,16 @@ object ConsensusStateUpdater {
             "n/a",
             "n/a",
             LogEvent.ForkDetected,
-            "observation" -> observationName,
+            "observation" -> observation.label,
             "totalObservations" -> totalObservations.toString,
-            "action" -> "no_strict_majority"
+            "action" -> ForkAction.NoStrictMajority.label
           )
         )
       case None => Applicative[F].unit
       case Some(majorityObservationHash) =>
         recoverIfForkingWithMajority(
           ownObservationHash,
-          observationName,
+          observation,
           nodeStorage,
           forkObservationsRef,
           confirmationWindow,
@@ -257,9 +257,9 @@ object ConsensusStateUpdater {
 
   private def recoverIfForkingWithMajority[F[_]: Async](
     ownObservationHash: Hash,
-    observationName: String,
+    observation: ForkObservation,
     nodeStorage: NodeStorage[F],
-    forkObservationsRef: Ref[F, Map[String, (Hash, FiniteDuration)]],
+    forkObservationsRef: Ref[F, Map[ForkObservation, (Hash, FiniteDuration)]],
     confirmationWindow: FiniteDuration,
     minObservations: Int,
     observations: SortedMap[PeerId, Hash],
@@ -274,7 +274,7 @@ object ConsensusStateUpdater {
 
     if (!isForked) {
       // Local node matches the strict majority — clear any pending suspicion for this observation type.
-      forkObservationsRef.update(_ - observationName)
+      forkObservationsRef.update(_ - observation)
     } else if (totalObservations < minObservations) {
       logger.info(
         ConsensusLog.format(
@@ -282,33 +282,33 @@ object ConsensusStateUpdater {
           "n/a",
           "n/a",
           LogEvent.ForkDetected,
-          "observation" -> observationName,
+          "observation" -> observation.label,
           "totalObservations" -> totalObservations.toString,
           "minObservations" -> minObservations.toString,
-          "action" -> "ignored_insufficient_sample"
+          "action" -> ForkAction.IgnoredInsufficientSample.label
         )
       )
     } else if (confirmationWindow <= 0.millis) {
       // Legacy single-sample behaviour: trigger recovery immediately.
-      triggerRecovery(observationName, majorityForkPeers, totalObservations, nodeStorage, logger) >>
-        forkObservationsRef.update(_ - observationName)
+      triggerRecovery(observation, majorityForkPeers, totalObservations, nodeStorage, logger) >>
+        forkObservationsRef.update(_ - observation)
     } else {
       for {
         now <- Async[F].monotonic
         decision <- forkObservationsRef.modify { current =>
-          current.get(observationName) match {
+          current.get(observation) match {
             case Some((existingHash, firstSeenAt))
                 if existingHash === majorityObservationHash && (now - firstSeenAt) >= confirmationWindow =>
-              (current - observationName, ForkDecision.Confirm(now - firstSeenAt))
+              (current - observation, ForkDecision.Confirm(now - firstSeenAt))
             case Some((existingHash, firstSeenAt)) if existingHash === majorityObservationHash =>
               (current, ForkDecision.AwaitWindow(now - firstSeenAt))
             case _ =>
-              (current.updated(observationName, (majorityObservationHash, now)), ForkDecision.Record)
+              (current.updated(observation, (majorityObservationHash, now)), ForkDecision.Record)
           }
         }
         _ <- decision match {
           case ForkDecision.Confirm(elapsed) =>
-            triggerRecovery(observationName, majorityForkPeers, totalObservations, nodeStorage, logger, elapsed.some)
+            triggerRecovery(observation, majorityForkPeers, totalObservations, nodeStorage, logger, elapsed.some)
           case ForkDecision.AwaitWindow(elapsed) =>
             logger.info(
               ConsensusLog.format(
@@ -316,12 +316,12 @@ object ConsensusStateUpdater {
                 "n/a",
                 "n/a",
                 LogEvent.ForkDetected,
-                "observation" -> observationName,
+                "observation" -> observation.label,
                 "majorityPeers" -> ConsensusLog.pids(majorityForkPeers),
                 "totalObservations" -> totalObservations.toString,
                 "elapsedMs" -> elapsed.toMillis.toString,
                 "windowMs" -> confirmationWindow.toMillis.toString,
-                "action" -> "awaiting_confirmation"
+                "action" -> ForkAction.AwaitingConfirmation.label
               )
             )
           case ForkDecision.Record =>
@@ -331,11 +331,11 @@ object ConsensusStateUpdater {
                 "n/a",
                 "n/a",
                 LogEvent.ForkDetected,
-                "observation" -> observationName,
+                "observation" -> observation.label,
                 "majorityPeers" -> ConsensusLog.pids(majorityForkPeers),
                 "totalObservations" -> totalObservations.toString,
                 "windowMs" -> confirmationWindow.toMillis.toString,
-                "action" -> "suspicion_recorded"
+                "action" -> ForkAction.SuspicionRecorded.label
               )
             )
         }
@@ -350,6 +350,30 @@ object ConsensusStateUpdater {
     final case class Confirm(elapsed: FiniteDuration) extends ForkDecision
   }
 
+  /** Identifies which divergence type a fork-detection sample is sourced from. The `label` is the stable string used as a Prometheus label
+    * value and a log field — keep it grep-stable. Adding a new observation type requires adding a case here and verifying the operator's
+    * dashboards include the new label.
+    */
+  sealed abstract class ForkObservation(val label: String)
+  object ForkObservation {
+    case object LastSnapshotHash extends ForkObservation("last-snapshot-hash")
+    case object FacilitatorsHash extends ForkObservation("facilitators-hash")
+    case object ConsensusConfigHash extends ForkObservation("consensus-config-hash")
+  }
+
+  /** What `recoverIfForking` decided to do for a given sample. The `label` is the stable structured-log `action` field — keep it
+    * grep-stable; operator dashboards/alerts pivot on these values.
+    */
+  sealed abstract class ForkAction(val label: String)
+  object ForkAction {
+    case object NoStrictMajority extends ForkAction("no_strict_majority")
+    case object IgnoredInsufficientSample extends ForkAction("ignored_insufficient_sample")
+    case object AwaitingConfirmation extends ForkAction("awaiting_confirmation")
+    case object SuspicionRecorded extends ForkAction("suspicion_recorded")
+    case object LoggedNoRecovery extends ForkAction("logged_no_recovery")
+    case object ConfirmedRecovery extends ForkAction("confirmed_recovery")
+  }
+
   /** Log + metric a divergence class that cannot be repaired by recovery download.
     *
     * For example, a `consensusConfigHash` mismatch indicates peers running with different config; a recovery download cycle won't change
@@ -360,7 +384,7 @@ object ConsensusStateUpdater {
     */
   def logRecoveryUnsuitableMismatch[F[_]: Sync](
     ownObservationHash: Hash,
-    observationName: String
+    observation: ForkObservation
   )(
     observations: SortedMap[PeerId, Hash]
   )(implicit metrics: Metrics[F]): F[Unit] = {
@@ -370,7 +394,7 @@ object ConsensusStateUpdater {
     else
       metrics.incrementCounter(
         "dag_consensus_unrepairable_mismatch",
-        Seq(unsafeLabelName("observation_type") -> observationName)
+        Seq(unsafeLabelName("observation_type") -> observation.label)
       ) >>
         logger.warn(
           ConsensusLog.format(
@@ -378,16 +402,16 @@ object ConsensusStateUpdater {
             "n/a",
             "n/a",
             LogEvent.ForkDetected,
-            "observation" -> observationName,
+            "observation" -> observation.label,
             "divergentPeers" -> ConsensusLog.pids(divergent),
             "totalObservations" -> observations.size.toString,
-            "action" -> "logged_no_recovery"
+            "action" -> ForkAction.LoggedNoRecovery.label
           )
         )
   }
 
   private def triggerRecovery[F[_]: Async](
-    observationName: String,
+    observation: ForkObservation,
     majorityForkPeers: List[PeerId],
     totalObservations: Int,
     nodeStorage: NodeStorage[F],
@@ -396,7 +420,7 @@ object ConsensusStateUpdater {
   )(implicit metrics: Metrics[F]): F[Unit] =
     metrics.incrementCounter(
       "dag_consensus_fork_detected",
-      Seq(unsafeLabelName("observation_type") -> observationName)
+      Seq(unsafeLabelName("observation_type") -> observation.label)
     ) >>
       logger.warn(
         ConsensusLog.format(
@@ -405,10 +429,10 @@ object ConsensusStateUpdater {
           "n/a",
           LogEvent.ForkDetected,
           (Seq(
-            "observation" -> observationName,
+            "observation" -> observation.label,
             "majorityPeers" -> ConsensusLog.pids(majorityForkPeers),
             "totalObservations" -> totalObservations.toString,
-            "action" -> "confirmed_recovery"
+            "action" -> ForkAction.ConfirmedRecovery.label
           ) ++ elapsedConfirmation.map(e => "confirmedAfterMs" -> e.toMillis.toString).toSeq): _*
         )
       ) >>
@@ -417,13 +441,13 @@ object ConsensusStateUpdater {
       // path which requires a full process restart and is too slow for tests.
       // Try from Ready first (normal case), then Observing (if already recovering).
       nodeStorage.setRecoveryDownload >>
-      tryTransitionToDownload(nodeStorage, logger, observationName) >>
+      tryTransitionToDownload(nodeStorage, logger, observation) >>
       ExitOnFork.exitOnFeature("CL_EXIT_ON_FORK")
 
   private def tryTransitionToDownload[F[_]: Async](
     nodeStorage: NodeStorage[F],
     logger: org.typelevel.log4cats.Logger[F],
-    observationName: String
+    observation: ForkObservation
   )(implicit metrics: Metrics[F]): F[Unit] = {
     val candidateStates = List(
       NodeState.Ready,
@@ -446,7 +470,7 @@ object ConsensusStateUpdater {
             "n/a",
             "n/a",
             LogEvent.RecoveryStateTransition,
-            "trigger" -> s"fork_detected_$observationName",
+            "trigger" -> s"fork_detected_${observation.label}",
             "from" -> fromState.toString,
             "to" -> "WaitingForDownload"
           )
@@ -460,7 +484,7 @@ object ConsensusStateUpdater {
             "n/a",
             "n/a",
             LogEvent.RecoveryStateTransition,
-            "trigger" -> s"fork_detected_$observationName",
+            "trigger" -> s"fork_detected_${observation.label}",
             "action" -> "already_recovering"
           )
         )

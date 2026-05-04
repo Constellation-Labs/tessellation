@@ -80,15 +80,15 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
 
   private[consensus] def addProposalQc(key: Key, qc: ProposalQC): F[Option[ConsensusResources[Artifact, Kind]]]
 
-  /** Attempt to atomically lock a local vote for (view, proposalHash). Returns Right(VoteLock) on success, or Left(reason) if the lock
-    * would violate the HotStuff-style safety rule.
+  /** Attempt to atomically lock a local vote for (view, proposalHash). Returns Right(VoteLock) on success, or Left(VoteRejection) if the
+    * lock would violate the HotStuff-style safety rule.
     */
   def tryLockVote(
     key: Key,
     view: Long,
     proposalHash: Hash,
     effectiveLockedQc: Option[ProposalQC]
-  ): F[Either[String, VoteLock]]
+  ): F[Either[VoteRejection, VoteLock]]
 
   /** Advance the `lockedQc` inside the VoteLock for a key. No-op if the existing QC is at an equal-or-higher view. */
   def advanceLockedQc(key: Key, qc: ProposalQC): F[Unit]
@@ -185,7 +185,7 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
 
   def getCandidates(key: Key): F[Candidates]
 
-  private[consensus] def registerPeer(peerId: PeerId, key: Key): F[Boolean]
+  private[consensus] def registerPeer(peerId: PeerId, key: Key): F[Unit]
 
   /** Returns all peer registrations (peerId → key) for lagging node detection. */
   private[consensus] def getPeerRegistrations: F[Map[PeerId, Key]]
@@ -419,12 +419,12 @@ object ConsensusStorage {
           view: Long,
           proposalHash: Hash,
           effectiveLockedQc: Option[ProposalQC]
-        ): F[Either[String, VoteLock]] =
+        ): F[Either[VoteRejection, VoteLock]] =
           voteLocksR(key).modify { maybeLock =>
             val current = maybeLock.getOrElse(VoteLock.empty)
             current.acceptVote(view, proposalHash, effectiveLockedQc) match {
-              case Right(newLock) => (newLock.some, Right(newLock))
-              case Left(reason)   => (maybeLock, Left(reason))
+              case Right(newLock)  => (newLock.some, Right(newLock))
+              case Left(rejection) => (maybeLock, Left(rejection))
             }
           }
 
@@ -639,7 +639,7 @@ object ConsensusStorage {
             }
           }.map(c => Candidates(c.toSet))
 
-        def registerPeer(peerId: PeerId, newKey: Key): F[Boolean] = {
+        def registerPeer(peerId: PeerId, newKey: Key): F[Unit] = {
           // Register at both key and key.next. The state creator calls getCandidates(key.next)
           // where key is the ordinal being produced. If a peer registers at N (the last outcome),
           // the next round produces N+1 and looks for candidates at N+2. Without registering at
@@ -657,7 +657,7 @@ object ConsensusStorage {
                     .some
                 }
             }
-          }.as(true)
+          }
         }
 
         def getPeerRegistrations: F[Map[PeerId, Key]] = peerRegistrationsR.get

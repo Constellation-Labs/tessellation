@@ -553,7 +553,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
     storage.getLastConsensusOutcome.flatMap {
       case None => Async[F].unit
       case Some(outcome) =>
-        storage.registerPeer(peer.id, outcomeKey.get(outcome)).void.handleError(_ => ())
+        storage.registerPeer(peer.id, outcomeKey.get(outcome)).handleError(_ => ())
     }
 
   def withdraw: F[Unit] =

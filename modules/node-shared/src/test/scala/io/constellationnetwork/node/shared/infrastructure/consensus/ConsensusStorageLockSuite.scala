@@ -35,12 +35,12 @@ object ConsensusStorageLockSuite extends SimpleIOSuite {
     view: Long,
     proposalHash: Hash,
     effectiveLockedQc: Option[ProposalQC]
-  ): IO[Either[String, VoteLock]] =
+  ): IO[Either[VoteRejection, VoteLock]] =
     voteLocksR(key).modify { maybeLock =>
       val current = maybeLock.getOrElse(VoteLock.empty)
       current.acceptVote(view, proposalHash, effectiveLockedQc) match {
-        case Right(newLock) => (newLock.some, Right(newLock))
-        case Left(reason)   => (maybeLock, Left(reason))
+        case Right(newLock)  => (newLock.some, Right(newLock))
+        case Left(rejection) => (maybeLock, Left(rejection))
       }
     }
 
