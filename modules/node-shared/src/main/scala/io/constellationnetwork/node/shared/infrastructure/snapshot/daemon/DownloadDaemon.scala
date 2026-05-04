@@ -98,12 +98,9 @@ object DownloadDaemon {
                     // those errors fails at compile time instead of silently breaking the switch.
                     val shouldSwitchToRecovery = !isRecovery && err.isInstanceOf[RecoveryFallbackEligible]
                     val switchAction =
-                      if (shouldSwitchToRecovery)
-                        logger.warn(
-                          s"[DownloadDaemon] Full download failed with recovery-eligible error (${err.getClass.getSimpleName}); switching to recovery path"
-                        ) >>
-                          nodeStorage.setRecoveryDownload
-                      else Async[F].unit
+                      (logger.warn(
+                        s"[DownloadDaemon] Full download failed with recovery-eligible error (${err.getClass.getSimpleName}); switching to recovery path"
+                      ) >> nodeStorage.setRecoveryDownload).whenA(shouldSwitchToRecovery)
                     logger.error(err)(
                       s"[DownloadDaemon] Download attempt $attempt failed, retrying in ${backoff.toSeconds}s"
                     ) >> switchAction >> Async[F].sleep(backoff) >> go(attempt + 1, nextBackoff)

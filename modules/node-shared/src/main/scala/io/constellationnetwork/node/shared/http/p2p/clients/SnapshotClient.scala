@@ -145,7 +145,7 @@ object SnapshotClient {
     decodeBody: fs2.Stream[F, Byte] => F[(Signed[S], SI)]
   ): F[Either[NotModified.type, (Signed[S], SI)]] =
     resp.status match {
-      case Status.NotModified => Async[F].pure(Left(NotModified))
+      case Status.NotModified => (Left(NotModified): Either[NotModified.type, (Signed[S], SI)]).pure[F]
       case Status.Ok          => decodeBody(resp.body).map(Right(_))
       case other =>
         Async[F].raiseError[Either[NotModified.type, (Signed[S], SI)]](
