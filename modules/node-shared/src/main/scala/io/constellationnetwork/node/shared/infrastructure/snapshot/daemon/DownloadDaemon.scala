@@ -99,7 +99,9 @@ object DownloadDaemon {
                     val shouldSwitchToRecovery = !isRecovery && err.isInstanceOf[RecoveryFallbackEligible]
                     val switchAction =
                       if (shouldSwitchToRecovery)
-                        logger.warn("[DownloadDaemon] Full download failed (genesis unavailable), switching to recovery path") >>
+                        logger.warn(
+                          s"[DownloadDaemon] Full download failed with recovery-eligible error (${err.getClass.getSimpleName}); switching to recovery path"
+                        ) >>
                           nodeStorage.setRecoveryDownload
                       else Async[F].unit
                     logger.error(err)(
