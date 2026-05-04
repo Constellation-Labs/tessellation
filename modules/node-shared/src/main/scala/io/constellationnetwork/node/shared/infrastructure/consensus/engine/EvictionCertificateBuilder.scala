@@ -47,7 +47,7 @@ object EvictionCertificateBuilder {
     votes: Map[PeerId, Signed[EvictionVote]],
     quorumSize: Int,
     witnessPool: Set[PeerId]
-  ): Either[String, EvictionCertificate] = {
+  ): Either[CertBuildError, EvictionCertificate] = {
     val wrongTarget = votes.toList.collect {
       case (pid, signed) if signed.value.targetPeer != target => pid
     }
@@ -76,15 +76,15 @@ object EvictionCertificateBuilder {
     }
 
     if (wrongTarget.nonEmpty)
-      Left(s"target_mismatch peers=${wrongTarget.size}")
+      Left(CertBuildError.TargetMismatch(wrongTarget.size))
     else if (wrongReason.nonEmpty)
-      Left(s"reason_mismatch peers=${wrongReason.size}")
+      Left(CertBuildError.ReasonMismatch(wrongReason.size))
     else if (wrongFacHash.nonEmpty)
-      Left(s"facilitators_mismatch peers=${wrongFacHash.size}")
+      Left(CertBuildError.FacilitatorsHashMismatch(wrongFacHash.size))
     else if (wrongLastSnapHash.nonEmpty)
-      Left(s"last_snapshot_hash_mismatch peers=${wrongLastSnapHash.size}")
+      Left(CertBuildError.LastSnapshotHashMismatch(wrongLastSnapHash.size))
     else if (nonWitnessPoolVoter.nonEmpty)
-      Left(s"voter_not_in_committee peers=${nonWitnessPoolVoter.size}")
+      Left(CertBuildError.VoterNotInCommittee(nonWitnessPoolVoter.size))
     else {
       // Deduplicate by signer BEFORE checking quorum. A relayed duplicate of the same signed
       // vote must not count twice, otherwise an adversary can fabricate under-quorum certs
@@ -105,14 +105,14 @@ object EvictionCertificateBuilder {
         .toMap
       val nonWitnessPoolSigner = bySigner.keys.filterNot(witnessPool.contains).toList
       if (nonWitnessPoolSigner.nonEmpty)
-        Left(s"signer_not_in_committee peers=${nonWitnessPoolSigner.size}")
+        Left(CertBuildError.SignerNotInCommittee(nonWitnessPoolSigner.size))
       else if (bySigner.size < quorumSize)
-        Left(s"under_quorum votes=${bySigner.size} required=$quorumSize")
+        Left(CertBuildError.UnderQuorum(bySigner.size, quorumSize))
       else {
         val sortedSet: SortedSet[Signed[EvictionVote]] = SortedSet.empty[Signed[EvictionVote]] ++ bySigner.values
         NonEmptySet
           .fromSet(sortedSet)
-          .toRight("empty_votes_after_filter")
+          .toRight(CertBuildError.EmptyVotesAfterFilter)
           .map(nes => EvictionCertificate(target, reason, facilitatorsHash, lastSnapshotHash, nes))
       }
     }

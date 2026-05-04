@@ -119,25 +119,32 @@ object peer {
     def isResponsive: Boolean = value.responsiveness === Responsive
   }
 
-  /** Server-computed view of a peer's committee-participation status, exposed via `/cluster/info`.
+  /** Per-peer committee membership status. JSON wire form is the lowercase label ("active"/"chronic"/"probation"); preserved verbatim
+    * across the type-tightening from `String` so dashboards and downstream consumers continue working unchanged.
     *
-    * Distinct from `NodeState` — a peer can be `state=Ready` (chain-synced) yet `status="chronic"` because the chronic-classifier is
-    * excluding it from the active committee. Computed at request time from the latest `ConsensusOutcome.peerQuality` and
-    * `readmissionCountdown` on the serving node. Same threshold logic as the consensus-side chronic-classifier, so the value is in lockstep
-    * with the node's actual committee decision.
-    *
-    * Field reference:
-    *   - `status`: "active" (passing chronic threshold AND not on probation), "chronic" (peerQuality ratio below `minParticipationRatio`
-    *     after `minObservationHistoryFloor` observations), "probation" (entry in `readmissionCountdown`, awaiting an AdmissionCertificate).
-    *   - `completed` / `participated`: raw counts from `peerQuality`. `participated` is the number of rounds where this peer was a
-    *     committee member; `completed` is the count of those where the peer's signature actually landed in the finalized snapshot.
-    *   - `ratio`: `completed / participated` if `participated > 0`, else `1.0`.
-    *   - `probationRoundsRemaining`: when `status="probation"`, the v12 sticky countdown value (0 means "minimum probation served, awaiting
-    *     AdmissionCertificate"). `None` for non-probation.
+    * Semantics:
+    *   - `Active` — passing chronic threshold AND not on probation
+    *   - `Chronic` — peerQuality ratio below `minParticipationRatio` after `minObservationHistoryFloor` observations
+    *   - `Probation` — entry in `readmissionCountdown`, awaiting an AdmissionCertificate
     */
+  sealed abstract class PeerCommitteeStatus(val label: String)
+  object PeerCommitteeStatus {
+    case object Active extends PeerCommitteeStatus("active")
+    case object Chronic extends PeerCommitteeStatus("chronic")
+    case object Probation extends PeerCommitteeStatus("probation")
+
+    val all: Set[PeerCommitteeStatus] = Set(Active, Chronic, Probation)
+
+    implicit val encoder: Encoder[PeerCommitteeStatus] = Encoder[String].contramap(_.label)
+    implicit val decoder: Decoder[PeerCommitteeStatus] = Decoder[String].emap { s =>
+      all.find(_.label == s).toRight(s"unknown peerCommitteeStatus: $s")
+    }
+    implicit val show: Show[PeerCommitteeStatus] = Show.show(_.label)
+  }
+
   @derive(encoder, decoder, show)
   case class PeerCommitteeView(
-    status: String,
+    status: PeerCommitteeStatus,
     completed: Int,
     participated: Int,
     ratio: Double,

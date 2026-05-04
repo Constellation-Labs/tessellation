@@ -116,7 +116,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
               case singleHash :: Nil =>
                 ViewChangeCertificateBuilder
                   .build(fromView, toView, singleHash, votes, q) match {
-                  case Left(reason) =>
+                  case Left(error) =>
                     ConsensusLog.warn(
                       log,
                       Category.Phase,
@@ -124,7 +124,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                       "n/a",
                       LogEvent.ViewChange,
                       "assembly" -> "vcc_build_failed",
-                      "reason" -> reason,
+                      "reason" -> error.code,
                       "fromView" -> fromView.toString,
                       "toView" -> toView.toString,
                       "votes" -> votes.size.toString,
@@ -283,7 +283,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                     val witnessPool = state.eligibleFacilitators.value.toSet - target
                     val expectedLastSnap = ctx.lastSnapshotHashOf(state.lastOutcome)
                     EvictionCertificateBuilder.build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, witnessPool) match {
-                      case Left(reason) =>
+                      case Left(error) =>
                         ConsensusLog.warn(
                           log,
                           Category.Phase,
@@ -292,7 +292,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                           LogEvent.Eviction,
                           "assembly" -> "ecs_build_failed",
                           "target" -> ConsensusLog.pid(target),
-                          "reason" -> reason,
+                          "reason" -> error.code,
                           "votes" -> matchingVotes.size.toString,
                           "quorum" -> q.toString
                         )
@@ -393,7 +393,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                     val expectedLastSnap = ctx.lastSnapshotHashOf(state.lastOutcome)
                     AdmissionCertificateBuilder
                       .build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, witnessPool) match {
-                      case Left(reason) =>
+                      case Left(error) =>
                         ConsensusLog.warn(
                           log,
                           Category.Phase,
@@ -402,7 +402,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                           LogEvent.Admission,
                           "assembly" -> "acs_build_failed",
                           "target" -> ConsensusLog.pid(target),
-                          "reason" -> reason,
+                          "reason" -> error.code,
                           "votes" -> matchingVotes.size.toString,
                           "quorum" -> q.toString
                         )

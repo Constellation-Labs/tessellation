@@ -32,7 +32,7 @@ object ViewChangeCertificateBuilder {
     facilitatorsHash: Hash,
     votes: Map[PeerId, Signed[ViewChangeVote]],
     quorumSize: Int
-  ): Either[String, ViewChangeCertificate] = {
+  ): Either[CertBuildError, ViewChangeCertificate] = {
     val matching = votes.toList.collect {
       case (_, signed) if signed.value.fromView == fromView && signed.value.toView == toView => signed
     }
@@ -44,19 +44,19 @@ object ViewChangeCertificateBuilder {
     }
 
     if (wrongFacHash.nonEmpty)
-      Left(s"facilitators_mismatch peers=${wrongFacHash.size}")
+      Left(CertBuildError.FacilitatorsHashMismatch(wrongFacHash.size))
     else if (matching.size < quorumSize)
-      Left(s"under_quorum votes=${matching.size} required=$quorumSize")
+      Left(CertBuildError.UnderQuorum(matching.size, quorumSize))
     else {
       val qcs = matching.flatMap(_.value.highestKnownQc)
       val divergent = qcs.groupBy(_.view).exists { case (_, qcsAtView) => qcsAtView.map(_.proposalHash).toSet.size > 1 }
       if (divergent)
-        Left("divergent_qcs")
+        Left(CertBuildError.DivergentQcs)
       else {
         val sortedSet: SortedSet[Signed[ViewChangeVote]] = SortedSet.empty[Signed[ViewChangeVote]] ++ matching
         NonEmptySet
           .fromSet(sortedSet)
-          .toRight("empty_votes_after_filter")
+          .toRight(CertBuildError.EmptyVotesAfterFilter)
           .map(nes => ViewChangeCertificate(fromView, toView, facilitatorsHash, nes))
       }
     }

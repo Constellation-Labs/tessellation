@@ -98,7 +98,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       quorumSize = 3,
       witnessPool = committee
     )
-    expect(result.swap.exists(_.startsWith("under_quorum")), s"expected Left(under_quorum...), got: $result")
+    expect(result.swap.exists(_.code.startsWith("under_quorum")), s"expected Left(under_quorum...), got: $result")
   }
 
   test("build: empty votes -> Left(under_quorum)") {
@@ -111,7 +111,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       quorumSize = 1,
       witnessPool = committee
     )
-    expect(result.swap.exists(_.startsWith("under_quorum")), s"expected Left(under_quorum...), got: $result")
+    expect(result.swap.exists(_.code.startsWith("under_quorum")), s"expected Left(under_quorum...), got: $result")
   }
 
   // === Mismatched fields ===
@@ -133,7 +133,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       quorumSize = 2,
       witnessPool = committee
     )
-    expect(result.swap.exists(_.startsWith("target_mismatch")), s"expected Left(target_mismatch...), got: $result")
+    expect(result.swap.exists(_.code.startsWith("target_mismatch")), s"expected Left(target_mismatch...), got: $result")
   }
 
   test("build: one vote has wrong lastSnapshotHash -> Left(last_snapshot_hash_mismatch)") {
@@ -149,7 +149,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
     )
     val result = EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, lastSnap, votes, 3, committee)
     expect(
-      result.swap.exists(_.startsWith("last_snapshot_hash_mismatch")),
+      result.swap.exists(_.code.startsWith("last_snapshot_hash_mismatch")),
       s"expected Left(last_snapshot_hash_mismatch...), got: $result"
     )
   }
@@ -171,7 +171,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       quorumSize = 3,
       witnessPool = committee
     )
-    expect(result.swap.exists(_.startsWith("facilitators_mismatch")), s"expected Left(facilitators_mismatch...), got: $result")
+    expect(result.swap.exists(_.code.startsWith("facilitators_mismatch")), s"expected Left(facilitators_mismatch...), got: $result")
   }
 
   // === Committee membership ===
@@ -195,7 +195,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       witnessPool = committee
     )
     expect(
-      result.swap.exists(_.startsWith("voter_not_in_committee")),
+      result.swap.exists(_.code.startsWith("voter_not_in_committee")),
       s"expected Left(voter_not_in_committee...), got: $result"
     )
   }
@@ -284,7 +284,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       witnessPool = committee
     )
     expect(
-      result.swap.exists(_.startsWith("under_quorum")),
+      result.swap.exists(_.code.startsWith("under_quorum")),
       s"expected Left(under_quorum...) when 3 relayed duplicates of 1 signed vote present, got: $result"
     )
   }
@@ -306,7 +306,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
     val exactlyMet =
       EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, lastSnap, votes, quorumSize = 2, witnessPool = committee)
     expect(
-      underQuorum.swap.exists(_.startsWith("under_quorum")),
+      underQuorum.swap.exists(_.code.startsWith("under_quorum")),
       s"quorum=3 with 2 unique signers must fail, got: $underQuorum"
     ).and(
       expect(exactlyMet.isRight, s"quorum=2 with 2 unique signers must succeed, got: $exactlyMet")
@@ -357,7 +357,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
     val result =
       EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, lastSnap, votes, quorumSize = 3, witnessPool = widerPool)
     expect(
-      result.swap.exists(_.startsWith("voter_not_in_committee")),
+      result.swap.exists(_.code.startsWith("voter_not_in_committee")),
       s"v9: outside-pool voter must still be rejected, got: $result"
     )
   }
