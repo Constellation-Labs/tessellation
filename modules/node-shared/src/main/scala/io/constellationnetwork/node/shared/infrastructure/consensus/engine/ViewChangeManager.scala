@@ -57,10 +57,10 @@ object ViewChangeVoter {
   * Mid-round facilitator eviction is not performed at this layer: if a facilitator is genuinely unreachable, the stall-cycle abandonment
   * path in [[StallDetector]] handles it (the round is abandoned and retried with the current eligibility set).
   */
-class ViewChangeManager[F[_]: Async, Key, Status, Outcome, Kind](
+class ViewChangeManager[F[_]: Async, Key, Artifact, Ctx, Status, Outcome, Kind](
   storage: ConsensusStorage[F, _, Key, _, _, Status, Outcome, Kind],
   peerQualityTracker: PeerQualityTracker[F],
-  queue: Queue[F, ConsensusCommand],
+  queue: Queue[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]],
   logger: SelfAwareStructuredLogger[F],
   voter: ViewChangeVoter[F, Key]
 ) {

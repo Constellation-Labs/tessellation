@@ -3,8 +3,8 @@ package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 import cats.Eq
 
 /** Why a `*CertificateBuilder.build` returned `Left`. The `code` projection is a stable structured-log string preserving the original
-  * pre-ADT format ("under_quorum votes=N required=M", "target_mismatch peers=N", etc.), so existing operator dashboards and tests grep-keyed
-  * on these prefixes keep working.
+  * pre-ADT format ("under_quorum votes=N required=M", "target_mismatch peers=N", etc.), so existing operator dashboards and tests
+  * grep-keyed on these prefixes keep working.
   */
 sealed abstract class CertBuildError(val code: String)
 

@@ -45,7 +45,7 @@ import eu.timepit.refined.auto._
 @scala.annotation.nowarn("msg=type parameter Outcome.*shadows")
 class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx, Status, Outcome, Kind](
   ctx: ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
-  viewChangeManager: ViewChangeManager[F, Key, Status, Outcome, Kind],
+  viewChangeManager: ViewChangeManager[F, Key, Artifact, Ctx, Status, Outcome, Kind],
   abandonmentTracker: AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   evictionVoter: EvictionVoter[F, Key],
   admissionVoter: AdmissionVoter[F, Key],

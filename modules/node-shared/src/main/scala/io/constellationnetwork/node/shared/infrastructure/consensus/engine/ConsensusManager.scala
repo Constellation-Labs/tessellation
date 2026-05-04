@@ -45,7 +45,7 @@ trait ConsensusManager[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
 object ConsensusManager {
 
   def make[F[_]: Async, Event, Key, Artifact, Context, Status, Outcome, Kind](
-    queue: Queue[F, ConsensusCommand],
+    queue: Queue[F, ConsensusCommand[Key, Artifact, Context, Outcome]],
     storage: ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind],
     nodeStorage: NodeStorage[F]
   ): F[ConsensusManager[F, Event, Key, Artifact, Context, Status, Outcome, Kind]] =
