@@ -6,6 +6,25 @@ import io.constellationnetwork.security.hash.Hash
 import derevo.cats.{eqv, show}
 import derevo.derive
 
+/** Why a `VoteLock.acceptVote` (or `ConsensusStorage.tryLockVote`) returned a Left. The `message` projection preserves the legacy
+  * structured-log string callers were already emitting; `code` is a stable short label suitable for metric grouping or grep.
+  */
+sealed abstract class VoteRejection(val code: String) {
+  def message: String
+}
+
+object VoteRejection {
+  final case class LowerView(attempted: Long, highest: Long) extends VoteRejection("lower_view") {
+    def message: String = s"lower-view vote: attempted view=$attempted, highestVoted=$highest"
+  }
+  final case class ConflictingSameView(view: Long, voted: Hash, attempted: Hash) extends VoteRejection("conflicting_same_view") {
+    def message: String = s"conflicting same-view vote: view=$view already voted hash=$voted, tried hash=$attempted"
+  }
+  final case class LockedOnQc(lockedHash: Hash, lockedView: Long, attempted: Hash) extends VoteRejection("locked_on_qc") {
+    def message: String = s"locked on QC hash=$lockedHash at view=$lockedView, cannot vote for hash=$attempted"
+  }
+}
+
 @derive(eqv, show)
 final case class VoteLock(
   highestVotedView: Option[Long],
@@ -13,18 +32,16 @@ final case class VoteLock(
   lockedQc: Option[ProposalQC]
 ) {
 
-  def acceptVote(view: Long, proposalHash: Hash, effectiveLockedQc: Option[ProposalQC]): Either[String, VoteLock] =
+  def acceptVote(view: Long, proposalHash: Hash, effectiveLockedQc: Option[ProposalQC]): Either[VoteRejection, VoteLock] =
     highestVotedView match {
       case Some(hv) if view < hv =>
-        Left(s"lower-view vote: attempted view=$view, highestVoted=$hv")
+        Left(VoteRejection.LowerView(view, hv))
       case Some(hv) if view == hv && votedHashAtHighestView.exists(_ != proposalHash) =>
-        Left(
-          s"conflicting same-view vote: view=$view already voted hash=${votedHashAtHighestView.getOrElse(Hash.empty)}, tried hash=$proposalHash"
-        )
+        Left(VoteRejection.ConflictingSameView(view, votedHashAtHighestView.getOrElse(Hash.empty), proposalHash))
       case _ =>
         effectiveLockedQc match {
           case Some(qc) if qc.proposalHash != proposalHash =>
-            Left(s"locked on QC hash=${qc.proposalHash} at view=${qc.view}, cannot vote for hash=$proposalHash")
+            Left(VoteRejection.LockedOnQc(qc.proposalHash, qc.view, proposalHash))
           case _ =>
             Right(
               VoteLock(
