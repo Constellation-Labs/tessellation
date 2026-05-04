@@ -129,9 +129,6 @@ object GlobalSnapshotConsensusStateAdvancer {
     new GlobalSnapshotConsensusStateAdvancer[F] {
 
       private val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](getClass)
-      private val lastSnapshotHashObservationName = "last-snapshot-hash"
-      private val facilitatorsHashObservationName = "facilitators-hash"
-      private val consensusConfigHashObservationName = "consensus-config-hash"
 
       /** Savepoint taken before `createArtifact()` mutations. On round abandonment + retry at the same ordinal, this is restored before
         * re-building the proposal to ensure the MptStore starts from a clean pre-mutation state.
@@ -171,7 +168,8 @@ object GlobalSnapshotConsensusStateAdvancer {
         * on first non-forked sample, on majority-hash flip, or on confirmation. See `recoverIfForking` docstring for the full state
         * machine.
         */
-      private val forkObservationsRef: Ref[F, Map[String, (Hash, FiniteDuration)]] = Ref.unsafe(Map.empty)
+      private val forkObservationsRef: Ref[F, Map[ConsensusStateUpdater.ForkObservation, (Hash, FiniteDuration)]] =
+        Ref.unsafe(Map.empty)
 
       protected val clusterStorage: ClusterStorage[F] = clusterStorageInstance
       protected val config: ConsensusConfig = consensusConfig
@@ -1650,178 +1648,189 @@ object GlobalSnapshotConsensusStateAdvancer {
       /** Produces a human-readable description of why the leader's artifact failed validation. */
       private def describeInvalidArtifact(err: InvalidArtifact): String = err match {
         case GlobalArtifactMismatch(leader, own) =>
-          val diffs = List.newBuilder[String]
-          if (leader.ordinal =!= own.ordinal) diffs += s"ordinal(leader=${leader.ordinal.show},own=${own.ordinal.show})"
-          if (leader.height =!= own.height) diffs += s"height(leader=${leader.height.show},own=${own.height.show})"
-          if (leader.subHeight =!= own.subHeight) diffs += s"subHeight(leader=${leader.subHeight.show},own=${own.subHeight.show})"
-          if (leader.lastSnapshotHash =!= own.lastSnapshotHash)
-            diffs += s"lastSnapshotHash(leader=${leader.lastSnapshotHash.show.take(8)},own=${own.lastSnapshotHash.show.take(8)})"
-          if (leader.blocks.size != own.blocks.size) diffs += s"blocks(leader=${leader.blocks.size},own=${own.blocks.size})"
-          if (leader.stateChannelSnapshots.size != own.stateChannelSnapshots.size)
-            diffs += s"stateChannels(leader=${leader.stateChannelSnapshots.size},own=${own.stateChannelSnapshots.size})"
           val leaderScAddrs = leader.stateChannelSnapshots.keySet
           val ownScAddrs = own.stateChannelSnapshots.keySet
           val onlyLeader = leaderScAddrs -- ownScAddrs
           val onlyOwn = ownScAddrs -- leaderScAddrs
-          if (onlyLeader.nonEmpty) diffs += s"scOnlyInLeader=[${onlyLeader.toList.map(_.show.take(8)).mkString(",")}]"
-          if (onlyOwn.nonEmpty) diffs += s"scOnlyInOwn=[${onlyOwn.toList.map(_.show.take(8)).mkString(",")}]"
-          if (leader.rewards =!= own.rewards) {
-            diffs += s"rewards(leader=${leader.rewards.size},own=${own.rewards.size})"
-            val onlyInLeader = leader.rewards -- own.rewards
-            val onlyInOwn = own.rewards -- leader.rewards
-            if (onlyInLeader.nonEmpty)
-              diffs += s"rewardsOnlyInLeader=[${onlyInLeader.toList.map(r => s"${r.destination.show.take(8)}:${r.amount.value.value}").mkString(",")}]"
-            if (onlyInOwn.nonEmpty)
-              diffs += s"rewardsOnlyInOwn=[${onlyInOwn.toList.map(r => s"${r.destination.show.take(8)}:${r.amount.value.value}").mkString(",")}]"
-          }
-          if (leader.epochProgress =!= own.epochProgress)
-            diffs += s"epochProgress(leader=${leader.epochProgress.show},own=${own.epochProgress.show})"
-          if (leader.tips =!= own.tips) diffs += "tipsDiffer"
-          if (leader.stateProof =!= own.stateProof) {
-            val lp = leader.stateProof
-            val op = own.stateProof
-            val spDiffs = List.newBuilder[String]
-            if (lp.lastStateChannelSnapshotHashesProof =!= op.lastStateChannelSnapshotHashesProof)
-              spDiffs += s"scHashesProof(l=${lp.lastStateChannelSnapshotHashesProof.show.take(8)},o=${op.lastStateChannelSnapshotHashesProof.show
-                  .take(8)})"
-            if (lp.lastTxRefsProof =!= op.lastTxRefsProof)
-              spDiffs += s"txRefsProof(l=${lp.lastTxRefsProof.show.take(8)},o=${op.lastTxRefsProof.show.take(8)})"
-            if (lp.balancesProof =!= op.balancesProof)
-              spDiffs += s"balancesProof(l=${lp.balancesProof.show.take(8)},o=${op.balancesProof.show.take(8)})"
-            if (lp.lastCurrencySnapshotsProof =!= op.lastCurrencySnapshotsProof)
-              spDiffs += "currencySnapshotsProof"
-            if (lp.activeAllowSpends =!= op.activeAllowSpends)
-              spDiffs += s"activeAllowSpends(l=${lp.activeAllowSpends.map(_.show.take(8))},o=${op.activeAllowSpends.map(_.show.take(8))})"
-            if (lp.activeTokenLocks =!= op.activeTokenLocks)
-              spDiffs += s"activeTokenLocks(l=${lp.activeTokenLocks.map(_.show.take(8))},o=${op.activeTokenLocks.map(_.show.take(8))})"
-            if (lp.tokenLockBalances =!= op.tokenLockBalances)
-              spDiffs += s"tokenLockBalances(l=${lp.tokenLockBalances.map(_.show.take(8))},o=${op.tokenLockBalances.map(_.show.take(8))})"
-            if (lp.lastAllowSpendRefs =!= op.lastAllowSpendRefs)
-              spDiffs += s"lastAllowSpendRefs(l=${lp.lastAllowSpendRefs.map(_.show.take(8))},o=${op.lastAllowSpendRefs.map(_.show.take(8))})"
-            if (lp.lastTokenLockRefs =!= op.lastTokenLockRefs)
-              spDiffs += s"lastTokenLockRefs(l=${lp.lastTokenLockRefs.map(_.show.take(8))},o=${op.lastTokenLockRefs.map(_.show.take(8))})"
-            if (lp.updateNodeParameters =!= op.updateNodeParameters)
-              spDiffs += s"updateNodeParams(l=${lp.updateNodeParameters.map(_.show.take(8))},o=${op.updateNodeParameters.map(_.show.take(8))})"
-            if (lp.activeDelegatedStakes =!= op.activeDelegatedStakes)
-              spDiffs += s"activeDelegatedStakes(l=${lp.activeDelegatedStakes
-                  .map(_.show.take(8))},o=${op.activeDelegatedStakes.map(_.show.take(8))})"
-            if (lp.delegatedStakesWithdrawals =!= op.delegatedStakesWithdrawals)
-              spDiffs += s"delegatedStakesWithdrawals(l=${lp.delegatedStakesWithdrawals.map(_.show.take(8))},o=${op.delegatedStakesWithdrawals
-                  .map(_.show.take(8))})"
-            if (lp.activeNodeCollaterals =!= op.activeNodeCollaterals)
-              spDiffs += s"activeNodeCollaterals(l=${lp.activeNodeCollaterals
-                  .map(_.show.take(8))},o=${op.activeNodeCollaterals.map(_.show.take(8))})"
-            if (lp.nodeCollateralWithdrawals =!= op.nodeCollateralWithdrawals)
-              spDiffs += s"nodeCollateralWithdrawals(l=${lp.nodeCollateralWithdrawals.map(_.show.take(8))},o=${op.nodeCollateralWithdrawals
-                  .map(_.show.take(8))})"
-            if (lp.priceState =!= op.priceState)
-              spDiffs += s"priceState(l=${lp.priceState.map(_.show.take(8))},o=${op.priceState.map(_.show.take(8))})"
-            if (lp.lastGlobalSnapshotsWithCurrency =!= op.lastGlobalSnapshotsWithCurrency)
-              spDiffs += s"lastGlobalSnapshotsWithCurrency(l=${lp.lastGlobalSnapshotsWithCurrency.map(_.show.take(8))},o=${op.lastGlobalSnapshotsWithCurrency
-                  .map(_.show.take(8))})"
-            if (lp.mptRoot =!= op.mptRoot)
-              spDiffs += s"mptRoot(l=${lp.mptRoot.map(_.show.take(8))},o=${op.mptRoot.map(_.show.take(8))})"
-            val spResult = spDiffs.result()
-            if (spResult.isEmpty) diffs += "stateProofDiffers(no sub-field diff — possible serialization difference)"
-            else diffs += s"stateProofDiffers{${spResult.mkString(",")}}"
-          }
-          if (leader.nextFacilitators =!= own.nextFacilitators)
-            diffs += s"nextFacilitators(leader=${leader.nextFacilitators.size},own=${own.nextFacilitators.size})"
-          if (leader.delegateRewards =!= own.delegateRewards) {
-            val leaderDR = leader.delegateRewards.map(_.size).getOrElse(0)
-            val ownDR = own.delegateRewards.map(_.size).getOrElse(0)
-            diffs += s"delegateRewards(leader=$leaderDR,own=$ownDR)"
-          }
-          val leaderAllowSpend = leader.allowSpendBlocks.map(_.size).getOrElse(0)
-          val ownAllowSpend = own.allowSpendBlocks.map(_.size).getOrElse(0)
-          if (leaderAllowSpend != ownAllowSpend) diffs += s"allowSpendBlocks(leader=$leaderAllowSpend,own=$ownAllowSpend)"
-          val leaderTokenLock = leader.tokenLockBlocks.map(_.size).getOrElse(0)
-          val ownTokenLock = own.tokenLockBlocks.map(_.size).getOrElse(0)
-          if (leaderTokenLock != ownTokenLock) diffs += s"tokenLockBlocks(leader=$leaderTokenLock,own=$ownTokenLock)"
-          if (leader.spendActions =!= own.spendActions) {
-            val leaderSA = leader.spendActions.map(_.size).getOrElse(0)
-            val ownSA = own.spendActions.map(_.size).getOrElse(0)
-            diffs += s"spendActions(leader=$leaderSA,own=$ownSA)"
-          }
-          if (leader.activeDelegatedStakes =!= own.activeDelegatedStakes) {
-            val leaderADS = leader.activeDelegatedStakes.map(_.size).getOrElse(0)
-            val ownADS = own.activeDelegatedStakes.map(_.size).getOrElse(0)
-            diffs += s"activeDelegatedStakes(leader=$leaderADS,own=$ownADS)"
-          }
-          if (leader.delegatedStakesWithdrawals =!= own.delegatedStakesWithdrawals) {
-            val leaderDSW = leader.delegatedStakesWithdrawals.map(_.size).getOrElse(0)
-            val ownDSW = own.delegatedStakesWithdrawals.map(_.size).getOrElse(0)
-            diffs += s"delegatedStakesWithdrawals(leader=$leaderDSW,own=$ownDSW)"
-          }
-          if (leader.activeNodeCollaterals =!= own.activeNodeCollaterals) {
-            val leaderANC = leader.activeNodeCollaterals.map(_.size).getOrElse(0)
-            val ownANC = own.activeNodeCollaterals.map(_.size).getOrElse(0)
-            diffs += s"activeNodeCollaterals(leader=$leaderANC,own=$ownANC)"
-          }
-          if (leader.nodeCollateralWithdrawals =!= own.nodeCollateralWithdrawals) {
-            val leaderNCW = leader.nodeCollateralWithdrawals.map(_.size).getOrElse(0)
-            val ownNCW = own.nodeCollateralWithdrawals.map(_.size).getOrElse(0)
-            diffs += s"nodeCollateralWithdrawals(leader=$leaderNCW,own=$ownNCW)"
-          }
-          if (leader.updateNodeParameters =!= own.updateNodeParameters) {
-            val leaderUNP = leader.updateNodeParameters.map(_.size).getOrElse(0)
-            val ownUNP = own.updateNodeParameters.map(_.size).getOrElse(0)
-            diffs += s"updateNodeParameters(leader=$leaderUNP,own=$ownUNP)"
-          }
-          if (leader.version =!= own.version)
-            diffs += s"version(leader=${leader.version.show},own=${own.version.show})"
-          val result = diffs.result()
-          if (result.isEmpty) "GlobalArtifactMismatch(no field-level diff detected — possible serialization difference)"
-          else s"GlobalArtifactMismatch[${result.mkString(",")}]"
+          val rewardsDiff: List[String] =
+            if (leader.rewards === own.rewards) Nil
+            else {
+              val onlyInLeader = leader.rewards -- own.rewards
+              val onlyInOwn = own.rewards -- leader.rewards
+              List(
+                Some(s"rewards(leader=${leader.rewards.size},own=${own.rewards.size})"),
+                Option.when(onlyInLeader.nonEmpty)(
+                  s"rewardsOnlyInLeader=[${onlyInLeader.toList.map(r => s"${r.destination.show.take(8)}:${r.amount.value.value}").mkString(",")}]"
+                ),
+                Option.when(onlyInOwn.nonEmpty)(
+                  s"rewardsOnlyInOwn=[${onlyInOwn.toList.map(r => s"${r.destination.show.take(8)}:${r.amount.value.value}").mkString(",")}]"
+                )
+              ).flatten
+            }
+          val stateProofDiff: List[String] =
+            if (leader.stateProof === own.stateProof) Nil
+            else {
+              val lp = leader.stateProof
+              val op = own.stateProof
+              val spDiffs: List[String] = List(
+                Option.when(lp.lastStateChannelSnapshotHashesProof =!= op.lastStateChannelSnapshotHashesProof)(
+                  s"scHashesProof(l=${lp.lastStateChannelSnapshotHashesProof.show.take(8)},o=${op.lastStateChannelSnapshotHashesProof.show.take(8)})"
+                ),
+                Option.when(lp.lastTxRefsProof =!= op.lastTxRefsProof)(
+                  s"txRefsProof(l=${lp.lastTxRefsProof.show.take(8)},o=${op.lastTxRefsProof.show.take(8)})"
+                ),
+                Option.when(lp.balancesProof =!= op.balancesProof)(
+                  s"balancesProof(l=${lp.balancesProof.show.take(8)},o=${op.balancesProof.show.take(8)})"
+                ),
+                Option.when(lp.lastCurrencySnapshotsProof =!= op.lastCurrencySnapshotsProof)("currencySnapshotsProof"),
+                Option.when(lp.activeAllowSpends =!= op.activeAllowSpends)(
+                  s"activeAllowSpends(l=${lp.activeAllowSpends.map(_.show.take(8))},o=${op.activeAllowSpends.map(_.show.take(8))})"
+                ),
+                Option.when(lp.activeTokenLocks =!= op.activeTokenLocks)(
+                  s"activeTokenLocks(l=${lp.activeTokenLocks.map(_.show.take(8))},o=${op.activeTokenLocks.map(_.show.take(8))})"
+                ),
+                Option.when(lp.tokenLockBalances =!= op.tokenLockBalances)(
+                  s"tokenLockBalances(l=${lp.tokenLockBalances.map(_.show.take(8))},o=${op.tokenLockBalances.map(_.show.take(8))})"
+                ),
+                Option.when(lp.lastAllowSpendRefs =!= op.lastAllowSpendRefs)(
+                  s"lastAllowSpendRefs(l=${lp.lastAllowSpendRefs.map(_.show.take(8))},o=${op.lastAllowSpendRefs.map(_.show.take(8))})"
+                ),
+                Option.when(lp.lastTokenLockRefs =!= op.lastTokenLockRefs)(
+                  s"lastTokenLockRefs(l=${lp.lastTokenLockRefs.map(_.show.take(8))},o=${op.lastTokenLockRefs.map(_.show.take(8))})"
+                ),
+                Option.when(lp.updateNodeParameters =!= op.updateNodeParameters)(
+                  s"updateNodeParams(l=${lp.updateNodeParameters.map(_.show.take(8))},o=${op.updateNodeParameters.map(_.show.take(8))})"
+                ),
+                Option.when(lp.activeDelegatedStakes =!= op.activeDelegatedStakes)(
+                  s"activeDelegatedStakes(l=${lp.activeDelegatedStakes.map(_.show.take(8))},o=${op.activeDelegatedStakes.map(_.show.take(8))})"
+                ),
+                Option.when(lp.delegatedStakesWithdrawals =!= op.delegatedStakesWithdrawals)(
+                  s"delegatedStakesWithdrawals(l=${lp.delegatedStakesWithdrawals.map(_.show.take(8))},o=${op.delegatedStakesWithdrawals
+                      .map(_.show.take(8))})"
+                ),
+                Option.when(lp.activeNodeCollaterals =!= op.activeNodeCollaterals)(
+                  s"activeNodeCollaterals(l=${lp.activeNodeCollaterals.map(_.show.take(8))},o=${op.activeNodeCollaterals.map(_.show.take(8))})"
+                ),
+                Option.when(lp.nodeCollateralWithdrawals =!= op.nodeCollateralWithdrawals)(
+                  s"nodeCollateralWithdrawals(l=${lp.nodeCollateralWithdrawals.map(_.show.take(8))},o=${op.nodeCollateralWithdrawals
+                      .map(_.show.take(8))})"
+                ),
+                Option.when(lp.priceState =!= op.priceState)(
+                  s"priceState(l=${lp.priceState.map(_.show.take(8))},o=${op.priceState.map(_.show.take(8))})"
+                ),
+                Option.when(lp.lastGlobalSnapshotsWithCurrency =!= op.lastGlobalSnapshotsWithCurrency)(
+                  s"lastGlobalSnapshotsWithCurrency(l=${lp.lastGlobalSnapshotsWithCurrency
+                      .map(_.show.take(8))},o=${op.lastGlobalSnapshotsWithCurrency.map(_.show.take(8))})"
+                ),
+                Option.when(lp.mptRoot =!= op.mptRoot)(
+                  s"mptRoot(l=${lp.mptRoot.map(_.show.take(8))},o=${op.mptRoot.map(_.show.take(8))})"
+                )
+              ).flatten
+              List(
+                if (spDiffs.isEmpty) "stateProofDiffers(no sub-field diff — possible serialization difference)"
+                else s"stateProofDiffers{${spDiffs.mkString(",")}}"
+              )
+            }
+          val diffs: List[String] = List(
+            Option.when(leader.ordinal =!= own.ordinal)(s"ordinal(leader=${leader.ordinal.show},own=${own.ordinal.show})"),
+            Option.when(leader.height =!= own.height)(s"height(leader=${leader.height.show},own=${own.height.show})"),
+            Option.when(leader.subHeight =!= own.subHeight)(s"subHeight(leader=${leader.subHeight.show},own=${own.subHeight.show})"),
+            Option.when(leader.lastSnapshotHash =!= own.lastSnapshotHash)(
+              s"lastSnapshotHash(leader=${leader.lastSnapshotHash.show.take(8)},own=${own.lastSnapshotHash.show.take(8)})"
+            ),
+            Option.when(leader.blocks.size != own.blocks.size)(s"blocks(leader=${leader.blocks.size},own=${own.blocks.size})"),
+            Option.when(leader.stateChannelSnapshots.size != own.stateChannelSnapshots.size)(
+              s"stateChannels(leader=${leader.stateChannelSnapshots.size},own=${own.stateChannelSnapshots.size})"
+            ),
+            Option.when(onlyLeader.nonEmpty)(s"scOnlyInLeader=[${onlyLeader.toList.map(_.show.take(8)).mkString(",")}]"),
+            Option.when(onlyOwn.nonEmpty)(s"scOnlyInOwn=[${onlyOwn.toList.map(_.show.take(8)).mkString(",")}]")
+          ).flatten ++ rewardsDiff ++ List(
+            Option.when(leader.epochProgress =!= own.epochProgress)(
+              s"epochProgress(leader=${leader.epochProgress.show},own=${own.epochProgress.show})"
+            ),
+            Option.when(leader.tips =!= own.tips)("tipsDiffer")
+          ).flatten ++ stateProofDiff ++ List(
+            Option.when(leader.nextFacilitators =!= own.nextFacilitators)(
+              s"nextFacilitators(leader=${leader.nextFacilitators.size},own=${own.nextFacilitators.size})"
+            ),
+            Option.when(leader.delegateRewards =!= own.delegateRewards)(
+              s"delegateRewards(leader=${leader.delegateRewards.map(_.size).getOrElse(0)},own=${own.delegateRewards.map(_.size).getOrElse(0)})"
+            ),
+            Option.when(leader.allowSpendBlocks.map(_.size).getOrElse(0) != own.allowSpendBlocks.map(_.size).getOrElse(0))(
+              s"allowSpendBlocks(leader=${leader.allowSpendBlocks.map(_.size).getOrElse(0)},own=${own.allowSpendBlocks.map(_.size).getOrElse(0)})"
+            ),
+            Option.when(leader.tokenLockBlocks.map(_.size).getOrElse(0) != own.tokenLockBlocks.map(_.size).getOrElse(0))(
+              s"tokenLockBlocks(leader=${leader.tokenLockBlocks.map(_.size).getOrElse(0)},own=${own.tokenLockBlocks.map(_.size).getOrElse(0)})"
+            ),
+            Option.when(leader.spendActions =!= own.spendActions)(
+              s"spendActions(leader=${leader.spendActions.map(_.size).getOrElse(0)},own=${own.spendActions.map(_.size).getOrElse(0)})"
+            ),
+            Option.when(leader.activeDelegatedStakes =!= own.activeDelegatedStakes)(
+              s"activeDelegatedStakes(leader=${leader.activeDelegatedStakes.map(_.size).getOrElse(0)},own=${own.activeDelegatedStakes.map(_.size).getOrElse(0)})"
+            ),
+            Option.when(leader.delegatedStakesWithdrawals =!= own.delegatedStakesWithdrawals)(
+              s"delegatedStakesWithdrawals(leader=${leader.delegatedStakesWithdrawals.map(_.size).getOrElse(0)},own=${own.delegatedStakesWithdrawals.map(_.size).getOrElse(0)})"
+            ),
+            Option.when(leader.activeNodeCollaterals =!= own.activeNodeCollaterals)(
+              s"activeNodeCollaterals(leader=${leader.activeNodeCollaterals.map(_.size).getOrElse(0)},own=${own.activeNodeCollaterals.map(_.size).getOrElse(0)})"
+            ),
+            Option.when(leader.nodeCollateralWithdrawals =!= own.nodeCollateralWithdrawals)(
+              s"nodeCollateralWithdrawals(leader=${leader.nodeCollateralWithdrawals.map(_.size).getOrElse(0)},own=${own.nodeCollateralWithdrawals.map(_.size).getOrElse(0)})"
+            ),
+            Option.when(leader.updateNodeParameters =!= own.updateNodeParameters)(
+              s"updateNodeParameters(leader=${leader.updateNodeParameters.map(_.size).getOrElse(0)},own=${own.updateNodeParameters.map(_.size).getOrElse(0)})"
+            ),
+            Option.when(leader.version =!= own.version)(s"version(leader=${leader.version.show},own=${own.version.show})")
+          ).flatten
+          if (diffs.isEmpty) "GlobalArtifactMismatch(no field-level diff detected — possible serialization difference)"
+          else s"GlobalArtifactMismatch[${diffs.mkString(",")}]"
         case other =>
           other.getClass.getSimpleName
       }
 
       /** Produces a compact representation of all stateProof sub-field hash prefixes for comparing leader vs follower. */
-      private def describeStateProof(sp: GlobalSnapshotStateProof): String = {
-        val parts = List.newBuilder[String]
-        parts += s"scHashes=${sp.lastStateChannelSnapshotHashesProof.show.take(8)}"
-        parts += s"txRefs=${sp.lastTxRefsProof.show.take(8)}"
-        parts += s"balances=${sp.balancesProof.show.take(8)}"
-        parts += s"currSnapshotsProof=${sp.lastCurrencySnapshotsProof.map(_.show.take(8)).getOrElse("none")}"
-        parts += s"allowSpends=${sp.activeAllowSpends.map(_.show.take(8)).getOrElse("none")}"
-        parts += s"tokenLocks=${sp.activeTokenLocks.map(_.show.take(8)).getOrElse("none")}"
-        parts += s"tokenLockBal=${sp.tokenLockBalances.map(_.show.take(8)).getOrElse("none")}"
-        parts += s"allowSpendRefs=${sp.lastAllowSpendRefs.map(_.show.take(8)).getOrElse("none")}"
-        parts += s"tokenLockRefs=${sp.lastTokenLockRefs.map(_.show.take(8)).getOrElse("none")}"
-        parts += s"nodeParams=${sp.updateNodeParameters.map(_.show.take(8)).getOrElse("none")}"
-        parts += s"delegStakes=${sp.activeDelegatedStakes.map(_.show.take(8)).getOrElse("none")}"
-        parts += s"delegWithdrawals=${sp.delegatedStakesWithdrawals.map(_.show.take(8)).getOrElse("none")}"
-        parts += s"nodeCollaterals=${sp.activeNodeCollaterals.map(_.show.take(8)).getOrElse("none")}"
-        parts += s"collateralWithdrawals=${sp.nodeCollateralWithdrawals.map(_.show.take(8)).getOrElse("none")}"
-        parts += s"priceState=${sp.priceState.map(_.show.take(8)).getOrElse("none")}"
-        parts += s"globalSnapsWithCurrency=${sp.lastGlobalSnapshotsWithCurrency.map(_.show.take(8)).getOrElse("none")}"
-        parts += s"mptRoot=${sp.mptRoot.map(_.show.take(8)).getOrElse("none")}"
-        parts.result().mkString(" ")
-      }
+      private def describeStateProof(sp: GlobalSnapshotStateProof): String =
+        List(
+          s"scHashes=${sp.lastStateChannelSnapshotHashesProof.show.take(8)}",
+          s"txRefs=${sp.lastTxRefsProof.show.take(8)}",
+          s"balances=${sp.balancesProof.show.take(8)}",
+          s"currSnapshotsProof=${sp.lastCurrencySnapshotsProof.map(_.show.take(8)).getOrElse("none")}",
+          s"allowSpends=${sp.activeAllowSpends.map(_.show.take(8)).getOrElse("none")}",
+          s"tokenLocks=${sp.activeTokenLocks.map(_.show.take(8)).getOrElse("none")}",
+          s"tokenLockBal=${sp.tokenLockBalances.map(_.show.take(8)).getOrElse("none")}",
+          s"allowSpendRefs=${sp.lastAllowSpendRefs.map(_.show.take(8)).getOrElse("none")}",
+          s"tokenLockRefs=${sp.lastTokenLockRefs.map(_.show.take(8)).getOrElse("none")}",
+          s"nodeParams=${sp.updateNodeParameters.map(_.show.take(8)).getOrElse("none")}",
+          s"delegStakes=${sp.activeDelegatedStakes.map(_.show.take(8)).getOrElse("none")}",
+          s"delegWithdrawals=${sp.delegatedStakesWithdrawals.map(_.show.take(8)).getOrElse("none")}",
+          s"nodeCollaterals=${sp.activeNodeCollaterals.map(_.show.take(8)).getOrElse("none")}",
+          s"collateralWithdrawals=${sp.nodeCollateralWithdrawals.map(_.show.take(8)).getOrElse("none")}",
+          s"priceState=${sp.priceState.map(_.show.take(8)).getOrElse("none")}",
+          s"globalSnapsWithCurrency=${sp.lastGlobalSnapshotsWithCurrency.map(_.show.take(8)).getOrElse("none")}",
+          s"mptRoot=${sp.mptRoot.map(_.show.take(8)).getOrElse("none")}"
+        ).mkString(" ")
 
       /** Produces a compact digest of GlobalSnapshotInfo field sizes/counts for diagnostic logging. Does NOT log actual data (state can be
         * 90MB+), only counts and hash prefixes of the stateProof.
         */
-      private def contextDigest(ctx: GlobalSnapshotContext): String = {
-        val parts = List.newBuilder[String]
-        parts += s"scHashes=${ctx.lastStateChannelSnapshotHashes.size}"
-        parts += s"txRefs=${ctx.lastTxRefs.size}"
-        parts += s"balances=${ctx.balances.size}"
-        parts += s"currencySnapshots=${ctx.lastCurrencySnapshots.size}"
-        parts += s"currencyProofs=${ctx.lastCurrencySnapshotsProofs.size}"
-        parts += s"allowSpends=${ctx.activeAllowSpends.map(_.values.map(_.values.map(_.size).sum).sum).getOrElse(0)}"
-        parts += s"tokenLocks=${ctx.activeTokenLocks.map(_.values.map(_.size).sum).getOrElse(0)}"
-        parts += s"tokenLockBal=${ctx.tokenLockBalances.map(_.size).getOrElse(0)}"
-        parts += s"delegStakes=${ctx.activeDelegatedStakes.map(_.size).getOrElse(0)}"
-        parts += s"delegWithdrawals=${ctx.delegatedStakesWithdrawals.map(_.size).getOrElse(0)}"
-        parts += s"nodeCollaterals=${ctx.activeNodeCollaterals.map(_.size).getOrElse(0)}"
-        parts += s"collateralWithdrawals=${ctx.nodeCollateralWithdrawals.map(_.size).getOrElse(0)}"
-        parts += s"updateNodeParams=${ctx.updateNodeParameters.map(_.size).getOrElse(0)}"
-        parts += s"priceState=${ctx.priceState.map(_.size).getOrElse(0)}"
-        parts += s"metagraphSync=${ctx.metagraphSyncData.map(_.size).getOrElse(0)}"
-        parts.result().mkString(" ")
-      }
+      private def contextDigest(ctx: GlobalSnapshotContext): String =
+        List(
+          s"scHashes=${ctx.lastStateChannelSnapshotHashes.size}",
+          s"txRefs=${ctx.lastTxRefs.size}",
+          s"balances=${ctx.balances.size}",
+          s"currencySnapshots=${ctx.lastCurrencySnapshots.size}",
+          s"currencyProofs=${ctx.lastCurrencySnapshotsProofs.size}",
+          s"allowSpends=${ctx.activeAllowSpends.map(_.values.map(_.values.map(_.size).sum).sum).getOrElse(0)}",
+          s"tokenLocks=${ctx.activeTokenLocks.map(_.values.map(_.size).sum).getOrElse(0)}",
+          s"tokenLockBal=${ctx.tokenLockBalances.map(_.size).getOrElse(0)}",
+          s"delegStakes=${ctx.activeDelegatedStakes.map(_.size).getOrElse(0)}",
+          s"delegWithdrawals=${ctx.delegatedStakesWithdrawals.map(_.size).getOrElse(0)}",
+          s"nodeCollaterals=${ctx.activeNodeCollaterals.map(_.size).getOrElse(0)}",
+          s"collateralWithdrawals=${ctx.nodeCollateralWithdrawals.map(_.size).getOrElse(0)}",
+          s"updateNodeParams=${ctx.updateNodeParameters.map(_.size).getOrElse(0)}",
+          s"priceState=${ctx.priceState.map(_.size).getOrElse(0)}",
+          s"metagraphSync=${ctx.metagraphSyncData.map(_.size).getOrElse(0)}"
+        ).mkString(" ")
 
       private def buildSignatureTransition(
         state: GlobalSnapshotConsensusState,
@@ -1874,7 +1883,7 @@ object GlobalSnapshotConsensusStateAdvancer {
           )
           tryLock <- consensusStorage.tryLockVote(state.key, view, majorityInfo.hash, effectiveLockedQc)
           result <- tryLock match {
-            case Left(reason) =>
+            case Left(rejection) =>
               ConsensusLog
                 .warn(
                   logger,
@@ -1882,7 +1891,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                   state.key.show,
                   "n/a",
                   Event.WithdrawValidationFail,
-                  "reason" -> s"vote_lock_rejected: $reason",
+                  "reason" -> s"vote_lock_rejected: ${rejection.message}",
+                  "rejection" -> rejection.code,
                   "view" -> view.toString,
                   "hash" -> majorityInfo.hash.show.take(8)
                 )
@@ -2280,7 +2290,7 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): F[Unit] =
         recoverIfForking[F](
           ownHash,
-          lastSnapshotHashObservationName,
+          ConsensusStateUpdater.ForkObservation.LastSnapshotHash,
           nodeStorage,
           forkObservationsRef,
           config.forkConfirmationWindow,
@@ -2306,7 +2316,7 @@ object GlobalSnapshotConsensusStateAdvancer {
       )(extractHash: A => Hash): F[Unit] =
         recoverIfForking[F](
           ownHash,
-          facilitatorsHashObservationName,
+          ConsensusStateUpdater.ForkObservation.FacilitatorsHash,
           nodeStorage,
           forkObservationsRef,
           config.forkConfirmationWindow,
@@ -2331,7 +2341,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         val peerHashes = declarations.collect { case (pid, f) => f.consensusConfigHash.map(pid -> _) }.flatten.toMap
         logRecoveryUnsuitableMismatch[F](
           ownConfigHash,
-          consensusConfigHashObservationName
+          ConsensusStateUpdater.ForkObservation.ConsensusConfigHash
         )(
           SortedMap.from(peerHashes)
         )

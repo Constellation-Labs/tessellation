@@ -100,9 +100,6 @@ object CurrencySnapshotConsensusStateAdvancer {
     new CurrencySnapshotConsensusStateAdvancer[F] {
 
       private val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](getClass)
-      private val lastSnapshotHashObservationName = "last-snapshot-hash"
-      private val facilitatorsHashObservationName = "facilitators-hash"
-      private val consensusConfigHashObservationName = "consensus-config-hash"
 
       protected val clusterStorage: ClusterStorage[F] = clusterStorageInstance
       protected val config: ConsensusConfig = consensusConfig
@@ -111,7 +108,8 @@ object CurrencySnapshotConsensusStateAdvancer {
         * `recoverIfForking` to enforce a `forkConfirmationWindow` persistence requirement before flipping to `WaitingForDownload`. See
         * `recoverIfForking` docstring for the full state machine.
         */
-      private val forkObservationsRef: Ref[F, Map[String, (Hash, FiniteDuration)]] = Ref.unsafe(Map.empty)
+      private val forkObservationsRef: Ref[F, Map[ConsensusStateUpdater.ForkObservation, (Hash, FiniteDuration)]] =
+        Ref.unsafe(Map.empty)
 
       private case class Transition(newState: CurrencySnapshotConsensusState, sideEffect: F[Unit])
 
@@ -1097,10 +1095,11 @@ object CurrencySnapshotConsensusStateAdvancer {
           )
           tryLock <- consensusStorage.tryLockVote(state.key, view, majorityInfo.hash, effectiveLockedQc)
           result <- tryLock match {
-            case Left(reason) =>
+            case Left(rejection) =>
               logger
                 .warn(
-                  s"[CONSENSUS] Vote lock rejected key=${state.key.show} view=$view hash=${majorityInfo.hash.show.take(8)} reason=$reason"
+                  s"[CONSENSUS] Vote lock rejected key=${state.key.show} view=$view hash=${majorityInfo.hash.show
+                      .take(8)} rejection=${rejection.code} reason=${rejection.message}"
                 )
                 .as(none[Transition])
             case Right(_) =>
@@ -1591,7 +1590,7 @@ object CurrencySnapshotConsensusStateAdvancer {
       ): F[Unit] =
         recoverIfForking[F](
           ownHash,
-          lastSnapshotHashObservationName,
+          ConsensusStateUpdater.ForkObservation.LastSnapshotHash,
           nodeStorage,
           forkObservationsRef,
           config.forkConfirmationWindow,
@@ -1616,7 +1615,7 @@ object CurrencySnapshotConsensusStateAdvancer {
       )(extractHash: A => Hash): F[Unit] =
         recoverIfForking[F](
           ownHash,
-          facilitatorsHashObservationName,
+          ConsensusStateUpdater.ForkObservation.FacilitatorsHash,
           nodeStorage,
           forkObservationsRef,
           config.forkConfirmationWindow,
@@ -1637,7 +1636,7 @@ object CurrencySnapshotConsensusStateAdvancer {
         if (peerConfigHashes.nonEmpty)
           logRecoveryUnsuitableMismatch[F](
             ownConfigHash,
-            consensusConfigHashObservationName
+            ConsensusStateUpdater.ForkObservation.ConsensusConfigHash
           )(
             SortedMap.from(peerConfigHashes)
           )
