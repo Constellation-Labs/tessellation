@@ -26,6 +26,7 @@ import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
+import io.constellationnetwork.node.shared.infrastructure.snapshot.daemon.RecoveryFallbackEligible
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.CombinedSnapshotCheckpointFileSystemStorage
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
@@ -894,11 +895,11 @@ object Download {
 
   case object CannotFetchSnapshot extends NoStackTrace
 
-  case object CannotFetchGenesisSnapshot extends NoStackTrace
+  case object CannotFetchGenesisSnapshot extends NoStackTrace with RecoveryFallbackEligible
 
   case object FirstIncrementalNotFound extends NoStackTrace
 
-  case object InvalidChain extends NoStackTrace
+  case object InvalidChain extends NoStackTrace with RecoveryFallbackEligible
 
   case class InvalidStateProof(ordinal: SnapshotOrdinal) extends NoStackTrace
 

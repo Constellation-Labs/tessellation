@@ -91,9 +91,12 @@ object DownloadDaemon {
                     // validators with persisted snapshots but no snapshot_info anchor — the full
                     // download falls back to genesis which is too old for any peer to serve.
                     // The recovery path doesn't need snapshot_info; it downloads from the tip.
-                    val errName = err.getClass.getSimpleName
-                    val shouldSwitchToRecovery = !isRecovery &&
-                      (errName.contains("CannotFetchGenesis") || errName.contains("InvalidChain"))
+                    //
+                    // Detection is via the `RecoveryFallbackEligible` marker trait mixed into the
+                    // concrete error case objects in each layer's Download.scala. Using a marker
+                    // trait rather than `getClass.getSimpleName.contains(...)` means a rename of
+                    // those errors fails at compile time instead of silently breaking the switch.
+                    val shouldSwitchToRecovery = !isRecovery && err.isInstanceOf[RecoveryFallbackEligible]
                     val switchAction =
                       if (shouldSwitchToRecovery)
                         logger.warn("[DownloadDaemon] Full download failed (genesis unavailable), switching to recovery path") >>

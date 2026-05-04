@@ -653,7 +653,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                   Category.Lifecycle,
                   key.toString,
                   "n/a",
-                  if (isRecoveryEffective) LogEvent.DownloadInitRecoveryImmediate else LogEvent.DownloadInitDeferred,
+                  if (isRecoveryEffective) LogEvent.DownloadInitRecoveryDeferred else LogEvent.DownloadInitDeferred,
                   "deferral" -> s"${ctx.config.timeTriggerInterval.toSeconds}s"
                 ) >>
                   Temporal[F].sleep(ctx.config.timeTriggerInterval) >>

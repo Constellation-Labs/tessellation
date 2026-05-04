@@ -48,11 +48,10 @@ object PerIpRateLimitMiddleware {
     *   legitimately exceeds the per-IP cap. Match is exact-string against the resolved IP (X-Forwarded-For first hop or remote address).
     * @param selfExternalIp
     *   the local node's external IP (typically `cfg.http.externalIp`). When provided, the middleware detects the XFF-self-injection case —
-    *   i.e. the load-balancer or upstream proxy injected the LOCAL node's own IP into `X-Forwarded-For` — and falls back to the TCP remote
-    *   address instead. Without this guard, all LB-injected requests share a single counter under our own IP, which on bootstrap-source
-    *   nodes (RunRollback) saturates within seconds and starts 429ing healthcheck probes — an external supervisor then treats the probe
-    *   failures as liveness failure and SIGTERMs the JVM, producing a 5-7 minute restart loop. Observed 2026-05-02 on alpha.51 testnet
-    *   `.193`.
+    * i.e. the load-balancer or upstream proxy injected the LOCAL node's own IP into `X-Forwarded-For` — and falls back to the TCP remote
+    * address instead. Without this guard, all LB-injected requests share a single counter under our own IP, which on bootstrap-source nodes
+    * (RunRollback) saturates within seconds and starts 429ing healthcheck probes — an external supervisor then treats the probe failures as
+    * liveness failure and SIGTERMs the JVM, producing a 5-7 minute restart loop. Observed 2026-05-02 on alpha.51 testnet `.193`.
     * @return
     *   a function that wraps `HttpRoutes[F]` with the rate limiter.
     */
