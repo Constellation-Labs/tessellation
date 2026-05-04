@@ -80,7 +80,7 @@ object AdmissionCertificateBuilderSuite extends FunSuite {
     )
     val result = AdmissionCertificateBuilder.build(targetA, AdmissionReason.ReadyAtTip, facHash, lastSnap, votes, 3, committee)
     expect(
-      result.swap.exists(_.startsWith("last_snapshot_hash_mismatch")),
+      result.swap.exists(_.code.startsWith("last_snapshot_hash_mismatch")),
       s"expected Left(last_snapshot_hash_mismatch...), got: $result"
     )
   }
@@ -91,12 +91,12 @@ object AdmissionCertificateBuilderSuite extends FunSuite {
       voter2 -> signedVote(voter2)
     )
     val result = AdmissionCertificateBuilder.build(targetA, AdmissionReason.ReadyAtTip, facHash, lastSnap, votes, 3, committee)
-    expect(result.swap.exists(_.startsWith("under_quorum")), s"expected Left(under_quorum...), got: $result")
+    expect(result.swap.exists(_.code.startsWith("under_quorum")), s"expected Left(under_quorum...), got: $result")
   }
 
   test("build: empty votes -> Left(under_quorum)") {
     val result = AdmissionCertificateBuilder.build(targetA, AdmissionReason.ReadyAtTip, facHash, lastSnap, Map.empty, 1, committee)
-    expect(result.swap.exists(_.startsWith("under_quorum")), s"expected Left(under_quorum...), got: $result")
+    expect(result.swap.exists(_.code.startsWith("under_quorum")), s"expected Left(under_quorum...), got: $result")
   }
 
   test("build: one vote targets different peer -> Left(target_mismatch)") {
@@ -106,7 +106,7 @@ object AdmissionCertificateBuilderSuite extends FunSuite {
       voter3 -> signedVote(voter3, target = targetA)
     )
     val result = AdmissionCertificateBuilder.build(targetA, AdmissionReason.ReadyAtTip, facHash, lastSnap, votes, 2, committee)
-    expect(result.swap.exists(_.startsWith("target_mismatch")), s"expected Left(target_mismatch...), got: $result")
+    expect(result.swap.exists(_.code.startsWith("target_mismatch")), s"expected Left(target_mismatch...), got: $result")
   }
 
   test("build: one vote has wrong facilitatorsHash -> Left(facilitators_mismatch)") {
@@ -117,7 +117,7 @@ object AdmissionCertificateBuilderSuite extends FunSuite {
     )
     val result = AdmissionCertificateBuilder.build(targetA, AdmissionReason.ReadyAtTip, facHash, lastSnap, votes, 3, committee)
     expect(
-      result.swap.exists(_.startsWith("facilitators_mismatch")),
+      result.swap.exists(_.code.startsWith("facilitators_mismatch")),
       s"expected Left(facilitators_mismatch...), got: $result"
     )
   }
@@ -131,7 +131,7 @@ object AdmissionCertificateBuilderSuite extends FunSuite {
     )
     val result = AdmissionCertificateBuilder.build(targetA, AdmissionReason.ReadyAtTip, facHash, lastSnap, votes, 3, committee)
     expect(
-      result.swap.exists(_.startsWith("voter_not_in_committee")),
+      result.swap.exists(_.code.startsWith("voter_not_in_committee")),
       s"expected Left(voter_not_in_committee...), got: $result"
     )
   }
@@ -184,7 +184,7 @@ object AdmissionCertificateBuilderSuite extends FunSuite {
     )
     val result = AdmissionCertificateBuilder.build(targetA, AdmissionReason.ReadyAtTip, facHash, lastSnap, votes, 3, committee)
     expect(
-      result.swap.exists(_.startsWith("under_quorum")),
+      result.swap.exists(_.code.startsWith("under_quorum")),
       s"expected Left(under_quorum...) for 3 relayed duplicates of 1 signed vote, got: $result"
     )
   }
@@ -239,7 +239,7 @@ object AdmissionCertificateBuilderSuite extends FunSuite {
         witnessPool = widerPool
       )
     expect(
-      result.swap.exists(_.startsWith("voter_not_in_committee")),
+      result.swap.exists(_.code.startsWith("voter_not_in_committee")),
       s"v9: outside-pool voter must still be rejected, got: $result"
     )
   }

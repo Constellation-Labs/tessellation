@@ -973,26 +973,30 @@ object GlobalSnapshotConsensusStateAdvancer {
         state: GlobalSnapshotConsensusState,
         proposal: Proposal,
         facilitatorsHash: Hash
-      ): Either[String, Unit] = {
+      ): Either[ProposalRejection, Unit] = {
         val n = state.facilitators.value.size
         val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
         if (proposal.view === 0L) {
-          if (proposal.vcc.nonEmpty) Left("view0_proposal_must_not_carry_vcc")
+          if (proposal.vcc.nonEmpty) Left(ProposalRejection("view0_proposal_must_not_carry_vcc"))
           else Right(())
         } else {
           proposal.vcc match {
-            case None => Left(s"view${proposal.view}_proposal_missing_vcc")
+            case None => Left(ProposalRejection(s"view${proposal.view}_proposal_missing_vcc"))
             case Some(vcc) if vcc.votes.size < q =>
-              Left(s"vcc_under_quorum votes=${vcc.votes.size} required=$q")
+              Left(ProposalRejection(s"vcc_under_quorum votes=${vcc.votes.size} required=$q"))
             case Some(vcc) if vcc.facilitatorsHash =!= facilitatorsHash =>
               Left(
-                s"vcc_facilitators_mismatch vccFacHash=${vcc.facilitatorsHash.show.take(8)} ours=${facilitatorsHash.show.take(8)}"
+                ProposalRejection(
+                  s"vcc_facilitators_mismatch vccFacHash=${vcc.facilitatorsHash.show.take(8)} ours=${facilitatorsHash.show.take(8)}"
+                )
               )
             case Some(vcc) =>
               vcc.highestQcInVcc match {
                 case Some(qc) if qc.proposalHash =!= proposal.hash =>
                   Left(
-                    s"highest_qc_carry_forward_violation qcHash=${qc.proposalHash.show.take(8)} proposalHash=${proposal.hash.show.take(8)}"
+                    ProposalRejection(
+                      s"highest_qc_carry_forward_violation qcHash=${qc.proposalHash.show.take(8)} proposalHash=${proposal.hash.show.take(8)}"
+                    )
                   )
                 case _ => Right(())
               }
@@ -1004,16 +1008,16 @@ object GlobalSnapshotConsensusStateAdvancer {
         * Protects against an adversarial leader constructing a VCC with fabricated/unsigned votes. Each vote must have exactly one
         * signature proof (the voter's) that validates against the canonical-encoded `ViewChangeVote` bytes.
         */
-      private def verifyVccSignatures(vcc: ViewChangeCertificate)(implicit hasher: Hasher[F]): F[Either[String, Unit]] =
+      private def verifyVccSignatures(vcc: ViewChangeCertificate)(implicit hasher: Hasher[F]): F[Either[ProposalRejection, Unit]] =
         vcc.votes.toNonEmptyList.traverse { signedVote =>
           signedVote.hasValidSignature[F].map {
-            case true  => Right(()): Either[String, Unit]
-            case false => Left(signedVote.proofs.head.id.show.take(8))
+            case true  => Right(()): Either[ProposalRejection, Unit]
+            case false => Left(ProposalRejection(signedVote.proofs.head.id.show.take(8)))
           }
         }.map { results =>
-          val invalidPeers = results.toList.collect { case Left(pid) => pid }
+          val invalidPeers = results.toList.collect { case Left(pid) => pid.code }
           if (invalidPeers.isEmpty) Right(())
-          else Left(s"vcc_invalid_signatures peers=${invalidPeers.mkString(",")}")
+          else Left(ProposalRejection(s"vcc_invalid_signatures peers=${invalidPeers.mkString(",")}"))
         }
 
       // Phase B1 bootstrap gate. Mirrors Phase 4's penalty-accrual suppression: while the chain
@@ -1035,9 +1039,9 @@ object GlobalSnapshotConsensusStateAdvancer {
         state: GlobalSnapshotConsensusState,
         proposal: Proposal,
         facilitatorsHash: Hash
-      ): Either[String, Unit] = {
+      ): Either[ProposalRejection, Unit] = {
         if (isInBootstrap(state) && proposal.evictionCertificates.nonEmpty)
-          return Left(s"ecs_rejected_in_bootstrap count=${proposal.evictionCertificates.size}")
+          return Left(ProposalRejection(s"ecs_rejected_in_bootstrap count=${proposal.evictionCertificates.size}"))
         // Canonical round-start committee — quorum threshold and target-membership are computed
         // against the fixed committee so validation is bit-identical across nodes that observed
         // mid-round withdrawals at different times.
@@ -1052,28 +1056,32 @@ object GlobalSnapshotConsensusStateAdvancer {
         val expectedLastSnap: Hash = state.lastOutcome.finished.snapshotHash
 
         @scala.annotation.tailrec
-        def loop(remaining: List[EvictionCertificate], seenTargets: Set[PeerId]): Either[String, Unit] =
+        def loop(remaining: List[EvictionCertificate], seenTargets: Set[PeerId]): Either[ProposalRejection, Unit] =
           remaining match {
             case Nil => Right(())
             case cert :: tail =>
               if (seenTargets.contains(cert.targetPeer))
-                Left(s"ecs_duplicate_target target=${cert.targetPeer.show.take(8)}")
+                Left(ProposalRejection(s"ecs_duplicate_target target=${cert.targetPeer.show.take(8)}"))
               else if (cert.facilitatorsHash =!= facilitatorsHash)
                 Left(
-                  s"ecs_facilitators_mismatch target=${cert.targetPeer.show.take(8)} " +
-                    s"certFacHash=${cert.facilitatorsHash.show.take(8)} ours=${facilitatorsHash.show.take(8)}"
+                  ProposalRejection(
+                    s"ecs_facilitators_mismatch target=${cert.targetPeer.show.take(8)} " +
+                      s"certFacHash=${cert.facilitatorsHash.show.take(8)} ours=${facilitatorsHash.show.take(8)}"
+                  )
                 )
               // Codex review 2026-04-23: bind cert to current tip. Prevents replay of stale
               // signed-vote quorums from earlier tips that happened to share facilitatorsHash.
               else if (cert.lastSnapshotHash =!= expectedLastSnap)
                 Left(
-                  s"ecs_last_snap_mismatch target=${cert.targetPeer.show.take(8)} " +
-                    s"certLastSnap=${cert.lastSnapshotHash.show.take(8)} ours=${expectedLastSnap.show.take(8)}"
+                  ProposalRejection(
+                    s"ecs_last_snap_mismatch target=${cert.targetPeer.show.take(8)} " +
+                      s"certLastSnap=${cert.lastSnapshotHash.show.take(8)} ours=${expectedLastSnap.show.take(8)}"
+                  )
                 )
               else if (!committee.contains(cert.targetPeer))
-                Left(s"ecs_target_not_in_committee target=${cert.targetPeer.show.take(8)}")
+                Left(ProposalRejection(s"ecs_target_not_in_committee target=${cert.targetPeer.show.take(8)}"))
               else if (cert.votes.size < q)
-                Left(s"ecs_under_quorum target=${cert.targetPeer.show.take(8)} votes=${cert.votes.size} required=$q")
+                Left(ProposalRejection(s"ecs_under_quorum target=${cert.targetPeer.show.take(8)} votes=${cert.votes.size} required=$q"))
               else {
                 val mismatched = cert.votes.toList.find { signed =>
                   signed.value.targetPeer =!= cert.targetPeer ||
@@ -1083,14 +1091,22 @@ object GlobalSnapshotConsensusStateAdvancer {
                 }
                 mismatched match {
                   case Some(bad) =>
-                    Left(s"ecs_vote_field_mismatch target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}")
+                    Left(
+                      ProposalRejection(
+                        s"ecs_vote_field_mismatch target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}"
+                      )
+                    )
                   case None =>
                     // v9: voter must be in the widened witness pool, not the committee.
                     val witnessPool = state.eligibleFacilitators.value.toSet - cert.targetPeer
                     val nonWitnessPoolVoter = cert.votes.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
                     nonWitnessPoolVoter match {
                       case Some(bad) =>
-                        Left(s"ecs_voter_not_in_committee target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}")
+                        Left(
+                          ProposalRejection(
+                            s"ecs_voter_not_in_committee target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}"
+                          )
+                        )
                       case None => loop(tail, seenTargets + cert.targetPeer)
                     }
                 }
@@ -1104,18 +1120,19 @@ object GlobalSnapshotConsensusStateAdvancer {
         */
       private def verifyEcsSignatures(
         proposal: Proposal
-      )(implicit hasher: Hasher[F]): F[Either[String, Unit]] =
+      )(implicit hasher: Hasher[F]): F[Either[ProposalRejection, Unit]] =
         proposal.evictionCertificates.flatTraverse { cert =>
           cert.votes.toNonEmptyList.toList.traverse { signedVote =>
             signedVote.hasValidSignature[F].map {
-              case true  => Right(()): Either[String, Unit]
-              case false => Left(s"target=${cert.targetPeer.show.take(8)} voter=${signedVote.proofs.head.id.show.take(8)}")
+              case true => Right(()): Either[ProposalRejection, Unit]
+              case false =>
+                Left(ProposalRejection(s"target=${cert.targetPeer.show.take(8)} voter=${signedVote.proofs.head.id.show.take(8)}"))
             }
           }
         }.map { results =>
-          val invalid = results.collect { case Left(msg) => msg }
+          val invalid = results.collect { case Left(msg) => msg.code }
           if (invalid.isEmpty) Right(())
-          else Left(s"ecs_invalid_signatures [${invalid.mkString("; ")}]")
+          else Left(ProposalRejection(s"ecs_invalid_signatures [${invalid.mkString("; ")}]"))
         }
 
       /** Validate structural invariants on every embedded `AdmissionCertificate`. Mirrors `validateProposalEcs` with symmetric checks for
@@ -1133,9 +1150,9 @@ object GlobalSnapshotConsensusStateAdvancer {
         state: GlobalSnapshotConsensusState,
         proposal: Proposal,
         facilitatorsHash: Hash
-      ): Either[String, Unit] = {
+      ): Either[ProposalRejection, Unit] = {
         if (isInBootstrap(state) && proposal.admissionCertificates.nonEmpty)
-          return Left(s"acs_rejected_in_bootstrap count=${proposal.admissionCertificates.size}")
+          return Left(ProposalRejection(s"acs_rejected_in_bootstrap count=${proposal.admissionCertificates.size}"))
         // Canonical round-start committee — see validateProposalEcs for rationale.
         val n = state.roundStartFacilitators.value.size
         val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
@@ -1144,28 +1161,32 @@ object GlobalSnapshotConsensusStateAdvancer {
         val expectedLastSnap: Hash = state.lastOutcome.finished.snapshotHash
 
         @scala.annotation.tailrec
-        def loop(remaining: List[AdmissionCertificate], seenTargets: Set[PeerId]): Either[String, Unit] =
+        def loop(remaining: List[AdmissionCertificate], seenTargets: Set[PeerId]): Either[ProposalRejection, Unit] =
           remaining match {
             case Nil => Right(())
             case cert :: tail =>
               if (seenTargets.contains(cert.targetPeer))
-                Left(s"acs_duplicate_target target=${cert.targetPeer.show.take(8)}")
+                Left(ProposalRejection(s"acs_duplicate_target target=${cert.targetPeer.show.take(8)}"))
               else if (cert.facilitatorsHash =!= facilitatorsHash)
                 Left(
-                  s"acs_facilitators_mismatch target=${cert.targetPeer.show.take(8)} " +
-                    s"certFacHash=${cert.facilitatorsHash.show.take(8)} ours=${facilitatorsHash.show.take(8)}"
+                  ProposalRejection(
+                    s"acs_facilitators_mismatch target=${cert.targetPeer.show.take(8)} " +
+                      s"certFacHash=${cert.facilitatorsHash.show.take(8)} ours=${facilitatorsHash.show.take(8)}"
+                  )
                 )
               else if (cert.lastSnapshotHash =!= expectedLastSnap)
                 Left(
-                  s"acs_last_snap_mismatch target=${cert.targetPeer.show.take(8)} " +
-                    s"certLastSnap=${cert.lastSnapshotHash.show.take(8)} ours=${expectedLastSnap.show.take(8)}"
+                  ProposalRejection(
+                    s"acs_last_snap_mismatch target=${cert.targetPeer.show.take(8)} " +
+                      s"certLastSnap=${cert.lastSnapshotHash.show.take(8)} ours=${expectedLastSnap.show.take(8)}"
+                  )
                 )
               else if (committee.contains(cert.targetPeer))
-                Left(s"acs_target_already_in_committee target=${cert.targetPeer.show.take(8)}")
+                Left(ProposalRejection(s"acs_target_already_in_committee target=${cert.targetPeer.show.take(8)}"))
               else if (!probation.contains(cert.targetPeer))
-                Left(s"acs_target_not_in_probation target=${cert.targetPeer.show.take(8)}")
+                Left(ProposalRejection(s"acs_target_not_in_probation target=${cert.targetPeer.show.take(8)}"))
               else if (cert.votes.size < q)
-                Left(s"acs_under_quorum target=${cert.targetPeer.show.take(8)} votes=${cert.votes.size} required=$q")
+                Left(ProposalRejection(s"acs_under_quorum target=${cert.targetPeer.show.take(8)} votes=${cert.votes.size} required=$q"))
               else {
                 val mismatched = cert.votes.toList.find { signed =>
                   signed.value.targetPeer =!= cert.targetPeer ||
@@ -1175,14 +1196,22 @@ object GlobalSnapshotConsensusStateAdvancer {
                 }
                 mismatched match {
                   case Some(bad) =>
-                    Left(s"acs_vote_field_mismatch target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}")
+                    Left(
+                      ProposalRejection(
+                        s"acs_vote_field_mismatch target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}"
+                      )
+                    )
                   case None =>
                     // v9: voter must be in the widened witness pool, not the committee.
                     val witnessPool = state.eligibleFacilitators.value.toSet - cert.targetPeer
                     val nonWitnessPoolVoter = cert.votes.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
                     nonWitnessPoolVoter match {
                       case Some(bad) =>
-                        Left(s"acs_voter_not_in_committee target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}")
+                        Left(
+                          ProposalRejection(
+                            s"acs_voter_not_in_committee target=${cert.targetPeer.show.take(8)} voter=${bad.proofs.head.id.show.take(8)}"
+                          )
+                        )
                       case None => loop(tail, seenTargets + cert.targetPeer)
                     }
                 }
@@ -1199,13 +1228,17 @@ object GlobalSnapshotConsensusStateAdvancer {
       private def validateProposalObservedResponders(
         state: GlobalSnapshotConsensusState,
         proposal: Proposal
-      ): Either[String, Unit] = {
+      ): Either[ProposalRejection, Unit] = {
         if (isInBootstrap(state) && proposal.observedResponders.nonEmpty)
-          return Left(s"obs_resp_rejected_in_bootstrap count=${proposal.observedResponders.size}")
+          return Left(ProposalRejection(s"obs_resp_rejected_in_bootstrap count=${proposal.observedResponders.size}"))
         val committee = state.roundStartFacilitators.value.toSet
         val notInCommittee = proposal.observedResponders.toSet -- committee
         if (notInCommittee.nonEmpty)
-          Left(s"obs_resp_not_in_committee count=${notInCommittee.size} sample=${notInCommittee.take(3).map(_.show.take(8)).mkString(",")}")
+          Left(
+            ProposalRejection(
+              s"obs_resp_not_in_committee count=${notInCommittee.size} sample=${notInCommittee.take(3).map(_.show.take(8)).mkString(",")}"
+            )
+          )
         else
           Right(())
       }
@@ -1215,18 +1248,19 @@ object GlobalSnapshotConsensusStateAdvancer {
         */
       private def verifyAcsSignatures(
         proposal: Proposal
-      )(implicit hasher: Hasher[F]): F[Either[String, Unit]] =
+      )(implicit hasher: Hasher[F]): F[Either[ProposalRejection, Unit]] =
         proposal.admissionCertificates.flatTraverse { cert =>
           cert.votes.toNonEmptyList.toList.traverse { signedVote =>
             signedVote.hasValidSignature[F].map {
-              case true  => Right(()): Either[String, Unit]
-              case false => Left(s"target=${cert.targetPeer.show.take(8)} voter=${signedVote.proofs.head.id.show.take(8)}")
+              case true => Right(()): Either[ProposalRejection, Unit]
+              case false =>
+                Left(ProposalRejection(s"target=${cert.targetPeer.show.take(8)} voter=${signedVote.proofs.head.id.show.take(8)}"))
             }
           }
         }.map { results =>
-          val invalid = results.collect { case Left(msg) => msg }
+          val invalid = results.collect { case Left(msg) => msg.code }
           if (invalid.isEmpty) Right(())
-          else Left(s"acs_invalid_signatures [${invalid.mkString("; ")}]")
+          else Left(ProposalRejection(s"acs_invalid_signatures [${invalid.mkString("; ")}]"))
         }
 
       private def resolveLeaderProposal(
@@ -1236,7 +1270,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         leaderProposal: Proposal
       )(implicit hasher: Hasher[F]): F[Option[Transition]] = {
         val role = if (selfId === state.leader) "LEADER" else "FOLLOWER"
-        def logVccReject(reason: String): F[Option[Transition]] =
+        def logVccReject(rejection: ProposalRejection): F[Option[Transition]] =
           ConsensusLog
             .warn(
               logger,
@@ -1244,12 +1278,12 @@ object GlobalSnapshotConsensusStateAdvancer {
               state.key.show,
               role,
               Event.ValidationFailed,
-              "reason" -> s"vcc_validation: $reason",
+              "reason" -> s"vcc_validation: ${rejection.code}",
               "leader" -> ConsensusLog.pid(state.leader),
               "view" -> state.viewNumber.toString
             )
             .as(none[Transition])
-        def logEcsReject(reason: String): F[Option[Transition]] =
+        def logEcsReject(rejection: ProposalRejection): F[Option[Transition]] =
           ConsensusLog
             .warn(
               logger,
@@ -1257,12 +1291,12 @@ object GlobalSnapshotConsensusStateAdvancer {
               state.key.show,
               role,
               Event.ValidationFailed,
-              "reason" -> s"ecs_validation: $reason",
+              "reason" -> s"ecs_validation: ${rejection.code}",
               "leader" -> ConsensusLog.pid(state.leader),
               "view" -> state.viewNumber.toString
             )
             .as(none[Transition])
-        def logAcsReject(reason: String): F[Option[Transition]] =
+        def logAcsReject(rejection: ProposalRejection): F[Option[Transition]] =
           ConsensusLog
             .warn(
               logger,
@@ -1270,7 +1304,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               state.key.show,
               role,
               Event.ValidationFailed,
-              "reason" -> s"acs_validation: $reason",
+              "reason" -> s"acs_validation: ${rejection.code}",
               "leader" -> ConsensusLog.pid(state.leader),
               "view" -> state.viewNumber.toString
             )
@@ -1317,7 +1351,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             // here — the rumor envelope binds the set to the leader; only deterministic subset
             // check is needed. Below-quorum count emits a warning log but does NOT reject.
             validateProposalObservedResponders(state, leaderProposal) match {
-              case Left(reason) =>
+              case Left(rejection) =>
                 ConsensusLog
                   .warn(
                     logger,
@@ -1325,7 +1359,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                     state.key.show,
                     role,
                     Event.ValidationFailed,
-                    "reason" -> s"obs_resp_validation: $reason",
+                    "reason" -> s"obs_resp_validation: ${rejection.code}",
                     "leader" -> ConsensusLog.pid(state.leader),
                     "view" -> state.viewNumber.toString
                   )

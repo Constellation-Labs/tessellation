@@ -26,7 +26,7 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.node.UpdateNodeParameters
-import io.constellationnetwork.schema.peer.{PeerCommitteeView, PeerId}
+import io.constellationnetwork.schema.peer.{PeerCommitteeStatus, PeerCommitteeView, PeerId}
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -186,10 +186,10 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
             participated >= ChronicMinObservationHistoryFloor &&
               ratio < ChronicMinParticipationRatio
           val onProbation = probation.contains(pid)
-          val status =
-            if (onProbation) "probation"
-            else if (isChronic) "chronic"
-            else "active"
+          val status: PeerCommitteeStatus =
+            if (onProbation) PeerCommitteeStatus.Probation
+            else if (isChronic) PeerCommitteeStatus.Chronic
+            else PeerCommitteeStatus.Active
           pid -> PeerCommitteeView(
             status = status,
             completed = completed,

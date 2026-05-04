@@ -201,7 +201,7 @@ object ViewChangeAssemblySuite extends FunSuite {
     )
     val result = ViewChangeCertificateBuilder.build(0L, 1L, facHash, votes, quorumSize = 3)
     expect(result.isLeft, s"should fail when under quorum, got $result").and(
-      expect(result.swap.exists(_.startsWith("under_quorum")), s"error should start with under_quorum, got $result")
+      expect(result.swap.exists(_.code.startsWith("under_quorum")), s"error should start with under_quorum, got $result")
     )
   }
 
@@ -213,7 +213,7 @@ object ViewChangeAssemblySuite extends FunSuite {
     )
     val result = ViewChangeCertificateBuilder.build(0L, 1L, facHash, votes, quorumSize = 3)
     expect(result.isLeft, s"should reject facilitators mismatch, got $result").and(
-      expect(result.swap.exists(_.startsWith("facilitators_mismatch")), s"error should start with facilitators_mismatch, got $result")
+      expect(result.swap.exists(_.code.startsWith("facilitators_mismatch")), s"error should start with facilitators_mismatch, got $result")
     )
   }
 
@@ -225,7 +225,7 @@ object ViewChangeAssemblySuite extends FunSuite {
     )
     val result = ViewChangeCertificateBuilder.build(0L, 1L, facHash, votes, quorumSize = 3)
     expect(result.isLeft, s"should reject divergent QCs at the same view, got $result").and(
-      expect(result.swap.exists(_ === "divergent_qcs"), s"error should be divergent_qcs, got $result")
+      expect(result.swap.exists(_.code === "divergent_qcs"), s"error should be divergent_qcs, got $result")
     )
   }
 }
