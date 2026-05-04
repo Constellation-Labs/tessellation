@@ -96,6 +96,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
 ) {
 
   import ctx.{clusterStorage, config, logger, peerQualityTracker, queue, storage}
+  import AbandonmentTracker.EscalationCause
 
   /** Emit a `RoundCompleted` tagged with the current attempt id so the FSM can drop it if the round has since advanced. See Bug A in the
     * 2026-04-21 fork-recovery post-mortem: an abandonment-queued `RoundCompleted` fired after a view change had moved the round forward and
@@ -115,7 +116,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
   /** After this many retriable abandonments at the same ordinal, escalate to recovery. Default: 1x maxConsecutiveAbandonments (5 with
     * default config). This is higher than the non-retriable threshold because quorum-infeasible is expected during transient partitions.
     */
-  private val maxRetriableAtSameKey: Int = config.maxConsecutiveAbandonments * 1
+  private val maxRetriableAtSameKey: Int = config.maxConsecutiveAbandonments
 
   /** Absolute ceiling: after this many retriable abandonments at the same key, force escalation to recovery regardless of
     * activeFacilitators. Without this, the "multi-peer stall" suppression path retries indefinitely — the counter climbs past
@@ -322,11 +323,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
                             "reason" -> reason.label,
                             "activeFacilitators" -> activeFacilitators.toString,
                             "requiredQuorum" -> requiredQuorum.toString,
-                            "escalationCause" -> {
-                              if (absoluteCeilingReached) "absolute_ceiling"
-                              else if (isIsolated) "isolated"
-                              else "quorum_impossible"
-                            }
+                            "escalationCause" -> EscalationCause.classify(absoluteCeilingReached, isIsolated).label
                           ) >>
                             healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount)) >>
                             triggerRecoveryDownload(key, consecutiveCount)
@@ -381,7 +378,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
              responsivePeers <- clusterStorage.getResponsivePeers
              readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
              readyPeerRegs = peerCurrentKeys.view.filterKeys(readyPeerIds.contains).toMap
-             peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => Order[Key].gt(peerKey, key) }
+             peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key }
              networkAdvanced = peersAtHigherKey > 0
              willRecover = shouldRecover && networkAdvanced
              _ <- healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount))
@@ -611,5 +608,19 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
               offerRoundCompleted
           }
       }
+  }
+}
+
+object AbandonmentTracker {
+
+  /** Why a retriable abandonment escalated to recovery download. Used as a metric/log label. */
+  private[engine] sealed abstract class EscalationCause(val label: String)
+  private[engine] object EscalationCause {
+    case object AbsoluteCeiling extends EscalationCause("absolute_ceiling")
+    case object Isolated extends EscalationCause("isolated")
+    case object QuorumImpossible extends EscalationCause("quorum_impossible")
+
+    def classify(absCeiling: Boolean, isolated: Boolean): EscalationCause =
+      if (absCeiling) AbsoluteCeiling else if (isolated) Isolated else QuorumImpossible
   }
 }

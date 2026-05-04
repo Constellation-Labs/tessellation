@@ -431,17 +431,14 @@ object ConsensusStateUpdater {
       NodeState.WaitingForReady
     )
 
-    def tryStates(remaining: List[NodeState]): F[Option[NodeState]] =
-      remaining match {
-        case Nil => none[NodeState].pure[F]
-        case state :: rest =>
-          nodeStorage.tryModifyStateGetResult(Set(state), NodeState.WaitingForDownload).flatMap {
-            case NodeStateTransition.Success => state.some.pure[F]
-            case _                           => tryStates(rest)
-          }
-      }
-
-    tryStates(candidateStates).flatMap {
+    candidateStates.collectFirstSomeM { state =>
+      nodeStorage
+        .tryModifyStateGetResult(Set[NodeState](state), NodeState.WaitingForDownload)
+        .map {
+          case NodeStateTransition.Success => state.some
+          case _                           => none[NodeState]
+        }
+    }.flatMap {
       case Some(fromState) =>
         logger.warn(
           ConsensusLog.format(

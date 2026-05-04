@@ -279,11 +279,8 @@ object ConsensusEventLoop {
         Set(NodeState.Observing, NodeState.WaitingForReady, NodeState.Ready)
 
       val peerRegistrationStream: Stream[F, Unit] =
-        clusterStorage.peerChanges.mapFilter {
-          case cats.data.Ior.Both(_, peer) if registrationStates.contains(peer.state) => Some(peer)
-          case cats.data.Ior.Right(peer) if registrationStates.contains(peer.state)   => Some(peer)
-          case _                                                                      => None
-        }
+        clusterStorage.peerChanges
+          .mapFilter(_.right.filter(p => registrationStates.contains(p.state)))
           .filter(_.isResponsive)
           .evalMap(peer =>
             collectRegistration(consensusClient, storage)(peer).handleErrorWith(e => ctx.logger.error(e)("Peer registration failed"))
@@ -317,9 +314,9 @@ object ConsensusEventLoop {
     // The peer enters Observing before initFromDownload sets its observationKey.
     // Without a retry, the registration silently fails (None) and the peer never
     // joins the facilitator set. One retry after a short delay covers the gap.
-    attempt.flatMap {
-      case true  => Async[F].unit
-      case false => Async[F].sleep(3.seconds) >> attempt.void
-    }
+    attempt.ifM(
+      ifTrue = Async[F].unit,
+      ifFalse = Async[F].sleep(3.seconds) >> attempt.void
+    )
   }
 }

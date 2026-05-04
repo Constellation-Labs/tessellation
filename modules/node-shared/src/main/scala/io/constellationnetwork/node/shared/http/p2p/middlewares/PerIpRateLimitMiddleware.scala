@@ -79,9 +79,10 @@ object PerIpRateLimitMiddleware {
             .map(_.toString.split(",").head.trim)
             .filter(_.nonEmpty)
         val xffIsSelfInjection: Boolean =
-          (selfExternalIp, xffFirstHop).mapN(_ == _).getOrElse(false)
+          selfExternalIp.exists(self => xffFirstHop.contains(self))
         val clientIpOpt: Option[String] =
-          (if (xffIsSelfInjection) None else xffFirstHop)
+          xffFirstHop
+            .filterNot(_ => xffIsSelfInjection)
             .orElse(req.remote.map(_.host.toString))
 
         clientIpOpt match {
