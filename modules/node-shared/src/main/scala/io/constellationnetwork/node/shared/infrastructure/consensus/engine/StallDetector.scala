@@ -815,12 +815,18 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
                         // only (gossip a VCV, wait for quorum-certified VCC to advance the view).
                         // If the round can't complete due to genuinely-unresponsive peers, the
                         // stall-cycle abandonment path in the outer monitor takes over.
+                        //
+                        // Propagate quorumInfeasible=true so the outer monitor's abandonment
+                        // classification can distinguish a genuine quorum-infeasible stall (this
+                        // branch) from ordinary stall-cycle expiry (the `else` below). Without
+                        // this, AbandonReason.QuorumInfeasible never fires and the new
+                        // escalate-vs-suppress logic in AbandonmentTracker is unreachable.
                         viewChangeManager
                           .performViewChange(key, state)
                           .as(
                             StallResult(
                               didStall = true,
-                              quorumInfeasible = false,
+                              quorumInfeasible = true,
                               activeFacilitators = remaining,
                               quorumSize = minQuorum,
                               clusterSize = clusterSize,

@@ -36,8 +36,9 @@ trait NodeStorage[F[_]] {
 
   def isInJoiningGracePeriod: F[Boolean]
 
-  /** Flag set by AbandonmentTracker before triggering recovery download. When true, DownloadDaemon uses the incremental recoveryDownload
-    * path (skips cache clearing and observe phase). Cleared after download completes.
+  /** Flag set by AbandonmentTracker before triggering recovery download. When true, DownloadDaemon uses the layer's `recoveryDownload`
+    * implementation rather than full `download`. dag-l0 resyncs MptStore from the downloaded checkpoint; currency-l0 currently delegates to
+    * its full download. Cleared after download completes.
     */
   def setRecoveryDownload: F[Unit]
 
