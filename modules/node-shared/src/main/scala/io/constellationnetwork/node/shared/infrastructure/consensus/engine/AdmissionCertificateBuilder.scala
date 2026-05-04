@@ -35,7 +35,7 @@ object AdmissionCertificateBuilder {
     votes: Map[PeerId, Signed[AdmissionVote]],
     quorumSize: Int,
     witnessPool: Set[PeerId]
-  ): Either[String, AdmissionCertificate] = {
+  ): Either[CertBuildError, AdmissionCertificate] = {
     val wrongTarget = votes.toList.collect {
       case (pid, signed) if signed.value.targetPeer != target => pid
     }
@@ -65,15 +65,15 @@ object AdmissionCertificateBuilder {
     }
 
     if (wrongTarget.nonEmpty)
-      Left(s"target_mismatch peers=${wrongTarget.size}")
+      Left(CertBuildError.TargetMismatch(wrongTarget.size))
     else if (wrongReason.nonEmpty)
-      Left(s"reason_mismatch peers=${wrongReason.size}")
+      Left(CertBuildError.ReasonMismatch(wrongReason.size))
     else if (wrongFacHash.nonEmpty)
-      Left(s"facilitators_mismatch peers=${wrongFacHash.size}")
+      Left(CertBuildError.FacilitatorsHashMismatch(wrongFacHash.size))
     else if (wrongLastSnapHash.nonEmpty)
-      Left(s"last_snapshot_hash_mismatch peers=${wrongLastSnapHash.size}")
+      Left(CertBuildError.LastSnapshotHashMismatch(wrongLastSnapHash.size))
     else if (nonWitnessPoolVoter.nonEmpty)
-      Left(s"voter_not_in_committee peers=${nonWitnessPoolVoter.size}")
+      Left(CertBuildError.VoterNotInCommittee(nonWitnessPoolVoter.size))
     else {
       // Deduplicate by signer BEFORE checking quorum — see EvictionCertificateBuilder for rationale.
       val bySigner: Map[PeerId, Signed[AdmissionVote]] = votes.values
@@ -90,14 +90,14 @@ object AdmissionCertificateBuilder {
         .toMap
       val nonWitnessPoolSigner = bySigner.keys.filterNot(witnessPool.contains).toList
       if (nonWitnessPoolSigner.nonEmpty)
-        Left(s"signer_not_in_committee peers=${nonWitnessPoolSigner.size}")
+        Left(CertBuildError.SignerNotInCommittee(nonWitnessPoolSigner.size))
       else if (bySigner.size < quorumSize)
-        Left(s"under_quorum votes=${bySigner.size} required=$quorumSize")
+        Left(CertBuildError.UnderQuorum(bySigner.size, quorumSize))
       else {
         val sortedSet: SortedSet[Signed[AdmissionVote]] = SortedSet.empty[Signed[AdmissionVote]] ++ bySigner.values
         NonEmptySet
           .fromSet(sortedSet)
-          .toRight("empty_votes_after_filter")
+          .toRight(CertBuildError.EmptyVotesAfterFilter)
           .map(nes => AdmissionCertificate(target, reason, facilitatorsHash, lastSnapshotHash, nes))
       }
     }
