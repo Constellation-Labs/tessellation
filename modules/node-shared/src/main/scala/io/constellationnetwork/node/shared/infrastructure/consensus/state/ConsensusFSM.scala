@@ -71,30 +71,27 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
   private val roundBlockedStates: Set[NodeState] =
     Set(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.Leaving)
 
-  def handle(cmd: ConsensusCommand): F[Unit] =
+  def handle(cmd: ConsensusCommand[Key, Artifact, Ctx, Outcome]): F[Unit] =
     Metrics[F].incrementCounter(
       "dag_consensus_fsm_command_processed",
       Seq(unsafeLabelName("command_type") -> cmd.getClass.getSimpleName.stripSuffix("$"))
     ) >>
       isRunning.get.flatMap { running =>
         cmd match {
-          case RumorReceived(r)             => rumorHandler.process(r)
-          case CheckUpdate(key)             => transitions.checkUpdate(key.asInstanceOf[Key])
-          case CheckViewChangeAssembly(key) => transitions.checkViewChangeAssembly(key.asInstanceOf[Key])
-          case CheckEvictionAssembly(key, target) =>
-            transitions.checkEvictionAssembly(key.asInstanceOf[Key], target.asInstanceOf[io.constellationnetwork.schema.peer.PeerId])
-          case CheckAdmissionAssembly(key, target) =>
-            transitions.checkAdmissionAssembly(key.asInstanceOf[Key], target.asInstanceOf[io.constellationnetwork.schema.peer.PeerId])
-          case InternalScheduled(inner) => handle(inner)
-          case PeerObserved(peer)       => transitions.registerPeer(peer)
-          case IgnoreUnexpectedRumor(r) => log.warn(s"Ignoring unexpected rumor: ${r.getClass.getSimpleName}")
+          case RumorReceived(r)                    => rumorHandler.process(r)
+          case CheckUpdate(key)                    => transitions.checkUpdate(key)
+          case CheckViewChangeAssembly(key)        => transitions.checkViewChangeAssembly(key)
+          case CheckEvictionAssembly(key, target)  => transitions.checkEvictionAssembly(key, target)
+          case CheckAdmissionAssembly(key, target) => transitions.checkAdmissionAssembly(key, target)
+          case InternalScheduled(inner)            => handle(inner)
+          case PeerObserved(peer)                  => transitions.registerPeer(peer)
 
           case _ if running => handleWhileBusy(cmd)
           case _            => handleWhileIdle(cmd)
         }
       }
 
-  private def handleWhileIdle(cmd: ConsensusCommand): F[Unit] =
+  private def handleWhileIdle(cmd: ConsensusCommand[Key, Artifact, Ctx, Outcome]): F[Unit] =
     cmd match {
       case StartRound(trigger) => startRound(trigger)
       case TimeTick            => startRound(Some(TimeTrigger))
@@ -103,13 +100,13 @@ class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq:
       case ConsensusFinished(_, _, _) =>
         log.warn(ConsensusLog.format(Category.Lifecycle, "n/a", "n/a", LogEvent.IdleConsensusFinished))
       case InitializeFromDownload(key, art, c, isRecovery) =>
-        transitions.initFromDownload(key.asInstanceOf[Key], art.asInstanceOf[Signed[Artifact]], c.asInstanceOf[Ctx], isRecovery)
-      case InitializeFromRollback(key, outcome) => transitions.initFromRollback(key.asInstanceOf[Key], outcome.asInstanceOf[Outcome])
+        transitions.initFromDownload(key, art, c, isRecovery)
+      case InitializeFromRollback(key, outcome) => transitions.initFromRollback(key, outcome)
       case WithdrawFromConsensus                => transitions.withdraw
       case _                                    => Async[F].unit
     }
 
-  private def handleWhileBusy(cmd: ConsensusCommand): F[Unit] =
+  private def handleWhileBusy(cmd: ConsensusCommand[Key, Artifact, Ctx, Outcome]): F[Unit] =
     cmd match {
       case FacilitateByEvent =>
         Metrics[F].incrementCounter("dag_consensus_fsm_pending_deferred", Seq(unsafeLabelName("trigger_type") -> "event")) >>

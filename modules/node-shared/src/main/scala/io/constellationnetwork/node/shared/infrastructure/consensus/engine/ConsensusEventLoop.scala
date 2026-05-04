@@ -64,7 +64,7 @@ object ConsensusEventLoop {
   final case class BuiltConsensusLoop[F[_], Event, Key, Artifact, Ctx, Status, Outcome, Kind](
     run: Stream[F, Unit],
     manager: ConsensusManager[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
-    queue: Queue[F, ConsensusCommand],
+    queue: Queue[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]],
     healthRef: Ref[F, ConsensusHealthStatus]
   )
 
@@ -106,7 +106,7 @@ object ConsensusEventLoop {
     _trigger: monocle.Lens[Outcome, ConsensusTrigger]
   ): F[BuiltConsensusLoop[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =
     for {
-      queue <- Queue.unbounded[F, ConsensusCommand]
+      queue <- Queue.unbounded[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]]
       pending <- PendingTriggers.create[F]
       ctx <- ConsensusEngineContext.create(
         selfId,
@@ -131,7 +131,7 @@ object ConsensusEventLoop {
         probationPeersOf
       )
       healthRef <- ConsensusHealthStatus.ref[F]
-      viewChangeManager = new ViewChangeManager[F, Key, Status, Outcome, Kind](
+      viewChangeManager = new ViewChangeManager[F, Key, Artifact, Ctx, Status, Outcome, Kind](
         storage,
         peerQualityTracker,
         queue,
@@ -186,7 +186,7 @@ object ConsensusEventLoop {
                 // Note: ConsensusFinished and RoundCompleted are internal FSM state transitions
                 // (Busy→Idle) and must NEVER be filtered — dropping them leaves the FSM permanently
                 // stuck in Busy, causing InitializeFromDownload to re-queue forever.
-                case _: ConsensusCommand.CheckUpdate | ConsensusCommand.TimeTick | ConsensusCommand.FacilitateByEvent |
+                case _: ConsensusCommand.CheckUpdate[_] | ConsensusCommand.TimeTick | ConsensusCommand.FacilitateByEvent |
                     _: ConsensusCommand.StartRound =>
                   true
                 case _ => false
@@ -200,7 +200,7 @@ object ConsensusEventLoop {
                     // After a successful consensus round completes, reset recovery counters.
                     // This prevents stale history from causing premature force-leave on future (unrelated) recovery.
                     cmd match {
-                      case _: ConsensusCommand.ConsensusFinished =>
+                      case _: ConsensusCommand.ConsensusFinished[_, _] =>
                         abandonmentTracker.resetOnSuccessfulRound >>
                           // Re-collect registrations from Ready peers in the background.
                           // The peerRegistrationStream only fires on state changes, so peers that
@@ -227,7 +227,7 @@ object ConsensusEventLoop {
                     ctx.logger.error(err)(s"Unhandled error processing ${cmd.getClass.getSimpleName}, recovering") >>
                       Metrics[F].incrementCounter("dag_consensus_command_error") >>
                       (cmd match {
-                        case _: ConsensusCommand.ConsensusFinished | _: ConsensusCommand.RoundCompleted =>
+                        case _: ConsensusCommand.ConsensusFinished[_, _] | _: ConsensusCommand.RoundCompleted =>
                           // Critical: if round-completion commands fail, FSM stays stuck in BUSY forever.
                           // Force round completion so the next round can start. Unconditional (no attemptId)
                           // because this is the error-recovery path — must always proceed.
@@ -246,7 +246,7 @@ object ConsensusEventLoop {
                                 ctx.logger.warn("Skipping TimeTick after error recovery: node is in Leaving state") >>
                                   Metrics[F].incrementCounter("dag_consensus_timetick_suppressed_leaving")
                             }
-                        case _: ConsensusCommand.InitializeFromDownload =>
+                        case _: ConsensusCommand.InitializeFromDownload[_, _, _] =>
                           // After 20 retries, initFromDownload exhausts its retry policy and the error propagates here.
                           // Without recovery, the node stays stuck — never initializes, never starts consensus.
                           // Track the failure so that after maxTotalRecoveryAttempts the node force-leaves

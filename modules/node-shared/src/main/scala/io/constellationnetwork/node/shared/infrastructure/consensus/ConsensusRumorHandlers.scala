@@ -18,46 +18,46 @@ import io.circe.Decoder
 class ConsensusRumorHandlers[F[
   _
 ]: Async: HasherSelector, Event: TypeTag: Decoder, Key: TypeTag: Decoder, Artifact: TypeTag: Decoder, Context, Status, Outcome, Kind: Decoder: TypeTag](
-  queue: Queue[F, ConsensusCommand]
+  queue: Queue[F, ConsensusCommand[Key, Artifact, Context, Outcome]]
 ) {
 
   /** 1. Events */
   val eventHandler: RumorHandler[F] =
-    RumorHandlerWithQueue.peer[F, ConsensusEvent[Event]](queue)
+    RumorHandlerWithQueue.peer[F, ConsensusEvent[Event]](queue.offer)
 
   /** 2. Facility */
   val facilityHandler: RumorHandler[F] =
-    RumorHandlerWithQueue.peer[F, ConsensusPeerDeclaration[Key, Facility]](queue)
+    RumorHandlerWithQueue.peer[F, ConsensusPeerDeclaration[Key, Facility]](queue.offer)
 
   /** 3. Proposal */
   val proposalHandler: RumorHandler[F] =
-    RumorHandlerWithQueue.peer[F, ConsensusPeerDeclaration[Key, Proposal]](queue)
+    RumorHandlerWithQueue.peer[F, ConsensusPeerDeclaration[Key, Proposal]](queue.offer)
 
   /** 4. MajoritySignature */
   val signatureHandler: RumorHandler[F] =
-    RumorHandlerWithQueue.peer[F, ConsensusPeerDeclaration[Key, MajoritySignature]](queue)
+    RumorHandlerWithQueue.peer[F, ConsensusPeerDeclaration[Key, MajoritySignature]](queue.offer)
 
   /** 5. BinarySignature */
   val binarySignatureHandler: RumorHandler[F] =
-    RumorHandlerWithQueue.peer[F, ConsensusPeerDeclaration[Key, BinarySignature]](queue)
+    RumorHandlerWithQueue.peer[F, ConsensusPeerDeclaration[Key, BinarySignature]](queue.offer)
 
   /** 6. PeerDeclarationAck */
   val ackHandler: RumorHandler[F] =
-    RumorHandlerWithQueue.peer[F, ConsensusPeerDeclarationAck[Key, Kind]](queue)
+    RumorHandlerWithQueue.peer[F, ConsensusPeerDeclarationAck[Key, Kind]](queue.offer)
 
   /** 7. WithdrawPeerDeclaration */
   val withdrawHandler: RumorHandler[F] =
-    RumorHandlerWithQueue.peer[F, ConsensusWithdrawPeerDeclaration[Key, Kind]](queue)
+    RumorHandlerWithQueue.peer[F, ConsensusWithdrawPeerDeclaration[Key, Kind]](queue.offer)
 
   /** 8. Artifact (Common rumor) */
   val artifactHandler: RumorHandler[F] =
-    RumorHandlerWithQueue.common[F, ConsensusArtifact[Key, Artifact]](queue)
+    RumorHandlerWithQueue.common[F, ConsensusArtifact[Key, Artifact]](queue.offer)
 
   /** 9. ViewChangeVote (signed, routed via ConsensusPeerVote — not ConsensusPeerDeclaration — so the per-vote Signed proof survives to the
     * VCC assembly stage).
     */
   val viewChangeVoteHandler: RumorHandler[F] =
-    RumorHandlerWithQueue.peer[F, ConsensusPeerVote[Key]](queue)
+    RumorHandlerWithQueue.peer[F, ConsensusPeerVote[Key]](queue.offer)
 
   /** 10. EvictionVote (signed, routed via ConsensusPeerEvictionVote for the same per-vote Signed preservation rationale as ViewChangeVote).
     *
@@ -67,11 +67,11 @@ class ConsensusRumorHandlers[F[
     * votes. See `.workspace/codex-response-broken-leader-trap-apr23.md` for the full diagnosis.
     */
   val evictionVoteHandler: RumorHandler[F] =
-    RumorHandlerWithQueue.peer[F, ConsensusPeerEvictionVote[Key]](queue)
+    RumorHandlerWithQueue.peer[F, ConsensusPeerEvictionVote[Key]](queue.offer)
 
   /** 11. AdmissionVote (B2, symmetric counterpart of EvictionVote). Same wiring requirements — without registration, inbound
     * ConsensusPeerAdmissionVote rumors are silently dropped.
     */
   val admissionVoteHandler: RumorHandler[F] =
-    RumorHandlerWithQueue.peer[F, ConsensusPeerAdmissionVote[Key]](queue)
+    RumorHandlerWithQueue.peer[F, ConsensusPeerAdmissionVote[Key]](queue.offer)
 }

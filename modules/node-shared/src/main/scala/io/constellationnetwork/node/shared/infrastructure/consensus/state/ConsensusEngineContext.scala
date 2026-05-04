@@ -48,7 +48,7 @@ import org.typelevel.log4cats.SelfAwareStructuredLogger
   */
 final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Status, Outcome, Kind](
   selfId: PeerId,
-  queue: Queue[F, ConsensusCommand],
+  queue: Queue[F, ConsensusCommand[Key, Artifact, Context, Outcome]],
   isRoundRunning: Ref[F, Boolean],
   pending: PendingTriggersF[F],
   storage: ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind],
@@ -106,7 +106,7 @@ object ConsensusEngineContext {
 
   def create[F[_]: Async, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
     selfId: PeerId,
-    queue: Queue[F, ConsensusCommand],
+    queue: Queue[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]],
     pending: PendingTriggersF[F],
     storage: ConsensusStorage[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
     creator: ConsensusStateCreator[F, Key, Artifact, Ctx, Status, Outcome, Kind],
