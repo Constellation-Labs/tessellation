@@ -159,7 +159,9 @@ object GlobalSnapshotConsensusStateAdvancer {
       /** Tracks consecutive validation failures (stateProofDiffers) at the same ordinal. When a node's local state diverges (e.g., after
         * network isolation), every validation attempt fails with the same MPT root mismatch. Neither consensus fork detection (requires
         * completed round) nor gossip fork detection (compares hashes at same ordinal, but node is 1 behind) catches this. After
-        * `maxConsecutiveValidationFailures` failures, trigger a FULL download recovery to reset all state including MPT.
+        * `maxConsecutiveValidationFailures` failures, trigger an incremental recovery via `nodeStorage.setRecoveryDownload`; the
+        * incremental path resyncs MptStore from the downloaded snapshot's checkpoint data, which is sufficient to clear the divergent MPT
+        * state without requiring a full re-download from genesis.
         */
       private val validationFailureCountRef: Ref[F, (Option[GlobalSnapshotKey], Int)] = Ref.unsafe((none, 0))
       private val maxConsecutiveValidationFailures: Int = 3
@@ -1553,9 +1555,10 @@ object GlobalSnapshotConsensusStateAdvancer {
                               Metrics[F].incrementCounter("dag_consensus_proposal_validation_failure") >>
                               Metrics[F].incrementCounter("dag_consensus_withdrawal_sent") >>
                               // Track consecutive validation failures at this ordinal. After repeated
-                              // failures (e.g., divergent MPT from network isolation), trigger full
-                              // download recovery. Use full download (not incremental) because the
-                              // incremental path preserves MptStore state, which is exactly what's wrong.
+                              // failures (e.g., divergent MPT from network isolation), trigger an
+                              // incremental recovery. The incremental path resyncs MptStore from the
+                              // downloaded checkpoint data, which clears the divergent local state
+                              // without the cost of a full re-download from genesis.
                               validationFailureCountRef.modify {
                                 case (Some(k), count) if k === state.key => ((state.key.some, count + 1), count + 1)
                                 case _                                   => ((state.key.some, 1), 1)
@@ -1569,7 +1572,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                                     Event.RecoveryStateTransition,
                                     "trigger" -> "consecutive_validation_failures",
                                     "count" -> count.toString,
-                                    "action" -> "full_download_recovery"
+                                    "action" -> "incremental_recovery"
                                   ) >>
                                     validationFailureCountRef.set((none, 0)) >>
                                     // Set recovery download flag so DownloadDaemon uses the incremental
