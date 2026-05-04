@@ -32,6 +32,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStora
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotContextFunctions
+import io.constellationnetwork.node.shared.infrastructure.snapshot.daemon.RecoveryFallbackEligible
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{CombinedSnapshotCheckpointFileSystemStorage, IdentifierStorage}
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.schema._
@@ -242,5 +243,5 @@ object Download {
 
   case object CannotFetchSnapshot extends NoStackTrace
 
-  case object InvalidChain extends NoStackTrace
+  case object InvalidChain extends NoStackTrace with RecoveryFallbackEligible
 }
