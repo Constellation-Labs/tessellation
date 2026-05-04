@@ -250,7 +250,13 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
       case Some(state) =>
         storage.getResources(key).flatMap { resources =>
           val votes = resources.evictionVotes.getOrElse(target, Map.empty)
-          val n = state.facilitators.value.size
+          // Quorum denominator MUST be the canonical round-start committee, not mutable
+          // state.facilitators. The vote payloads hash roundStartFacilitators (see
+          // GossipingEvictionVoter) and proposal validation also derives q from
+          // roundStartFacilitators. Using state.facilitators here lets a node with a locally
+          // shrunken committee (mid-round withdrawals) assemble an under-quorum cert that every
+          // follower rejects — visible as locally-built but globally-invalid certs.
+          val n = state.roundStartFacilitators.value.size
           val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
           if (votes.size >= q) {
             // All votes for a given target must agree on facilitatorsHash; otherwise some
@@ -368,7 +374,9 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
       case Some(state) =>
         storage.getResources(key).flatMap { resources =>
           val votes = resources.admissionVotes.getOrElse(target, Map.empty)
-          val n = state.facilitators.value.size
+          // See B1 eviction-cert assembly above for the rationale: quorum denominator must be
+          // the canonical roundStartFacilitators, not mutable state.facilitators.
+          val n = state.roundStartFacilitators.value.size
           val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
           if (votes.size >= q) {
             val byHash: Map[_root_.io.constellationnetwork.security.hash.Hash, Int] =
