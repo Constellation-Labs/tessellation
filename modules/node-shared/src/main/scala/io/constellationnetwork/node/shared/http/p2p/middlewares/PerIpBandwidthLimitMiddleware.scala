@@ -107,9 +107,10 @@ object PerIpBandwidthLimitMiddleware {
               .map(_.toString.split(",").head.trim)
               .filter(_.nonEmpty)
           val xffIsSelfInjection: Boolean =
-            (selfExternalIp, xffFirstHop).mapN(_ == _).getOrElse(false)
+            selfExternalIp.exists(self => xffFirstHop.contains(self))
           val clientIpOpt: Option[String] =
-            (if (xffIsSelfInjection) None else xffFirstHop)
+            xffFirstHop
+              .filterNot(_ => xffIsSelfInjection)
               .orElse(req.remote.map(_.host.toString))
 
           clientIpOpt match {
@@ -153,7 +154,7 @@ object PerIpBandwidthLimitMiddleware {
                             }
                           }
                           .flatMap {
-                            case None           => Async[F].pure(resp)
+                            case None           => resp.pure[F]
                             case Some(observed) =>
                               // Drain the unused inner body so any held resources release. Then return 429.
                               resp.body.compile.drain.attempt.void >>

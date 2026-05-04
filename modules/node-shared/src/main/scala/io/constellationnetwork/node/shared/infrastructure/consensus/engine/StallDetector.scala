@@ -709,8 +709,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
                 // group froze at ord 13 forever because supermajority required 4 signers and 2
                 // peers had stopped declaring yet clusterStorage still reported them Responsive.
                 // Same category of bug; fix is the same: bounded patience window.
-                val EvictionSkipMaxStalls = 3
-                val inGracePeriod = stallCount < EvictionSkipMaxStalls
+                val inGracePeriod = stallCount < StallDetector.EvictionSkipMaxStalls
                 val gossipingTips: Set[PeerId] = chainTips.keySet
                 val unresponsiveMissing = {
                   val clusterUnresponsive = missingPeers.filterNot(responsiveIds.contains)
@@ -1100,6 +1099,11 @@ object StallDetector {
     * order of magnitude sooner — catching gossip-jitter Facility drops in the first 35s instead of waiting 90s.
     */
   private[consensus] val MaxFacilityRetransmits: Int = 5
+
+  /** Number of stall cycles to keep the gossip-tip / cluster-responsiveness shield active before evicting still-missing peers. See the
+    * comment block at the use site (eviction grace period) for full rationale.
+    */
+  private[consensus] val EvictionSkipMaxStalls: Int = 3
 
   /** Initial delay before the first Facility retransmit, and the exponential base for subsequent attempts. Chosen at 5s to fire fast enough
     * to catch the common case (gossip-mesh drop during cold-start round 1-10 on docker compose) without piling on bandwidth when peers are
