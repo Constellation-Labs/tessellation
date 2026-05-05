@@ -31,15 +31,15 @@ sequenceDiagram
 
     Network-->>Minority: Network restored
 
-    Note over Minority,Majority: Fork detection fires 22-32s after restore<br/>(natural stagger from gossip timing)
+    Note over Minority,Majority: Fork detection fires 22-32s after restore<br/>(natural stagger from gossip timing<br/>+ forkConfirmationWindow gate, default 30s,<br/>on the consensus channel)
 
     loop EventGossipDaemon heartbeat (~10s)
         Minority->>Majority: Sample chain tips
         Majority-->>Minority: ChainTip(ordinal, hash)
     end
 
-    Minority->>Minority: detectForkDivergence()
-    Note right of Minority: Majority hash differs<br/>from local hash
+    Minority->>Minority: ForkRecoveryDetector.<br/>detectForkDivergence()
+    Note right of Minority: Tier 1: majority of peers at our<br/>ordinal report a different hash<br/>(running fork)
 
     Minority->>Minority: RUNNING FORK detected
 
@@ -109,6 +109,11 @@ Minority: ordinal=100, hash=0xDEF (produced before stall or isolation)
 ```
 
 When minority nodes sample chain tips:
-1. They see majority peers at same ordinal with different hash
-2. >50% of sampled peers have hash ≠ local hash
-3. This triggers RUNNING_FORK detection
+1. They see majority peers at the same ordinal with different hash
+2. Strict majority (>50%) of sampled peers have hash != local hash
+3. Tier 1 RUNNING_FORK fires immediately on the gossip channel — no
+   confirmation-window delay (the same-ordinal hash divergence is
+   self-evident, no risk of cascading every node simultaneously since
+   only the minority side observes it)
+4. The `onForkDetected` callback stores `RecoveryPeerHint = majorityPeers`
+   so the recovery download targets the canonical chain

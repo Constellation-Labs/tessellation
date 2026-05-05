@@ -1,5 +1,12 @@
 // Stall Detector Flow
-// Render: dot -Tsvg stall-detector.dot -o stall-detector.svg
+// Reflects engine/StallDetector.scala on fix/fork-recovery-followup:
+//  - capped-exp Facility retransmit (v13)
+//  - quorum-certified view change (no in-place leader mutation)
+//  - B1 EvictionVote emission gated on quorumInfeasible + Unresponsive missing
+//  - B2 AdmissionVote emission per-tick when probation peer at tip + streak met
+//  - Lagging detection from live keyed rumors (not join-ordinal registrations)
+//
+// Render: dot -Tpng stall-detector.dot -o stall-detector.png
 
 digraph StallDetector {
     rankdir=TB;
@@ -14,10 +21,10 @@ digraph StallDetector {
 
     Start -> Poll;
 
-    // Checks
+    // Termination checks
     StateGone [shape=diamond, label="State\nGone?"];
     OutcomeReady [shape=diamond, label="Outcome\nReady?"];
-    
+
     Poll -> StateGone;
     StateGone -> Exit [label="yes"];
     StateGone -> OutcomeReady [label="no"];
@@ -26,99 +33,123 @@ digraph StallDetector {
 
     Exit [shape=ellipse, label="Exit\nMonitor"];
 
-    // Change detection
-    CheckChanges [label="Detect Changes\n• Status changed?\n• Resources changed?", style="rounded,filled", fillcolor="lightyellow"];
-    
-    CheckChanges -> QueueCheckUpdate [label="changed"];
-    QueueCheckUpdate [label="queue.offer(\nCheckUpdate(key))"];
-    QueueCheckUpdate -> CalculateTimeout;
-    CheckChanges -> CalculateTimeout [label="no change"];
+    // Change detection + signatures-phase heartbeat
+    CheckChanges [label="Detect Changes\n• Status changed?\n• Resources changed?\n• Heartbeat in signatures phase", style="rounded,filled", fillcolor="lightyellow"];
+    CheckChanges -> QueueCheckUpdate [label="changed or\nin signatures phase"];
+    QueueCheckUpdate [label="queue.offer(CheckUpdate(key))"];
+    QueueCheckUpdate -> AdmissionEmit;
+    CheckChanges -> AdmissionEmit [label="no change"];
+
+    // B2 admission emission (every tick)
+    AdmissionEmit [label="For each probation peer:\n  if mesh tip == committed tip\n  AND streak >= b2AdmissionAtTipStreak:\n    emit AdmissionVote +\n    queue CheckAdmissionAssembly", style="rounded,filled", fillcolor="palegreen"];
+    AdmissionEmit -> ViewReset;
+
+    // Per-view round-duration reset
+    ViewReset [label="If state.viewNumber > lastView:\n  roundStartTime ← now", style="rounded,filled", fillcolor="lightcyan"];
+    ViewReset -> CalculateTimeout;
 
     // Timeout calculation
-    CalculateTimeout [label="Calculate Timeout\n• Base: declarationTimeout\n• Phase multiplier\n• Near-completion bonus\n• Stall count adjustment", style="rounded,filled", fillcolor="lightcyan"];
+    CalculateTimeout [label="Calculate Timeout\n• Base: declarationTimeout\n• Bootstrap multiplier (consensus-agreed)\n• Phase multiplier\n• Near-completion bonus\n• Re-stall timeout if stallCount > 0", style="rounded,filled", fillcolor="lightcyan"];
 
     CalculateTimeout -> CheckEarlyViewChange;
 
-    // Early view change
-    CheckEarlyViewChange [shape=diamond, label="Leader\nUnresponsive\n& Proposal\nPhase?"];
-    
+    // Early view change (no stall counted)
+    CheckEarlyViewChange [shape=diamond, label="Leader Unresponsive\n+ proposal phase\n+ roundElapsed ≥ 5s\nOR self recently\nrecovered + leader?"];
     CheckEarlyViewChange -> EarlyViewChange [label="yes"];
-    EarlyViewChange [label="Early View Change\nViewChangeManager", style="rounded,filled", fillcolor="orange"];
-    EarlyViewChange -> UpdateHealth;
-
+    EarlyViewChange [label="ViewChangeManager.\nperformViewChange()\n→ emit VCV (gossip)\n→ CheckViewChangeAssembly", style="rounded,filled", fillcolor="orange"];
+    EarlyViewChange -> Retransmit;
     CheckEarlyViewChange -> CheckStall [label="no"];
 
     // Stall handling
     CheckStall [shape=diamond, label="Timeout\nExceeded?"];
-    
     CheckStall -> GraduatedResponse [label="yes"];
-    CheckStall -> CheckLagging [label="no"];
+    CheckStall -> Retransmit [label="no"];
 
-    GraduatedResponse [shape=diamond, label="First\nStall?"];
-    
+    GraduatedResponse [shape=diamond, label="First\nStall?\n(stallCount==0)"];
     GraduatedResponse -> WarnOnly [label="yes"];
-    WarnOnly [label="PEER_STALL_WARNING\n(double tolerance)", style="rounded,filled", fillcolor="lightyellow"];
-    WarnOnly -> CheckLagging;
+    WarnOnly [label="PEER_STALL_WARNING\n(no eviction yet)", style="rounded,filled", fillcolor="lightyellow"];
+    WarnOnly -> Retransmit;
 
     GraduatedResponse -> CheckMissing [label="no"];
 
     CheckMissing [shape=diamond, label="Missing\nPeers?"];
-    
     CheckMissing -> CheckQuorum [label="yes"];
     CheckMissing -> CheckProposalPhase [label="no"];
 
-    CheckQuorum [shape=diamond, label="Remaining\n≥ MinQuorum?"];
-    
-    CheckQuorum -> Evict [label="yes"];
-    CheckQuorum -> QuorumInfeasible [label="no"];
+    CheckQuorum [shape=diamond, label="Remaining ≥ minQuorum?\nminQuorum = ceil(N * fraction)"];
+    CheckQuorum -> StallCount [label="yes"];
+    CheckQuorum -> CheckResponsive [label="no\n(quorumInfeasible)"];
 
-    Evict [label="ViewChangeManager.\nperformViewChange\nWithEviction()", style="rounded,filled", fillcolor="lightcoral"];
-    Evict -> CheckLagging;
+    StallCount [label="Count cycle\n(quorum still feasible)", style="rounded,filled", fillcolor="lightyellow"];
+    StallCount -> Retransmit;
 
-    QuorumInfeasible [label="QuorumInfeasible\n(retriable=true)", style="rounded,filled", fillcolor="lightpink"];
-    QuorumInfeasible -> CheckAbandon;
+    // Eviction-vote emission gate
+    CheckResponsive [shape=diamond, label="Missing peers\nUnresponsive?\n(or grace exhausted)"];
+    CheckResponsive -> EvictEmit [label="yes"];
+    CheckResponsive -> SkipEvict [label="no\n(within grace)"];
+
+    SkipEvict [label="Skip eviction\n(missing still gossiping;\nbounded by EvictionSkipMaxStalls=3)", style="rounded,filled", fillcolor="lightyellow"];
+    SkipEvict -> Retransmit;
+
+    EvictEmit [label="EvictionVoter.emitEvictionVote\n+ CheckEvictionAssembly\n(targets via selectEvictionTargets,\ncapped at committee - minQuorum)", style="rounded,filled", fillcolor="lightcoral"];
+    EvictEmit -> ViewChange;
+    ViewChange [label="ViewChangeManager.\nperformViewChange()", style="rounded,filled", fillcolor="orange"];
+    ViewChange -> Retransmit;
 
     CheckProposalPhase [shape=diamond, label="Proposal\nPhase?"];
-    
-    CheckProposalPhase -> ViewChange [label="yes"];
-    ViewChange [label="ViewChangeManager.\nperformViewChange()", style="rounded,filled", fillcolor="orange"];
-    ViewChange -> CheckLagging;
-
+    CheckProposalPhase -> ProposalViewChange [label="yes"];
+    ProposalViewChange [label="ViewChangeManager.\nperformViewChange()\n(leader stall, all declared)", style="rounded,filled", fillcolor="orange"];
+    ProposalViewChange -> Retransmit;
     CheckProposalPhase -> CountStall [label="no"];
-    CountStall [label="Count toward\nabandonment"];
-    CountStall -> CheckLagging;
+    CountStall [label="Count toward abandon"];
+    CountStall -> Retransmit;
 
-    // Lagging check
-    CheckLagging [shape=diamond, label="Majority\nat Higher\nKey?"];
-    
+    // Capped-exp Facility retransmit (v13): 5s/10s/20s/30s/30s, max 5 attempts
+    Retransmit [label="Capped-exp Facility retransmit\nif: facilities phase, quorum feasible,\nself active facilitator, attempt < 5,\nsince last ≥ nextRetransmitDelay(attempt)", style="rounded,filled", fillcolor="moccasin"];
+    Retransmit -> CheckLagging;
+
+    // Lagging check (live keyed rumors, Ready peers only)
+    CheckLagging [shape=diamond, label="≥ 3 Ready peers,\n> 50% at higher key,\nstallCount ≥ 1?"];
     CheckLagging -> Lagging [label="yes"];
-    Lagging [label="Lagging\n(retriable=false)", style="rounded,filled", fillcolor="lightcoral"];
+    Lagging [label="AbandonReason.Lagging\n(retriable=false)", style="rounded,filled", fillcolor="lightcoral"];
     Lagging -> CheckAbandon;
-    
     CheckLagging -> CheckAbandon [label="no"];
 
     // Abandon check
     CheckAbandon [shape=diamond, label="Should\nAbandon?"];
-    
-    CheckAbandon -> Abandon [label="yes\nmaxStalls\ntimeout\nquorumInfeasible\nlagging"];
-    Abandon [label="AbandonmentTracker.\nabandonRound()", style="rounded,filled", fillcolor="red", fontcolor="white"];
+    CheckAbandon -> Abandon [label="yes:\nstallCount≥maxStallCycles,\nperview-roundDuration exceeded,\nquorumInfeasible,\nor Lagging"];
+    Abandon [label="AbandonmentTracker.\nabandonRound(reason)", style="rounded,filled", fillcolor="red", fontcolor="white"];
     Abandon -> Exit;
 
     CheckAbandon -> UpdateHealth [label="no"];
 
-    // Health update and loop
     UpdateHealth [label="Update Health\nSnapshot", style="rounded,filled", fillcolor="lightgreen"];
     UpdateHealth -> Sleep;
-    
     Sleep [label="Adaptive Sleep\n(100ms - 1000ms)"];
     Sleep -> Poll;
 
-    // Min Quorum calculation note
+    // Notes
     subgraph cluster_quorum {
-        label="Quorum Floor Calculation";
+        label="Quorum Floor (per tick)";
         style=dashed;
         fontsize=10;
-        
-        QuorumNote [shape=plaintext, label="clusterSize = max(readyPeerCount + 1, facilitators)\nminQuorum = floor(clusterSize / 2) + 1\n\nUses cluster-wide Ready count, NOT round facilitator count"];
+
+        QuorumNote [shape=plaintext, label="clusterSize = max(readyPeerCount + 1, totalFacilitators)\nminQuorum = max(1, ceil(totalFacilitators * quorumThresholdFraction))\nselectEvictionTargets caps emission at committee.size - minQuorum\nso aggregate certified evictions cannot shrink committee below quorum."];
+    }
+
+    subgraph cluster_witness {
+        label="Witness Pool (B1/B2 cert assembly)";
+        style=dashed;
+        fontsize=10;
+
+        WitnessNote [shape=plaintext, label="witnessPool = state.eligibleFacilitators - target  (v9 widening)\nQuorum still pegged to roundStartFacilitators size."];
+    }
+
+    subgraph cluster_v13 {
+        label="Facility Retransmit Schedule (v13)";
+        style=dashed;
+        fontsize=10;
+
+        V13Note [shape=plaintext, label="nextRetransmitDelay(attempt): 5s, 10s, 20s, 30s, 30s\nMax attempts = 5; reset on status change or solo-eviction\nReads stored self-Facility (no rebuild — no eventHashes drift)"];
     }
 }
