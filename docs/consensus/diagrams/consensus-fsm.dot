@@ -1,5 +1,6 @@
 // Consensus Finite State Machine
-// This diagram shows the consensus FSM introduced in commit d7d2b0dd4
+// Reflects ConsensusFSM.scala: parameterized ConsensusCommand[+Key,+Artifact,+Ctx,+Outcome],
+// always-handled assembly checks, and the BUSY-state recovery escape hatch.
 //
 // Render with: dot -Tpng consensus-fsm.dot -o consensus-fsm.png
 
@@ -106,11 +107,16 @@ digraph ConsensusFSM {
     // After round completes, check pending
     PendingTriggers -> IDLE [label="pullNext()\n-> StartRound", style=dashed, color=purple];
 
-    // RumorReceived always processed
-    RumorReceived [shape=parallelogram, style=filled, fillcolor=lavender,
-                   label="RumorReceived"];
+    // Always-handled commands (independent of IDLE/BUSY).
+    // RumorReceived stores rumor; CheckUpdate / CheckXxxAssembly drive state advance.
+    AlwaysHandled [shape=parallelogram, style=filled, fillcolor=lavender,
+                   label="Always handled\n(IDLE or BUSY)\nRumorReceived\nCheckUpdate(key)\nCheckViewChangeAssembly(key)\nCheckEvictionAssembly(key,target)\nCheckAdmissionAssembly(key,target)\nPeerObserved(peer)\nInternalScheduled(inner)"];
 
-    RumorReceived -> BUSY [label="CheckUpdate(key)", style=dashed, color=gray50];
+    AlwaysHandled -> BUSY [label="dispatch", style=dashed, color=gray50];
+    AlwaysHandled -> IDLE [label="dispatch", style=dashed, color=gray50];
+
+    // Stale-round recovery escape hatch: InitializeFromDownload arrives while BUSY in Observing.
+    BUSY -> IDLE [label="InitializeFromDownload\n+ NodeState=Observing\n→ force completeRound", style=dashed, color=red];
 
     // Layout hints
     { rank=same; TimeTrigger; EventTrigger; UNINITIALIZED; }
