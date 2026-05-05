@@ -1,5 +1,10 @@
-// Fork Detection Flow
-// Render: dot -Tsvg fork-detection.dot -o fork-detection.svg
+// Fork Detection Flow (gossip/chain-tip channel)
+// Render: dot -Tpng fork-detection.dot -o fork-detection.png
+//
+// This diagram covers the gossip channel: ForkRecoveryDetector consuming
+// chain tips sampled by EventGossipDaemon. The consensus-declarations
+// channel (ConsensusStateUpdater.recoverIfForking, with its
+// forkConfirmationWindow gate) is described in §12 of README.md.
 
 digraph ForkDetection {
     rankdir=TB;
@@ -10,63 +15,89 @@ digraph ForkDetection {
     Heartbeat [shape=ellipse, label="EventGossipDaemon\nHeartbeat (~10s)"];
 
     // Chain tip sampling
-    Sample [label="Sample Chain Tips\n\n1. Select 3 random mesh peers\n2. GET /events/ihave\n3. Store in MeshState", style="rounded,filled", fillcolor="lightblue"];
-    
+    Sample [label="Sample Chain Tips\n\n1. Select up to 3 random mesh peers\n2. GET /events/ihave\n3. Store in MeshState", style="rounded,filled", fillcolor="lightblue"];
+
     Heartbeat -> Sample;
 
     // Detection
     Detect [label="ForkRecoveryDetector.\ndetectForkDivergence()", style="rounded,filled", fillcolor="lightyellow"];
-    
+
     Sample -> Detect;
 
     // Grouping
-    Group [label="Group peers by\n(ordinal, hash)"];
-    
+    Group [label="Group peers by\n(ordinal, hash)\nPick largest group as candidate majority"];
+
     Detect -> Group;
 
     // Majority check
-    MajorityCheck [shape=diamond, label="Clear\nMajority?\n(>50%)"];
-    
+    MajorityCheck [shape=diamond, label="Strict majority?\n(group > 50%\nof reporters)"];
+
     Group -> MajorityCheck;
     MajorityCheck -> NoFork [label="no"];
-    NoFork [label="No fork detected\n(ambiguous)"];
+    NoFork [label="No fork detected\n(ambiguous — no canonical chain)"];
     NoFork -> Done;
 
     MajorityCheck -> CheckLag [label="yes"];
 
-    // Lag check
-    CheckLag [shape=diamond, label="Local lag\n> threshold\n(default: 2)?"];
-    
+    // Tier 1: Lag check
+    CheckLag [shape=diamond, label="Tier 1: Lagging fork?\nlag > forkLagThreshold\n(default: 10)"];
+
     CheckLag -> LaggingFork [label="yes"];
     LaggingFork [label="LAGGING FORK\n\nLocal ordinal far behind\nmajority ordinal", style="rounded,filled", fillcolor="lightcoral"];
     LaggingFork -> TriggerRecovery;
 
     CheckLag -> CheckHash [label="no"];
 
-    // Hash divergence check
-    CheckHash [shape=diamond, label="Same ordinal,\ndifferent hash?\n(>50% disagree)"];
-    
+    // Tier 1: Hash divergence check (running fork at same ordinal)
+    CheckHash [shape=diamond, label="Tier 1: Running fork?\npeersAtLocalOrdinal >= 2\nAND >50% disagree on hash"];
+
     CheckHash -> RunningFork [label="yes"];
-    RunningFork [label="RUNNING FORK\n\nLocal hash differs from\nmajority at same ordinal", style="rounded,filled", fillcolor="lightcoral"];
+    RunningFork [label="RUNNING FORK\n\nLocal hash differs from\nstrict majority at our ordinal", style="rounded,filled", fillcolor="lightcoral"];
     RunningFork -> TriggerRecovery;
 
-    CheckHash -> NoFork2 [label="no"];
-    NoFork2 [label="No fork detected\n(in sync)"];
+    CheckHash -> CheckAmbiguous [label="no"];
+
+    // Tier 2 entry condition
+    CheckAmbiguous [shape=diamond, label="Tier 2 ambiguous?\nlocal alone on its tip\nAND majority ahead\nAND verifyHashAt configured"];
+
+    CheckAmbiguous -> NoFork2 [label="no"];
+    NoFork2 [label="No fork detected\n(in sync or insufficient signal)"];
     NoFork2 -> Done;
 
+    CheckAmbiguous -> Probe [label="yes"];
+
+    // Tier 2: hash-at-ordinal probe
+    Probe [label="Tier 2: HashAtOrdinalProbe\n\nSample probeCount peers (default 3)\nfrom majority group, in parallel ask:\n  \"hash at MY localOrdinal?\"\nPer-peer timeout 10s; timeouts = absent", style="rounded,filled", fillcolor="lightyellow"];
+
+    Probe -> ProbeClassify;
+
+    ProbeClassify [shape=diamond, label="Classify responses\n(match / mismatch / absent)"];
+
+    ProbeClassify -> ProbeMatch [label="match wins\n(>50% of responses)"];
+    ProbeMatch [label="SAME CHAIN\n\nWe're lagging, not forked"];
+    ProbeMatch -> Done;
+
+    ProbeClassify -> ProbeMismatch [label="mismatch wins\nAND mismatches\nagree on single hash"];
+    ProbeMismatch [label="FORK CONFIRMED\n(isolated minority)\n\nReturn ForkRecoveryInfo", style="rounded,filled", fillcolor="lightcoral"];
+    ProbeMismatch -> TriggerRecovery;
+
+    ProbeClassify -> ProbeIncon [label="otherwise"];
+    ProbeIncon [label="INCONCLUSIVE\nDefer to next heartbeat"];
+    ProbeIncon -> Done;
+
     // Recovery trigger
-    TriggerRecovery [label="onForkDetected callback", style="rounded,filled", fillcolor="orange"];
+    TriggerRecovery [label="onForkDetected callback\n(EventGossipDaemon clears mesh first,\nstores RecoveryPeerHint = majorityPeers)", style="rounded,filled", fillcolor="orange"];
 
     // State guard
-    StateGuard [shape=diamond, label="Node in\nObserving/WaitingForObserving/\nDownloadInProgress/WaitingForDownload?"];
-    
+    StateGuard [shape=diamond, label="Node in\nObserving / WaitingForObserving /\nDownloadInProgress / WaitingForDownload?"];
+
     TriggerRecovery -> StateGuard;
     StateGuard -> Suppressed [label="yes"];
-    Suppressed [label="Fork detection\nSUPPRESSED\n(prevent restart loops)", style="rounded,filled", fillcolor="lightgray"];
+    Suppressed [label="Recovery\nSUPPRESSED\n(prevent restart loops)", style="rounded,filled", fillcolor="lightgray"];
     Suppressed -> Done;
 
     StateGuard -> WaitForDownload [label="no"];
-    WaitForDownload [label="Transition to\nWaitingForDownload", style="rounded,filled", fillcolor="red", fontcolor="white"];
+    WaitForDownload [label="Set isRecovery flag\nTransition to\nWaitingForDownload", style="rounded,filled", fillcolor="red", fontcolor="white"];
     WaitForDownload -> Done;
 
     Done [shape=ellipse, label="Done"];
@@ -76,7 +107,7 @@ digraph ForkDetection {
         label="Detection Modes";
         style=dashed;
         fontsize=10;
-        
-        ModesNote [shape=plaintext, label="Lagging Fork: majorityOrdinal - localOrdinal > 2\nRunning Fork: Same ordinal, hash differs from majority\n\nBoth require >50% of reporters to agree"];
+
+        ModesNote [shape=plaintext, label="Tier 1 Lagging:  majorityOrdinal - localOrdinal > forkLagThreshold (default 10)\nTier 1 Running:  >50% of peers at our ordinal report a different hash\nTier 2 Probe:    direct hash-at-ordinal query when local is alone on its tip\n\nAll tiers require a strict majority (>50% of reporters)\nfor the candidate canonical chain."];
     }
 }

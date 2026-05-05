@@ -49,13 +49,6 @@ object AbandonReason {
     def retriable: Boolean = false
   }
 
-  /** Repeated eviction attempts blocked (below minimum facilitators), cycling without progress. */
-  case object EvictionLoopStuck extends AbandonReason {
-    def message: String = "eviction loop: repeated eviction skips (below minimum facilitators), escalating to abandon"
-    def label: String = "eviction_loop"
-    def retriable: Boolean = false
-  }
-
   /** Round exceeded maximum allowed duration. */
   final case class RoundTimeout(elapsedSeconds: Long, maxSeconds: Option[Long]) extends AbandonReason {
     def message: String = s"round timed out after ${elapsedSeconds}s (max=${maxSeconds}s)"
@@ -356,7 +349,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
                   queue.offer(ConsensusCommand.TimeTick))
          }
        else
-         // Non-retriable path (MaxStalls / RoundTimeout / EvictionLoopStuck). Historically this
+         // Non-retriable path (MaxStalls / RoundTimeout). Historically this
          // escalated to recovery unconditionally after maxConsecutiveAbandonments. During fork-recovery
          // E2E, that produced a cascading-recovery deadlock: the 4 active peers all hit max stalls
          // on the same ordinal (view-change thrashing), each independently entered Observing, and
