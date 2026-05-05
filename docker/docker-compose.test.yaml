@@ -4,6 +4,15 @@ services:
     cap_add:
       - NET_ADMIN
     environment:
+      # Test-only JVM thread-pool cap. Five sibling JVMs share the host (laptop or
+      # CI runner). Without this cap each JVM sees the full host CPU count and
+      # spins up matching FJP / Cats-Effect / GC pools, which thrash the scheduler
+      # under contention and produce overlapping multi-second pauses (the wedge
+      # profile observed in the 2026-05-05 fork-recovery flake). Production
+      # validators run alone on dedicated hardware, so this cap is intentionally
+      # NOT in entrypoint.sh -- it lives here, scoped to the multi-node test
+      # topology only. Appended to entrypoint's defaults via env-merge.
+      - CL_DOCKER_JAVA_OPTS=${CL_DOCKER_JAVA_OPTS:-} -XX:ActiveProcessorCount=8
       # Consensus timing overrides — HOCON ${?VAR} in conf files reads these.
       # Defaults baked in so local `just test` runs don't require shell exports;
       # CI / shell can still override by setting the var explicitly.
