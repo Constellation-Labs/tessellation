@@ -329,14 +329,45 @@ object CurrencySnapshotConsensusStateAdvancer {
                 .whenA(evicted.nonEmpty)
           }
 
-          result <- cleanFacilities.flatTraverse { facilities =>
-            // Only fork-evicted peers (divergent facilitatorsHash) accumulate into
-            // state.removedFacilitators — that set is consensus-agreed. Missing-declaration
-            // peers remain in state.facilitators (they just don't participate this round);
-            // evicting them would depend on local gossip-arrival timing and would diverge
-            // across nodes. See dag-l0 mirror for full rationale.
+          // v13 (2026-05-07) — applied-cert-tuple agreement gate. Mirror of dag-l0; see
+          // GlobalSnapshotConsensusStateAdvancer for the full design rationale.
+          tupleAgreedFacilities = cleanFacilities.flatMap { facilities =>
+            val canonicalAppliedCertTargets = (f: Facility) => f.appliedEvictionCerts.map(_.targetPeer.value.value).sorted
+            val ownTargets = facilities.get(selfId).map(canonicalAppliedCertTargets).getOrElse(List.empty[String])
+            val matching = facilities.filter { case (_, f) => canonicalAppliedCertTargets(f) == ownTargets }
+            val n = state.roundStartFacilitators.value.size
+            val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+            if (matching.size >= q) Some(matching) else None
+          }
+
+          _ <- (cleanFacilities, tupleAgreedFacilities).tupled.traverse_ {
+            case (afterHashFilter, afterTupleFilter) =>
+              val excluded = afterHashFilter.keySet -- afterTupleFilter.keySet
+              ConsensusLog
+                .info(
+                  logger,
+                  Category.Fork,
+                  state.key.show,
+                  "n/a",
+                  Event.ForkChecksPassed,
+                  "filter" -> "applied_cert_tuple",
+                  "excluded" -> excluded.size.toString,
+                  "remaining" -> afterTupleFilter.size.toString,
+                  "excludedPeers" -> excluded.toList.map(ConsensusLog.pid).mkString(",")
+                )
+                .whenA(excluded.nonEmpty)
+          }
+
+          result <- tupleAgreedFacilities.flatTraverse { tupleAgreedSet =>
+            // Only HASH-fork-evicted peers (divergent facilitatorsHash) accumulate into
+            // state.removedFacilitators — that set is consensus-agreed. CERT-TUPLE-disagreed
+            // peers are NOT permanently evicted (their disagreement is transient and resolves
+            // via gossip propagation before the next retry). Missing-declaration peers remain
+            // in state.facilitators (just don't participate this round). See dag-l0 mirror
+            // for full rationale.
+            val hashCleanedSet = cleanFacilities.getOrElse(SortedMap.empty[PeerId, Facility])
             val forkEvictedPeers: Set[PeerId] = maybeFacilities match {
-              case Some(orig) => orig.keySet -- facilities.keySet
+              case Some(orig) => orig.keySet -- hashCleanedSet.keySet
               case None       => Set.empty
             }
             val updatedState: CurrencySnapshotConsensusState =
@@ -346,7 +377,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                   removedFacilitators = RemovedFacilitators(state.removedFacilitators.value ++ forkEvictedPeers)
                 )
               else state
-            toProposalsPhase(updatedState, facilities)
+            toProposalsPhase(updatedState, tupleAgreedSet)
           }
         } yield result
 
