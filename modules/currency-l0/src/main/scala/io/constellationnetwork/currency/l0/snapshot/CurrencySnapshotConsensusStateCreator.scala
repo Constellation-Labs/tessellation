@@ -309,24 +309,47 @@ object CurrencySnapshotConsensusStateCreator {
         }
         effectiveChronic = chronicNonSigners -- reinstatedThisRound
 
+        // v13 (2026-05-07) — apply assembled eviction certificates at round-start. Mirror of
+        // GlobalSnapshotConsensusStateCreator; see that file for the full design rationale and
+        // `docs/consensus/eviction-cert-deterministic-shrinkage.md` for the determinism story.
+        assembledCertsThisKey <- consensusStorage.getAssembledEvictionCertificates(key)
+        certEvictedTargets = assembledCertsThisKey.map(_.targetPeer)
+        sortedAppliedCerts = assembledCertsThisKey.toList.sorted
+
+        _ <- ConsensusLog
+          .info(
+            logger,
+            Category.Facilitator,
+            key.show,
+            "n/a",
+            Event.CertAppliedAtRoundStart,
+            "count" -> sortedAppliedCerts.size.toString,
+            "targets" -> sortedAppliedCerts.map(c => ConsensusLog.pid(c.targetPeer)).mkString(",")
+          )
+          .whenA(sortedAppliedCerts.nonEmpty)
+
         eligibleThisRound = {
-          // B2 probation is included in the excluded set AND the withoutPenaltiesOnly escape,
-          // making it non-bypassable. See dag-l0 mirror for full rationale.
-          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers
+          // B2 probation AND cert-evicted are non-bypassable (the only exits are the
+          // respective re-entry gates). See dag-l0 mirror for full rationale.
+          val excluded =
+            previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers ++ certEvictedTargets
           val filtered = allEligible.filterNot(excluded.contains)
+          val nonBypassable = probationPeers ++ certEvictedTargets
           val withoutPenaltiesOnly =
-            allEligible.filterNot((previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ probationPeers).contains)
-          val allEligibleMinusProbation = allEligible.filterNot(probationPeers.contains)
+            allEligible.filterNot((previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ nonBypassable).contains)
+          val allEligibleMinusNonBypassable = allEligible.filterNot(nonBypassable.contains)
           if (filtered.size >= minViableQuorum) filtered
           else if (withoutPenaltiesOnly.size >= 2 && allDeferred.nonEmpty) withoutPenaltiesOnly
           else if (filtered.nonEmpty) filtered
-          else if (allEligibleMinusProbation.nonEmpty) allEligibleMinusProbation
-          else if (allEligible.nonEmpty) allEligible
+          else if (allEligibleMinusNonBypassable.nonEmpty) allEligibleMinusNonBypassable
+          else if (allEligible.filterNot(certEvictedTargets.contains).nonEmpty)
+            allEligible.filterNot(certEvictedTargets.contains)
           else List(selfId)
         }
 
         penaltyBypassed = {
-          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers
+          val excluded =
+            previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers ++ certEvictedTargets
           val filtered = allEligible.filterNot(excluded.contains)
           filtered.size < minViableQuorum && allEligible.size > filtered.size
         }
@@ -405,7 +428,8 @@ object CurrencySnapshotConsensusStateCreator {
             lastOutcome.finished.facilitatorsHash,
             lastGlobalSnapshotOrdinal,
             lastOutcome.finished.snapshotHash,
-            consensusConfigHash = consensusConfigHash.some
+            consensusConfigHash = consensusConfigHash.some,
+            appliedEvictionCerts = sortedAppliedCerts
           )
           declaration = ConsensusPeerDeclaration(key, facility)
           _ <- consensusStorage.addFacility(selfId, key, facility)

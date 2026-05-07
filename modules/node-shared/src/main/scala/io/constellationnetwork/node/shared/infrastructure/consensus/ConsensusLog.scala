@@ -99,6 +99,7 @@ object ConsensusLog {
     case object MinQuorumFloorApplied extends Event { val show = "MIN_QUORUM_FLOOR_APPLIED" }
     case object CandidateObserving extends Event { val show = "CANDIDATE_OBSERVING" }
     case object ChronicNonSignersExcluded extends Event { val show = "CHRONIC_NON_SIGNERS_EXCLUDED" }
+    case object CertAppliedAtRoundStart extends Event { val show = "CERT_APPLIED_AT_ROUND_START" }
     case object TcaFilterApplied extends Event { val show = "TCA_FILTER_APPLIED" }
     case object AbandonedMissingLogged extends Event { val show = "ABANDONED_MISSING_LOGGED" }
     case object FacilityRetransmit extends Event { val show = "FACILITY_RETRANSMIT" }

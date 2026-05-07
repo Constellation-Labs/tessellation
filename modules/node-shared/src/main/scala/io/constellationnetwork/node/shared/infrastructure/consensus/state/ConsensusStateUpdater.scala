@@ -510,6 +510,26 @@ object ConsensusStateUpdater {
         Set.empty[PeerId]
     }
 
+  /** Identify peers whose applied-eviction-cert SET differs from the local node's, mirroring [[identifyForkedPeers]] for the cert tuple
+    * dimension introduced by v13's `Facility.appliedEvictionCerts`. The "observation" here is the canonicalized list of target peer ids
+    * that each peer asserts in its Facility — `List[String]` sorted by peer-id value, which is the canonical form Creator uses when
+    * constructing a Facility (`sortedAppliedCerts`).
+    *
+    * Determinism rule (same as the hash variant): when the local node is in the majority, evict the minority. When in the minority or no
+    * clear majority, return empty so the round naturally stalls and abandons via the existing stall-cycle path. After abandon, gossip will
+    * have propagated the cert(s) more broadly and the next retry-round will converge.
+    */
+  def identifyForkedPeersByAppliedCerts(
+    ownAppliedCertTargets: List[String],
+    observations: SortedMap[PeerId, List[String]]
+  ): Set[PeerId] =
+    pickMajority(observations.values.toList) match {
+      case Some(majorityTargets) if majorityTargets == ownAppliedCertTargets =>
+        observations.collect { case (pid, targets) if targets != ownAppliedCertTargets => pid }.toSet
+      case _ =>
+        Set.empty[PeerId]
+    }
+
   def pickValidatedMajorityArtifact[F[_]: Sync, Event, Key, Artifact, Context, Kind](
     ownProposalInfo: ArtifactInfo[Artifact, Context],
     lastSignedArtifact: Signed[Artifact],
