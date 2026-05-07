@@ -74,4 +74,12 @@ class ConsensusRumorHandlers[F[
     */
   val admissionVoteHandler: RumorHandler[F] =
     RumorHandlerWithQueue.peer[F, ConsensusPeerAdmissionVote[Key]](queue.offer)
+
+  /** 12. AssembledEvictionCertificate (gossip carrier). Lets a node that has assembled a quorum-signed cert deliver it to the rest of the
+    * facilitator set without waiting for the next Proposal that would normally embed it. Without this registration, inbound
+    * ConsensusPeerEvictionCertificate rumors are silently dropped — Kryo decodes them but nothing dispatches them to the consensus queue
+    * (see the EvictionVote handler's history for an instance of the same class of bug).
+    */
+  val evictionCertificateHandler: RumorHandler[F] =
+    RumorHandlerWithQueue.peer[F, ConsensusPeerEvictionCertificate[Key]](queue.offer)
 }

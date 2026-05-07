@@ -99,7 +99,15 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // Local-only because the deferral is a self-defense decision, not a consensus rule. Other peers
   // still elect this node deterministically; this node refuses and emits a VCV. The view-change
   // certificate then assembles deterministically across the cluster as designed.
-  recoveredAtKeyRef: Ref[F, Option[Key]]
+  recoveredAtKeyRef: Ref[F, Option[Key]],
+  // Broadcasts an assembled EvictionCertificate to the current facilitator set the moment it is
+  // assembled, so the cert reaches all peers via gossip rather than only via the next Proposal's
+  // embedded `evictionCertificates` field. Storage-level fan-out only — does NOT change committee
+  // selection or any consensus decision in this PR. Read-side consumers (`getAssembledEvictionCertificates`)
+  // are unchanged. See docs/consensus/eviction-cert-deterministic-shrinkage.md for the followup
+  // (PR2) that would actually use the wider distribution to drive same-ordinal committee shrinkage
+  // under a deterministic activation gate.
+  evictionCertificateGossiper: io.constellationnetwork.node.shared.infrastructure.consensus.engine.EvictionCertificateGossiper[F, Key]
 )
 
 object ConsensusEngineContext {
@@ -124,7 +132,8 @@ object ConsensusEngineContext {
     peerQualityTracker: PeerQualityTracker[F],
     isInBootstrap: Outcome => Boolean,
     lastSnapshotHashOf: Outcome => io.constellationnetwork.security.hash.Hash,
-    probationPeersOf: Outcome => Set[PeerId]
+    probationPeersOf: Outcome => Set[PeerId],
+    evictionCertificateGossiper: io.constellationnetwork.node.shared.infrastructure.consensus.engine.EvictionCertificateGossiper[F, Key]
   ): F[ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =
     for {
       running <- Ref.of[F, Boolean](false)
@@ -152,6 +161,7 @@ object ConsensusEngineContext {
         isInBootstrap,
         lastSnapshotHashOf,
         probationPeersOf,
-        recoveredAtKey
+        recoveredAtKey,
+        evictionCertificateGossiper
       )
 }

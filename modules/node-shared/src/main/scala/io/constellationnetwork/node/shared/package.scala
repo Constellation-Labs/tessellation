@@ -66,6 +66,13 @@ package object shared {
       classOf[AdmissionVote] -> 539,
       classOf[AdmissionCertificate] -> 540,
       classOf[ConsensusPeerAdmissionVote[_]] -> 541,
-      AdmissionReason.ReadyAtTip.getClass -> 542
+      AdmissionReason.ReadyAtTip.getClass -> 542,
+      // Gossip carrier for an assembled EvictionCertificate. Lets the cert reach all
+      // facilitators at the moment of assembly so subsequent retry-rounds at the SAME
+      // ordinal can apply the eviction during committee selection rather than waiting
+      // for a Proposal to be accepted at the NEXT ordinal — testnet 2026-05-07 stuck-cluster
+      // observation: cert assembled at 18:23:33 + 18:28:07 but cluster never finalized a
+      // Proposal at the stuck ordinal so the cert never took effect.
+      classOf[ConsensusPeerEvictionCertificate[_]] -> 543
     ).union(sharedKryoRegistrar)
 }

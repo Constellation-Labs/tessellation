@@ -68,6 +68,7 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
       case d: ConsensusPeerDeclaration[_, _]         => handleDeclaration(origin, d)
       case v: ConsensusPeerVote[_]                   => handlePeerVote(origin, v)
       case e: ConsensusPeerEvictionVote[_]           => handleEvictionVote(origin, e)
+      case ec: ConsensusPeerEvictionCertificate[_]   => handleEvictionCertificate(origin, ec)
       case av: ConsensusPeerAdmissionVote[_]         => handleAdmissionVote(origin, av)
       case a: ConsensusPeerDeclarationAck[_, _]      => handleDeclarationAck(origin, a)
       case w: ConsensusWithdrawPeerDeclaration[_, _] => handleWithdrawDeclaration(origin, w)
@@ -185,6 +186,68 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
           .addEvictionVote(origin, key, signedVote)
           .flatMap(triggerUpdateIfChanged(queue, key)) >>
         queue.offer(io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand.CheckEvictionAssembly(key, target))
+    }
+  }
+
+  /** Handle a gossiped, already-assembled `EvictionCertificate`. The cert carries quorum-many signed votes; we re-validate it structurally
+    * here using the same builder the proposer uses, then store. Storage is idempotent (assembledEvictionCerts is a Set).
+    *
+    * No consensus behavior changes from receiving the cert in this PR — the read path (`getAssembledEvictionCertificates`, used by
+    * advancers at proposal-build time) is unchanged. Only fan-out is wider: the cert reaches followers via direct gossip rather than only
+    * via a subsequent Proposal's embedded `evictionCertificates` field. See the followup design at
+    * `docs/consensus/eviction-cert-deterministic-shrinkage.md` for how the wider distribution is intended to support same-ordinal committee
+    * shrinkage under a deterministic activation gate.
+    */
+  private def handleEvictionCertificate(origin: PeerId, e: ConsensusPeerEvictionCertificate[_]): F[Unit] = {
+    val key = e.key.asInstanceOf[Key]
+    val observeTip = storage.observePeerAtKey(origin, key)
+    val cert = e.cert
+    // Replay the structural validation the proposer performs at assembly time. We don't have the
+    // sender's witness pool locally, so the strictest check (signer-in-witness-pool) cannot fire
+    // exactly here — but the cert already carries quorum-many signed votes whose signatures and
+    // (target, reason, facilitatorsHash, lastSnapshotHash) consistency are what the builder
+    // verifies. validateProposalEcs at proposal-acceptance time provides the final canonical check
+    // before the cert is applied to consensus state.
+    val votesByKey: Map[PeerId, io.constellationnetwork.security.signature.Signed[
+      io.constellationnetwork.node.shared.infrastructure.consensus.declaration.EvictionVote
+    ]] =
+      cert.votes.toSortedSet.toList.map(sv => (sv.proofs.head.id.toPeerId, sv)).toMap
+    val witnessPool: Set[PeerId] = votesByKey.keySet // permissive; canonical pool is checked at proposal acceptance
+    val q = votesByKey.size // cert was assembled at quorum; structural recheck only
+    val rebuild = io.constellationnetwork.node.shared.infrastructure.consensus.engine.EvictionCertificateBuilder.build(
+      cert.targetPeer,
+      cert.reason,
+      cert.facilitatorsHash,
+      cert.lastSnapshotHash,
+      votesByKey,
+      q,
+      witnessPool
+    )
+    rebuild match {
+      case Left(error) =>
+        observeTip >> ConsensusLog.warn(
+          log,
+          Category.Phase,
+          key.toString,
+          "n/a",
+          LogEvent.Eviction,
+          "carrier" -> "cert_gossip_rejected",
+          "from" -> ConsensusLog.pid(origin),
+          "target" -> ConsensusLog.pid(cert.targetPeer),
+          "reason" -> error.code
+        )
+      case Right(_) =>
+        observeTip >> ConsensusLog.info(
+          log,
+          Category.Phase,
+          key.toString,
+          "n/a",
+          LogEvent.Eviction,
+          "carrier" -> "cert_gossip_received",
+          "from" -> ConsensusLog.pid(origin),
+          "target" -> ConsensusLog.pid(cert.targetPeer),
+          "votes" -> votesByKey.size.toString
+        ) >> storage.storeAssembledEvictionCertificate(key, cert)
     }
   }
 

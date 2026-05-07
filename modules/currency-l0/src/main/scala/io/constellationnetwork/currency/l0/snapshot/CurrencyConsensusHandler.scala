@@ -38,6 +38,7 @@ object CurrencyConsensusHandler {
       all.withdrawHandler <+>
       all.viewChangeVoteHandler <+>
       all.evictionVoteHandler <+>
+      all.evictionCertificateHandler <+>
       all.admissionVoteHandler
   }
 }
