@@ -27,14 +27,18 @@ sealed trait AbandonReason {
   def retriable: Boolean
 
   /** When the abandonment carries a (active, required) facilitator-count pair, expose it. The retriable path in `AbandonmentTracker` reads
-    * this to decide between escalate-to-recovery and suppress (cluster-wide stall). Only `QuorumInfeasible` carries this signal today.
+    * this to classify the escalation cause (isolated vs quorum-impossible). Only `QuorumInfeasible` carries this signal today.
     */
   def quorumPair: Option[(Int, Int)] = None
 }
 
 object AbandonReason {
 
-  /** Not enough peers to reach quorum — wait for peers to come back. */
+  /** Not enough peers to reach quorum — wait for peers to come back.
+    *
+    * Invariant: `active < required`. Constructed only by `StallDetector` inside the `quorumInfeasible = remaining < minQuorum` branch with
+    * `active = remaining` and `required = minQuorum`. The retriable handler in `AbandonmentTracker` relies on this.
+    */
   final case class QuorumInfeasible(active: Int, required: Int, clusterSize: Int) extends AbandonReason {
     def message: String = s"quorum infeasible: $active active < $required required (clusterSize=$clusterSize)"
     def label: String = "quorum_infeasible"
@@ -116,16 +120,6 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
     * default config). This is higher than the non-retriable threshold because quorum-infeasible is expected during transient partitions.
     */
   private val maxRetriableAtSameKey: Int = config.maxConsecutiveAbandonments
-
-  /** Absolute ceiling: after this many retriable abandonments at the same key, force escalation to recovery regardless of
-    * activeFacilitators. Without this, the "multi-peer stall" suppression path retries indefinitely — the counter climbs past
-    * maxRetriableAtSameKey but never gates anything because escalation is suppressed.
-    *
-    * Set to maxRetriableAtSameKey + 2 to give multi-peer stalls a brief window (2 extra rounds) to self-resolve while still escalating
-    * promptly when the node is genuinely behind the network (e.g., after isolation recovery). The previous value of 3× (15 rounds at ~99s
-    * each = 25 minutes) was too slow for post-isolation recovery.
-    */
-  private val absoluteMaxRetriableAtSameKey: Int = maxRetriableAtSameKey + 2
 
   /** Tracks total recovery download attempts across all keys to detect extended recovery loops. */
   private val totalRecoveryAttemptsRef: Ref[F, Int] = Ref.unsafe(0)
@@ -279,70 +273,39 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
              "maxRetriableAtSameKey" -> maxRetriableAtSameKey.toString
            ) >>
              (if (shouldEscalate)
-                // Stuck at the same ordinal with quorum-infeasible for too long.
-                // Determine whether this node is ISOLATED (should escalate to recovery)
-                // or the WHOLE CLUSTER is stuck (kill-4, should NOT escalate).
+                // Stuck at the same ordinal with QuorumInfeasible for too long. Per the
+                // QuorumInfeasible invariant (`active < required`, see AbandonReason.scala),
+                // every retriable abandonment past this threshold means peers cannot form
+                // quorum at this ordinal — either the node is isolated (active==1) or it has
+                // fallen behind the network (peers advanced past this ordinal). Both cases
+                // resolve to recovery download.
                 //
-                // The key signal is the last round's active facilitator count from the
-                // QuorumInfeasible reason:
-                //   active == 1: only this node participated → isolated, peers moved on
-                //   active > 1: multiple peers participated → cluster-wide stall, recovery
-                //               would deadlock with no Ready peers to serve downloads
-                //
-                // This is more reliable than peer registrations, which go stale in long-running
-                // clusters (registrations stay at join-time ordinal, far below current).
+                // Cluster-wide-stall suppression (where all peers ARE at this ordinal but
+                // can't agree) lives in the non-retriable path below, gated on
+                // `peersAtHigherKey`. That path catches MaxStalls/RoundTimeout abandonments,
+                // which is what fires when B1 eviction can't progress the round.
                 reason.quorumPair
                   .liftTo[F](new IllegalStateException(s"Retriable AbandonReason without quorumPair: $reason"))
                   .flatMap {
                     case (activeFacilitators, requiredQuorum) =>
                       val isIsolated = activeFacilitators <= 1
-                      val absoluteCeilingReached = retriableCount >= absoluteMaxRetriableAtSameKey
-                      // If active < required, the node is behind the network (peers moved on, not enough
-                      // remain at this ordinal to form quorum). Retrying will never succeed.
-                      // Only suppress when active >= required (cluster-wide stall where all peers are
-                      // present but can't agree - recovery download would deadlock with no Ready peers).
-                      val quorumImpossible = activeFacilitators < requiredQuorum
-                      if (isIsolated || absoluteCeilingReached || quorumImpossible)
-                        // Escalate to recovery when:
-                        // 1. Only this node participated (isolated from the network), OR
-                        // 2. Absolute ceiling reached - multi-peer stall has persisted too long, OR
-                        // 3. Active facilitators can't form quorum - node is behind the network
-                        //    (e.g., after isolation, peers advanced past this ordinal).
-                        retriableAtSameKeyRef.set((none[Key], 0)) >>
-                          trackConsecutiveAbandonments(key).flatMap { consecutiveCount =>
-                            ConsensusLog.info(
-                              logger,
-                              Category.Lifecycle,
-                              key.toString,
-                              "n/a",
-                              LogEvent.RetriableEscalated,
-                              "reason" -> reason.label,
-                              "activeFacilitators" -> activeFacilitators.toString,
-                              "requiredQuorum" -> requiredQuorum.toString,
-                              "escalationCause" -> EscalationCause.classify(absoluteCeilingReached, isIsolated).label
-                            ) >>
-                              healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount)) >>
-                              triggerRecoveryDownload(key, consecutiveCount)
-                          }
-                      else
-                        // Multiple peers participated AND can form quorum - cluster-wide stall
-                        // (e.g. kill-4). Keep retrying; recovery download would deadlock with no
-                        // Ready peers to serve downloads. The absolute ceiling ensures this path
-                        // cannot loop indefinitely.
-                        ConsensusLog.info(
-                          logger,
-                          Category.Lifecycle,
-                          key.toString,
-                          "n/a",
-                          LogEvent.RoundAbandonedRetriable,
-                          "reason" -> reason.label,
-                          "detail" -> s"escalation suppressed: multi-peer stall (active=$activeFacilitators >= required=$requiredQuorum)",
-                          "retriableAtSameKey" -> retriableCount.toString,
-                          "maxRetriableAtSameKey" -> maxRetriableAtSameKey.toString,
-                          "absoluteMax" -> absoluteMaxRetriableAtSameKey.toString
-                        ) >>
-                          offerRoundCompleted >>
-                          queue.offer(ConsensusCommand.TimeTick)
+                      val cause = if (isIsolated) EscalationCause.Isolated else EscalationCause.QuorumImpossible
+                      retriableAtSameKeyRef.set((none[Key], 0)) >>
+                        trackConsecutiveAbandonments(key).flatMap { consecutiveCount =>
+                          ConsensusLog.info(
+                            logger,
+                            Category.Lifecycle,
+                            key.toString,
+                            "n/a",
+                            LogEvent.RetriableEscalated,
+                            "reason" -> reason.label,
+                            "activeFacilitators" -> activeFacilitators.toString,
+                            "requiredQuorum" -> requiredQuorum.toString,
+                            "escalationCause" -> cause.label
+                          ) >>
+                            healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount)) >>
+                            triggerRecoveryDownload(key, consecutiveCount)
+                        }
                   }
               else
                 offerRoundCompleted >>
@@ -356,10 +319,11 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
          // then competed to download a snapshot the cluster had not produced — only the one remaining
          // Ready peer could serve, and it had nothing to serve. Quorum permanently broken.
          //
-         // Same safety rationale as the retriable QuorumInfeasible path above: only escalate to
-         // recovery when peers have actually advanced past this key. Otherwise, this is a cluster-wide
-         // stall and recovery cascade will make it worse. Keep retrying — when peers do advance,
-         // we'll detect it on a subsequent abandonment.
+         // Distinguish "this node is behind" from "the whole cluster is stuck": only escalate to
+         // recovery when peers have actually advanced past this key (peersAtHigherKey > 0).
+         // Otherwise this is a cluster-wide stall and a recovery cascade would deadlock with no
+         // Ready peers to serve downloads. Keep retrying — when peers do advance, we'll detect
+         // it on a subsequent abandonment.
          //
          // `peersAtHigherKey` is read from Ready peers' registered observation keys. Uses the same
          // signal StallDetector uses for lagging detection (see StallDetector.scala where
@@ -612,11 +576,7 @@ object AbandonmentTracker {
   /** Why a retriable abandonment escalated to recovery download. Used as a metric/log label. */
   private[engine] sealed abstract class EscalationCause(val label: String)
   private[engine] object EscalationCause {
-    case object AbsoluteCeiling extends EscalationCause("absolute_ceiling")
     case object Isolated extends EscalationCause("isolated")
     case object QuorumImpossible extends EscalationCause("quorum_impossible")
-
-    def classify(absCeiling: Boolean, isolated: Boolean): EscalationCause =
-      if (absCeiling) AbsoluteCeiling else if (isolated) Isolated else QuorumImpossible
   }
 }
