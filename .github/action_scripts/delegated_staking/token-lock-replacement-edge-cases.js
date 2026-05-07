@@ -532,24 +532,32 @@ const setupNodeParameters = async (urls) => {
 }
 
 /**
- * Clean up all existing delegated stakes for an account.
- * Withdraws all active stakes and waits for pending withdrawals to complete,
- * which automatically unlocks the associated token locks and returns balance.
+ * Clean up all existing delegated stakes and token locks for an account.
  *
- * This prevents state accumulation across repeated runs on persistent clusters
- * (e.g. the nightly E2E environment where the same account is reused hourly).
+ * Withdraws all active stakes, waits for pending withdrawals to drain, then
+ * waits for the address's active token locks to drain. Stake withdrawal emits
+ * a TokenUnlock that eventually frees the underlying lock from currentTokenLocks,
+ * but the lock can persist in the validator's view past the point where pending
+ * withdrawals reach zero, so we must poll the locks endpoint independently.
+ *
+ * Without this, persistent clusters (e.g. the nightly E2E environment that
+ * reuses the same account hourly) accumulate locks until the address hits
+ * TooManyTokenLocksForAddress on the next createTokenLock.
  */
 const cleanupExistingStakes = async (urls, account) => {
   const response = await getAccountDelegatedStakes(urls, account.address)
   const active = response.activeDelegatedStakes || []
   const pending = response.pendingWithdrawals || []
+  const initialLocks = await getActiveTokenLocks(urls, account.address)
 
-  if (active.length === 0 && pending.length === 0) {
-    logWorkflow.info('No pre-existing stakes to clean up')
+  if (active.length === 0 && pending.length === 0 && initialLocks.length === 0) {
+    logWorkflow.info('No pre-existing stakes or token locks to clean up')
     return
   }
 
-  logWorkflow.info(`Cleaning up ${active.length} active stakes and ${pending.length} pending withdrawals`)
+  logWorkflow.info(
+    `Cleaning up ${active.length} active stakes, ${pending.length} pending withdrawals, ${initialLocks.length} token locks`
+  )
 
   for (const stake of active) {
     logWorkflow.info(`  Withdrawing stake ${stake.hash.substring(0, 16)}...`)
@@ -575,13 +583,29 @@ const cleanupExistingStakes = async (urls, account) => {
     },
     {
       globalL0Url: urls.globalL0Url,
-      name: 'cleanupExistingStakes',
+      name: 'cleanupExistingStakes:stakes',
       maxOrdinalMisses: 60,
       maxStalledChecks: 120,
       interval: 5000,
     },
   )
-  logWorkflow.info('Pre-existing stakes cleaned up, token locks unlocked')
+
+  await withRetryOrdinal(
+    async () => {
+      const locks = await getActiveTokenLocks(urls, account.address)
+      if (locks.length > 0)
+        throw new Error(`Still ${locks.length} active token locks`)
+    },
+    {
+      globalL0Url: urls.globalL0Url,
+      name: 'cleanupExistingStakes:tokenLocks',
+      maxOrdinalMisses: 60,
+      maxStalledChecks: 120,
+      interval: 5000,
+    },
+  )
+
+  logWorkflow.info('Pre-existing stakes and token locks cleaned up')
 }
 
 /**

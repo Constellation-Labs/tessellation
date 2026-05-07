@@ -3,6 +3,10 @@ name: Nightly Rebuild
 on:
   schedule:
     - cron: '0 4 * * *'
+  workflow_dispatch:
+  push:
+    branches:
+      - nighty_e2e_fixes
 
 # Shared with nightly-deploy.yml — only one deploy/rebuild can run at a time
 concurrency:
@@ -137,9 +141,73 @@ jobs:
             exit 1
           fi
 
-          # Start snapshot-streaming on last node
+          # Start snapshot-streaming on last node.
+          # Volume + data dir were wiped in the previous step, so postgres has no
+          # schema and there is no seed file. Bring postgres up first, apply the
+          # block-explorer prisma schema, then start the streaming app — without
+          # the schema the producer crash-loops on missing tables.
           echo "Starting snapshot-streaming on n$LAST_NODE"
-          ssh "n$LAST_NODE" "if [ -f $DIR/snapshot-streaming/docker-compose.yaml ]; then cd $DIR/snapshot-streaming && docker compose up -d; fi" 2>&1 || true
+          if ssh "n$LAST_NODE" "test -f $DIR/snapshot-streaming/docker-compose.yaml"; then
+            ssh "n$LAST_NODE" "cd $DIR/snapshot-streaming && docker compose up -d snapshot-streaming-postgres" 2>&1 || true
+
+            # Wait for postgres TCP to be live (unix-socket pg_isready races with
+            # the postgres entrypoint's init-phase shutdown — see remote-deploy.sh).
+            SS_PG_OK=false
+            for i in $(seq 1 30); do
+              if ssh "n$LAST_NODE" "docker exec snapshot-streaming-postgres pg_isready -h 127.0.0.1 -U snapshot_streaming" >/dev/null 2>&1; then
+                SS_PG_OK=true; break
+              fi
+              sleep 2
+            done
+            if [ "$SS_PG_OK" != "true" ]; then
+              echo "::error::snapshot-streaming-postgres did not become ready"
+              exit 1
+            fi
+
+            # Apply prisma schema. The prisma/ dir was uploaded by the most recent
+            # nightly-deploy and persists on the host across rebuilds.
+            if ssh "n$LAST_NODE" "test -d $DIR/snapshot-streaming/prisma"; then
+              ssh "n$LAST_NODE" "docker run --rm --network host \
+                -v $DIR/snapshot-streaming/prisma:/app/prisma -w /app \
+                -e DATABASE_URL='postgresql://snapshot_streaming:snapshot_streaming@127.0.0.1:5432/snapshot_streaming' \
+                node:20-alpine sh -c 'npx prisma@6.2.1 db push --accept-data-loss --force-reset'" 2>&1 | tail -3
+            else
+              echo "::error::prisma migrations missing on n$LAST_NODE — run nightly-deploy first"
+              exit 1
+            fi
+
+            # Build a fresh seed snapshot from genesis. The streaming app's
+            # bootstrap path requires data/seed-snapshot.json.gz; without it the
+            # Producer logs "No snapshots found at all!" and never starts indexing.
+            # Mirrors remote-deploy.sh's seed creation.
+            GENESIS_IP="${IPS[0]}"
+            gl0_url="http://${GENESIS_IP}:9000"
+            for attempt in $(seq 1 60); do
+              latest_ord=$(curl -sf "$gl0_url/global-snapshots/latest/ordinal" 2>/dev/null \
+                | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('value',d) if isinstance(d,dict) else d)" 2>/dev/null || echo 0)
+              [ "$latest_ord" -ge 2 ] 2>/dev/null && break
+              sleep 3
+            done
+            if ! [ "$latest_ord" -ge 2 ] 2>/dev/null; then
+              echo "::error::genesis did not produce enough snapshots for seeding (ord=$latest_ord)"
+              exit 1
+            fi
+
+            combined_json=$(curl -sf "$gl0_url/global-snapshots/latest/combined")
+            seed_ordinal=$(echo "$combined_json" | python3 -c "import sys,json;print(json.load(sys.stdin)[0]['value']['ordinal'])")
+            snapshot_hash=$(curl -sf "$gl0_url/global-snapshots/$seed_ordinal/hash" \
+              | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('value',d) if isinstance(d,dict) else d)" 2>/dev/null | tr -d '"')
+            proofs_hash=$(echo "$combined_json" \
+              | python3 -c "import sys,json;print(json.dumps(json.load(sys.stdin)[0]['proofs'],sort_keys=True,separators=(',',':')))" \
+              | shasum -a 256 | awk '{print $1}')
+            echo "  Seed ordinal: $seed_ordinal, hash: ${snapshot_hash:0:16}..."
+
+            echo "$combined_json" \
+              | python3 -c "import sys,json;d=json.load(sys.stdin);print(json.dumps({'snapshot':{'signed':d[0],'hash':'$snapshot_hash','proofsHash':'$proofs_hash'},'state':d[1]}))" \
+              | gzip | ssh "n$LAST_NODE" "cat > $DIR/snapshot-streaming/data/seed-snapshot.json.gz"
+
+            ssh "n$LAST_NODE" "cd $DIR/snapshot-streaming && docker compose up -d snapshot-streaming" 2>&1 || true
+          fi
 
       - name: Health check
         run: |
