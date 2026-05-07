@@ -226,6 +226,18 @@ object CurrencySnapshotConsensus {
         org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F]
       )
 
+      evictionCertificateGossiper =
+        new io.constellationnetwork.node.shared.infrastructure.consensus.engine.GossipingEvictionCertificateGossiper[
+          F,
+          CurrencySnapshotEvent,
+          CurrencySnapshotKey,
+          CurrencySnapshotArtifact,
+          CurrencySnapshotContext,
+          CurrencySnapshotStatus,
+          CurrencyConsensusOutcome,
+          CurrencyConsensusKind
+        ](selfId, gossip, consensusStorage, org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F])
+
       loop <-
         ConsensusEventLoop.build[
           F,
@@ -254,6 +266,7 @@ object CurrencySnapshotConsensus {
           viewChangeVoter,
           evictionVoter,
           admissionVoter,
+          evictionCertificateGossiper,
           (o: CurrencyConsensusOutcome) =>
             !o.recentProofSizes.values.exists(_ >= snapshotConfig.consensus.bootstrapCompleteProofsThreshold),
           (o: CurrencyConsensusOutcome) => o.readmissionCountdown.filter(_._2 > 0).keySet,

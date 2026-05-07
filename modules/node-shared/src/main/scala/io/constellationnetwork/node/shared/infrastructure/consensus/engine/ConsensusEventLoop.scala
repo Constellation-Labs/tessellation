@@ -95,6 +95,7 @@ object ConsensusEventLoop {
     viewChangeVoter: ViewChangeVoter[F, Key],
     evictionVoter: EvictionVoter[F, Key],
     admissionVoter: AdmissionVoter[F, Key],
+    evictionCertificateGossiper: EvictionCertificateGossiper[F, Key],
     isInBootstrap: Outcome => Boolean,
     probationPeersOf: Outcome => Set[PeerId],
     lastSnapshotHashOf: Outcome => io.constellationnetwork.security.hash.Hash,
@@ -128,7 +129,8 @@ object ConsensusEventLoop {
         peerQualityTracker,
         isInBootstrap,
         lastSnapshotHashOf,
-        probationPeersOf
+        probationPeersOf,
+        evictionCertificateGossiper
       )
       healthRef <- ConsensusHealthStatus.ref[F]
       viewChangeManager = new ViewChangeManager[F, Key, Artifact, Ctx, Status, Outcome, Kind](

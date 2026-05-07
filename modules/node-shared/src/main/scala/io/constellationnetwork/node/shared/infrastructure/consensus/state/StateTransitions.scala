@@ -297,7 +297,16 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                           "quorum" -> q.toString
                         )
                       case Right(cert) =>
+                        // Store the cert locally, then broadcast it to facilitators so the cert
+                        // reaches all peers via direct gossip rather than only via the next Proposal's
+                        // embedded `evictionCertificates` field. The local read path
+                        // (`getAssembledEvictionCertificates`, used by advancers at proposal-build
+                        // time) is unchanged by this gossip; only fan-out is wider. Followup work
+                        // in docs/consensus/eviction-cert-deterministic-shrinkage.md uses the wider
+                        // distribution to drive same-ordinal committee shrinkage under a
+                        // deterministic activation gate.
                         storage.storeAssembledEvictionCertificate(key, cert) >>
+                          ctx.evictionCertificateGossiper.gossipCert(key, cert) >>
                           ConsensusLog.info(
                             log,
                             Category.Phase,
