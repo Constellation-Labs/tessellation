@@ -225,6 +225,14 @@ object types {
     // post-bootstrap. While bootstrap is active (no recent snapshot meets this threshold), penalty accrual is
     // suppressed to avoid ejecting slow peers during the solo->multi transition. Consensus-critical because it
     // determines `penalizedThisRound` in the outcome; included in `deterministicConfigHash`.
+    //
+    // OPERATOR NOTE: this default (3) assumes the cluster will eventually reach a committee size >= 3.
+    // For small deployments (single-node test rigs, 2-validator metagraphs), no recent snapshot will
+    // ever meet the threshold and `isBootstrapActive` stays `true` for the cluster's lifetime —
+    // silently disabling quality scoring (`penalizedThisRound` stays empty), exponential penalties,
+    // and readmission machinery. Operators of small clusters should override this to match their
+    // expected steady-state committee size (e.g. 2 for a 2-validator metagraph). Note that changing
+    // this value bumps `deterministicConfigHash`, so all peers in the cluster must agree.
     bootstrapCompleteProofsThreshold: Int = 3,
     // Adaptive declaration timeout: during bootstrap (recentProofSizes shows no round >= bootstrapCompleteProofsThreshold),
     // the `declarationTimeout` is multiplied by this factor so fresh-start peers have more time to respond before
@@ -337,7 +345,16 @@ object types {
     //     sticky and the ACS path becomes load-bearing instead of decorative. v12 nodes carry
     //     readmissionCountdown values that v11 nodes would auto-drop, producing different
     //     `lastOutcome` evolution → cluster-wide cold restart required.
-    consensusSchemaVersion: Int = 12
+    //   v13 (2026-05-07): Facility schema gains `appliedEvictionCerts: List[EvictionCertificate]`.
+    //     Lets a node that has assembled a quorum-signed cert apply it at round-start instead
+    //     of having to wait for proposal acceptance at the next ordinal. v13 nodes derive
+    //     committee = eligible \\ chronicNonSigners \\ probation \\ deferred \\ cert_targets;
+    //     v12 nodes derive committee = eligible \\ chronicNonSigners \\ probation \\ deferred.
+    //     With even one cert applied, the two committees produce different proof sets, so
+    //     v12 cannot safely participate in v13 rounds — cluster-wide cold restart required.
+    //     Closes the testnet 2026-05-07 ord 3121304 stuck-cluster gap. See
+    //     docs/consensus/eviction-cert-deterministic-shrinkage.md.
+    consensusSchemaVersion: Int = 13
   ) {
 
     /** Deterministic hash of consensus-critical config values.
