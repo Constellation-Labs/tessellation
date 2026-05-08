@@ -22,8 +22,10 @@ object ReadmissionMaintenance {
     *   1. Decrement every active counter by 1, clamped at 0. 2. Seed entries for peers in `justUnpenalized` at `probationRounds` (only if
     *      not already present). 3. Remove entries for peers in `admittedThisRound` (the only path out of probation).
     *
-    * Invariant: `admittedThisRound ∩ justUnpenalized = ∅` is enforced by upstream code; if a peer is both, the admit step wins (entry
-    * removed) because admission applies last.
+    * Invariant: `admittedThisRound ∩ justUnpenalized = ∅` holds by protocol timing — a peer enters `readmissionCountdown` (seeded from
+    * `justUnpenalized`) in round N, and an `AdmissionCertificate` for that peer requires multiple rounds of B2 vote accumulation, so it
+    * cannot be assembled and admitted in the same round N. There is no explicit upstream guard; if both sets ever overlap (e.g. a future
+    * caller breaks the timing assumption), the admit step wins (entry removed) because `-- admittedThisRound` applies last.
     */
   def step(
     prev: SortedMap[PeerId, Int],
