@@ -98,8 +98,7 @@ jobs:
           - { name: dag-cluster,            tests: "dag-cluster" }
           - { name: delegated-staking,      tests: "delegated-staking" }
           - { name: token-lock-replacement, tests: "token-lock-replacement" }
-          # TODO: re-enable once PR #1485 is merged
-          # - { name: fork-recovery,          tests: "fork-recovery", extra-args: "--num-gl0=5", runner: "Ubuntu-22-64-core" }
+          - { name: fork-recovery,          tests: "fork-recovery", extra-args: "--num-gl0=5", runner: "Ubuntu-22-64-core" }
           - { name: currency,               tests: "currency" }
           - { name: rewards,                tests: "rewards" }
           - { name: token-locks,            tests: "token-locks" }
