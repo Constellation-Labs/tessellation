@@ -23,9 +23,9 @@ object AdmissionCertificateBuilder {
 
   /** Build a valid AdmissionCertificate for a specific (target, reason) pair.
     *
-    * Invariant checks are identical to the eviction path — filter by (target, reason, facilitatorsHash), reject voters outside the
-    * `witnessPool`, count UNIQUE SIGNERS for the quorum check. See `EvictionCertificateBuilder` for the full rationale on relay-duplicate
-    * deduplication and on the v9 widening of the witness pool from committee to `state.eligibleFacilitators - target`.
+    * Invariant checks mirror the eviction path; see `EvictionCertificateBuilder` for the full rationale on relay-duplicate deduplication,
+    * the v9 widening of the witness pool from committee to `state.eligibleFacilitators - target`, and the v15 (2026-05-08) move from
+    * fail-fast rejection to silent filtering of non-pool signers (testnet wedge at ord 3121873).
     */
   def build(
     target: PeerId,
@@ -60,9 +60,6 @@ object AdmissionCertificateBuilder {
             && signed.value.lastSnapshotHash != lastSnapshotHash =>
         pid
     }
-    val nonWitnessPoolVoter = votes.toList.collect {
-      case (voter, _) if !witnessPool.contains(voter) => voter
-    }
 
     if (wrongTarget.nonEmpty)
       Left(CertBuildError.TargetMismatch(wrongTarget.size))
@@ -72,10 +69,8 @@ object AdmissionCertificateBuilder {
       Left(CertBuildError.FacilitatorsHashMismatch(wrongFacHash.size))
     else if (wrongLastSnapHash.nonEmpty)
       Left(CertBuildError.LastSnapshotHashMismatch(wrongLastSnapHash.size))
-    else if (nonWitnessPoolVoter.nonEmpty)
-      Left(CertBuildError.VoterNotInCommittee(nonWitnessPoolVoter.size))
     else {
-      // Deduplicate by signer BEFORE checking quorum — see EvictionCertificateBuilder for rationale.
+      // Deduplicate by signer BEFORE the pool filter and quorum check.
       val bySigner: Map[PeerId, Signed[AdmissionVote]] = votes.values
         .filter(signed =>
           signed.value.targetPeer == target
@@ -88,13 +83,13 @@ object AdmissionCertificateBuilder {
         .view
         .mapValues(_.head)
         .toMap
-      val nonWitnessPoolSigner = bySigner.keys.filterNot(witnessPool.contains).toList
-      if (nonWitnessPoolSigner.nonEmpty)
-        Left(CertBuildError.SignerNotInCommittee(nonWitnessPoolSigner.size))
-      else if (bySigner.size < quorumSize)
-        Left(CertBuildError.UnderQuorum(bySigner.size, quorumSize))
+      val poolSigners: Map[PeerId, Signed[AdmissionVote]] = bySigner.filter {
+        case (signer, _) => witnessPool.contains(signer)
+      }
+      if (poolSigners.size < quorumSize)
+        Left(CertBuildError.UnderQuorum(poolSigners.size, quorumSize))
       else {
-        val sortedSet: SortedSet[Signed[AdmissionVote]] = SortedSet.empty[Signed[AdmissionVote]] ++ bySigner.values
+        val sortedSet: SortedSet[Signed[AdmissionVote]] = SortedSet.empty[Signed[AdmissionVote]] ++ poolSigners.values
         NonEmptySet
           .fromSet(sortedSet)
           .toRight(CertBuildError.EmptyVotesAfterFilter)

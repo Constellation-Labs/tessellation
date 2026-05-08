@@ -176,7 +176,9 @@ object EvictionCertificateBuilderSuite extends FunSuite {
 
   // === Committee membership ===
 
-  test("build: voter not in committee -> Left(voter_not_in_committee)") {
+  test("build: outsider vote silently dropped, remaining < quorum -> Left(under_quorum)") {
+    // v15 (2026-05-08 hotfix): non-pool signers are filtered, not rejected. With voter1+voter2
+    // counting and the outsider dropped, 2 < quorum=3, so the failure is under_quorum.
     val outsider: PeerId = PeerId(Hex("ff" * 64))
     val votes = votesFromMap(
       Map(
@@ -195,8 +197,8 @@ object EvictionCertificateBuilderSuite extends FunSuite {
       witnessPool = committee
     )
     expect(
-      result.swap.exists(_.code.startsWith("voter_not_in_committee")),
-      s"expected Left(voter_not_in_committee...), got: $result"
+      result.swap.exists(_.code.startsWith("under_quorum")),
+      s"expected Left(under_quorum...) after outsider filtered, got: $result"
     )
   }
 
@@ -344,9 +346,10 @@ object EvictionCertificateBuilderSuite extends FunSuite {
     )
   }
 
-  test("v9: voter outside witness pool is rejected") {
-    // Symmetric guarantee: a peer that is in NEITHER the committee nor the wider eligible set
-    // must still be rejected. Otherwise any random gossiper could spam votes.
+  test("v9: voter outside witness pool is silently filtered (does not count toward quorum)") {
+    // Symmetric guarantee: a peer in NEITHER the committee nor the wider eligible set must not
+    // count. v15 (2026-05-08 hotfix) drops it silently rather than rejecting the cert outright,
+    // but the security envelope is identical — only pool members count.
     val outsider: PeerId = PeerId(Hex("ee" * 64))
     val widerPool: Set[PeerId] = Set(voter1, voter2, voter3, voter4, voter5)
     val votes: Map[PeerId, Signed[EvictionVote]] = Map(
@@ -357,8 +360,31 @@ object EvictionCertificateBuilderSuite extends FunSuite {
     val result =
       EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, lastSnap, votes, quorumSize = 3, witnessPool = widerPool)
     expect(
-      result.swap.exists(_.code.startsWith("voter_not_in_committee")),
-      s"v9: outside-pool voter must still be rejected, got: $result"
+      result.swap.exists(_.code.startsWith("under_quorum")),
+      s"v9+v15: outside-pool voter is filtered; remaining 2 < quorum=3, got: $result"
+    )
+  }
+
+  // === v15 (2026-05-08): hotfix regression — single rogue voter must not deadlock cert assembly ===
+
+  test("v15: outsider vote silently dropped when remaining pool members exactly meet quorum") {
+    // 2026-05-08 testnet wedge regression. At ord 3121873 the cluster had 6 valid signers AND
+    // 1 voter outside the witness pool (mid-round eligibility shrinkage). The pre-hotfix builder
+    // returned voter_not_in_committee on the first non-pool voter, throwing away 6 valid votes
+    // and stalling consensus indefinitely. The fix filters non-pool signers silently; if the
+    // remaining set still meets quorum, the cert assembles.
+    val outsider: PeerId = PeerId(Hex("dd" * 64))
+    val pool: Set[PeerId] = Set(voter1, voter2, voter3, targetA, targetB)
+    val votes: Map[PeerId, Signed[EvictionVote]] = Map(
+      voter1 -> signedVote(voter1),
+      voter2 -> signedVote(voter2),
+      voter3 -> signedVote(voter3),
+      outsider -> signedVote(outsider) // a single rogue gossiper used to wedge the whole cert
+    )
+    val result =
+      EvictionCertificateBuilder.build(targetA, EvictionReason.Silent, facHash, lastSnap, votes, quorumSize = 3, witnessPool = pool)
+    expect(result.isRight, s"v15: outsider must not block a quorum-met cert, got: $result").and(
+      expect(result.exists(_.votes.length === 3), s"cert must carry exactly the 3 pool members, got: $result")
     )
   }
 }
