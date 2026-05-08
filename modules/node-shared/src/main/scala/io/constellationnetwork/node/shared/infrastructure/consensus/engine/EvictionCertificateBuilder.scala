@@ -22,20 +22,23 @@ object EvictionCertificateBuilder {
 
   /** Build a valid EvictionCertificate for a specific (target, reason) pair.
     *
-    *   - Filter votes to those matching (target, reason, facilitatorsHash).
-    *   - Reject any vote whose voter is not in `witnessPool`.
+    *   - Reject the entire input on payload mismatches (target, reason, facilitatorsHash, lastSnapshotHash) — these indicate adversarial
+    *     replay or a leader stitching votes from divergent views.
+    *   - Drop votes whose signer is not in `witnessPool` SILENTLY; only pool members count toward quorum. The voter-key (storage slot)
+    *     filter is implicit — a non-pool signer cannot pass the gate regardless of which storage key relayed the vote.
     *   - Count UNIQUE SIGNERS (by `proofs.head.id`) — not storage keys — for the quorum check. The `votes` map is keyed by the gossip
     *     sender, which is not necessarily the signer: a single signed vote can be relayed through multiple peers and end up stored under
-    *     different keys. Without signer-level deduplication, a Byzantine relay can inflate the apparent quorum, get a cert assembled, and
-    *     then see it rejected at proposal-acceptance time (where `validateProposalEcs` re-checks against the deduplicated `cert.votes`
-    *     set). Deduplicating here ensures the cert is only built from distinct signers.
+    *     different keys. Without signer-level deduplication, a Byzantine relay can inflate the apparent quorum.
     *   - Use a SortedSet for the resulting votes so serialization order is stable.
     *
     * v9 (2026-04-29): `witnessPool` widened from the round-start committee to `state.eligibleFacilitators - target`. Caller responsibility
-    * to compute the deterministic witness set; this function just gates voters/signers against it. Quorum is still passed as a separate
-    * `quorumSize` so the caller pegs it to committee size, not witness pool size. Rejection strings still say `voter_not_in_committee` /
-    * `signer_not_in_committee` to preserve log-grep compatibility — the semantic is now "not in witness pool" but the operational filter is
-    * unchanged.
+    * to compute the deterministic witness set; this function gates signers against it. Quorum is still passed as a separate `quorumSize` so
+    * the caller pegs it to committee size, not witness pool size.
+    *
+    * v15 (2026-05-08): non-pool voters are FILTERED instead of REJECTED. Prior fail-fast on any single non-pool voter caused the 2026-05-08
+    * testnet wedge at ord 3121873 — a stale gossip relay or mid-round eligibility shrinkage was enough to poison every cert assembly
+    * attempt (`peers=1 votes=6 quorum=6` → no cert, view-change loop, no snapshots). Filter-then-quorum keeps the same security envelope
+    * (only pool members count toward quorum) but no longer lets one rogue voter deadlock the cluster.
     *
     * Returns `Right(cert)` on success, or `Left(reason)` with a stable code-like string.
     */
@@ -71,9 +74,6 @@ object EvictionCertificateBuilder {
             && signed.value.lastSnapshotHash != lastSnapshotHash =>
         pid
     }
-    val nonWitnessPoolVoter = votes.toList.collect {
-      case (voter, _) if !witnessPool.contains(voter) => voter
-    }
 
     if (wrongTarget.nonEmpty)
       Left(CertBuildError.TargetMismatch(wrongTarget.size))
@@ -83,12 +83,9 @@ object EvictionCertificateBuilder {
       Left(CertBuildError.FacilitatorsHashMismatch(wrongFacHash.size))
     else if (wrongLastSnapHash.nonEmpty)
       Left(CertBuildError.LastSnapshotHashMismatch(wrongLastSnapHash.size))
-    else if (nonWitnessPoolVoter.nonEmpty)
-      Left(CertBuildError.VoterNotInCommittee(nonWitnessPoolVoter.size))
     else {
-      // Deduplicate by signer BEFORE checking quorum. A relayed duplicate of the same signed
-      // vote must not count twice, otherwise an adversary can fabricate under-quorum certs
-      // that followers later reject in validateProposalEcs.
+      // Deduplicate by signer BEFORE the pool filter and quorum check. A relayed duplicate of the
+      // same signed vote must not count twice.
       val bySigner: Map[PeerId, Signed[EvictionVote]] = votes.values
         .filter(signed =>
           signed.value.targetPeer == target
@@ -103,13 +100,13 @@ object EvictionCertificateBuilder {
         .view
         .mapValues(_.head)
         .toMap
-      val nonWitnessPoolSigner = bySigner.keys.filterNot(witnessPool.contains).toList
-      if (nonWitnessPoolSigner.nonEmpty)
-        Left(CertBuildError.SignerNotInCommittee(nonWitnessPoolSigner.size))
-      else if (bySigner.size < quorumSize)
-        Left(CertBuildError.UnderQuorum(bySigner.size, quorumSize))
+      val poolSigners: Map[PeerId, Signed[EvictionVote]] = bySigner.filter {
+        case (signer, _) => witnessPool.contains(signer)
+      }
+      if (poolSigners.size < quorumSize)
+        Left(CertBuildError.UnderQuorum(poolSigners.size, quorumSize))
       else {
-        val sortedSet: SortedSet[Signed[EvictionVote]] = SortedSet.empty[Signed[EvictionVote]] ++ bySigner.values
+        val sortedSet: SortedSet[Signed[EvictionVote]] = SortedSet.empty[Signed[EvictionVote]] ++ poolSigners.values
         NonEmptySet
           .fromSet(sortedSet)
           .toRight(CertBuildError.EmptyVotesAfterFilter)
