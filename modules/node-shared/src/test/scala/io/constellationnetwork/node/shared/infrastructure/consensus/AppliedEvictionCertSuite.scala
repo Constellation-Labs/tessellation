@@ -20,9 +20,8 @@ import io.circe.parser.decode
 import io.circe.syntax._
 import weaver.FunSuite
 
-/** Coverage for the v13 (2026-05-07) `Facility.appliedEvictionCerts` schema addition and the
-  * `identifyForkedPeersByAppliedCerts` helper that gates round advancement on quorum-many
-  * Facilities agreeing on the same applied-cert SET.
+/** Coverage for the v13 (2026-05-07) `Facility.appliedEvictionCerts` schema addition and the `identifyForkedPeersByAppliedCerts` helper
+  * that gates round advancement on quorum-many Facilities agreeing on the same applied-cert SET.
   *
   * See `docs/consensus/eviction-cert-deterministic-shrinkage.md` for the design context.
   */
@@ -110,20 +109,24 @@ object AppliedEvictionCertSuite extends FunSuite {
     // would be rejected via `checkForkByConsensusConfigHash` before any decode mismatch surfaced.
     // Test pinned here so future schema changes that try to bypass the hash bump trip immediately.
     val v13 = facility(applied = List.empty).asJson.noSpaces
-    io.circe.parser.parse(v13).fold(
-      e => failure(s"could not parse v13 JSON: $e"),
-      json =>
-        json.hcursor.downField("appliedEvictionCerts").delete.top match {
-          case Some(stripped) =>
-            decode[Facility](stripped.noSpaces) match {
-              case Right(_) =>
-                failure("stripped-field JSON unexpectedly decoded — derivation behavior changed; coordinate with consensusConfigHash bump")
-              case Left(_) =>
-                success
-            }
-          case None => failure("could not strip appliedEvictionCerts field")
-        }
-    )
+    io.circe.parser
+      .parse(v13)
+      .fold(
+        e => failure(s"could not parse v13 JSON: $e"),
+        json =>
+          json.hcursor.downField("appliedEvictionCerts").delete.top match {
+            case Some(stripped) =>
+              decode[Facility](stripped.noSpaces) match {
+                case Right(_) =>
+                  failure(
+                    "stripped-field JSON unexpectedly decoded — derivation behavior changed; coordinate with consensusConfigHash bump"
+                  )
+                case Left(_) =>
+                  success
+              }
+            case None => failure("could not strip appliedEvictionCerts field")
+          }
+      )
   }
 
   // === identifyForkedPeersByAppliedCerts: determinism + minority-eviction ===
@@ -149,11 +152,11 @@ object AppliedEvictionCertSuite extends FunSuite {
     val result = ConsensusStateUpdater.identifyForkedPeersByAppliedCerts(
       ownAppliedCertTargets = targets,
       observations = SortedMap(
-        peer1 -> targets,    // same as self
-        peer2 -> targets,    // same as self
-        peer3 -> targets,    // same as self (3 with cert)
+        peer1 -> targets, // same as self
+        peer2 -> targets, // same as self
+        peer3 -> targets, // same as self (3 with cert)
         peer4 -> List.empty, // minority — no cert
-        peer5 -> List.empty  // minority — no cert
+        peer5 -> List.empty // minority — no cert
       )
     )
     expect(result === Set(peer4, peer5), s"minority-no-cert peers must be evicted; got $result")
@@ -164,11 +167,11 @@ object AppliedEvictionCertSuite extends FunSuite {
     val result = ConsensusStateUpdater.identifyForkedPeersByAppliedCerts(
       ownAppliedCertTargets = targets,
       observations = SortedMap(
-        peer1 -> targets,    // self has cert
+        peer1 -> targets, // self has cert
         peer2 -> List.empty, // majority — no cert
         peer3 -> List.empty, // majority — no cert
         peer4 -> List.empty, // majority — no cert
-        peer5 -> List.empty  // majority — no cert
+        peer5 -> List.empty // majority — no cert
       )
     )
     expect(result.isEmpty, s"self-in-minority must NOT evict (recovery path handles this); got $result")
