@@ -297,18 +297,6 @@ object GlobalSnapshotConsensus {
         org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F]
       )
 
-      evictionCertificateGossiper =
-        new io.constellationnetwork.node.shared.infrastructure.consensus.engine.GossipingEvictionCertificateGossiper[
-          F,
-          GlobalSnapshotEvent,
-          GlobalSnapshotKey,
-          GlobalSnapshotArtifact,
-          GlobalSnapshotContext,
-          GlobalSnapshotStatus,
-          GlobalConsensusOutcome,
-          GlobalConsensusKind
-        ](selfId, gossip, consensusStorage, org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F])
-
       loop <-
         ConsensusEventLoop.build[
           F,
@@ -337,7 +325,6 @@ object GlobalSnapshotConsensus {
           viewChangeVoter,
           evictionVoter,
           admissionVoter,
-          evictionCertificateGossiper,
           (o: GlobalConsensusOutcome) =>
             !o.recentProofSizes.values.exists(_ >= appConfig.snapshot.consensus.bootstrapCompleteProofsThreshold),
           (o: GlobalConsensusOutcome) => o.readmissionCountdown.filter(_._2 > 0).keySet,
