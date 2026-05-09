@@ -37,15 +37,6 @@ object message {
   @derive(encoder, decoder)
   case class ConsensusPeerEvictionVote[K](key: K, vote: Signed[EvictionVote])
 
-  /** Assembled eviction certificate gossiped between facilitators the moment any node assembles quorum. Without this carrier the cert is
-    * only consumed at proposal-acceptance time of the NEXT ordinal, so a stuck retry-loop at the same ordinal can collect quorum on every
-    * attempt without ever applying the eviction. Receivers re-validate the cert structurally before storing it so a malformed cert from a
-    * buggy peer cannot poison local state. The cert itself carries quorum-many [[Signed]] votes — those proofs are the authority, the
-    * envelope is just routing.
-    */
-  @derive(encoder, decoder)
-  case class ConsensusPeerEvictionCertificate[K](key: K, cert: EvictionCertificate)
-
   /** Signed per-peer admission vote (B2). Same wire-envelope rationale as [[ConsensusPeerEvictionVote]]. */
   @derive(encoder, decoder)
   case class ConsensusPeerAdmissionVote[K](key: K, vote: Signed[AdmissionVote])
