@@ -484,63 +484,6 @@ object GlobalSnapshotConsensusStateAdvancer {
                     .whenA(evicted.nonEmpty)
               }
 
-              // v13 (2026-05-07) — applied-cert-tuple agreement gate. After hash-based fork
-              // eviction, restrict the Facility set used for round advancement to peers whose
-              // `appliedEvictionCerts` target list matches the local node's. A round only
-              // advances when quorum-many such Facilities exist (i.e., the cluster has converged
-              // on the same applied-cert SET, and therefore the same derived committee).
-              //
-              // This is a NON-PERMANENT filter: peers in the minority cert-tuple group are NOT
-              // accumulated into `removedFacilitators` (unlike hash-fork eviction), because their
-              // disagreement may simply mean they haven't yet received a freshly-assembled cert
-              // via gossip. They will receive it before the next retry-round and converge.
-              //
-              // When no quorum group matches local view (local is in minority, or cluster is
-              // genuinely split on cert availability), this returns None — the round stalls,
-              // eventually abandons, and the next retry-round runs with up-to-date local cert
-              // storage (PR1's gossip carrier closes the gap between retries).
-              tupleAgreedFacilities = cleanFacilities.flatMap { facilities =>
-                val canonicalAppliedCertTargets = (f: Facility) => f.appliedEvictionCerts.map(_.targetPeer.value.value).sorted
-                val ownTargets = facilities.get(selfId).map(canonicalAppliedCertTargets).getOrElse(List.empty[String])
-                val matching = facilities.filter { case (_, f) => canonicalAppliedCertTargets(f) == ownTargets }
-                val n = state.roundStartFacilitators.value.size
-                val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
-                if (matching.size >= q) Some(matching) else None
-              }
-
-              _ <- (cleanFacilities, tupleAgreedFacilities).tupled.traverse_ {
-                case (afterHashFilter, afterTupleFilter) =>
-                  val excluded = afterHashFilter.keySet -- afterTupleFilter.keySet
-                  ConsensusLog
-                    .info(
-                      logger,
-                      Category.Fork,
-                      state.key.show,
-                      "n/a",
-                      Event.ForkChecksPassed,
-                      "filter" -> "applied_cert_tuple",
-                      "excluded" -> excluded.size.toString,
-                      "remaining" -> afterTupleFilter.size.toString,
-                      "excludedPeers" -> excluded.toList.map(ConsensusLog.pid).mkString(",")
-                    )
-                    .whenA(excluded.nonEmpty)
-              }
-
-              _ <- cleanFacilities.traverse_ { afterHashFilter =>
-                ConsensusLog
-                  .info(
-                    logger,
-                    Category.Fork,
-                    state.key.show,
-                    "n/a",
-                    Event.ForkChecksPassed,
-                    "filter" -> "applied_cert_tuple_no_quorum",
-                    "afterHashFilter" -> afterHashFilter.size.toString,
-                    "tupleQuorumReached" -> "false"
-                  )
-                  .whenA(tupleAgreedFacilities.isEmpty)
-              }
-
               _ <- cleanFacilities.traverse_ { _ =>
                 ConsensusLog.debug(
                   logger,
@@ -553,15 +496,11 @@ object GlobalSnapshotConsensusStateAdvancer {
                 )
               }
 
-              result <- tupleAgreedFacilities.flatTraverse { tupleAgreedSet =>
-                // Only HASH-fork-evicted peers (those who declared a Facility with a divergent
+              result <- cleanFacilities.flatTraverse { facilities =>
+                // Only fork-evicted peers (those who declared a Facility with a divergent
                 // `facilitatorsHash`) accumulate into `state.removedFacilitators`. That set is
                 // consensus-agreed because every non-forked node sees the same declarations and
                 // computes the same minority via `identifyForkedPeers`.
-                //
-                // CERT-TUPLE-disagreed peers are explicitly NOT permanently evicted: their
-                // disagreement is transient and will resolve via gossip propagation before the
-                // next retry-round. Permanent removal would punish nodes for gossip latency.
                 //
                 // Peers simply missing from the local facility map (didn't declare in time to
                 // hit quorum on this node) are NOT evicted: that set is local-observation-
@@ -575,10 +514,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                 // Missing-declaration peers simply don't participate this round. They remain
                 // in `state.facilitators` for future rounds; stall-cycle abandonment + VCC
                 // view change handle liveness if they're persistently unresponsive.
-                val hashCleanedSet =
-                  cleanFacilities.getOrElse(SortedMap.empty[PeerId, Facility])
                 val forkEvictedPeers: Set[PeerId] = maybeFacilities match {
-                  case Some(orig) => orig.keySet -- hashCleanedSet.keySet
+                  case Some(orig) => orig.keySet -- facilities.keySet
                   case None       => Set.empty
                 }
                 val updatedState: GlobalSnapshotConsensusState =
@@ -588,7 +525,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                       removedFacilitators = RemovedFacilitators(state.removedFacilitators.value ++ forkEvictedPeers)
                     )
                   else state
-                toProposalsPhase(updatedState, tupleAgreedSet)
+                toProposalsPhase(updatedState, facilities)
               }
             } yield result
           }

@@ -370,74 +370,35 @@ object GlobalSnapshotConsensusStateCreator {
           )
           .whenA(reinstatedThisRound.nonEmpty)
 
-        // v13 (2026-05-07) — apply assembled eviction certificates at round-start. The cert is a
-        // quorum-signed object preserved across abandonment retries (see ConsensusStorage.scala
-        // `clearResourcesPreservingDeclarations`). Honest peers either have the cert in storage
-        // (assembled locally OR received via PR1's `ConsensusPeerEvictionCertificate` gossip
-        // carrier) or do not yet — the gossip dissemination is best-effort during the in-flight
-        // window. The Facility built below carries the local applied-cert list; the advancer
-        // groups received Facilities by `(facilitatorsHash, sorted_appliedCert_targets, ...)`
-        // and only advances when a quorum-many group exists, so the round naturally stalls
-        // (and abandons via the existing stall-cycle path) until the cluster converges on the
-        // same applied-cert set. No mid-round mutation of `state.facilitators` — see codex
-        // review note in `docs/consensus/eviction-cert-deterministic-shrinkage.md`.
-        assembledCertsThisKey <- consensusStorage.getAssembledEvictionCertificates(key)
-        certEvictedTargets = assembledCertsThisKey.map(_.targetPeer)
-        // Sort by EvictionCertificate.ordering at construction time so two nodes with the same
-        // applied-cert SET produce byte-identical Facility serializations and matching tuple-
-        // quorum membership. List ordering matters for the canonical form.
-        sortedAppliedCerts = assembledCertsThisKey.toList.sorted
-
-        _ <- ConsensusLog
-          .info(
-            logger,
-            Facilitator,
-            key.show,
-            "n/a",
-            CertAppliedAtRoundStart,
-            "count" -> sortedAppliedCerts.size.toString,
-            "targets" -> sortedAppliedCerts.map(c => ConsensusLog.pid(c.targetPeer)).mkString(",")
-          )
-          .whenA(sortedAppliedCerts.nonEmpty)
-
         eligibleThisRound = {
           // Exclude: previously removed peers, penalized peers, chronic non-signers (minus any
           // reinstated for this round), deferred candidates (brand-new or in countdown),
-          // B2 probation peers (waiting for AdmissionCertificate re-admission), AND
-          // peers with an assembled EvictionCertificate at this key.
+          // AND B2 probation peers (waiting for AdmissionCertificate re-admission).
           // Deferred/probation candidates remain in allEligible so they remain tracked.
-          val excluded =
-            previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers ++ certEvictedTargets
+          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers
           val filtered = allEligible.filterNot(excluded.contains)
           // Bypass chain for liveness when filtering would drop below minViableQuorum:
           //   1. withoutPenaltiesOnly — lift penalties + deferral, keep chronic, reinstatement
           //      rotation, AND probation. Probation is NON-BYPASSABLE: the only way out of
           //      probation is a quorum-witnessed AdmissionCertificate embedded in a Proposal.
-          //      Cert-evicted peers are also NON-BYPASSABLE: a quorum-signed eviction cert is
-          //      at least as authoritative as a probation gate.
-          //   2. filtered itself (even below floor) — accept degraded committee over re-admitting chronic/probation/cert-evicted peers
-          //   3. allEligible MINUS probation MINUS cert-evicted — last-resort re-admit of chronic peers
-          //      but never probation or cert-evicted
-          //   4. allEligible MINUS cert-evicted — pathological-fall-through; cert-evicted stays out
-          //   5. List(selfId) — only if even step 4 is empty
-          // This is the fork-safety critical path: we never re-admit `chronicNonSigners`,
-          // `probationPeers`, or `certEvictedTargets` except via their respective re-entry gates.
-          val nonBypassable = probationPeers ++ certEvictedTargets
+          //   2. filtered itself (even below floor) — accept degraded committee over re-admitting chronic/probation peers
+          //   3. allEligible MINUS probation — last-resort full re-admit of chronic peers, but never probation
+          //   4. allEligible — only if even step 3 is empty (pathological case, falls through to selfId)
+          // This is the fork-safety critical path: we never re-admit `chronicNonSigners` or
+          // `probationPeers` except via their respective re-entry gates.
           val withoutPenaltiesOnly =
-            allEligible.filterNot((previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ nonBypassable).contains)
-          val allEligibleMinusNonBypassable = allEligible.filterNot(nonBypassable.contains)
+            allEligible.filterNot((previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ probationPeers).contains)
+          val allEligibleMinusProbation = allEligible.filterNot(probationPeers.contains)
           if (filtered.size >= minViableQuorum) filtered
           else if (withoutPenaltiesOnly.size >= 2 && allDeferred.nonEmpty) withoutPenaltiesOnly
           else if (filtered.nonEmpty) filtered
-          else if (allEligibleMinusNonBypassable.nonEmpty) allEligibleMinusNonBypassable
-          else if (allEligible.filterNot(certEvictedTargets.contains).nonEmpty)
-            allEligible.filterNot(certEvictedTargets.contains)
+          else if (allEligibleMinusProbation.nonEmpty) allEligibleMinusProbation
+          else if (allEligible.nonEmpty) allEligible
           else List(selfId)
         }
 
         penaltyBypassed = {
-          val excluded =
-            previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers ++ certEvictedTargets
+          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers
           val filtered = allEligible.filterNot(excluded.contains)
           filtered.size < minViableQuorum && allEligible.size > filtered.size
         }
@@ -520,8 +481,7 @@ object GlobalSnapshotConsensusStateCreator {
             lastOutcome.finished.facilitatorsHash,
             lastOutcome.key,
             lastOutcome.finished.snapshotHash,
-            consensusConfigHash = consensusConfigHash.some,
-            appliedEvictionCerts = sortedAppliedCerts
+            consensusConfigHash = consensusConfigHash.some
           )
           declaration = ConsensusPeerDeclaration(key, facility)
           _ <- consensusStorage.addFacility(selfId, key, facility)

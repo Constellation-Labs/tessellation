@@ -11,9 +11,9 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.
   * cluster is wedged and no Proposal is accepted, the cert keeps re-assembling on every retry but never takes effect. Gossiping it on
   * assembly closes that gap.
   *
-  * Parallels `EvictionVoter` / `GossipingEvictionVoter`. Generic engine-level decision logic (when to assemble, what counts as quorum)
-  * lives in the caller (`StateTransitions.checkEvictionAssembly`); this trait's responsibility is solely the gossip-broadcast step once the
-  * cert has been assembled and stored.
+  * Parallels `EvictionVoter` / `GossipingEvictionVoter`. Generic engine-level decision logic (when to assemble, what counts as quorum) lives
+  * in the caller (`StateTransitions.checkEvictionAssembly`); this trait's responsibility is solely the gossip-broadcast step once the cert
+  * has been assembled and stored.
   */
 trait EvictionCertificateGossiper[F[_], Key] {
   def gossipCert(

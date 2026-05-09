@@ -30,9 +30,16 @@ object declaration {
     def lastSnapshotHash: Hash
   }
 
-  // Facility is declared LATER in this file (after EvictionCertificate / AdmissionCertificate
-  // and before Proposal) because it embeds `appliedEvictionCerts: List[EvictionCertificate]`
-  // for the same circe-generic forward-reference reason as Proposal/VCC documented below.
+  @derive(eqv, show, encoder, decoder)
+  case class Facility(
+    eventHashes: Set[Hash],
+    candidates: Candidates,
+    trigger: Option[ConsensusTrigger],
+    facilitatorsHash: Hash,
+    lastGlobalSnapshotOrdinal: SnapshotOrdinal,
+    lastSnapshotHash: Hash,
+    consensusConfigHash: Option[Hash] = None
+  ) extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)
   case class ProposalQC(
@@ -281,38 +288,6 @@ object declaration {
       }
     implicit val order: cats.kernel.Order[AdmissionCertificate] = cats.kernel.Order.fromOrdering(ordering)
   }
-
-  // Facility is declared HERE (rather than at the top with the other PeerDeclarations) so its
-  // `appliedEvictionCerts: List[EvictionCertificate]` field can resolve the circe-generic
-  // implicit chain at macro-expansion time. Same forward-reference rationale as
-  // Proposal-after-ViewChangeCertificate.
-  @derive(eqv, show, encoder, decoder)
-  case class Facility(
-    eventHashes: Set[Hash],
-    candidates: Candidates,
-    trigger: Option[ConsensusTrigger],
-    facilitatorsHash: Hash,
-    lastGlobalSnapshotOrdinal: SnapshotOrdinal,
-    lastSnapshotHash: Hash,
-    consensusConfigHash: Option[Hash] = None,
-    // Quorum-witnessed eviction certificates this node is applying at round-start. Used to
-    // shrink the round committee for the SAME ordinal that produced the cert — closes the
-    // testnet 2026-05-07 ord 3121304 stuck-cluster gap where certs assembled but never took
-    // effect because no Proposal was ever accepted.
-    //
-    // Determinism rule: this list participates in fork detection / quorum grouping at
-    // facility-collection time. A round only advances when quorum-many Facilities agree on
-    // (facilitatorsHash, sorted_appliedEvictionCert_targets, lastSnapshotHash, consensusConfigHash).
-    // See `docs/consensus/eviction-cert-deterministic-shrinkage.md`.
-    //
-    // Sort by `EvictionCertificate.ordering` (by target peer id, then reason, then hashes) at
-    // construction time so two nodes with the same applied-cert SET produce byte-identical
-    // serializations and matching tuple-quorum membership.
-    //
-    // Defaults to empty for forward compatibility — old peers (pre-PR2) and rounds where no
-    // cert has been assembled write out an empty list.
-    appliedEvictionCerts: List[EvictionCertificate] = List.empty
-  ) extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)
   case class Proposal(
