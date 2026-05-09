@@ -193,10 +193,11 @@ object types {
     // deferral, as a hard filter that keeps chronic flaky community peers out of the
     // committee before round start (preventing mid-round eviction cascades).
     minParticipationObservations: Int = 5,
-    // v15 (2026-05-08): default tightened 0.5 → 0.6. Real priority-node participation on testnet runs
-    // ~85% accounting for restart cycles; 0.6 keeps healthy nodes comfortably in committees while
-    // filtering peers with sustained low signing rates. See dag-l0.conf v15 note.
-    minParticipationRatio: Double = 0.6,
+    // v16 (2026-05-08): default tightened 0.6 → 0.7 after observing alpha.55 stalls where
+    // 0.6 admitted peers running ratio ~0.6-0.65. Source-node participation runs ~85% so 0.7
+    // still keeps healthy nodes comfortably admitted while excluding the marginal flaky cohort.
+    // See dag-l0.conf v16 note.
+    minParticipationRatio: Double = 0.7,
     // v8 (2026-04-29) minimum-history floor for chronic classification. Codex-recommended
     // separate knob: the existing `minParticipationObservations` is reused as the leader-
     // graduation gate (state-creator:470), so bumping it to 30 would also delay leader
