@@ -991,14 +991,29 @@ object GlobalSnapshotConsensusStateAdvancer {
                 )
               )
             case Some(vcc) =>
-              vcc.highestQcInVcc match {
-                case Some(qc) if qc.proposalHash =!= proposal.hash =>
-                  Left(
-                    ProposalRejection(
-                      s"highest_qc_carry_forward_violation qcHash=${qc.proposalHash.show.take(8)} proposalHash=${proposal.hash.show.take(8)}"
-                    )
-                  )
-                case _ => Right(())
+              // v17 (2026-05-11): symmetric with B1/B2 -- every VCC voter must be in the deterministic
+              // wider witness pool. The assembler (StateTransitions.checkViewChangeAssembly) filters by
+              // the same pool; without this re-check on the follower side, an adversarial leader could
+              // embed a VCC built from out-of-pool voters and the rest of the cluster would accept it.
+              val witnessPool = WitnessPool.all(
+                state.eligibleFacilitators.value.toSet,
+                state.lastOutcome.peerQuality.toMap,
+                config.minParticipationObservations
+              )
+              val nonWitnessPoolVoter = vcc.votes.toNonEmptyList.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
+              nonWitnessPoolVoter match {
+                case Some(bad) =>
+                  Left(ProposalRejection(s"vcc_voter_not_in_pool voter=${bad.proofs.head.id.show.take(8)}"))
+                case None =>
+                  vcc.highestQcInVcc match {
+                    case Some(qc) if qc.proposalHash =!= proposal.hash =>
+                      Left(
+                        ProposalRejection(
+                          s"highest_qc_carry_forward_violation qcHash=${qc.proposalHash.show.take(8)} proposalHash=${proposal.hash.show.take(8)}"
+                        )
+                      )
+                    case _ => Right(())
+                  }
               }
           }
         }
@@ -1097,8 +1112,19 @@ object GlobalSnapshotConsensusStateAdvancer {
                       )
                     )
                   case None =>
-                    // v9: voter must be in the widened witness pool, not the committee.
-                    val witnessPool = state.eligibleFacilitators.value.toSet - cert.targetPeer
+                    // v17 (2026-05-11): pool widens from the round-start committee to the union of
+                    // `eligibleFacilitators` and historical participants in `lastOutcome.peerQuality`
+                    // (participated >= minParticipationObservations). Both inputs are projections of
+                    // the previous signed outcome; both sides of the round (assembler in
+                    // StateTransitions.checkEvictionAssembly and follower here) compute the
+                    // byte-identical pool via the shared WitnessPool helper. The quorum denominator
+                    // stays committee-sized -- only the set of valid witness signers widens.
+                    val witnessPool = WitnessPool.forTarget(
+                      state.eligibleFacilitators.value.toSet,
+                      state.lastOutcome.peerQuality.toMap,
+                      config.minParticipationObservations,
+                      cert.targetPeer
+                    )
                     val nonWitnessPoolVoter = cert.votes.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
                     nonWitnessPoolVoter match {
                       case Some(bad) =>
@@ -1202,8 +1228,13 @@ object GlobalSnapshotConsensusStateAdvancer {
                       )
                     )
                   case None =>
-                    // v9: voter must be in the widened witness pool, not the committee.
-                    val witnessPool = state.eligibleFacilitators.value.toSet - cert.targetPeer
+                    // v17 (2026-05-11): symmetric widening with B1 -- see validateProposalEcs above.
+                    val witnessPool = WitnessPool.forTarget(
+                      state.eligibleFacilitators.value.toSet,
+                      state.lastOutcome.peerQuality.toMap,
+                      config.minParticipationObservations,
+                      cert.targetPeer
+                    )
                     val nonWitnessPoolVoter = cert.votes.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
                     nonWitnessPoolVoter match {
                       case Some(bad) =>

@@ -258,6 +258,7 @@ object CurrencySnapshotConsensus {
             !o.recentProofSizes.values.exists(_ >= snapshotConfig.consensus.bootstrapCompleteProofsThreshold),
           (o: CurrencyConsensusOutcome) => o.readmissionCountdown.filter(_._2 > 0).keySet,
           (o: CurrencyConsensusOutcome) => o.finished.snapshotHash,
+          (o: CurrencyConsensusOutcome) => o.peerQuality.toMap,
           getPeerChainTips
         )
 

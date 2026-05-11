@@ -329,6 +329,7 @@ object GlobalSnapshotConsensus {
             !o.recentProofSizes.values.exists(_ >= appConfig.snapshot.consensus.bootstrapCompleteProofsThreshold),
           (o: GlobalConsensusOutcome) => o.readmissionCountdown.filter(_._2 > 0).keySet,
           (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
+          (o: GlobalConsensusOutcome) => o.peerQuality.toMap,
           getPeerChainTips
         )
 
