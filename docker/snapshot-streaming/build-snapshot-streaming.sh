@@ -40,17 +40,26 @@ else
   fi
 
   # Apply compatibility patch if present (breaks circular dependency with tessellation)
-  # Uses --check first to skip gracefully if already applied upstream
+  # Uses --check first to skip gracefully if already applied upstream.
+  # The patch currently strips c.forkInfoStorage so positional args line up
+  # against a SharedConfig where forkInfoStorage has been removed (release/testnet).
+  # On branches that still carry forkInfoStorage (develop, feature branches),
+  # applying it leaves the constructor one arg short — detect and skip in that case.
   PATCH_FILE="$SS_DIR/snapshot-streaming.patch"
+  TYPES_FILE="$SCRIPT_DIR/../../modules/node-shared/src/main/scala/io/constellationnetwork/node/shared/config/types.scala"
   if [ -f "$PATCH_FILE" ] && [ -s "$PATCH_FILE" ]; then
-    cd "$BUILD_DIR"
-    if git apply --check "$PATCH_FILE" 2>/dev/null; then
-      echo "Applying snapshot-streaming compatibility patch..."
-      git apply "$PATCH_FILE"
+    if [ -f "$TYPES_FILE" ] && grep -q "forkInfoStorage: ForkInfoStorageConfig" "$TYPES_FILE"; then
+      echo "Local SharedConfig still has forkInfoStorage — skipping snapshot-streaming patch"
     else
-      echo "Patch already applied or not needed, skipping..."
+      cd "$BUILD_DIR"
+      if git apply --check "$PATCH_FILE" 2>/dev/null; then
+        echo "Applying snapshot-streaming compatibility patch..."
+        git apply "$PATCH_FILE"
+      else
+        echo "Patch already applied or not needed, skipping..."
+      fi
+      cd "$SCRIPT_DIR"
     fi
-    cd "$SCRIPT_DIR"
   fi
 
   cd "$BUILD_DIR"
