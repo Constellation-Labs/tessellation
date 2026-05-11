@@ -87,6 +87,17 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // forever (gl0-4 2026-04-24 fork-recovery E2E). Same wiring source as `StallDetector`'s B2
   // admission emission — see the ConsensusEventLoop construction site.
   probationPeersOf: Outcome => Set[PeerId],
+  // Layer-specific extraction of consensus-agreed peerQuality from the carried outcome.
+  // Used to widen the witness pool for B1/B2/VCC cert assembly beyond the round-start
+  // committee. peerQuality lives in the concrete outcome type (GlobalConsensusOutcome /
+  // CurrencyConsensusOutcome) and is signed as part of the snapshot, so every honest node
+  // computes byte-identical maps and therefore the same wider witness pool. See
+  // `StateTransitions.witnessPoolFor` for the deterministic derivation.
+  //
+  // Returns an empty map if the outcome carries no peerQuality (genesis / pre-v8 outcomes),
+  // in which case the wider-pool reduces to `eligibleFacilitators` and preserves prior
+  // behavior.
+  peerQualityOf: Outcome => Map[PeerId, (Int, Int)],
   // Local-only marker: the consensus key at which this node most recently completed
   // `initFromDownload` (recovery path). Read by layer-specific advancers — when this node is
   // elected leader within `recoveryLeaderCooldownRounds` of recovery completion, the advancer
@@ -124,7 +135,8 @@ object ConsensusEngineContext {
     peerQualityTracker: PeerQualityTracker[F],
     isInBootstrap: Outcome => Boolean,
     lastSnapshotHashOf: Outcome => io.constellationnetwork.security.hash.Hash,
-    probationPeersOf: Outcome => Set[PeerId]
+    probationPeersOf: Outcome => Set[PeerId],
+    peerQualityOf: Outcome => Map[PeerId, (Int, Int)] = (_: Outcome) => Map.empty[PeerId, (Int, Int)]
   ): F[ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =
     for {
       running <- Ref.of[F, Boolean](false)
@@ -152,6 +164,7 @@ object ConsensusEngineContext {
         isInBootstrap,
         lastSnapshotHashOf,
         probationPeersOf,
+        peerQualityOf,
         recoveredAtKey
       )
 }

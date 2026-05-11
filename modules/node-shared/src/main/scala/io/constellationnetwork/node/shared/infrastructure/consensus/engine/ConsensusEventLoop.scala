@@ -98,6 +98,7 @@ object ConsensusEventLoop {
     isInBootstrap: Outcome => Boolean,
     probationPeersOf: Outcome => Set[PeerId],
     lastSnapshotHashOf: Outcome => io.constellationnetwork.security.hash.Hash,
+    peerQualityOf: Outcome => Map[PeerId, (Int, Int)],
     getPeerChainTips: F[Map[PeerId, io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip]]
   )(
     implicit _key: monocle.Lens[Outcome, Key],
@@ -128,7 +129,8 @@ object ConsensusEventLoop {
         peerQualityTracker,
         isInBootstrap,
         lastSnapshotHashOf,
-        probationPeersOf
+        probationPeersOf,
+        peerQualityOf
       )
       healthRef <- ConsensusHealthStatus.ref[F]
       viewChangeManager = new ViewChangeManager[F, Key, Artifact, Ctx, Status, Outcome, Kind](

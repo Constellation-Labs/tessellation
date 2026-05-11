@@ -75,7 +75,49 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
   outcomeTrigger: Lens[Outcome, ConsensusTrigger]
 ) {
 
-  import ctx.{advancer, config, facilitatorSelector, logger => log, peerQualityTracker, queue, remover, storage, updater}
+  import ctx.{advancer, config, facilitatorSelector, logger => log, peerQualityOf, peerQualityTracker, queue, remover, storage, updater}
+
+  /** Deterministic witness pool for B1/B2/VCC certificate assembly.
+    *
+    * The pool unions two consensus-agreed sets, then removes `target`:
+    *
+    *   1. `state.eligibleFacilitators` -- peers eligible to facilitate THIS round (chronic-filtered subset of the previous outcome's
+    *      participants). Always non-empty for active rounds. 2. Peers in `lastOutcome.peerQuality` with `participated >=
+    *      minParticipationObservations` -- anyone who has actually voted in at least the observation-floor number of past rounds,
+    *      regardless of whether they're currently in the chronic-excluded set.
+    *
+    * Determinism guarantees: both inputs are projections of `lastOutcome` which is signed and propagated as part of the previous snapshot.
+    * `minParticipationObservations` is in `ConsensusConfig.deterministicConfigHash`. Every honest node therefore computes the
+    * byte-identical witness pool from the same lastOutcome. The set semantics (Set[PeerId]) eliminates ordering as a determinism concern;
+    * cert builders sort the resulting votes into a SortedSet so serialization is stable downstream.
+    *
+    * Why widen at all: in the canonical "committee = previous signers" pattern, when 4 of 6 committee members are offline or stuck in
+    * `WaitingForDownload`, the round can't progress AND the eviction/admission cert that would normally rotate the committee also can't
+    * assemble (same supermajority gate). Letting peers with proven prior participation witness the cert -- without giving them a vote in
+    * the round itself -- breaks the deadlock without weakening the round's BFT guarantee. The wider pool only matters when there ARE peers
+    * outside the committee with peerQuality history; in normal ops with a healthy committee it has no practical effect because the
+    * committee dominates the union.
+    *
+    * Why this doesn't drift in steady state: peerQuality grows monotonically (entries are added, counters increment); it does not
+    * arbitrarily reshape. The wider pool is therefore a monotone function of round history and consensus-agreed observations.
+    *
+    * Returns the EXCLUSIVE pool (target removed). Callers do not need to filter again.
+    */
+  private[state] def widerWitnessPool(state: ConsensusState[Key, Status, Outcome, Kind], target: PeerId): Set[PeerId] =
+    WitnessPool.forTarget(
+      state.eligibleFacilitators.value.toSet,
+      peerQualityOf(state.lastOutcome),
+      config.minParticipationObservations,
+      target
+    )
+
+  /** Same as [[widerWitnessPool]] without target removal. Used for callers like VCC that aren't keyed by a specific target peer. */
+  private[state] def widerWitnessPoolAll(state: ConsensusState[Key, Status, Outcome, Kind]): Set[PeerId] =
+    WitnessPool.all(
+      state.eligibleFacilitators.value.toSet,
+      peerQualityOf(state.lastOutcome),
+      config.minParticipationObservations
+    )
 
   def checkUpdate(key: Key): F[Unit] =
     for {
@@ -114,8 +156,13 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
             val facilitatorsHashCandidates = votes.values.map(_.value.facilitatorsHash).toSet
             facilitatorsHashCandidates.toList match {
               case singleHash :: Nil =>
+                // v17 (2026-05-11): widen VCC witness pool to match EvictionCertificateBuilder's
+                // v17 widening. The proposal-validation path in the advancer derives the same pool
+                // from the same consensus-agreed inputs, so this is the canonical pool for the
+                // round. Quorum stays committee-sized (passed in q above).
+                val vccPool = widerWitnessPoolAll(state)
                 ViewChangeCertificateBuilder
-                  .build(fromView, toView, singleHash, votes, q) match {
+                  .build(fromView, toView, singleHash, votes, q, vccPool) match {
                   case Left(error) =>
                     ConsensusLog.warn(
                       log,
@@ -275,12 +322,15 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                 val reasons = matchingVotes.values.map(_.value.reason).toSet
                 reasons.toList match {
                   case singleReason :: Nil =>
-                    // v9 (2026-04-29): widen witness pool from committee to eligibleFacilitators - target.
-                    // Phase A of the apr29 wedge (round 3110065) had committee=9, eligibleFacilitators=12,
-                    // and 3 chronic-excluded peers signed valid eviction votes that the committee gate threw
-                    // away — leaving 4 of 7 needed votes. The wider pool admits those eligible-but-not-active
-                    // signatures while quorum stays pegged to committee size below.
-                    val witnessPool = state.eligibleFacilitators.value.toSet - target
+                    // v17 (2026-05-11): pool widens further to include `lastOutcome.peerQuality` peers
+                    // (participated >= minParticipationObservations). The v9 widening to
+                    // `eligibleFacilitators` did not cover the post-rollback wedge at ord 3122488 where
+                    // the chronic-classifier excluded most non-source peers AND the committee was the
+                    // entire eligibleFacilitators set. Adding historical participants -- peers consensus-
+                    // agreed to have voted in past rounds -- preserves the supermajority quorum (still
+                    // committee-sized) while allowing rotated-out peers with proven history to witness
+                    // the cert. See `widerWitnessPool` for the full determinism analysis.
+                    val witnessPool = widerWitnessPool(state, target)
                     val expectedLastSnap = ctx.lastSnapshotHashOf(state.lastOutcome)
                     EvictionCertificateBuilder.build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, witnessPool) match {
                       case Left(error) =>
@@ -387,9 +437,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                 val reasons = matchingVotes.values.map(_.value.reason).toSet
                 reasons.toList match {
                   case singleReason :: Nil =>
-                    // v9 (2026-04-29): symmetric widening with B1 — use eligibleFacilitators - target as
-                    // the witness pool. Quorum stays committee-sized.
-                    val witnessPool = state.eligibleFacilitators.value.toSet - target
+                    // v17 (2026-05-11): symmetric widening with B1 -- pool extended to include
+                    // historical participants from `peerQuality` (see `widerWitnessPool` for the
+                    // determinism analysis). Quorum stays committee-sized.
+                    val witnessPool = widerWitnessPool(state, target)
                     val expectedLastSnap = ctx.lastSnapshotHashOf(state.lastOutcome)
                     AdmissionCertificateBuilder
                       .build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, witnessPool) match {
