@@ -7,7 +7,7 @@ on:
     branches:
       - develop
       - release/testnet
-      - nightly_monitoring
+      - nightly_deploy_fixes
   workflow_dispatch:
     inputs:
       branch:
@@ -89,6 +89,40 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/sbt-archive-keyring.gpg] https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
           sudo apt-get update
           sudo apt-get install -y sbt
+
+      # The build checkout above pins to release/testnet (the deploy branch), but
+      # snapshot-streaming.patch fixes typically land on develop or a feature branch
+      # first. Grab the patch file from the triggering ref so feature branches can
+      # exercise fixes in CI before merging to release/testnet.
+      - name: Grab snapshot-streaming patch from triggering ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          path: .patch-source
+          sparse-checkout: |
+            docker/snapshot-streaming/snapshot-streaming.patch
+          sparse-checkout-cone-mode: false
+
+      # snapshot-streaming.patch removes c.forkInfoStorage from Configuration.scala
+      # to match release/testnet's SharedConfigReader. Other branches still have
+      # forkInfoStorage, so applying the patch there would drop a required arg
+      # and break the build. Overlay the triggering ref's patch only when the
+      # build ref is release/testnet; otherwise clear the patch file.
+      - name: Apply or disable snapshot-streaming patch
+        run: |
+          src=.patch-source/docker/snapshot-streaming/snapshot-streaming.patch
+          dst=docker/snapshot-streaming/snapshot-streaming.patch
+          if [ "${{ inputs.branch || 'release/testnet' }}" = "release/testnet" ]; then
+            if [ -f "$src" ] && [ -s "$src" ]; then
+              cp "$src" "$dst"
+              echo "Overlaid snapshot-streaming.patch from ${{ github.ref_name }} ($(wc -c < "$dst") bytes)"
+            else
+              echo "No snapshot-streaming.patch on triggering ref (${{ github.ref_name }}) — leaving build-ref copy in place"
+            fi
+          else
+            : > "$dst"
+            echo "Cleared snapshot-streaming.patch (building ${{ inputs.branch }}, not release/testnet)"
+          fi
 
       - name: Build all JARs
         run: just build --num-gl0=3 --snapshot-streaming-branch=${{ vars.SNAPSHOT_STREAMING_BRANCH || 'testing' }} --block-explorer-branch=${{ vars.BLOCK_EXPLORER_BRANCH || 'increase_delegated_stakes' }}
