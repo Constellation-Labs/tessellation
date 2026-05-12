@@ -8,6 +8,37 @@ import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 
+// Per-peer behavior counters consolidated into a single record so each PeerId
+// appears once across all five per-peer dimensions, instead of being duplicated
+// as a key across five separate maps. PeerId is a 128-char hex string (~128
+// bytes per occurrence); with 150 mainnet peers active in 2-4 of these
+// dimensions, the prior layout wasted tens of KB per snapshot in duplicated
+// keys.
+//
+// `empty` is the identity element: a peer absent from the per-peer map is
+// equivalent to a peer with `PerPeerOperationalRecord.empty`. Code that
+// previously checked `if (penalties.contains(pid))` now checks
+// `if (record.removalPenalty > 0)`.
+@derive(eqv, show, encoder, decoder)
+final case class PerPeerOperationalRecord(
+  quality: (Int, Int),
+  removalPenalty: Int,
+  cumulativeMissCount: Long,
+  readmissionCountdown: Int,
+  deferralCountdown: Int
+)
+
+object PerPeerOperationalRecord {
+  val empty: PerPeerOperationalRecord =
+    PerPeerOperationalRecord(
+      quality = (0, 0),
+      removalPenalty = 0,
+      cumulativeMissCount = 0L,
+      readmissionCountdown = 0,
+      deferralCountdown = 0
+    )
+}
+
 // Persisted snapshot of consensus-derived peer-behavior counters.
 //
 // Carried as an optional field on the incremental snapshot (initially `None`
@@ -21,28 +52,27 @@ import derevo.derive
 // the previous round's outcome. Do not introduce wall-clock, randomness, or
 // node-local state into the pack/unpack helpers.
 //
-// On rollback (Main.scala consumes via `seed`), the six fields are spliced
-// into the GlobalConsensusOutcome that seeds startFacilitatingAfterRollback,
-// so chronic-classifier history, B2 readmission, and removal-penalty escalation
-// survive cluster cold-starts without re-bootstrapping from zero.
+// Known off-by-one on cold-restart: snapshot[N].peerHistory packs the outcome
+// AS-OF round N proposal time (= pack(Outcome[N-1])), because the snapshot's
+// signed bytes are sealed at proposal-build before Outcome[N] exists. On
+// rollback to N, we therefore seed `state.lastOutcome` with N-1 era counters
+// rather than N era counters -- losing exactly one round of evolution per
+// cold-restart. That 1-round drift on `cumulativeMissCount` etc. is well below
+// the chronic-classifier floor (10-30 observations) and is not material vs the
+// alternative (no persistence at all).
+//
+// `perPeer` holds the five PeerId-keyed dimensions. `recentProofSizes` is
+// keyed by SnapshotOrdinal so it stays separate.
 @derive(eqv, show, encoder, decoder)
 final case class ConsensusOperationalState(
-  peerQuality: SortedMap[PeerId, (Int, Int)],
-  removalPenalties: SortedMap[PeerId, Int],
-  cumulativeMissCounts: SortedMap[PeerId, Long],
-  readmissionCountdown: SortedMap[PeerId, Int],
-  recentProofSizes: SortedMap[SnapshotOrdinal, Int],
-  deferralCountdown: SortedMap[PeerId, Int]
+  perPeer: SortedMap[PeerId, PerPeerOperationalRecord],
+  recentProofSizes: SortedMap[SnapshotOrdinal, Int]
 )
 
 object ConsensusOperationalState {
   val empty: ConsensusOperationalState =
     ConsensusOperationalState(
-      peerQuality = SortedMap.empty,
-      removalPenalties = SortedMap.empty,
-      cumulativeMissCounts = SortedMap.empty,
-      readmissionCountdown = SortedMap.empty,
-      recentProofSizes = SortedMap.empty,
-      deferralCountdown = SortedMap.empty
+      perPeer = SortedMap.empty,
+      recentProofSizes = SortedMap.empty
     )
 }

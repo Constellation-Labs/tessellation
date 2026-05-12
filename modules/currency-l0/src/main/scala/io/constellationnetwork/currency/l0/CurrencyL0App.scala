@@ -393,10 +393,26 @@ abstract class CurrencyL0App(
                       // for full rationale.
                       signers = currencySnapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
                       bootstrapFacilitators = if (signers.contains(nodeId)) signers else List(nodeId)
-                      // v20: restore consensus-derived peer-behavior counters from the rollback
+                      // v20+v21: restore consensus-derived peer-behavior counters from the rollback
                       // snapshot if present. Pre-v20 snapshots have `peerHistory = None` and the
-                      // cluster bootstraps from zero just as before. See dag-l0 mirror.
+                      // cluster bootstraps from zero just as before. See dag-l0 mirror for the
+                      // known one-round off-by-one (we accept it; drift is below chronic floors).
                       seedOperational = currencySnapshot.value.peerHistory.getOrElse(ConsensusOperationalState.empty)
+                      seedPeerQuality = SortedMap.from(seedOperational.perPeer.iterator.collect {
+                        case (pid, r) if r.quality != ((0, 0)) => pid -> r.quality
+                      })
+                      seedRemovalPenalties = SortedMap.from(seedOperational.perPeer.iterator.collect {
+                        case (pid, r) if r.removalPenalty > 0 => pid -> r.removalPenalty
+                      })
+                      seedCumulativeMissCounts = SortedMap.from(seedOperational.perPeer.iterator.collect {
+                        case (pid, r) if r.cumulativeMissCount > 0L => pid -> r.cumulativeMissCount
+                      })
+                      seedReadmissionCountdown = SortedMap.from(seedOperational.perPeer.iterator.collect {
+                        case (pid, r) if r.readmissionCountdown > 0 => pid -> r.readmissionCountdown
+                      })
+                      seedDeferralCountdown = SortedMap.from(seedOperational.perPeer.iterator.collect {
+                        case (pid, r) if r.deferralCountdown > 0 => pid -> r.deferralCountdown
+                      })
                       rollbackRecentProofSizes =
                         if (seedOperational.recentProofSizes.nonEmpty) seedOperational.recentProofSizes
                         else
@@ -420,12 +436,12 @@ abstract class CurrencyL0App(
                             Hash.empty,
                             hashedSnapshot.hash
                           ),
-                          removalPenalties = seedOperational.removalPenalties,
-                          deferralCountdown = seedOperational.deferralCountdown,
-                          peerQuality = seedOperational.peerQuality,
-                          cumulativeMissCounts = seedOperational.cumulativeMissCounts,
+                          removalPenalties = seedRemovalPenalties,
+                          deferralCountdown = seedDeferralCountdown,
+                          peerQuality = seedPeerQuality,
+                          cumulativeMissCounts = seedCumulativeMissCounts,
                           recentProofSizes = rollbackRecentProofSizes,
-                          readmissionCountdown = seedOperational.readmissionCountdown
+                          readmissionCountdown = seedReadmissionCountdown
                         )
                       )
                     } yield ()
