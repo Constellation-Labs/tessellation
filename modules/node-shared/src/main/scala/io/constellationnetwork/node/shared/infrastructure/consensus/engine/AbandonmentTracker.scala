@@ -276,14 +276,21 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
                 // Stuck at the same ordinal with QuorumInfeasible for too long. Per the
                 // QuorumInfeasible invariant (`active < required`, see AbandonReason.scala),
                 // every retriable abandonment past this threshold means peers cannot form
-                // quorum at this ordinal — either the node is isolated (active==1) or it has
-                // fallen behind the network (peers advanced past this ordinal). Both cases
-                // resolve to recovery download.
+                // quorum at this ordinal -- either the node is isolated (active==1), the node
+                // has fallen behind (peers advanced past this ordinal), or the whole cluster
+                // is stuck at this ordinal (e.g. fresh post-deploy where every facilitator
+                // simultaneously reboots and cannot meet quorum on the first round).
                 //
-                // Cluster-wide-stall suppression (where all peers ARE at this ordinal but
-                // can't agree) lives in the non-retriable path below, gated on
-                // `peersAtHigherKey`. That path catches MaxStalls/RoundTimeout abandonments,
-                // which is what fires when B1 eviction can't progress the round.
+                // v18 (2026-05-11): apply the same `peersAtHigherKey > 0` gate the
+                // non-retriable path uses. Without it, a fresh deploy where all source nodes
+                // reboot together cascades all of them into WaitingForDownload on the FIRST
+                // failed round at the new ordinal -- and since no peer is ahead, every node
+                // loops in `Discovered 0/1 selectable peers, waiting 1 minute` forever. v17
+                // alpha.58 deploy 2026-05-11 deadlocked at ord 3122551 with exactly this
+                // shape: clusterSize=7, active=3, requiredQuorum=5, no peer ahead. Retain
+                // the original semantics when a peer IS ahead (isolated / lagging cases) by
+                // keeping the same recovery-download trigger; only the cluster-wide-stall
+                // case is suppressed.
                 reason.quorumPair
                   .liftTo[F](new IllegalStateException(s"Retriable AbandonReason without quorumPair: $reason"))
                   .flatMap {
@@ -292,19 +299,38 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
                       val cause = if (isIsolated) EscalationCause.Isolated else EscalationCause.QuorumImpossible
                       retriableAtSameKeyRef.set((none[Key], 0)) >>
                         trackConsecutiveAbandonments(key).flatMap { consecutiveCount =>
-                          ConsensusLog.info(
-                            logger,
-                            Category.Lifecycle,
-                            key.toString,
-                            "n/a",
-                            LogEvent.RetriableEscalated,
-                            "reason" -> reason.label,
-                            "activeFacilitators" -> activeFacilitators.toString,
-                            "requiredQuorum" -> requiredQuorum.toString,
-                            "escalationCause" -> cause.label
-                          ) >>
-                            healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount)) >>
-                            triggerRecoveryDownload(key, consecutiveCount)
+                          for {
+                            // Mirror the non-retriable path's network-advance probe so the
+                            // same observation drives both escalation paths. `peerCurrentKeys`
+                            // is the live per-peer tip (max seen via incoming keyed rumors);
+                            // `readyPeerIds` filters to peers currently in Ready state because
+                            // a non-Ready peer's reported tip can't be downloaded from.
+                            peerCurrentKeys <- storage.getPeerCurrentKeys
+                            responsivePeers <- clusterStorage.getResponsivePeers
+                            readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
+                            readyPeerRegs = peerCurrentKeys.view.filterKeys(readyPeerIds.contains).toMap
+                            peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key }
+                            networkAdvanced = peersAtHigherKey > 0
+                            _ <- ConsensusLog.info(
+                              logger,
+                              Category.Lifecycle,
+                              key.toString,
+                              "n/a",
+                              LogEvent.RetriableEscalated,
+                              "reason" -> reason.label,
+                              "activeFacilitators" -> activeFacilitators.toString,
+                              "requiredQuorum" -> requiredQuorum.toString,
+                              "escalationCause" -> cause.label,
+                              "peersAtHigherKey" -> peersAtHigherKey.toString,
+                              "readyPeers" -> readyPeerRegs.size.toString,
+                              "triggerRecovery" -> networkAdvanced.toString,
+                              "recoverySuppressed" -> (!networkAdvanced).toString
+                            )
+                            _ <- healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount))
+                            _ <-
+                              if (networkAdvanced) triggerRecoveryDownload(key, consecutiveCount)
+                              else offerRoundCompleted >> queue.offer(ConsensusCommand.TimeTick)
+                          } yield ()
                         }
                   }
               else
