@@ -10,8 +10,8 @@ import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotArtifact
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.{ConsensusOperationalState, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
@@ -126,6 +126,17 @@ object schema {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value
       else facilitators.value
+
+    // v20 mirror of GlobalConsensusOutcome.toOperationalState. See dag-l0 schema.
+    def toOperationalState: ConsensusOperationalState =
+      ConsensusOperationalState(
+        peerQuality = peerQuality,
+        removalPenalties = removalPenalties,
+        cumulativeMissCounts = cumulativeMissCounts,
+        readmissionCountdown = readmissionCountdown,
+        recentProofSizes = recentProofSizes,
+        deferralCountdown = deferralCountdown
+      )
   }
 
   object CurrencyConsensusOutcome {

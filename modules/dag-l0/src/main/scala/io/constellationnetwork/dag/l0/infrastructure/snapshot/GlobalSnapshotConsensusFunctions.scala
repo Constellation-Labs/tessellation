@@ -108,7 +108,8 @@ object GlobalSnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       artifact: GlobalSnapshotArtifact,
       facilitators: Set[PeerId],
-      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+      peerHistory: Option[ConsensusOperationalState] = None
     )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (GlobalSnapshotArtifact, GlobalSnapshotContext)]] = {
       val dagEvents = artifact.blocks.unsorted.map(_.block).map(DAGEvent(_))
       val scEvents = artifact.stateChannelSnapshots.toList.flatMap {
@@ -156,7 +157,8 @@ object GlobalSnapshotConsensusFunctions {
         artifactTrigger,
         events,
         facilitators,
-        getGlobalSnapshotByOrdinal
+        getGlobalSnapshotByOrdinal,
+        peerHistory
       )
 
       def check(result: F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])]) =
@@ -198,7 +200,8 @@ object GlobalSnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       events: Set[GlobalSnapshotEvent],
       facilitators: Set[PeerId],
-      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+      peerHistory: Option[ConsensusOperationalState] = None
     )(implicit hasher: Hasher[F]): F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])] = {
       val scEventsBeforeCut = events.collect { case sc: StateChannelEvent => sc }
       val dagEventsBeforeCut = events.collect { case d: DAGEvent => d }
@@ -482,7 +485,8 @@ object GlobalSnapshotConsensusFunctions {
           acceptedDelegatedStakeCreates.some,
           acceptedDelegatedStakeWithdrawals.some,
           acceptedNnodeCollateralCreates.some,
-          acceptedNnodeCollateralWithdrawals.some
+          acceptedNnodeCollateralWithdrawals.some,
+          peerHistory
         )
         returnedEvents = returnedSCEvents.map(StateChannelEvent(_)) ++ returnedDAGEvents
         _ <- ConsensusLog.info(

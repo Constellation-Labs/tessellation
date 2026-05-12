@@ -1078,7 +1078,10 @@ object CurrencySnapshotConsensusStateAdvancer {
             // Canonical round-start committee — matches createArtifact's read so leader and
             // validators accept/reject against the same facilitator set. See dag-l0 equivalent.
             state.roundStartFacilitators.value.toSet,
-            getGlobalSnapshotByOrdinal
+            getGlobalSnapshotByOrdinal,
+            // v20: re-pack from validator's own lastOutcome -- consensus-agreed,
+            // so leader and validator produce byte-identical artifact.peerHistory.
+            Some(state.lastOutcome.toOperationalState)
           )
           .map {
             case Right((validatedArtifact, context)) =>
@@ -1456,7 +1459,9 @@ object CurrencySnapshotConsensusStateAdvancer {
           events,
           // Canonical round-start committee — matches validateLeaderArtifact.
           state.roundStartFacilitators.value.toSet,
-          getGlobalSnapshotByOrdinal
+          getGlobalSnapshotByOrdinal,
+          // v20: see dag-l0 mirror.
+          Some(state.lastOutcome.toOperationalState)
         )
 
       private val selfId: PeerId = PeerId.fromPublic(keyPair.getPublic)

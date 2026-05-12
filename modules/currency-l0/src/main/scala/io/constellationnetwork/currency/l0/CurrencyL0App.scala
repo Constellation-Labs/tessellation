@@ -34,6 +34,7 @@ import io.constellationnetwork.node.shared.resources.MkHttpServer
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.node.shared.{NodeSharedOrSharedRegistrationIdRange, nodeSharedKryoRegistrar}
+import io.constellationnetwork.schema.ConsensusOperationalState
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.gossip.{Ordinal => GossipOrdinal}
@@ -392,11 +393,16 @@ abstract class CurrencyL0App(
                       // for full rationale.
                       signers = currencySnapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
                       bootstrapFacilitators = if (signers.contains(nodeId)) signers else List(nodeId)
-                      // Seed the bootstrap-warmup window with this rollback snapshot's proof count.
-                      // See dag-l0 mirror for rationale.
-                      rollbackRecentProofSizes = SortedMap(
-                        currencySnapshot.ordinal -> currencySnapshot.proofs.size.toInt
-                      )
+                      // v20: restore consensus-derived peer-behavior counters from the rollback
+                      // snapshot if present. Pre-v20 snapshots have `peerHistory = None` and the
+                      // cluster bootstraps from zero just as before. See dag-l0 mirror.
+                      seedOperational = currencySnapshot.value.peerHistory.getOrElse(ConsensusOperationalState.empty)
+                      rollbackRecentProofSizes =
+                        if (seedOperational.recentProofSizes.nonEmpty) seedOperational.recentProofSizes
+                        else
+                          SortedMap(
+                            currencySnapshot.ordinal -> currencySnapshot.proofs.size.toInt
+                          )
                       _ <- services.consensus.manager.startFacilitatingAfterRollback(
                         currencySnapshot.ordinal,
                         CurrencyConsensusOutcome(
@@ -414,7 +420,12 @@ abstract class CurrencyL0App(
                             Hash.empty,
                             hashedSnapshot.hash
                           ),
-                          recentProofSizes = rollbackRecentProofSizes
+                          removalPenalties = seedOperational.removalPenalties,
+                          deferralCountdown = seedOperational.deferralCountdown,
+                          peerQuality = seedOperational.peerQuality,
+                          cumulativeMissCounts = seedOperational.cumulativeMissCounts,
+                          recentProofSizes = rollbackRecentProofSizes,
+                          readmissionCountdown = seedOperational.readmissionCountdown
                         )
                       )
                     } yield ()

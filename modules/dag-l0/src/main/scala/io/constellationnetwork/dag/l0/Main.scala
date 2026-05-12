@@ -323,7 +323,18 @@ object Main
                   // rolling back to a solo/bootstrap-era snapshot, the window starts in bootstrap mode
                   // and the cluster re-stabilizes naturally.
                   rollbackProofSize = snapshot.proofs.size.toInt
-                  seedRecentProofSizes = SortedMap(snapshot.ordinal -> rollbackProofSize)
+                  // v20: persisted operational history if the rollback snapshot carries it.
+                  // Pre-v20 snapshots have `peerHistory = None`, so seedOperational stays empty
+                  // and the cluster bootstraps from zero just as before. Post-v20 snapshots
+                  // restore chronic-classifier history, B2 readmission, and removal-penalty
+                  // escalation across the cold-restart boundary.
+                  seedOperational = snapshot.value.peerHistory.getOrElse(ConsensusOperationalState.empty)
+                  // Recent-proof window: prefer the persisted history (so the bootstrap-vs-post
+                  // classification matches the running cluster), otherwise seed with the rollback
+                  // snapshot's proof count -- preserves pre-v20 behavior.
+                  seedRecentProofSizes =
+                    if (seedOperational.recentProofSizes.nonEmpty) seedOperational.recentProofSizes
+                    else SortedMap(snapshot.ordinal -> rollbackProofSize)
                   result <- services.consensus.manager.startFacilitatingAfterRollback(
                     snapshot.ordinal,
                     GlobalConsensusOutcome(
@@ -333,7 +344,12 @@ object Main
                       WithdrawnFacilitators.empty,
                       EligibleFacilitators(bootstrapFacilitators),
                       Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty, hashedSnapshot.hash),
-                      recentProofSizes = seedRecentProofSizes
+                      removalPenalties = seedOperational.removalPenalties,
+                      deferralCountdown = seedOperational.deferralCountdown,
+                      peerQuality = seedOperational.peerQuality,
+                      cumulativeMissCounts = seedOperational.cumulativeMissCounts,
+                      recentProofSizes = seedRecentProofSizes,
+                      readmissionCountdown = seedOperational.readmissionCountdown
                     )
                   )
                 } yield result

@@ -7,8 +7,8 @@ import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.{ConsensusOperationalState, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
@@ -129,6 +129,19 @@ object schema {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value
       else facilitators.value
+
+    // v20: package the consensus-derived peer-behavior counters for persistence on
+    // the next round's incremental snapshot. All six inputs are consensus-agreed,
+    // so every facilitator produces a byte-identical result.
+    def toOperationalState: ConsensusOperationalState =
+      ConsensusOperationalState(
+        peerQuality = peerQuality,
+        removalPenalties = removalPenalties,
+        cumulativeMissCounts = cumulativeMissCounts,
+        readmissionCountdown = readmissionCountdown,
+        recentProofSizes = recentProofSizes,
+        deferralCountdown = deferralCountdown
+      )
   }
 
   @derive(encoder, decoder, eqv, show)
