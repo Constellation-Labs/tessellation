@@ -14,7 +14,7 @@ import io.constellationnetwork.env.AppEnvironment.Dev
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.snapshot.PeerDiscoveryDelay
 import io.constellationnetwork.node.shared.infrastructure.snapshot.PeerSelect.NoPeersToSelect
-import io.constellationnetwork.schema.node.NodeState.Ready
+import io.constellationnetwork.schema.node.NodeState.{Ready, WaitingForReady}
 import io.constellationnetwork.schema.peer.Peer
 
 import eu.timepit.refined.auto._
@@ -48,7 +48,7 @@ object SelectablePeerDiscoveryDelay {
         logger.info(
           s"Discovered ${a.size}/$minPeers selectable peers, waiting $checkPeersAttemptDelay: $details"
         )
-    )(clusterStorage.getResponsivePeers.map(_.filter(_.state === Ready)))
+    )(clusterStorage.getResponsivePeers.map(_.filter(p => p.state === Ready || p.state === WaitingForReady)))
 
     def waitForPeers: F[Unit] = {
       val peers =

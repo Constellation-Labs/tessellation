@@ -759,10 +759,17 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
 
     def selectPeer: F[Peer] =
       ctx.clusterStorage.getResponsivePeers.flatMap { allPeers =>
-        val readyPeers = allPeers.filter(_.state == NodeState.Ready).toSeq
+        // WaitingForReady peers hold a validated downloaded outcome (initFromDownload
+        // already ran trySetInitialConsensusOutcome) and serve the same consensus
+        // outcome endpoint as Ready peers. Including them prevents the post-rollback
+        // bottleneck where only the rollback-lead node is Ready while sibling source
+        // nodes sit in WaitingForReady waiting on a round to close: joining peers
+        // funnel through the lone Ready peer and stall.
+        val primaryCandidates =
+          allPeers.filter(p => p.state == NodeState.Ready || p.state == NodeState.WaitingForReady).toSeq
         val observingPeers = allPeers.filter(_.state == NodeState.Observing).toSeq
 
-        val candidates = if (readyPeers.nonEmpty) readyPeers else observingPeers
+        val candidates = if (primaryCandidates.nonEmpty) primaryCandidates else observingPeers
 
         if (candidates.isEmpty) {
           val peerStates = allPeers.toList.map(p => s"${ConsensusLog.pid(p.id)}=${p.state}").mkString(", ")
@@ -775,7 +782,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
             "peerStates" -> s"[$peerStates]"
           ) >>
             new NoValidPeersException(
-              s"No peers in Ready or Observing state. Available: ${allPeers.size} peers"
+              s"No peers in Ready, WaitingForReady, or Observing state. Available: ${allPeers.size} peers"
             ).raiseError[F, Peer]
         } else {
           Random[F].elementOf(candidates)
