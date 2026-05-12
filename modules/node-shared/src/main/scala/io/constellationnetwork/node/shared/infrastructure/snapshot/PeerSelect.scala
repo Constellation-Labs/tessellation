@@ -18,7 +18,7 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.snapshot.PeerSelect
 import io.constellationnetwork.node.shared.http.p2p.clients.SnapshotClient
 import io.constellationnetwork.schema.SnapshotOrdinal
-import io.constellationnetwork.schema.node.NodeState.{Observing, Ready}
+import io.constellationnetwork.schema.node.NodeState.{Observing, Ready, WaitingForReady}
 import io.constellationnetwork.schema.peer.Peer.toP2PContext
 import io.constellationnetwork.schema.peer.{L0Peer, Peer}
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo}
@@ -85,9 +85,14 @@ object PeerSelect {
     def getFilteredPeerDetails: F[FilteredPeerDetails] = getFilteredPeerDetails(observingFallback = false)
 
     def getFilteredPeerDetails(observingFallback: Boolean): F[FilteredPeerDetails] = for {
+      // WaitingForReady peers hold the same snapshot state as Ready peers (initFromDownload
+      // already ran trySetInitialConsensusOutcome). Including them in the primary pool
+      // prevents the post-rollback bottleneck where only the rollback-lead node is Ready
+      // while sibling source nodes await a round to close: joining peers funnel through
+      // the lone Ready peer for snapshot downloads and stall.
       peers <- storage.getResponsivePeers.map { all =>
-        val ready = all.filter(_.state === Ready)
-        if (ready.nonEmpty || !observingFallback) ready
+        val primary = all.filter(p => p.state === Ready || p.state === WaitingForReady)
+        if (primary.nonEmpty || !observingFallback) primary
         else all.filter(_.state === Observing)
       }
         .flatMap(getPeerSublist)
