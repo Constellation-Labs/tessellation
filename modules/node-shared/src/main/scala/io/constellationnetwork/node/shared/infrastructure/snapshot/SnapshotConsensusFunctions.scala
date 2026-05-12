@@ -65,7 +65,8 @@ abstract class SnapshotConsensusFunctions[
     trigger: ConsensusTrigger,
     artifact: Artifact,
     facilitators: Set[PeerId],
-    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    peerHistory: Option[ConsensusOperationalState] = None
   )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (Artifact, Context)]]
 
   protected def getUpdatedTips(

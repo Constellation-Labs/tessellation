@@ -1700,7 +1700,10 @@ object GlobalSnapshotConsensusStateAdvancer {
               status.majorityTrigger,
               artifact,
               facilitators,
-              getGlobalSnapshotByOrdinal
+              getGlobalSnapshotByOrdinal,
+              // v20: re-pack from validator's own lastOutcome -- consensus-agreed,
+              // so leader and validator produce byte-identical artifact.peerHistory.
+              Some(state.lastOutcome.toOperationalState)
             )
             .map {
               case Right((validatedArtifact, context)) =>
@@ -2281,7 +2284,11 @@ object GlobalSnapshotConsensusStateAdvancer {
               // Canonical round-start committee — matches validateLeaderArtifact's read so leader
               // and validators build/accept against the same facilitator set.
               state.roundStartFacilitators.value.toSet,
-              getGlobalSnapshotByOrdinal
+              getGlobalSnapshotByOrdinal,
+              // v20: snapshot the prev-round outcome's peer-behavior counters for persistence.
+              // `state.lastOutcome` is consensus-agreed (= same value on every facilitator), so
+              // every leader and every validator computes the same artifact.peerHistory.
+              Some(state.lastOutcome.toOperationalState)
             )
           }
         }
