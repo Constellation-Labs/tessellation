@@ -323,12 +323,39 @@ object Main
                   // rolling back to a solo/bootstrap-era snapshot, the window starts in bootstrap mode
                   // and the cluster re-stabilizes naturally.
                   rollbackProofSize = snapshot.proofs.size.toInt
-                  // v20: persisted operational history if the rollback snapshot carries it.
+                  // v20+v21: persisted operational history if the rollback snapshot carries it.
                   // Pre-v20 snapshots have `peerHistory = None`, so seedOperational stays empty
-                  // and the cluster bootstraps from zero just as before. Post-v20 snapshots
-                  // restore chronic-classifier history, B2 readmission, and removal-penalty
+                  // and the cluster bootstraps from zero. Post-v20 snapshots restore
+                  // chronic-classifier history, B2 readmission, and removal-penalty
                   // escalation across the cold-restart boundary.
+                  //
+                  // Known one-round off-by-one: `snapshot[N].peerHistory` was packed at round-N
+                  // proposal time, before Outcome[N] existed, so it actually carries
+                  // `pack(Outcome[N-1])`. Seeded state.lastOutcome is therefore one round
+                  // stale relative to the live cluster at ordinal N. Drift is at most one
+                  // round per cold-restart -- well below the chronic-classifier floor
+                  // (10-30 observations) -- and we accept it rather than introduce a sidecar
+                  // file or a wire-format participation field.
                   seedOperational = snapshot.value.peerHistory.getOrElse(ConsensusOperationalState.empty)
+                  // Project the consolidated per-peer record back out to the five PeerId-keyed
+                  // dimensions on the outcome. A peer absent from `perPeer` is treated as
+                  // `PerPeerOperationalRecord.empty` (= no penalty, no probation, etc.) on the
+                  // consumer side; here we only emit non-default entries to keep the maps small.
+                  seedPeerQuality = SortedMap.from(seedOperational.perPeer.iterator.collect {
+                    case (pid, r) if r.quality != ((0, 0)) => pid -> r.quality
+                  })
+                  seedRemovalPenalties = SortedMap.from(seedOperational.perPeer.iterator.collect {
+                    case (pid, r) if r.removalPenalty > 0 => pid -> r.removalPenalty
+                  })
+                  seedCumulativeMissCounts = SortedMap.from(seedOperational.perPeer.iterator.collect {
+                    case (pid, r) if r.cumulativeMissCount > 0L => pid -> r.cumulativeMissCount
+                  })
+                  seedReadmissionCountdown = SortedMap.from(seedOperational.perPeer.iterator.collect {
+                    case (pid, r) if r.readmissionCountdown > 0 => pid -> r.readmissionCountdown
+                  })
+                  seedDeferralCountdown = SortedMap.from(seedOperational.perPeer.iterator.collect {
+                    case (pid, r) if r.deferralCountdown > 0 => pid -> r.deferralCountdown
+                  })
                   // Recent-proof window: prefer the persisted history (so the bootstrap-vs-post
                   // classification matches the running cluster), otherwise seed with the rollback
                   // snapshot's proof count -- preserves pre-v20 behavior.
@@ -344,12 +371,12 @@ object Main
                       WithdrawnFacilitators.empty,
                       EligibleFacilitators(bootstrapFacilitators),
                       Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty, hashedSnapshot.hash),
-                      removalPenalties = seedOperational.removalPenalties,
-                      deferralCountdown = seedOperational.deferralCountdown,
-                      peerQuality = seedOperational.peerQuality,
-                      cumulativeMissCounts = seedOperational.cumulativeMissCounts,
+                      removalPenalties = seedRemovalPenalties,
+                      deferralCountdown = seedDeferralCountdown,
+                      peerQuality = seedPeerQuality,
+                      cumulativeMissCounts = seedCumulativeMissCounts,
                       recentProofSizes = seedRecentProofSizes,
-                      readmissionCountdown = seedOperational.readmissionCountdown
+                      readmissionCountdown = seedReadmissionCountdown
                     )
                   )
                 } yield result

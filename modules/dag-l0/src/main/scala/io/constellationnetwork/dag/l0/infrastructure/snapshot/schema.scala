@@ -8,7 +8,7 @@ import scala.collection.immutable.SortedMap
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{ConsensusOperationalState, SnapshotOrdinal}
+import io.constellationnetwork.schema.{ConsensusOperationalState, PerPeerOperationalRecord, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
@@ -130,18 +130,35 @@ object schema {
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value
       else facilitators.value
 
-    // v20: package the consensus-derived peer-behavior counters for persistence on
-    // the next round's incremental snapshot. All six inputs are consensus-agreed,
+    // v20: package the consensus-derived peer-behavior counters for persistence
+    // on the next round's incremental snapshot. All inputs are consensus-agreed,
     // so every facilitator produces a byte-identical result.
-    def toOperationalState: ConsensusOperationalState =
-      ConsensusOperationalState(
-        peerQuality = peerQuality,
-        removalPenalties = removalPenalties,
-        cumulativeMissCounts = cumulativeMissCounts,
-        readmissionCountdown = readmissionCountdown,
-        recentProofSizes = recentProofSizes,
-        deferralCountdown = deferralCountdown
-      )
+    //
+    // v21 layout: peer-keyed dimensions collapsed into a single map keyed by
+    // PeerId so each id appears once. The union of keys across the five
+    // dimensions becomes the per-peer map's key set; absent peers contribute
+    // `PerPeerOperationalRecord.empty` semantics on the consumer side.
+    def toOperationalState: ConsensusOperationalState = {
+      val keys: Set[PeerId] =
+        (peerQuality.keysIterator ++
+          removalPenalties.keysIterator ++
+          cumulativeMissCounts.keysIterator ++
+          readmissionCountdown.keysIterator ++
+          deferralCountdown.keysIterator).toSet
+      val perPeer: SortedMap[PeerId, PerPeerOperationalRecord] =
+        SortedMap.from(
+          keys.iterator.map { pid =>
+            pid -> PerPeerOperationalRecord(
+              quality = peerQuality.getOrElse(pid, (0, 0)),
+              removalPenalty = removalPenalties.getOrElse(pid, 0),
+              cumulativeMissCount = cumulativeMissCounts.getOrElse(pid, 0L),
+              readmissionCountdown = readmissionCountdown.getOrElse(pid, 0),
+              deferralCountdown = deferralCountdown.getOrElse(pid, 0)
+            )
+          }
+        )
+      ConsensusOperationalState(perPeer = perPeer, recentProofSizes = recentProofSizes)
+    }
   }
 
   @derive(encoder, decoder, eqv, show)
