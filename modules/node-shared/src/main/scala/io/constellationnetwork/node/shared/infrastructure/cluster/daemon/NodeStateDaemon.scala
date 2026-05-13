@@ -8,6 +8,8 @@ import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.show._
 
+import scala.concurrent.duration.FiniteDuration
+
 import io.constellationnetwork.node.shared.domain.Daemon
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
@@ -21,7 +23,15 @@ trait NodeStateDaemon[F[_]] extends Daemon[F] {}
 
 object NodeStateDaemon {
 
-  def make[F[_]: Async: Metrics](nodeStorage: NodeStorage[F], gossip: Gossip[F])(implicit S: Supervisor[F]): NodeStateDaemon[F] =
+  def make[F[_]: Async: Metrics](
+    nodeStorage: NodeStorage[F],
+    gossip: Gossip[F],
+    // Externally-owned Ref holding the monotonic time at which the node entered its current
+    // NodeState. When provided, every observed transition refreshes the timestamp. Read by
+    // Cluster.leave() to enforce a dwell-time check on recovery-path states. None preserves the
+    // pre-alpha.68 behavior (no timestamp tracking, dwell check inactive).
+    stateEntryAtRef: Option[Ref[F, FiniteDuration]] = None
+  )(implicit S: Supervisor[F]): NodeStateDaemon[F] =
     new NodeStateDaemon[F] {
       private val logger = Slf4jLogger.getLogger[F]
 
@@ -38,9 +48,11 @@ object NodeStateDaemon {
         Ref[F].of(none[NodeState]).flatMap { prevRef =>
           nodeStorage.nodeStates.evalTap { newState =>
             prevRef.getAndSet(newState.some).flatMap {
-              case Some(prev) if prev != newState => emitTransition(prev.entryName, newState.entryName)
-              case None                           => emitTransition("(initial)", newState.entryName)
-              case _                              => Async[F].unit
+              case Some(prev) if prev != newState =>
+                emitTransition(prev.entryName, newState.entryName) >> refreshStateEntryAt
+              case None =>
+                emitTransition("(initial)", newState.entryName) >> refreshStateEntryAt
+              case _ => Async[F].unit
             }
           }
             .filter(NodeState.toBroadcast.contains)
@@ -62,6 +74,15 @@ object NodeStateDaemon {
             Metrics.unsafeLabelName("to") -> to
           )
         )
+
+      // Reset the state-entry timestamp on every transition. The Cluster.leave() guard reads this
+      // to refuse external leave requests that fire while a recovery-path state is still within
+      // its dwell window. Skipped when no Ref is wired (currency-l0 / dag-l1 paths today).
+      private def refreshStateEntryAt: F[Unit] =
+        stateEntryAtRef match {
+          case None      => Async[F].unit
+          case Some(ref) => Async[F].monotonic.flatMap(ref.set)
+        }
     }
 
 }

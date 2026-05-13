@@ -198,7 +198,8 @@ object Main
           keyPair,
           cfg,
           hasherSelector,
-          eventGossipDaemon
+          eventGossipDaemon,
+          sharedServices.stateEntryAtRef
         )
         .asResource
 

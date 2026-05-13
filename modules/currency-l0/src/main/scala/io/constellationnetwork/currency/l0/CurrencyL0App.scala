@@ -221,7 +221,18 @@ abstract class CurrencyL0App(
       _ <- Resource.eval(peerChainTipsGetterRef.set(eventGossipDaemon.getPeerChainTips))
 
       _ <- Daemons
-        .start(storages, services, programs, queues, keyPair, services.dataApplication, eventGossipDaemon, cfg, hasherSelectorAlwaysCurrent)
+        .start(
+          storages,
+          services,
+          programs,
+          queues,
+          keyPair,
+          services.dataApplication,
+          eventGossipDaemon,
+          cfg,
+          hasherSelectorAlwaysCurrent,
+          sharedServices.stateEntryAtRef
+        )
         .asResource
 
       api <- Resource.eval(

@@ -9,6 +9,8 @@ import cats.effect.kernel.Ref
 import cats.effect.std.Supervisor
 import cats.syntax.all._
 
+import scala.concurrent.duration.FiniteDuration
+
 import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.env.AppEnvironment
@@ -92,6 +94,13 @@ object SharedServices {
       // `ConsensusHealthStatus.empty` -> wedgeDetectedAtMs = None -> guard inert there.
       consensusHealthRef <- ConsensusHealthStatus.ref[F]
 
+      // Monotonic timestamp of the most recent NodeState transition. Written by NodeStateDaemon
+      // (which already observes `nodeStorage.nodeStates`), read by Cluster.leave()'s dwell-time
+      // guard. Initialized to "now" at startup so the boot state has a defined entry time before
+      // the first transition flows through. Wired to every layer's NodeStateDaemon.
+      now <- Async[F].monotonic
+      stateEntryAtRef <- Ref.of[F, FiniteDuration](now)
+
       cluster = Cluster
         .make[F](
           cfg.leavingDelay,
@@ -109,7 +118,8 @@ object SharedServices {
           environment,
           allowanceList,
           metagraphId,
-          consensusHealth = Some(consensusHealthRef.get)
+          consensusHealth = Some(consensusHealthRef.get),
+          lastStateEntryAt = Some(stateEntryAtRef.get)
         )
 
       localHealthcheck <- LocalHealthcheck.make[F](nodeClient, storages.cluster)
@@ -208,7 +218,8 @@ object SharedServices {
         updateDelegatedStakeAcceptanceManager = updateDelegatedStakeAcceptanceManager,
         updateNodeCollateralAcceptanceManager = updateNodeCollateralAcceptanceManager,
         priceStateUpdater = priceStateUpdater,
-        consensusHealthRef = consensusHealthRef
+        consensusHealthRef = consensusHealthRef,
+        stateEntryAtRef = stateEntryAtRef
       ) {}
 }
 
@@ -229,5 +240,9 @@ sealed abstract class SharedServices[F[_], A <: CliMethod] private (
   // Exposed so each layer's consensus engine can pass it to `ConsensusEventLoop.build` as the
   // injectedHealthRef. When wired, the engine's AbandonmentTracker becomes the writer for this
   // Ref and `Cluster.leave()`'s wedge guard becomes active. Only dag-l0 wires this today.
-  val consensusHealthRef: Ref[F, ConsensusHealthStatus]
+  val consensusHealthRef: Ref[F, ConsensusHealthStatus],
+  // Monotonic timestamp of the latest NodeState transition. Written by NodeStateDaemon, read by
+  // Cluster.leave()'s dwell-time guard. Each layer's Daemons.make pipes this into its
+  // NodeStateDaemon so transitions update the timestamp.
+  val stateEntryAtRef: Ref[F, FiniteDuration]
 )

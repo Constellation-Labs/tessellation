@@ -138,7 +138,7 @@ object Main
         tokenLockBlockRumorHandler[IO](queues.tokenLocksBlocks)
 
       _ <- Daemons
-        .start(storages, services)
+        .start(storages, services, sharedServices.stateEntryAtRef)
         .asResource
 
       api = HttpApi

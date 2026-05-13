@@ -253,6 +253,45 @@ object Download {
       * ensure the node starts facilitating at the beginning of a round rather than mid-flight, avoiding a race condition where the node
       * joins a round already in progress and misses declarations/proposals.
       */
+    // Classify a recoveryStart failure for the dag_recovery_start_outcome_total counter.
+    // The recovery FSM bounces back to WaitingForDownload on any error, so the precise cause is
+    // invisible from source-node logs alone. This lets a /metrics scrape on a cycling community
+    // peer report the dominant failure mode at a glance.
+    private def classifyRecoveryStartError(err: Throwable): String = err match {
+      case InvalidStateProof(_)       => "state_proof_invalid"
+      case InvalidChain               => "chain_invalid"
+      case HashAndOrdinalMismatch     => "hash_ordinal_mismatch"
+      case FirstIncrementalNotFound   => "first_incremental_missing"
+      case CannotFetchSnapshot        => "fetch_snapshot_failed"
+      case CannotFetchGenesisSnapshot => "fetch_genesis_failed"
+      case _                          => "other_error"
+    }
+
+    private def classifyRecoveryObserveError(err: Throwable): String = err match {
+      case _: ObserveDeadlineExceeded => "deadline_exceeded"
+      case CannotFetchSnapshot        => "fetch_snapshot_failed"
+      case InvalidChain               => "chain_invalid"
+      case _                          => "other_error"
+    }
+
+    private def recordRecoveryStartOutcome(outcome: String): F[Unit] =
+      Metrics[F].incrementCounter(
+        "dag_recovery_start_outcome_total",
+        Seq(Metrics.unsafeLabelName("outcome") -> outcome)
+      )
+
+    private def recordRecoveryObserveOutcome(outcome: String): F[Unit] =
+      Metrics[F].incrementCounter(
+        "dag_recovery_observe_outcome_total",
+        Seq(Metrics.unsafeLabelName("outcome") -> outcome)
+      )
+
+    private def recordConvergenceOutcome(outcome: String): F[Unit] =
+      Metrics[F].incrementCounter(
+        "dag_recovery_convergence_iterations_total",
+        Seq(Metrics.unsafeLabelName("outcome") -> outcome)
+      )
+
     def recoveryDownload(implicit hasherSelector: HasherSelector[F]): F[Unit] = {
       def getLatestMetadata: F[SnapshotMetadata] = {
         val retryPolicy = RetryPolicies.exponentialBackoff[F](1.second).join(RetryPolicies.limitRetries(5))
@@ -270,39 +309,44 @@ object Download {
         }
       }
 
-      def recoveryStart: F[DownloadResult] =
-        for {
-          metadata <- getLatestMetadata
-          _ <- logger.info(
-            s"[RecoveryDownload] Starting incremental recovery. Network tip: ordinal=${metadata.ordinal.show}, hash=${metadata.hash.show}"
-          )
-          // Clean up snapshots above the network tip (e.g. from a minority fork).
-          _ <- snapshotStorage.cleanupAbove(metadata.ordinal)
-          _ <- combinedSnapshotCheckpointFileSystemStorage.deleteAbove(metadata.ordinal)
-          // Clear in-memory snapshot caches. During a network partition the node may have
-          // produced minority-fork snapshots whose hashes differ from the canonical chain.
-          // If we keep stale cache entries, the download replay will fail when it tries to
-          // chain canonical ordinal N+1 onto a forked ordinal N (hash mismatch in set()).
-          _ <- lastNGlobalSnapshotStorage.clear
-          _ <- lastGlobalSnapshotStorage.clear
-          // Reset consensus manager state (observation key, last outcome) so the fresh
-          // initFromDownload can set them cleanly.
-          _ <- consensus.manager.resetForRecovery
-          // Clear event mempool. Stale events from before recovery (especially
-          // UpdateNodeParameters) change reward calculations and cause validation
-          // failures when the follower includes events the leader doesn't have.
-          _ <- eventMempool.clear
-          _ <- logger.info("[RecoveryDownload] Cleared event mempool")
-          // Fetch only the gap: the download() hash-chain walker already stops at persisted snapshots
-          result <- download(metadata.hash, metadata.ordinal, none)
-          _ <- logger.info(
-            s"[RecoveryDownload] Gap fetched. Latest downloaded: ordinal=${result._1.ordinal.show}"
-          )
-        } yield result
+      def recoveryStart: F[DownloadResult] = {
+        val body =
+          for {
+            metadata <- getLatestMetadata
+            _ <- logger.info(
+              s"[RecoveryDownload] Starting incremental recovery. Network tip: ordinal=${metadata.ordinal.show}, hash=${metadata.hash.show}"
+            )
+            // Clean up snapshots above the network tip (e.g. from a minority fork).
+            _ <- snapshotStorage.cleanupAbove(metadata.ordinal)
+            _ <- combinedSnapshotCheckpointFileSystemStorage.deleteAbove(metadata.ordinal)
+            // Clear in-memory snapshot caches. During a network partition the node may have
+            // produced minority-fork snapshots whose hashes differ from the canonical chain.
+            // If we keep stale cache entries, the download replay will fail when it tries to
+            // chain canonical ordinal N+1 onto a forked ordinal N (hash mismatch in set()).
+            _ <- lastNGlobalSnapshotStorage.clear
+            _ <- lastGlobalSnapshotStorage.clear
+            // Reset consensus manager state (observation key, last outcome) so the fresh
+            // initFromDownload can set them cleanly.
+            _ <- consensus.manager.resetForRecovery
+            // Clear event mempool. Stale events from before recovery (especially
+            // UpdateNodeParameters) change reward calculations and cause validation
+            // failures when the follower includes events the leader doesn't have.
+            _ <- eventMempool.clear
+            _ <- logger.info("[RecoveryDownload] Cleared event mempool")
+            // Fetch only the gap: the download() hash-chain walker already stops at persisted snapshots
+            result <- download(metadata.hash, metadata.ordinal, none)
+            _ <- logger.info(
+              s"[RecoveryDownload] Gap fetched. Latest downloaded: ordinal=${result._1.ordinal.show}"
+            )
+          } yield result
+        body.flatTap(_ => recordRecoveryStartOutcome("success")).onError {
+          case err => recordRecoveryStartOutcome(classifyRecoveryStartError(err))
+        }
+      }
 
       def recoveryObserve(result: DownloadResult): F[(DownloadResult, ObservationLimit)] = {
         val (lastSnapshot, lastContext) = result
-        for {
+        val body = for {
           // Random 1-5 rounds observation to stagger recovery re-entry and mitigate thundering herd.
           // Minimum of 1 ensures at least one round is observed before rejoining consensus.
           recoveryRounds <- Random[F].betweenLong(1L, 6L)
@@ -331,6 +375,7 @@ object Download {
           // hardcoded `lastSnapshot.ordinal + recoveryOffset` target is unreachable. Codex
           // diagnosis 2026-04-23: this is the tip-plus-one recovery loop, separate from B2.
           readyPeerTips <- getReadyPeerTips
+          _ <- Metrics[F].updateGauge("dag_recovery_ready_peer_tips_size", readyPeerTips.size.toLong)
           recoveryObservationLimit = chooseObservationLimit(
             hashedSnapshot.ordinal,
             hashedSnapshot.hash,
@@ -343,7 +388,7 @@ object Download {
               s"[RecoveryDownload] Caught-up shortcut: local=${hashedSnapshot.ordinal.show} " +
                 s"hash=${hashedSnapshot.hash.value.take(8)}, majority of ${readyPeerTips.size} Ready peers " +
                 s"at or behind; skipping forward observe"
-            )
+            ) >> recordRecoveryObserveOutcome("shortcut")
           )
           _ <- Applicative[F].unlessA(isShortcut)(
             logger.info(
@@ -368,7 +413,10 @@ object Download {
           _ <- logger.info(
             s"[RecoveryDownload] Consensus head synced to ordinal ${observedSnapshot.ordinal.show}"
           )
+          _ <- Applicative[F].unlessA(isShortcut)(recordRecoveryObserveOutcome("forward_observe_success"))
         } yield observeResult
+
+        body.onError { case err => recordRecoveryObserveOutcome(classifyRecoveryObserveError(err)) }
       }
 
       // Bounded convergence loop (codex 2026-04-24): a single pass of recoveryStart + observe
@@ -426,13 +474,15 @@ object Download {
                   .info(
                     s"[RecoveryDownload] Converged at ordinal ${observedOrdinal.show} (cluster tip ${freshTip.ordinal.show}, " +
                       s"lag=$lag, iterations=${iteration + 1}, elapsed=${elapsed.toSeconds}s)"
-                  )
-                  .as(observed)
-              else if (iteration + 1 >= recoveryMaxIterations || elapsed >= recoveryMaxWallClock)
+                  ) >> recordConvergenceOutcome("converged").as(observed)
+              else if (iteration + 1 >= recoveryMaxIterations || elapsed >= recoveryMaxWallClock) {
+                val outcome =
+                  if (elapsed >= recoveryMaxWallClock) "max_wallclock" else "max_iterations"
                 logger.warn(
                   s"[RecoveryDownload] Budget exhausted: observed=${observedOrdinal.show} clusterTip=${freshTip.ordinal.show} " +
                     s"lag=$lag iterations=${iteration + 1} elapsed=${elapsed.toSeconds}s — failing recovery to trigger retry"
                 ) >>
+                  recordConvergenceOutcome(outcome) >>
                   RecoveryConvergenceFailed(
                     observedOrdinal,
                     freshTip.ordinal,
@@ -440,7 +490,7 @@ object Download {
                     iteration + 1,
                     elapsed
                   ).raiseError[F, (DownloadResult, ObservationLimit)]
-              else
+              } else
                 logger.info(
                   s"[RecoveryDownload] Observed=${observedOrdinal.show}, cluster tip ${freshTip.ordinal.show}, " +
                     s"lag=$lag > $recoveryTargetLagOrdinals — iterating to catch up further"
