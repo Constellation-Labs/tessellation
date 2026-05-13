@@ -212,10 +212,19 @@ object Download {
         _ <- Metrics[F].updateGauge("dag_global_snapshot_signature_count", snapshot.proofs.size.toDouble)
       } yield ()
 
-    def download(implicit hasherSelector: HasherSelector[F]): F[Unit] =
+    def download(implicit hasherSelector: HasherSelector[F]): F[Unit] = {
+      val instrumentedStart = start
+        .flatTap(_ => recordStartOutcome("full", "success"))
+        .onError { case err => recordStartOutcome("full", classifyStartError(err)) }
+
+      def instrumentedObserve(result: DownloadResult): F[(DownloadResult, ObservationLimit)] =
+        observe(result)
+          .flatTap(_ => recordObserveOutcome("full", "success"))
+          .onError { case err => recordObserveOutcome("full", classifyObserveError(err)) }
+
       nodeStorage
-        .tryModifyState(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.WaitingForObserving)(start)
-        .flatMap(observe)
+        .tryModifyState(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.WaitingForObserving)(instrumentedStart)
+        .flatMap(instrumentedObserve)
         .flatMap { result =>
           val ((snapshot, context), observationLimit) = result
           for {
@@ -235,6 +244,7 @@ object Download {
               Async[F].unit // Already in WaitingForDownload (start failed) or Ready (someone else recovered)
           } >> err.raiseError[F, Unit]
         }
+    }
 
     /** Incremental recovery download: fetches only the gap between local tip and network tip.
       *
@@ -253,11 +263,12 @@ object Download {
       * ensure the node starts facilitating at the beginning of a round rather than mid-flight, avoiding a race condition where the node
       * joins a round already in progress and misses declarations/proposals.
       */
-    // Classify a recoveryStart failure for the dag_recovery_start_outcome_total counter.
-    // The recovery FSM bounces back to WaitingForDownload on any error, so the precise cause is
-    // invisible from source-node logs alone. This lets a /metrics scrape on a cycling community
-    // peer report the dominant failure mode at a glance.
-    private def classifyRecoveryStartError(err: Throwable): String = err match {
+    // Classify a download `start` failure (recovery or full path). Recovery FSM bounces back to
+    // WaitingForDownload on any error, so the precise cause is invisible from source-node logs
+    // alone. This lets a /metrics scrape on a cycling community peer report the dominant failure
+    // mode at a glance, regardless of whether it was a fresh-join (full download) or a post-abandon
+    // recovery download.
+    private def classifyStartError(err: Throwable): String = err match {
       case InvalidStateProof(_)       => "state_proof_invalid"
       case InvalidChain               => "chain_invalid"
       case HashAndOrdinalMismatch     => "hash_ordinal_mismatch"
@@ -267,23 +278,33 @@ object Download {
       case _                          => "other_error"
     }
 
-    private def classifyRecoveryObserveError(err: Throwable): String = err match {
+    private def classifyObserveError(err: Throwable): String = err match {
       case _: ObserveDeadlineExceeded => "deadline_exceeded"
       case CannotFetchSnapshot        => "fetch_snapshot_failed"
       case InvalidChain               => "chain_invalid"
       case _                          => "other_error"
     }
 
-    private def recordRecoveryStartOutcome(outcome: String): F[Unit] =
+    // path label distinguishes the recovery flow (incremental gap fetch) from the full flow
+    // (fresh-join chain walk from genesis or persisted tail). 90eb1ed3-class peers that restart
+    // and re-handshake without abandonment history go through the full path; peers that
+    // abandoned consensus locally and got force-redownload go through the recovery path.
+    private def recordStartOutcome(path: String, outcome: String): F[Unit] =
       Metrics[F].incrementCounter(
-        "dag_recovery_start_outcome_total",
-        Seq(Metrics.unsafeLabelName("outcome") -> outcome)
+        "dag_download_start_outcome_total",
+        Seq(
+          Metrics.unsafeLabelName("path") -> path,
+          Metrics.unsafeLabelName("outcome") -> outcome
+        )
       )
 
-    private def recordRecoveryObserveOutcome(outcome: String): F[Unit] =
+    private def recordObserveOutcome(path: String, outcome: String): F[Unit] =
       Metrics[F].incrementCounter(
-        "dag_recovery_observe_outcome_total",
-        Seq(Metrics.unsafeLabelName("outcome") -> outcome)
+        "dag_download_observe_outcome_total",
+        Seq(
+          Metrics.unsafeLabelName("path") -> path,
+          Metrics.unsafeLabelName("outcome") -> outcome
+        )
       )
 
     private def recordConvergenceOutcome(outcome: String): F[Unit] =
@@ -339,8 +360,8 @@ object Download {
               s"[RecoveryDownload] Gap fetched. Latest downloaded: ordinal=${result._1.ordinal.show}"
             )
           } yield result
-        body.flatTap(_ => recordRecoveryStartOutcome("success")).onError {
-          case err => recordRecoveryStartOutcome(classifyRecoveryStartError(err))
+        body.flatTap(_ => recordStartOutcome("recovery", "success")).onError {
+          case err => recordStartOutcome("recovery", classifyStartError(err))
         }
       }
 
@@ -388,7 +409,7 @@ object Download {
               s"[RecoveryDownload] Caught-up shortcut: local=${hashedSnapshot.ordinal.show} " +
                 s"hash=${hashedSnapshot.hash.value.take(8)}, majority of ${readyPeerTips.size} Ready peers " +
                 s"at or behind; skipping forward observe"
-            ) >> recordRecoveryObserveOutcome("shortcut")
+            ) >> recordObserveOutcome("recovery", "shortcut")
           )
           _ <- Applicative[F].unlessA(isShortcut)(
             logger.info(
@@ -413,10 +434,10 @@ object Download {
           _ <- logger.info(
             s"[RecoveryDownload] Consensus head synced to ordinal ${observedSnapshot.ordinal.show}"
           )
-          _ <- Applicative[F].unlessA(isShortcut)(recordRecoveryObserveOutcome("forward_observe_success"))
+          _ <- Applicative[F].unlessA(isShortcut)(recordObserveOutcome("recovery", "forward_observe_success"))
         } yield observeResult
 
-        body.onError { case err => recordRecoveryObserveOutcome(classifyRecoveryObserveError(err)) }
+        body.onError { case err => recordObserveOutcome("recovery", classifyObserveError(err)) }
       }
 
       // Bounded convergence loop (codex 2026-04-24): a single pass of recoveryStart + observe
