@@ -215,12 +215,24 @@ object Download {
     def download(implicit hasherSelector: HasherSelector[F]): F[Unit] = {
       val instrumentedStart = start
         .flatTap(_ => recordStartOutcome("full", "success"))
-        .onError { case err => recordStartOutcome("full", classifyStartError(err)) }
+        .onError {
+          case err =>
+            val outcome = classifyStartError(err)
+            val maybeLog =
+              if (outcome.startsWith("other_")) logUnclassifiedStartError(err) else Async[F].unit
+            maybeLog >> recordStartOutcome("full", outcome)
+        }
 
       def instrumentedObserve(result: DownloadResult): F[(DownloadResult, ObservationLimit)] =
         observe(result)
           .flatTap(_ => recordObserveOutcome("full", "success"))
-          .onError { case err => recordObserveOutcome("full", classifyObserveError(err)) }
+          .onError {
+            case err =>
+              val outcome = classifyObserveError(err)
+              val maybeLog =
+                if (outcome.startsWith("other_")) logUnclassifiedObserveError(err) else Async[F].unit
+              maybeLog >> recordObserveOutcome("full", outcome)
+          }
 
       nodeStorage
         .tryModifyState(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.WaitingForObserving)(instrumentedStart)
@@ -267,7 +279,8 @@ object Download {
     // WaitingForDownload on any error, so the precise cause is invisible from source-node logs
     // alone. This lets a /metrics scrape on a cycling community peer report the dominant failure
     // mode at a glance, regardless of whether it was a fresh-join (full download) or a post-abandon
-    // recovery download.
+    // recovery download. Unclassified exceptions surface as `other_<SimpleClassName>` so the
+    // metric label itself names the exception type without needing log access.
     private def classifyStartError(err: Throwable): String = err match {
       case InvalidStateProof(_)       => "state_proof_invalid"
       case InvalidChain               => "chain_invalid"
@@ -275,15 +288,23 @@ object Download {
       case FirstIncrementalNotFound   => "first_incremental_missing"
       case CannotFetchSnapshot        => "fetch_snapshot_failed"
       case CannotFetchGenesisSnapshot => "fetch_genesis_failed"
-      case _                          => "other_error"
+      case other                      => s"other_${other.getClass.getSimpleName}"
     }
 
     private def classifyObserveError(err: Throwable): String = err match {
       case _: ObserveDeadlineExceeded => "deadline_exceeded"
       case CannotFetchSnapshot        => "fetch_snapshot_failed"
       case InvalidChain               => "chain_invalid"
-      case _                          => "other_error"
+      case other                      => s"other_${other.getClass.getSimpleName}"
     }
+
+    // Log the exception when a start failure falls outside the classified set so source-node and
+    // community-peer log captures retain the underlying type + message even without log scraping.
+    private def logUnclassifiedStartError(err: Throwable): F[Unit] =
+      logger.warn(err)(s"[Download] full-path start unclassified error class=${err.getClass.getName} message=${err.getMessage}")
+
+    private def logUnclassifiedObserveError(err: Throwable): F[Unit] =
+      logger.warn(err)(s"[Download] observe unclassified error class=${err.getClass.getName} message=${err.getMessage}")
 
     // path label distinguishes the recovery flow (incremental gap fetch) from the full flow
     // (fresh-join chain walk from genesis or persisted tail). 90eb1ed3-class peers that restart
@@ -361,7 +382,11 @@ object Download {
             )
           } yield result
         body.flatTap(_ => recordStartOutcome("recovery", "success")).onError {
-          case err => recordStartOutcome("recovery", classifyStartError(err))
+          case err =>
+            val outcome = classifyStartError(err)
+            val maybeLog =
+              if (outcome.startsWith("other_")) logUnclassifiedStartError(err) else Async[F].unit
+            maybeLog >> recordStartOutcome("recovery", outcome)
         }
       }
 
@@ -437,7 +462,13 @@ object Download {
           _ <- Applicative[F].unlessA(isShortcut)(recordObserveOutcome("recovery", "forward_observe_success"))
         } yield observeResult
 
-        body.onError { case err => recordObserveOutcome("recovery", classifyObserveError(err)) }
+        body.onError {
+          case err =>
+            val outcome = classifyObserveError(err)
+            val maybeLog =
+              if (outcome.startsWith("other_")) logUnclassifiedObserveError(err) else Async[F].unit
+            maybeLog >> recordObserveOutcome("recovery", outcome)
+        }
       }
 
       // Bounded convergence loop (codex 2026-04-24): a single pass of recoveryStart + observe
