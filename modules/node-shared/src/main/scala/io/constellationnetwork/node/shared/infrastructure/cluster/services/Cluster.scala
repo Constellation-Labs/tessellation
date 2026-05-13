@@ -18,6 +18,7 @@ import io.constellationnetwork.node.shared.config.types.HttpConfig
 import io.constellationnetwork.node.shared.domain.cluster.services.Cluster
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusHealthStatus
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
 import io.constellationnetwork.schema.address.Address
@@ -46,7 +47,16 @@ object Cluster {
     environment: AppEnvironment,
     allowanceList: Option[Set[AllowanceListEntry]],
     metagraphId: Option[Address],
-    consensusConfigHash: Option[Hash] = None
+    consensusConfigHash: Option[Hash] = None,
+    // Optional consensus-health probe. When provided, `leave()` consults it to refuse external
+    // leave signals during a sustained quorum-infeasible wedge. None preserves legacy behavior
+    // (every `leave()` proceeds unconditionally). Wired in dag-l0 from the consensus engine's
+    // healthRef; non-wired in dag-l1 / currency-l0 where the cluster-wedge signal is not produced.
+    consensusHealth: Option[F[ConsensusHealthStatus]] = None,
+    // Time-based escape hatch for the leave guard. After this duration since wedge first detected,
+    // leaves are permitted even if the wedge persists. Prevents permanent lock-out if a wedge
+    // becomes terminal and operators legitimately need to leave. Force-flag callers also bypass.
+    wedgeMaxRefuseDuration: FiniteDuration = 1.hour
   ): Cluster[F] =
     new Cluster[F] {
 
@@ -87,7 +97,50 @@ object Cluster {
       def signRequest(signRequest: SignRequest)(implicit hasher: Hasher[F]): F[Signed[SignRequest]] =
         signRequest.sign(keyPair)
 
-      def leave(): F[Unit] = {
+      // States in which the leave-guard refuses (peer is part of the consensus committee).
+      // Other states (WaitingForDownload, DownloadInProgress, ReadyToJoin, etc.) always allow
+      // leaves - those are legitimate restart-needed transitions, not wedge symptoms.
+      private val guardedStates: Set[NodeState] =
+        Set(NodeState.Observing, NodeState.WaitingForReady, NodeState.Ready)
+
+      // Returns Some(refusalReason) when the leave should be refused, None to proceed.
+      // Three-layer gate:
+      //   1. Force bypass: `force=true` always permits.
+      //   2. State gate: only refuse in guardedStates (in-committee states).
+      //   3. Wedge gate: requires consensusHealth to report wedgeDetectedAtMs set
+      //      AND elapsed-since-detection < wedgeMaxRefuseDuration.
+      // Wedge signal is owned by AbandonmentTracker; see ConsensusHealthStatus.wedgeDetectedAtMs.
+      private def evaluateLeaveGuard(force: Boolean): F[Option[String]] =
+        if (force) Async[F].pure(None)
+        else
+          nodeStorage.getNodeState.flatMap { state =>
+            if (!guardedStates.contains(state)) Async[F].pure(None)
+            else
+              consensusHealth match {
+                case None => Async[F].pure(None)
+                case Some(getHealth) =>
+                  for {
+                    health <- getHealth
+                    now <- Async[F].monotonic
+                    refusal = health.wedgeDetectedAtMs.flatMap { wedgeAtMs =>
+                      val elapsedMs = now.toMillis - wedgeAtMs
+                      if (elapsedMs < wedgeMaxRefuseDuration.toMillis)
+                        Some(
+                          s"cluster in sustained wedge (state=$state, " +
+                            s"reason=${health.lastAbandonReason.getOrElse("unknown")}, " +
+                            s"peersAtHigherKey=${health.peersAtHigherKey}, " +
+                            s"consecutiveAbandonments=${health.consecutiveAbandonments}, " +
+                            s"wedgeForMs=$elapsedMs)"
+                        )
+                      else None
+                    }
+                  } yield refusal
+              }
+          }
+
+      def leave(): F[Unit] = leave(force = false)
+
+      def leave(force: Boolean): F[Unit] = {
         def process =
           nodeStorage.setNodeState(NodeState.Leaving) >>
             Temporal[F].sleep(leavingDelay) >>
@@ -95,7 +148,10 @@ object Cluster {
             Temporal[F].sleep(5.seconds) >>
             restartService.signalClusterLeaveRestart()
 
-        Temporal[F].start(process).void
+        evaluateLeaveGuard(force).flatMap {
+          case Some(reason) => MonadThrow[F].raiseError[Unit](ClusterLeaveRefused(reason))
+          case None         => Temporal[F].start(process).void
+        }
       }
 
       def info(implicit hasher: Hasher[F]): F[Set[PeerInfo]] =

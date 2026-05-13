@@ -130,7 +130,36 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
   def resetOnSuccessfulRound: F[Unit] =
     totalRecoveryAttemptsRef.set(0) >>
       retriableAtSameKeyRef.set((none[Key], 0)) >>
-      healthRef.update(_.copy(totalRecoveryAttempts = 0))
+      healthRef.update(_.copy(totalRecoveryAttempts = 0, wedgeDetectedAtMs = None))
+
+  /** Threshold for declaring a "sustained wedge": retriable abandonments at the same key with no peer ahead. Set to half the recovery
+    * threshold so the wedge signal fires before recovery would have been triggered if a peer WERE ahead. Read by Cluster.leave() guard.
+    */
+  private val wedgeRetriableThreshold: Int = math.max(2, config.maxConsecutiveAbandonments / 2)
+
+  /** Update health snapshot fields visible to Cluster.leave() guard. Called from the retriable path after `peersAtHigherKey` is computed.
+    * Sets `wedgeDetectedAtMs` once when sustained quorum-infeasible-without-peers-ahead is observed; preserves the timestamp across
+    * subsequent abandonments at the same key so the time-based escape hatch in Cluster.leave() measures from first detection.
+    */
+  private def updateWedgeHealth(
+    retriableCount: Int,
+    peersAtHigherKey: Int,
+    reasonLabel: String
+  ): F[Unit] =
+    Async[F].monotonic.flatMap { now =>
+      healthRef.update { h =>
+        val nextWedgeAt =
+          if (retriableCount >= wedgeRetriableThreshold && peersAtHigherKey == 0)
+            h.wedgeDetectedAtMs.orElse(Some(now.toMillis))
+          else
+            None
+        h.copy(
+          peersAtHigherKey = peersAtHigherKey,
+          lastAbandonReason = Some(reasonLabel),
+          wedgeDetectedAtMs = nextWedgeAt
+        )
+      }
+    }
 
   /** Track a failed initFromDownload attempt. Called by the event loop error handler when InitializeFromDownload exhausts retries. Without
     * this, repeated init failures would loop forever (download → init fail → download) because the recovery counter is only incremented by
@@ -327,6 +356,11 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
                               "recoverySuppressed" -> (!networkAdvanced).toString
                             )
                             _ <- healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount))
+                            // Update wedge signal for Cluster.leave() guard. Fires when retriable abandonments at the same key
+                            // pile up AND no peer is ahead - the symptom of an orchestration-induced wedge where consensus
+                            // can't close because the committee is structurally short of quorum. Clears when peersAtHigherKey > 0
+                            // (cluster has advanced) or when a round closes (resetOnSuccessfulRound).
+                            _ <- updateWedgeHealth(retriableCount, peersAtHigherKey, reason.label)
                             _ <-
                               if (networkAdvanced) triggerRecoveryDownload(key, consecutiveCount)
                               else offerRoundCompleted >> queue.offer(ConsensusCommand.TimeTick)
