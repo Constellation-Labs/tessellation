@@ -16,6 +16,7 @@ import io.constellationnetwork.node.shared.domain.Daemon
 import io.constellationnetwork.node.shared.infrastructure.cluster.daemon.NodeStateDaemon
 import io.constellationnetwork.node.shared.infrastructure.collateral.daemon.CollateralDaemon
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.EventGossipDaemon
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.daemon.{DownloadDaemon, SelectablePeerDiscoveryDelay}
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.peer.PeerId
@@ -23,7 +24,7 @@ import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
 object Daemons {
 
-  def start[F[_]: Async: Supervisor: HasherSelector: SecurityProvider, R <: CliMethod](
+  def start[F[_]: Async: Supervisor: HasherSelector: SecurityProvider: Metrics, R <: CliMethod](
     storages: Storages[F],
     services: Services[F, R],
     programs: Programs[F],
