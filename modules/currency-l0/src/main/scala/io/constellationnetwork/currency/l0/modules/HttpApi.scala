@@ -64,6 +64,8 @@ object HttpApi {
       snapshotRoutes <-
         SnapshotRoutes.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           storages.snapshot,
+          // currency-l0 has no equivalent LastN storage for fallback; preserves legacy behavior.
+          None,
           None,
           "/snapshots",
           storages.node,

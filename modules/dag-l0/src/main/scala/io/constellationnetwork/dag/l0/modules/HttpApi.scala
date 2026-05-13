@@ -16,6 +16,7 @@ import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment._
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.{HttpConfig, RouteRateLimiterConfig, SharedConfig}
+import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{MetricsMiddleware, PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip
@@ -57,12 +58,14 @@ object HttpApi {
       GlobalIncrementalSnapshot,
       GlobalSnapshotInfo
     ],
+    lastNGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     getLocalChainTip: Option[F[Option[ChainTip]]] = None,
     maybeMarkSeen: Option[Hash => F[Unit]] = None
   ): F[HttpApi[F, R]] =
     SnapshotRoutes
       .make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
         storages.globalSnapshot,
+        lastNGlobalSnapshotStorage.some,
         storages.fullGlobalSnapshot.some,
         "/global-snapshots",
         storages.node,
