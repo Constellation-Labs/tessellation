@@ -101,8 +101,9 @@ object Download {
     *      ordinal, the majority hash equals our local hash (prevents a running-fork scenario where peers are "at our ordinal" but on a
     *      different chain).
     *
-    * Data source for peer tips: `SnapshotRoutes:/global-snapshots/latest/metadata`, which is `whenNodeReady`-gated on the responder — a
-    * response is evidence the responder is actually in `NodeState.Ready`.
+    * Data source for peer tips: `SnapshotRoutes:/global-snapshots/latest/metadata`, which is `whenNodeReady`-gated on the responder. Since
+    * alpha.64 the gate accepts both `NodeState.Ready` and `NodeState.WaitingForReady`, with the body falling back to
+    * `lastNGlobalSnapshotStorage` when production head is empty (so a recovering source node serves its recovery tip).
     */
   private[snapshot] def chooseObservationLimit(
     currentOrdinal: SnapshotOrdinal,
@@ -560,12 +561,19 @@ object Download {
     // block the shortcut decision indefinitely; one that errors or times out simply doesn't vote.
     private val perPeerTipTimeout: FiniteDuration = 3.seconds
 
-    /** Query every responsive Ready peer's `/global-snapshots/latest/metadata` in parallel. Used by both the normal observe path and the
-      * recovery observe path to decide whether the cluster is already at our tip (shortcut) or ahead (fetch forward).
+    /** Query every responsive Ready or WaitingForReady peer's `/global-snapshots/latest/metadata` in parallel. Used by both the normal
+      * observe path and the recovery observe path to decide whether the cluster is already at our tip (shortcut) or ahead (fetch forward).
+      *
+      * Pool widened beyond Ready to include WaitingForReady (matches the alpha.63/64 widening of PeerSelect, SelectablePeerDiscoveryDelay,
+      * StateTransitions.selectPeer, and SnapshotRoutes.validStateForSnapshotReturn). On a stalled rollback-lead topology the only Ready
+      * peer may be the rollback-lead itself while sibling source nodes sit in WaitingForReady; with just one Ready respondent a single
+      * timed-out probe drops `readyPeerTips.size` below `minReadyQuorum`, forcing recovering peers into the forward-observe path against an
+      * ordinal the cluster cannot produce. Including WaitingForReady peers makes the shortcut decision robust under stall. SnapshotRoutes
+      * already serves `/global-snapshots/latest/metadata` from WaitingForReady via the LastN fallback added in alpha.64.
       */
     private def getReadyPeerTips: F[List[PeerTip]] =
       clusterStorage.getResponsivePeers
-        .map(NodeState.ready)
+        .map(_.filter(p => p.state === NodeState.Ready || p.state === NodeState.WaitingForReady))
         .map(_.toList)
         .flatMap(
           _.parTraverse(peer =>
@@ -574,7 +582,7 @@ object Download {
               .map(m => PeerTip(m.ordinal, m.hash).some)
               .handleErrorWith(err =>
                 logger
-                  .warn(err)(s"[Download] Unable to fetch latest metadata from ready peer ${peer.show}")
+                  .warn(err)(s"[Download] Unable to fetch latest metadata from peer ${peer.show}")
                   .as(none[PeerTip])
               )
           )
