@@ -70,7 +70,12 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
       case `If-None-Match`(Some(tags)) => tags.exists(_.tag == expectedTag.tag)
     }
 
-  private def validStateForSnapshotReturn(state: NodeState): Boolean = state === NodeState.Ready
+  // WaitingForReady peers have run initFromDownload successfully and have a consensus-validated head snapshot
+  // loaded in storage. The bytes they serve for historical snapshot reads are equivalent to a Ready peer's.
+  // Allowing them to serve unblocks the post-rollback bottleneck where joining peers funnel through the
+  // lone Ready node because sibling source nodes await a round to close before transitioning to Ready.
+  private def validStateForSnapshotReturn(state: NodeState): Boolean =
+    state === NodeState.Ready || state === NodeState.WaitingForReady
 
   private def whenNodeReady(action: F[Response[F]]): F[Response[F]] =
     nodeStorage.getNodeState
