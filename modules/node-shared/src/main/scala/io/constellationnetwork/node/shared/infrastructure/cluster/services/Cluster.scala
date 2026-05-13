@@ -19,6 +19,7 @@ import io.constellationnetwork.node.shared.domain.cluster.services.Cluster
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusHealthStatus
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
 import io.constellationnetwork.schema.address.Address
@@ -29,9 +30,11 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
 
+import eu.timepit.refined.auto._
+
 object Cluster {
 
-  def make[F[_]: Async: SecurityProvider](
+  def make[F[_]: Async: SecurityProvider: Metrics](
     leavingDelay: FiniteDuration,
     httpConfig: HttpConfig,
     selfId: PeerId,
@@ -56,7 +59,15 @@ object Cluster {
     // Time-based escape hatch for the leave guard. After this duration since wedge first detected,
     // leaves are permitted even if the wedge persists. Prevents permanent lock-out if a wedge
     // becomes terminal and operators legitimately need to leave. Force-flag callers also bypass.
-    wedgeMaxRefuseDuration: FiniteDuration = 1.hour
+    wedgeMaxRefuseDuration: FiniteDuration = 1.hour,
+    // Optional thunk reading the monotonic timestamp of the last NodeState entry. Used by the
+    // recovery-dwell guard to refuse external leave POSTs that fire while the local recovery
+    // FSM is still inside its own internal recovery budget. None disables the dwell guard.
+    lastStateEntryAt: Option[F[FiniteDuration]] = None,
+    // Minimum time the node must remain in a recovery-path state before an external leave is
+    // permitted. Matches the internal recoveryMaxWallClock so the guard never refuses past the
+    // point where the local recovery FSM would itself have given up.
+    recoveryDwellTime: FiniteDuration = 10.minutes
   ): Cluster[F] =
     new Cluster[F] {
 
@@ -97,46 +108,90 @@ object Cluster {
       def signRequest(signRequest: SignRequest)(implicit hasher: Hasher[F]): F[Signed[SignRequest]] =
         signRequest.sign(keyPair)
 
-      // States in which the leave-guard refuses (peer is part of the consensus committee).
-      // Other states (WaitingForDownload, DownloadInProgress, ReadyToJoin, etc.) always allow
-      // leaves - those are legitimate restart-needed transitions, not wedge symptoms.
-      private val guardedStates: Set[NodeState] =
+      // In-committee states. Wedge gate (sustained quorum-infeasible) refuses leaves here when
+      // ConsensusHealthStatus.wedgeDetectedAtMs is set. Other states with a different gate handled below.
+      private val committeeGuardedStates: Set[NodeState] =
         Set(NodeState.Observing, NodeState.WaitingForReady, NodeState.Ready)
 
+      // Recovery-path states. Dwell-time gate refuses leaves while the local recovery FSM is
+      // still inside its internal recovery budget (default 10 min, matches
+      // convergingRecoveryCycle.recoveryMaxWallClock). After that the gate releases on its own.
+      // Independent of wedge signal because peers in these states haven't started consensus yet
+      // and don't produce a wedge signal locally.
+      private val recoveryGuardedStates: Set[NodeState] =
+        Set(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.WaitingForObserving)
+
       // Returns Some(refusalReason) when the leave should be refused, None to proceed.
-      // Three-layer gate:
-      //   1. Force bypass: `force=true` always permits.
-      //   2. State gate: only refuse in guardedStates (in-committee states).
-      //   3. Wedge gate: requires consensusHealth to report wedgeDetectedAtMs set
-      //      AND elapsed-since-detection < wedgeMaxRefuseDuration.
-      // Wedge signal is owned by AbandonmentTracker; see ConsensusHealthStatus.wedgeDetectedAtMs.
-      private def evaluateLeaveGuard(force: Boolean): F[Option[String]] =
+      // Force bypass always permits. Otherwise applies (in order) the wedge gate for committee
+      // states and the dwell gate for recovery states. Side-effects emit
+      // `dag_cluster_leave_refused_total{reason}` so refusals are visible in Prometheus.
+      private def evaluateLeaveGuard(force: Boolean): F[Option[String]] = {
+        def recordRefusal(reasonLabel: String, message: String): F[Option[String]] =
+          Metrics[F]
+            .incrementCounter(
+              "dag_cluster_leave_refused_total",
+              Seq(Metrics.unsafeLabelName("reason") -> reasonLabel)
+            )
+            .as(Some(message))
+
         if (force) Async[F].pure(None)
         else
           nodeStorage.getNodeState.flatMap { state =>
-            if (!guardedStates.contains(state)) Async[F].pure(None)
-            else
-              consensusHealth match {
-                case None => Async[F].pure(None)
-                case Some(getHealth) =>
-                  for {
-                    health <- getHealth
-                    now <- Async[F].monotonic
-                    refusal = health.wedgeDetectedAtMs.flatMap { wedgeAtMs =>
-                      val elapsedMs = now.toMillis - wedgeAtMs
-                      if (elapsedMs < wedgeMaxRefuseDuration.toMillis)
-                        Some(
-                          s"cluster in sustained wedge (state=$state, " +
-                            s"reason=${health.lastAbandonReason.getOrElse("unknown")}, " +
-                            s"peersAtHigherKey=${health.peersAtHigherKey}, " +
-                            s"consecutiveAbandonments=${health.consecutiveAbandonments}, " +
-                            s"wedgeForMs=$elapsedMs)"
-                        )
-                      else None
-                    }
-                  } yield refusal
-              }
+            if (committeeGuardedStates.contains(state)) checkWedgeGate(state, recordRefusal)
+            else if (recoveryGuardedStates.contains(state)) checkRecoveryDwellGate(state, recordRefusal)
+            else Async[F].pure(None)
           }
+      }
+
+      private def checkWedgeGate(
+        state: NodeState,
+        recordRefusal: (String, String) => F[Option[String]]
+      ): F[Option[String]] =
+        consensusHealth match {
+          case None => Async[F].pure(None)
+          case Some(getHealth) =>
+            for {
+              health <- getHealth
+              now <- Async[F].monotonic
+              result <- health.wedgeDetectedAtMs match {
+                case Some(wedgeAtMs) =>
+                  val elapsedMs = now.toMillis - wedgeAtMs
+                  if (elapsedMs < wedgeMaxRefuseDuration.toMillis)
+                    recordRefusal(
+                      "wedge",
+                      s"cluster in sustained wedge (state=$state, " +
+                        s"reason=${health.lastAbandonReason.getOrElse("unknown")}, " +
+                        s"peersAtHigherKey=${health.peersAtHigherKey}, " +
+                        s"consecutiveAbandonments=${health.consecutiveAbandonments}, " +
+                        s"wedgeForMs=$elapsedMs)"
+                    )
+                  else Async[F].pure(None: Option[String])
+                case None => Async[F].pure(None: Option[String])
+              }
+            } yield result
+        }
+
+      private def checkRecoveryDwellGate(
+        state: NodeState,
+        recordRefusal: (String, String) => F[Option[String]]
+      ): F[Option[String]] =
+        lastStateEntryAt match {
+          case None => Async[F].pure(None)
+          case Some(getEntryAt) =>
+            for {
+              entryAt <- getEntryAt
+              now <- Async[F].monotonic
+              dwellMs = now.toMillis - entryAt.toMillis
+              result <-
+                if (dwellMs < recoveryDwellTime.toMillis)
+                  recordRefusal(
+                    "recovery_dwell",
+                    s"node is in recovery (state=$state, " +
+                      s"dwellMs=$dwellMs, requiredMs=${recoveryDwellTime.toMillis})"
+                  )
+                else Async[F].pure(None: Option[String])
+            } yield result
+        }
 
       def leave(): F[Unit] = leave(force = false)
 

@@ -187,7 +187,7 @@ abstract class CurrencyL1App(
         tokenLockBlockRumorHandler[IO](queues.tokenLocksBlocks)
 
       _ <- DAGL1Daemons
-        .start(storages, services)
+        .start(storages, services, sharedServices.stateEntryAtRef)
         .asResource
 
       implicit0(nodeContext: L1NodeContext[IO]) = L1NodeContext
