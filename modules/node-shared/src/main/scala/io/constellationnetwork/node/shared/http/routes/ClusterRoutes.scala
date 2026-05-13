@@ -61,8 +61,18 @@ final case class ClusterRoutes[F[_]: Async: Hasher](
             case _                                              => InternalServerError("Unknown error.")
           }
       }
-    case POST -> Root / "leave" =>
-      cluster.leave() >> Ok()
+    case req @ POST -> Root / "leave" =>
+      // `?force=true` bypasses the wedge guard. Operators with legitimate need-to-leave during a
+      // sustained quorum-infeasible wedge should include the flag; orchestration tooling (node-pilot,
+      // nodectl) that POSTs unadorned gets refused via 409 with reason, defending against
+      // healthcheck-driven leave loops that misread consensus stalls as unhealthiness.
+      val force = req.uri.query.params.get("force").exists(_.equalsIgnoreCase("true"))
+      cluster
+        .leave(force)
+        .flatMap(_ => Ok())
+        .recoverWith {
+          case ClusterLeaveRefused(reason) => Conflict(reason)
+        }
   }
 
   protected val p2pPublic: HttpRoutes[F] = HttpRoutes.of[F] {
