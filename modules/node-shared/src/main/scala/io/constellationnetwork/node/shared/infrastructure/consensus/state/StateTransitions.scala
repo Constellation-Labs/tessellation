@@ -618,8 +618,30 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
       _ <- ctx.nodeStorage.tryModifyState(NodeState.Observing, NodeState.Ready)
     } yield ()
 
+  /** `dag_consensus_init_download_outcome_total{outcome}` - telemetry on which path through `initFromDownload` is exercised. `outcome`
+    * labels: `success`, `self_in_probation` (B2 gate fired), `no_outcome_available` (fetchOutcomeFromCluster exhausted retries),
+    * `outcome_validation_failed` (post-retry artifact/context mismatch), `storage_init_failed` (trySetInitialConsensusOutcome returned
+    * false), `other` (anything else). Read alongside `dag_consensus_init_download_failure_tracked` and
+    * `dag_consensus_force_leave_triggered` to identify why a recovering peer ends up in Leaving.
+    */
+  private def initDownloadOutcome(outcome: String): F[Unit] =
+    Metrics[F].incrementCounter(
+      "dag_consensus_init_download_outcome_total",
+      Seq(unsafeLabelName("outcome") -> outcome)
+    )
+
+  private def classifyInitDownloadError(err: Throwable): String = err match {
+    case _: SelfStillInProbation => "self_in_probation"
+    case t =>
+      val msg = Option(t.getMessage).getOrElse("")
+      if (msg.startsWith("[DownloadInit] Could not observe outcome")) "no_outcome_available"
+      else if (msg.startsWith("[DownloadInit] Outcome validation failed")) "outcome_validation_failed"
+      else if (msg.contains("Failed to initialize consensus storage")) "storage_init_failed"
+      else "other"
+  }
+
   def initFromDownload(key: Key, artifact: Signed[Artifact], context: Ctx, isRecovery: Boolean = false): F[Unit] =
-    for {
+    (for {
       _ <- ConsensusLog.info(log, Category.Lifecycle, key.toString, "n/a", LogEvent.DownloadInitStart)
       // isRecoveryEffective = true if either the caller flagged this as recovery, OR the cluster
       // has advanced past our downloaded ordinal (peer returned a newer outcome). In both cases
@@ -720,7 +742,9 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
               }
             }
         )
-    } yield ()
+    } yield ())
+      .flatTap(_ => initDownloadOutcome("success"))
+      .onError { case err => initDownloadOutcome(classifyInitDownloadError(err)) }
 
   def initFromRollback(key: Key, outcome: Outcome): F[Unit] =
     for {

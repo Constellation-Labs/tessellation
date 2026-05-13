@@ -9,12 +9,13 @@ import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.domain.Daemon
 import io.constellationnetwork.node.shared.infrastructure.cluster.daemon.NodeStateDaemon
 import io.constellationnetwork.node.shared.infrastructure.collateral.daemon.CollateralDaemon
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 
 object Daemons {
 
   def start[
-    F[_]: Async: Supervisor,
+    F[_]: Async: Supervisor: Metrics,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P],

@@ -16,13 +16,14 @@ import io.constellationnetwork.node.shared.domain.Daemon
 import io.constellationnetwork.node.shared.infrastructure.cluster.daemon.NodeStateDaemon
 import io.constellationnetwork.node.shared.infrastructure.collateral.daemon.CollateralDaemon
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.EventGossipDaemon
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.daemon.{DownloadDaemon, SelectablePeerDiscoveryDelay}
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
 object Daemons {
 
-  def start[F[_]: Async: Supervisor: SecurityProvider](
+  def start[F[_]: Async: Supervisor: SecurityProvider: Metrics](
     storages: Storages[F],
     services: Services[F, Run],
     programs: Programs[F],
