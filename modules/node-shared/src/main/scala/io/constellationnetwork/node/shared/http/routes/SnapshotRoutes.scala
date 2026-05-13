@@ -8,7 +8,7 @@ import io.constellationnetwork.ext.http4s.{BlockingEntityEncoder, HashVar}
 import io.constellationnetwork.json.StreamingCollectionEncoder
 import io.constellationnetwork.node.shared.config.types.{SnapshotServingConfig, SnapshotTimeoutsConfig}
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.ext.http4s.SnapshotOrdinalVar
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{
   ConcurrencyLimitMiddleware,
@@ -38,6 +38,13 @@ import shapeless.syntax.singleton._
 
 final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: SnapshotInfo[_]: Encoder](
   snapshotStorage: SnapshotStorage[F, S, SI],
+  // On WaitingForReady peers reached via the download path, snapshotStorage.head returns None
+  // (it's only populated as the node produces snapshots). lastNSnapshotStorage IS populated for
+  // such peers via Download.recoveryObserve setForRecovery. When provided, we use it as a fallback
+  // so the /latest endpoints serve correctly from WaitingForReady peers - critical for parallel
+  // snapshot download distribution after rollback. None for layers (e.g. currency-l0) that don't
+  // have an equivalent LastN storage; those preserve the legacy behavior.
+  lastNSnapshotStorage: Option[LastSnapshotStorage[F, S, SI]],
   fullGlobalSnapshotStorage: Option[SnapshotLocalFileSystemStorage[F, GlobalSnapshot]],
   prefixPath: InternalUrlPrefix,
   nodeStorage: NodeStorage[F],
@@ -77,6 +84,27 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
   private def validStateForSnapshotReturn(state: NodeState): Boolean =
     state === NodeState.Ready || state === NodeState.WaitingForReady
 
+  // Fallback helpers: snapshotStorage.head is populated as the node PRODUCES snapshots
+  // (consensus head). On a WaitingForReady peer reached via the download path, the
+  // production head is empty - but lastNSnapshotStorage is populated via Download.recoveryObserve
+  // setForRecovery. Falling back keeps the /latest endpoints serving correctly without
+  // changing semantics on Ready peers (snapshotStorage.head is the canonical source there).
+  private def headSnapshotWithFallback: F[Option[Signed[S]]] =
+    snapshotStorage.headSnapshot.flatMap {
+      case s @ Some(_) => (s: Option[Signed[S]]).pure[F]
+      case None =>
+        lastNSnapshotStorage.fold(Option.empty[Signed[S]].pure[F])(_.get.map(_.map(_.signed)))
+    }
+
+  private def headWithFallback: F[Option[(Signed[S], SI)]] =
+    snapshotStorage.head.flatMap {
+      case s @ Some(_) => (s: Option[(Signed[S], SI)]).pure[F]
+      case None =>
+        lastNSnapshotStorage.fold(Option.empty[(Signed[S], SI)].pure[F])(
+          _.getCombined.map(_.map { case (h, si) => (h.signed, si) })
+        )
+    }
+
   private def whenNodeReady(action: F[Response[F]]): F[Response[F]] =
     nodeStorage.getNodeState
       .map(validStateForSnapshotReturn)
@@ -98,7 +126,7 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
       HttpRoutes.of[F] {
         case GET -> Root / "latest" / "ordinal" =>
           whenNodeReady {
-            snapshotStorage.headSnapshot.map(_.map(_.ordinal)).flatMap {
+            headSnapshotWithFallback.map(_.map(_.ordinal)).flatMap {
               case Some(ordinal) => Ok(("value" ->> ordinal.value.value) :: HNil)
               case None          => NotFound()
             }
@@ -106,7 +134,7 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
 
         case GET -> Root / "latest" / "metadata" =>
           whenNodeReady {
-            snapshotStorage.headSnapshot
+            headSnapshotWithFallback
               .flatMap(_.traverse(snapshot => hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[F])))
               .map(
                 _.map(snapshot =>
@@ -129,7 +157,7 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
         case req @ GET -> Root / "latest" =>
           whenNodeReady {
             resolveEncoder[F, Signed[S]](req) { implicit enc =>
-              snapshotStorage.headSnapshot.flatMap {
+              headSnapshotWithFallback.flatMap {
                 case Some(snapshot) => Ok(snapshot)
                 case _              => NotFound()
               }
@@ -138,7 +166,7 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
 
         case GET -> Root / "latest" / "combined" =>
           whenNodeReady {
-            snapshotStorage.head.flatMap {
+            headWithFallback.flatMap {
               case Some((snapshot, state)) =>
                 cachedCombinedResponse.get(snapshot.ordinal, snapshot, state).flatMap { bytes =>
                   Ok(
@@ -289,6 +317,7 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
 object SnapshotRoutes {
   def make[F[_]: Async, S <: Snapshot: Encoder, SI <: SnapshotInfo[_]: Encoder](
     snapshotStorage: SnapshotStorage[F, S, SI],
+    lastNSnapshotStorage: Option[LastSnapshotStorage[F, S, SI]],
     fullGlobalSnapshotStorage: Option[SnapshotLocalFileSystemStorage[F, GlobalSnapshot]],
     prefixPath: InternalUrlPrefix,
     nodeStorage: NodeStorage[F],
@@ -339,6 +368,7 @@ object SnapshotRoutes {
     } yield
       new SnapshotRoutes[F, S, SI](
         snapshotStorage,
+        lastNSnapshotStorage,
         fullGlobalSnapshotStorage,
         prefixPath,
         nodeStorage,
