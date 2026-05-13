@@ -48,7 +48,10 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
 
   protected val prefixPath: InternalUrlPrefix = "/node-params"
 
-  private def validStateForSnapshotReturn(state: NodeState): Boolean = state === NodeState.Ready
+  // Parity with SnapshotRoutes: WaitingForReady peers have a consensus-validated head snapshot loaded
+  // and can serve node parameters derived from it.
+  private def validStateForSnapshotReturn(state: NodeState): Boolean =
+    state === NodeState.Ready || state === NodeState.WaitingForReady
 
   private def getLatestNodeParameters(nodeId: Id): F[Option[NodeParamsInfo]] =
     for {
