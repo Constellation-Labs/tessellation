@@ -99,7 +99,12 @@ object ConsensusEventLoop {
     probationPeersOf: Outcome => Set[PeerId],
     lastSnapshotHashOf: Outcome => io.constellationnetwork.security.hash.Hash,
     peerQualityOf: Outcome => Map[PeerId, (Int, Int)],
-    getPeerChainTips: F[Map[PeerId, io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip]]
+    getPeerChainTips: F[Map[PeerId, io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip]],
+    // Optional externally-owned health Ref. When provided, AbandonmentTracker writes to it so
+    // a sibling reader (e.g. `Cluster.leave()`'s wedge guard in SharedServices) observes the
+    // same wedge signal. When None, an internal Ref is created and writes stay local. Either
+    // way the returned `BuiltConsensusLoop.healthRef` is non-null so callers always have a handle.
+    injectedHealthRef: Option[Ref[F, ConsensusHealthStatus]] = None
   )(
     implicit _key: monocle.Lens[Outcome, Key],
     _context: monocle.Lens[Outcome, Ctx],
@@ -132,7 +137,7 @@ object ConsensusEventLoop {
         probationPeersOf,
         peerQualityOf
       )
-      healthRef <- ConsensusHealthStatus.ref[F]
+      healthRef <- injectedHealthRef.fold(ConsensusHealthStatus.ref[F])(Async[F].pure)
       viewChangeManager = new ViewChangeManager[F, Key, Artifact, Ctx, Status, Outcome, Kind](
         storage,
         peerQualityTracker,
