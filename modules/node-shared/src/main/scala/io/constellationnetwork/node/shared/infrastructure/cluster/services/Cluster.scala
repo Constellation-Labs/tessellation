@@ -108,23 +108,27 @@ object Cluster {
       def signRequest(signRequest: SignRequest)(implicit hasher: Hasher[F]): F[Signed[SignRequest]] =
         signRequest.sign(keyPair)
 
-      // In-committee states. Wedge gate (sustained quorum-infeasible) refuses leaves here when
-      // ConsensusHealthStatus.wedgeDetectedAtMs is set. Other states with a different gate handled below.
+      // In-committee states (peer has been admitted to consensus). Wedge gate fires here when
+      // local AbandonmentTracker has detected sustained quorum-infeasibility.
       private val committeeGuardedStates: Set[NodeState] =
         Set(NodeState.Observing, NodeState.WaitingForReady, NodeState.Ready)
 
-      // Recovery-path states. Dwell-time gate refuses leaves while the local recovery FSM is
-      // still inside its internal recovery budget (default 10 min, matches
-      // convergingRecoveryCycle.recoveryMaxWallClock). After that the gate releases on its own.
-      // Independent of wedge signal because peers in these states haven't started consensus yet
-      // and don't produce a wedge signal locally.
+      // Recovery-path states (peer is downloading + transitioning toward committee). Dwell gate
+      // refuses leaves while the local recovery FSM is still inside its internal recovery budget.
       private val recoveryGuardedStates: Set[NodeState] =
         Set(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.WaitingForObserving)
 
+      // Every state where the dwell gate applies. Includes BOTH recovery-path and committee
+      // states: a freshly-arrived peer in WaitingForReady has no local wedge signal yet (its
+      // AbandonmentTracker hasn't accumulated abandonments), so the wedge gate would let node-pilot
+      // kill it during the settle-in window. The dwell gate covers that gap.
+      private val dwellGuardedStates: Set[NodeState] =
+        committeeGuardedStates ++ recoveryGuardedStates
+
       // Returns Some(refusalReason) when the leave should be refused, None to proceed.
-      // Force bypass always permits. Otherwise applies (in order) the wedge gate for committee
-      // states and the dwell gate for recovery states. Side-effects emit
-      // `dag_cluster_leave_refused_total{reason}` so refusals are visible in Prometheus.
+      // Force bypass always permits. Gate order: dwell gate first (universal), then wedge gate
+      // for committee states. Side-effects emit `dag_cluster_leave_refused_total{reason}` so
+      // refusals are visible in Prometheus.
       private def evaluateLeaveGuard(force: Boolean): F[Option[String]] = {
         def recordRefusal(reasonLabel: String, message: String): F[Option[String]] =
           Metrics[F]
@@ -137,9 +141,14 @@ object Cluster {
         if (force) Async[F].pure(None)
         else
           nodeStorage.getNodeState.flatMap { state =>
-            if (committeeGuardedStates.contains(state)) checkWedgeGate(state, recordRefusal)
-            else if (recoveryGuardedStates.contains(state)) checkRecoveryDwellGate(state, recordRefusal)
-            else Async[F].pure(None)
+            if (!dwellGuardedStates.contains(state)) Async[F].pure(None)
+            else
+              checkDwellGate(state, recordRefusal).flatMap {
+                case some @ Some(_) => Async[F].pure(some)
+                case None =>
+                  if (committeeGuardedStates.contains(state)) checkWedgeGate(state, recordRefusal)
+                  else Async[F].pure(None)
+              }
           }
       }
 
@@ -171,7 +180,7 @@ object Cluster {
             } yield result
         }
 
-      private def checkRecoveryDwellGate(
+      private def checkDwellGate(
         state: NodeState,
         recordRefusal: (String, String) => F[Option[String]]
       ): F[Option[String]] =
@@ -186,7 +195,7 @@ object Cluster {
                 if (dwellMs < recoveryDwellTime.toMillis)
                   recordRefusal(
                     "recovery_dwell",
-                    s"node is in recovery (state=$state, " +
+                    s"node settling in state (state=$state, " +
                       s"dwellMs=$dwellMs, requiredMs=${recoveryDwellTime.toMillis})"
                   )
                 else Async[F].pure(None: Option[String])
