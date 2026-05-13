@@ -5,6 +5,7 @@ import java.security.KeyPair
 import cats.Parallel
 import cats.data.NonEmptySet
 import cats.effect.Async
+import cats.effect.kernel.Ref
 import cats.effect.std.Supervisor
 import cats.syntax.all._
 
@@ -29,6 +30,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlock
 import io.constellationnetwork.node.shared.http.p2p.clients.NodeClient
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.cluster.services.Cluster
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusHealthStatus
 import io.constellationnetwork.node.shared.infrastructure.gossip.{Gossip => GossipImpl}
 import io.constellationnetwork.node.shared.infrastructure.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
@@ -82,6 +84,14 @@ object SharedServices {
     for {
       restartService <- RestartService.make(restartSignal, storages.cluster)
 
+      // Shared consensus-health Ref. The writer is each layer's AbandonmentTracker (wired
+      // through `ConsensusEventLoop.build`'s injectedHealthRef param); the reader is
+      // `Cluster.leave()` via `consensusHealth = Some(consensusHealthRef.get)`. Created here
+      // so it exists before `Cluster.make`. Layers that don't wire their consensus engine to
+      // this Ref (currently: dag-l1, currency-l0, currency-l1) leave the guard reading
+      // `ConsensusHealthStatus.empty` -> wedgeDetectedAtMs = None -> guard inert there.
+      consensusHealthRef <- ConsensusHealthStatus.ref[F]
+
       cluster = Cluster
         .make[F](
           cfg.leavingDelay,
@@ -98,7 +108,8 @@ object SharedServices {
           jarHash,
           environment,
           allowanceList,
-          metagraphId
+          metagraphId,
+          consensusHealth = Some(consensusHealthRef.get)
         )
 
       localHealthcheck <- LocalHealthcheck.make[F](nodeClient, storages.cluster)
@@ -196,7 +207,8 @@ object SharedServices {
         updateNodeParametersAcceptanceManager = updateNodeParametersAcceptanceManager,
         updateDelegatedStakeAcceptanceManager = updateDelegatedStakeAcceptanceManager,
         updateNodeCollateralAcceptanceManager = updateNodeCollateralAcceptanceManager,
-        priceStateUpdater = priceStateUpdater
+        priceStateUpdater = priceStateUpdater,
+        consensusHealthRef = consensusHealthRef
       ) {}
 }
 
@@ -213,5 +225,9 @@ sealed abstract class SharedServices[F[_], A <: CliMethod] private (
   val updateNodeParametersAcceptanceManager: UpdateNodeParametersAcceptanceManager[F],
   val updateDelegatedStakeAcceptanceManager: UpdateDelegatedStakeAcceptanceManager[F],
   val updateNodeCollateralAcceptanceManager: UpdateNodeCollateralAcceptanceManager[F],
-  val priceStateUpdater: PriceStateUpdater[F]
+  val priceStateUpdater: PriceStateUpdater[F],
+  // Exposed so each layer's consensus engine can pass it to `ConsensusEventLoop.build` as the
+  // injectedHealthRef. When wired, the engine's AbandonmentTracker becomes the writer for this
+  // Ref and `Cluster.leave()`'s wedge guard becomes active. Only dag-l0 wires this today.
+  val consensusHealthRef: Ref[F, ConsensusHealthStatus]
 )

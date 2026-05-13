@@ -4,7 +4,7 @@ import java.security.KeyPair
 
 import cats.Parallel
 import cats.data.NonEmptySet
-import cats.effect.kernel.{Async, Fiber}
+import cats.effect.kernel.{Async, Fiber, Ref}
 import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
 
@@ -111,7 +111,12 @@ object GlobalSnapshotConsensus {
     // EventGossipDaemon is constructed after consensus in Main.scala — the Ref pattern in
     // Main.scala populates the real getter once the daemon is up; before that it returns
     // Map.empty and no admission votes fire (safe default).
-    getPeerChainTips: F[Map[PeerId, io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip]]
+    getPeerChainTips: F[Map[PeerId, io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip]],
+    // Shared consensus-health Ref from SharedServices. When provided, the engine's
+    // AbandonmentTracker writes wedge signals into the same Ref that Cluster.leave()'s guard
+    // reads, activating the leave-refusal behavior. When None, the engine creates its own
+    // internal Ref and the cluster-level guard sees only the empty default (inert).
+    injectedHealthRef: Option[Ref[F, ConsensusHealthStatus]] = None
   )(implicit supervisor: Supervisor[F], globalStateProofSelector: GlobalStateProofSelector): F[GlobalSnapshotConsensus[F]] =
     for {
       globalStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
@@ -330,7 +335,8 @@ object GlobalSnapshotConsensus {
           (o: GlobalConsensusOutcome) => o.readmissionCountdown.filter(_._2 > 0).keySet,
           (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
           (o: GlobalConsensusOutcome) => o.peerQuality.toMap,
-          getPeerChainTips
+          getPeerChainTips,
+          injectedHealthRef
         )
 
       handler = GlobalConsensusHandler.make(loop.queue)

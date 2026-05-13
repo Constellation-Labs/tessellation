@@ -141,7 +141,11 @@ object Services {
             eventGossipClient,
             loggerBundle,
             queues.rumor,
-            getPeerChainTips
+            getPeerChainTips,
+            // Activate the Cluster.leave() wedge guard: AbandonmentTracker writes wedge state
+            // into the SharedServices-owned Ref; Cluster reads from the same Ref via the
+            // consensusHealth thunk passed at Cluster.make time.
+            injectedHealthRef = Some(sharedServices.consensusHealthRef)
           )
       }
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
