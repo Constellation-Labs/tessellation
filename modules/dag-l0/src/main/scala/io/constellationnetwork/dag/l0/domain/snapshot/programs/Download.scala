@@ -157,6 +157,14 @@ object Download {
     val observationOffset = NonNegLong(1L)
     val fetchSnapshotDelayBetweenTrials = 10.seconds
 
+    // Outer watchdog for Download.start (both full path and recovery path). Picked generously:
+    // a fresh-join full download from genesis can take several minutes through validateChain +
+    // MPT trie build (~890k entries observed on testnet). Anything longer than this is almost
+    // certainly a hung fiber, not a slow legitimate download. Wraps `start` in timeoutTo so a
+    // hang raises DownloadStartTimedOut, which fires the .onError instrumentation and lets the
+    // FSM revert state to WaitingForDownload for retry.
+    val downloadStartMaxDuration: FiniteDuration = 10.minutes
+
     type DownloadResult = (Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)
     type ObservationLimit = SnapshotOrdinal
 
@@ -213,7 +221,13 @@ object Download {
       } yield ()
 
     def download(implicit hasherSelector: HasherSelector[F]): F[Unit] = {
-      val instrumentedStart = start
+      val guardedStart =
+        Async[F].timeoutTo(
+          start,
+          downloadStartMaxDuration,
+          DownloadStartTimedOut.raiseError[F, DownloadResult]
+        )
+      val instrumentedStart = guardedStart
         .flatTap(_ => recordStartOutcome("full", "success"))
         .onError {
           case err =>
@@ -281,6 +295,24 @@ object Download {
     // mode at a glance, regardless of whether it was a fresh-join (full download) or a post-abandon
     // recovery download. Unclassified exceptions surface as `other_<SimpleClassName>` so the
     // metric label itself names the exception type without needing log access.
+    // Message-prefix matching for bare RuntimeException/Exception sites whose class name is
+    // generic ("RuntimeException", "Exception") and would otherwise collapse to a single
+    // "other_RuntimeException" / "other_Exception" bucket. These prefixes are STABLE STRINGS
+    // owned by us in:
+    //   - SnapshotDownloadStorage.cleanupAbove (line ~175)        -> "Cleanup incomplete:"
+    //   - SnapshotDownloadStorage.readCombined (line ~116)        -> "Persisted snapshot info does not match"
+    //   - GlobalSnapshotAcceptanceManager.scala (lines ~891-1007) -> "Balance arithmetic error ..." / "Error generating token unlocks"
+    // Changing these messages on the producing side requires also updating these prefixes.
+    private def messagePrefix(err: Throwable): Option[String] = Option(err.getMessage).flatMap {
+      case m if m.startsWith("Cleanup incomplete")                                  => Some("cleanup_incomplete")
+      case m if m.contains("Persisted snapshot info does not match")                => Some("persisted_state_mismatch")
+      case m if m.startsWith("Balance arithmetic error updating balances by allow") => Some("balance_arithmetic_allow_spends")
+      case m if m.startsWith("Balance arithmetic error updating balances by token") => Some("balance_arithmetic_token_locks")
+      case m if m.startsWith("Balance arithmetic error updating balances by spend") => Some("balance_arithmetic_spend_txns")
+      case m if m.startsWith("Error generating token unlocks")                      => Some("token_unlock_error")
+      case _                                                                        => None
+    }
+
     private def classifyStartError(err: Throwable): String = err match {
       case InvalidStateProof(_)       => "state_proof_invalid"
       case InvalidChain               => "chain_invalid"
@@ -288,14 +320,15 @@ object Download {
       case FirstIncrementalNotFound   => "first_incremental_missing"
       case CannotFetchSnapshot        => "fetch_snapshot_failed"
       case CannotFetchGenesisSnapshot => "fetch_genesis_failed"
-      case other                      => s"other_${other.getClass.getSimpleName}"
+      case DownloadStartTimedOut      => "start_timed_out"
+      case other                      => messagePrefix(other).getOrElse(s"other_${other.getClass.getSimpleName}")
     }
 
     private def classifyObserveError(err: Throwable): String = err match {
       case _: ObserveDeadlineExceeded => "deadline_exceeded"
       case CannotFetchSnapshot        => "fetch_snapshot_failed"
       case InvalidChain               => "chain_invalid"
-      case other                      => s"other_${other.getClass.getSimpleName}"
+      case other                      => messagePrefix(other).getOrElse(s"other_${other.getClass.getSimpleName}")
     }
 
     // Log the exception when a start failure falls outside the classified set so source-node and
@@ -381,7 +414,13 @@ object Download {
               s"[RecoveryDownload] Gap fetched. Latest downloaded: ordinal=${result._1.ordinal.show}"
             )
           } yield result
-        body.flatTap(_ => recordStartOutcome("recovery", "success")).onError {
+        val guardedBody =
+          Async[F].timeoutTo(
+            body,
+            downloadStartMaxDuration,
+            DownloadStartTimedOut.raiseError[F, DownloadResult]
+          )
+        guardedBody.flatTap(_ => recordStartOutcome("recovery", "success")).onError {
           case err =>
             val outcome = classifyStartError(err)
             val maybeLog =
@@ -1014,4 +1053,14 @@ object Download {
   case class InvalidStateProof(ordinal: SnapshotOrdinal) extends NoStackTrace
 
   case object UnexpectedState extends NoStackTrace
+
+  // Raised when Download.start exceeds the outer watchdog budget. Converts a silent hang inside
+  // start (whether in fetchSnapshot, validateChain, createContext, mptStore.syncFullIfNeeded, or
+  // any other operation that could block without raising) into an explicit Throwable that:
+  //   1. Triggers the .onError instrumentation in `download` so the metric records `start_timed_out`
+  //   2. Propagates to NodeStorage.tryModifyState which reverts DLI -> WFD
+  //   3. Allows DownloadDaemon to schedule a fresh start() attempt
+  // Without this watchdog, a hung start() leaves the node permanently in DownloadInProgress with
+  // no metric increment and no FSM revert -- the observed silent-peer mode in alpha.70.
+  case object DownloadStartTimedOut extends NoStackTrace
 }
