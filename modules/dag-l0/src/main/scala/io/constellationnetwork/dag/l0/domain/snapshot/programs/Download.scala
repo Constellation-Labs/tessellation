@@ -923,16 +923,62 @@ object Download {
         } yield result
       }
 
+      // Search successively-lower persisted (snapshot, info) pairs until one validates. When
+      // readCombined self-heals (deletes a mismatched pair and returns None), we MUST NOT fall
+      // back to genesis: the chain has millions of blocks and re-downloading from genesis is
+      // operationally unacceptable. Instead, ask getHighestSnapshotInfoOrdinal for the next-lower
+      // persisted info ordinal and try again. The deleted info file is already gone, so the next
+      // call naturally returns a strictly-lower ordinal. Bounded by maxPersistedSearchAttempts to
+      // prevent runaway iteration on a fully-corrupted local state.
+      val maxPersistedSearchAttempts = 200
+
+      def findHighestValidPersisted(lte: SnapshotOrdinal, attempts: Int)(
+        implicit hasher: Hasher[F]
+      ): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
+        if (attempts <= 0) {
+          logger.warn(
+            s"[validateChain] exhausted $maxPersistedSearchAttempts attempts searching for a valid persisted (snapshot, info) " +
+              s"pair at or below ord=${lte.show}; will raise rather than re-download from genesis"
+          ) >> none[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F]
+        } else
+          snapshotStorage.getHighestSnapshotInfoOrdinal(lte = lte).flatMap {
+            case None => none[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F]
+            case Some(ord) =>
+              snapshotStorage.readCombined(ord).flatMap {
+                case Some(result) => result.some.pure[F]
+                case None         =>
+                  // readCombined self-healed by deleting the bad pair at `ord`. The next call to
+                  // getHighestSnapshotInfoOrdinal will return a strictly-lower ord, but we also
+                  // pass `ord` explicitly (rather than `ord - 1`) to keep the bound aligned with
+                  // any new write races. SnapshotOrdinal.MinValue terminates if we reach genesis.
+                  findHighestValidPersisted(ord, attempts - 1)
+              }
+          }
+
       state
         .map(_.pure[F])
         .getOrElse {
-          startingOrdinal
-            .flatTraverse(ordinal => hasherSelector.withCurrent(implicit hasher => snapshotStorage.readCombined(ordinal)))
-            .flatMap {
-              _.map(_.pure[F]).getOrElse(
-                getGenesisSnapshot(tmpMap)
-              )
-            }
+          startingOrdinal match {
+            case None =>
+              // No persisted info anywhere on disk -- this is a genuine fresh-node bootstrap and
+              // a genesis re-download is the only correct option. NOT the wedge-recovery path.
+              getGenesisSnapshot(tmpMap)
+            case Some(initial) =>
+              hasherSelector
+                .withCurrent(implicit hasher => findHighestValidPersisted(initial, maxPersistedSearchAttempts))
+                .flatMap {
+                  case Some(result) => result.pure[F]
+                  case None         =>
+                    // We had persisted state but every inspected pair failed validation and was
+                    // discarded. Refuse to silently re-download from genesis (potentially millions
+                    // of blocks). Raise so the FSM reverts state, the daemon retries, and an
+                    // operator can intervene if the corruption persists across retries.
+                    new RuntimeException(
+                      s"All inspected persisted snapshot/info pairs at or below ord=${initial.show} " +
+                        s"failed validation; refusing to re-download from genesis"
+                    ).raiseError[F, (Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]
+                }
+          }
         }
         .flatMap {
           case (s, c) =>
