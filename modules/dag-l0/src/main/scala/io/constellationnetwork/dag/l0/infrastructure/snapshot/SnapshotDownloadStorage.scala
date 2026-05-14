@@ -10,6 +10,7 @@ import io.constellationnetwork.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
 import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
   CombinedSnapshotCheckpointFileSystemStorage,
   SnapshotInfoLocalFileSystemStorage,
@@ -23,11 +24,12 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.validator.StateProofValidator
 
+import eu.timepit.refined.auto._
 import io.circe.Json
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object SnapshotDownloadStorage {
-  def make[F[_]: Async: Parallel: HasherSelector: KryoSerializer: JsonSerializer](
+  def make[F[_]: Async: Parallel: HasherSelector: KryoSerializer: JsonSerializer: Metrics](
     tmpStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     persistedStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     fullGlobalSnapshotStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
@@ -169,6 +171,10 @@ object SnapshotDownloadStorage {
             .findAbove(ordinal)
             .compile
             .count
+
+          // Always update the gauge so /metrics on a remote community peer can answer
+          // "how many files refused to clean up?" without log access. 0 on success.
+          _ <- Metrics[F].updateGauge("dag_download_cleanup_remaining_files", remainingFiles.toDouble)
 
           _ <-
             if (remainingFiles > 0) {
