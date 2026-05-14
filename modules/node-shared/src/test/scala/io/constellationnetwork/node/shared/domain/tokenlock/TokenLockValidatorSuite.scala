@@ -248,6 +248,30 @@ object TokenLockValidatorSuite extends MutableIOSuite {
     } yield expect.same(TooManyTokenLocksForAddress.invalidNec, result)
   }
 
+  test("validateWithTokenLockLimits - should succeed for a replacement even at max token locks per address") { res =>
+    implicit val (h, sp) = res
+
+    val config = TokenLockLimitsConfig(
+      maxTokenLocksPerAddress = PosInt.unsafeFrom(2),
+      minTokenLockAmount = PosLong.unsafeFrom(10L)
+    )
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address = keyPair.getPublic.toAddress
+
+      existingLock1 <- buildSignedTokenLock(keyPair, amount = TokenLockAmount(50L))
+      existingLock2 <- buildSignedTokenLock(keyPair, amount = TokenLockAmount(60L))
+      replaceRef <- existingLock1.toHashed.map(_.hash)
+
+      currentTokenLocks = SortedMap(address -> SortedSet(existingLock1, existingLock2))
+
+      replacement <- buildSignedTokenLock(keyPair, amount = TokenLockAmount(70L), replaceTokenLockRef = replaceRef.some)
+      validator = mkValidator()
+      result <- validator.validateWithTokenLockLimits(replacement, config, currentTokenLocks.some, EpochProgress.MinValue.some)
+    } yield expect.same(Valid(replacement), result)
+  }
+
   test("validateWithTokenLockLimits - should succeed when below max token locks per address") { res =>
     implicit val (h, sp) = res
 
