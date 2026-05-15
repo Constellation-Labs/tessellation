@@ -526,7 +526,12 @@ object GlobalSnapshotConsensusStateCreator {
           participated >= config.minParticipationObservations && completed >= 1
         }
         leaderPool = if (graduatedLeaderPool.size >= 2) graduatedLeaderPool else active
-        leader = facilitatorSelector.selectLeaderWeighted(leaderPool, entropy, qualityScores = lastOutcome.peerQuality)
+        leader = facilitatorSelector.selectLeaderWeighted(
+          leaderPool,
+          entropy,
+          qualityScores = lastOutcome.peerQuality,
+          minLeaderRatioPct = config.leaderRotationMinRatioPct
+        )
 
         _ <- ConsensusLog.info(
           logger,

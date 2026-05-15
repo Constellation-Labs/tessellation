@@ -200,6 +200,23 @@ object types {
     // witness pool) and v18 (peersAtHigherKey gate) provide the safety / liveness
     // reinforcements v15/v16 were targeting, without compressing the eligible set.
     minParticipationRatio: Double = 0.5,
+    // v14 (2026-05-14) leader-rotation band threshold. Integer percent (0..100) such that any
+    // peer in the graduated leader pool with `completed * 100 >= participated * threshold` lands
+    // in the "leader-eligible" tier; the rest fall into a fallback tier used only when no
+    // eligible peer is available. Default 50 mirrors `minParticipationRatio`.
+    //
+    // Why: pre-v14 leader tier was `participated - completed` (unbounded failure count). Under
+    // sustained leader-vs-follower asymmetry (the leader always credits itself via
+    // `observedResponders`; followers are credited only if their facility decl arrives in time)
+    // every non-leader peer's tier drifted up while the current leader's stayed at 0. Empirically
+    // this concentrated 100% of leadership on the lowest-tier 1-2 peers on testnet alpha.72,
+    // even though 6 peers were demonstrably "good enough" by quality ratio. The binary band here
+    // collapses all above-threshold peers into a single tier so rendezvous entropy spreads
+    // leadership uniformly across them.
+    //
+    // Included in `deterministicConfigHash` because it changes the leader selection algorithm
+    // (consensus-critical: divergent operator values would produce divergent leaders -> fork).
+    leaderRotationMinRatioPct: Int = 50,
     // v8 (2026-04-29) minimum-history floor for chronic classification. Codex-recommended
     // separate knob: the existing `minParticipationObservations` is reused as the leader-
     // graduation gate (state-creator:470), so bumping it to 30 would also delay leader
@@ -360,7 +377,15 @@ object types {
     //     v12 cannot safely participate in v13 rounds — cluster-wide cold restart required.
     //     Closes the testnet 2026-05-07 ord 3121304 stuck-cluster gap. See
     //     docs/consensus/eviction-cert-deterministic-shrinkage.md.
-    consensusSchemaVersion: Int = 13
+    //   v14 (2026-05-14): Leader rotation band. `selectLeaderWeighted` tier formula changes from
+    //     unbounded `participated - completed` to a binary band keyed on
+    //     `leaderRotationMinRatioPct` (default 50): peers at or above the ratio threshold all land
+    //     in tier 0, below land in tier 1. v13 nodes pick a single ratchet-favored leader; v14
+    //     nodes pick a rendezvous-rotated leader across the eligible band. Different leader ->
+    //     fork, so cluster-wide cold restart required. Empirical motivation: testnet alpha.72
+    //     showed 100% of leadership concentrated on the 2 peers with the lowest
+    //     `participated - completed` count even though 6 peers had ratio >= 0.85.
+    consensusSchemaVersion: Int = 14
   ) {
 
     /** Deterministic hash of consensus-critical config values.
@@ -411,6 +436,9 @@ object types {
           s"maxRemovalPenaltyRounds=$maxRemovalPenaltyRounds," +
           s"minParticipationObservations=$minParticipationObservations," +
           s"minParticipationRatio=$minParticipationRatio," +
+          // v14 (2026-05-14): leader-rotation band threshold. Mutates the agreed leader of every
+          // round; divergent operator values would silently fork the cluster.
+          s"leaderRotationMinRatioPct=$leaderRotationMinRatioPct," +
           // v8 (2026-04-29): chronic-classification floor. Changes the agreed chronicNonSigners
           // set; divergent operator values would produce silently-divergent committee composition.
           s"minObservationHistoryFloor=$minObservationHistoryFloor," +
