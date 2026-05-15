@@ -30,6 +30,7 @@ import io.constellationnetwork.node.shared.domain.nodeCollateral.{
 }
 import io.constellationnetwork.node.shared.domain.priceOracle.PricingUpdateValidator.PricingUpdateValidationError
 import io.constellationnetwork.node.shared.domain.priceOracle.{PriceStateUpdater, PricingUpdateValidator}
+import io.constellationnetwork.node.shared.domain.snapshot.programs.SnapshotFailure
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
 import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator.SpendActionValidationError
@@ -888,7 +889,7 @@ object GlobalSnapshotAcceptanceManager {
                   globalAllowSpends,
                   globalActiveAllowSpends
                 )
-                .leftMap(ex => new RuntimeException(s"Balance arithmetic error updating balances by allow spends: $ex"))
+                .leftMap(ex => SnapshotFailure.BalanceArithmeticError.AllowSpends(ex.toString))
             )
 
             unexpiredNodeCollateralsRaw = nodeCollateralStateManager.acceptNodeCollaterals(
@@ -915,7 +916,7 @@ object GlobalSnapshotAcceptanceManager {
                 acceptedGlobalTokenLocks,
                 globalActiveTokenLocksByRef
               )
-              .leftMap(error => new RuntimeException(s"Error generating token unlocks: $error"))
+              .leftMap(error => SnapshotFailure.TokenUnlockGenerationFailed(error.toString))
               .liftTo[F]
 
             TokenLockAcceptanceResult(updatedGlobalTokenLocks, tokenLocksDeltas, removedTokenLockKeys) <- tokenLockStateManager
@@ -945,7 +946,7 @@ object GlobalSnapshotAcceptanceManager {
               generatedTokenUnlocks
             ) match {
               case Right(balances) => balances
-              case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by token locks: $error")
+              case Left(error)     => throw SnapshotFailure.BalanceArithmeticError.TokenLocks(error.toString)
             }
 
             lastActiveGlobalAllowSpends = globalActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
@@ -1004,7 +1005,7 @@ object GlobalSnapshotAcceptanceManager {
                 globalSpendTransactions
               ) match {
               case Right(balances) => balances
-              case Left(error) => throw new RuntimeException(s"Balance arithmetic error updating balances by spend transactions: $error")
+              case Left(error)     => throw SnapshotFailure.BalanceArithmeticError.SpendTransactions(error.toString)
             }
 
             MerkleTreeResult(_, updatedLastCurrencySnapshotProofs) <- buildMerkleTreeAndProofs(

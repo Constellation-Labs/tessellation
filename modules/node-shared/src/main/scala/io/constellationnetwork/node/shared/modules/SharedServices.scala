@@ -37,6 +37,7 @@ import io.constellationnetwork.node.shared.infrastructure.gossip.{Gossip => Goss
 import io.constellationnetwork.node.shared.infrastructure.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
+import io.constellationnetwork.node.shared.infrastructure.selfhealth.LocalHealthMonitor
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.CurrencySnapshotAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.{
@@ -100,6 +101,13 @@ object SharedServices {
       // the first transition flows through. Wired to every layer's NodeStateDaemon.
       now <- Async[F].monotonic
       stateEntryAtRef <- Ref.of[F, FiniteDuration](now)
+
+      // Phase A self-health throttle (docs/consensus/self-health-throttle.md). Polls JVM GC
+      // pauses and OS load average; exposes `current: F[SelfHealthHint]` and Prometheus gauges
+      // dag_node_self_health{state} + signal gauges. In Phase A this is observational only; in
+      // Phase B (consensusSchemaVersion 15) the Facility builder reads `current` to attach the
+      // hint to outgoing declarations.
+      localHealthMonitor <- LocalHealthMonitor.make[F](cfg.localHealthMonitor)
 
       cluster = Cluster
         .make[F](
@@ -219,7 +227,8 @@ object SharedServices {
         updateNodeCollateralAcceptanceManager = updateNodeCollateralAcceptanceManager,
         priceStateUpdater = priceStateUpdater,
         consensusHealthRef = consensusHealthRef,
-        stateEntryAtRef = stateEntryAtRef
+        stateEntryAtRef = stateEntryAtRef,
+        localHealthMonitor = localHealthMonitor
       ) {}
 }
 
@@ -244,5 +253,9 @@ sealed abstract class SharedServices[F[_], A <: CliMethod] private (
   // Monotonic timestamp of the latest NodeState transition. Written by NodeStateDaemon, read by
   // Cluster.leave()'s dwell-time guard. Each layer's Daemons.make pipes this into its
   // NodeStateDaemon so transitions update the timestamp.
-  val stateEntryAtRef: Ref[F, FiniteDuration]
+  val stateEntryAtRef: Ref[F, FiniteDuration],
+  // Phase A self-health throttle. Owned by SharedServices because the polling fiber is a
+  // single-instance background task and the hint is consumed at Facility-build time in Phase B.
+  // Layers that don't need the hint just ignore this reference.
+  val localHealthMonitor: LocalHealthMonitor[F]
 )

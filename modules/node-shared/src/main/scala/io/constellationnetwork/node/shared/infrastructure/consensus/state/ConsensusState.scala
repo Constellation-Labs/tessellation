@@ -7,6 +7,7 @@ import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.PeerDeclarations
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.PeerDeclaration
+import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 
@@ -108,6 +109,19 @@ object ObservedResponders {
   def empty: ObservedResponders = ObservedResponders(Set.empty)
 }
 
+/** v15 (2026-05-15) self-health throttle: leader's canonical view of each observed responder's `SelfHealthHint`, copied into local state
+  * when a Proposal is accepted. Carried forward into the next round's Outcome (`peerSelfHealth`) which then feeds `selectLeaderWeighted` to
+  * demote Degraded peers to tier 1 and Critical peers to tier 2.
+  *
+  * REPLACE semantics on accept (mirrors `ObservedResponders` REPLACE rationale): an honest view change adopts the new proposal's map; old
+  * view's hints are discarded so a stale Healthy claim cannot bleed into view-N+1 selection.
+  */
+@derive(eqv, encoder, decoder)
+case class ObservedSelfHealth(value: Map[PeerId, SelfHealthHint])
+object ObservedSelfHealth {
+  def empty: ObservedSelfHealth = ObservedSelfHealth(Map.empty)
+}
+
 @derive(eqv, encoder, decoder, show)
 case class Candidates(value: Set[PeerId])
 object Candidates {
@@ -147,6 +161,7 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   eligibleFacilitators: EligibleFacilitators = EligibleFacilitators.empty,
   admittedFacilitators: AdmittedFacilitators = AdmittedFacilitators.empty,
   observedResponders: ObservedResponders = ObservedResponders.empty,
+  observedSelfHealth: ObservedSelfHealth = ObservedSelfHealth.empty,
   leader: PeerId,
   viewNumber: Int = 0,
   entropy: Hash

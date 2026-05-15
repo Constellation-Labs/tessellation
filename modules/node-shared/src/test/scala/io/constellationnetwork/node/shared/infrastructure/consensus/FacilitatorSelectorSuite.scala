@@ -497,20 +497,27 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
     }
   }
 
-  test("v14 binary-band: integer-only -- no float-to-long divergence across many invocations") {
+  test("v14 binary-band: integer comparison places ratios at and just below the threshold correctly") {
     IO {
-      // Strict determinism guard: the ratio comparison must be integer-only so two JVMs with
-      // different float-to-long rounding can never disagree on tier assignment.
-      val peers = (1 to 10).map(i => pid(s"peer$i")).toList
-      val entropy = Hash.fromBytes("v14-determinism".getBytes("UTF-8"))
-      val scores: Map[PeerId, (Int, Int)] = peers.zipWithIndex.map {
-        case (p, i) =>
-          // Ratios: 0.05, 0.15, 0.25, ..., 0.95 -- straddles the 50% boundary
-          p -> ((i * 10 + 5), 100)
-      }.toMap
+      // Integer-only comparison guard. `completed * 100 >= participated * threshold` must
+      // place 50/100 in tier 0 and 49/100 in tier 1. With float arithmetic the boundary
+      // could shift between JVMs (49.0/100.0 may round differently than 0.49), so verify
+      // the integer math directly by sweeping entropies and asserting the tier-1 peer
+      // never wins when any tier-0 peer is also in the pool.
+      val atBoundary = pid("at-50pct")
+      val justBelow = pid("just-49pct")
+      val justAbove = pid("just-51pct")
+      val scores = Map(
+        atBoundary -> (50, 100),
+        justBelow -> (49, 100),
+        justAbove -> (51, 100)
+      )
 
-      val results = (1 to 200).map(_ => selector.selectLeaderWeighted(peers, entropy, 0, scores))
-      expect(results.distinct.size == 1)
+      val entropies = (0 until 500).map(i => Hash.fromBytes(s"boundary-$i".getBytes("UTF-8")))
+      val winners = entropies.map(e => selector.selectLeaderWeighted(List(atBoundary, justBelow, justAbove), e, 0, scores))
+
+      val leaked = winners.count(_ == justBelow)
+      expect(leaked == 0, s"49/100 tier-1 peer leaked into leader pool: $leaked selections")
     }
   }
 

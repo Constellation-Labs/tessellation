@@ -5,6 +5,7 @@ import cats.data.NonEmptySet
 import io.constellationnetwork.ext.codecs.NonEmptySetCodec
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
+import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
@@ -38,7 +39,14 @@ object declaration {
     facilitatorsHash: Hash,
     lastGlobalSnapshotOrdinal: SnapshotOrdinal,
     lastSnapshotHash: Hash,
-    consensusConfigHash: Option[Hash] = None
+    consensusConfigHash: Option[Hash] = None,
+    // v15 (2026-05-15) self-health throttle, see docs/consensus/self-health-throttle.md.
+    // The peer's own current `SelfHealthHint` derived from `LocalHealthMonitor`. The leader
+    // aggregates these into `Proposal.observedSelfHealth` for consensus-agreed propagation;
+    // `selectLeaderWeighted` in the next round demotes Degraded peers to tier 1 and Critical
+    // peers to tier 2. Optional with default None so the field is wire-compatible with v14,
+    // although the jar hash gate already prevents cross-version peer connections.
+    selfHealthHint: Option[SelfHealthHint] = None
   ) extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)
@@ -322,7 +330,15 @@ object declaration {
     // sort-at-construction pattern) for deterministic proposal-hash agreement.
     // Defaults empty for old-format compatibility (cold-restart hard fork in
     // practice).
-    observedResponders: List[PeerId] = List.empty
+    observedResponders: List[PeerId] = List.empty,
+    // v15 (2026-05-15) self-health throttle: leader's canonical view of each observed
+    // responder's `SelfHealthHint`, aggregated from the Facilities collected this round.
+    // Signed into the Proposal so all followers adopt the same map on accept; this is what
+    // makes the hint consensus-agreed for the next round's `selectLeaderWeighted`. Peers
+    // absent from the map default to `Healthy` at read time. Map is materialized at
+    // proposal-build time in deterministic key order to keep the proposal hash stable
+    // across nodes.
+    observedSelfHealth: Map[PeerId, SelfHealthHint] = Map.empty
   ) extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)

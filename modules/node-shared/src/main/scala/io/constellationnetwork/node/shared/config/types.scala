@@ -8,6 +8,7 @@ import scala.concurrent.duration.{DurationInt, FiniteDuration}
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculatorConfig
+import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
@@ -39,6 +40,35 @@ object types {
   case class MetagraphsSyncConfig(
     maxUnappliedGlobalChangeOrdinals: PosInt
   )
+
+  /** Configuration for `LocalHealthMonitor` (Phase A of the self-health throttle, see docs/consensus/self-health-throttle.md).
+    *
+    * Thresholds match the alpha.73 overnight metrics-deep-dive:
+    *   - GC pause > 5s in last 5 min is degraded; > 30s is critical (8804651b's 81s is unambiguous critical).
+    *   - Load1m / vCPU > 3.0 is degraded; > 6.0 is critical (90eb1ed3's 54/8 = 6.75 is critical, 9561959b's 39/8 = 4.88 is degraded).
+    *
+    * `operatorOverride` lets an operator pin a peer's self-report without restarting: setting it to `Critical` deprioritizes the peer in
+    * the next round's leader selection. Useful as a stop-gap for the 6 hardware-marginal community peers while the auto-detection
+    * thresholds bake.
+    *
+    * Phase B inclusion in `deterministicConfigHash`: the THRESHOLDS feed each peer's locally-computed hint; the hint then enters
+    * consensus-agreed state via Facility. If thresholds diverge, two peers can compute different hints from the same signals -> different
+    * tiers in `selectLeaderWeighted` -> fork. So thresholds must be in the hash. `operatorOverride` is per-peer (different by design) and
+    * stays out.
+    */
+  case class LocalHealthMonitorConfig(
+    pollInterval: FiniteDuration = 10.seconds,
+    historyWindow: FiniteDuration = 5.minutes,
+    gcPauseDegradedMs: Long = 5000L,
+    gcPauseCriticalMs: Long = 30000L,
+    loadPerVcpuDegraded: Double = 3.0,
+    loadPerVcpuCritical: Double = 6.0,
+    operatorOverride: Option[SelfHealthHint] = None
+  )
+
+  object LocalHealthMonitorConfig {
+    val default: LocalHealthMonitorConfig = LocalHealthMonitorConfig()
+  }
 
   case class SharedConfigReader(
     gossip: GossipConfig,
@@ -93,7 +123,8 @@ object types {
     snapshotTimeoutsConfig: SnapshotTimeoutsConfig,
     clickHouseConfig: ClickHouseAppConfig,
     mptSnapshotInfoPath: Path,
-    snapshotServingConfig: Option[SnapshotServingConfig] = None
+    snapshotServingConfig: Option[SnapshotServingConfig] = None,
+    localHealthMonitor: LocalHealthMonitorConfig = LocalHealthMonitorConfig.default
   )
 
   case class SharedTrustConfig(
@@ -200,22 +231,12 @@ object types {
     // witness pool) and v18 (peersAtHigherKey gate) provide the safety / liveness
     // reinforcements v15/v16 were targeting, without compressing the eligible set.
     minParticipationRatio: Double = 0.5,
-    // v14 (2026-05-14) leader-rotation band threshold. Integer percent (0..100) such that any
-    // peer in the graduated leader pool with `completed * 100 >= participated * threshold` lands
-    // in the "leader-eligible" tier; the rest fall into a fallback tier used only when no
-    // eligible peer is available. Default 50 mirrors `minParticipationRatio`.
-    //
-    // Why: pre-v14 leader tier was `participated - completed` (unbounded failure count). Under
-    // sustained leader-vs-follower asymmetry (the leader always credits itself via
-    // `observedResponders`; followers are credited only if their facility decl arrives in time)
-    // every non-leader peer's tier drifted up while the current leader's stayed at 0. Empirically
-    // this concentrated 100% of leadership on the lowest-tier 1-2 peers on testnet alpha.72,
-    // even though 6 peers were demonstrably "good enough" by quality ratio. The binary band here
-    // collapses all above-threshold peers into a single tier so rendezvous entropy spreads
-    // leadership uniformly across them.
-    //
-    // Included in `deterministicConfigHash` because it changes the leader selection algorithm
-    // (consensus-critical: divergent operator values would produce divergent leaders -> fork).
+    // Leader-rotation band threshold. Integer percent (0..100) such that a graduated peer with
+    // `completed * 100 >= participated * threshold` lands in the leader-eligible tier; the rest
+    // fall into a fallback tier used only when no eligible peer is available. Default 50 mirrors
+    // `minParticipationRatio`. Consensus-critical: included in `deterministicConfigHash`.
+    // Deploy history: introduced in v14 (consensusSchemaVersion); see the v14 entry below for the
+    // ratchet failure it replaces.
     leaderRotationMinRatioPct: Int = 50,
     // v8 (2026-04-29) minimum-history floor for chronic classification. Codex-recommended
     // separate knob: the existing `minParticipationObservations` is reused as the leader-
@@ -385,6 +406,14 @@ object types {
     //     fork, so cluster-wide cold restart required. Empirical motivation: testnet alpha.72
     //     showed 100% of leadership concentrated on the 2 peers with the lowest
     //     `participated - completed` count even though 6 peers had ratio >= 0.85.
+    //   v15 (planned): Self-health throttle (docs/consensus/self-health-throttle.md). Facility
+    //     and Proposal will carry `SelfHealthHint`; `selectLeaderWeighted` will demote Degraded
+    //     peers to tier 1 and Critical peers to tier 2. The schema fields and selector parameter
+    //     are already in place (dormant, defaulted) so the wire format is forward-compatible.
+    //     The bump from 14 to 15 will happen in the commit that wires LocalHealthMonitor into
+    //     the Facility builder and aggregates `observedSelfHealth` into Proposal -- at that point
+    //     a v15 jar in a v14 cluster would compute a different proposal hash, so the bump anchors
+    //     the cluster-wide cold restart that ships those consumers.
     consensusSchemaVersion: Int = 14
   ) {
 
