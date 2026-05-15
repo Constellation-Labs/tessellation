@@ -37,6 +37,7 @@ import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.node.NodeState
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
@@ -85,8 +86,8 @@ object Main
       // subsequent reads through the thunk return fresh mesh tips.
       peerChainTipsGetterRef <-
         Ref
-          .of[IO, IO[Map[io.constellationnetwork.schema.peer.PeerId, ChainTip]]](
-            Map.empty[io.constellationnetwork.schema.peer.PeerId, ChainTip].pure[IO]
+          .of[IO, IO[Map[PeerId, ChainTip]]](
+            Map.empty[PeerId, ChainTip].pure[IO]
           )
           .asResource
       getPeerChainTips = peerChainTipsGetterRef.get.flatten
@@ -156,8 +157,8 @@ object Main
       // resolution or RPC failure so the detector treats it as inconclusive (safer than false
       // positives). Reuses the existing p2pClient.globalSnapshot.getHash primitive.
       hashAtOrdinalProbe =
-        new io.constellationnetwork.node.shared.infrastructure.gossip.event.HashAtOrdinalProbe[IO] {
-          def probe(peerId: io.constellationnetwork.schema.peer.PeerId, ordinal: SnapshotOrdinal): IO[Option[Hash]] =
+        new HashAtOrdinalProbe[IO] {
+          def probe(peerId: PeerId, ordinal: SnapshotOrdinal): IO[Option[Hash]] =
             storages.cluster.getPeer(peerId).flatMap {
               case None => none[Hash].pure[IO]
               case Some(peer) =>

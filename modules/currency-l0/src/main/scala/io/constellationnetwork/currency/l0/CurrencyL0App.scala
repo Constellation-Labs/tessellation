@@ -39,6 +39,7 @@ import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.gossip.{Ordinal => GossipOrdinal}
 import io.constellationnetwork.schema.node.NodeState
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -115,8 +116,8 @@ abstract class CurrencyL0App(
       // admission votes don't fire until eventGossipDaemon populates this post-startup.
       peerChainTipsGetterRef <-
         Ref
-          .of[IO, IO[Map[io.constellationnetwork.schema.peer.PeerId, ChainTip]]](
-            Map.empty[io.constellationnetwork.schema.peer.PeerId, ChainTip].pure[IO]
+          .of[IO, IO[Map[PeerId, ChainTip]]](
+            Map.empty[PeerId, ChainTip].pure[IO]
           )
           .asResource
       getPeerChainTips = peerChainTipsGetterRef.get.flatten

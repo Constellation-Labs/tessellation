@@ -7,6 +7,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.Queue
 
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.Hashed
 import io.constellationnetwork.security.hash.Hash
@@ -36,7 +37,7 @@ case class ConfirmedBinary(
 case class GlobalSnapshotConfirmationProof(
   globalHash: Hash,
   globalOrdinal: SnapshotOrdinal,
-  globalEpochProgress: io.constellationnetwork.schema.epoch.EpochProgress
+  globalEpochProgress: EpochProgress
 )
 
 object GlobalSnapshotConfirmationProof {

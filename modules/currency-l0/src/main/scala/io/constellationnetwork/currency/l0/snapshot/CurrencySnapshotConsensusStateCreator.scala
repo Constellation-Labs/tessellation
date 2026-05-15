@@ -20,6 +20,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.state.{Conse
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.selfhealth.LocalHealthMonitor
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
@@ -54,7 +55,8 @@ object CurrencySnapshotConsensusStateCreator {
     consensusConfig: ConsensusConfig,
     peerQualityTracker: PeerQualityTracker[F],
     tcaFilter: TrailingCommonAncestorFilter[F],
-    eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey]
+    eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey],
+    localHealthMonitor: LocalHealthMonitor[F]
   ): CurrencySnapshotConsensusStateCreator[F] = new CurrencySnapshotConsensusStateCreator[F] {
     val config: ConsensusConfig = consensusConfig
 
@@ -398,6 +400,10 @@ object CurrencySnapshotConsensusStateCreator {
         // direct-push to the active facilitator set. Matches the dag-l0 creator — see rationale there.
         effect = for {
           eventHashes <- eventMempool.getEventHashes
+          // v15: see GlobalSnapshotConsensusStateCreator for full rationale -- the hint is
+          // captured at effect run time so the most recent LocalHealthMonitor sample rides
+          // with the outgoing Facility.
+          selfHealth <- localHealthMonitor.current
           facility = Facility(
             eventHashes,
             candidates,
@@ -405,7 +411,8 @@ object CurrencySnapshotConsensusStateCreator {
             lastOutcome.finished.facilitatorsHash,
             lastGlobalSnapshotOrdinal,
             lastOutcome.finished.snapshotHash,
-            consensusConfigHash = consensusConfigHash.some
+            consensusConfigHash = consensusConfigHash.some,
+            selfHealthHint = selfHealth.some
           )
           declaration = ConsensusPeerDeclaration(key, facility)
           _ <- consensusStorage.addFacility(selfId, key, facility)
@@ -430,6 +437,7 @@ object CurrencySnapshotConsensusStateCreator {
           leaderPool,
           entropy,
           qualityScores = lastOutcome.peerQuality,
+          selfHealthHints = lastOutcome.peerSelfHealth,
           minLeaderRatioPct = config.leaderRotationMinRatioPct
         )
 

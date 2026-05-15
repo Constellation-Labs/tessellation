@@ -32,8 +32,16 @@ object schema {
     implicit val show: Show[CurrencyConsensusStep] = Show.show {
       case CollectingFacilities(maybeTrigger, facilitatorsHash, lastSnapshotHash) =>
         s"CollectingFacilities{maybeTrigger=${maybeTrigger.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
-      case CollectingProposals(majorityTrigger, proposalArtifactInfo, candidates, facilitatorsHash, lastSnapshotHash, observedResponders) =>
-        s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, proposalArtifactInfo=${proposalArtifactInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}, observedRespondersCount=${observedResponders.size}}"
+      case CollectingProposals(
+            majorityTrigger,
+            proposalArtifactInfo,
+            candidates,
+            facilitatorsHash,
+            lastSnapshotHash,
+            observedResponders,
+            observedSelfHealth
+          ) =>
+        s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, proposalArtifactInfo=${proposalArtifactInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}, observedRespondersCount=${observedResponders.size}, observedSelfHealthCount=${observedSelfHealth.size}}"
       case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, facilitatorsHash, lastSnapshotHash) =>
         s"CollectingSignatures{majorityArtifactInfo=${majorityArtifactInfo.show}, ${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
       case CollectingBinarySignatures(_, _, _, majorityTrigger, candidates, facilitatorsHash, lastSnapshotHash) =>
@@ -58,7 +66,11 @@ object schema {
     // v7 (codex turn 2 fix #2): leader's observedResponders frozen at proposal-build time —
     // see dag-l0 mirror for full rationale. Re-spread reads from this immutable status field
     // instead of recomputing from current resources.
-    observedResponders: List[PeerId]
+    observedResponders: List[PeerId],
+    // v15: same byte-identical-re-spread rationale as observedResponders. The aggregated
+    // selfHealth map is frozen here at proposal-build time so any retransmit reproduces the
+    // original Proposal payload exactly.
+    observedSelfHealth: SortedMap[PeerId, SelfHealthHint]
   ) extends CurrencyConsensusStep
 
   final case class CollectingSignatures(

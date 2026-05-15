@@ -33,6 +33,7 @@ import io.constellationnetwork.node.shared.infrastructure.gossip.event.{EventGos
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
+import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{
   CurrencyArtifactMismatch,
   SnapshotDifferentThanExpected,
@@ -251,7 +252,9 @@ object CurrencySnapshotConsensusStateAdvancer {
               peerQuality = accumulatedQuality,
               cumulativeMissCounts = newCumulative,
               recentProofSizes = newRecentProofSizes,
-              readmissionCountdown = finalReadmission
+              readmissionCountdown = finalReadmission,
+              // v15: carry the accepted Proposal's `observedSelfHealth` forward, mirror of dag-l0.
+              peerSelfHealth = state.observedSelfHealth.value
             )
             (Previous(state.lastOutcome.key), outcome).some
           case _ =>
@@ -368,6 +371,10 @@ object CurrencySnapshotConsensusStateAdvancer {
         val observedResponders: List[PeerId] =
           if (isInBootstrap(state)) List.empty
           else (facilities.keySet + selfId).toList.sorted
+        // v15 (mirror of dag-l0): aggregate each facilitator's self-reported `selfHealthHint`.
+        val observedSelfHealth: SortedMap[PeerId, SelfHealthHint] =
+          if (isInBootstrap(state)) SortedMap.empty[PeerId, SelfHealthHint]
+          else SortedMap.from(facilities.iterator.flatMap { case (pid, f) => f.selfHealthHint.map(pid -> _) })
         val committeeSize = state.roundStartFacilitators.value.size
         val responderRatio: Double =
           if (committeeSize > 0) observedResponders.size.toDouble / committeeSize.toDouble else 0.0
@@ -392,7 +399,7 @@ object CurrencySnapshotConsensusStateAdvancer {
           _ <- Metrics[F].updateGauge("dag_currency_consensus_observed_responders_count", observedResponders.size.toLong)
           _ <- Metrics[F].updateGauge("dag_currency_consensus_facility_quorum_ratio", responderRatio)
 
-          result <- buildProposalTransition(state, unionHashes, candidates, trigger, observedResponders)
+          result <- buildProposalTransition(state, unionHashes, candidates, trigger, observedResponders, observedSelfHealth)
         } yield result
       }
 
@@ -449,7 +456,8 @@ object CurrencySnapshotConsensusStateAdvancer {
         commonHashes: Set[Hash],
         candidates: Set[PeerId],
         majorityTrigger: ConsensusTrigger,
-        observedResponders: List[PeerId]
+        observedResponders: List[PeerId],
+        observedSelfHealth: SortedMap[PeerId, SelfHealthHint]
       ): F[Option[Transition]] =
         HasherSelector[F].withCurrent { implicit hasher =>
           for {
@@ -524,7 +532,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                     Candidates(candidates),
                     facilitatorsHash,
                     state.lastOutcome.finished.snapshotHash,
-                    observedResponders
+                    observedResponders,
+                    observedSelfHealth
                   )
                 ),
                 sideEffect =
@@ -549,7 +558,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                           maybeAssembledVcc,
                           ecs.toList,
                           acs.toList,
-                          observedResponders
+                          observedResponders,
+                          observedSelfHealth
                         )
                     }
                   else
@@ -641,7 +651,9 @@ object CurrencySnapshotConsensusStateAdvancer {
                         acs.toList,
                         // v7 codex turn 2 fix #2: re-spread reads observedResponders from the
                         // immutable status, not recomputed from current resources.
-                        status.observedResponders
+                        // v15: same rationale for observedSelfHealth.
+                        status.observedResponders,
+                        status.observedSelfHealth
                       ).as(none[Transition])
                 }
               else
@@ -1017,7 +1029,8 @@ object CurrencySnapshotConsensusStateAdvancer {
               leaderProposal.vcc,
               leaderProposal.evictionCertificates,
               leaderProposal.admissionCertificates,
-              leaderProposal.observedResponders
+              leaderProposal.observedResponders,
+              leaderProposal.observedSelfHealth
             )
         } else {
           // Leader proposed a different artifact — validate theirs
@@ -1039,7 +1052,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                       leaderProposal.vcc,
                       leaderProposal.evictionCertificates,
                       leaderProposal.admissionCertificates,
-                      leaderProposal.observedResponders
+                      leaderProposal.observedResponders,
+                      leaderProposal.observedSelfHealth
                     )
                 case Left(invalidArtifact) =>
                   val diffDetail = describeInvalidArtifact(invalidArtifact)
@@ -1126,7 +1140,8 @@ object CurrencySnapshotConsensusStateAdvancer {
         leaderVcc: Option[ViewChangeCertificate] = None,
         leaderEvictionCerts: List[EvictionCertificate] = List.empty,
         leaderAdmissionCerts: List[AdmissionCertificate] = List.empty,
-        leaderObservedResponders: List[PeerId] = List.empty
+        leaderObservedResponders: List[PeerId] = List.empty,
+        leaderObservedSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty
       )(implicit hasher: Hasher[F]): F[Option[Transition]] = {
         val evictedTargets: Set[PeerId] =
           if (isInBootstrap(state)) Set.empty
@@ -1198,6 +1213,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                     admittedFacilitators = postAdmissionAdmitted,
                     // v7 codex turn 2 fix #5: REPLACE on accept (not union). See dag-l0 mirror.
                     observedResponders = ObservedResponders(leaderObservedResponders.toSet),
+                    // v15: REPLACE on accept; see dag-l0 mirror.
+                    observedSelfHealth = ObservedSelfHealth(leaderObservedSelfHealth),
                     status = CollectingSignatures(
                       majorityInfo,
                       status.majorityTrigger,
@@ -1478,13 +1495,17 @@ object CurrencySnapshotConsensusStateAdvancer {
         vcc: Option[ViewChangeCertificate] = None,
         evictionCertificates: List[EvictionCertificate] = List.empty,
         admissionCertificates: List[AdmissionCertificate] = List.empty,
-        observedResponders: List[PeerId] = List.empty
+        observedResponders: List[PeerId] = List.empty,
+        observedSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty
       ): F[Unit] = {
         val sortedEcs = evictionCertificates.sorted(EvictionCertificate.ordering)
         val sortedAcs = admissionCertificates.sorted(AdmissionCertificate.ordering)
         val sortedObs = observedResponders.distinct.sorted
         val declaration =
-          ConsensusPeerDeclaration(key, Proposal(hash, facilitatorsHash, lastSnapshotHash, view, vcc, sortedEcs, sortedAcs, sortedObs))
+          ConsensusPeerDeclaration(
+            key,
+            Proposal(hash, facilitatorsHash, lastSnapshotHash, view, vcc, sortedEcs, sortedAcs, sortedObs, observedSelfHealth)
+          )
         val targets = state.facilitators.value.toSet
 
         gossip.spreadDirect(declaration, targets) >>

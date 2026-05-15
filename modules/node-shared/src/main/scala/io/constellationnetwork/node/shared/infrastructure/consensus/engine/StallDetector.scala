@@ -1155,12 +1155,12 @@ object StallDetector {
     *      more peers are missing than any one voter's cap allows — otherwise cert quorum would starve (codex review finding #2).
     */
   private[consensus] def selectEvictionTargets(
-    selfId: io.constellationnetwork.schema.peer.PeerId,
-    unresponsiveMissing: Set[io.constellationnetwork.schema.peer.PeerId],
-    committee: Set[io.constellationnetwork.schema.peer.PeerId],
-    alreadyVotedBySelf: Set[io.constellationnetwork.schema.peer.PeerId],
+    selfId: PeerId,
+    unresponsiveMissing: Set[PeerId],
+    committee: Set[PeerId],
+    alreadyVotedBySelf: Set[PeerId],
     minQuorum: Int
-  ): List[io.constellationnetwork.schema.peer.PeerId] = {
+  ): List[PeerId] = {
     // Quorum-aware cap: at most (committee.size - minQuorum) evictions can be
     // certified before the next-round committee falls below quorum. With the
     // canonical sort, all honest voters select the same prefix of length cap,

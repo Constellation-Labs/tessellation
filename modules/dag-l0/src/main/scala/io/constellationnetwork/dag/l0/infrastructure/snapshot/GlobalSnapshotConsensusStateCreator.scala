@@ -19,6 +19,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.selfhealth.LocalHealthMonitor
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
@@ -50,7 +51,8 @@ object GlobalSnapshotConsensusStateCreator {
     consensusConfig: ConsensusConfig,
     peerQualityTracker: PeerQualityTracker[F],
     tcaFilter: TrailingCommonAncestorFilter[F],
-    eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey]
+    eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey],
+    localHealthMonitor: LocalHealthMonitor[F]
   ): GlobalSnapshotConsensusStateCreator[F] = new GlobalSnapshotConsensusStateCreator[F] {
     val config: ConsensusConfig = consensusConfig
 
@@ -472,8 +474,12 @@ object GlobalSnapshotConsensusStateCreator {
         //   2. Direct-push to the active facilitator set (same delivery class as Proposal / Signature)
         //      so peers receive it through the reliable path, not the best-effort broadcast.
         // `eventHashes` is captured at effect run time (same as before) to reflect the current mempool.
+        // v15: `selfHealthHint` is also captured at effect run time so the most recently-derived
+        // hint (Healthy/Degraded/Critical) rides on the outgoing Facility -- the leader aggregates
+        // these across the committee into `Proposal.observedSelfHealth`.
         effect = for {
           eventHashes <- eventMempool.getEventHashes
+          selfHealth <- localHealthMonitor.current
           facility = Facility(
             eventHashes,
             candidates,
@@ -481,7 +487,8 @@ object GlobalSnapshotConsensusStateCreator {
             lastOutcome.finished.facilitatorsHash,
             lastOutcome.key,
             lastOutcome.finished.snapshotHash,
-            consensusConfigHash = consensusConfigHash.some
+            consensusConfigHash = consensusConfigHash.some,
+            selfHealthHint = selfHealth.some
           )
           declaration = ConsensusPeerDeclaration(key, facility)
           _ <- consensusStorage.addFacility(selfId, key, facility)
@@ -530,6 +537,7 @@ object GlobalSnapshotConsensusStateCreator {
           leaderPool,
           entropy,
           qualityScores = lastOutcome.peerQuality,
+          selfHealthHints = lastOutcome.peerSelfHealth,
           minLeaderRatioPct = config.leaderRotationMinRatioPct
         )
 

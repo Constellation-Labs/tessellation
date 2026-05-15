@@ -34,6 +34,7 @@ import io.constellationnetwork.node.shared.infrastructure.gossip.event.{EventGos
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
+import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalArtifactMismatch
 import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.schema.gossip.Ordinal
@@ -400,7 +401,11 @@ object GlobalSnapshotConsensusStateAdvancer {
               peerQuality = accumulatedQuality,
               cumulativeMissCounts = newCumulative,
               recentProofSizes = newRecentProofSizes,
-              readmissionCountdown = finalReadmission
+              readmissionCountdown = finalReadmission,
+              // v15: carry the accepted Proposal's `observedSelfHealth` forward as the next
+              // round's leader-selection input. `state.observedSelfHealth` was populated via
+              // REPLACE-on-accept at buildSignatureTransition from `leaderProposal.observedSelfHealth`.
+              peerSelfHealth = state.observedSelfHealth.value
             )
             (Previous(state.lastOutcome.key), outcome).some
           case _ =>
@@ -555,6 +560,14 @@ object GlobalSnapshotConsensusStateAdvancer {
         val observedResponders: List[PeerId] =
           if (isInBootstrap(state)) List.empty
           else (facilities.keySet + selfId).toList.sorted
+        // v15: aggregate each facilitator's self-reported `selfHealthHint` into a single
+        // consensus-agreed map. Bootstrap path emits empty so the proposal-build path mirrors
+        // observedResponders' bootstrap gate; absence -> default Healthy at read time means a
+        // freshly-restarted cluster picks leaders without hints until the first hint-bearing
+        // round closes.
+        val observedSelfHealth: SortedMap[PeerId, SelfHealthHint] =
+          if (isInBootstrap(state)) SortedMap.empty[PeerId, SelfHealthHint]
+          else SortedMap.from(facilities.iterator.flatMap { case (pid, f) => f.selfHealthHint.map(pid -> _) })
         // Surface participation visibility for stall-prevention dashboards: leader's
         // observed responder count + ratio against the canonical committee size at this
         // round. Low ratios indicate Facility-phase delivery issues even when consensus
@@ -584,7 +597,7 @@ object GlobalSnapshotConsensusStateAdvancer {
           _ <- Metrics[F].updateGauge("dag_consensus_observed_responders_count", observedResponders.size.toLong)
           _ <- Metrics[F].updateGauge("dag_consensus_facility_quorum_ratio", responderRatio)
 
-          result <- buildProposalTransition(state, unionHashes, candidates, trigger, observedResponders)
+          result <- buildProposalTransition(state, unionHashes, candidates, trigger, observedResponders, observedSelfHealth)
         } yield result
       }
 
@@ -652,7 +665,8 @@ object GlobalSnapshotConsensusStateAdvancer {
         commonHashes: Set[Hash],
         candidates: Set[PeerId],
         majorityTrigger: ConsensusTrigger,
-        observedResponders: List[PeerId]
+        observedResponders: List[PeerId],
+        observedSelfHealth: SortedMap[PeerId, SelfHealthHint]
       ): F[Option[Transition]] =
         for {
           _ <- clearTimeTriggerIfNeeded(majorityTrigger)
@@ -811,7 +825,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                   Candidates(candidates),
                   facilitatorsHash,
                   state.lastOutcome.finished.snapshotHash,
-                  observedResponders
+                  observedResponders,
+                  observedSelfHealth
                 )
               ),
               sideEffect =
@@ -836,7 +851,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                         maybeAssembledVcc,
                         ecs.toList,
                         acs.toList,
-                        observedResponders
+                        observedResponders,
+                        observedSelfHealth
                       )
                   }
                 else
@@ -953,7 +969,9 @@ object GlobalSnapshotConsensusStateAdvancer {
                             // v7 codex turn 2 fix #2: re-spread MUST read observedResponders
                             // from the immutable status, not recompute. Otherwise honest re-spread
                             // could emit a different set than the original first-spread.
-                            status.observedResponders
+                            // v15: same rationale for observedSelfHealth.
+                            status.observedResponders,
+                            status.observedSelfHealth
                           ).as(none[Transition])
                     }
                   else
@@ -1455,7 +1473,8 @@ object GlobalSnapshotConsensusStateAdvancer {
               leaderProposal.vcc,
               leaderProposal.evictionCertificates,
               leaderProposal.admissionCertificates,
-              leaderProposal.observedResponders
+              leaderProposal.observedResponders,
+              leaderProposal.observedSelfHealth
             )
         } else {
           // HotStuff-inspired leader adoption: when the facilitator set diverges (follower
@@ -1508,7 +1527,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                               leaderProposal.vcc,
                               leaderProposal.evictionCertificates,
                               leaderProposal.admissionCertificates,
-                              leaderProposal.observedResponders
+                              leaderProposal.observedResponders,
+                              leaderProposal.observedSelfHealth
                             )
                         case Left(_) =>
                           sp.restore >>
@@ -1575,7 +1595,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                                 leaderProposal.vcc,
                                 leaderProposal.evictionCertificates,
                                 leaderProposal.admissionCertificates,
-                                leaderProposal.observedResponders
+                                leaderProposal.observedResponders,
+                                leaderProposal.observedSelfHealth
                               )
                           case Left(invalidArtifact) =>
                             // Validation failed — restore MptStore to pre-validation state
@@ -1908,7 +1929,8 @@ object GlobalSnapshotConsensusStateAdvancer {
         leaderVcc: Option[ViewChangeCertificate] = None,
         leaderEvictionCerts: List[EvictionCertificate] = List.empty,
         leaderAdmissionCerts: List[AdmissionCertificate] = List.empty,
-        leaderObservedResponders: List[PeerId] = List.empty
+        leaderObservedResponders: List[PeerId] = List.empty,
+        leaderObservedSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty
       )(implicit hasher: Hasher[F]): F[Option[Transition]] = {
         // B1 apply: on proposal acceptance, shrink this round's committee by the set of peers
         // carried in the leader's EvictionCertificates. Validation already verified quorum +
@@ -2028,6 +2050,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                     // proposal canonically replaces state.observedResponders. View-N's set
                     // does NOT bleed into view-N+1 accounting after an honest view change.
                     observedResponders = ObservedResponders(leaderObservedResponders.toSet),
+                    // v15: REPLACE on accept, same rationale as observedResponders.
+                    observedSelfHealth = ObservedSelfHealth(leaderObservedSelfHealth),
                     status = CollectingSignatures(
                       majorityInfo,
                       status.majorityTrigger,
@@ -2307,7 +2331,8 @@ object GlobalSnapshotConsensusStateAdvancer {
         vcc: Option[ViewChangeCertificate] = None,
         evictionCertificates: List[EvictionCertificate] = List.empty,
         admissionCertificates: List[AdmissionCertificate] = List.empty,
-        observedResponders: List[PeerId] = List.empty
+        observedResponders: List[PeerId] = List.empty,
+        observedSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty
       ): F[Unit] = {
         // Deterministic order is required — two leaders building from the same storage state
         // must produce the same proposal-hash payload, and `Set` iteration order is not guaranteed.
@@ -2317,7 +2342,10 @@ object GlobalSnapshotConsensusStateAdvancer {
         // ensures deterministic encoding regardless of caller path.
         val sortedObs = observedResponders.distinct.sorted
         val declaration =
-          ConsensusPeerDeclaration(key, Proposal(hash, facilitatorsHash, lastSnapshotHash, view, vcc, sortedEcs, sortedAcs, sortedObs))
+          ConsensusPeerDeclaration(
+            key,
+            Proposal(hash, facilitatorsHash, lastSnapshotHash, view, vcc, sortedEcs, sortedAcs, sortedObs, observedSelfHealth)
+          )
         val targets = state.facilitators.value.toSet
 
         gossip.spreadDirect(declaration, targets) >>

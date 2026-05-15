@@ -11,6 +11,7 @@ import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, PendingTriggersF}
 import io.constellationnetwork.node.shared.infrastructure.consensus.{FacilitatorSelector, _}
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.security.hash.Hash
 
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 
@@ -76,7 +77,7 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // referenced a stale tip, and honest followers would accept the cert. Every cert is now required
   // to carry `lastSnapshotHash == lastSnapshotHashOf(state.lastOutcome)`; mixed-tip vote sets are
   // rejected at build time and the advancer validates the cert's tip at proposal-acceptance time.
-  lastSnapshotHashOf: Outcome => io.constellationnetwork.security.hash.Hash,
+  lastSnapshotHashOf: Outcome => Hash,
   // Set of peers currently on B2 probation per the carried outcome. A peer is on probation while
   // its `readmissionCountdown` is positive — it was previously evicted via B1 and is awaiting a
   // quorum-witnessed `AdmissionCertificate` from the cluster before it can re-enter the committee.
@@ -134,7 +135,7 @@ object ConsensusEngineContext {
     facilitatorSelector: FacilitatorSelector,
     peerQualityTracker: PeerQualityTracker[F],
     isInBootstrap: Outcome => Boolean,
-    lastSnapshotHashOf: Outcome => io.constellationnetwork.security.hash.Hash,
+    lastSnapshotHashOf: Outcome => Hash,
     probationPeersOf: Outcome => Set[PeerId],
     peerQualityOf: Outcome => Map[PeerId, (Int, Int)] = (_: Outcome) => Map.empty[PeerId, (Int, Int)]
   ): F[ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =

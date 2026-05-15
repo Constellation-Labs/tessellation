@@ -25,13 +25,14 @@ import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus._
-import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, ConsensusEventLoop}
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine._
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
-import io.constellationnetwork.node.shared.infrastructure.gossip.event.EventGossipClient
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.{ChainTip, EventGossipClient}
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
+import io.constellationnetwork.node.shared.infrastructure.selfhealth.LocalHealthMonitor
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencySnapshotCreator, CurrencySnapshotValidator}
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.artifact.SharedArtifact
@@ -44,6 +45,7 @@ import io.constellationnetwork.security.{Hashed, HasherSelector, SecurityProvide
 
 import io.circe.{Decoder, Encoder}
 import org.http4s.client.Client
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 /** Factory for creating the Currency L0 consensus engine.
   *
@@ -81,7 +83,11 @@ object CurrencySnapshotConsensus {
     eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey],
     rumorQueue: Queue[F, Hashed[RumorRaw]],
     // B2 witness channel — see GlobalSnapshotConsensus for the full rationale.
-    getPeerChainTips: F[Map[PeerId, io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip]]
+    getPeerChainTips: F[Map[PeerId, ChainTip]],
+    // v15 self-health throttle. Injected so the metagraph creator can stamp Facility.selfHealthHint
+    // from this node's current LocalHealthMonitor sample. Shared with the dag-l0 instance via
+    // SharedServices.localHealthMonitor at the caller site.
+    localHealthMonitor: LocalHealthMonitor[F]
   )(implicit supervisor: Supervisor[F]): F[CurrencySnapshotConsensus[F]] = {
     implicit val daDecoder: Decoder[DataTransaction] = DataTransactionCodecs.decoder(maybeDataApplication)
     implicit val daEncoder: Encoder[DataTransaction] = DataTransactionCodecs.encoder(maybeDataApplication)
@@ -149,7 +155,8 @@ object CurrencySnapshotConsensus {
           snapshotConfig.consensus,
           peerQualityTracker,
           tcaFilter,
-          eventMempool
+          eventMempool,
+          localHealthMonitor
         )
 
       consensusStateRemover =
@@ -172,7 +179,7 @@ object CurrencySnapshotConsensus {
       directPushFn = ConsensusDirectSender.makeDirectPushFn(clusterStorage, consensusClient)
       _ <- gossip.setDirectPushFn(directPushFn)
 
-      viewChangeVoter = new io.constellationnetwork.node.shared.infrastructure.consensus.engine.GossipingViewChangeVoter[
+      viewChangeVoter = new GossipingViewChangeVoter[
         F,
         CurrencySnapshotEvent,
         CurrencySnapshotKey,
@@ -187,10 +194,10 @@ object CurrencySnapshotConsensus {
         gossip,
         consensusStorage,
         (o: CurrencyConsensusOutcome) => o.finished.snapshotHash,
-        org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F]
+        Slf4jLogger.getLogger[F]
       )
 
-      evictionVoter = new io.constellationnetwork.node.shared.infrastructure.consensus.engine.GossipingEvictionVoter[
+      evictionVoter = new GossipingEvictionVoter[
         F,
         CurrencySnapshotEvent,
         CurrencySnapshotKey,
@@ -205,10 +212,10 @@ object CurrencySnapshotConsensus {
         gossip,
         consensusStorage,
         (o: CurrencyConsensusOutcome) => o.finished.snapshotHash,
-        org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F]
+        Slf4jLogger.getLogger[F]
       )
 
-      admissionVoter = new io.constellationnetwork.node.shared.infrastructure.consensus.engine.GossipingAdmissionVoter[
+      admissionVoter = new GossipingAdmissionVoter[
         F,
         CurrencySnapshotEvent,
         CurrencySnapshotKey,
@@ -223,7 +230,7 @@ object CurrencySnapshotConsensus {
         gossip,
         consensusStorage,
         (o: CurrencyConsensusOutcome) => o.finished.snapshotHash,
-        org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F]
+        Slf4jLogger.getLogger[F]
       )
 
       loop <-

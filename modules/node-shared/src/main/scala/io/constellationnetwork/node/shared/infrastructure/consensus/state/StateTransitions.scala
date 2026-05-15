@@ -17,6 +17,7 @@ import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
@@ -309,7 +310,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
             // All votes for a given target must agree on facilitatorsHash; otherwise some
             // voter was signing against a different committee view and the certificate
             // would be invalid. Pick the hash with the most votes (tie: reject and wait).
-            val byHash: Map[_root_.io.constellationnetwork.security.hash.Hash, Int] =
+            val byHash: Map[Hash, Int] =
               votes.values.groupBy(_.value.facilitatorsHash).view.mapValues(_.size).toMap
             byHash.toList.sortBy(-_._2) match {
               case (facHash, voteCount) :: _ if voteCount >= q =>
@@ -429,7 +430,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
           val n = state.roundStartFacilitators.value.size
           val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
           if (votes.size >= q) {
-            val byHash: Map[_root_.io.constellationnetwork.security.hash.Hash, Int] =
+            val byHash: Map[Hash, Int] =
               votes.values.groupBy(_.value.facilitatorsHash).view.mapValues(_.size).toMap
             byHash.toList.sortBy(-_._2) match {
               case (facHash, voteCount) :: _ if voteCount >= q =>

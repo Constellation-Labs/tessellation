@@ -23,7 +23,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencyBalan
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencyMessageValidator, GlobalSnapshotSyncValidator}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.artifact.{GlobalSnapshotsProcessed, SharedArtifact, TokenUnlock}
+import io.constellationnetwork.schema.artifact._
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.currencyMessage.CurrencyMessage
 import io.constellationnetwork.schema.epoch.EpochProgress
@@ -490,7 +490,7 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       }
 
     balanceAdjustments = acceptedSharedArtifacts.collect {
-      case balanceAdjustment: io.constellationnetwork.schema.artifact.BalanceAdjustment => balanceAdjustment
+      case balanceAdjustment: BalanceAdjustment => balanceAdjustment
     }
 
     updatedBalancesByInvalidAddressChecks <-

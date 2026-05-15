@@ -7,6 +7,7 @@ import cats.syntax.all._
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.schema.gossip.{CommonRumor, Ordinal, PeerRumor}
 import io.constellationnetwork.schema.peer.PeerId
@@ -142,7 +143,7 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
       storage
         .addViewChangeVote(origin, key, fromView, toView, signedVote)
         .flatMap(triggerUpdateIfChanged(queue, key)) >>
-      queue.offer(io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand.CheckViewChangeAssembly(key))
+      queue.offer(ConsensusCommand.CheckViewChangeAssembly(key))
   }
 
   private def handleEvictionVote(origin: PeerId, e: ConsensusPeerEvictionVote[_]): F[Unit] = {
@@ -184,7 +185,7 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
         storage
           .addEvictionVote(origin, key, signedVote)
           .flatMap(triggerUpdateIfChanged(queue, key)) >>
-        queue.offer(io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand.CheckEvictionAssembly(key, target))
+        queue.offer(ConsensusCommand.CheckEvictionAssembly(key, target))
     }
   }
 
@@ -224,7 +225,7 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
           .addAdmissionVote(origin, key, signedVote)
           .flatMap(triggerUpdateIfChanged(queue, key)) >>
         queue.offer(
-          io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand.CheckAdmissionAssembly(key, target)
+          ConsensusCommand.CheckAdmissionAssembly(key, target)
         )
     }
   }

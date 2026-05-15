@@ -37,8 +37,16 @@ object schema {
     implicit val show: Show[GlobalConsensusStep] = Show.show {
       case CollectingFacilities(maybeTrigger, facilitatorsHash, lastSnapshotHash) =>
         s"CollectingFacilities{maybeTrigger=${maybeTrigger.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}"
-      case CollectingProposals(majorityTrigger, proposalArtifactInfo, candidates, facilitatorsHash, lastSnapshotHash, observedResponders) =>
-        s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, proposalArtifactInfo=${proposalArtifactInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}, observedRespondersCount=${observedResponders.size}}"
+      case CollectingProposals(
+            majorityTrigger,
+            proposalArtifactInfo,
+            candidates,
+            facilitatorsHash,
+            lastSnapshotHash,
+            observedResponders,
+            observedSelfHealth
+          ) =>
+        s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, proposalArtifactInfo=${proposalArtifactInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}, observedRespondersCount=${observedResponders.size}, observedSelfHealthCount=${observedSelfHealth.size}}"
       case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, facilitatorsHash, lastSnapshotHash) =>
         s"CollectingSignatures{majorityArtifactInfo=${majorityArtifactInfo.show}, ${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
       case Finished(_, _, majorityTrigger, candidates, facilitatorsHash, snapshotHash) =>
@@ -62,7 +70,11 @@ object schema {
     // so leader re-spread (advancer:889 → spreadProposal:2098) reads from this immutable
     // status field instead of recomputing from current resources. Without this, every
     // re-spread could produce a different observedResponders set, breaking determinism.
-    observedResponders: List[PeerId]
+    observedResponders: List[PeerId],
+    // v15: same byte-identical-re-spread rationale as observedResponders. The aggregated
+    // selfHealth map is frozen here at proposal-build time so any retransmit reproduces the
+    // original Proposal payload exactly. SortedMap so circe encodes in deterministic key order.
+    observedSelfHealth: SortedMap[PeerId, SelfHealthHint]
   ) extends GlobalConsensusStep
 
   final case class CollectingSignatures(

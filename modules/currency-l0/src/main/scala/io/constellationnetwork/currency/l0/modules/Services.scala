@@ -34,6 +34,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.services.{AddressServ
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
@@ -79,7 +80,7 @@ object Services {
     mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
     maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
     queues: Queues[F],
-    getPeerChainTips: F[Map[PeerId, io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip]]
+    getPeerChainTips: F[Map[PeerId, ChainTip]]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector,
     currencyStateProofSelector: CurrencyStateProofSelector
@@ -181,7 +182,8 @@ object Services {
           maybeCustomArtifacts,
           storages.eventMempool,
           queues.rumor,
-          getPeerChainTips
+          getPeerChainTips,
+          sharedServices.localHealthMonitor
         )
     } yield
       new Services[F, R](
