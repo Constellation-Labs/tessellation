@@ -20,7 +20,7 @@ if [ -n "$SS_NODE" ]; then
   echo "Stopping snapshot-streaming on $SS_NODE"
   ssh "$SS_NODE" "if [ -f $DIR/snapshot-streaming/docker-compose.yaml ]; then cd $DIR/snapshot-streaming && docker compose down 2>&1 | grep -E '(Stopped|Removed)' || true; fi"
   if [ "$REMOTE_CLEAN" = "true" ]; then
-    ssh "$SS_NODE" "rm -rf $DIR/snapshot-streaming/data && mkdir -p $DIR/snapshot-streaming/data; docker volume rm ss-pgdata 2>/dev/null" || true
+    ssh "$SS_NODE" "rm -rf $DIR/snapshot-streaming/data && mkdir -p $DIR/snapshot-streaming/data; docker volume rm ss-pgdata block-explorer-node-modules 2>/dev/null" || true
     echo "  $SS_NODE data wiped"
   fi
 fi
