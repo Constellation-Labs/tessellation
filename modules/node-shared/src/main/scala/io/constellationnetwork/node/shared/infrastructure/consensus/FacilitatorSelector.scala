@@ -133,9 +133,22 @@ class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
     * platform-dependent float-to-long conversion differences that could cause different nodes to compute different tiers → different
     * leaders → fork.
     *
+    * '''Tiering rule (v14 binary band):''' a peer is in tier 0 (leader-eligible) if its completion ratio `completed / participated` is at
+    * least `minLeaderRatioPct / 100`. Peers with `participated == 0` (no history at all -- bootstrap fallback) are also placed in tier 0.
+    * Everyone else lands in tier 1 (used only when no tier-0 peer is available in the pool).
+    *
+    * Pre-v14 the tier was `participated - completed`, an unbounded failure count. The asymmetric crediting in `observedResponders` (the
+    * leader always credits itself; others are credited only if their facility decl arrives before the leader closes the phase) caused a
+    * ratchet: the current leader's tier stayed at 0 while every other facilitator drifted up, and leadership concentrated on the 1-2 peers
+    * with the lowest tier. The v14 binary band collapses all "good enough" peers into a single tier so per-round rendezvous entropy spreads
+    * leadership uniformly across them.
+    *
+    * Chronic peers are still kept out of the leader slot via two layers: the graduation filter at the call-site (`participated >=
+    * minObservations && completed >= 1`) excludes peers that have never delivered, and the tier-1 band here deprioritizes peers below the
+    * ratio threshold.
+    *
     * Callers should pre-filter `facilitators` to a leader-eligible pool (e.g. by `participated >= minObservations`) so that unproven peers
-    * are not given the leader slot. A peer with no quality history defaults to tier 0 here, which otherwise ties with a peer that has
-    * proven itself — the filtering is the caller's responsibility.
+    * are not given the leader slot.
     *
     * @param facilitators
     *   The already-selected facilitators for this round (or a leader-eligible subset of them)
@@ -146,6 +159,9 @@ class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
     * @param qualityScores
     *   Map of peer → (completedRounds, participatedRounds) from consensus-agreed outcome. Must be identical across all nodes for
     *   determinism.
+    * @param minLeaderRatioPct
+    *   Integer percent threshold (0..100): peers with `completed/participated >= minLeaderRatioPct/100` are leader-eligible (tier 0).
+    *   Default 50 mirrors the existing chronic-classification ratio. Integer arithmetic only -- no floats anywhere in this function.
     * @return
     *   The selected leader PeerId
     */
@@ -153,20 +169,25 @@ class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
     facilitators: List[PeerId],
     entropy: Hash,
     viewNumber: Int = 0,
-    qualityScores: Map[PeerId, (Int, Int)] = Map.empty
+    qualityScores: Map[PeerId, (Int, Int)] = Map.empty,
+    minLeaderRatioPct: Int = 50
   ): PeerId = {
     require(
       facilitators.nonEmpty,
       "selectLeaderWeighted called with empty facilitators list — consensus cannot proceed without facilitators"
     )
-    // Tiered ordering using integer-only arithmetic for determinism.
-    // Tier = number of failures (participated - completed). Lower tier = better peer = selected first.
-    // Rendezvous score breaks ties within the same tier.
-    // This avoids float-to-long conversion which can differ across JVM platforms.
+    // v14 binary-band tiering. Integer-only arithmetic for determinism across JVM platforms.
+    //   tier 0 = leader-eligible (ratio >= threshold, OR no history at all)
+    //   tier 1 = fallback (ratio < threshold)
+    // Within a tier, rendezvous score (entropy-dependent) decides ordering, so view 0 picks a
+    // different peer each round and leadership spreads across the eligible pool.
     val sorted = facilitators.sortBy { pid =>
       val rendezvousScore = FacilitatorSelector.rendezvousScore(pid.value.value, entropy.value)
       val (completed, participated) = qualityScores.getOrElse(pid, (0, 0))
-      val tier: Long = if (participated > 0) (participated - completed).toLong else 0L
+      val tier: Long =
+        if (participated == 0) 0L
+        else if (completed.toLong * 100L >= participated.toLong * minLeaderRatioPct.toLong) 0L
+        else 1L
       (tier, rendezvousScore)
     }
     val index = viewNumber % sorted.size

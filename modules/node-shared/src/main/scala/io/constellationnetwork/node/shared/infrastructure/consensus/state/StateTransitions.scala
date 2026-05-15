@@ -579,6 +579,38 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                   (if (withdrawnCount > 0) Seq("withdrawn" -> withdrawnCount.toString) else Seq.empty) ++
                   (if (removedCount > 0) Seq("removed" -> removedCount.toString) else Seq.empty)): _*
               )
+            } >> {
+              // v14 diagnostic: per-peer observed_responders crediting. For each canonical
+              // committee member, increment EITHER `credited` (peer was in
+              // `observedResponders`, will get `completed += 1` in lastOutcome.peerQuality) OR
+              // `omitted` (peer was in the committee but missed `observedResponders`, won't
+              // get the completed credit). Tagged by `peer_id_short` so operators can spot a
+              // peer whose omission rate keeps rising. That's the ratchet that pushes them
+              // out of the leader-rotation band.
+              //
+              // Cross-reference with existing per-peer JVM/system metrics on the SAME peer to
+              // triangulate the cause:
+              //   - high omitted rate + high `dag_consensus_facility_decl_received_total`
+              //     (when added) from leader's perspective => decl arrived but past the cutoff
+              //     => consensus/timing race
+              //   - high omitted rate + low decl-received => peer didn't emit => likely resource
+              //     pressure (GC, CPU, load) on peer
+              //   - high omitted rate + decl-received normal + peer's
+              //     `dag_gossip_round_duration_seconds` high to this leader => network
+              //
+              // Skipped during bootstrap (observedResponders is empty until the leader has a
+              // post-bootstrap proposal cycle) so the metric stays meaningful.
+              val responders: Set[PeerId] = newState.observedResponders.value.toSet
+              val committee = newState.roundStartFacilitators.value
+              if (responders.isEmpty || committee.isEmpty) Async[F].unit
+              else
+                committee.toList.traverse_ { pid =>
+                  val labels = Seq(unsafeLabelName("peer_id_short") -> ConsensusLog.pid(pid))
+                  if (responders.contains(pid))
+                    Metrics[F].incrementCounter("dag_consensus_observed_responders_credited_total", labels)
+                  else
+                    Metrics[F].incrementCounter("dag_consensus_observed_responders_omitted_total", labels)
+                }
             } >>
             ctx.nodeStorage.tryModifyStateGetResult(NodeState.WaitingForReady, NodeState.Ready).void >>
             queue.offer(ConsensusFinished(key, outcome, trigger))

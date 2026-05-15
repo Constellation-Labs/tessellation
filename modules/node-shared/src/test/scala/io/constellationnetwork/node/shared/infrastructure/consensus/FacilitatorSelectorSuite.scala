@@ -415,6 +415,107 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
     }
   }
 
+  // === v14 (2026-05-14) leader-rotation band tests ===
+  //
+  // Pre-v14 the tier formula was `participated - completed` (unbounded). The asymmetric
+  // crediting in `observedResponders` ratcheted non-leader peers' tiers up indefinitely;
+  // empirically on testnet alpha.72 this concentrated 100% of leadership on 2 peers even
+  // though 6 peers were demonstrably "good enough" by quality ratio. v14 replaces the
+  // formula with a binary band keyed on `minLeaderRatioPct` so leadership rotates
+  // uniformly across all above-threshold peers via per-round rendezvous entropy.
+
+  test("v14 binary-band: above-threshold peers share leadership across rounds") {
+    IO {
+      // Mirrors testnet alpha.72: one peer at 100%, others at 85-95%. Pre-v14 the 100%
+      // peer dominated (tier=0 vs tier=5-15 for others). v14 puts all five in tier 0 and
+      // rendezvous entropy spreads selection.
+      val peers = (1 to 5).map(i => pid(s"peer$i")).toList
+      val scores: Map[PeerId, (Int, Int)] = Map(
+        peers(0) -> (100, 100),
+        peers(1) -> (95, 100),
+        peers(2) -> (90, 100),
+        peers(3) -> (85, 100),
+        peers(4) -> (50, 100) // exactly the 50% boundary
+      )
+
+      val entropies = (0 until 500).map(i => Hash.fromBytes(s"entropy$i".getBytes("UTF-8")))
+      val selections = entropies.map(e => selector.selectLeaderWeighted(peers, e, 0, scores))
+      val counts = peers.map(p => p -> selections.count(_ == p)).toMap
+
+      // Each of the 5 peers must take at least 10% of leadership (uniform ideal = 20%).
+      val belowFloor = peers.filter(p => counts(p) < 50)
+      expect(
+        belowFloor.isEmpty,
+        s"binary-band failed to rotate: ${belowFloor.map(p => s"${p.value.value.take(8)}=${counts(p)}").mkString(", ")}"
+      )
+    }
+  }
+
+  test("v14 binary-band: chronic peer below threshold never beats above-threshold peer at view 0") {
+    IO {
+      // chronic = 30%, good = 80%. Both pass the graduation filter (completed >= 1).
+      // Pre-v14 chronic at tier=7 vs good at tier=2 was still occasionally selected via
+      // rendezvous tiebreak. v14 puts chronic in tier 1, good in tier 0 -> good wins every time.
+      val chronic = pid("chronic-30pct")
+      val good = pid("good-80pct")
+      val scores = Map(chronic -> (3, 10), good -> (8, 10))
+
+      val entropies = (0 until 200).map(i => Hash.fromBytes(s"entropy$i".getBytes("UTF-8")))
+      val selections = entropies.map(e => selector.selectLeaderWeighted(List(chronic, good), e, 0, scores))
+
+      expect.same(200, selections.count(_ == good))
+    }
+  }
+
+  test("v14 binary-band: threshold is tunable via minLeaderRatioPct") {
+    IO {
+      // A peer at 60% should be tier 0 with threshold=50 (eligible) but tier 1 with threshold=70 (fallback).
+      val a = pid("a-60pct")
+      val b = pid("b-80pct")
+      val scores = Map(a -> (6, 10), b -> (8, 10))
+      val entropies = (0 until 100).map(i => Hash.fromBytes(s"entropy$i".getBytes("UTF-8")))
+
+      val at50 = entropies.map(e => selector.selectLeaderWeighted(List(a, b), e, 0, scores, minLeaderRatioPct = 50))
+      val aAt50 = at50.count(_ == a)
+      expect(aAt50 > 20 && aAt50 < 80, s"threshold=50: both tier 0, should rotate ~50/50, got a=$aAt50/100")
+
+      val at70 = entropies.map(e => selector.selectLeaderWeighted(List(a, b), e, 0, scores, minLeaderRatioPct = 70))
+      expect.same(100, at70.count(_ == b))
+    }
+  }
+
+  test("v14 binary-band: no-history peer (participated=0) is tier 0 (bootstrap fallback preserved)") {
+    IO {
+      // Pre-v14 had `if (participated > 0) (participated - completed) else 0` -- no-history was
+      // tier 0. v14 preserves that exact behavior so bootstrap / cold-start clusters still pick
+      // a deterministic leader instead of being stuck in "no eligible peer" land.
+      val bootstrap = pid("no-history")
+      val active = List(bootstrap)
+      val scores: Map[PeerId, (Int, Int)] = Map.empty // bootstrap has no entry
+      val leader = selector.selectLeaderWeighted(active, Hash.empty, 0, scores)
+      expect.same(bootstrap, leader)
+    }
+  }
+
+  test("v14 binary-band: integer-only -- no float-to-long divergence across many invocations") {
+    IO {
+      // Strict determinism guard: the ratio comparison must be integer-only so two JVMs with
+      // different float-to-long rounding can never disagree on tier assignment.
+      val peers = (1 to 10).map(i => pid(s"peer$i")).toList
+      val entropy = Hash.fromBytes("v14-determinism".getBytes("UTF-8"))
+      val scores: Map[PeerId, (Int, Int)] = peers.zipWithIndex.map {
+        case (p, i) =>
+          // Ratios: 0.05, 0.15, 0.25, ..., 0.95 -- straddles the 50% boundary
+          p -> ((i * 10 + 5), 100)
+      }.toMap
+
+      val results = (1 to 200).map(_ => selector.selectLeaderWeighted(peers, entropy, 0, scores))
+      expect(results.distinct.size == 1)
+    }
+  }
+
+  // === end v14 tests ===
+
   test("kick-fast: all-flaky cluster falls back to active (cluster of zero-completion peers)") {
     IO {
       // Edge case: nobody has any completions yet. This shouldn't happen in steady state, but
