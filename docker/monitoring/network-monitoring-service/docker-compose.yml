@@ -1,0 +1,50 @@
+# Single-network deployment for the 'nightly' Constellation cluster.
+# Runs on n3 (77.42.16.251) and monitors n0, n1, n2 over SSH.
+#
+# n3 already hosts grafana:3000, block-explorer:3001, snapshot-streaming:3002,
+# so this service uses non-default host ports:
+#   3010 -> dashboard      (Next.js UI)
+#   3011 -> gateway proxy
+#
+# Both bound to all interfaces; access is gated by ufw + JWT auth + 100/min
+# rate limit. Reach the dashboard at http://77.42.16.251:3010.
+#
+# Caveat: the browser-side SSE log stream hardcodes the gateway at port 3001
+# of whatever host loaded the dashboard (src/ui/lib/api-client.ts:207). When
+# the dashboard is loaded from http://77.42.16.251:3010, SSE tries n3:3001 —
+# which is the block-explorer, not the gateway. Live log streaming will not
+# work over the public URL until that hardcode is parameterized. Everything
+# else (status, nodes, ops, settings, paged logs) works.
+
+services:
+  monitor-nightly:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - API_PORT=3001
+    volumes:
+      - ./config/nightly.config.json:/app/config/nightly.config.json:rw
+      - ./resources:/app/resources:ro
+      - ~/.ssh/id_rsa:/root/.ssh/id_rsa:ro
+      - ./logs/nightly:/app/logs
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    ports:
+      - '3010:3000'
+      - '3011:3001'
+    env_file: .env
+    environment:
+      - GATEWAY_PORT=3001
+      - CORS_ORIGIN=*
+      - NETWORK_BACKENDS=nightly=http://monitor-nightly:3001
+    depends_on:
+      - monitor-nightly
+    restart: unless-stopped

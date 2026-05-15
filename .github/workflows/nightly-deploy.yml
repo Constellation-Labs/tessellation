@@ -7,7 +7,7 @@ on:
     branches:
       - develop
       - release/testnet
-      - nightly_deploy_fixes
+      - nightly_monitoring_service
   workflow_dispatch:
     inputs:
       branch:
@@ -91,38 +91,24 @@ jobs:
           sudo apt-get install -y sbt
 
       # The build checkout above pins to release/testnet (the deploy branch), but
-      # snapshot-streaming.patch fixes typically land on develop or a feature branch
-      # first. Grab the patch file from the triggering ref so feature branches can
-      # exercise fixes in CI before merging to release/testnet.
-      - name: Grab snapshot-streaming patch from triggering ref
+      # snapshot-streaming.patch fixes and workflow-script changes typically land on
+      # develop or a feature branch first. Grab them from the triggering ref so
+      # feature branches can exercise fixes in CI before merging to release/testnet.
+      - name: Grab patch and workflow scripts from triggering ref
         uses: actions/checkout@v4
         with:
           ref: ${{ github.ref }}
           path: .patch-source
           sparse-checkout: |
             docker/snapshot-streaming/snapshot-streaming.patch
+            .github/workflows/scripts/nightly-deploy
           sparse-checkout-cone-mode: false
 
-      # snapshot-streaming.patch removes c.forkInfoStorage from Configuration.scala
-      # to match release/testnet's SharedConfigReader. Other branches still have
-      # forkInfoStorage, so applying the patch there would drop a required arg
-      # and break the build. Overlay the triggering ref's patch only when the
-      # build ref is release/testnet; otherwise clear the patch file.
       - name: Apply or disable snapshot-streaming patch
-        run: |
-          src=.patch-source/docker/snapshot-streaming/snapshot-streaming.patch
-          dst=docker/snapshot-streaming/snapshot-streaming.patch
-          if [ "${{ inputs.branch || 'release/testnet' }}" = "release/testnet" ]; then
-            if [ -f "$src" ] && [ -s "$src" ]; then
-              cp "$src" "$dst"
-              echo "Overlaid snapshot-streaming.patch from ${{ github.ref_name }} ($(wc -c < "$dst") bytes)"
-            else
-              echo "No snapshot-streaming.patch on triggering ref (${{ github.ref_name }}) — leaving build-ref copy in place"
-            fi
-          else
-            : > "$dst"
-            echo "Cleared snapshot-streaming.patch (building ${{ inputs.branch }}, not release/testnet)"
-          fi
+        env:
+          BUILD_BRANCH: ${{ inputs.branch || 'release/testnet' }}
+          TRIGGERING_REF: ${{ github.ref_name }}
+        run: bash .patch-source/.github/workflows/scripts/nightly-deploy/apply-snapshot-streaming-patch.sh
 
       - name: Build all JARs
         run: just build --num-gl0=3 --snapshot-streaming-branch=${{ vars.SNAPSHOT_STREAMING_BRANCH || 'testing' }} --block-explorer-branch=${{ vars.BLOCK_EXPLORER_BRANCH || 'increase_delegated_stakes' }}
@@ -144,11 +130,11 @@ jobs:
           path: docker/snapshot-streaming/snapshot-streaming.jar
           retention-days: 3
 
-      - name: Upload block-explorer prisma
+      - name: Upload block-explorer
         uses: actions/upload-artifact@v4
         with:
-          name: block-explorer-prisma
-          path: docker/snapshot-streaming/block-explorer/prisma/
+          name: block-explorer
+          path: docker/snapshot-streaming/block-explorer/
           retention-days: 3
 
   deploy:
@@ -186,12 +172,12 @@ jobs:
           name: snapshot-streaming-jar
           path: docker/snapshot-streaming/
 
-      - name: Download block-explorer prisma
+      - name: Download block-explorer
         if: ${{ !inputs.skip_build }}
         uses: actions/download-artifact@v4
         with:
-          name: block-explorer-prisma
-          path: docker/snapshot-streaming/block-explorer/prisma/
+          name: block-explorer
+          path: docker/snapshot-streaming/block-explorer/
 
       - name: Validate configuration
         run: |
@@ -201,24 +187,10 @@ jobs:
           fi
 
       - name: Setup SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.NIGHTLY_SSH_KEY }}" > ~/.ssh/nightly_key
-          chmod 600 ~/.ssh/nightly_key
-          touch ~/.ssh/config
-
-          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
-          for i in "${!IPS[@]}"; do
-            cat >> ~/.ssh/config <<EOF
-          Host n$i
-              User root
-              Hostname ${IPS[$i]}
-              IdentityFile ~/.ssh/nightly_key
-              StrictHostKeyChecking no
-              UserKnownHostsFile /dev/null
-          EOF
-          done
-          chmod 600 ~/.ssh/config
+        env:
+          NIGHTLY_HOSTS: ${{ vars.NIGHTLY_HOSTS }}
+          NIGHTLY_SSH_KEY: ${{ secrets.NIGHTLY_SSH_KEY }}
+        run: bash .github/workflows/scripts/nightly-deploy/setup-ssh.sh
 
       - name: Verify SSH connectivity
         run: |
@@ -271,88 +243,20 @@ jobs:
 
       - name: Verify monitoring pipeline
         env:
+          NIGHTLY_HOSTS: ${{ vars.NIGHTLY_HOSTS }}
           CH_PASS: ${{ secrets.NIGHTLY_CLICKHOUSE_PASSWORD || 'clickhouse' }}
-        run: |
-          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
-          LAST=$((${#IPS[@]} - 1))
-
-          # Prometheus/Grafana listen on host networking on the monitoring node, not
-          # exposed publicly — probe via SSH from inside the node.
-          echo "=== Prometheus ==="
-          ssh "n$LAST" "curl -fsS http://localhost:9090/-/ready"
-
-          echo "=== Grafana ==="
-          ssh "n$LAST" "curl -fsS http://localhost:3000/api/health" | python3 -c "
-          import sys,json
-          h=json.load(sys.stdin)
-          assert h.get('database') == 'ok', f'Grafana unhealthy: {h}'
-          print(f'  version: {h.get(\"version\")}')
-          "
-
-          echo "=== ClickHouse log ingestion ==="
-          # Nodes log asynchronously; allow up to 2 min for the first batch to land.
-          for i in $(seq 1 12); do
-            rows=$(ssh "n$LAST" "docker exec clickhouse clickhouse-client --password '$CH_PASS' -q \"SELECT count() FROM default.nightly_logs WHERE timestamp > now() - INTERVAL 2 MINUTE\"" 2>/dev/null || echo 0)
-            if [ "${rows:-0}" -gt 0 ] 2>/dev/null; then
-              echo "  OK: $rows rows in last 2min"
-              exit 0
-            fi
-            printf "  Waiting for log rows... (%d/12)\n" "$i"
-            sleep 10
-          done
-
-          echo "::error::No rows ingested into nightly_logs within 2 minutes"
-          echo "=== Diagnostics ==="
-          echo "--- n0 /opt/tessellation/.env CLICKHOUSE_* lines ---"
-          ssh n0 "grep ^CLICKHOUSE_ /opt/tessellation/.env 2>&1 || echo '(no .env or no CLICKHOUSE_ lines)'"
-          echo "--- ClickHouse server reachable from n0? ---"
-          ssh n0 "curl -sS -o /dev/null -w 'http_code=%{http_code}\n' --max-time 5 http://\$(grep ^CLICKHOUSE_HOST= /opt/tessellation/.env | cut -d= -f2):8123/ping || true"
-          echo "--- Total rows in nightly_logs (all time) ---"
-          ssh "n$LAST" "docker exec clickhouse clickhouse-client --password '$CH_PASS' -q 'SELECT count() FROM default.nightly_logs'" || true
-          echo "--- gl0 recent log tail on n0 ---"
-          ssh n0 "docker logs gl0 2>&1 | tail -30" || true
-          exit 1
+        run: bash .github/workflows/scripts/nightly-deploy/verify-monitoring.sh
 
       - name: Post-deploy health check
-        run: |
-          GENESIS_IP=$(echo "${{ vars.NIGHTLY_HOSTS }}" | cut -d',' -f1)
-
-          echo "=== GL0 Cluster ==="
-          curl -sf "http://$GENESIS_IP:9000/cluster/info" | python3 -c "
-          import sys,json
-          peers=json.load(sys.stdin)
-          for p in peers: print(f\"  {p['state']:12} {p['ip']}:{p['publicPort']}\")
-          assert len(peers) >= 3, f'Expected 3+ GL0 nodes, got {len(peers)}'
-          "
-
-          echo "=== GL1 Cluster ==="
-          curl -sf "http://$GENESIS_IP:9010/cluster/info" | python3 -c "
-          import sys,json
-          peers=json.load(sys.stdin)
-          for p in peers: print(f\"  {p['state']:12} {p['ip']}:{p['publicPort']}\")
-          assert len(peers) >= 3, f'Expected 3+ GL1 nodes, got {len(peers)}'
-          "
-
-          echo "=== Snapshots ==="
-          curl -sf "http://$GENESIS_IP:9000/global-snapshots/latest" | python3 -c "
-          import sys,json
-          ordinal=json.load(sys.stdin)['value']['ordinal']
-          print(f'Latest ordinal: {ordinal}')
-          assert ordinal > 0, 'No snapshots produced'
-          "
+        env:
+          NIGHTLY_HOSTS: ${{ vars.NIGHTLY_HOSTS }}
+        run: bash .github/workflows/scripts/nightly-deploy/health-check.sh
 
       - name: Collect remote logs on failure
         if: failure()
-        run: |
-          mkdir -p runner-logs
-          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
-          for i in "${!IPS[@]}"; do
-            echo "=== n$i (${IPS[$i]}) ===" >> runner-logs/remote-status.txt
-            ssh "n$i" "docker ps -a 2>/dev/null" >> runner-logs/remote-status.txt 2>&1 || true
-            for svc in gl0 gl1; do
-              ssh "n$i" "docker logs $svc 2>&1 | tail -50" > "runner-logs/n${i}-${svc}.log" 2>&1 || true
-            done
-          done
+        env:
+          NIGHTLY_HOSTS: ${{ vars.NIGHTLY_HOSTS }}
+        run: bash .github/workflows/scripts/nightly-deploy/collect-failure-logs.sh
 
       - name: Upload failure logs
         if: failure()

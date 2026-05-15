@@ -362,9 +362,34 @@ services:
       - ./application.conf:/app/application.conf:ro
       - ./data:/app/data
 
+  # serverless-offline exposes block_explorer's API on host:3001. Postgres lives
+  # on host loopback (same node), so DATABASE_URL points at 127.0.0.1:5432.
+  # node_modules is held in a named volume so re-deploys don't repeat npm ci.
+  block-explorer:
+    image: node:20-alpine
+    container_name: block-explorer
+    network_mode: host
+    depends_on:
+      snapshot-streaming-postgres:
+        condition: service_healthy
+    working_dir: /app
+    environment:
+      DATABASE_URL: "postgresql://snapshot_streaming:snapshot_streaming@127.0.0.1:5432/snapshot_streaming?schema=public"
+    # serverless@3 is the last fully-open-source major; v4 requires a license.
+    # block_explorer's package.json only lists serverless-offline (the plugin)
+    # and assumes serverless cli is provided externally, so install it here
+    # with --no-save so the bind-mounted package.json is left untouched.
+    command: ["sh", "-c", "npm install --no-audit --no-fund --loglevel=error && npm install --no-save --no-package-lock --no-audit --no-fund --loglevel=error serverless@3 && npx serverless offline --host 0.0.0.0 --httpPort 3001"]
+    volumes:
+      - ./block-explorer:/app
+      - block-explorer-node-modules:/app/node_modules
+    restart: unless-stopped
+
 volumes:
   ss-pgdata:
     name: ss-pgdata
+  block-explorer-node-modules:
+    name: block-explorer-node-modules
 DCEOF
 
   # Transfer to SS node
@@ -386,12 +411,26 @@ DCEOF
     sleep 2
   done
 
+  # Transfer block_explorer source (prisma migrations + serverless API)
+  log "  Transferring block_explorer to $SS_NODE"
+  BE_DIR="$SS_DIR/block-explorer"
+  # Replace any prior copy so a branch change can't leave stale files behind.
+  # node_modules is held in a docker volume, not under block-explorer/, so this
+  # rm doesn't trash installed deps.
+  ssh "$SS_NODE" "rm -rf $SS_REMOTE_DIR/block-explorer"
+  scp -rq "$BE_DIR" "$SS_NODE:$SS_REMOTE_DIR/block-explorer"
+  # env.yml in the repo points at a local dev db; override so serverless-offline
+  # reads from snapshot-streaming's postgres on this node.
+  ssh "$SS_NODE" "cat > $SS_REMOTE_DIR/block-explorer/env.yml" <<'ENVEOF'
+default:
+  vpc: {}
+  db_url: postgresql://snapshot_streaming:snapshot_streaming@127.0.0.1:5432/snapshot_streaming?schema=public
+ENVEOF
+
   # Apply schema via prisma migrations
   log "  Applying database schema"
-  BE_DIR="$SS_DIR/block-explorer"
   ssh "$SS_NODE" "docker exec snapshot-streaming-postgres psql -U snapshot_streaming -d snapshot_streaming -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'" 2>/dev/null || true
-  scp -rq "$BE_DIR/prisma" "$SS_NODE:$SS_REMOTE_DIR/prisma"
-  ssh "$SS_NODE" "docker run --rm --network host -v $SS_REMOTE_DIR/prisma:/app/prisma -w /app -e DATABASE_URL='postgresql://snapshot_streaming:snapshot_streaming@127.0.0.1:5432/snapshot_streaming' node:20-alpine sh -c 'npx prisma@6.2.1 db push --accept-data-loss --force-reset'" 2>&1 | tail -3
+  ssh "$SS_NODE" "docker run --rm --network host -v $SS_REMOTE_DIR/block-explorer/prisma:/app/prisma -w /app -e DATABASE_URL='postgresql://snapshot_streaming:snapshot_streaming@127.0.0.1:5432/snapshot_streaming' node:20-alpine sh -c 'npx prisma@6.2.1 db push --accept-data-loss --force-reset'" 2>&1 | tail -3
 
   # Seed with initial snapshot from GL0
   log "  Seeding from GL0"
@@ -417,6 +456,10 @@ print(json.dumps({'snapshot':{'signed':d[0],'hash':'$snapshot_hash','proofsHash'
   # Start snapshot-streaming
   log "  Starting snapshot-streaming"
   ssh "$SS_NODE" "cd $SS_REMOTE_DIR && docker compose up -d snapshot-streaming"
+
+  # Start block-explorer (serverless-offline API on :3001 against the SS postgres)
+  log "  Starting block-explorer"
+  ssh "$SS_NODE" "cd $SS_REMOTE_DIR && docker compose up -d block-explorer"
 
   # Wait for indexing to start
   for attempt in $(seq 1 30); do
