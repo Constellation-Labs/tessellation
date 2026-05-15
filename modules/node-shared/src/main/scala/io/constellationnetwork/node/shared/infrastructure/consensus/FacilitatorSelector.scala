@@ -5,6 +5,7 @@ import java.security.MessageDigest
 import cats.Order
 import cats.syntax.all._
 
+import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 
@@ -129,23 +130,22 @@ class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
 
   /** Selects a leader with quality-weighted scoring using integer-only tier computation.
     *
-    * Uses consensus-agreed quality scores (completed, participated) to compute deterministic tiers. Integer arithmetic avoids
-    * platform-dependent float-to-long conversion differences that could cause different nodes to compute different tiers → different
-    * leaders → fork.
+    * Uses consensus-agreed quality scores (completed, participated) AND each peer's last-known `SelfHealthHint` to compute deterministic
+    * tiers. Integer arithmetic avoids platform-dependent float-to-long conversion differences that could cause different nodes to compute
+    * different tiers, different leaders, or a fork.
     *
-    * '''Tiering rule (v14 binary band):''' a peer is in tier 0 (leader-eligible) if its completion ratio `completed / participated` is at
-    * least `minLeaderRatioPct / 100`. Peers with `participated == 0` (no history at all -- bootstrap fallback) are also placed in tier 0.
-    * Everyone else lands in tier 1 (used only when no tier-0 peer is available in the pool).
+    * '''Tiering rule:'''
+    *   - Critical self-health: tier 2 (selected only when no tier 0/1 peer exists in the pool; avoids deadlock if every peer reports
+    *     Critical).
+    *   - Degraded self-health: tier 1 (fallback band).
+    *   - Healthy self-health (or missing entry, default Healthy): tier 0 if completion ratio `completed / participated >=
+    *     minLeaderRatioPct / 100` OR `participated == 0` (bootstrap fallback); else tier 1.
     *
-    * Pre-v14 the tier was `participated - completed`, an unbounded failure count. The asymmetric crediting in `observedResponders` (the
-    * leader always credits itself; others are credited only if their facility decl arrives before the leader closes the phase) caused a
-    * ratchet: the current leader's tier stayed at 0 while every other facilitator drifted up, and leadership concentrated on the 1-2 peers
-    * with the lowest tier. The v14 binary band collapses all "good enough" peers into a single tier so per-round rendezvous entropy spreads
-    * leadership uniformly across them.
+    * Chronic peers are kept out of the leader slot via two layers: the graduation filter at the call-site (`participated >= minObservations
+    * && completed >= 1`) excludes peers that have never delivered, and the tier-1 band here deprioritizes peers below the ratio threshold.
     *
-    * Chronic peers are still kept out of the leader slot via two layers: the graduation filter at the call-site (`participated >=
-    * minObservations && completed >= 1`) excludes peers that have never delivered, and the tier-1 band here deprioritizes peers below the
-    * ratio threshold.
+    * Schema/deploy history (binary band introduced v14; self-health throttle added v15) lives in `ConsensusConfig.consensusSchemaVersion`
+    * documentation.
     *
     * Callers should pre-filter `facilitators` to a leader-eligible pool (e.g. by `participated >= minObservations`) so that unproven peers
     * are not given the leader slot.
@@ -170,24 +170,32 @@ class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
     entropy: Hash,
     viewNumber: Int = 0,
     qualityScores: Map[PeerId, (Int, Int)] = Map.empty,
+    selfHealthHints: Map[PeerId, SelfHealthHint] = Map.empty,
     minLeaderRatioPct: Int = 50
   ): PeerId = {
     require(
       facilitators.nonEmpty,
       "selectLeaderWeighted called with empty facilitators list — consensus cannot proceed without facilitators"
     )
-    // v14 binary-band tiering. Integer-only arithmetic for determinism across JVM platforms.
-    //   tier 0 = leader-eligible (ratio >= threshold, OR no history at all)
-    //   tier 1 = fallback (ratio < threshold)
-    // Within a tier, rendezvous score (entropy-dependent) decides ordering, so view 0 picks a
+    // v15 tiering. Self-health hint applied first; observed completion ratio applied within
+    // Healthy. Integer-only arithmetic for determinism across JVM platforms.
+    //   tier 0 = Healthy + leader-eligible (ratio >= threshold, OR no history at all)
+    //   tier 1 = Healthy below ratio threshold OR Degraded self-report
+    //   tier 2 = Critical self-report (strong demote, selected only as ultimate fallback)
+    // Within a tier, rendezvous score (entropy-dependent) decides ordering so view 0 picks a
     // different peer each round and leadership spreads across the eligible pool.
     val sorted = facilitators.sortBy { pid =>
       val rendezvousScore = FacilitatorSelector.rendezvousScore(pid.value.value, entropy.value)
       val (completed, participated) = qualityScores.getOrElse(pid, (0, 0))
-      val tier: Long =
-        if (participated == 0) 0L
-        else if (completed.toLong * 100L >= participated.toLong * minLeaderRatioPct.toLong) 0L
-        else 1L
+      val hint = selfHealthHints.getOrElse(pid, SelfHealthHint.Healthy)
+      val tier: Long = hint match {
+        case SelfHealthHint.Critical => 2L
+        case SelfHealthHint.Degraded => 1L
+        case SelfHealthHint.Healthy =>
+          if (participated == 0) 0L
+          else if (completed.toLong * 100L >= participated.toLong * minLeaderRatioPct.toLong) 0L
+          else 1L
+      }
       (tier, rendezvousScore)
     }
     val index = viewNumber % sorted.size

@@ -19,7 +19,7 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.domain.cluster.programs.Joining
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
+import io.constellationnetwork.node.shared.domain.snapshot.programs.{Download, SnapshotFailure}
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
 import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
@@ -72,6 +72,45 @@ object Download {
 
   /** Per-Ready-peer advertised tip. */
   private[snapshot] final case class PeerTip(ordinal: SnapshotOrdinal, hash: Hash)
+
+  /** Categorical label for the `dag_download_*_outcome_total{outcome}` counter family.
+    *
+    * Producers (start path, observe path, both full and recovery) classify their result into one of these cases. The Prometheus label is
+    * `outcome.label`; `isUnclassified` decides whether to ALSO emit a warning log carrying the underlying exception class and message.
+    *
+    * Replaces an earlier string-based encoding where the producer returned a `String` and the caller branched on
+    * `outcome.startsWith("other_")`. The string check could silently break if the prefix was renamed; this ADT shifts the discriminator
+    * into the type system.
+    */
+  sealed trait DownloadOutcome {
+    def label: String
+    def isUnclassified: Boolean = false
+  }
+
+  object DownloadOutcome {
+    case object Success extends DownloadOutcome { val label = "success" }
+    case object Shortcut extends DownloadOutcome { val label = "shortcut" }
+    case object ForwardObserveSuccess extends DownloadOutcome { val label = "forward_observe_success" }
+
+    case object DeadlineExceeded extends DownloadOutcome { val label = "deadline_exceeded" }
+    case object StateProofInvalid extends DownloadOutcome { val label = "state_proof_invalid" }
+    case object ChainInvalid extends DownloadOutcome { val label = "chain_invalid" }
+    case object HashOrdinalMismatch extends DownloadOutcome { val label = "hash_ordinal_mismatch" }
+    case object FirstIncrementalMissing extends DownloadOutcome { val label = "first_incremental_missing" }
+    case object FetchSnapshotFailed extends DownloadOutcome { val label = "fetch_snapshot_failed" }
+    case object FetchGenesisFailed extends DownloadOutcome { val label = "fetch_genesis_failed" }
+    case object StartTimedOut extends DownloadOutcome { val label = "start_timed_out" }
+    case object CleanupIncomplete extends DownloadOutcome { val label = "cleanup_incomplete" }
+    case object BalanceArithmeticAllowSpends extends DownloadOutcome { val label = "balance_arithmetic_allow_spends" }
+    case object BalanceArithmeticTokenLocks extends DownloadOutcome { val label = "balance_arithmetic_token_locks" }
+    case object BalanceArithmeticSpendTxns extends DownloadOutcome { val label = "balance_arithmetic_spend_txns" }
+    case object TokenUnlockError extends DownloadOutcome { val label = "token_unlock_error" }
+
+    final case class Unclassified(cls: String) extends DownloadOutcome {
+      val label: String = s"other_$cls"
+      override val isUnclassified: Boolean = true
+    }
+  }
 
   /** Minimum number of Ready peer responses required before trusting a caught-up shortcut.
     *
@@ -165,6 +204,12 @@ object Download {
     // FSM revert state to WaitingForDownload for retry.
     val downloadStartMaxDuration: FiniteDuration = 10.minutes
 
+    // Upper bound on the iterations validateChain spends searching for a valid persisted
+    // (snapshot, info) pair when the local state has drifted. Each iteration discards one
+    // mismatched pair and asks getHighestSnapshotInfoOrdinal for the next-lower candidate;
+    // 200 caps the descent so a fully-corrupted local state raises instead of looping.
+    private val maxPersistedSearchAttempts: Int = 200
+
     type DownloadResult = (Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)
     type ObservationLimit = SnapshotOrdinal
 
@@ -228,23 +273,23 @@ object Download {
           DownloadStartTimedOut.raiseError[F, DownloadResult]
         )
       val instrumentedStart = guardedStart
-        .flatTap(_ => recordStartOutcome("full", "success"))
+        .flatTap(_ => recordStartOutcome("full", DownloadOutcome.Success))
         .onError {
           case err =>
             val outcome = classifyStartError(err)
             val maybeLog =
-              if (outcome.startsWith("other_")) logUnclassifiedStartError(err) else Async[F].unit
+              if (outcome.isUnclassified) logUnclassifiedStartError(err) else Async[F].unit
             maybeLog >> recordStartOutcome("full", outcome)
         }
 
       def instrumentedObserve(result: DownloadResult): F[(DownloadResult, ObservationLimit)] =
         observe(result)
-          .flatTap(_ => recordObserveOutcome("full", "success"))
+          .flatTap(_ => recordObserveOutcome("full", DownloadOutcome.Success))
           .onError {
             case err =>
               val outcome = classifyObserveError(err)
               val maybeLog =
-                if (outcome.startsWith("other_")) logUnclassifiedObserveError(err) else Async[F].unit
+                if (outcome.isUnclassified) logUnclassifiedObserveError(err) else Async[F].unit
               maybeLog >> recordObserveOutcome("full", outcome)
           }
 
@@ -289,75 +334,60 @@ object Download {
       * ensure the node starts facilitating at the beginning of a round rather than mid-flight, avoiding a race condition where the node
       * joins a round already in progress and misses declarations/proposals.
       */
-    // Classify a download `start` failure (recovery or full path). Recovery FSM bounces back to
-    // WaitingForDownload on any error, so the precise cause is invisible from source-node logs
-    // alone. This lets a /metrics scrape on a cycling community peer report the dominant failure
-    // mode at a glance, regardless of whether it was a fresh-join (full download) or a post-abandon
-    // recovery download. Unclassified exceptions surface as `other_<SimpleClassName>` so the
-    // metric label itself names the exception type without needing log access.
-    // Message-prefix matching for bare RuntimeException/Exception sites whose class name is
-    // generic ("RuntimeException", "Exception") and would otherwise collapse to a single
-    // "other_RuntimeException" / "other_Exception" bucket. These prefixes are STABLE STRINGS
-    // owned by us in:
-    //   - SnapshotDownloadStorage.cleanupAbove (line ~175)        -> "Cleanup incomplete:"
-    //   - SnapshotDownloadStorage.readCombined (line ~116)        -> "Persisted snapshot info does not match"
-    //   - GlobalSnapshotAcceptanceManager.scala (lines ~891-1007) -> "Balance arithmetic error ..." / "Error generating token unlocks"
-    // Changing these messages on the producing side requires also updating these prefixes.
-    private def messagePrefix(err: Throwable): Option[String] = Option(err.getMessage).flatMap {
-      case m if m.startsWith("Cleanup incomplete")                                  => Some("cleanup_incomplete")
-      case m if m.contains("Persisted snapshot info does not match")                => Some("persisted_state_mismatch")
-      case m if m.startsWith("Balance arithmetic error updating balances by allow") => Some("balance_arithmetic_allow_spends")
-      case m if m.startsWith("Balance arithmetic error updating balances by token") => Some("balance_arithmetic_token_locks")
-      case m if m.startsWith("Balance arithmetic error updating balances by spend") => Some("balance_arithmetic_spend_txns")
-      case m if m.startsWith("Error generating token unlocks")                      => Some("token_unlock_error")
-      case _                                                                        => None
+    // Classify a download start/observe failure into a `DownloadOutcome` for Prometheus labeling.
+    // Recovery FSM bounces back to WaitingForDownload on any error, so the precise cause is invisible
+    // from source-node logs alone. Unclassified exceptions surface as `Unclassified(SimpleClassName)`
+    // so the metric label names the exception type without needing log access.
+    private def classifyStartError(err: Throwable): DownloadOutcome = err match {
+      case _: SnapshotFailure.BalanceArithmeticError.AllowSpends       => DownloadOutcome.BalanceArithmeticAllowSpends
+      case _: SnapshotFailure.BalanceArithmeticError.TokenLocks        => DownloadOutcome.BalanceArithmeticTokenLocks
+      case _: SnapshotFailure.BalanceArithmeticError.SpendTransactions => DownloadOutcome.BalanceArithmeticSpendTxns
+      case _: SnapshotFailure.TokenUnlockGenerationFailed              => DownloadOutcome.TokenUnlockError
+      case _: SnapshotFailure.CleanupIncomplete                        => DownloadOutcome.CleanupIncomplete
+      case InvalidStateProof(_)                                        => DownloadOutcome.StateProofInvalid
+      case InvalidChain                                                => DownloadOutcome.ChainInvalid
+      case HashAndOrdinalMismatch                                      => DownloadOutcome.HashOrdinalMismatch
+      case FirstIncrementalNotFound                                    => DownloadOutcome.FirstIncrementalMissing
+      case CannotFetchSnapshot                                         => DownloadOutcome.FetchSnapshotFailed
+      case CannotFetchGenesisSnapshot                                  => DownloadOutcome.FetchGenesisFailed
+      case DownloadStartTimedOut                                       => DownloadOutcome.StartTimedOut
+      case other                                                       => DownloadOutcome.Unclassified(other.getClass.getSimpleName)
     }
 
-    private def classifyStartError(err: Throwable): String = err match {
-      case InvalidStateProof(_)       => "state_proof_invalid"
-      case InvalidChain               => "chain_invalid"
-      case HashAndOrdinalMismatch     => "hash_ordinal_mismatch"
-      case FirstIncrementalNotFound   => "first_incremental_missing"
-      case CannotFetchSnapshot        => "fetch_snapshot_failed"
-      case CannotFetchGenesisSnapshot => "fetch_genesis_failed"
-      case DownloadStartTimedOut      => "start_timed_out"
-      case other                      => messagePrefix(other).getOrElse(s"other_${other.getClass.getSimpleName}")
+    private def classifyObserveError(err: Throwable): DownloadOutcome = err match {
+      case _: ObserveDeadlineExceeded                                  => DownloadOutcome.DeadlineExceeded
+      case _: SnapshotFailure.BalanceArithmeticError.AllowSpends       => DownloadOutcome.BalanceArithmeticAllowSpends
+      case _: SnapshotFailure.BalanceArithmeticError.TokenLocks        => DownloadOutcome.BalanceArithmeticTokenLocks
+      case _: SnapshotFailure.BalanceArithmeticError.SpendTransactions => DownloadOutcome.BalanceArithmeticSpendTxns
+      case _: SnapshotFailure.TokenUnlockGenerationFailed              => DownloadOutcome.TokenUnlockError
+      case CannotFetchSnapshot                                         => DownloadOutcome.FetchSnapshotFailed
+      case InvalidChain                                                => DownloadOutcome.ChainInvalid
+      case other                                                       => DownloadOutcome.Unclassified(other.getClass.getSimpleName)
     }
 
-    private def classifyObserveError(err: Throwable): String = err match {
-      case _: ObserveDeadlineExceeded => "deadline_exceeded"
-      case CannotFetchSnapshot        => "fetch_snapshot_failed"
-      case InvalidChain               => "chain_invalid"
-      case other                      => messagePrefix(other).getOrElse(s"other_${other.getClass.getSimpleName}")
-    }
-
-    // Log the exception when a start failure falls outside the classified set so source-node and
-    // community-peer log captures retain the underlying type + message even without log scraping.
+    // Log the exception when an outcome is `Unclassified` so source-node and community-peer log
+    // captures retain the underlying type + message even without log scraping.
     private def logUnclassifiedStartError(err: Throwable): F[Unit] =
       logger.warn(err)(s"[Download] full-path start unclassified error class=${err.getClass.getName} message=${err.getMessage}")
 
     private def logUnclassifiedObserveError(err: Throwable): F[Unit] =
       logger.warn(err)(s"[Download] observe unclassified error class=${err.getClass.getName} message=${err.getMessage}")
 
-    // path label distinguishes the recovery flow (incremental gap fetch) from the full flow
-    // (fresh-join chain walk from genesis or persisted tail). 90eb1ed3-class peers that restart
-    // and re-handshake without abandonment history go through the full path; peers that
-    // abandoned consensus locally and got force-redownload go through the recovery path.
-    private def recordStartOutcome(path: String, outcome: String): F[Unit] =
+    private def recordStartOutcome(path: String, outcome: DownloadOutcome): F[Unit] =
       Metrics[F].incrementCounter(
         "dag_download_start_outcome_total",
         Seq(
           Metrics.unsafeLabelName("path") -> path,
-          Metrics.unsafeLabelName("outcome") -> outcome
+          Metrics.unsafeLabelName("outcome") -> outcome.label
         )
       )
 
-    private def recordObserveOutcome(path: String, outcome: String): F[Unit] =
+    private def recordObserveOutcome(path: String, outcome: DownloadOutcome): F[Unit] =
       Metrics[F].incrementCounter(
         "dag_download_observe_outcome_total",
         Seq(
           Metrics.unsafeLabelName("path") -> path,
-          Metrics.unsafeLabelName("outcome") -> outcome
+          Metrics.unsafeLabelName("outcome") -> outcome.label
         )
       )
 
@@ -420,11 +450,11 @@ object Download {
             downloadStartMaxDuration,
             DownloadStartTimedOut.raiseError[F, DownloadResult]
           )
-        guardedBody.flatTap(_ => recordStartOutcome("recovery", "success")).onError {
+        guardedBody.flatTap(_ => recordStartOutcome("recovery", DownloadOutcome.Success)).onError {
           case err =>
             val outcome = classifyStartError(err)
             val maybeLog =
-              if (outcome.startsWith("other_")) logUnclassifiedStartError(err) else Async[F].unit
+              if (outcome.isUnclassified) logUnclassifiedStartError(err) else Async[F].unit
             maybeLog >> recordStartOutcome("recovery", outcome)
         }
       }
@@ -473,7 +503,7 @@ object Download {
               s"[RecoveryDownload] Caught-up shortcut: local=${hashedSnapshot.ordinal.show} " +
                 s"hash=${hashedSnapshot.hash.value.take(8)}, majority of ${readyPeerTips.size} Ready peers " +
                 s"at or behind; skipping forward observe"
-            ) >> recordObserveOutcome("recovery", "shortcut")
+            ) >> recordObserveOutcome("recovery", DownloadOutcome.Shortcut)
           )
           _ <- Applicative[F].unlessA(isShortcut)(
             logger.info(
@@ -498,14 +528,14 @@ object Download {
           _ <- logger.info(
             s"[RecoveryDownload] Consensus head synced to ordinal ${observedSnapshot.ordinal.show}"
           )
-          _ <- Applicative[F].unlessA(isShortcut)(recordObserveOutcome("recovery", "forward_observe_success"))
+          _ <- Applicative[F].unlessA(isShortcut)(recordObserveOutcome("recovery", DownloadOutcome.ForwardObserveSuccess))
         } yield observeResult
 
         body.onError {
           case err =>
             val outcome = classifyObserveError(err)
             val maybeLog =
-              if (outcome.startsWith("other_")) logUnclassifiedObserveError(err) else Async[F].unit
+              if (outcome.isUnclassified) logUnclassifiedObserveError(err) else Async[F].unit
             maybeLog >> recordObserveOutcome("recovery", outcome)
         }
       }
@@ -928,9 +958,7 @@ object Download {
       // back to genesis: the chain has millions of blocks and re-downloading from genesis is
       // operationally unacceptable. Instead, ask getHighestSnapshotInfoOrdinal for the next-lower
       // persisted info ordinal and try again. The deleted info file is already gone, so the next
-      // call naturally returns a strictly-lower ordinal. Bounded by maxPersistedSearchAttempts to
-      // prevent runaway iteration on a fully-corrupted local state.
-      val maxPersistedSearchAttempts = 200
+      // call naturally returns a strictly-lower ordinal. Bounded by maxPersistedSearchAttempts.
 
       def findHighestValidPersisted(lte: SnapshotOrdinal, attempts: Int)(
         implicit hasher: Hasher[F]

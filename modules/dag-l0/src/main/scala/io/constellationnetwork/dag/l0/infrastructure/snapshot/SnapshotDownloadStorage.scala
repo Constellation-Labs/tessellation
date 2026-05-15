@@ -10,6 +10,7 @@ import io.constellationnetwork.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
 import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.domain.snapshot.programs.SnapshotFailure
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
   CombinedSnapshotCheckpointFileSystemStorage,
@@ -250,10 +251,7 @@ object SnapshotDownloadStorage {
                 fallbackLoop(iteration = 1).flatMap { stillRemaining =>
                   Metrics[F].updateGauge("dag_download_cleanup_remaining_files", stillRemaining.toDouble) >> {
                     if (stillRemaining > 0L)
-                      throw new RuntimeException(
-                        s"Cleanup incomplete: $stillRemaining files still remain above ordinal ${ordinal.show} " +
-                          s"after fallback direct deletion"
-                      )
+                      Async[F].raiseError[Unit](SnapshotFailure.CleanupIncomplete(stillRemaining, ordinal))
                     else
                       logger.info(
                         s"[cleanupAbove] fallback succeeded: removed $remainingFiles orphan ordinal hardlinks above ${ordinal.show}"

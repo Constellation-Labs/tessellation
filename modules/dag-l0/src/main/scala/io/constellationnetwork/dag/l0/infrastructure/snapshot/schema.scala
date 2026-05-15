@@ -7,6 +7,7 @@ import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
+import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{ConsensusOperationalState, PerPeerOperationalRecord, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
@@ -124,7 +125,16 @@ object schema {
     // observes the peer in a quorum-certified AdmissionCertificate embedded in a
     // proposal (re-admitted via consensus-witnessed current-tip participation).
     // Consensus-agreed → deterministic across all peers.
-    readmissionCountdown: SortedMap[PeerId, Int] = SortedMap.empty
+    readmissionCountdown: SortedMap[PeerId, Int] = SortedMap.empty,
+    // v15 (2026-05-15) self-health throttle: each peer's last-known `SelfHealthHint`
+    // copied from the accepted Proposal's `observedSelfHealth`. Read by the next round's
+    // `selectLeaderWeighted` to demote Degraded peers to tier 1 and Critical peers to
+    // tier 2 (strong demote, not hard exclude -- keeps liveness if all peers report Critical).
+    // Peers absent from the map default to `Healthy` at read time. Not persisted into the
+    // snapshot operational state (see docs/consensus/self-health-throttle.md, open decision
+    // 4): a freshly-restarted cluster picks leaders without hints until the first round of
+    // facilities arrives.
+    peerSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty
   ) {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value

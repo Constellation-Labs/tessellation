@@ -9,6 +9,7 @@ import io.constellationnetwork.currency.schema.currency.CurrencySnapshotContext
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
+import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotArtifact
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{ConsensusOperationalState, PerPeerOperationalRecord, SnapshotOrdinal}
@@ -121,7 +122,10 @@ object schema {
     // B2 re-admission gate: peers whose `removalPenalty` expired enter this map
     // at `readmissionProbationRounds` and count down one per finished round. See
     // dag-l0 mirror for full rationale.
-    readmissionCountdown: SortedMap[PeerId, Int] = SortedMap.empty
+    readmissionCountdown: SortedMap[PeerId, Int] = SortedMap.empty,
+    // v15 (2026-05-15) self-health throttle mirror of dag-l0 schema; see dag-l0 for full
+    // rationale.
+    peerSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty
   ) {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value

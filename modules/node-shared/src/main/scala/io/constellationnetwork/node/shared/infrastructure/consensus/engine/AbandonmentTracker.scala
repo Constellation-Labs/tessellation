@@ -273,9 +273,19 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
       storage
         .condModifyState[Unit](key) {
           case Some(state) =>
-            peerQualityTracker
-              .recordRoundAbandoned(state.facilitators.value.toSet)
-              .as((none[ConsensusState[Key, Status, Outcome, Kind]], ()).some)
+            // Attribute the abandon to its leader so operators can tell whether a flaky community
+            // peer is dragging the cluster down. Pair with dag_consensus_round_completed_total
+            // (same `peer_id` label) for a per-leader success-rate query.
+            Metrics[F].incrementCounter(
+              "dag_consensus_round_abandoned_by_leader_total",
+              Seq(
+                Metrics.unsafeLabelName("peer_id") -> ConsensusLog.pid(state.leader),
+                Metrics.unsafeLabelName("reason") -> reason.label
+              )
+            ) >>
+              peerQualityTracker
+                .recordRoundAbandoned(state.facilitators.value.toSet)
+                .as((none[ConsensusState[Key, Status, Outcome, Kind]], ()).some)
           case _ =>
             none[(Option[ConsensusState[Key, Status, Outcome, Kind]], Unit)].pure[F]
         }
