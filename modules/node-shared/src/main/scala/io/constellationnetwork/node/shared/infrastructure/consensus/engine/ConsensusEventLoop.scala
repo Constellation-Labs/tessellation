@@ -16,10 +16,12 @@ import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger._
 import io.constellationnetwork.node.shared.infrastructure.consensus.{FacilitatorSelector, _}
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.node.{NodeState, NodeStateTransition}
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.security.HasherSelector
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
@@ -97,9 +99,9 @@ object ConsensusEventLoop {
     admissionVoter: AdmissionVoter[F, Key],
     isInBootstrap: Outcome => Boolean,
     probationPeersOf: Outcome => Set[PeerId],
-    lastSnapshotHashOf: Outcome => io.constellationnetwork.security.hash.Hash,
+    lastSnapshotHashOf: Outcome => Hash,
     peerQualityOf: Outcome => Map[PeerId, (Int, Int)],
-    getPeerChainTips: F[Map[PeerId, io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip]],
+    getPeerChainTips: F[Map[PeerId, ChainTip]],
     // Optional externally-owned health Ref. When provided, AbandonmentTracker writes to it so
     // a sibling reader (e.g. `Cluster.leave()`'s wedge guard in SharedServices) observes the
     // same wedge signal. When None, an internal Ref is created and writes stay local. Either

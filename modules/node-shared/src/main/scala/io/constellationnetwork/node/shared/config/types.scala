@@ -406,15 +406,16 @@ object types {
     //     fork, so cluster-wide cold restart required. Empirical motivation: testnet alpha.72
     //     showed 100% of leadership concentrated on the 2 peers with the lowest
     //     `participated - completed` count even though 6 peers had ratio >= 0.85.
-    //   v15 (planned): Self-health throttle (docs/consensus/self-health-throttle.md). Facility
-    //     and Proposal will carry `SelfHealthHint`; `selectLeaderWeighted` will demote Degraded
-    //     peers to tier 1 and Critical peers to tier 2. The schema fields and selector parameter
-    //     are already in place (dormant, defaulted) so the wire format is forward-compatible.
-    //     The bump from 14 to 15 will happen in the commit that wires LocalHealthMonitor into
-    //     the Facility builder and aggregates `observedSelfHealth` into Proposal -- at that point
-    //     a v15 jar in a v14 cluster would compute a different proposal hash, so the bump anchors
-    //     the cluster-wide cold restart that ships those consumers.
-    consensusSchemaVersion: Int = 14
+    //   v15 (2026-05-15): Self-health throttle activated (docs/consensus/self-health-throttle.md).
+    //     The Facility builder reads `LocalHealthMonitor.current` and attaches it as
+    //     `Facility.selfHealthHint`; the leader aggregates collected hints into
+    //     `Proposal.observedSelfHealth`; followers adopt the leader's map on accept and persist
+    //     into `outcome.peerSelfHealth`. The next round's `selectLeaderWeighted` reads that map
+    //     and demotes Degraded peers to tier 1 / Critical peers to tier 2. v14 nodes do not
+    //     populate `observedSelfHealth` (default empty), so a mixed v14/v15 cluster would compute
+    //     different leaders on rounds following a v15-led proposal -- bumping anchors the
+    //     required cold-restart fence. Jar hash already refuses v14<->v15 peer connections.
+    consensusSchemaVersion: Int = 15
   ) {
 
     /** Deterministic hash of consensus-critical config values.

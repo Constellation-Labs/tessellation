@@ -1,6 +1,10 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
+import cats.Show
 import cats.data.NonEmptySet
+import cats.syntax.show._
+
+import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.ext.codecs.NonEmptySetCodec
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
@@ -24,6 +28,13 @@ object declaration {
     NonEmptySetCodec.encoder[SignatureProof]
   implicit val signatureProofsDecoder: Decoder[NonEmptySet[SignatureProof]] =
     NonEmptySetCodec.decoder[SignatureProof]
+
+  // v15: explicit Show for Proposal.observedSelfHealth resolves an ambiguity between
+  // `cats.Show.catsShowForSortedMap` and the package-object `showSortedMapAsList` that both
+  // match the field's `SortedMap[PeerId, SelfHealthHint]` type during derevo's `@derive(show)`
+  // chain. Local scope wins, so this fixes the derivation without changing wire format.
+  implicit val showSortedSelfHealth: Show[SortedMap[PeerId, SelfHealthHint]] =
+    Show.show(_.toList.map { case (k, v) => s"${k.show}->${v.show}" }.mkString("{", ",", "}"))
 
   @derive(eqv, show, encoder, decoder)
   sealed trait PeerDeclaration {
@@ -335,10 +346,13 @@ object declaration {
     // responder's `SelfHealthHint`, aggregated from the Facilities collected this round.
     // Signed into the Proposal so all followers adopt the same map on accept; this is what
     // makes the hint consensus-agreed for the next round's `selectLeaderWeighted`. Peers
-    // absent from the map default to `Healthy` at read time. Map is materialized at
-    // proposal-build time in deterministic key order to keep the proposal hash stable
-    // across nodes.
-    observedSelfHealth: Map[PeerId, SelfHealthHint] = Map.empty
+    // absent from the map default to `Healthy` at read time.
+    //
+    // `SortedMap` (not `Map`) so circe's derived encoder iterates by `PeerId` order and
+    // produces byte-identical JSON across nodes -- a `Map` (HashMap-backed) iterator order
+    // is hash-bucket-dependent and would diverge between leaders running on different JVMs
+    // or with different mutation histories, breaking the proposal-hash quorum check.
+    observedSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty
   ) extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)

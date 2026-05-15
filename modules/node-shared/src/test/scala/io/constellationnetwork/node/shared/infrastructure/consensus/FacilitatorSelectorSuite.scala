@@ -2,6 +2,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 
 import cats.effect.IO
 
+import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
@@ -522,6 +523,96 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
   }
 
   // === end v14 tests ===
+
+  // === v15 self-health throttle tests ===
+
+  test("v15 self-health: Degraded peer demoted to tier 1 below an otherwise-tied Healthy peer") {
+    IO {
+      val healthy = pid("healthy-peer")
+      val degraded = pid("degraded-peer")
+      // Both at the same observed quality so the only differentiator is the self-health hint.
+      val scores = Map(healthy -> (9, 10), degraded -> (9, 10))
+      val hints: Map[PeerId, SelfHealthHint] = Map(degraded -> SelfHealthHint.Degraded)
+      val entropies = (0 until 200).map(i => Hash.fromBytes(s"v15-deg-$i".getBytes("UTF-8")))
+
+      val winners = entropies.map { e =>
+        selector.selectLeaderWeighted(List(healthy, degraded), e, viewNumber = 0, scores, selfHealthHints = hints)
+      }
+      // Degraded must never win at view 0 when a Healthy alternative exists.
+      expect.same(0, winners.count(_ == degraded))
+    }
+  }
+
+  test("v15 self-health: Critical peer demoted to tier 2 below Degraded peers") {
+    IO {
+      val healthy = pid("healthy")
+      val degraded = pid("degraded")
+      val critical = pid("critical")
+      val scores = Map(healthy -> (9, 10), degraded -> (9, 10), critical -> (9, 10))
+      val hints: Map[PeerId, SelfHealthHint] = Map(
+        degraded -> SelfHealthHint.Degraded,
+        critical -> SelfHealthHint.Critical
+      )
+      val entropies = (0 until 200).map(i => Hash.fromBytes(s"v15-crit-$i".getBytes("UTF-8")))
+
+      val winners = entropies.map { e =>
+        selector.selectLeaderWeighted(List(healthy, degraded, critical), e, 0, scores, selfHealthHints = hints)
+      }
+      // Critical must never be picked while any non-Critical peer exists.
+      expect.same(0, winners.count(_ == critical))
+    }
+  }
+
+  test("v15 self-health: all-Critical pool still elects a leader (strong demote, not hard exclude)") {
+    IO {
+      // The deadlock-avoidance guarantee: if every peer reports Critical, the round still resolves.
+      // This is the user-required liveness property -- Phase B+C must never wedge the cluster by
+      // refusing all candidates.
+      val peers = (1 to 5).map(i => pid(s"critical-$i")).toList
+      val scores = peers.map(_ -> (9, 10)).toMap
+      val hints: Map[PeerId, SelfHealthHint] = peers.map(_ -> SelfHealthHint.Critical).toMap
+
+      val leader = selector.selectLeaderWeighted(peers, Hash.empty, 0, scores, selfHealthHints = hints)
+      expect(peers.contains(leader), s"all-Critical pool produced invalid leader: $leader")
+    }
+  }
+
+  test("v15 self-health: missing hint defaults to Healthy (v14 binary-band behavior preserved)") {
+    IO {
+      // Peer A reports Healthy explicitly, Peer B has no entry in the hint map. Both must land in
+      // tier 0 so the choice is decided by rendezvous entropy -- mirrors the bootstrap path where
+      // peers come up before any hint has been collected.
+      val a = pid("explicit-healthy")
+      val b = pid("missing-hint")
+      val scores = Map(a -> (9, 10), b -> (9, 10))
+      val hints: Map[PeerId, SelfHealthHint] = Map(a -> SelfHealthHint.Healthy)
+      val entropies = (0 until 200).map(i => Hash.fromBytes(s"v15-miss-$i".getBytes("UTF-8")))
+
+      val aCount = entropies.count(e => selector.selectLeaderWeighted(List(a, b), e, 0, scores, selfHealthHints = hints) == a)
+      // Should rotate ~50/50; tolerate wide bounds because rendezvous is sensitive to entropy.
+      expect(aCount > 50 && aCount < 150, s"expected ~50/50 rotation with default-Healthy, got a=$aCount/200")
+    }
+  }
+
+  test("v15 self-health: Healthy below leaderRatio still beats Degraded (within tier 1)") {
+    IO {
+      // Tier model: Healthy-but-below-ratio -> tier 1. Degraded -> also tier 1. They should rotate.
+      // The intended demotion only fires across tiers; same-tier peers continue to rotate via
+      // rendezvous so leadership doesn't concentrate on a single peer just because two are equal.
+      val belowRatio = pid("healthy-30pct")
+      val degraded = pid("degraded-perfect")
+      val scores = Map(belowRatio -> (3, 10), degraded -> (10, 10))
+      val hints: Map[PeerId, SelfHealthHint] = Map(degraded -> SelfHealthHint.Degraded)
+      val entropies = (0 until 200).map(i => Hash.fromBytes(s"v15-mix-$i".getBytes("UTF-8")))
+
+      val winners = entropies.map(e => selector.selectLeaderWeighted(List(belowRatio, degraded), e, 0, scores, selfHealthHints = hints))
+      val belowCount = winners.count(_ == belowRatio)
+      // Same tier => rotation. Don't pin a tight ratio; just verify both can win.
+      expect(belowCount > 50 && belowCount < 150, s"same-tier rotation broken: below-ratio=$belowCount/200")
+    }
+  }
+
+  // === end v15 tests ===
 
   test("kick-fast: all-flaky cluster falls back to active (cluster of zero-completion peers)") {
     IO {

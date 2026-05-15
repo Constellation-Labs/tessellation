@@ -41,7 +41,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{Cons
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorHandler
-import io.constellationnetwork.node.shared.infrastructure.gossip.event.EventGossipClient
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.{ChainTip, EventGossipClient}
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
@@ -65,6 +65,7 @@ import io.constellationnetwork.security._
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.Json
 import org.http4s.client.Client
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 /** Factory for creating the Global L0 consensus engine.
   *
@@ -111,7 +112,7 @@ object GlobalSnapshotConsensus {
     // EventGossipDaemon is constructed after consensus in Main.scala — the Ref pattern in
     // Main.scala populates the real getter once the daemon is up; before that it returns
     // Map.empty and no admission votes fire (safe default).
-    getPeerChainTips: F[Map[PeerId, io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip]],
+    getPeerChainTips: F[Map[PeerId, ChainTip]],
     // Shared consensus-health Ref from SharedServices. When provided, the engine's
     // AbandonmentTracker writes wedge signals into the same Ref that Cluster.leave()'s guard
     // reads, activating the leave-refusal behavior. When None, the engine creates its own
@@ -225,7 +226,8 @@ object GlobalSnapshotConsensus {
           appConfig.snapshot.consensus,
           peerQualityTracker,
           tcaFilter,
-          eventMempool
+          eventMempool,
+          sharedServices.localHealthMonitor
         )
 
       stateRemover =
@@ -263,7 +265,7 @@ object GlobalSnapshotConsensus {
         gossip,
         consensusStorage,
         (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
-        org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F]
+        Slf4jLogger.getLogger[F]
       )
 
       evictionVoter = new GossipingEvictionVoter[
@@ -281,10 +283,10 @@ object GlobalSnapshotConsensus {
         gossip,
         consensusStorage,
         (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
-        org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F]
+        Slf4jLogger.getLogger[F]
       )
 
-      admissionVoter = new io.constellationnetwork.node.shared.infrastructure.consensus.engine.GossipingAdmissionVoter[
+      admissionVoter = new GossipingAdmissionVoter[
         F,
         GlobalSnapshotEvent,
         GlobalSnapshotKey,
@@ -299,7 +301,7 @@ object GlobalSnapshotConsensus {
         gossip,
         consensusStorage,
         (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
-        org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F]
+        Slf4jLogger.getLogger[F]
       )
 
       loop <-

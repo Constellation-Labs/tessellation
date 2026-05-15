@@ -15,6 +15,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock.ContextualTokenLockV
   ContextualTokenLockValidationError,
   NonContextualValidationError
 }
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
@@ -43,7 +44,7 @@ object TokenLockService {
 
     private def getBalanceAndTokenLocks(
       si: SI,
-      address: io.constellationnetwork.schema.address.Address
+      address: Address
     ): F[(Balance, SortedSet[Signed[TokenLock]])] =
       maybeMptStore match {
         case Some(mptStore) =>

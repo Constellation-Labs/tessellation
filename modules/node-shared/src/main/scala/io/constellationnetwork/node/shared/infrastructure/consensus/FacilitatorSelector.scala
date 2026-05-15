@@ -138,8 +138,8 @@ class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
     *   - Critical self-health: tier 2 (selected only when no tier 0/1 peer exists in the pool; avoids deadlock if every peer reports
     *     Critical).
     *   - Degraded self-health: tier 1 (fallback band).
-    *   - Healthy self-health (or missing entry, default Healthy): tier 0 if completion ratio `completed / participated >=
-    *     minLeaderRatioPct / 100` OR `participated == 0` (bootstrap fallback); else tier 1.
+    *   - Healthy self-health (or missing entry, default Healthy): tier 0 if completion ratio `completed / participated >= minLeaderRatioPct
+    *     / 100` OR `participated == 0` (bootstrap fallback); else tier 1.
     *
     * Chronic peers are kept out of the leader slot via two layers: the graduation filter at the call-site (`participated >= minObservations
     * && completed >= 1`) excludes peers that have never delivered, and the tier-1 band here deprioritizes peers below the ratio threshold.

@@ -3,6 +3,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus.state
 import cats.Show
 import cats.syntax.show._
 
+import scala.collection.immutable.SortedMap
 import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.PeerDeclarations
@@ -117,9 +118,9 @@ object ObservedResponders {
   * view's hints are discarded so a stale Healthy claim cannot bleed into view-N+1 selection.
   */
 @derive(eqv, encoder, decoder)
-case class ObservedSelfHealth(value: Map[PeerId, SelfHealthHint])
+case class ObservedSelfHealth(value: SortedMap[PeerId, SelfHealthHint])
 object ObservedSelfHealth {
-  def empty: ObservedSelfHealth = ObservedSelfHealth(Map.empty)
+  def empty: ObservedSelfHealth = ObservedSelfHealth(SortedMap.empty)
 }
 
 @derive(eqv, encoder, decoder, show)
