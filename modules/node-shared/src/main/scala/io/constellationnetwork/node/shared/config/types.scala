@@ -514,12 +514,21 @@ object types {
     // (combined-stream + per-ordinal checkpoint stream). 0 bytes disables the limit.
     //
     // Default 300 MB / 1 minute = 5 MiB/s sustained per IP. A legitimate snapshot streamer
-    // pulls one 72 MB combined snapshot per round (~22-50s/round) ≈ 1.5 MiB/s, so this
-    // gives ~3-4× headroom for legitimate parallel reads while throttling bulk pollers.
+    // pulls one 72 MB combined snapshot per round (~22-50s/round) ~= 1.5 MiB/s, so this
+    // gives ~3-4x headroom for legitimate parallel reads while throttling bulk pollers.
     //
     // See PerIpBandwidthLimitMiddleware for mechanism + caveats. v9 (2026-04-29) addition.
     perIpMaxBytesPerWindow: Long = 0L,
-    perIpBandwidthRetryAfterSeconds: Long = 5
+    perIpBandwidthRetryAfterSeconds: Long = 5,
+    // Route-scoped bound on simultaneous heavy snapshot serves (currently
+    // `/latest/combined/stream` + `/{ordinal}?full=true`). Layered INSIDE the existing
+    // public-middleware chain so it applies regardless of whether the request is anonymous
+    // or peer-authenticated. When saturated the route returns 503 with a Retry-After
+    // header instead of queuing the handler. Tuned to match the storage-layer
+    // `concurrentStreams` permit (default 4) plus a small slack -- the route fast-fails
+    // before the disk-stream semaphore would block, so slow consumers don't accumulate
+    // ahead of the disk read.
+    heavyRouteConcurrency: PosInt = PosInt(6)
   )
 
   case class SnapshotTimeoutsConfig(

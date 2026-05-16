@@ -50,14 +50,16 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
 ](
   path: Path,
   lastSnapshotInfo: SignallingRef[F, LastCheckpointInfo],
+  // Bounds concurrent open file streams; permit is held for the entire stream lifetime
+  // including slow consumer drain. Lowering this is the primary lever for capping disk
+  // contention from concurrent heavy-route serves.
   concurrentStreams: Semaphore[F],
-  byteCache: Cache[SnapshotOrdinal, Array[Byte]],
   // Parallel cache populated at write time so per-ordinal requests can emit a strong-validator
   // ETag of `<ordinal>-<snapshotHash>` rather than ordinal-only. The ordinal-only form would be
   // a lying validator: ord-N can map to different bytes on different forks, and a peer holding
-  // stale (N, H₁) querying with `If-None-Match: "N"` would falsely 304 against the canonical
-  // (N, H₂). Snapshots loaded from disk after a restart that aren't in this cache fall back to
-  // emitting no ETag — strictly correct (always 200), just no optimization for that ordinal.
+  // stale (N, H1) querying with `If-None-Match: "N"` would falsely 304 against the canonical
+  // (N, H2). Snapshots loaded from disk after a restart that aren't in this cache fall back to
+  // emitting no ETag -- strictly correct (always 200), just no optimization for that ordinal.
   hashCache: Cache[SnapshotOrdinal, Hash]
 )(
   implicit encSigned: Encoder[Signed[S]],
@@ -107,74 +109,55 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
     }
   }
 
-  /** Read checkpoint bytes — serves from Scaffeine cache if present, otherwise reads from disk and populates cache. Max 4 entries (~8MB for
-    * 2MB checkpoints) with 60s TTL.
+  /** Stream the on-disk checkpoint file directly. Returns `(contentLength, byteStream)` when the file exists. The disk-read semaphore
+    * permit is acquired before the first byte and released when the stream terminates (success or cancellation), so the permit lifetime
+    * tracks slow consumer drains -- the desired backpressure shape.
+    *
+    * No heap materialization. Previously the body was read via `.compile.to(Array)` before chunking, which allocated ~76 MB per request on
+    * a 76 MB checkpoint. Streaming directly from disk lets the OS page cache (rather than a per-process Scaffeine cache) handle hot-read
+    * reuse, and shrinks per-request heap pressure to chunk-size (64 KiB) times in-flight readers.
     */
-  private def readBytesWithCache(ordinal: SnapshotOrdinal): F[Option[Array[Byte]]] =
-    Async[F].delay(byteCache.getIfPresent(ordinal)).flatMap {
-      case Some(bytes) => bytes.some.pure[F]
-      case None =>
-        val file = path / ordinal.value.value.toString
-        Files[F].exists(file).flatMap {
-          case false => none[Array[Byte]].pure[F]
-          case true =>
+  private def readBytesAsStream(ordinal: SnapshotOrdinal): F[Option[(Long, Stream[F, Byte])]] = {
+    val file = path / ordinal.value.value.toString
+    Files[F].exists(file).flatMap {
+      case false => none[(Long, Stream[F, Byte])].pure[F]
+      case true =>
+        Files[F].size(file).map { size =>
+          val body: Stream[F, Byte] =
             Stream
               .resource(concurrentStreams.permit)
-              .flatMap { _ =>
-                Files[F].readAll(file, 64 * 1024, Flags.Read)
-              }
-              .compile
-              .to(Array)
-              .flatTap { bytes =>
-                Async[F].delay(byteCache.put(ordinal, bytes))
-              }
-              .map(_.some)
+              .flatMap(_ => Files[F].readAll(file, 64 * 1024, Flags.Read))
+          (size, body).some
         }
     }
-
-  /** Wrap a cached `Array[Byte]` as a chunked fs2 stream so http4s/netty can flush each segment as the socket drains rather than queueing
-    * the entire response in the outbound buffer. The chunks are views into the same underlying array (no copying), so the cache benefit is
-    * preserved.
-    *
-    * Background (2026-04-28 testnet): with state sizes ~58 MB, the prior single-chunk pattern caused the netty outbound buffer to hold the
-    * full response for slow consumers, manifesting as multi-GB direct-buffer pressure (8.99 GB observed on the rollback validator under
-    * steady 1.4 req/s traffic at this endpoint). Chunked emission caps per-stream buffer pressure to roughly `chunkSize ×
-    * in-flight-responses`.
-    */
-  private def chunkedBodyStream(bytes: Array[Byte]): Stream[F, Byte] =
-    Stream.unfoldChunk(0) { offset =>
-      if (offset >= bytes.length) None
-      else {
-        val len = math.min(64 * 1024, bytes.length - offset)
-        Some((fs2.Chunk.array(bytes, offset, len), offset + len))
-      }
-    }
+  }
 
   /** ETag value for the immutable identity `(ordinal, snapshotHash)`. The HTTP strong-validator semantics demand that distinct bytes
     * produce distinct ETag values; ordinal alone is insufficient because the same ordinal can carry different bytes across forks. Encoding
-    * both halves ensures a stale (ord, H₁) cache cannot 304 against the canonical (ord, H₂).
+    * both halves ensures a stale (ord, H1) cache cannot 304 against the canonical (ord, H2).
     */
   def etagFor(ordinal: SnapshotOrdinal, snapshotHash: Hash): EntityTag =
     EntityTag(s"${ordinal.value.value}-${snapshotHash.value}", EntityTag.Strong)
 
   def getAsHttpResponse(ordinal: SnapshotOrdinal): F[Option[Response[F]]] =
-    readBytesWithCache(ordinal).map(_.map { bytes =>
-      // Emit ETag only when we have a cached hash for this ordinal (populated at write time).
-      // Cold-restart historical reads have no cached hash; we fall back to no-ETag → server
-      // always returns 200, client gets the body. Strictly correct, just no optimization for
-      // that single request — and the rarely-fetched-historical case is tolerant of that.
-      val baseHeaders = Headers(
-        `Content-Type`(MediaType.application.json),
-        `Content-Length`(bytes.length.toLong)
-      )
-      val headers = hashCache
-        .getIfPresent(ordinal)
-        .fold(baseHeaders)(hash => baseHeaders.put(ETag(etagFor(ordinal, hash))))
-      Response[F](status = Status.Ok, headers = headers, body = chunkedBodyStream(bytes))
+    readBytesAsStream(ordinal).map(_.map {
+      case (size, body) =>
+        // Emit ETag only when we have a cached hash for this ordinal (populated at write time).
+        // Cold-restart historical reads have no cached hash; we fall back to no-ETag -- server
+        // always returns 200, client gets the body. Strictly correct, just no optimization for
+        // that single request -- and the rarely-fetched-historical case is tolerant of that.
+        val baseHeaders = Headers(
+          `Content-Type`(MediaType.application.json),
+          `Content-Length`(size)
+        )
+        val headers = hashCache
+          .getIfPresent(ordinal)
+          .fold(baseHeaders)(hash => baseHeaders.put(ETag(etagFor(ordinal, hash))))
+        Response[F](status = Status.Ok, headers = headers, body = body)
     })
 
   def getAsStream(ordinal: SnapshotOrdinal): F[Option[Stream[F, Byte]]] =
-    readBytesWithCache(ordinal).map(_.map(chunkedBodyStream))
+    readBytesAsStream(ordinal).map(_.map { case (_, body) => body })
 
   def exists(ordinal: SnapshotOrdinal): F[Boolean] =
     exists(toOrdinalName(ordinal))
@@ -185,9 +168,7 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
         val sortedOrdinals = ordinals.sorted(Ordering[SnapshotOrdinal].reverse)
         if (sortedOrdinals.length > maxCheckpointsStored) {
           val ordinalsToDelete = sortedOrdinals.drop(maxCheckpointsStored)
-          ordinalsToDelete.traverse_ { ord =>
-            Async[F].delay(byteCache.invalidate(ord)) >> delete(ord)
-          }
+          ordinalsToDelete.traverse_(delete)
         } else Concurrent[F].unit
       }
     }
@@ -221,9 +202,7 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
 
   def deleteAbove(ordinal: SnapshotOrdinal): F[Unit] =
     listStoredOrdinals.flatMap {
-      _.filter(_ > ordinal).evalMap { ord =>
-        Async[F].delay(byteCache.invalidate(ord)) >> delete(ord)
-      }.compile.drain
+      _.filter(_ > ordinal).evalMap(delete).compile.drain
     }
 
   def getLatestOrdinal: F[Option[SnapshotOrdinal]] =
@@ -261,18 +240,9 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
 
 object CombinedSnapshotCheckpointFileSystemStorage {
 
-  /** Scaffeine byte cache for combined checkpoint files. Small max size (4 entries) since checkpoints are ~2MB each. TTL ensures stale data
-    * is evicted.
-    */
-  private def mkByteCache: Cache[SnapshotOrdinal, Array[Byte]] =
-    Scaffeine()
-      .expireAfterWrite(60.seconds)
-      .maximumSize(4)
-      .build[SnapshotOrdinal, Array[Byte]]()
-
   /** Hash cache keyed by ordinal. Populated at write time so the per-ordinal HTTP route can emit a strong-validator ETag of `(ordinal,
-    * snapshotHash)`. Capacity matches `maxCheckpointsStored` (default 2) plus a small slack — historical reads beyond that window fall back
-    * to no-ETag emission.
+    * snapshotHash)`. Capacity matches `maxCheckpointsStored` (default 2) plus a small slack -- historical reads beyond that window fall
+    * back to no-ETag emission.
     */
   private def mkHashCache: Cache[SnapshotOrdinal, Hash] =
     Scaffeine()
@@ -288,10 +258,11 @@ object CombinedSnapshotCheckpointFileSystemStorage {
     path: Path
   )(implicit encSigned: Encoder[Signed[S]], encState: Encoder[SI]): F[CombinedSnapshotCheckpointFileSystemStorage[F, S, SI]] = for {
     lastCheckpointInfo <- SignallingRef.of[F, LastCheckpointInfo](LastCheckpointInfo.empty())
-    concurrentStreams <- Semaphore[F](5)
-    cache = mkByteCache
+    // Default 4 aligned with the route-scoped heavy-serve cap so the storage layer does not
+    // become the bottleneck before the route-scoped 503-fast-fail can kick in.
+    concurrentStreams <- Semaphore[F](4)
     hashes = mkHashCache
-    storage = new CombinedSnapshotCheckpointFileSystemStorage[F, S, SI](path, lastCheckpointInfo, concurrentStreams, cache, hashes)
+    storage = new CombinedSnapshotCheckpointFileSystemStorage[F, S, SI](path, lastCheckpointInfo, concurrentStreams, hashes)
     _ <- storage.createDirectoryIfNotExists().rethrowT
   } yield storage
 }
