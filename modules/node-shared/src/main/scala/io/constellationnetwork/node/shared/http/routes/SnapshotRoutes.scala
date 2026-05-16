@@ -1,6 +1,7 @@
 package io.constellationnetwork.node.shared.http.routes
 
 import cats.effect._
+import cats.effect.std.Semaphore
 import cats.syntax.all._
 
 import io.constellationnetwork.ext.http4s.headers.negotiation.resolveEncoder
@@ -26,12 +27,13 @@ import io.constellationnetwork.schema.{GlobalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.signature.Signed
 
+import eu.timepit.refined.types.numeric.PosInt
 import io.circe.shapes._
 import io.circe.{Encoder, Printer}
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
-import org.http4s.headers.{ETag, `Content-Type`, `If-None-Match`}
+import org.http4s.headers._
 import org.http4s.server.middleware.Timeout
 import shapeless.HNil
 import shapeless.syntax.singleton._
@@ -52,6 +54,15 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
   snapshotTimeoutsConfig: SnapshotTimeoutsConfig,
   cachedCombinedResponse: CachedCombinedResponse[F, S, SI],
   combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, SI],
+  // Route-scoped concurrency cap for heavy snapshot serves. Layered INSIDE the public
+  // middleware chain so it applies regardless of whether the request is anonymous or
+  // peer-authenticated. Held only for the heavy handlers (`/latest/combined/stream` and
+  // `/{ordinal}?full=true`); cheap probe routes are unbounded by this cap.
+  heavyRouteConcurrency: Semaphore[F],
+  // Retry-After value (seconds) returned with 503 responses when `heavyRouteConcurrency`
+  // is saturated. Sourced from `SnapshotServingConfig.retryAfterSeconds` for parity with
+  // the existing global cap response shape.
+  heavyRouteRetryAfterSeconds: Long,
   publicConcurrencyLimit: Option[HttpRoutes[F] => HttpRoutes[F]] = None,
   publicPerIpRateLimit: Option[HttpRoutes[F] => HttpRoutes[F]] = None,
   publicPerIpBandwidthLimit: Option[HttpRoutes[F] => HttpRoutes[F]] = None
@@ -109,6 +120,31 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
     nodeStorage.getNodeState
       .map(validStateForSnapshotReturn)
       .ifM(action, serviceUnavailableNodeNotReady)
+
+  /** Route-scoped heavy-serve cap. Tries to acquire a permit on `heavyRouteConcurrency`; on saturation, returns 503 with a Retry-After
+    * header without running `action`. On acquisition, the permit is attached to the response body's stream finalizer so it is released only
+    * after the stream terminates (success, error, or cancellation). This ties permit lifetime to slow consumer drain, which is what we want
+    * for bounding total in-flight serves rather than just dispatch.
+    *
+    * If `action` itself fails before producing a response, the permit is released synchronously via `handleErrorWith` so the cap doesn't
+    * leak permits on handler errors.
+    *
+    * Layered INSIDE the public middleware chain (ConcurrencyLimitMiddleware / PerIpBandwidthLimitMiddleware / PerIpRateLimitMiddleware), so
+    * it applies whether the request is anonymous or peer-authenticated. Cheap probe routes bypass this guard entirely.
+    */
+  private def withHeavyRoutePermit(action: F[Response[F]]): F[Response[F]] = {
+    val release = heavyRouteConcurrency.release
+    heavyRouteConcurrency.tryAcquire.flatMap {
+      case false =>
+        Response[F](status = Status.ServiceUnavailable)
+          .putHeaders(`Retry-After`.unsafeFromLong(heavyRouteRetryAfterSeconds))
+          .pure[F]
+      case true =>
+        action
+          .map(resp => resp.copy(body = resp.body.onFinalizeWeak(release)))
+          .handleErrorWith(t => release >> Async[F].raiseError[Response[F]](t))
+    }
+  }
 
   /** Fast-reject ordinals above head snapshot. Returns NotFound for ordinals beyond the current head. */
   private def rejectAboveHead(ordinal: SnapshotOrdinal)(action: F[Response[F]]): F[Response[F]] =
@@ -180,38 +216,40 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
 
         case req @ GET -> Root / "latest" / "combined" / "stream" =>
           whenNodeReady {
-            // v9 ETag/304 + v10.x correctness fix (2026-04-30): the strong validator now encodes
-            // the full immutable identity `(ordinal, snapshotHash)`. Ordinal alone is insufficient —
-            // ord-N can carry different bytes on different forks, so a stale-(N, H₁) cache claiming
-            // `If-None-Match: "N"` against the canonical (N, H₂) would falsely 304. Including the
-            // hash makes the 304 path correct under fork-recovery.
-            //
-            // "Anything stored?" comes from `getLatestOrdinal` (a directory listing on disk). Using
-            // the in-memory `getLatestCheckpointInfo` Ref instead would 404 on cold-restart until
-            // the first new write — that Ref is reset to `empty()` on startup and only repopulated
-            // by `tryWrite`. The hash cache is allowed to miss; we just skip ETag emission in that
-            // case rather than 404. This matches the per-ord checkpoint route's behavior below.
-            combinedSnapshotCheckpointFileSystemStorage.getLatestOrdinal.flatMap {
-              case None => NotFound()
-              case Some(ordinal) =>
-                combinedSnapshotCheckpointFileSystemStorage.getCachedHash(ordinal).flatMap {
-                  case Some(hash) =>
-                    val expectedTag = combinedSnapshotCheckpointFileSystemStorage.etagFor(ordinal, hash)
-                    if (matchesIfNoneMatch(req, expectedTag))
-                      Response[F](status = Status.NotModified, headers = Headers(ETag(expectedTag))).pure[F]
-                    else
+            withHeavyRoutePermit {
+              // v9 ETag/304 + v10.x correctness fix (2026-04-30): the strong validator now encodes
+              // the full immutable identity `(ordinal, snapshotHash)`. Ordinal alone is insufficient
+              // -- ord-N can carry different bytes on different forks, so a stale-(N, H1) cache
+              // claiming `If-None-Match: "N"` against the canonical (N, H2) would falsely 304.
+              // Including the hash makes the 304 path correct under fork-recovery.
+              //
+              // "Anything stored?" comes from `getLatestOrdinal` (a directory listing on disk). Using
+              // the in-memory `getLatestCheckpointInfo` Ref instead would 404 on cold-restart until
+              // the first new write -- that Ref is reset to `empty()` on startup and only repopulated
+              // by `tryWrite`. The hash cache is allowed to miss; we just skip ETag emission in that
+              // case rather than 404. This matches the per-ord checkpoint route's behavior below.
+              combinedSnapshotCheckpointFileSystemStorage.getLatestOrdinal.flatMap {
+                case None => NotFound()
+                case Some(ordinal) =>
+                  combinedSnapshotCheckpointFileSystemStorage.getCachedHash(ordinal).flatMap {
+                    case Some(hash) =>
+                      val expectedTag = combinedSnapshotCheckpointFileSystemStorage.etagFor(ordinal, hash)
+                      if (matchesIfNoneMatch(req, expectedTag))
+                        Response[F](status = Status.NotModified, headers = Headers(ETag(expectedTag))).pure[F]
+                      else
+                        combinedSnapshotCheckpointFileSystemStorage.getAsHttpResponse(ordinal).flatMap {
+                          case Some(resp) => resp.pure[F]
+                          case None       => NotFound()
+                        }
+                    case None =>
+                      // Cold-restart historical: hash unknown, skip the conditional check and serve
+                      // the body. Strictly correct, just no optimization for this single request.
                       combinedSnapshotCheckpointFileSystemStorage.getAsHttpResponse(ordinal).flatMap {
                         case Some(resp) => resp.pure[F]
                         case None       => NotFound()
                       }
-                  case None =>
-                    // Cold-restart historical: hash unknown, skip the conditional check and serve
-                    // the body. Strictly correct, just no optimization for this single request.
-                    combinedSnapshotCheckpointFileSystemStorage.getAsHttpResponse(ordinal).flatMap {
-                      case Some(resp) => resp.pure[F]
-                      case None       => NotFound()
-                    }
-                }
+                  }
+              }
             }
           }
 
@@ -259,14 +297,16 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
                   }
                 }
               else
-                fullGlobalSnapshotStorage.map { storage =>
-                  resolveEncoder[F, Signed[GlobalSnapshot]](req) { implicit enc =>
-                    storage.read(ordinal).flatMap {
-                      case Some(snapshot) => Ok(snapshot)
-                      case _              => NotFound()
+                withHeavyRoutePermit {
+                  fullGlobalSnapshotStorage.map { storage =>
+                    resolveEncoder[F, Signed[GlobalSnapshot]](req) { implicit enc =>
+                      storage.read(ordinal).flatMap {
+                        case Some(snapshot) => Ok(snapshot)
+                        case _              => NotFound()
+                      }
                     }
-                  }
-                }.getOrElse(NotFound())
+                  }.getOrElse(NotFound())
+                }
             }
           }
 
@@ -337,7 +377,7 @@ object SnapshotRoutes {
       concurrencyLimit <- snapshotServingConfig.traverse(cfg =>
         ConcurrencyLimitMiddleware[F](cfg.maxConcurrentPublic, cfg.retryAfterSeconds)
       )
-      // Only build the per-IP rate limiter when both bounds are positive — 0 disables.
+      // Only build the per-IP rate limiter when both bounds are positive: 0 disables.
       perIpRateLimit <- snapshotServingConfig
         .filter(cfg => cfg.perIpMaxRequestsPerWindow > 0 && cfg.perIpWindow.toMillis > 0)
         .traverse(cfg =>
@@ -365,6 +405,9 @@ object SnapshotRoutes {
             selfExternalIp = selfExternalIp
           )
         }
+      heavyRouteCapacity: PosInt = snapshotServingConfig.map(_.heavyRouteConcurrency).getOrElse(PosInt(6))
+      heavyRouteRetryAfter: Long = snapshotServingConfig.map(_.retryAfterSeconds).getOrElse(2L)
+      heavyRoutePermit <- Semaphore[F](heavyRouteCapacity.value.toLong)
     } yield
       new SnapshotRoutes[F, S, SI](
         snapshotStorage,
@@ -376,6 +419,8 @@ object SnapshotRoutes {
         snapshotTimeoutsConfig,
         cachedCombined,
         combinedSnapshotCheckpointFileSystemStorage,
+        heavyRoutePermit,
+        heavyRouteRetryAfter,
         concurrencyLimit,
         perIpRateLimit,
         perIpBandwidthLimit
