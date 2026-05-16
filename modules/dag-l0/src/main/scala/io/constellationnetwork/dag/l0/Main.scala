@@ -28,8 +28,8 @@ import io.constellationnetwork.node.shared.infrastructure.genesis.{GenesisFS => 
 import io.constellationnetwork.node.shared.infrastructure.gossip.event._
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.GlobalSnapshotLocalFileSystemStorage
-import io.constellationnetwork.node.shared.resources.MkHttpServer
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
+import io.constellationnetwork.node.shared.resources.{ConsensusExecutor, MkHttpServer}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.cluster.ClusterId
@@ -105,6 +105,11 @@ object Main
           hashSelect
         )
         .asResource
+      // Dedicated work-stealing pool for the ConsensusEventLoop consume fiber. Isolates
+      // round-timing from HTTP serving load on the default global compute pool. Zero or
+      // negative `consensusDispatcherThreads` falls back to the global runtime (legacy
+      // behaviour). See ConsensusExecutor for the rationale and lifecycle notes.
+      consensusEc <- ConsensusExecutor.optional[IO](cfg.snapshot.consensus.consensusDispatcherThreads)
       services <- Services
         .make[IO, Run](
           sharedConfig,
@@ -122,7 +127,8 @@ object Main
           cfg,
           Hasher.forKryo[IO],
           nodeShared.loggerBundle,
-          getPeerChainTips
+          getPeerChainTips,
+          consensusEc
         )
         .asResource
 

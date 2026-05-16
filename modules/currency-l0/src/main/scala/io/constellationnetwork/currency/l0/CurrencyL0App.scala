@@ -30,8 +30,8 @@ import io.constellationnetwork.node.shared.infrastructure.gossip.event.{ChainTip
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastCheckpointInfo
 import io.constellationnetwork.node.shared.infrastructure.statechannel.StateChannelAllowanceLists
-import io.constellationnetwork.node.shared.resources.MkHttpServer
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
+import io.constellationnetwork.node.shared.resources.{ConsensusExecutor, MkHttpServer}
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.node.shared.{NodeSharedOrSharedRegistrationIdRange, nodeSharedKryoRegistrar}
 import io.constellationnetwork.schema.ConsensusOperationalState
@@ -136,6 +136,10 @@ abstract class CurrencyL0App(
 
       mkCell = (event: CurrencySnapshotEvent) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleCurrencySnapshotEvent(event))
 
+      // Dedicated work-stealing pool for the ConsensusEventLoop consume fiber. Mirrors the
+      // dag-l0 setup. Isolates round-timing from HTTP serving load on the default global
+      // compute pool. See ConsensusExecutor.
+      consensusEc <- ConsensusExecutor.optional[IO](cfg.snapshot.consensus.consensusDispatcherThreads)
       services <- Services
         .make[IO, Run](
           sharedConfig,
@@ -161,7 +165,8 @@ abstract class CurrencyL0App(
           mkCell,
           Some(customArtifacts),
           queues,
-          getPeerChainTips
+          getPeerChainTips,
+          consensusEc
         )
         .asResource
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext

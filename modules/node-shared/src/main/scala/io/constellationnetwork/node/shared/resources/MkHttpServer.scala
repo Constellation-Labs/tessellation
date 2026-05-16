@@ -33,18 +33,15 @@ object MkHttpServer {
     logger.info(s"HTTP Server name=${name.show} started at ${s.address}")
 
   implicit def forAsync[F[_]: Async: Network]: MkHttpServer[F] =
-    (name: ServerName, cfg: HttpServerConfig, httpApp: HttpApp[F]) => {
-      val base = EmberServerBuilder
+    (name: ServerName, cfg: HttpServerConfig, httpApp: HttpApp[F]) =>
+      EmberServerBuilder
         .default[F]
         .withHost(cfg.host)
         .withPort(cfg.port)
         .withShutdownTimeout(cfg.shutdownTimeout)
+        .withMaxConnections(cfg.maxConnections.value)
         .withHttpApp(httpApp)
-
-      val withMaxConn = cfg.maxConnections.fold(base)(base.withMaxConnections)
-
-      withMaxConn.build
+        .build
         .evalTap(showEmberBanner[F](name))
-        .evalTap(_ => cfg.maxConnections.traverse_(mc => logger.info(s"HTTP Server name=${name.show} maxConnections=$mc")))
-    }
+        .evalTap(_ => logger.info(s"HTTP Server name=${name.show} maxConnections=${cfg.maxConnections.value}"))
 }

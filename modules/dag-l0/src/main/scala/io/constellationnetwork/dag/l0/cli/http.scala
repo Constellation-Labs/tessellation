@@ -9,6 +9,8 @@ import io.constellationnetwork.node.shared.config.types.{HttpClientConfig, HttpC
 
 import com.comcast.ip4s._
 import com.monovore.decline.Opts
+import com.monovore.decline.refined.refTypeArgument
+import eu.timepit.refined.types.numeric.PosInt
 
 object http {
 
@@ -17,10 +19,16 @@ object http {
     idleTimeInPool = 30.seconds
   )
 
-  val publicMaxConnectionsOpts: Opts[Option[Int]] = Opts
-    .option[Int]("public-max-connections", help = "Max concurrent connections on public HTTP server")
-    .orElse(Opts.env[Int]("CL_PUBLIC_HTTP_MAX_CONNECTIONS", help = "Max concurrent connections on public HTTP server"))
-    .orNone
+  // Public listener cap default. Backstops the per-route ConcurrencyLimitMiddleware in PR-1:
+  // a buggy or hostile client cannot exhaust handler threads or fds regardless of which route
+  // they hit. Override per environment via --public-max-connections / CL_PUBLIC_HTTP_MAX_CONNECTIONS
+  // if a deployment needs a different ceiling.
+  val publicMaxConnectionsDefault: PosInt = PosInt(100)
+
+  val publicMaxConnectionsOpts: Opts[PosInt] = Opts
+    .option[PosInt]("public-max-connections", help = "Max concurrent connections on public HTTP server")
+    .orElse(Opts.env[PosInt]("CL_PUBLIC_HTTP_MAX_CONNECTIONS", help = "Max concurrent connections on public HTTP server"))
+    .withDefault(publicMaxConnectionsDefault)
 
   val opts: Opts[HttpConfig] =
     (

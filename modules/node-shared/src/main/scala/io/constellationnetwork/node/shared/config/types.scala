@@ -415,7 +415,23 @@ object types {
     //     populate `observedSelfHealth` (default empty), so a mixed v14/v15 cluster would compute
     //     different leaders on rounds following a v15-led proposal -- bumping anchors the
     //     required cold-restart fence. Jar hash already refuses v14<->v15 peer connections.
-    consensusSchemaVersion: Int = 15
+    consensusSchemaVersion: Int = 15,
+    // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
+    // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
+    // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with
+    // PR-1's streaming heap discipline, can otherwise contend with consensus on the global
+    // compute pool). 0 means "use the default global runtime" (legacy behaviour, useful for
+    // tests that build the loop without a dedicated EC). Non-zero values are clamped to >=1
+    // at the construction site.
+    //
+    // NOT in `deterministicConfigHash`: thread-pool sizing is per-node performance tuning,
+    // not consensus protocol. Operators may run different values without forking.
+    //
+    // Default 2: covers consume + occasional pinned downstream work without monopolising
+    // cores on the typical 4-8 vCPU validator. Larger pools rarely help because the consume
+    // loop is single-threaded by construction; the pool size matters only for the fanned-out
+    // round handlers that elect to shift back via `evalOn`.
+    consensusDispatcherThreads: Int = 2
   ) {
 
     /** Deterministic hash of consensus-critical config values.
@@ -587,11 +603,18 @@ object types {
     idleTimeInPool: FiniteDuration
   )
 
+  // Ember-level connection cap. Backstops the per-route ConcurrencyLimitMiddleware from
+  // PR-1: a buggy or hostile client cannot open unlimited concurrent connections regardless
+  // of which route they target, so fd exhaustion and excessive concurrent handler scheduling
+  // are bounded at the server. Default 100 is a coarse safety ceiling, not a sizing knob;
+  // workload-shaping should still be done via the per-route caps. CLI/env override allowed
+  // (see e.g. dag-l0/cli/http.scala publicMaxConnectionsOpts) for environments that need a
+  // different ceiling.
   case class HttpServerConfig(
     host: Host,
     port: Port,
     shutdownTimeout: FiniteDuration,
-    maxConnections: Option[Int] = None
+    maxConnections: PosInt = PosInt(100)
   )
 
   case class HttpConfig(

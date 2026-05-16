@@ -10,6 +10,8 @@ import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import scala.concurrent.ExecutionContext
+
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.cell.L0Cell
 import io.constellationnetwork.dag.l0.domain.statechannel.StateChannelService
@@ -68,7 +70,8 @@ object Services {
     cfg: AppConfig,
     txHasher: Hasher[F],
     loggerBundle: LoggerBundle[F],
-    getPeerChainTips: F[Map[PeerId, ChainTip]]
+    getPeerChainTips: F[Map[PeerId, ChainTip]],
+    consensusEc: Option[ExecutionContext] = None
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): F[Services[F, R]] =
@@ -145,7 +148,8 @@ object Services {
             // Activate the Cluster.leave() wedge guard: AbandonmentTracker writes wedge state
             // into the SharedServices-owned Ref; Cluster reads from the same Ref via the
             // consensusHealth thunk passed at Cluster.make time.
-            injectedHealthRef = Some(sharedServices.consensusHealthRef)
+            injectedHealthRef = Some(sharedServices.consensusHealthRef),
+            consensusEc = consensusEc
           )
       }
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
