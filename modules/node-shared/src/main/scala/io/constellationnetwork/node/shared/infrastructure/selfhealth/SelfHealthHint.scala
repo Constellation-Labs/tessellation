@@ -63,5 +63,6 @@ final case class HealthSnapshot(
   loadPerVcpu: Double,
   recentLeaderRoundP95Ms: Option[Long],
   sampleCount: Int,
-  overriddenByOperator: Boolean
+  overriddenByOperator: Boolean,
+  heapUsedRatio: Double
 )
