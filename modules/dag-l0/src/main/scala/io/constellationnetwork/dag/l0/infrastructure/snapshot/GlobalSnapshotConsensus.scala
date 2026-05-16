@@ -9,6 +9,7 @@ import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
+import scala.concurrent.ExecutionContext
 
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
@@ -117,7 +118,13 @@ object GlobalSnapshotConsensus {
     // AbandonmentTracker writes wedge signals into the same Ref that Cluster.leave()'s guard
     // reads, activating the leave-refusal behavior. When None, the engine creates its own
     // internal Ref and the cluster-level guard sees only the empty default (inert).
-    injectedHealthRef: Option[Ref[F, ConsensusHealthStatus]] = None
+    injectedHealthRef: Option[Ref[F, ConsensusHealthStatus]] = None,
+    // Dedicated EC for the FSM consume fiber. When provided, the whole
+    // `loop.run.compile.drain` is shifted onto this EC via `Async[F].evalOn`, isolating
+    // round-timing from HTTP serving load on the default global runtime. When None (default,
+    // and what tests use) the loop runs on the ambient runtime -- same behaviour as before
+    // PR-2's executor isolation. See `ConsensusExecutor`.
+    consensusEc: Option[ExecutionContext] = None
   )(implicit supervisor: Supervisor[F], globalStateProofSelector: GlobalStateProofSelector): F[GlobalSnapshotConsensus[F]] =
     for {
       globalStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
@@ -355,7 +362,11 @@ object GlobalSnapshotConsensus {
 
       triggerEvent = loop.queue.offer(ConsensusCommand.FacilitateByEvent)
 
-      _ <- supervisor.supervise(loop.run.compile.drain)
+      // Pin the consume fiber onto the dedicated consensus EC when one was provided. The
+      // shift covers the entire stream's compile-drain so queue.take blocks on the consensus
+      // pool rather than the global runtime; downstream effects that elect to shift back via
+      // `evalOn` (gossip emits, P2P calls) are not forced onto the consensus pool.
+      _ <- supervisor.supervise(consensusEc.fold(loop.run.compile.drain)(ec => Async[F].evalOn(loop.run.compile.drain, ec)))
       consensus = new Consensus(
         handler,
         consensusStorage,

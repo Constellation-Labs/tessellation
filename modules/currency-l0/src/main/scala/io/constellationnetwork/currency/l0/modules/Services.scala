@@ -9,6 +9,7 @@ import cats.effect.{Async, IO, Resource}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
+import scala.concurrent.ExecutionContext
 
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
 import io.constellationnetwork.currency.l0.config.types.AppConfig
@@ -80,7 +81,8 @@ object Services {
     mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
     maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
     queues: Queues[F],
-    getPeerChainTips: F[Map[PeerId, ChainTip]]
+    getPeerChainTips: F[Map[PeerId, ChainTip]],
+    consensusEc: Option[ExecutionContext] = None
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector,
     currencyStateProofSelector: CurrencyStateProofSelector
@@ -183,7 +185,8 @@ object Services {
           storages.eventMempool,
           queues.rumor,
           getPeerChainTips,
-          sharedServices.localHealthMonitor
+          sharedServices.localHealthMonitor,
+          consensusEc
         )
     } yield
       new Services[F, R](

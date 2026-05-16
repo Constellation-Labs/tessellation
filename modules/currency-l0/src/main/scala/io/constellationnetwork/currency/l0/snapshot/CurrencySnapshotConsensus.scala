@@ -8,6 +8,7 @@ import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
+import scala.concurrent.ExecutionContext
 import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataTransaction}
@@ -87,7 +88,12 @@ object CurrencySnapshotConsensus {
     // v15 self-health throttle. Injected so the metagraph creator can stamp Facility.selfHealthHint
     // from this node's current LocalHealthMonitor sample. Shared with the dag-l0 instance via
     // SharedServices.localHealthMonitor at the caller site.
-    localHealthMonitor: LocalHealthMonitor[F]
+    localHealthMonitor: LocalHealthMonitor[F],
+    // Dedicated EC for the FSM consume fiber. When provided, the whole
+    // `loop.run.compile.drain` is shifted onto this EC via `Async[F].evalOn`, isolating
+    // round-timing from HTTP serving load on the default global runtime. When None (default,
+    // and what tests use) the loop runs on the ambient runtime. See `ConsensusExecutor`.
+    consensusEc: Option[ExecutionContext] = None
   )(implicit supervisor: Supervisor[F]): F[CurrencySnapshotConsensus[F]] = {
     implicit val daDecoder: Decoder[DataTransaction] = DataTransactionCodecs.decoder(maybeDataApplication)
     implicit val daEncoder: Encoder[DataTransaction] = DataTransactionCodecs.encoder(maybeDataApplication)
@@ -281,7 +287,10 @@ object CurrencySnapshotConsensus {
         CurrencyConsensusKind
       ](consensusStorage, rumorQueue)
 
-      _ <- supervisor.supervise(loop.run.compile.drain)
+      // Pin the consume fiber onto the dedicated consensus EC when one was provided. The
+      // shift covers the entire stream's compile-drain so queue.take blocks on the consensus
+      // pool rather than the global runtime.
+      _ <- supervisor.supervise(consensusEc.fold(loop.run.compile.drain)(ec => Async[F].evalOn(loop.run.compile.drain, ec)))
       triggerEventConsensus = loop.queue.offer(
         ConsensusCommand.FacilitateByEvent
       )
