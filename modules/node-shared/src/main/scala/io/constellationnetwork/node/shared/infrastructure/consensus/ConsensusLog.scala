@@ -101,6 +101,7 @@ object ConsensusLog {
     case object ChronicNonSignersExcluded extends Event { val show = "CHRONIC_NON_SIGNERS_EXCLUDED" }
     case object TcaFilterApplied extends Event { val show = "TCA_FILTER_APPLIED" }
     case object AbandonedMissingLogged extends Event { val show = "ABANDONED_MISSING_LOGGED" }
+    case object PriorRoundMissingExcluded extends Event { val show = "PRIOR_ROUND_MISSING_EXCLUDED" }
     case object FacilityRetransmit extends Event { val show = "FACILITY_RETRANSMIT" }
 
     // ── Proposal events ───────────────────────────────────────────

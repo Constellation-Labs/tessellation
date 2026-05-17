@@ -113,8 +113,12 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
 
   /** Tracks consecutive retriable abandonments at the same key. If the node is stuck at the same ordinal with quorum-infeasible for too
     * long (e.g., post-chaos where one node forked ahead), this escalates to non-retriable after `maxRetriableAtSameKey` attempts.
+    *
+    * Lives on `ConsensusEngineContext` rather than being a private field here so `ConsensusRoundRunner` can read the same counter when
+    * constructing a fresh retry: it passes the count to the state creator as the initial `viewNumber` so each retry deterministically
+    * rotates the leader pick (sorted[N % facilitator_count] instead of always sorted[0]).
     */
-  private val retriableAtSameKeyRef: Ref[F, (Option[Key], Int)] = Ref.unsafe((none[Key], 0))
+  private val retriableAtSameKeyRef: Ref[F, (Option[Key], Int)] = ctx.retriableAtSameKeyRef
 
   /** After this many retriable abandonments at the same ordinal, escalate to recovery. Default: 1x maxConsecutiveAbandonments (5 with
     * default config). This is higher than the non-retriable threshold because quorum-infeasible is expected during transient partitions.

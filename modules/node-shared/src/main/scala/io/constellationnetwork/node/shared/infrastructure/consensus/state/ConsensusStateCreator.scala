@@ -36,11 +36,17 @@ abstract class ConsensusStateCreator[F[_]: Sync, Key: Show, Artifact, Context, S
 
   type StateCreateResult = Option[ConsensusState[Key, Status, Outcome, Kind]]
 
+  /** Builds a new consensus state for `key`. `priorAbandonmentCount` is the number of consecutive abandonment retries already observed at
+    * this key (read from `ConsensusEngineContext.retriableAtSameKeyRef` by the caller). Implementations should pass it as the initial
+    * `viewNumber` to `selectLeaderWeighted` so each retry deterministically rotates to a different leader, breaking the loop where every
+    * retry of a wedged key re-elected the same silent peer.
+    */
   def tryFacilitateConsensus(
     key: Key,
     lastOutcome: Outcome,
     maybeTrigger: Option[ConsensusTrigger],
-    resources: ConsensusResources[Artifact, Kind]
+    resources: ConsensusResources[Artifact, Kind],
+    priorAbandonmentCount: Int
   ): F[StateCreateResult]
 
   /** Re-send this node's own, already-stored Facility declaration to the given targets.

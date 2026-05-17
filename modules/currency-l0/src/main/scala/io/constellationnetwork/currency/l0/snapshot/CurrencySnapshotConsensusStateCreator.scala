@@ -66,10 +66,11 @@ object CurrencySnapshotConsensusStateCreator {
       key: CurrencySnapshotKey,
       lastOutcome: CurrencyConsensusOutcome,
       maybeTrigger: Option[ConsensusTrigger],
-      resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind]
+      resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind],
+      priorAbandonmentCount: Int
     ): F[StateCreateResult] =
       consensusStorage
-        .condModifyState(key)(toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources)))
+        .condModifyState(key)(toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources, priorAbandonmentCount)))
         .flatMap(evalEffect)
         .flatTap(logIfCreated)
 
@@ -97,7 +98,8 @@ object CurrencySnapshotConsensusStateCreator {
       key: CurrencySnapshotKey,
       lastOutcome: CurrencyConsensusOutcome,
       maybeTrigger: Option[ConsensusTrigger],
-      resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind]
+      resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind],
+      priorAbandonmentCount: Int
     ): F[(CurrencySnapshotConsensusState, F[Unit])] =
       for {
         candidates <- consensusStorage.getCandidates(key.next)
@@ -280,6 +282,27 @@ object CurrencySnapshotConsensusStateCreator {
           )
           .whenA(abandonedMissing.nonEmpty)
 
+        // Prior-round-missing exclusion (Layer 2-Lite, 2026-05-16). Mirrors the dag-l0
+        // implementation. Peers in the prior round's round-start committee that did NOT sign
+        // the finalized outcome are excluded from THIS round's committee. Consensus-agreed
+        // signal (every node has the byte-identical `Signed[Artifact]`), so no fork risk.
+        // One-round memory only.
+        priorRoundSigners = lastOutcome.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet
+        priorRoundFacilitators = lastOutcome.facilitators.value.toSet
+        priorRoundMissing = priorRoundFacilitators -- priorRoundSigners
+
+        _ <- ConsensusLog
+          .info(
+            logger,
+            Category.Facilitator,
+            key.show,
+            "n/a",
+            Event.PriorRoundMissingExcluded,
+            "count" -> priorRoundMissing.size.toString,
+            "peers" -> priorRoundMissing.toList.map(_.value.value.take(8)).sorted.mkString(",")
+          )
+          .whenA(priorRoundMissing.nonEmpty)
+
         // For THIS round only: exclude recently removed and penalized peers from active selection.
         // They remain in allEligible so they can be re-selected in future rounds.
         // NOTE: abandonedMissing is intentionally NOT included — it's a local-only tracker that
@@ -314,7 +337,10 @@ object CurrencySnapshotConsensusStateCreator {
         eligibleThisRound = {
           // B2 probation is included in the excluded set AND the withoutPenaltiesOnly escape,
           // making it non-bypassable. See dag-l0 mirror for full rationale.
-          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers
+          // priorRoundMissing acts like a penalty: excluded normally, bypassable via
+          // withoutPenaltiesOnly when liveness is at risk.
+          val excluded =
+            previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers ++ priorRoundMissing
           val filtered = allEligible.filterNot(excluded.contains)
           val withoutPenaltiesOnly =
             allEligible.filterNot((previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ probationPeers).contains)
@@ -328,7 +354,8 @@ object CurrencySnapshotConsensusStateCreator {
         }
 
         penaltyBypassed = {
-          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers
+          val excluded =
+            previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers ++ priorRoundMissing
           val filtered = allEligible.filterNot(excluded.contains)
           filtered.size < minViableQuorum && allEligible.size > filtered.size
         }
@@ -433,9 +460,12 @@ object CurrencySnapshotConsensusStateCreator {
           participated >= config.minParticipationObservations && completed >= 1
         }
         leaderPool = if (graduatedLeaderPool.size >= 2) graduatedLeaderPool else active
+        // Layer 1 view-carry-forward (2026-05-16): see dag-l0 mirror. priorAbandonmentCount
+        // seeds the leader pick so same-key retries rotate to different initial leaders.
         leader = facilitatorSelector.selectLeaderWeighted(
           leaderPool,
           entropy,
+          viewNumber = priorAbandonmentCount,
           qualityScores = lastOutcome.peerQuality,
           selfHealthHints = lastOutcome.peerSelfHealth,
           minLeaderRatioPct = config.leaderRotationMinRatioPct
@@ -468,6 +498,8 @@ object CurrencySnapshotConsensusStateCreator {
           withdrawnFacilitators = WithdrawnFacilitators(withdrawn.toSet),
           eligibleFacilitators = EligibleFacilitators(allEligible),
           leader = leader,
+          // Mirror dag-l0: start at the retry count so view-change continues monotonically.
+          viewNumber = priorAbandonmentCount,
           entropy = entropy
         )
 
@@ -482,7 +514,7 @@ object CurrencySnapshotConsensusStateCreator {
             "leader" -> ConsensusLog.pid(leader),
             "leaderScore" -> f"$leaderScore%.2f",
             "self" -> ConsensusLog.pid(selfId),
-            "view" -> "0",
+            "view" -> priorAbandonmentCount.toString,
             "lastGlobalOrd" -> lastGlobalSnapshotOrdinal.show
           )
           val optionalPairs =
@@ -490,7 +522,9 @@ object CurrencySnapshotConsensusStateCreator {
               (if (penalizedPeers.nonEmpty) Seq("penalized" -> penalizedPeers.size.toString) else Seq.empty) ++
               (if (previouslyRemoved.nonEmpty) Seq("previouslyRemoved" -> previouslyRemoved.size.toString) else Seq.empty) ++
               (if (abandonedMissing.nonEmpty) Seq("abandonedMissing" -> abandonedMissing.size.toString) else Seq.empty) ++
-              (if (allDeferred.nonEmpty) Seq("deferredCandidates" -> allDeferred.size.toString) else Seq.empty)
+              (if (priorRoundMissing.nonEmpty) Seq("priorRoundMissing" -> priorRoundMissing.size.toString) else Seq.empty) ++
+              (if (allDeferred.nonEmpty) Seq("deferredCandidates" -> allDeferred.size.toString) else Seq.empty) ++
+              (if (priorAbandonmentCount > 0) Seq("retryCount" -> priorAbandonmentCount.toString) else Seq.empty)
           ConsensusLog.info(logger, Category.Lifecycle, key.show, role, Event.RoundStarted, (basePairs ++ optionalPairs): _*)
         }
 
