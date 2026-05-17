@@ -93,7 +93,8 @@ object CurrencySnapshotConsensusStateAdvancer {
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     clusterStorageInstance: ClusterStorage[F],
     eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey],
-    eventGossipClient: EventGossipClient[F, CurrencySnapshotEvent]
+    eventGossipClient: EventGossipClient[F, CurrencySnapshotEvent],
+    facilitatorSelector: FacilitatorSelector
   )(
     implicit eventEncoder: Encoder[CurrencySnapshotEvent],
     eventDecoder: Decoder[CurrencySnapshotEvent]
@@ -239,6 +240,46 @@ object CurrencySnapshotConsensusStateAdvancer {
               admittedThisRound = admittedThisRound,
               probationRounds = config.readmissionProbationRounds
             )
+            // v16 (2026-05-17): per-peer cumulative view-change-caused credits.
+            // Mirror of dag-l0; see GlobalSnapshotConsensusStateAdvancer for full rationale and
+            // the determinism contract.
+            val priorPeerQuality = state.lastOutcome.peerQuality
+            val priorActive = state.roundStartFacilitators.value
+            val priorGraduated = priorActive.filter { pid =>
+              val (completed, participated) = priorPeerQuality.getOrElse(pid, (0, 0))
+              participated >= config.minParticipationObservations && completed >= 1
+            }
+            val priorLeaderPool = if (priorGraduated.size >= 2) priorGraduated else priorActive
+            val viewChangeCredits: SortedMap[PeerId, Long] =
+              if (state.viewNumber <= 0 || priorLeaderPool.isEmpty) SortedMap.empty[PeerId, Long]
+              else {
+                val priorPeerQualityMap: Map[PeerId, (Int, Int)] = priorPeerQuality.toMap
+                val priorPeerSelfHealthMap = state.lastOutcome.peerSelfHealth.toMap
+                val priorPeerViewChangesMap = state.lastOutcome.peerViewChanges.toMap
+                (0 until state.viewNumber).foldLeft(SortedMap.empty[PeerId, Long]) { (acc, v) =>
+                  val failedLeader = facilitatorSelector.selectLeaderWeighted(
+                    priorLeaderPool,
+                    state.entropy,
+                    viewNumber = v,
+                    qualityScores = priorPeerQualityMap,
+                    selfHealthHints = priorPeerSelfHealthMap,
+                    peerViewChanges = priorPeerViewChangesMap,
+                    minLeaderRatioPct = config.leaderRotationMinRatioPct,
+                    hardLeaderQualityScorePct = config.hardLeaderQualityScorePct,
+                    minLeaderPoolSize = config.minLeaderPoolSize
+                  )
+                  acc.updated(failedLeader, acc.getOrElse(failedLeader, 0L) + 1L)
+                }
+              }
+            val accumulatedPeerViewChanges: SortedMap[PeerId, Long] = {
+              val priorMap = state.lastOutcome.peerViewChanges
+              val allKeys = (priorMap.keysIterator ++ viewChangeCredits.keysIterator).toSet
+              SortedMap
+                .from(allKeys.iterator.map { pid =>
+                  pid -> (priorMap.getOrElse(pid, 0L) + viewChangeCredits.getOrElse(pid, 0L))
+                })
+                .filter { case (_, v) => v > 0L }
+            }
             val outcome = CurrencyConsensusOutcome(
               state.key,
               // Canonical committee persists in lastOutcome — see dag-l0 mirror.
@@ -254,7 +295,9 @@ object CurrencySnapshotConsensusStateAdvancer {
               recentProofSizes = newRecentProofSizes,
               readmissionCountdown = finalReadmission,
               // v15: carry the accepted Proposal's `observedSelfHealth` forward, mirror of dag-l0.
-              peerSelfHealth = state.observedSelfHealth.value
+              peerSelfHealth = state.observedSelfHealth.value,
+              // v16: per-peer cumulative view-change-caused, mirror of dag-l0.
+              peerViewChanges = accumulatedPeerViewChanges
             )
             (Previous(state.lastOutcome.key), outcome).some
           case _ =>
