@@ -90,7 +90,15 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
   private def facilitateRound(lastOutcome: Outcome, key: Key, trigger: Option[ConsensusTrigger]): F[Unit] =
     for {
       resources <- storage.getResources(key)
-      facilitated <- creator.tryFacilitateConsensus(key, lastOutcome, trigger, resources)
+      // Read the per-key abandonment-retry counter so the state creator can rotate the initial
+      // leader pick. AbandonmentTracker owns the write; we only read here. On a fresh key the
+      // Ref carries (None, 0) or (Some(otherKey), N); only the matching-key branch returns N.
+      retriableSnapshot <- ctx.retriableAtSameKeyRef.get
+      priorAbandonmentCount = retriableSnapshot match {
+        case (Some(trackedKey), n) if trackedKey == key => n
+        case _                                          => 0
+      }
+      facilitated <- creator.tryFacilitateConsensus(key, lastOutcome, trigger, resources, priorAbandonmentCount)
 
       // Validators must not produce solo — solo production from multiple validators creates
       // divergent forks when they restart simultaneously. Abort the round if this is a

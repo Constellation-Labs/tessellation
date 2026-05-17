@@ -62,10 +62,11 @@ object GlobalSnapshotConsensusStateCreator {
       key: GlobalSnapshotKey,
       lastOutcome: GlobalConsensusOutcome,
       maybeTrigger: Option[ConsensusTrigger],
-      resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind]
+      resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind],
+      priorAbandonmentCount: Int
     ): F[StateCreateResult] =
       consensusStorage
-        .condModifyState(key)(toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources)))
+        .condModifyState(key)(toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources, priorAbandonmentCount)))
         .flatMap(evalEffect)
         .flatTap(logIfCreated)
 
@@ -95,7 +96,8 @@ object GlobalSnapshotConsensusStateCreator {
       key: GlobalSnapshotKey,
       lastOutcome: GlobalConsensusOutcome,
       maybeTrigger: Option[ConsensusTrigger],
-      resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind]
+      resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind],
+      priorAbandonmentCount: Int
     ): F[(GlobalSnapshotConsensusState, F[Unit])] =
       for {
         candidates <- consensusStorage.getCandidates(key.next)
@@ -315,6 +317,39 @@ object GlobalSnapshotConsensusStateCreator {
           )
           .whenA(abandonedMissing.nonEmpty)
 
+        // Prior-round-missing exclusion (Layer 2-Lite, 2026-05-16). Peers that were in the
+        // prior round's round-start committee but did NOT sign the finalized outcome are
+        // excluded from THIS round's committee. The signal is consensus-agreed: every honest
+        // node sees the byte-identical `Signed[Artifact]` propagated by the prior round's
+        // leader, so `signers = proofs.map(_.id.toPeerId)` is the same set on every node, and
+        // `priorRoundFacilitators - signers` therefore yields the same exclusion set
+        // everywhere. No schema change required.
+        //
+        // One-round memory: a peer excluded here re-enters the eligible pool for the round
+        // after next (because they won't be in *that* round's `lastOutcome.facilitators` if
+        // they were excluded here). This gives recovered peers a quick path back without
+        // letting persistently-silent peers stay in the committee.
+        //
+        // Motivation: alpha.76 wedge at ord 3126034 where 63adf853 was in the round-start
+        // committee of every retry despite being silent in ord 3126033's outcome. With this
+        // exclusion the wedge round's committee shrinks from 6 to 5, quorum drops from 5 to
+        // 4, and the 4 responsive peers complete the round even with another peer silent.
+        priorRoundSigners = lastOutcome.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet
+        priorRoundFacilitators = lastOutcome.facilitators.value.toSet
+        priorRoundMissing = priorRoundFacilitators -- priorRoundSigners
+
+        _ <- ConsensusLog
+          .info(
+            logger,
+            Facilitator,
+            key.show,
+            "n/a",
+            PriorRoundMissingExcluded,
+            "count" -> priorRoundMissing.size.toString,
+            "peers" -> priorRoundMissing.toList.map(_.value.value.take(8)).sorted.mkString(",")
+          )
+          .whenA(priorRoundMissing.nonEmpty)
+
         // For THIS round only: exclude recently removed and penalized peers from active selection.
         // They remain in allEligible so they can be re-selected in future rounds.
         // NOTE: abandonedMissing is intentionally NOT included — it's a local-only tracker that
@@ -375,9 +410,12 @@ object GlobalSnapshotConsensusStateCreator {
         eligibleThisRound = {
           // Exclude: previously removed peers, penalized peers, chronic non-signers (minus any
           // reinstated for this round), deferred candidates (brand-new or in countdown),
-          // AND B2 probation peers (waiting for AdmissionCertificate re-admission).
+          // B2 probation peers (waiting for AdmissionCertificate re-admission), AND
+          // priorRoundMissing (facilitators of the previous round that did not sign; see
+          // the `priorRoundMissing` computation above for the determinism rationale).
           // Deferred/probation candidates remain in allEligible so they remain tracked.
-          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers
+          val excluded =
+            previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers ++ priorRoundMissing
           val filtered = allEligible.filterNot(excluded.contains)
           // Bypass chain for liveness when filtering would drop below minViableQuorum:
           //   1. withoutPenaltiesOnly — lift penalties + deferral, keep chronic, reinstatement
@@ -400,7 +438,8 @@ object GlobalSnapshotConsensusStateCreator {
         }
 
         penaltyBypassed = {
-          val excluded = previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers
+          val excluded =
+            previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers ++ priorRoundMissing
           val filtered = allEligible.filterNot(excluded.contains)
           filtered.size < minViableQuorum && allEligible.size > filtered.size
         }
@@ -533,9 +572,17 @@ object GlobalSnapshotConsensusStateCreator {
           participated >= config.minParticipationObservations && completed >= 1
         }
         leaderPool = if (graduatedLeaderPool.size >= 2) graduatedLeaderPool else active
+        // Layer 1 view-carry-forward (2026-05-16): seed `selectLeaderWeighted` with
+        // `priorAbandonmentCount` so each same-key retry deterministically picks a different
+        // initial leader (`sorted[N % size]`). Without this every retry reset to view=0 and
+        // re-elected the same peer that caused the prior abandonment. The viewNumber is also
+        // stamped on the freshly-created ConsensusState below so the round's view-change
+        // counter continues monotonically from where the prior retry left off (HotStuff-style
+        // monotonic-view discipline).
         leader = facilitatorSelector.selectLeaderWeighted(
           leaderPool,
           entropy,
+          viewNumber = priorAbandonmentCount,
           qualityScores = lastOutcome.peerQuality,
           selfHealthHints = lastOutcome.peerSelfHealth,
           minLeaderRatioPct = config.leaderRotationMinRatioPct
@@ -569,6 +616,11 @@ object GlobalSnapshotConsensusStateCreator {
           withdrawnFacilitators = WithdrawnFacilitators(withdrawn.toSet),
           eligibleFacilitators = EligibleFacilitators(allEligible),
           leader = leader,
+          // Start the round at the retry-count view so view-change continues monotonically.
+          // Pairs with the `viewNumber = priorAbandonmentCount` argument to selectLeaderWeighted
+          // above: the leader the round believes it has at view=N must match the leader the
+          // selector returns at view=N.
+          viewNumber = priorAbandonmentCount,
           entropy = entropy
         )
 
@@ -583,14 +635,16 @@ object GlobalSnapshotConsensusStateCreator {
             "leader" -> ConsensusLog.pid(leader),
             "leaderScore" -> f"$leaderScore%.2f",
             "self" -> ConsensusLog.pid(selfId),
-            "view" -> "0"
+            "view" -> priorAbandonmentCount.toString
           )
           val optionalPairs =
             (if (withdrawn.nonEmpty) Seq("withdrawn" -> withdrawn.size.toString) else Seq.empty) ++
               (if (penalizedPeers.nonEmpty) Seq("penalized" -> penalizedPeers.size.toString) else Seq.empty) ++
               (if (previouslyRemoved.nonEmpty) Seq("previouslyRemoved" -> previouslyRemoved.size.toString) else Seq.empty) ++
               (if (abandonedMissing.nonEmpty) Seq("abandonedMissing" -> abandonedMissing.size.toString) else Seq.empty) ++
-              (if (allDeferred.nonEmpty) Seq("deferredCandidates" -> allDeferred.size.toString) else Seq.empty)
+              (if (priorRoundMissing.nonEmpty) Seq("priorRoundMissing" -> priorRoundMissing.size.toString) else Seq.empty) ++
+              (if (allDeferred.nonEmpty) Seq("deferredCandidates" -> allDeferred.size.toString) else Seq.empty) ++
+              (if (priorAbandonmentCount > 0) Seq("retryCount" -> priorAbandonmentCount.toString) else Seq.empty)
           ConsensusLog.info(logger, Lifecycle, key.show, role, RoundStarted, (basePairs ++ optionalPairs): _*)
         }
 

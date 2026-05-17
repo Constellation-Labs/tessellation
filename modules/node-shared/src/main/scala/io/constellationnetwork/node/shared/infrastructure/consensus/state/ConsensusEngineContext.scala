@@ -111,7 +111,21 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // Local-only because the deferral is a self-defense decision, not a consensus rule. Other peers
   // still elect this node deterministically; this node refuses and emits a VCV. The view-change
   // certificate then assembles deterministically across the cluster as designed.
-  recoveredAtKeyRef: Ref[F, Option[Key]]
+  recoveredAtKeyRef: Ref[F, Option[Key]],
+  // Per-key abandonment-retry counter. Owned by `AbandonmentTracker`, which increments on every
+  // `ROUND_ABANDONED_RETRIABLE` at the same key and resets when a new key arrives. Read by
+  // `ConsensusRoundRunner` at round-facilitation time and fed into the state creator as the
+  // initial `viewNumber` argument to `selectLeaderWeighted`. The deterministic effect: each
+  // same-key retry picks a different initial leader because `selectLeaderWeighted` indexes
+  // `sorted[viewNumber % size]`. Without this, every retry of a wedged key reset view to 0 and
+  // re-elected the same silent peer that caused the prior abandonment (observed 2026-05-16 at
+  // ord 3126034: 7 abandons in a row with leader=63adf853, score decaying but never crossing
+  // the chronic threshold).
+  //
+  // Deterministic across honest nodes that observed the same abandonment sequence. Slight
+  // divergence is possible if a node joins/restarts mid-wedge, but view-change converges within
+  // ~10 seconds of round start when leaders disagree.
+  retriableAtSameKeyRef: Ref[F, (Option[Key], Int)]
 )
 
 object ConsensusEngineContext {
@@ -142,6 +156,7 @@ object ConsensusEngineContext {
     for {
       running <- Ref.of[F, Boolean](false)
       recoveredAtKey <- Ref.of[F, Option[Key]](None)
+      retriableAtSameKey <- Ref.of[F, (Option[Key], Int)]((none[Key], 0))
     } yield
       ConsensusEngineContext(
         selfId,
@@ -166,6 +181,7 @@ object ConsensusEngineContext {
         lastSnapshotHashOf,
         probationPeersOf,
         peerQualityOf,
-        recoveredAtKey
+        recoveredAtKey,
+        retriableAtSameKey
       )
 }
