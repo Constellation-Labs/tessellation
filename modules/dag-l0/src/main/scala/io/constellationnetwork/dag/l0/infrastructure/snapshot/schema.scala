@@ -189,7 +189,10 @@ object schema {
               cumulativeMissCount = cumulativeMissCounts.getOrElse(pid, 0L),
               readmissionCountdown = readmissionCountdown.getOrElse(pid, 0),
               deferralCountdown = deferralCountdown.getOrElse(pid, 0),
-              viewChangesCaused = peerViewChanges.getOrElse(pid, 0L)
+              // v16: Option-wrap so absent peers / pre-v16 readers see no key under
+              // dropNullValues=true. Some(0) would render as "0" and break byte-stable
+              // back-compat; only emit Some when there is actual history to persist.
+              viewChangesCaused = peerViewChanges.get(pid).filter(_ > 0L)
             )
           }
         )

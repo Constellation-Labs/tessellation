@@ -164,7 +164,9 @@ object schema {
               cumulativeMissCount = cumulativeMissCounts.getOrElse(pid, 0L),
               readmissionCountdown = readmissionCountdown.getOrElse(pid, 0),
               deferralCountdown = deferralCountdown.getOrElse(pid, 0),
-              viewChangesCaused = peerViewChanges.getOrElse(pid, 0L)
+              // v16: Option-wrap so absent peers / pre-v16 readers see no key under
+              // dropNullValues=true. Mirror of dag-l0 schema.
+              viewChangesCaused = peerViewChanges.get(pid).filter(_ > 0L)
             )
           }
         )

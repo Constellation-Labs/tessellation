@@ -368,8 +368,10 @@ object Main
                   // v16: per-peer cumulative view-change-caused. Seeded only when non-zero so
                   // the persisted map stays small. Absent peers default to 0 at the v16 filter
                   // call-site, matching the pre-v16 "no penalty" semantic.
-                  seedPeerViewChanges = SortedMap.from(seedOperational.perPeer.iterator.collect {
-                    case (pid, r) if r.viewChangesCaused > 0L => pid -> r.viewChangesCaused
+                  // PerPeerOperationalRecord.viewChangesCaused is Option[Long] (back-compat with
+                  // pre-v16 JSON), so unwrap with the same > 0 filter.
+                  seedPeerViewChanges = SortedMap.from(seedOperational.perPeer.iterator.flatMap {
+                    case (pid, r) => r.viewChangesCaused.filter(_ > 0L).map(v => pid -> v)
                   })
                   // Recent-proof window: prefer the persisted history (so the bootstrap-vs-post
                   // classification matches the running cluster), otherwise seed with the rollback

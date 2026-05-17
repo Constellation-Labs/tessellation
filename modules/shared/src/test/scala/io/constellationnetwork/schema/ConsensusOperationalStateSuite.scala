@@ -59,7 +59,41 @@ object ConsensusOperationalStateSuite extends SimpleIOSuite {
       r.cumulativeMissCount == 0L,
       r.readmissionCountdown == 0,
       r.deferralCountdown == 0,
-      r.viewChangesCaused == 0L
+      r.viewChangesCaused.isEmpty
+    )
+  }
+
+  pureTest("PerPeerOperationalRecord decodes pre-v16 JSON (no viewChangesCaused key) as None") {
+    // Back-compat regression: pre-v16 snapshots have no `viewChangesCaused` field
+    // under `peerHistory.perPeer.<pid>`. The decoder MUST accept this and produce
+    // `viewChangesCaused = None`, NOT fail with "missing required field". This was
+    // the v16 hotfix root cause: a Long with a Scala default was treated as required.
+    val preV16Json =
+      """{"quality":[5,7],"removalPenalty":12,"cumulativeMissCount":2,"readmissionCountdown":0,"deferralCountdown":0}"""
+    val decoded = decode[PerPeerOperationalRecord](preV16Json)
+    expect(decoded.isRight, s"pre-v16 JSON failed to decode: $decoded").and(
+      expect(decoded.toOption.exists(_.viewChangesCaused.isEmpty), "expected viewChangesCaused = None on pre-v16 JSON")
+    )
+  }
+
+  pureTest("PerPeerOperationalRecord with None viewChangesCaused drops the key under dropNullValues=true") {
+    // Byte-stability check: a v16-encoded record with `viewChangesCaused = None`
+    // must produce JSON byte-identical to the pre-v16 layout (no key at all) under
+    // the production Printer. Verified for the artifact-hash determinism contract.
+    val r = PerPeerOperationalRecord(
+      quality = (5, 7),
+      removalPenalty = 12,
+      cumulativeMissCount = 2L,
+      readmissionCountdown = 0,
+      deferralCountdown = 0,
+      viewChangesCaused = None
+    )
+    val productionPrinter = Printer(dropNullValues = true, indent = "", sortKeys = true)
+    val rendered = productionPrinter.print(r.asJson)
+    expect.all(
+      !rendered.contains("viewChangesCaused"),
+      !rendered.contains("null"),
+      rendered.contains("\"removalPenalty\":12")
     )
   }
 
