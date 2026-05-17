@@ -431,9 +431,10 @@ abstract class CurrencyL0App(
                         case (pid, r) if r.deferralCountdown > 0 => pid -> r.deferralCountdown
                       })
                       // v16: per-peer cumulative view-change-caused. Mirror of dag-l0 seed
-                      // pattern; see dag-l0 Main for full rationale.
-                      seedPeerViewChanges = SortedMap.from(seedOperational.perPeer.iterator.collect {
-                        case (pid, r) if r.viewChangesCaused > 0L => pid -> r.viewChangesCaused
+                      // pattern; see dag-l0 Main for full rationale. viewChangesCaused is
+                      // Option[Long] for pre-v16 back-compat at decode time.
+                      seedPeerViewChanges = SortedMap.from(seedOperational.perPeer.iterator.flatMap {
+                        case (pid, r) => r.viewChangesCaused.filter(_ > 0L).map(v => pid -> v)
                       })
                       rollbackRecentProofSizes =
                         if (seedOperational.recentProofSizes.nonEmpty) seedOperational.recentProofSizes

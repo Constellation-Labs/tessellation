@@ -32,11 +32,17 @@ final case class PerPeerOperationalRecord(
   // by recomputing the deterministic leader at each view in [0, finalView) and
   // crediting that peer with one view-change-caused. Persisted on the snapshot so
   // the chronic-leader filter survives cluster cold-restart, the same way
-  // `cumulativeMissCount` and `removalPenalty` do. Default 0L means a peer with no
-  // history yet (bootstrap) is treated as having caused zero view changes, which
-  // pairs with the `participated == 0 -> pass` bypass in the v16 filter so freshly
-  // joined peers are not penalized.
-  viewChangesCaused: Long = 0L
+  // `cumulativeMissCount` and `removalPenalty` do.
+  //
+  // MUST be `Option[Long]`, not `Long = 0L`: the derevo-derived JSON decoder does NOT
+  // respect Scala default values. A `Long` field with a default would be treated as
+  // required by the decoder, breaking back-compat with pre-v16 snapshots that have
+  // no `viewChangesCaused` key under `peerHistory.perPeer.<pid>`. Wrapping in Option
+  // makes the field truly optional at decode time; combined with
+  // `Printer(dropNullValues = true)` in production, `None` is dropped from JSON
+  // entirely so v16-encoded snapshots are byte-identical to pre-v16 for peers that
+  // have not yet caused a view change. Treat `None` as 0 at every read site.
+  viewChangesCaused: Option[Long] = None
 )
 
 object PerPeerOperationalRecord {
@@ -47,7 +53,7 @@ object PerPeerOperationalRecord {
       cumulativeMissCount = 0L,
       readmissionCountdown = 0,
       deferralCountdown = 0,
-      viewChangesCaused = 0L
+      viewChangesCaused = None
     )
 }
 
