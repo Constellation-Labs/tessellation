@@ -58,7 +58,8 @@ object ConsensusOperationalStateSuite extends SimpleIOSuite {
       r.removalPenalty == 0,
       r.cumulativeMissCount == 0L,
       r.readmissionCountdown == 0,
-      r.deferralCountdown == 0
+      r.deferralCountdown == 0,
+      r.viewChangesCaused == 0L
     )
   }
 

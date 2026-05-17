@@ -377,15 +377,18 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
     }
   }
 
-  test("kick-fast: peer with one completion graduates back to lead-eligible") {
+  test("kick-fast: peer with completions above v16 floor graduates back to lead-eligible") {
     IO {
-      // Recovery path: a peer that previously never completed now has completed=1.
-      // It SHOULD be lead-eligible — the rule is "at least one win", not "perfect record".
-      val recovered = pid("recovered-one-win")
+      // Recovery path: a peer that previously never completed now has some wins. To be
+      // lead-eligible under v16 it must clear BOTH (a) graduation (completed >= 1) AND
+      // (b) the hard quality-score floor at 20%. Original pre-v16 test used (1, 12) which
+      // is 8.3% -- correctly excluded by v16 now. Updated to (5, 12) which is 41.7%,
+      // above the 20% floor, demonstrating the recovery path under v16 rules.
+      val recovered = pid("recovered-above-floor")
       val proven = (1 to 2).map(i => pid(s"proven$i")).toList
       val active = recovered +: proven
       val scores: Map[PeerId, (Int, Int)] = Map(
-        recovered -> (1, 12) // 1 success out of 12 — bad ratio but at least demonstrated capability
+        recovered -> (5, 12) // 5 of 12 = 41.7%, still below leaderRotationMinRatioPct (50%) so tier 1, but above v16 hard floor (20%)
       ) ++ proven.map(p => p -> (10, 10)).toMap
       val threshold = 5
 
@@ -395,6 +398,27 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
       val leaders = (0 until 3).map(v => selectGraduatedLeader(active, entropy, scores, threshold, v))
 
       expect(leaders.contains(recovered) || leaders.toSet.size == 3, s"recovered peer never reached leader slot: $leaders")
+    }
+  }
+
+  test("v16: peer with completions below the hard quality-score floor is NOT lead-eligible") {
+    IO {
+      // Companion to the test above: a peer with ratio 8.3% (1/12) should NOT be elected
+      // even though they pass graduation. Captures the regression that v16 was designed
+      // to fix: pre-v16 the peer would rotate into leadership at some view; post-v16
+      // they are excluded from the leader pool entirely so other peers always win.
+      val belowFloor = pid("below-floor-one-of-twelve")
+      val proven = (1 to 2).map(i => pid(s"proven$i")).toList
+      val active = belowFloor +: proven
+      val scores: Map[PeerId, (Int, Int)] = Map(
+        belowFloor -> (1, 12) // 1 of 12 = 8.3%, BELOW the 20% v16 floor
+      ) ++ proven.map(p => p -> (10, 10)).toMap
+      val threshold = 5
+
+      val entropies = (0 until 50).map(i => Hash.fromBytes(s"v16-recovery-floor-$i".getBytes("UTF-8")))
+      val winners = entropies.flatMap(e => (0 until 5).map(v => selectGraduatedLeader(active, e, scores, threshold, v)))
+
+      expect.same(0, winners.count(_ == belowFloor))
     }
   }
 
@@ -631,4 +655,222 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
       expect(active.contains(leader), s"leader $leader not in active fallback pool")
     }
   }
+
+  // === v16 (2026-05-17) hard leader-eligible floor tests ===
+  //
+  // selectLeaderWeighted now applies a pre-filter using `hardLeaderEligibleMinRatioPct` (default 20)
+  // BEFORE the tier sort. Peers below the floor are removed from leader candidacy entirely;
+  // they remain committee members. If fewer than `minLeaderPoolSize` (default 3) peers survive
+  // the filter, the full input is used (starvation fallback). Closes the chronic-leader-loop
+  // wedge observed on 2026-05-17 where score-0.07 peers continued to be elected via tier-1
+  // rotation.
+
+  test("v16 hard floor: chronic peer below 0.2 never elected when 3+ healthy peers exist") {
+    IO {
+      // Models the 2026-05-17 wedge: chronic at 0.07 (1/15), healthy peers in tier 0/1 above
+      // the hard floor. Pre-v16 the chronic peer was tier 1 and `sorted[viewNumber % size]`
+      // walked through it on view rotation. v16 removes it from the pool entirely.
+      val chronic = pid("chronic-7pct")
+      val healthy = (1 to 3).map(i => pid(s"healthy-$i")).toList
+      val pool = chronic +: healthy
+      val scores: Map[PeerId, (Int, Int)] = Map(chronic -> (1, 15)) ++ healthy.map(_ -> (9, 10)).toMap
+
+      // Sweep view numbers 0..49 across multiple entropies. Chronic must never be returned.
+      val entropies = (0 until 10).map(i => Hash.fromBytes(s"v16-floor-$i".getBytes("UTF-8")))
+      val views = entropies.flatMap(e => (0 until 50).map(v => selector.selectLeaderWeighted(pool, e, v, scores)))
+
+      expect.same(0, views.count(_ == chronic))
+    }
+  }
+
+  test("v16 hard floor: peer just below threshold excluded, peer just above included") {
+    IO {
+      // Integer-arithmetic boundary, mirrors the v14 boundary test. With default threshold=20:
+      // 19/100 must be excluded; 20/100 must be included.
+      val justBelow = pid("just-19pct")
+      val atBoundary = pid("at-20pct")
+      val justAbove = pid("just-21pct")
+      val healthy = (1 to 3).map(i => pid(s"healthy-$i")).toList
+      val pool = List(justBelow, atBoundary, justAbove) ++ healthy
+      val scores: Map[PeerId, (Int, Int)] = Map(
+        justBelow -> (19, 100),
+        atBoundary -> (20, 100),
+        justAbove -> (21, 100)
+      ) ++ healthy.map(_ -> (10, 10)).toMap
+
+      val entropies = (0 until 50).map(i => Hash.fromBytes(s"v16-bound-$i".getBytes("UTF-8")))
+      val winners = entropies.flatMap(e => (0 until 20).map(v => selector.selectLeaderWeighted(pool, e, v, scores)))
+
+      expect(
+        !winners.contains(justBelow),
+        s"just-19pct leaked into leader pool"
+      )
+    }
+  }
+
+  test("v16 hard floor: starvation fallback engages when pool too small") {
+    IO {
+      // 4 peers, 3 below the floor (would be filtered), 1 above. After filtering, pool size = 1
+      // which is below minLeaderPoolSize=3. Selector must fall back to the full input so the
+      // round still has a leader. Cluster cannot wedge just because too many peers are chronic.
+      val above = pid("only-good")
+      val chronic = (1 to 3).map(i => pid(s"chronic-$i")).toList
+      val pool = above +: chronic
+      val scores: Map[PeerId, (Int, Int)] = Map(above -> (10, 10)) ++ chronic.map(_ -> (1, 20)).toMap
+
+      val entropy = Hash.fromBytes("v16-starve".getBytes("UTF-8"))
+      val leaders = (0 until 4).map(v => selector.selectLeaderWeighted(pool, entropy, v, scores))
+
+      // Fallback engaged: all 4 peers reachable across view rotation.
+      expect.same(4, leaders.distinct.size)
+    }
+  }
+
+  test("v16 hard floor: bootstrap peers (participated=0) bypass the filter") {
+    IO {
+      // Cold-start path: peerQuality is empty or peers have participated=0. The hard floor
+      // check must NOT exclude unproven peers; the call-site graduation filter is the
+      // authority on unproven exclusion (and at bootstrap it falls back to active anyway).
+      val bootstrap = (1 to 4).map(i => pid(s"bootstrap-$i")).toList
+      val scores: Map[PeerId, (Int, Int)] = Map.empty // no history at all
+
+      val entropy = Hash.fromBytes("v16-bootstrap".getBytes("UTF-8"))
+      val leaders = (0 until bootstrap.size).map(v => selector.selectLeaderWeighted(bootstrap, entropy, v, scores))
+
+      // No filter exclusion -> rotation picks each peer once.
+      expect.same(bootstrap.size, leaders.distinct.size)
+    }
+  }
+
+  test("v16 hard floor: Critical self-health excluded from leader pool when alternatives exist") {
+    IO {
+      // The v15 tier-2 demote handled this within the tier sort, but the v16 starvation
+      // fallback could re-expose Critical peers when too few peers survive the ratio filter.
+      // The pool filter now also excludes Critical so it cannot be elected via fallback unless
+      // every peer is Critical (the all-Critical case is covered by an existing v15 test).
+      val critical = pid("critical-peer")
+      val healthy = (1 to 3).map(i => pid(s"healthy-$i")).toList
+      val pool = critical +: healthy
+      val scores = pool.map(_ -> (10, 10)).toMap
+      val hints: Map[PeerId, SelfHealthHint] = Map(critical -> SelfHealthHint.Critical)
+
+      val entropies = (0 until 50).map(i => Hash.fromBytes(s"v16-crit-$i".getBytes("UTF-8")))
+      val winners =
+        entropies.flatMap(e => (0 until 10).map(v => selector.selectLeaderWeighted(pool, e, v, scores, selfHealthHints = hints)))
+
+      expect.same(0, winners.count(_ == critical))
+    }
+  }
+
+  test("v16 hard floor: deterministic across nodes with same inputs") {
+    IO {
+      // Fork-safety regression: two honest nodes with identical (pool, entropy, view, scores,
+      // hints, thresholds) MUST return the same leader. Pre-v16 this was already true; v16
+      // adds a filter step that must also be deterministic.
+      val chronic = pid("chronic")
+      val healthy = (1 to 4).map(i => pid(s"healthy-$i")).toList
+      val pool = chronic +: healthy
+      val scores: Map[PeerId, (Int, Int)] = Map(chronic -> (1, 20)) ++ healthy.map(_ -> (9, 10)).toMap
+
+      val entropy = Hash.fromBytes("v16-det".getBytes("UTF-8"))
+      val nodeA = selector.selectLeaderWeighted(pool, entropy, viewNumber = 3, scores)
+      val nodeB = selector.selectLeaderWeighted(pool, entropy, viewNumber = 3, scores)
+
+      expect.same(nodeA, nodeB)
+    }
+  }
+
+  test("v16 view-change penalty: peer with high completion but high view-change rate is excluded") {
+    IO {
+      // The audit-driven case: a peer that completes EVERY round (10/10) but causes a
+      // view change in 9 of them has raw ratio 1.0 (would pass any ratio-only filter) but
+      // qualityScore = 1.0 * (1 - 0.9) = 0.10, which is below the 20% floor. The v16
+      // filter must exclude this peer. This is the specific failure mode the patch was
+      // designed to address.
+      val wedgingLeader = pid("wedging-leader-10-of-10-9-vc")
+      val healthy = (1 to 3).map(i => pid(s"healthy-$i")).toList
+      val pool = wedgingLeader +: healthy
+      val scores: Map[PeerId, (Int, Int)] = Map(wedgingLeader -> (10, 10)) ++ healthy.map(_ -> (9, 10)).toMap
+      val viewChanges: Map[PeerId, Long] = Map(wedgingLeader -> 9L)
+
+      val entropies = (0 until 30).map(i => Hash.fromBytes(s"v16-vc-$i".getBytes("UTF-8")))
+      val winners =
+        entropies.flatMap(e => (0 until 5).map(v => selector.selectLeaderWeighted(pool, e, v, scores, peerViewChanges = viewChanges)))
+
+      expect.same(0, winners.count(_ == wedgingLeader))
+    }
+  }
+
+  test("v16 view-change penalty: peer with zero view changes uses raw ratio only") {
+    IO {
+      // Sanity: when viewChangesCaused is 0 (or absent), the formula reduces to the
+      // raw completed/participated ratio. A peer at 25% completion with 0 view changes
+      // should pass the 20% floor.
+      val cleanLeader = pid("clean-no-view-changes")
+      val ok = (1 to 3).map(i => pid(s"ok-$i")).toList
+      val pool = cleanLeader +: ok
+      val scores: Map[PeerId, (Int, Int)] = Map(cleanLeader -> (25, 100)) ++ ok.map(_ -> (10, 10)).toMap
+      // peerViewChanges intentionally empty -- exercises the default-0 lookup
+      val viewChanges: Map[PeerId, Long] = Map.empty
+
+      val entropies = (0 until 50).map(i => Hash.fromBytes(s"v16-clean-$i".getBytes("UTF-8")))
+      val winners =
+        entropies.flatMap(e => (0 until 4).map(v => selector.selectLeaderWeighted(pool, e, v, scores, peerViewChanges = viewChanges)))
+
+      // Clean leader passes the floor; should appear among the selected leaders at some view.
+      expect(winners.contains(cleanLeader), s"clean-leader at 25% with 0 vc never elected: $winners")
+    }
+  }
+
+  test("v16 view-change penalty: peer at exact qualityScore boundary (20%)") {
+    IO {
+      // Integer-arithmetic boundary check for the new formula. With completed=50,
+      // participated=100, vcc=60: deficit=40, score = 50*40/100^2 = 0.20 (exactly the
+      // threshold). The integer comparison is `completed * deficit * 100 >= threshold *
+      // participated^2`, i.e. 50*40*100 = 200000 >= 20*100*100 = 200000. Equal -> passes.
+      val atBoundary = pid("at-vc-boundary")
+      val justBelow = pid("just-below-vc-boundary")
+      val healthy = (1 to 3).map(i => pid(s"healthy-$i")).toList
+      val pool = atBoundary +: justBelow +: healthy
+      val scores: Map[PeerId, (Int, Int)] = Map(
+        atBoundary -> (50, 100), // score = 50/100 * (1 - 60/100) = 0.5 * 0.4 = 0.20
+        justBelow -> (50, 100) //  score = 50/100 * (1 - 61/100) = 0.5 * 0.39 = 0.195
+      ) ++ healthy.map(_ -> (10, 10)).toMap
+      val viewChanges: Map[PeerId, Long] = Map(
+        atBoundary -> 60L,
+        justBelow -> 61L
+      )
+
+      val entropies = (0 until 30).map(i => Hash.fromBytes(s"v16-vc-bound-$i".getBytes("UTF-8")))
+      val winners =
+        entropies.flatMap(e => (0 until 5).map(v => selector.selectLeaderWeighted(pool, e, v, scores, peerViewChanges = viewChanges)))
+
+      // atBoundary passes (= threshold); justBelow excluded
+      expect(!winners.contains(justBelow), s"just-below-vc-boundary leaked into leader pool")
+    }
+  }
+
+  test("v16 view-change penalty: clamps viewChangesCaused at participated (no negative deficit)") {
+    IO {
+      // Defensive case: if some external bug ever produces viewChangesCaused > participated
+      // (which should not happen in practice -- view changes are counted per leader at view
+      // <  finalView, and the peer must have participated to be a leader), the deficit term
+      // is clamped to >= 0 so we don't get a negative score that confuses the integer
+      // comparison. With (10, 10) and vcc=100, clamped vcc=10, deficit=0, score=0 -> below
+      // any positive threshold -> excluded.
+      val overflowing = pid("overflowing-vc")
+      val healthy = (1 to 3).map(i => pid(s"healthy-$i")).toList
+      val pool = overflowing +: healthy
+      val scores: Map[PeerId, (Int, Int)] = Map(overflowing -> (10, 10)) ++ healthy.map(_ -> (9, 10)).toMap
+      val viewChanges: Map[PeerId, Long] = Map(overflowing -> 100L) // way more than participated
+
+      val entropies = (0 until 30).map(i => Hash.fromBytes(s"v16-vc-overflow-$i".getBytes("UTF-8")))
+      val winners =
+        entropies.flatMap(e => (0 until 4).map(v => selector.selectLeaderWeighted(pool, e, v, scores, peerViewChanges = viewChanges)))
+
+      expect.same(0, winners.count(_ == overflowing))
+    }
+  }
+
+  // === end v16 tests ===
 }

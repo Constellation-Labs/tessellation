@@ -146,7 +146,19 @@ object schema {
     // snapshot operational state (see docs/consensus/self-health-throttle.md, open decision
     // 4): a freshly-restarted cluster picks leaders without hints until the first round of
     // facilities arrives.
-    peerSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty
+    peerSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty,
+    // v16 (2026-05-17) cumulative per-peer count of view changes this peer caused as a
+    // failed leader-of-the-view. Derived at round finalization by the StateAdvancer from
+    // (roundStartFacilitators, entropy, finalView, prior peerQuality, prior peerSelfHealth,
+    // prior peerViewChanges) -- all consensus-agreed inputs -- by recomputing
+    // selectLeaderWeighted at each view v in [0, state.viewNumber) and crediting the
+    // resulting peer with one view-change-caused. Used by the next round's
+    // selectLeaderWeighted to compute a fork-safe integer qualityScore =
+    // completed * (participated - viewChangesCaused) / participated^2 and hard-exclude
+    // peers below the configured floor. Default empty: pre-v16 outcomes decode with no
+    // view-change history (matches v15 peerSelfHealth pattern). Persisted via v20/v21
+    // PerPeerOperationalRecord so the chronic-leader filter survives cold-restart.
+    peerViewChanges: SortedMap[PeerId, Long] = SortedMap.empty
   ) {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value
@@ -166,7 +178,8 @@ object schema {
           removalPenalties.keysIterator ++
           cumulativeMissCounts.keysIterator ++
           readmissionCountdown.keysIterator ++
-          deferralCountdown.keysIterator).toSet
+          deferralCountdown.keysIterator ++
+          peerViewChanges.keysIterator).toSet
       val perPeer: SortedMap[PeerId, PerPeerOperationalRecord] =
         SortedMap.from(
           keys.iterator.map { pid =>
@@ -175,7 +188,8 @@ object schema {
               removalPenalty = removalPenalties.getOrElse(pid, 0),
               cumulativeMissCount = cumulativeMissCounts.getOrElse(pid, 0L),
               readmissionCountdown = readmissionCountdown.getOrElse(pid, 0),
-              deferralCountdown = deferralCountdown.getOrElse(pid, 0)
+              deferralCountdown = deferralCountdown.getOrElse(pid, 0),
+              viewChangesCaused = peerViewChanges.getOrElse(pid, 0L)
             )
           }
         )

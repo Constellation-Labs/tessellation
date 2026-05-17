@@ -192,6 +192,10 @@ object GlobalSnapshotConsensus {
           mptStore
         )
 
+      facilitatorSelector = FacilitatorSelector.make(
+        appConfig.snapshot.maxFacilitatorCount.get(appConfig.environment).map(_.value)
+      )
+
       stateAdvancer =
         GlobalSnapshotConsensusStateAdvancer.make(
           appConfig.snapshot.consensus,
@@ -210,12 +214,9 @@ object GlobalSnapshotConsensus {
           eventMempool,
           eventGossipClient,
           loggerBundle,
-          mptStore
+          mptStore,
+          facilitatorSelector
         )
-
-      facilitatorSelector = FacilitatorSelector.make(
-        appConfig.snapshot.maxFacilitatorCount.get(appConfig.environment).map(_.value)
-      )
 
       peerQualityTracker <- PeerQualityTracker.make[F]
 

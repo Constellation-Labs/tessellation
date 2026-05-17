@@ -125,7 +125,8 @@ object GlobalSnapshotConsensusStateAdvancer {
     eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey],
     eventGossipClient: EventGossipClient[F, GlobalSnapshotEvent],
     loggerBundle: LoggerBundle[F],
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    facilitatorSelector: FacilitatorSelector
   )(implicit globalStateProofSelector: GlobalStateProofSelector): GlobalSnapshotConsensusStateAdvancer[F] =
     new GlobalSnapshotConsensusStateAdvancer[F] {
 
@@ -384,6 +385,61 @@ object GlobalSnapshotConsensusStateAdvancer {
               admittedThisRound = admittedThisRound,
               probationRounds = config.readmissionProbationRounds
             )
+            // v16 (2026-05-17): per-peer cumulative view-change-caused credits.
+            //
+            // For each view v in [0, state.viewNumber) the round attempted, recompute the
+            // deterministic leader using the SAME inputs `selectLeaderWeighted` was called
+            // with at round-start: state.lastOutcome.peerQuality, state.lastOutcome.peerSelfHealth,
+            // state.lastOutcome.peerViewChanges, and a leaderPool derived from
+            // state.roundStartFacilitators via the same graduation rule the creator applied.
+            // Each resulting peer is credited with one view-change-caused. All inputs are
+            // consensus-agreed (lastOutcome is signed, roundStartFacilitators is canonical at
+            // round-start, entropy is derived from the prior snapshot hash, config is
+            // deterministicConfigHash-gated), so every honest node computes the same credit
+            // map byte-identically.
+            //
+            // Determinism contract: the leaderPool re-derivation here MUST mirror the
+            // creator's logic at GlobalSnapshotConsensusStateCreator. If the creator changes
+            // the graduation rule, this credit logic MUST change in lockstep, or the
+            // selectLeaderWeighted recomputation here will return a different peer than the
+            // one the round actually elected at the same view -- producing a credit miss.
+            val priorPeerQuality = state.lastOutcome.peerQuality
+            val priorActive = state.roundStartFacilitators.value
+            val priorGraduated = priorActive.filter { pid =>
+              val (completed, participated) = priorPeerQuality.getOrElse(pid, (0, 0))
+              participated >= config.minParticipationObservations && completed >= 1
+            }
+            val priorLeaderPool = if (priorGraduated.size >= 2) priorGraduated else priorActive
+            val viewChangeCredits: SortedMap[PeerId, Long] =
+              if (state.viewNumber <= 0 || priorLeaderPool.isEmpty) SortedMap.empty[PeerId, Long]
+              else {
+                val priorPeerQualityMap: Map[PeerId, (Int, Int)] = priorPeerQuality.toMap
+                val priorPeerSelfHealthMap = state.lastOutcome.peerSelfHealth.toMap
+                val priorPeerViewChangesMap = state.lastOutcome.peerViewChanges.toMap
+                (0 until state.viewNumber).foldLeft(SortedMap.empty[PeerId, Long]) { (acc, v) =>
+                  val failedLeader = facilitatorSelector.selectLeaderWeighted(
+                    priorLeaderPool,
+                    state.entropy,
+                    viewNumber = v,
+                    qualityScores = priorPeerQualityMap,
+                    selfHealthHints = priorPeerSelfHealthMap,
+                    peerViewChanges = priorPeerViewChangesMap,
+                    minLeaderRatioPct = config.leaderRotationMinRatioPct,
+                    hardLeaderQualityScorePct = config.hardLeaderQualityScorePct,
+                    minLeaderPoolSize = config.minLeaderPoolSize
+                  )
+                  acc.updated(failedLeader, acc.getOrElse(failedLeader, 0L) + 1L)
+                }
+              }
+            val accumulatedPeerViewChanges: SortedMap[PeerId, Long] = {
+              val priorMap = state.lastOutcome.peerViewChanges
+              val allKeys = (priorMap.keysIterator ++ viewChangeCredits.keysIterator).toSet
+              SortedMap
+                .from(allKeys.iterator.map { pid =>
+                  pid -> (priorMap.getOrElse(pid, 0L) + viewChangeCredits.getOrElse(pid, 0L))
+                })
+                .filter { case (_, v) => v > 0L }
+            }
             val outcome = GlobalConsensusOutcome(
               state.key,
               // Canonical committee in the persisted outcome — not post-withdrawal
@@ -405,7 +461,10 @@ object GlobalSnapshotConsensusStateAdvancer {
               // v15: carry the accepted Proposal's `observedSelfHealth` forward as the next
               // round's leader-selection input. `state.observedSelfHealth` was populated via
               // REPLACE-on-accept at buildSignatureTransition from `leaderProposal.observedSelfHealth`.
-              peerSelfHealth = state.observedSelfHealth.value
+              peerSelfHealth = state.observedSelfHealth.value,
+              // v16: per-peer cumulative view-change-caused, deterministic from this round's
+              // (entropy, viewNumber, lastOutcome, roundStartFacilitators) inputs above.
+              peerViewChanges = accumulatedPeerViewChanges
             )
             (Previous(state.lastOutcome.key), outcome).some
           case _ =>

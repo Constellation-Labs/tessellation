@@ -25,7 +25,18 @@ final case class PerPeerOperationalRecord(
   removalPenalty: Int,
   cumulativeMissCount: Long,
   readmissionCountdown: Int,
-  deferralCountdown: Int
+  deferralCountdown: Int,
+  // v16 (2026-05-17): cumulative count of view changes this peer caused as a failed
+  // leader-of-the-view. Derived at round finalization from
+  // `(roundStartFacilitators, entropy, finalView, priorOutcome.peerQuality, ...)`
+  // by recomputing the deterministic leader at each view in [0, finalView) and
+  // crediting that peer with one view-change-caused. Persisted on the snapshot so
+  // the chronic-leader filter survives cluster cold-restart, the same way
+  // `cumulativeMissCount` and `removalPenalty` do. Default 0L means a peer with no
+  // history yet (bootstrap) is treated as having caused zero view changes, which
+  // pairs with the `participated == 0 -> pass` bypass in the v16 filter so freshly
+  // joined peers are not penalized.
+  viewChangesCaused: Long = 0L
 )
 
 object PerPeerOperationalRecord {
@@ -35,7 +46,8 @@ object PerPeerOperationalRecord {
       removalPenalty = 0,
       cumulativeMissCount = 0L,
       readmissionCountdown = 0,
-      deferralCountdown = 0
+      deferralCountdown = 0,
+      viewChangesCaused = 0L
     )
 }
 

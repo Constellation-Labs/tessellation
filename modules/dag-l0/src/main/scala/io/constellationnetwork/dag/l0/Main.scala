@@ -365,6 +365,12 @@ object Main
                   seedDeferralCountdown = SortedMap.from(seedOperational.perPeer.iterator.collect {
                     case (pid, r) if r.deferralCountdown > 0 => pid -> r.deferralCountdown
                   })
+                  // v16: per-peer cumulative view-change-caused. Seeded only when non-zero so
+                  // the persisted map stays small. Absent peers default to 0 at the v16 filter
+                  // call-site, matching the pre-v16 "no penalty" semantic.
+                  seedPeerViewChanges = SortedMap.from(seedOperational.perPeer.iterator.collect {
+                    case (pid, r) if r.viewChangesCaused > 0L => pid -> r.viewChangesCaused
+                  })
                   // Recent-proof window: prefer the persisted history (so the bootstrap-vs-post
                   // classification matches the running cluster), otherwise seed with the rollback
                   // snapshot's proof count -- preserves pre-v20 behavior.
@@ -385,7 +391,8 @@ object Main
                       peerQuality = seedPeerQuality,
                       cumulativeMissCounts = seedCumulativeMissCounts,
                       recentProofSizes = seedRecentProofSizes,
-                      readmissionCountdown = seedReadmissionCountdown
+                      readmissionCountdown = seedReadmissionCountdown,
+                      peerViewChanges = seedPeerViewChanges
                     )
                   )
                 } yield result

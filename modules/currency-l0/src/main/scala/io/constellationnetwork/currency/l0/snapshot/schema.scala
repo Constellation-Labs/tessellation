@@ -137,7 +137,10 @@ object schema {
     readmissionCountdown: SortedMap[PeerId, Int] = SortedMap.empty,
     // v15 (2026-05-15) self-health throttle mirror of dag-l0 schema; see dag-l0 for full
     // rationale.
-    peerSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty
+    peerSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty,
+    // v16 (2026-05-17) cumulative view-change-caused counts mirror of dag-l0 schema; see
+    // dag-l0 schema for the full pack/unpack + recompute-at-finalize contract.
+    peerViewChanges: SortedMap[PeerId, Long] = SortedMap.empty
   ) {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value
@@ -150,7 +153,8 @@ object schema {
           removalPenalties.keysIterator ++
           cumulativeMissCounts.keysIterator ++
           readmissionCountdown.keysIterator ++
-          deferralCountdown.keysIterator).toSet
+          deferralCountdown.keysIterator ++
+          peerViewChanges.keysIterator).toSet
       val perPeer: SortedMap[PeerId, PerPeerOperationalRecord] =
         SortedMap.from(
           keys.iterator.map { pid =>
@@ -159,7 +163,8 @@ object schema {
               removalPenalty = removalPenalties.getOrElse(pid, 0),
               cumulativeMissCount = cumulativeMissCounts.getOrElse(pid, 0L),
               readmissionCountdown = readmissionCountdown.getOrElse(pid, 0),
-              deferralCountdown = deferralCountdown.getOrElse(pid, 0)
+              deferralCountdown = deferralCountdown.getOrElse(pid, 0),
+              viewChangesCaused = peerViewChanges.getOrElse(pid, 0L)
             )
           }
         )

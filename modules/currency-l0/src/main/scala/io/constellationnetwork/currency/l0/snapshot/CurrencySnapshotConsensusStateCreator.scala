@@ -468,7 +468,10 @@ object CurrencySnapshotConsensusStateCreator {
           viewNumber = priorAbandonmentCount,
           qualityScores = lastOutcome.peerQuality,
           selfHealthHints = lastOutcome.peerSelfHealth,
-          minLeaderRatioPct = config.leaderRotationMinRatioPct
+          peerViewChanges = lastOutcome.peerViewChanges.toMap,
+          minLeaderRatioPct = config.leaderRotationMinRatioPct,
+          hardLeaderQualityScorePct = config.hardLeaderQualityScorePct,
+          minLeaderPoolSize = config.minLeaderPoolSize
         )
 
         _ <- ConsensusLog.info(

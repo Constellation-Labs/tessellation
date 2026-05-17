@@ -430,6 +430,11 @@ abstract class CurrencyL0App(
                       seedDeferralCountdown = SortedMap.from(seedOperational.perPeer.iterator.collect {
                         case (pid, r) if r.deferralCountdown > 0 => pid -> r.deferralCountdown
                       })
+                      // v16: per-peer cumulative view-change-caused. Mirror of dag-l0 seed
+                      // pattern; see dag-l0 Main for full rationale.
+                      seedPeerViewChanges = SortedMap.from(seedOperational.perPeer.iterator.collect {
+                        case (pid, r) if r.viewChangesCaused > 0L => pid -> r.viewChangesCaused
+                      })
                       rollbackRecentProofSizes =
                         if (seedOperational.recentProofSizes.nonEmpty) seedOperational.recentProofSizes
                         else
@@ -458,7 +463,8 @@ abstract class CurrencyL0App(
                           peerQuality = seedPeerQuality,
                           cumulativeMissCounts = seedCumulativeMissCounts,
                           recentProofSizes = rollbackRecentProofSizes,
-                          readmissionCountdown = seedReadmissionCountdown
+                          readmissionCountdown = seedReadmissionCountdown,
+                          peerViewChanges = seedPeerViewChanges
                         )
                       )
                     } yield ()

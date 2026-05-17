@@ -122,6 +122,10 @@ object CurrencySnapshotConsensus {
 
       eventGossipClient = EventGossipClient.make[F, CurrencySnapshotEvent](client, session)
 
+      facilitatorSelector = FacilitatorSelector.make(
+        snapshotConfig.maxFacilitatorCount.get(environment).map(_.value)
+      )
+
       consensusStateAdvancer =
         CurrencySnapshotConsensusStateAdvancer.make(
           snapshotConfig.consensus,
@@ -137,12 +141,9 @@ object CurrencySnapshotConsensus {
           getGlobalSnapshotByOrdinal,
           clusterStorage,
           eventMempool,
-          eventGossipClient
+          eventGossipClient,
+          facilitatorSelector
         )
-
-      facilitatorSelector = FacilitatorSelector.make(
-        snapshotConfig.maxFacilitatorCount.get(environment).map(_.value)
-      )
 
       peerQualityTracker <- PeerQualityTracker.make[F]
 

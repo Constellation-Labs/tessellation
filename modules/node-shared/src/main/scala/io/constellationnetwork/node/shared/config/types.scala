@@ -238,6 +238,44 @@ object types {
     // Deploy history: introduced in v14 (consensusSchemaVersion); see the v14 entry below for the
     // ratchet failure it replaces.
     leaderRotationMinRatioPct: Int = 50,
+    // v16 (2026-05-17): hard leader-eligible floor on the integer quality score
+    // `(completed/participated) * (1 - viewChangesCaused/participated)`. Inside
+    // `selectLeaderWeighted`, peers below the floor are EXCLUDED from the leader-eligible pool
+    // entirely (not just demoted to tier 1). They remain facilitators (vote / sign / witness),
+    // just cannot be selected as leader. Closes the chronic-leader-loop wedge observed on
+    // 2026-05-17: peers with quality score decaying through 0.07-0.25 (driven by view-change
+    // rate, not completion rate) were still tier 1 and `sorted[viewNumber % size]` continued
+    // to walk through them on view rotation, dragging out 30-90 minute wedges per chronic-
+    // leader episode. The raw completion ratio missed this case because the looping leaders
+    // STILL completed rounds (as followers after view advance), only failed AS leaders.
+    //
+    // Default 20 is intentionally well below `leaderRotationMinRatioPct` (50). The two
+    // thresholds work in concert: 50 deprioritises within the leader pool (tier 1 fallback
+    // band); 20 removes from the pool entirely. Setting them equal would collapse the
+    // gradient and reintroduce the cliff that motivated v14's tier-1 band.
+    //
+    // The score is consensus-agreed because all three inputs (peerQuality.completed,
+    // peerQuality.participated, peerViewChanges) are populated by the StateAdvancer from
+    // deterministic functions of the prior outcome at round finalization.
+    //
+    // Pool collapse is guarded by `minLeaderPoolSize`: if fewer than that many peers clear the
+    // 0.20 floor, the selector falls back to the full graduated set to avoid starvation
+    // (bootstrap, mass-chronic, single-node test rigs).
+    //
+    // Consensus-critical: included in `deterministicConfigHash`. Different operator values
+    // would compute different leader pools, different leaders, and silently fork.
+    hardLeaderQualityScorePct: Int = 20,
+    // v16 (2026-05-17): minimum size of the hard-filtered leader pool. If `selectLeaderWeighted`
+    // filters fewer than this many leader-eligible peers (after applying
+    // `hardLeaderQualityScorePct`), it falls back to the full graduated facilitator set so
+    // consensus does not starve. Default 2 matches the call-site graduation ladder
+    // (`graduatedLeaderPool.size >= 2`): a single-peer pool deadlocks view rotation because
+    // `viewNumber % 1 == 0` always selects the same peer, so we require at least two healthy
+    // candidates before excluding the chronic ones; below that, the fallback re-admits the
+    // graduated set so rotation can still cover the round.
+    //
+    // Consensus-critical: included in `deterministicConfigHash`.
+    minLeaderPoolSize: Int = 2,
     // v8 (2026-04-29) minimum-history floor for chronic classification. Codex-recommended
     // separate knob: the existing `minParticipationObservations` is reused as the leader-
     // graduation gate (state-creator:470), so bumping it to 30 would also delay leader
@@ -415,7 +453,23 @@ object types {
     //     populate `observedSelfHealth` (default empty), so a mixed v14/v15 cluster would compute
     //     different leaders on rounds following a v15-led proposal -- bumping anchors the
     //     required cold-restart fence. Jar hash already refuses v14<->v15 peer connections.
-    consensusSchemaVersion: Int = 15,
+    //   v16 (2026-05-17): Hard quality-score floor on leader candidacy.
+    //     Adds `peerViewChanges: SortedMap[PeerId, Long]` to GlobalConsensusOutcome and
+    //     CurrencyConsensusOutcome (additive, defaulted to empty so pre-v16 outcomes decode
+    //     cleanly). Persisted via `PerPeerOperationalRecord.viewChangesCaused`. The StateAdvancer
+    //     credits view-change-caused at round finalization by recomputing the deterministic
+    //     leader at each view in `[0, state.viewNumber)` and incrementing the resulting peer.
+    //     selectLeaderWeighted pre-filters by integer quality score
+    //     `(completed/participated) * (1 - viewChangesCaused/participated)` against
+    //     `hardLeaderQualityScorePct` (default 20) before the tier sort, with a fallback to the
+    //     full graduated set when fewer than `minLeaderPoolSize` peers survive. Closes the
+    //     2026-05-17 chronic-leader-loop wedge where peers with high completion but high view-
+    //     change rate were tier 1 and `sorted[viewNumber % size]` kept walking through them.
+    //     v15 nodes have neither the per-peer view-change credit nor the score-based filter,
+    //     so a mixed v15/v16 cluster would compute different leaders the moment any peer has
+    //     `viewChangesCaused > 0`. Cold restart required; jar hash gates v15<->v16 peer
+    //     connection.
+    consensusSchemaVersion: Int = 16,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with
@@ -451,6 +505,10 @@ object types {
       *   - `maxRemovalPenaltyRounds`: cap on total penalty so it doesn't overflow Int
       *   - `minParticipationObservations`: threshold at which chronic non-signer filter kicks in
       *   - `minParticipationRatio`: ratio below which a peer is excluded from the committee
+      *   - `leaderRotationMinRatioPct`: v14 (2026-05-14) leader-rotation band threshold (tier 0 vs tier 1 inside the pool)
+      *   - `hardLeaderQualityScorePct`: v16 (2026-05-17) hard floor on the consensus-agreed quality score (peers below excluded from leader
+      *     pool)
+      *   - `minLeaderPoolSize`: v16 (2026-05-17) fallback threshold when too few peers clear the hard floor
       *   - `minObservationHistoryFloor`: v8 (2026-04-29) minimum participated count before chronic classification can fire
       *   - `bootstrapDeclarationTimeoutMultiplier`: affects phase-transition timing during bootstrap
       *
@@ -485,6 +543,11 @@ object types {
           // v14 (2026-05-14): leader-rotation band threshold. Mutates the agreed leader of every
           // round; divergent operator values would silently fork the cluster.
           s"leaderRotationMinRatioPct=$leaderRotationMinRatioPct," +
+          // v16 (2026-05-17): hard quality-score floor + pool-size fallback. Together these
+          // determine which peers are leader candidates; divergent operator values would
+          // produce different leader pools and silently fork.
+          s"hardLeaderQualityScorePct=$hardLeaderQualityScorePct," +
+          s"minLeaderPoolSize=$minLeaderPoolSize," +
           // v8 (2026-04-29): chronic-classification floor. Changes the agreed chronicNonSigners
           // set; divergent operator values would produce silently-divergent committee composition.
           s"minObservationHistoryFloor=$minObservationHistoryFloor," +
