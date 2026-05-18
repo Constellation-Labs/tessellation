@@ -447,6 +447,17 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
         ((key.some, 1), 1)
     }
 
+  /** Read-only accessor for `StallDetector` (v22): how many consecutive times has THIS key been abandoned? Returns 0 if the last-abandoned
+    * key was a different ordinal (a successful round since then would also leave the tracked key behind, in which case 0 is the right
+    * answer). Used to drive the defensive force-VCV short-circuit in `StallDetector.handleStall` without giving the caller mutate access to
+    * the internal counter.
+    */
+  def consecutiveAbandonmentsFor(key: Key): F[Int] =
+    consecutiveAbandonCountRef.get.map {
+      case (Some(lastKey), count) if lastKey === key => count
+      case _                                         => 0
+    }
+
   /** Track retriable abandonments at the same key. If the node keeps getting quorum-infeasible at the same ordinal, something is
     * permanently wrong (e.g., post-partition with a 1-ordinal minority fork). Resets to 1 when the key changes.
     */

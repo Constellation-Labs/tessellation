@@ -139,6 +139,13 @@ object ConsensusLog {
     case object ViewChange extends Event { val show = "VIEW_CHANGE" }
     case object ViewChangeWithEviction extends Event { val show = "VIEW_CHANGE_WITH_EVICTION" }
     case object EarlyViewChange extends Event { val show = "EARLY_VIEW_CHANGE" }
+    // v22 (2026-05-18): defensive force-VCV emission when consecutiveAbandonments at the same
+    // ordinal crosses `forceViewChangeAbandonments`. Bypasses the per-round "missing-still-
+    // responsive" gate in StallDetector that otherwise blocks VCV emission across abandoned
+    // rounds (the gate is correct for the FIRST stall but wrong when applied across N abandons
+    // at the same ord). All responsive peers cross the threshold within bounded skew and emit
+    // VCVs at the same (fromView, toView), letting VCC assembly converge.
+    case object ForcedViewChange extends Event { val show = "FORCED_VIEW_CHANGE" }
     case object EvictionLoopEscalation extends Event { val show = "EVICTION_LOOP_ESCALATION" }
     case object EvictionSkippedMinFacilitators extends Event { val show = "EVICTION_SKIPPED_MIN_FACILITATORS" }
     // Phase B1 EvictionVote mechanism (see codex-handoff-facilitator-set-shrinkage.md):

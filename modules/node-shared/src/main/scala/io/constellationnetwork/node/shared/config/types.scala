@@ -205,6 +205,18 @@ object types {
     // becomes a bottleneck; tune up if network jitter routinely drops late signers.
     signatureGracePeriod: FiniteDuration = FiniteDuration(500, "ms"),
     maxConsecutiveAbandonments: Int = 5,
+    // v22 (2026-05-18): defensive threshold for forcing a VCV emission when the cluster has
+    // already abandoned the same ordinal this many times. Bypasses the "missing-still-responsive"
+    // gate in StallDetector which is correct for transient gossip jitter on round 1 but wrong
+    // when applied across N abandons of the same key. With each abandon ~57s, default 3 fires
+    // after ~3 minutes of cluster being stuck at the same (ord, view=0). Setting equal to
+    // maxConsecutiveAbandonments would force VCV at the same moment recovery would normally
+    // be triggered (and is currently suppressed under peersAtHigherKey=0); setting strictly
+    // less than maxConsecutiveAbandonments lets the new view advance before the recovery gate
+    // would normally fire. Consensus-critical: included in deterministicConfigHash so all
+    // operators force VCV at the same count, ensuring all honest nodes converge on the same
+    // (fromView, toView) for VCC assembly within bounded skew.
+    forceViewChangeAbandonments: Int = 3,
     monitorSummaryInterval: FiniteDuration = FiniteDuration(10, "s"),
     peerScoreLogInterval: FiniteDuration = FiniteDuration(60, "s"),
     qualityDecayThreshold: Int = 100,
@@ -529,6 +541,8 @@ object types {
       *     pool)
       *   - `minLeaderPoolSize`: v16 (2026-05-17) fallback threshold when too few peers clear the hard floor
       *   - `minObservationHistoryFloor`: v8 (2026-04-29) minimum participated count before chronic classification can fire
+      *   - `forceViewChangeAbandonments`: v22 (2026-05-18) defensive force-VCV threshold (bypasses missing-still-responsive gate after N
+      *     same-key abandons)
       *   - `bootstrapDeclarationTimeoutMultiplier`: affects phase-transition timing during bootstrap
       *
       * '''Non-critical fields''' (excluded — affect timing/performance, not deterministic outcomes):
@@ -570,6 +584,10 @@ object types {
           // v8 (2026-04-29): chronic-classification floor. Changes the agreed chronicNonSigners
           // set; divergent operator values would produce silently-divergent committee composition.
           s"minObservationHistoryFloor=$minObservationHistoryFloor," +
+          // v22 (2026-05-18): defensive force-VCV threshold. Different operator values would
+          // produce divergent VCV-emission timing, splitting the cluster across (fromView, toView)
+          // pairs and starving VCC assembly.
+          s"forceViewChangeAbandonments=$forceViewChangeAbandonments," +
           s"chronicReinstatementInterval=$chronicReinstatementInterval," +
           s"lockOnVoteProtocolVersion=$lockOnVoteProtocolVersion," +
           s"bootstrapCompleteProofsThreshold=$bootstrapCompleteProofsThreshold," +

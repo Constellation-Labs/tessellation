@@ -2,20 +2,19 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 
 import weaver.SimpleIOSuite
 
-/**
-  * Locks in the v22 (2026-05-18) supermajority-quorum invariant.
+/** Locks in the v22 (2026-05-18) supermajority-quorum invariant.
   *
-  * The previous testnet config used `quorum-threshold-fraction = 0.67`, which rounded up unfavorably for N divisible by 3: specifically
-  * for N=6 the computed quorum was `ceil(6 * 0.67) = ceil(4.02) = 5` instead of the BFT-intended `ceil(2N/3) = 4`. The off-by-one caused
-  * the 2026-05-17/18 wedges: 4-of-6 responsive facilitators failed both Facility quorum AND ViewChangeCertificate quorum (same threshold),
-  * so the cluster could neither commit NOR view-change out of the stalled round.
+  * The previous testnet config used `quorum-threshold-fraction = 0.67`, which rounded up unfavorably for N divisible by 3: specifically for
+  * N=6 the computed quorum was `ceil(6 * 0.67) = ceil(4.02) = 5` instead of the BFT-intended `ceil(2N/3) = 4`. The off-by-one caused the
+  * 2026-05-17/18 wedges: 4-of-6 responsive facilitators failed both Facility quorum AND ViewChangeCertificate quorum (same threshold), so
+  * the cluster could neither commit NOR view-change out of the stalled round.
   *
   * The current testnet value is `0.6666666666666666` (max-precision Double approximation of 2/3 exact). This suite asserts that the
   * resulting `math.ceil(N * fraction).toInt` matches `math.ceil(2N/3)` for all N in the cluster-size range we expect to operate at.
   *
   * Any regression here would silently re-introduce the wedge. Two file-line references hold this value: the formula site in
-  * `ConsensusStateAdvancer.maybeGetAllDeclarations` (~line 106) and the testnet config `modules/dag-l0/src/main/resources/dag-l0.conf`.
-  * The default in `ConsensusConfig.quorumThresholdFraction = 1.0` (unanimity) stays unchanged; only the testnet override moves.
+  * `ConsensusStateAdvancer.maybeGetAllDeclarations` (~line 106) and the testnet config `modules/dag-l0/src/main/resources/dag-l0.conf`. The
+  * default in `ConsensusConfig.quorumThresholdFraction = 1.0` (unanimity) stays unchanged; only the testnet override moves.
   */
 object QuorumThresholdSuite extends SimpleIOSuite {
 
