@@ -102,8 +102,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
   import AbandonmentTracker.EscalationCause
 
   /** Emit a `RoundCompleted` tagged with the current attempt id so the FSM can drop it if the round has since advanced. See Bug A in the
-    * 2026-04-21 fork-recovery post-mortem: an abandonment-queued `RoundCompleted` fired after a view change had moved the round forward and
-    * wiped the nearly-finished round.
+    * fork-recovery post-mortem: an abandonment-queued `RoundCompleted` fired after a view change had moved the round forward and wiped the
+    * nearly-finished round.
     */
   private def offerRoundCompleted: F[Unit] =
     storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(Some(id))))
@@ -324,12 +324,12 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
                 // is stuck at this ordinal (e.g. fresh post-deploy where every facilitator
                 // simultaneously reboots and cannot meet quorum on the first round).
                 //
-                // v18 (2026-05-11): apply the same `peersAtHigherKey > 0` gate the
+                // Apply the same `peersAtHigherKey > 0` gate the
                 // non-retriable path uses. Without it, a fresh deploy where all source nodes
                 // reboot together cascades all of them into WaitingForDownload on the FIRST
                 // failed round at the new ordinal -- and since no peer is ahead, every node
-                // loops in `Discovered 0/1 selectable peers, waiting 1 minute` forever. v17
-                // alpha.58 deploy 2026-05-11 deadlocked at ord 3122551 with exactly this
+                // loops in `Discovered 0/1 selectable peers, waiting 1 minute` forever. The
+                // alpha.58 deploy deadlocked at ord 3122551 with exactly this
                 // shape: clusterSize=7, active=3, requiredQuorum=5, no peer ahead. Retain
                 // the original semantics when a peer IS ahead (isolated / lagging cases) by
                 // keeping the same recovery-download trigger; only the cluster-wide-stall
@@ -407,7 +407,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
            for {
              // `peerCurrentKeys` = live per-peer tip (max seen via incoming keyed rumors).
              // Supersedes the old `peerRegistrations` read which was a one-time join-ordinal
-             // and left lagging nodes with peersAtHigherKey=0 forever (Bug B, 2026-04-21).
+             // and left lagging nodes with peersAtHigherKey=0 forever (Bug B).
              peerCurrentKeys <- storage.getPeerCurrentKeys
              responsivePeers <- clusterStorage.getResponsivePeers
              readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet

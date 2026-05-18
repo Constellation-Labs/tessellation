@@ -369,7 +369,7 @@ object DeterministicPenaltiesSuite extends FunSuite {
   test(
     "ord-5 fork regression: passing the canonical committee (roundStartFacilitators) produces identical outcome even when node-local views of facilitators diverged mid-round"
   ) {
-    // This simulates the 2026-04-23 protocol fix. Before the fix, node A and
+    // This simulates the protocol fix. Before the fix, node A and
     // node B could finalize ord N with different `state.facilitators` depending
     // on when each observed a mid-round withdrawal — producing divergent
     // `lastOutcome.facilitators` and `completedFacilitators`, cascading into

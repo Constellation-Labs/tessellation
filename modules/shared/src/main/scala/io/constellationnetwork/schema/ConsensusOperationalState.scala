@@ -26,7 +26,7 @@ final case class PerPeerOperationalRecord(
   cumulativeMissCount: Long,
   readmissionCountdown: Int,
   deferralCountdown: Int,
-  // v16 (2026-05-17): cumulative count of view changes this peer caused as a failed
+  // Cumulative count of view changes this peer caused as a failed
   // leader-of-the-view. Derived at round finalization from
   // `(roundStartFacilitators, entropy, finalView, priorOutcome.peerQuality, ...)`
   // by recomputing the deterministic leader at each view in [0, finalView) and

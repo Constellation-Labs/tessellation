@@ -174,7 +174,7 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
               .flatMap(_.traverse(snapshot => hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[F])))
               .map(
                 _.map(snapshot =>
-                  // v10.x (2026-04-30): include epochProgress so the L1 alignment loop and other
+                  // Include epochProgress so the L1 alignment loop and other
                   // cheap consumers can read it without pulling the ~60 MB combined-snapshot body.
                   SnapshotMetadata(
                     snapshot.ordinal,
@@ -217,7 +217,7 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
         case req @ GET -> Root / "latest" / "combined" / "stream" =>
           whenNodeReady {
             withHeavyRoutePermit {
-              // v9 ETag/304 + v10.x correctness fix (2026-04-30): the strong validator now encodes
+              // ETag/304 + correctness fix: the strong validator now encodes
               // the full immutable identity `(ordinal, snapshotHash)`. Ordinal alone is insufficient
               // -- ord-N can carry different bytes on different forks, so a stale-(N, H1) cache
               // claiming `If-None-Match: "N"` against the canonical (N, H2) would falsely 304.
@@ -261,7 +261,7 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
         case req @ GET -> Root / "latest" / "combined" / "checkpoint" / SnapshotOrdinalVar(ordinal) =>
           whenNodeReady {
             ordinalGuard(ordinal) {
-              // v10.x (2026-04-30): per-ordinal ETag now encodes (ordinal, snapshotHash) for the
+              // Per-ordinal ETag now encodes (ordinal, snapshotHash) for the
               // same fork-correctness reason as the latest-stream variant above. We can only
               // emit the ETag when the hash is in our cache (populated at write time, retained
               // via the storage's bounded-size hashCache). Cold-restart historical reads with
@@ -342,7 +342,7 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
     //   ──> PerIpBandwidthLimitMiddleware (post-handler peek at Content-Length, pre-egress reject)
     //   ──> PerIpRateLimitMiddleware      (counter check, cheapest reject — outermost)
     //
-    // v9 (2026-04-29) added the bandwidth middleware to address the apr29 observation that
+    // The bandwidth middleware was added to address the observation that
     // request-rate caps (30 req/min) miss the actual cost dimension when each request is 72 MB.
     // The bandwidth middleware applies only to heavyweight snapshot routes via its `appliesTo`
     // predicate; cheap probes (`/latest/ordinal`, `/latest/metadata`) bypass it so a single
@@ -369,7 +369,7 @@ object SnapshotRoutes {
     // detect the XFF-self-injection case (LB injecting our own IP into X-Forwarded-For) and fall
     // back to the TCP remote. Without this guard, all LB-injected requests share a single counter
     // under our own IP, which on bootstrap-source nodes saturates within seconds and starts 429ing
-    // healthcheck probes — observed 2026-05-02 on testnet .193.
+    // healthcheck probes -- observed on testnet .193.
     selfExternalIp: Option[String] = None
   ): F[SnapshotRoutes[F, S, SI]] =
     for {

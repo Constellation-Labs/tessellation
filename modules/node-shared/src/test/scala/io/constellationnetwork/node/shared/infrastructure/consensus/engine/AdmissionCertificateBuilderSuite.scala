@@ -123,7 +123,7 @@ object AdmissionCertificateBuilderSuite extends FunSuite {
   }
 
   test("build: outsider vote silently dropped, remaining < quorum -> Left(under_quorum)") {
-    // v15 (2026-05-08 hotfix): non-pool signers are filtered, not rejected. With voter1+voter2
+    // Non-pool signers are filtered, not rejected (hotfix). With voter1+voter2
     // counting and the outsider dropped, 2 < quorum=3, so the failure is under_quorum.
     val outsider: PeerId = PeerId(Hex("ff" * 64))
     val votes = Map(
@@ -191,7 +191,7 @@ object AdmissionCertificateBuilderSuite extends FunSuite {
     )
   }
 
-  // === v9 (2026-04-29): witness pool widened from committee to eligibleFacilitators ===
+  // === Witness pool widened from committee to eligibleFacilitators ===
 
   test("v9: voter in wider witness pool but outside committee subset is accepted") {
     // B2 mirror of the apr29 wedge regression. Symmetric with B1: when the cluster has chronic-
@@ -223,7 +223,7 @@ object AdmissionCertificateBuilderSuite extends FunSuite {
   }
 
   test("v9: voter outside witness pool is silently filtered (does not count toward quorum)") {
-    // v15 (2026-05-08 hotfix): symmetric guarantee — outside-pool voters are dropped silently,
+    // Symmetric guarantee (hotfix) -- outside-pool voters are dropped silently,
     // but only pool members count toward quorum, so the cert still fails when the remaining
     // valid set is short.
     val outsider: PeerId = PeerId(Hex("ee" * 64))
@@ -249,7 +249,7 @@ object AdmissionCertificateBuilderSuite extends FunSuite {
     )
   }
 
-  // === v15 (2026-05-08): hotfix regression — single rogue voter must not deadlock cert assembly ===
+  // === Hotfix regression -- single rogue voter must not deadlock cert assembly ===
 
   test("v15: outsider vote silently dropped when remaining pool members exactly meet quorum") {
     // Symmetric to EvictionCertificateBuilderSuite. Mid-round eligibility shrinkage that

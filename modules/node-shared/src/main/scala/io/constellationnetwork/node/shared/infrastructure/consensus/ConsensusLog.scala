@@ -144,7 +144,7 @@ object ConsensusLog {
     case object ViewChange extends Event { val show = "VIEW_CHANGE" }
     case object ViewChangeWithEviction extends Event { val show = "VIEW_CHANGE_WITH_EVICTION" }
     case object EarlyViewChange extends Event { val show = "EARLY_VIEW_CHANGE" }
-    // v22 (2026-05-18): defensive force-VCV emission when consecutiveAbandonments at the same
+    // Defensive force-VCV emission when consecutiveAbandonments at the same
     // ordinal crosses `forceViewChangeAbandonments`. Bypasses the per-round "missing-still-
     // responsive" gate in StallDetector that otherwise blocks VCV emission across abandoned
     // rounds (the gate is correct for the FIRST stall but wrong when applied across N abandons

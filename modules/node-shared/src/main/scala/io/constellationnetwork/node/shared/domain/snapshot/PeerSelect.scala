@@ -7,11 +7,10 @@ trait PeerSelect[F[_]] {
 
   /** Recovery-path peer selection: prefers Ready peers, falls back to Observing peers when no Ready peer is available.
     *
-    * Codex review 2026-04-27: during a recovery cascade (e.g., alpha.40 17:01:59 — three peers detected fork within 25s and all flipped to
-    * `WaitingForDownload` simultaneously), the standard `select` finds no Ready peers and returns `NoPeersToSelect`, burning the inner
-    * retry ladder. Observing peers — those that have completed download and are observing the cluster prior to becoming Ready — are valid
-    * sources for recovery metadata. Including them widens the candidate pool for the recovery path without affecting the standard download
-    * path.
+    * During a recovery cascade (e.g., alpha.40: three peers detected fork within 25s and all flipped to `WaitingForDownload`
+    * simultaneously), the standard `select` finds no Ready peers and returns `NoPeersToSelect`, burning the inner retry ladder. Observing
+    * peers -- those that have completed download and are observing the cluster prior to becoming Ready -- are valid sources for recovery
+    * metadata. Including them widens the candidate pool for the recovery path without affecting the standard download path.
     *
     * Mirrors the `Ready -> Observing` filter used by `StateTransitions.fetchOutcomeFromCluster`.
     */

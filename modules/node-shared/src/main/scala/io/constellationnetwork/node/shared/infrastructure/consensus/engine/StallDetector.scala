@@ -81,8 +81,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
     // Bounded Facility retransmit attempt counter (0-indexed). Incremented each time we re-broadcast
     // our own stored Facility while in CollectingFacilities. Capped by MaxFacilityRetransmits to
     // avoid spam when the round is genuinely stuck. Sender-side mitigation for gossip delivery
-    // asymmetry — peers that missed our original Facility via plain `spread` get it via direct push
-    // on retry. v13 (2026-05-02): the delay between successive retransmits follows a capped
+    // asymmetry -- peers that missed our original Facility via plain `spread` get it via direct push
+    // on retry. The delay between successive retransmits follows a capped
     // exponential backoff rather than a fixed cadence (see StallDetector.nextRetransmitDelay).
     retransmitAttempt: Int = 0,
     // Wall-clock of the last retransmit, used to gate the next attempt against the exponential
@@ -92,7 +92,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
     // round-duration clock when the view advances, so the maxRoundDuration safety net applies
     // per-view, not to the entire life of the round. Without this, a round that view-changes
     // late in the 300s window runs out of budget in view-1 CollectingSignatures even though
-    // the new view is making steady progress — observed 2026-04-22 in fork-recovery E2E.
+    // the new view is making steady progress -- observed in fork-recovery E2E.
     lastView: Int = 0
   )
 
@@ -189,7 +189,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
       // of seconds later. This heartbeat ticks CheckUpdate every monitor cycle
       // (100-1000ms) while in the at-risk phase so the grace check re-evaluates
       // naturally; checkUpdate is a no-op on unchanged state, so the overhead is
-      // trivial. Observed 2026-04-24 E2E: single round wedged 14.7s without this.
+      // trivial. Observed in E2E: single round wedged 14.7s without this.
       inSignaturesPhase = ops.isSignaturesPhase(state.status)
       _ <- queue
         .offer(ConsensusCommand.CheckUpdate(key))
@@ -202,7 +202,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
       // resourcesChanged). Witness signal is the mesh chain tip, which updates
       // independently of per-round consensus resources — binding emission to
       // `resourcesChanged` misses the case where a probation peer's mesh tip advances
-      // mid-round without any consensus declaration arriving. Observed 2026-04-23 E2E:
+      // mid-round without any consensus declaration arriving. Observed in E2E:
       // only 1 voter per cycle produced an AdmissionVote, so the 3-of-5 quorum never
       // assembled and re-admission fell back to countdown expiry. With per-tick emission,
       // every committee member gets a chance to observe the probation peer at tip within
@@ -251,7 +251,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
       // and gossip mesh need a few rounds to fully prime before it can be a competent leader.
       // If it wins the leader lottery for one of those primings rounds, it can't propose in
       // time and the cluster wedges for the full proposal-phase timeout (~98s observed
-      // 2026-04-27 E2E). Codex review 2026-04-27 ("Option A aggressive"): immediately self-defer
+      // in E2E). Per codex review ("Option A aggressive"): immediately self-defer
       // into a view change, converting the 98s wedge into a ~5s rotation.
       //
       // Cooldown window: `state.key` within `recoveryLeaderCooldownRounds` of the recovery key.
@@ -304,13 +304,13 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
       finalStallCount = if (didStall) newStallCount + 1 else newStallCount
 
       // Bounded sender-side retransmit of our own Facility when stalled in CollectingFacilities.
-      // v13 (2026-05-02): switched from "fire on every stall cycle" to capped exponential backoff.
-      //   Pre-v13: retransmit fired on each `didStall` (~30s cadence determined by declarationTimeout)
-      //            so 3 retransmits took ~90s; the May 2 E2E ord-6 stall ate ~3 minutes because
+      // Switched from "fire on every stall cycle" to capped exponential backoff.
+      //   Previously: retransmit fired on each `didStall` (~30s cadence determined by declarationTimeout)
+      //            so 3 retransmits took ~90s; the E2E ord-6 stall ate ~3 minutes because
       //            gossip-mesh-dropped Facility decls weren't pushed back into the network fast
       //            enough during the high-jitter cold-start window.
-      //   v13: retransmit fires when `(now - lastRetransmitAt) >= nextRetransmitDelay(attempt)`,
-      //        producing schedule 5s → 10s → 20s → 30s → 30s. First three attempts within ~35s,
+      //   Now: retransmit fires when `(now - lastRetransmitAt) >= nextRetransmitDelay(attempt)`,
+      //        producing schedule 5s -> 10s -> 20s -> 30s -> 30s. First three attempts within ~35s,
       //        bounded steady-state at 30s for the remaining attempts; cap is now 5 (raised from 3)
       //        to keep the same ~95s total budget while landing the early attempts much sooner.
       // Gates retained (all still required for retransmit to fire):
@@ -370,7 +370,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
       // could observe inconsistent state. The race is benign: worst case is one extra round
       // of lagging detection before self-correcting on the next monitor cycle.
       // Live per-peer tip keys (from incoming keyed rumors). Replaces the old peerRegistrations
-      // read which was a one-time join ordinal — see Bug B (2026-04-21): a node that had joined
+      // read which was a one-time join ordinal -- see Bug B: a node that had joined
       // earlier than its current round would never observe "peer ahead" even after the cluster
       // advanced, so isLagging stayed false forever.
       peerCurrentKeys <- storage.getPeerCurrentKeys
@@ -655,7 +655,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
           // This gives slow peers (gossip delay, network jitter) an extra timeout window
           // before being removed, preventing premature eviction cascades.
           //
-          // v22 (2026-05-18): the existing chain below is the "graduated response" path
+          // The existing chain below is the "graduated response" path
           // (stall warn -> eviction or normal). It runs only when the same key has NOT
           // already been abandoned `config.forceViewChangeAbandonments` times. Once that
           // threshold is crossed, the wrapper below short-circuits to a VCV emission
@@ -710,8 +710,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
                   // retained `(ordinal, hash)` entries that persist until the mesh ages them out. A
                   // zombie node whose consensus fiber wedged at ordinal N but whose gossip fiber
                   // keeps advertising the stale tip would be indefinitely protected if we treated
-                  // "has any chain-tip entry" as permanent liveness evidence (codex review
-                  // 2026-04-24). Bounding the chain-tip shield to the same `EvictionSkipMaxStalls`
+                  // "has any chain-tip entry" as permanent liveness evidence.
+                  // Bounding the chain-tip shield to the same `EvictionSkipMaxStalls`
                   // window as the cluster-storage shield prevents that.
                   //
                   // Observed Apr 18: with an unbounded cluster-responsive gate, a 3-of-5 surviving
@@ -788,7 +788,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
                           // during initial sync and recovery, and clusterStorage's view of who is
                           // unresponsive is unreliable until at least one full-committee snapshot
                           // exists. Emitting here produced cascading committee splits in the
-                          // 2026-04-21 E2E failures. Matches Phase 4's penalty-suppression pattern.
+                          // fork-recovery E2E failures. Matches Phase 4's penalty-suppression pattern.
                           Async[F].unit
                         } else
                           storage.getResources(key).flatMap { resources =>
@@ -800,7 +800,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
                             // "nobody declared" means the leader is the unique culprit — everyone else is
                             // correctly waiting. `unresponsiveMissing` would mostly be responsive followers,
                             // and voting to evict them is a false positive. Target the leader specifically.
-                            // Observed 2026-04-23 ord 3107095: leader cd6362ae (Responsive but pipeline-stalled)
+                            // Observed at ord 3107095: leader cd6362ae (Responsive but pipeline-stalled)
                             // never emitted a Proposal; the cluster abandoned 4x without producing an eviction
                             // vote because the existing target computation matched neither.
                             val candidates: Set[PeerId] =
@@ -853,7 +853,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
                 StallResult(didStall = true, quorumInfeasible = false).pure[F]
             }
 
-          // v22 (2026-05-18) defensive force-VCV short-circuit. Reads the cluster-tracked
+          // Defensive force-VCV short-circuit. Reads the cluster-tracked
           // consecutiveAbandonments counter (same one logged as `consecutiveAbandonments=` in
           // ROUND_ABANDONED_TRACKED / RETRIABLE_ESCALATED). When it crosses the threshold for
           // THIS ordinal, emit a ViewChangeVote unconditionally so all responsive peers
@@ -1079,7 +1079,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
         }.flatMap { streaks =>
           // Require multiple consecutive at-tip observations before emitting. A single tick of
           // match is insufficient evidence that the peer has stably caught up — observed
-          // 2026-04-24 E2E: B1 evicted gl0-2 while it was still downloading, then B2 re-admitted
+          // in E2E: B1 evicted gl0-2 while it was still downloading, then B2 re-admitted
           // it the instant its recovery download produced the committed tip hash; committee
           // snapped back to 5 just before isolation, leaving only 3 active signers against a
           // declaration quorum of 4 (ceil(5*0.67)). Requiring a stability streak delays
@@ -1097,9 +1097,9 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
             !alreadyVotedBySelf.contains(pid) &&
             streaks.getOrElse(pid, 0) >= minStreak
           }
-          // v12 (2026-05-02): admission-gate diagnostic log per probation peer per tick. Codex
-          // turn-2 follow-up to the alpha.50 ZERO-admission-certs finding: lets operators verify
-          // which gate is the actual blocker — empty probation, atTip false, streak < minStreak,
+          // Admission-gate diagnostic log per probation peer per tick.
+          // Follow-up to the alpha.50 ZERO-admission-certs finding: lets operators verify
+          // which gate is the actual blocker -- empty probation, atTip false, streak < minStreak,
           // or already-voted-by-self. One INFO line per call when probation is non-empty.
           val atTipPerPeer = probation.iterator.map { pid =>
             val atTip = chainTips.get(pid).exists(_.snapshotHash === expectedTip)
@@ -1148,9 +1148,9 @@ object StallDetector {
   /** Hard cap on stored-Facility retransmits per round. Past this count the round is likely stuck on issues other than facility-delivery
     * (genuinely-absent peers, network partition, etc.) and additional retransmits are wasted.
     *
-    * v13 (2026-05-02) raised 3 → 5 to match the new capped-exponential cadence (see `nextRetransmitDelay`). The first 5 retransmits fire
-    * within 5+10+20+30+30 = 95s, which is the same wall-time budget as the pre-v13 fixed-30s × 3 = 90s but lands the early attempts an
-    * order of magnitude sooner — catching gossip-jitter Facility drops in the first 35s instead of waiting 90s.
+    * Raised 3 -> 5 to match the new capped-exponential cadence (see `nextRetransmitDelay`). The first 5 retransmits fire within
+    * 5+10+20+30+30 = 95s, which is the same wall-time budget as the previous fixed-30s x 3 = 90s but lands the early attempts an order of
+    * magnitude sooner -- catching gossip-jitter Facility drops in the first 35s instead of waiting 90s.
     */
   private[consensus] val MaxFacilityRetransmits: Int = 5
 
@@ -1165,13 +1165,13 @@ object StallDetector {
     */
   private[consensus] val FacilityRetransmitInitialDelay: FiniteDuration = 5.seconds
 
-  /** Cap on the exponential backoff. Once the schedule reaches this value it stays here for the remaining attempts. Matches the pre-v13
+  /** Cap on the exponential backoff. Once the schedule reaches this value it stays here for the remaining attempts. Matches the previous
     * fixed cadence (~declarationTimeout) so steady-state behaviour is unchanged when the issue persists past the first few retries.
     */
   private[consensus] val FacilityRetransmitMaxDelay: FiniteDuration = 30.seconds
 
-  /** Compute the wall-clock delay required between attempt `n` and attempt `n+1` of a Facility retransmit. Capped exponential: 5s → 10s →
-    * 20s → 30s → 30s → ...
+  /** Compute the wall-clock delay required between attempt `n` and attempt `n+1` of a Facility retransmit. Capped exponential: 5s -> 10s ->
+    * 20s -> 30s -> 30s -> ...
     *
     * Pure function, exposed for unit-tests.
     */
@@ -1202,7 +1202,7 @@ object StallDetector {
     *      over-counts (allows f+1 evictions on n=9), letting the aggregate of honest-voter agreed targets exceed `committee - quorum` and
     *      driving the round into `QUORUM_INFEASIBLE_EVICTION` even when honest voters only emitted within their per-voter caps. The
     *      quorum-derived cap guarantees that no aggregate set of cert-finalized evictions can shrink the committee below quorum. Observed
-    *      2026-04-30: post-restart 9-committee deadlocked when 5+ FACILITY_FOREVER cohort peers in the committee triggered eviction votes;
+    *      Observed: post-restart 9-committee deadlocked when 5+ FACILITY_FOREVER cohort peers in the committee triggered eviction votes;
     *      with the old cap of 3 every honest voter agreed on the same 3 canonical-prefix targets, drove cert assembly to shrink committee
     *      below the 7-of-9 quorum, and broke liveness for hours. 4. Ordering is stable: for the same inputs (as Sets), this function
     *      returns the same list in the same order every invocation. This is what lets different honest nodes vote for the same subset when

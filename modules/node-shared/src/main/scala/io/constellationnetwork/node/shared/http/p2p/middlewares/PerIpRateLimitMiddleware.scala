@@ -51,7 +51,7 @@ object PerIpRateLimitMiddleware {
     * i.e. the load-balancer or upstream proxy injected the LOCAL node's own IP into `X-Forwarded-For` — and falls back to the TCP remote
     * address instead. Without this guard, all LB-injected requests share a single counter under our own IP, which on bootstrap-source nodes
     * (RunRollback) saturates within seconds and starts 429ing healthcheck probes — an external supervisor then treats the probe failures as
-    * liveness failure and SIGTERMs the JVM, producing a 5-7 minute restart loop. Observed 2026-05-02 on alpha.51 testnet `.193`.
+    * liveness failure and SIGTERMs the JVM, producing a 5-7 minute restart loop. Observed on alpha.51 testnet `.193`.
     * @return
     *   a function that wraps `HttpRoutes[F]` with the rate limiter.
     */

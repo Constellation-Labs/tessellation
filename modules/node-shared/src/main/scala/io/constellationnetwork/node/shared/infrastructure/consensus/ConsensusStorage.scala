@@ -53,7 +53,7 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
   // immediately after signing, mirroring the Facility self-store pattern. Without this
   // the local signature only reaches resources.signatures via the gossip round-trip,
   // which produces a 1-3ms race window at the fast-path quorum threshold (see
-  // 2026-04-23 ord-10 failure analysis).
+  // ord-10 failure analysis).
   def addSignature(
     peerId: PeerId,
     key: Key,
@@ -279,14 +279,14 @@ object ConsensusStorage {
       // Monotonic counter bumped on every successful state mutation via condModifyState. Used by
       // the FSM to drop stale ConsensusCommand.RoundCompleted commands — one queued before a
       // subsequent view change / phase transition would otherwise wipe the newly-advanced round.
-      // Observed in the 2026-04-21 fork-recovery E2E: abandonment at T=0 queued RoundCompleted,
+      // Observed in the fork-recovery E2E: abandonment at T=0 queued RoundCompleted,
       // view change at T+165s advanced the round to view=1 CollectingSignatures, the stale
       // RoundCompleted fired 104ms before the final signature arrived and dropped the round.
       roundAttemptIdR <- Ref.of[F, Long](0L)
       // Per-peer highest observed key from incoming keyed rumors (declarations, votes, acks,
       // withdraws, artifacts). Feeds live "peer is ahead of me" detection in AbandonmentTracker
       // and StallDetector. Distinct from peerRegistrationsR which records one-time join keys
-      // (see Bug B in the 2026-04-21 fork-recovery post-mortem: peersAtHigherKey=0 forever
+      // (see Bug B in the fork-recovery post-mortem: peersAtHigherKey=0 forever
       // because registered keys never advance as peers progress).
       peerCurrentKeysR <- Ref.of(Map.empty[PeerId, Key])
     } yield
@@ -314,7 +314,7 @@ object ConsensusStorage {
         // which processes one command at a time. `clearAllConsensusState` — the only other writer —
         // is also FSM-driven (StateTransitions + AbandonmentTracker). There is no concurrent writer
         // to serialize against, so no semaphore is needed here. The earlier Semaphore + 30s timeout
-        // wrapper caused 259 testnet stalls on 2026-04-21 under load (heavy work inside the critical
+        // wrapper caused 259 testnet stalls under load (heavy work inside the critical
         // section backed up the queue); removing the lock eliminates that stall class.
         def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[F, Key, Status, Outcome, Kind, B]): F[Option[B]] =
           for {
@@ -602,8 +602,8 @@ object ConsensusStorage {
           // admissionVotes and assembledAdmissionCerts are NOT preserved. Admission votes
           // are based on an instantaneous mesh-chain-tip observation and become stale
           // immediately — preserving them would mean "peer was seen at tip once during
-          // this round" rather than "peer is currently at tip" (codex review 2026-04-23,
-          // non-blocker correctness item #1). Clearing forces fresh witness evidence for
+          // this round" rather than "peer is currently at tip" (non-blocker correctness
+          // item #1). Clearing forces fresh witness evidence for
           // each retry, which keeps the B2 semantics honest.
           updateResources(key) { resources =>
             resources.copy(
@@ -679,7 +679,7 @@ object ConsensusStorage {
             // Only prune keys STRICTLY LESS THAN activeKey. Pre-arrived declarations for future
             // rounds (within the `declarationRangeLimit` window) are already admitted by
             // `updateResources` and must survive completion of earlier rounds; wiping them here
-            // on every `activeKey` advance erased legitimate pipelined state. Observed 2026-04-24
+            // on every `activeKey` advance erased legitimate pipelined state. Observed in
             // E2E: Facility declarations for round N+1 arriving ~100ms before round N's local
             // finalization were stored in resourcesR(N+1), then deleted when round N completed,
             // leaving the new round N+1 with `progress=3/5 missing=2` forever because the two

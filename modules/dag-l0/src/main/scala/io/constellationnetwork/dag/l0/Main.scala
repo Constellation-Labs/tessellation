@@ -332,9 +332,9 @@ object Main
                   // rolling back to a solo/bootstrap-era snapshot, the window starts in bootstrap mode
                   // and the cluster re-stabilizes naturally.
                   rollbackProofSize = snapshot.proofs.size.toInt
-                  // v20+v21: persisted operational history if the rollback snapshot carries it.
-                  // Pre-v20 snapshots have `peerHistory = None`, so seedOperational stays empty
-                  // and the cluster bootstraps from zero. Post-v20 snapshots restore
+                  // Persisted operational history if the rollback snapshot carries it.
+                  // Older snapshots have `peerHistory = None`, so seedOperational stays empty
+                  // and the cluster bootstraps from zero. Newer snapshots restore
                   // chronic-classifier history, B2 readmission, and removal-penalty
                   // escalation across the cold-restart boundary.
                   //

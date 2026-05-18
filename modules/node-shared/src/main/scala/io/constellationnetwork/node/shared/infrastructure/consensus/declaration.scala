@@ -51,12 +51,12 @@ object declaration {
     lastGlobalSnapshotOrdinal: SnapshotOrdinal,
     lastSnapshotHash: Hash,
     consensusConfigHash: Option[Hash] = None,
-    // v15 (2026-05-15) self-health throttle, see docs/consensus/self-health-throttle.md.
+    // Self-health throttle, see docs/consensus/self-health-throttle.md.
     // The peer's own current `SelfHealthHint` derived from `LocalHealthMonitor`. The leader
     // aggregates these into `Proposal.observedSelfHealth` for consensus-agreed propagation;
     // `selectLeaderWeighted` in the next round demotes Degraded peers to tier 1 and Critical
-    // peers to tier 2. Optional with default None so the field is wire-compatible with v14,
-    // although the jar hash gate already prevents cross-version peer connections.
+    // peers to tier 2. Optional with default None so the field is wire-compatible with older
+    // versions, although the jar hash gate already prevents cross-version peer connections.
     selfHealthHint: Option[SelfHealthHint] = None
   ) extends PeerDeclaration
 
@@ -207,9 +207,9 @@ object declaration {
   implicit val evictionVotesDecoder: Decoder[NonEmptySet[Signed[EvictionVote]]] =
     NonEmptySetCodec.decoder[Signed[EvictionVote]]
 
-  // Codex review 2026-04-23: `lastSnapshotHash` field binds the cert to a specific tip.
+  // `lastSnapshotHash` field binds the cert to a specific tip.
   // Without it, a leader could replay an older quorum of signed votes that matched the
-  // current `facilitatorsHash` but referenced a stale tip — followers would accept it.
+  // current `facilitatorsHash` but referenced a stale tip -- followers would accept it.
   // Builders reject mixed-tip vote sets; advancers validate the cert's hash against the
   // current `lastOutcome.finished.snapshotHash` at proposal acceptance.
   @derive(eqv, show, encoder, decoder)
@@ -231,7 +231,7 @@ object declaration {
 
   // Phase B2: re-admission of previously-removed peers into the committee.
   //
-  // Codex-approved design (2026-04-23) — mirrors B1 eviction-cert semantics. The
+  // Mirrors B1 eviction-cert semantics. The
   // motivating failure was post-isolation re-admission: peers whose removalPenalty
   // expires rejoin `eligibleFacilitators` immediately, even if they have not caught
   // up to cluster tip. Committee then stalls because those peers cannot contribute
@@ -288,7 +288,7 @@ object declaration {
   implicit val admissionVotesDecoder: Decoder[NonEmptySet[Signed[AdmissionVote]]] =
     NonEmptySetCodec.decoder[Signed[AdmissionVote]]
 
-  // Codex review 2026-04-23: `lastSnapshotHash` binds the cert to a specific tip — see
+  // `lastSnapshotHash` binds the cert to a specific tip -- see
   // EvictionCertificate above for the same rationale. Without it, a stale quorum of signed
   // admission votes at an older tip could be replayed as if fresh.
   @derive(eqv, show, encoder, decoder)
@@ -342,7 +342,7 @@ object declaration {
     // Defaults empty for old-format compatibility (cold-restart hard fork in
     // practice).
     observedResponders: List[PeerId] = List.empty,
-    // v15 (2026-05-15) self-health throttle: leader's canonical view of each observed
+    // Self-health throttle: leader's canonical view of each observed
     // responder's `SelfHealthHint`, aggregated from the Facilities collected this round.
     // Signed into the Proposal so all followers adopt the same map on accept; this is what
     // makes the hint consensus-agreed for the next round's `selectLeaderWeighted`. Peers

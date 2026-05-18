@@ -224,7 +224,7 @@ object CurrencySnapshotConsensusStateCreator {
         // observed for at least config.minParticipationObservations rounds. See dag-l0
         // GlobalSnapshotConsensusStateCreator for full rationale.
         //
-        // v8 (2026-04-29) minimum-history floor mirror: see dag-l0 site for Design B context.
+        // Minimum-history floor mirror: see dag-l0 site for Design B context.
         chronicNonSigners = lastOutcome.peerQuality.collect {
           case (pid, (completed, participated))
               if participated >= config.minParticipationObservations &&
@@ -282,7 +282,7 @@ object CurrencySnapshotConsensusStateCreator {
           )
           .whenA(abandonedMissing.nonEmpty)
 
-        // Prior-round-missing exclusion (Layer 2-Lite, 2026-05-16). Mirrors the dag-l0
+        // Prior-round-missing exclusion (Layer 2-Lite). Mirrors the dag-l0
         // implementation. Peers in the prior round's round-start committee that did NOT sign
         // the finalized outcome are excluded from THIS round's committee. Consensus-agreed
         // signal (every node has the byte-identical `Signed[Artifact]`), so no fork risk.
@@ -502,16 +502,16 @@ object CurrencySnapshotConsensusStateCreator {
         // minParticipationObservations`, but require at least 2 graduated peers so
         // view rotation can actually rotate. See GlobalSnapshotConsensusStateCreator
         // for the full rationale.
-        // v11 (2026-04-30): kick-fast leader graduation. Mirror of dag-l0; see
+        // Kick-fast leader graduation. Mirror of dag-l0; see
         // GlobalSnapshotConsensusStateCreator for full rationale. Adds `completed >= 1` so a
-        // peer that has never finalized a round cannot lead — closes the same chronic-flaky
+        // peer that has never finalized a round cannot lead -- closes the same chronic-flaky
         // leader trap on metagraph layer.
         graduatedLeaderPool = active.filter { pid =>
           val (completed, participated) = lastOutcome.peerQuality.getOrElse(pid, (0, 0))
           participated >= config.minParticipationObservations && completed >= 1
         }
         leaderPool = if (graduatedLeaderPool.size >= 2) graduatedLeaderPool else active
-        // Layer 1 view-carry-forward (2026-05-16): see dag-l0 mirror. priorAbandonmentCount
+        // Layer 1 view-carry-forward: see dag-l0 mirror. priorAbandonmentCount
         // seeds the leader pick so same-key retries rotate to different initial leaders.
         leader = facilitatorSelector.selectLeaderWeighted(
           leaderPool,

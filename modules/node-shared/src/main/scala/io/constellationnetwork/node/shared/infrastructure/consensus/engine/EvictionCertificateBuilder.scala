@@ -26,19 +26,19 @@ object EvictionCertificateBuilder {
     *     replay or a leader stitching votes from divergent views.
     *   - Drop votes whose signer is not in `witnessPool` SILENTLY; only pool members count toward quorum. The voter-key (storage slot)
     *     filter is implicit — a non-pool signer cannot pass the gate regardless of which storage key relayed the vote.
-    *   - Count UNIQUE SIGNERS (by `proofs.head.id`) — not storage keys — for the quorum check. The `votes` map is keyed by the gossip
+    *   - Count UNIQUE SIGNERS (by `proofs.head.id`) -- not storage keys -- for the quorum check. The `votes` map is keyed by the gossip
     *     sender, which is not necessarily the signer: a single signed vote can be relayed through multiple peers and end up stored under
     *     different keys. Without signer-level deduplication, a Byzantine relay can inflate the apparent quorum.
     *   - Use a SortedSet for the resulting votes so serialization order is stable.
     *
-    * v9 (2026-04-29): `witnessPool` widened from the round-start committee to `state.eligibleFacilitators - target`. Caller responsibility
-    * to compute the deterministic witness set; this function gates signers against it. Quorum is still passed as a separate `quorumSize` so
-    * the caller pegs it to committee size, not witness pool size.
+    * `witnessPool` widened from the round-start committee to `state.eligibleFacilitators - target`. Caller responsibility to compute the
+    * deterministic witness set; this function gates signers against it. Quorum is still passed as a separate `quorumSize` so the caller
+    * pegs it to committee size, not witness pool size.
     *
-    * v15 (2026-05-08): non-pool voters are FILTERED instead of REJECTED. Prior fail-fast on any single non-pool voter caused the 2026-05-08
-    * testnet wedge at ord 3121873 — a stale gossip relay or mid-round eligibility shrinkage was enough to poison every cert assembly
-    * attempt (`peers=1 votes=6 quorum=6` → no cert, view-change loop, no snapshots). Filter-then-quorum keeps the same security envelope
-    * (only pool members count toward quorum) but no longer lets one rogue voter deadlock the cluster.
+    * Non-pool voters are FILTERED instead of REJECTED. Prior fail-fast on any single non-pool voter caused the testnet wedge at ord 3121873
+    * -- a stale gossip relay or mid-round eligibility shrinkage was enough to poison every cert assembly attempt (`peers=1 votes=6
+    * quorum=6` -> no cert, view-change loop, no snapshots). Filter-then-quorum keeps the same security envelope (only pool members count
+    * toward quorum) but no longer lets one rogue voter deadlock the cluster.
     *
     * Returns `Right(cert)` on success, or `Left(reason)` with a stable code-like string.
     */
@@ -64,7 +64,7 @@ object EvictionCertificateBuilder {
             && signed.value.facilitatorsHash != facilitatorsHash =>
         pid
     }
-    // Codex review 2026-04-23: reject mixed-tip vote sets — prevents a leader from replaying
+    // Reject mixed-tip vote sets -- prevents a leader from replaying
     // older signed votes that matched the current facilitators hash but referenced a prior tip.
     val wrongLastSnapHash = votes.toList.collect {
       case (pid, signed)

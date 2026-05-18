@@ -231,8 +231,8 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
     threshold: Int,
     viewNumber: Int = 0
   ): PeerId = {
-    // v11 (2026-04-30): kick-fast leader graduation. Mirrors production at
-    // GlobalSnapshotConsensusStateCreator.scala:513 — a peer must have BOTH enough history
+    // Kick-fast leader graduation. Mirrors production at
+    // GlobalSnapshotConsensusStateCreator.scala:513 -- a peer must have BOTH enough history
     // AND at least one completed round to be lead-eligible. Closes the chronic-flaky leader
     // trap where peers accumulated participated counts but had completed=0.
     val graduated = active.filter { p =>
@@ -347,12 +347,12 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
     }
   }
 
-  // === v11 (2026-04-30) kick-fast leader graduation tests ===
+  // === Kick-fast leader graduation tests ===
   //
   // Regression coverage for the apr30 testnet deadlock: chronic-flaky peers (890a641e,
   // c96c3a41) had `participated >= minObservations` but `completed == 0` because they
-  // never finalized any round. Pre-v11 graduation filter ONLY checked `participated`,
-  // letting them lead → no proposal → infinite stall. The fix adds `completed >= 1`.
+  // never finalized any round. The earlier graduation filter ONLY checked `participated`,
+  // letting them lead -> no proposal -> infinite stall. The fix adds `completed >= 1`.
 
   test("kick-fast: peer with high participated but zero completions is rejected as leader") {
     IO {
@@ -440,9 +440,9 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
     }
   }
 
-  // === v14 (2026-05-14) leader-rotation band tests ===
+  // === Leader-rotation band tests ===
   //
-  // Pre-v14 the tier formula was `participated - completed` (unbounded). The asymmetric
+  // The earlier tier formula was `participated - completed` (unbounded). The asymmetric
   // crediting in `observedResponders` ratcheted non-leader peers' tiers up indefinitely;
   // empirically on testnet alpha.72 this concentrated 100% of leadership on 2 peers even
   // though 6 peers were demonstrably "good enough" by quality ratio. v14 replaces the
@@ -656,20 +656,20 @@ object FacilitatorSelectorSuite extends SimpleIOSuite with Checkers {
     }
   }
 
-  // === v16 (2026-05-17) hard leader-eligible floor tests ===
+  // === Hard leader-eligible floor tests ===
   //
   // selectLeaderWeighted now applies a pre-filter using `hardLeaderEligibleMinRatioPct` (default 20)
   // BEFORE the tier sort. Peers below the floor are removed from leader candidacy entirely;
   // they remain committee members. If fewer than `minLeaderPoolSize` (default 3) peers survive
   // the filter, the full input is used (starvation fallback). Closes the chronic-leader-loop
-  // wedge observed on 2026-05-17 where score-0.07 peers continued to be elected via tier-1
+  // wedge where score-0.07 peers continued to be elected via tier-1
   // rotation.
 
   test("v16 hard floor: chronic peer below 0.2 never elected when 3+ healthy peers exist") {
     IO {
-      // Models the 2026-05-17 wedge: chronic at 0.07 (1/15), healthy peers in tier 0/1 above
-      // the hard floor. Pre-v16 the chronic peer was tier 1 and `sorted[viewNumber % size]`
-      // walked through it on view rotation. v16 removes it from the pool entirely.
+      // Models the chronic-leader wedge: chronic at 0.07 (1/15), healthy peers in tier 0/1 above
+      // the hard floor. Earlier the chronic peer was tier 1 and `sorted[viewNumber % size]`
+      // walked through it on view rotation. The filter removes it from the pool entirely.
       val chronic = pid("chronic-7pct")
       val healthy = (1 to 3).map(i => pid(s"healthy-$i")).toList
       val pool = chronic +: healthy

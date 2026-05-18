@@ -33,8 +33,8 @@ object TrustStorageUpdater {
     } yield ()
   }
 
-  /** Trust-update cadence. Was 1.minute pre-2026-04-30; lowered to 1.hour because the only remaining live consumer of trust scores is
-    * `PeerSelect.getPeerSublist`, which weights download-peer selection during recovery downloads — a rare event (cold start or
+  /** Trust-update cadence. Was previously 1.minute; lowered to 1.hour because the only remaining live consumer of trust scores is
+    * `PeerSelect.getPeerSublist`, which weights download-peer selection during recovery downloads -- a rare event (cold start or
     * `updateShouldRedownload` triggers) that does not need minute-fresh trust data.
     *
     * Pre-cleanup audit: `SnapshotOrdinalPublicTrust` rumor accounted for ~20% of cluster gossip traffic at the 1-minute cadence to feed a

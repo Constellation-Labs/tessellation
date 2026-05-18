@@ -24,8 +24,8 @@ object AdmissionCertificateBuilder {
   /** Build a valid AdmissionCertificate for a specific (target, reason) pair.
     *
     * Invariant checks mirror the eviction path; see `EvictionCertificateBuilder` for the full rationale on relay-duplicate deduplication,
-    * the v9 widening of the witness pool from committee to `state.eligibleFacilitators - target`, and the v15 (2026-05-08) move from
-    * fail-fast rejection to silent filtering of non-pool signers (testnet wedge at ord 3121873).
+    * the widening of the witness pool from committee to `state.eligibleFacilitators - target`, and the subsequent move from fail-fast
+    * rejection to silent filtering of non-pool signers (testnet wedge at ord 3121873).
     */
   def build(
     target: PeerId,
@@ -49,7 +49,7 @@ object AdmissionCertificateBuilder {
             && signed.value.facilitatorsHash != facilitatorsHash =>
         pid
     }
-    // Codex review 2026-04-23: reject mixed-tip vote sets. Without this, signed votes that
+    // Reject mixed-tip vote sets. Without this, signed votes that
     // targeted an earlier tip with the same facilitators hash could be stitched into a fresh-
     // looking cert. Every vote in the assembled cert must match the current expected tip.
     val wrongLastSnapHash = votes.toList.collect {

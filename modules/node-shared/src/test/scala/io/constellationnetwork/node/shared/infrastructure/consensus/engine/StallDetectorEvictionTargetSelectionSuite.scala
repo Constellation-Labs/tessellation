@@ -174,7 +174,7 @@ object StallDetectorEvictionTargetSelectionSuite extends FunSuite {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // 2026-04-30 regression suite: quorum-aware cap prevents over-eviction
+  // Regression suite: quorum-aware cap prevents over-eviction
   // ─────────────────────────────────────────────────────────────────────────
 
   test("quorum-aware cap: 9-committee with 7-quorum caps at 2 (BFT f=2)") {

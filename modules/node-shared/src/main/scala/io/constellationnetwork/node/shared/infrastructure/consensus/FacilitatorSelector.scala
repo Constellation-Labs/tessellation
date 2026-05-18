@@ -211,11 +211,11 @@ class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
       facilitators.nonEmpty,
       "selectLeaderWeighted called with empty facilitators list, consensus cannot proceed without facilitators"
     )
-    // v16 (2026-05-17): hard quality-score floor applied BEFORE tier sort. The score is the
+    // Hard quality-score floor applied BEFORE tier sort. The score is the
     // integer-arithmetic equivalent of
     //   (completed / participated) * (1 - viewChangesCaused / participated)
     // i.e. completion rate adjusted down by the view-change-caused rate. Closes the gap exposed
-    // 2026-05-17: peers with high completion (e.g. 10/10) but high view-change rate (9 caused)
+    // by the wedge: peers with high completion (e.g. 10/10) but high view-change rate (9 caused)
     // had raw ratio 1.0 but qualityScore 0.10 -- they kept wedging rounds as failed leaders
     // while passing every existing filter that only checked the raw ratio. Integer-only so the
     // comparison is byte-identical across JVM platforms.

@@ -67,8 +67,8 @@ object ClickHouseSink {
 
   // ClickHouse JDBC driver does not enforce a default socket-connect timeout, so
   // `new HikariDataSource(hc)` can block indefinitely if the configured host is
-  // unreachable. The 2026-04-29 testnet incident saw .193 silent for 35-45 minutes
-  // per restart with no further log lines after "Jar hash" — the JVM was stuck inside
+  // unreachable. A testnet incident saw .193 silent for 35-45 minutes
+  // per restart with no further log lines after "Jar hash" -- the JVM was stuck inside
   // HikariCP pool construction waiting on a TCP SYN-ACK to a dead ClickHouse host.
   // The `handleErrorWith` chains in MetricsFactory + ClickHouseLoggerBundle never
   // fired because there was no error to handle, just a hang.

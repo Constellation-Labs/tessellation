@@ -383,10 +383,10 @@ object TessellationIOApp {
     *
     * Matches the mainnet default documented in `docker/bin/docker-env-setup.sh` (-Xmx8192M = 8 GB).
     *
-    * Under-provisioned heap causes long stop-the-world GC pauses — observed 2026-04-22 testnet: a validator with an undersized heap stalled
-    * for 21.5 seconds in a single GC event, backing up the consensus command queue and indirectly draining neighbor peers that were waiting
-    * on its HTTP responses. This constant is the threshold we log a warning at; it is not enforced (operators may still run
-    * under-provisioned nodes, they just see a loud startup message).
+    * Under-provisioned heap causes long stop-the-world GC pauses -- observed on testnet: a validator with an undersized heap stalled for
+    * 21.5 seconds in a single GC event, backing up the consensus command queue and indirectly draining neighbor peers that were waiting on
+    * its HTTP responses. This constant is the threshold we log a warning at; it is not enforced (operators may still run under-provisioned
+    * nodes, they just see a loud startup message).
     */
   private val RecommendedHeapMb: Long = 8192L
 
