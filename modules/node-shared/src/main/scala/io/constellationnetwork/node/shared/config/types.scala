@@ -469,7 +469,26 @@ object types {
     //     so a mixed v15/v16 cluster would compute different leaders the moment any peer has
     //     `viewChangesCaused > 0`. Cold restart required; jar hash gates v15<->v16 peer
     //     connection.
-    consensusSchemaVersion: Int = 16,
+    //   v17 (2026-05-18, iteration v22): Exact-fraction supermajority quorum. The previous
+    //     `quorum-threshold-fraction = 0.67` was a decimal approximation of 2/3 that rounded
+    //     up unfavorably for N divisible by 3: `ceil(N * 0.67)` gave 5 for N=6 instead of the
+    //     BFT-intended `ceil(2N/3) = 4`. The off-by-one caused the 2026-05-17/18 wedges where
+    //     4-of-6 responsive facilitators failed both Facility quorum AND ViewChangeCertificate
+    //     quorum (VCC uses the same threshold), making the cluster unable to either commit OR
+    //     view-change out of the stalled round. Operator restart was the only path forward,
+    //     and the wedge recurred ~30 minutes later when a chronic peer cycled. testnet config
+    //     now sets `quorum-threshold-fraction = 0.6666666666666666` (max-precision Double of
+    //     2/3) which makes `ceil(N * fraction)` produce the formal HotStuff threshold for all
+    //     N up to ~200. BFT safety preserved: any two quorums of size 4 over N=6 intersect in
+    //     2*4 - 6 = 2 >= f+1 replicas for f=1. Tradeoff: implicit f=2 tolerance under the old
+    //     0.67 value (5-of-6 tolerates 2 byzantine) is reduced to f=1 (4-of-6 tolerates 1
+    //     byzantine). Acceptable because observed silent peers are crash-faulty (network,
+    //     JVM hang), not byzantine, and the wedge under crash faults is far more damaging
+    //     than the theoretical f=2 tolerance we lose. quorumThresholdFraction is in
+    //     deterministicConfigHash so a v16-config and v17-config cluster reject each other at
+    //     handshake; jar hash also enforces. Currency-l0 unaffected (defaults to 1.0
+    //     unanimity, applies to small metagraph clusters where unanimity is preferred).
+    consensusSchemaVersion: Int = 17,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with
