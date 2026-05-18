@@ -19,9 +19,9 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
   *   - concurrency limit catches deep-parallel fan-out from a single client
   *   - this one catches sustained bulk-egress from a slow-rate but heavyweight client
   *
-  * The 2026-04-29 testnet measurement showed `/global-snapshots/latest/combined/stream` accounting for 98.8% of cluster egress, with
-  * individual external clients pulling 72 MB once every 30-90s. None of those clients hit the existing 30 req/min count cap, but their
-  * aggregate egress was ~25-40 MiB/s. Bandwidth-based limiting is the right primitive for that pattern.
+  * A testnet measurement showed `/global-snapshots/latest/combined/stream` accounting for 98.8% of cluster egress, with individual external
+  * clients pulling 72 MB once every 30-90s. None of those clients hit the existing 30 req/min count cap, but their aggregate egress was
+  * ~25-40 MiB/s. Bandwidth-based limiting is the right primitive for that pattern.
   *
   * ==Mechanism==
   *
@@ -77,7 +77,7 @@ object PerIpBandwidthLimitMiddleware {
     * @param selfExternalIp
     *   the local node's external IP. When provided, the middleware detects the XFF-self-injection case (LB injected our own IP into
     *   `X-Forwarded-For`) and falls back to the TCP remote address. Mirrors [[PerIpRateLimitMiddleware]]'s guard; see that header doc for
-    *   the full rationale (.193 self-loop SIGTERM cascade observed 2026-05-02).
+    *   the full rationale (.193 self-loop SIGTERM cascade observed on testnet).
     */
   def apply[F[_]: Async](
     maxBytesPerWindow: Long,

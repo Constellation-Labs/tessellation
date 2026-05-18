@@ -177,7 +177,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
   // === Committee membership ===
 
   test("build: outsider vote silently dropped, remaining < quorum -> Left(under_quorum)") {
-    // v15 (2026-05-08 hotfix): non-pool signers are filtered, not rejected. With voter1+voter2
+    // Non-pool signers are filtered, not rejected (hotfix). With voter1+voter2
     // counting and the outsider dropped, 2 < quorum=3, so the failure is under_quorum.
     val outsider: PeerId = PeerId(Hex("ff" * 64))
     val votes = votesFromMap(
@@ -317,7 +317,7 @@ object EvictionCertificateBuilderSuite extends FunSuite {
     )
   }
 
-  // === v9 (2026-04-29): witness pool widened from committee to eligibleFacilitators ===
+  // === Witness pool widened from committee to eligibleFacilitators ===
 
   test("v9: voter in witness pool but outside committee subset is accepted (apr29 wedge regression)") {
     // Apr 29 testnet wedge regression. At round 3110065 the cluster had committee=9 but
@@ -348,8 +348,8 @@ object EvictionCertificateBuilderSuite extends FunSuite {
 
   test("v9: voter outside witness pool is silently filtered (does not count toward quorum)") {
     // Symmetric guarantee: a peer in NEITHER the committee nor the wider eligible set must not
-    // count. v15 (2026-05-08 hotfix) drops it silently rather than rejecting the cert outright,
-    // but the security envelope is identical — only pool members count.
+    // count. The hotfix drops it silently rather than rejecting the cert outright,
+    // but the security envelope is identical -- only pool members count.
     val outsider: PeerId = PeerId(Hex("ee" * 64))
     val widerPool: Set[PeerId] = Set(voter1, voter2, voter3, voter4, voter5)
     val votes: Map[PeerId, Signed[EvictionVote]] = Map(
@@ -365,10 +365,10 @@ object EvictionCertificateBuilderSuite extends FunSuite {
     )
   }
 
-  // === v15 (2026-05-08): hotfix regression — single rogue voter must not deadlock cert assembly ===
+  // === Hotfix regression -- single rogue voter must not deadlock cert assembly ===
 
   test("v15: outsider vote silently dropped when remaining pool members exactly meet quorum") {
-    // 2026-05-08 testnet wedge regression. At ord 3121873 the cluster had 6 valid signers AND
+    // Testnet wedge regression. At ord 3121873 the cluster had 6 valid signers AND
     // 1 voter outside the witness pool (mid-round eligibility shrinkage). The pre-hotfix builder
     // returned voter_not_in_committee on the first non-pool voter, throwing away 6 valid votes
     // and stalling consensus indefinitely. The fix filters non-pool signers silently; if the

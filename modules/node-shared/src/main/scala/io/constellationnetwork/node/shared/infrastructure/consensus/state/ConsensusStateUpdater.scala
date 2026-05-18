@@ -166,8 +166,8 @@ object ConsensusStateUpdater {
     * a single-element sample is treated as unanimous only when sole value -> majority by definition. The general guarantee callers care
     * about is "more than half of the observed peers agree on this hash."
     *
-    * Codex review 2026-04-27: replaces `FoldableOps.pickMajority` (plurality) at the fork-detection seam, where treating a plurality as
-    * authoritative could seed/confirm suspicion against a non-majority cohort.
+    * Replaces `FoldableOps.pickMajority` (plurality) at the fork-detection seam, where treating a plurality as authoritative could
+    * seed/confirm suspicion against a non-majority cohort.
     */
   private[consensus] def strictMajorityHash(observations: Iterable[Hash]): Option[Hash] = {
     val total = observations.size
@@ -180,10 +180,10 @@ object ConsensusStateUpdater {
 
   /** Detect a sustained-divergence fork and trigger recovery if confirmed.
     *
-    * Two-stage gate to avoid the simultaneous-recovery cascade observed in the alpha.40 testnet incident (2026-04-27): a single observation
-    * no longer flips the node into `WaitingForDownload`. Instead the first divergent strict-majority is RECORDED in `forkObservationsRef`
-    * with a monotonic timestamp, and a subsequent call with the same divergent majority can trigger recovery only if the divergence has
-    * persisted for at least `confirmationWindow`. Local-only timing decision; cluster safety is unaffected.
+    * Two-stage gate to avoid the simultaneous-recovery cascade observed in the alpha.40 testnet incident: a single observation no longer
+    * flips the node into `WaitingForDownload`. Instead the first divergent strict-majority is RECORDED in `forkObservationsRef` with a
+    * monotonic timestamp, and a subsequent call with the same divergent majority can trigger recovery only if the divergence has persisted
+    * for at least `confirmationWindow`. Local-only timing decision; cluster safety is unaffected.
     *
     * Behaviour:
     *   - `observations.size < minObservations` -> log "insufficient sample" and do not update the tracker. Pass `minObservations = 1` at
@@ -380,7 +380,7 @@ object ConsensusStateUpdater {
     * the local config, so re-triggering recovery loops without progress. Instead we surface the misconfiguration via a dedicated counter
     * and structured log so operators can intervene.
     *
-    * Codex review 2026-04-27: prevents `consensusConfigHash` from re-entering recovery on every round.
+    * Prevents `consensusConfigHash` from re-entering recovery on every round.
     */
   def logRecoveryUnsuitableMismatch[F[_]: Sync](
     ownObservationHash: Hash,

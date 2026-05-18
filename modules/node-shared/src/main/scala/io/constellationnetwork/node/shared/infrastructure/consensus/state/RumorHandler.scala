@@ -90,7 +90,7 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
     val key = decl.key.asInstanceOf[Key]
     // Record the sender's current tip BEFORE any admission filtering. This is the live "peer is
     // ahead of me" signal consumed by AbandonmentTracker + StallDetector. See Bug B in the
-    // 2026-04-21 post-mortem: peerRegistrations alone is set-once and goes stale.
+    // post-mortem: peerRegistrations alone is set-once and goes stale.
     val observeTip = storage.observePeerAtKey(origin, key)
     val kindLabel = decl.declaration match {
       case _: Facility          => "Facility"

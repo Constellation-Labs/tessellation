@@ -135,10 +135,10 @@ object schema {
     // at `readmissionProbationRounds` and count down one per finished round. See
     // dag-l0 mirror for full rationale.
     readmissionCountdown: SortedMap[PeerId, Int] = SortedMap.empty,
-    // v15 (2026-05-15) self-health throttle mirror of dag-l0 schema; see dag-l0 for full
+    // Self-health throttle mirror of dag-l0 schema; see dag-l0 for full
     // rationale.
     peerSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty,
-    // v16 (2026-05-17) cumulative view-change-caused counts mirror of dag-l0 schema; see
+    // Cumulative view-change-caused counts mirror of dag-l0 schema; see
     // dag-l0 schema for the full pack/unpack + recompute-at-finalize contract.
     peerViewChanges: SortedMap[PeerId, Long] = SortedMap.empty,
     // Recent-signers sliding window mirror of dag-l0 schema. See dag-l0 mirror for
@@ -150,7 +150,7 @@ object schema {
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value
       else facilitators.value
 
-    // v20+v21 mirror of GlobalConsensusOutcome.toOperationalState. See dag-l0 schema.
+    // Mirror of GlobalConsensusOutcome.toOperationalState. See dag-l0 schema.
     def toOperationalState: ConsensusOperationalState = {
       val keys: Set[PeerId] =
         (peerQuality.keysIterator ++

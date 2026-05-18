@@ -63,8 +63,8 @@ class ConsensusRumorHandlers[F[
     *
     * Without this registration, inbound ConsensusPeerEvictionVote rumors gossiped by other peers are silently dropped at the rumor-router
     * layer — Kryo decodes them, but nothing dispatches them to the ConsensusCommand queue. That kept EvictionCertificate assembly stuck at
-    * votes=1 (the local self-vote only) during the 2026-04-23 broken-leader stall on testnet, even though every honest peer was emitting
-    * votes. See `.workspace/codex-response-broken-leader-trap-apr23.md` for the full diagnosis.
+    * votes=1 (the local self-vote only) during the broken-leader stall on testnet, even though every honest peer was emitting votes. See
+    * `.workspace/codex-response-broken-leader-trap-apr23.md` for the full diagnosis.
     */
   val evictionVoteHandler: RumorHandler[F] =
     RumorHandlerWithQueue.peer[F, ConsensusPeerEvictionVote[Key]](queue.offer)

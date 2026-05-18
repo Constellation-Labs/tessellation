@@ -92,8 +92,8 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
       resources <- storage.getResources(key)
       // Initial view for the next round-attempt at this key. Replaces the previous local-Ref
       // retry counter (`AbandonmentTracker.retriableAtSameKeyRef`), which drifted between nodes
-      // when they processed ROUND_ABANDONED events at different rates. Observed 2026-05-16
-      // testnet: .193 retryCount=4, .45 retryCount=2, .79 retryCount=4 for the same wedged key.
+      // when they processed ROUND_ABANDONED events at different rates. Observed on testnet:
+      // .193 retryCount=4, .45 retryCount=2, .79 retryCount=4 for the same wedged key.
       // Different counts produced different initial leader picks via `sorted[N % size]`, splitting
       // the committee's view of who the leader was and starving view-change of quorum.
       //

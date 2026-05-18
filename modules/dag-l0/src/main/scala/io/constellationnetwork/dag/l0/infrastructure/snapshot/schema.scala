@@ -138,7 +138,7 @@ object schema {
     // proposal (re-admitted via consensus-witnessed current-tip participation).
     // Consensus-agreed → deterministic across all peers.
     readmissionCountdown: SortedMap[PeerId, Int] = SortedMap.empty,
-    // v15 (2026-05-15) self-health throttle: each peer's last-known `SelfHealthHint`
+    // Self-health throttle: each peer's last-known `SelfHealthHint`
     // copied from the accepted Proposal's `observedSelfHealth`. Read by the next round's
     // `selectLeaderWeighted` to demote Degraded peers to tier 1 and Critical peers to
     // tier 2 (strong demote, not hard exclude -- keeps liveness if all peers report Critical).
@@ -147,7 +147,7 @@ object schema {
     // 4): a freshly-restarted cluster picks leaders without hints until the first round of
     // facilities arrives.
     peerSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty,
-    // v16 (2026-05-17) cumulative per-peer count of view changes this peer caused as a
+    // Cumulative per-peer count of view changes this peer caused as a
     // failed leader-of-the-view. Derived at round finalization by the StateAdvancer from
     // (roundStartFacilitators, entropy, finalView, prior peerQuality, prior peerSelfHealth,
     // prior peerViewChanges) -- all consensus-agreed inputs -- by recomputing

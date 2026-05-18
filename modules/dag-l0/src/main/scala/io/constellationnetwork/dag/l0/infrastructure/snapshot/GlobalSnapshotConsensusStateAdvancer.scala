@@ -247,8 +247,8 @@ object GlobalSnapshotConsensusStateAdvancer {
             // Uses roundStartFacilitators (canonical) not state.facilitators (mutable):
             // mid-round withdrawals mutate state.facilitators on nodes that observed the
             // withdrawal pre-finish, diverging completedFacilitators across nodes and
-            // ultimately the deferralCountdown in lastOutcome. That was the 2026-04-23
-            // ord-4→5 fork (see .workspace/codex-response-ord5-facilitator-fork-apr23.md).
+            // ultimately the deferralCountdown in lastOutcome. That was the
+            // ord-4->5 fork (see .workspace/codex-response-ord5-facilitator-fork-apr23.md).
             val completedFacilitators = state.roundStartFacilitators.value.toSet -- evictedPeers
             val decayedCumulative = completedFacilitators.foldLeft(previousCumulative) { (acc, pid) =>
               acc.get(pid) match {
@@ -376,22 +376,22 @@ object GlobalSnapshotConsensusStateAdvancer {
               withCurrent.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
             }
 
-            // B2 readmissionCountdown maintenance (v12 sticky-probation, codex turn-2 2026-05-02):
-            //   1) Decrement any active probation counters by 1 — but CLAMP at 0 instead of
-            //      auto-clearing the entry. Pre-v12 had `.filter(_._2 > 0)` here, which dropped
+            // B2 readmissionCountdown maintenance (sticky-probation):
+            //   1) Decrement any active probation counters by 1 -- but CLAMP at 0 instead of
+            //      auto-clearing the entry. Earlier versions had `.filter(_._2 > 0)` here, which dropped
             //      the key when the countdown ran out. That made the AdmissionCertificate path
             //      semantically optional: a peer would auto-leave probation after N rounds
             //      regardless of whether quorum had ever witnessed its catch-up. Empirical
             //      consequence: ZERO admission certs assembled across 14 hours of alpha.50,
-            //      because the StallDetector emission gate (probation ∩ atTip-streak) only
+            //      because the StallDetector emission gate (probation intersect atTip-streak) only
             //      considers peers still in the probation set, but those peers exited probation
             //      via auto-clear before the streak threshold could fire.
             //   2) Seed entries for `justUnpenalized` (peers whose removalPenalty expired
-            //      this round) at `readmissionProbationRounds`. Codex corrective #3: these
-            //      peers take the B2 re-admission path, not the B1 deferral path.
+            //      this round) at `readmissionProbationRounds`. These peers take the B2
+            //      re-admission path, not the B1 deferral path.
             //   3) Clear entries for peers admitted via AdmissionCertificate this round
             //      (state.admittedFacilitators populated at buildSignatureTransition).
-            //      Post-v12, this is the ONLY path that removes a peer from probation.
+            //      This is the ONLY path that removes a peer from probation.
             // Order matters: decrement-then-clear-then-seed avoids decrementing a freshly
             // seeded entry in the same step. Admitted peers are removed last so an edge
             // case where the same peer is both admitted AND newly-unpenalized (shouldn't
@@ -403,7 +403,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               admittedThisRound = admittedThisRound,
               probationRounds = config.readmissionProbationRounds
             )
-            // v16 (2026-05-17): per-peer cumulative view-change-caused credits.
+            // Per-peer cumulative view-change-caused credits.
             //
             // For each view v in [0, state.viewNumber) the round attempted, recompute the
             // deterministic leader using the SAME inputs `selectLeaderWeighted` was called
@@ -1089,7 +1089,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                 )
               )
             case Some(vcc) =>
-              // v17 (2026-05-11): symmetric with B1/B2 -- every VCC voter must be in the deterministic
+              // Symmetric with B1/B2 -- every VCC voter must be in the deterministic
               // wider witness pool. The assembler (StateTransitions.checkViewChangeAssembly) filters by
               // the same pool; without this re-check on the follower side, an adversarial leader could
               // embed a VCC built from out-of-pool voters and the rest of the cluster would accept it.
@@ -1136,7 +1136,7 @@ object GlobalSnapshotConsensusStateAdvancer {
       // Phase B1 bootstrap gate. Mirrors Phase 4's penalty-accrual suppression: while the chain
       // has not yet produced a snapshot with >= bootstrapCompleteProofsThreshold signers, the
       // cluster is still stabilizing and any B1 activity is unsafe (causes cascading committee
-      // splits as observed in 2026-04-21 E2E runs).
+      // splits as observed in early fork-recovery E2E runs).
       private def isInBootstrap(state: GlobalSnapshotConsensusState): Boolean =
         !state.lastOutcome.recentProofSizes.values.exists(_ >= config.bootstrapCompleteProofsThreshold)
 
@@ -1159,7 +1159,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         // against the fixed committee so validation is bit-identical across nodes that observed
         // mid-round withdrawals at different times.
         //
-        // v9 (2026-04-29): voter/signer membership widened from `roundStartFacilitators` to
+        // Voter/signer membership widened from `roundStartFacilitators` to
         // `eligibleFacilitators - target`. See StateTransitions.scala assembly site for full
         // rationale. Both the assembly site and this re-validation must agree on the witness
         // pool, otherwise leaders would assemble certs that followers reject.
@@ -1182,7 +1182,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                       s"certFacHash=${cert.facilitatorsHash.show.take(8)} ours=${facilitatorsHash.show.take(8)}"
                   )
                 )
-              // Codex review 2026-04-23: bind cert to current tip. Prevents replay of stale
+              // Bind cert to current tip. Prevents replay of stale
               // signed-vote quorums from earlier tips that happened to share facilitatorsHash.
               else if (cert.lastSnapshotHash =!= expectedLastSnap)
                 Left(
@@ -1210,7 +1210,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                       )
                     )
                   case None =>
-                    // v17 (2026-05-11): pool widens from the round-start committee to the union of
+                    // Pool widens from the round-start committee to the union of
                     // `eligibleFacilitators` and historical participants in `lastOutcome.peerQuality`
                     // (participated >= minParticipationObservations). Both inputs are projections of
                     // the previous signed outcome; both sides of the round (assembler in
@@ -1326,7 +1326,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                       )
                     )
                   case None =>
-                    // v17 (2026-05-11): symmetric widening with B1 -- see validateProposalEcs above.
+                    // Symmetric widening with B1 -- see validateProposalEcs above.
                     val witnessPool = WitnessPool.forTarget(
                       state.eligibleFacilitators.value.toSet,
                       state.lastOutcome.peerQuality.toMap,
@@ -1783,7 +1783,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         // Use canonical round-start committee so every validator reaches the same accept/reject
         // decision regardless of the order in which they observed mid-round withdrawals. Using the
         // mutable state.facilitators allowed artifact validation to diverge across nodes (same
-        // class as the 2026-04-23 ord-5 facilitatorsHash fork, but in the artifact plane).
+        // class as the ord-5 facilitatorsHash fork, but in the artifact plane).
         validateLeaderArtifact(state, status, artifact, hash, state.roundStartFacilitators.value.toSet)
 
       private def validateLeaderArtifact(
@@ -2079,7 +2079,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                 // the Fix-2 self-store-of-Facility pattern (commit 82179f2ec) for the signature
                 // phase. Without this, our own signature only enters `resources.signatures` via
                 // the gossip round-trip through RumorHandler; if three other peers' signatures
-                // cross quorum in ~1-3ms (the 2026-04-23 ord-10 fast-path race), our node
+                // cross quorum in ~1-3ms (the ord-10 fast-path race), our node
                 // finalizes its own round without its own signature and drops off `lastSigners`
                 // in the next round's state creator. The complementary defence is the
                 // `signatureGracePeriod` in buildFinishedTransition that also catches late
@@ -2259,7 +2259,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             // Formula is `(n/2)+1` rather than `ceil(n * quorumThresholdFraction)` for liveness
             // reasons: at n=5 with fraction=0.67, supermajority=4 leaves zero headroom (any one
             // peer drop wedges the round, and the B1/VCC paths also need 4 so nothing can
-            // auto-recover — observed 2026-04-24 E2E ord-10 wedge). Majority=3 gives slack.
+            // auto-recover -- observed in the E2E ord-10 wedge). Majority=3 gives slack.
             // The forking risk that supermajority addresses (two disjoint finalized sets under
             // view-change splits) is protected against elsewhere via VoteLock + VCC; finalization
             // threshold is a liveness lever, not the primary safety lever.
@@ -2271,7 +2271,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               // thus lastOutcome.finished.facilitatorsHash), which fork detection
               // compares across peers. Deriving from state.facilitators (mutable)
               // would produce divergent hashes on nodes that observed a withdrawal
-              // at different phases — exactly the 2026-04-23 ord-5 fork trigger.
+              // at different phases -- exactly the ord-5 fork trigger.
               facilitatorsHash <- state.roundStartFacilitators.value.hash
               facilitators = state.roundStartFacilitators.value
               _ <- loggerBundle.consensus.roundFinished(facilitators)
@@ -2512,7 +2512,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         * on timing behaviour.
         */
       private def checkForkByConsensusConfigHash(declarations: SortedMap[PeerId, Facility]): F[Unit] = {
-        // Codex review 2026-04-27: a `consensusConfigHash` divergence cannot be repaired by recovery
+        // A `consensusConfigHash` divergence cannot be repaired by recovery
         // download (the local node's deterministicConfigHash is computed from local config and won't
         // change after rejoin). Loop-triggering recovery on this class of divergence is wasted I/O.
         // Surface it via `dag_consensus_unrepairable_mismatch` + structured log so operators can fix

@@ -69,10 +69,10 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // Phase B1 gate: returns true while the cluster has not yet produced a snapshot with committee
   // size >= config.bootstrapCompleteProofsThreshold (matches Phase 4's warmup-for-penalty-accrual).
   // All B1 activity (emission, cert assembly, validation, embedding, application) is suppressed
-  // while this returns true — evictions during bootstrap caused cascading committee splits in
-  // the 2026-04-21 E2E failures.
+  // while this returns true -- evictions during bootstrap caused cascading committee splits in
+  // the early fork-recovery E2E failures.
   isInBootstrap: Outcome => Boolean,
-  // Binds B1/B2 certs to the current tip. Codex review 2026-04-23: without this binding a leader
+  // Binds B1/B2 certs to the current tip. Without this binding a leader
   // could replay an older quorum of signed votes that matched the current facilitators hash but
   // referenced a stale tip, and honest followers would accept the cert. Every cert is now required
   // to carry `lastSnapshotHash == lastSnapshotHashOf(state.lastOutcome)`; mixed-tip vote sets are
@@ -81,11 +81,11 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // Set of peers currently on B2 probation per the carried outcome. A peer is on probation while
   // its `readmissionCountdown` is positive — it was previously evicted via B1 and is awaiting a
   // quorum-witnessed `AdmissionCertificate` from the cluster before it can re-enter the committee.
-  // Codex review 2026-04-24: recovery (`StateTransitions.initFromDownload`) must respect this set
+  // Recovery (`StateTransitions.initFromDownload`) must respect this set
   // and decline to facilitate while self is still in probation. Otherwise a recovering peer would
   // emit Facility/Proposal/Signature against a committee the cluster has already rebuilt without
   // it, producing a split-brain consensus state where rounds appear stalled at `progress=1/5`
-  // forever (gl0-4 2026-04-24 fork-recovery E2E). Same wiring source as `StallDetector`'s B2
+  // forever (gl0-4 in fork-recovery E2E). Same wiring source as `StallDetector`'s B2
   // admission emission — see the ConsensusEventLoop construction site.
   probationPeersOf: Outcome => Set[PeerId],
   // Layer-specific extraction of consensus-agreed peerQuality from the carried outcome.
@@ -103,7 +103,7 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // `initFromDownload` (recovery path). Read by layer-specific advancers — when this node is
   // elected leader within `recoveryLeaderCooldownRounds` of recovery completion, the advancer
   // should emit a ViewChangeVote instead of attempting to propose, because the just-recovered
-  // node's storage / gossip mesh / proposal-build pipeline isn't primed yet (gl0-4 2026-04-27 E2E:
+  // node's storage / gossip mesh / proposal-build pipeline isn't primed yet (gl0-4 in E2E:
   // recovered, won leader lottery for the next round, wedged the round for 98s on `progress=1/5`
   // before the cluster's stall detector forced the view change). Self-deferred view change makes
   // that wedge a ~5s rotation instead of a 98s timeout.
@@ -118,7 +118,7 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // initial `viewNumber` argument to `selectLeaderWeighted`. The deterministic effect: each
   // same-key retry picks a different initial leader because `selectLeaderWeighted` indexes
   // `sorted[viewNumber % size]`. Without this, every retry of a wedged key reset view to 0 and
-  // re-elected the same silent peer that caused the prior abandonment (observed 2026-05-16 at
+  // re-elected the same silent peer that caused the prior abandonment (observed at
   // ord 3126034: 7 abandons in a row with leader=63adf853, score decaying but never crossing
   // the chronic threshold).
   //

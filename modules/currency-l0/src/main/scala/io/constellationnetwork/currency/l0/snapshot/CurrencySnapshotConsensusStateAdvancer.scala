@@ -252,7 +252,7 @@ object CurrencySnapshotConsensusStateAdvancer {
               admittedThisRound = admittedThisRound,
               probationRounds = config.readmissionProbationRounds
             )
-            // v16 (2026-05-17): per-peer cumulative view-change-caused credits.
+            // Per-peer cumulative view-change-caused credits.
             // Mirror of dag-l0; see GlobalSnapshotConsensusStateAdvancer for full rationale and
             // the determinism contract.
             val priorPeerQuality = state.lastOutcome.peerQuality
@@ -742,7 +742,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                 )
               )
             case Some(vcc) =>
-              // v17 (2026-05-11): symmetric with B1/B2 -- see dag-l0 mirror.
+              // Symmetric with B1/B2 -- see dag-l0 mirror.
               val witnessPool = WitnessPool.all(
                 state.eligibleFacilitators.value.toSet,
                 state.lastOutcome.peerQuality.toMap,
@@ -827,7 +827,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                       )
                     )
                   case None =>
-                    // v17 (2026-05-11): pool widens from the round-start committee to the union of
+                    // Pool widens from the round-start committee to the union of
                     // `eligibleFacilitators` and historical participants in `lastOutcome.peerQuality`.
                     // See dag-l0 mirror for the full determinism analysis; both sides of the round
                     // derive the byte-identical pool via the shared WitnessPool helper.
@@ -930,7 +930,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                       )
                     )
                   case None =>
-                    // v17 (2026-05-11): symmetric widening with B1 -- see validateProposalEcs above.
+                    // Symmetric widening with B1 -- see validateProposalEcs above.
                     val witnessPool = WitnessPool.forTarget(
                       state.eligibleFacilitators.value.toSet,
                       state.lastOutcome.peerQuality.toMap,
@@ -1394,7 +1394,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                 // BinarySignature only enters resources via gossip round-trip; if
                 // three other peers' binary sigs cross quorum in 1-3ms, our node
                 // finalizes the currency round without its own signature (the
-                // currency analogue of the 2026-04-23 ord-10 race). Currently
+                // currency analogue of the ord-10 race). Currently
                 // masked in dev by quorumThresholdFraction=1.0, but becomes
                 // active on any cluster configured with supermajority quorum.
                 val selfBinarySig = BinarySignature(
@@ -1763,7 +1763,7 @@ object CurrencySnapshotConsensusStateAdvancer {
         )
 
       private def checkForkByConsensusConfigHash(facilities: SortedMap[PeerId, Facility]): F[Unit] = {
-        // Codex review 2026-04-27: a `consensusConfigHash` divergence cannot be repaired by recovery
+        // A `consensusConfigHash` divergence cannot be repaired by recovery
         // download. Surface it via metric + structured log so operators can fix the misconfigured
         // peer; consensus continues but the divergence is visible. See dag-l0 advancer for the full
         // rationale.

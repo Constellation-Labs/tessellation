@@ -410,8 +410,8 @@ abstract class CurrencyL0App(
                       // for full rationale.
                       signers = currencySnapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
                       bootstrapFacilitators = if (signers.contains(nodeId)) signers else List(nodeId)
-                      // v20+v21: restore consensus-derived peer-behavior counters from the rollback
-                      // snapshot if present. Pre-v20 snapshots have `peerHistory = None` and the
+                      // Restore consensus-derived peer-behavior counters from the rollback
+                      // snapshot if present. Older snapshots have `peerHistory = None` and the
                       // cluster bootstraps from zero just as before. See dag-l0 mirror for the
                       // known one-round off-by-one (we accept it; drift is below chronic floors).
                       seedOperational = currencySnapshot.value.peerHistory.getOrElse(ConsensusOperationalState.empty)

@@ -406,7 +406,7 @@ object Download {
             logger.error(err)(s"[RecoveryDownload] Error fetching metadata (attempt=${details.retriesSoFar})")
         ) {
           // selectForRecovery widens the candidate pool to include Observing peers when no Ready peer is
-          // available (codex review 2026-04-27). Mirrors the Ready -> Observing fallback used by
+          // available. Mirrors the Ready -> Observing fallback used by
           // StateTransitions.fetchOutcomeFromCluster. Doesn't fully solve the alpha.40 cascade where ALL
           // peers were in WaitingForDownload, but covers the partial case where some peers reached
           // Observing while others were still in download.
@@ -487,8 +487,8 @@ object Download {
           // shows the cluster is already at (or behind) our recovered tip with matching hash,
           // skip the forward-observe loop entirely. Without this, a cluster that is stalled at
           // tip N makes us loop forever asking for N+1 (which never exists), because the
-          // hardcoded `lastSnapshot.ordinal + recoveryOffset` target is unreachable. Codex
-          // diagnosis 2026-04-23: this is the tip-plus-one recovery loop, separate from B2.
+          // hardcoded `lastSnapshot.ordinal + recoveryOffset` target is unreachable.
+          // This is the tip-plus-one recovery loop, separate from B2.
           readyPeerTips <- getReadyPeerTips
           _ <- Metrics[F].updateGauge("dag_recovery_ready_peer_tips_size", readyPeerTips.size.toLong)
           recoveryObservationLimit = chooseObservationLimit(
@@ -540,7 +540,7 @@ object Download {
         }
       }
 
-      // Bounded convergence loop (codex 2026-04-24): a single pass of recoveryStart + observe
+      // Bounded convergence loop: a single pass of recoveryStart + observe
       // can finish while the cluster has already moved past the observed tip because the observe
       // step uses a random 1-5 round offset. A peer that rejoins while still materially behind
       // immediately becomes a leader candidate with a stale view, wedging the round it leads

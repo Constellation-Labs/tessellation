@@ -250,7 +250,7 @@ object GlobalSnapshotConsensusStateCreator {
         // Only peers with participated >= minParticipationObservations are subject to the
         // filter — new peers get a grace period to establish a track record.
         //
-        // v8 (2026-04-29) minimum-history floor: also require participated >= minObservationHistoryFloor.
+        // Minimum-history floor: also require participated >= minObservationHistoryFloor.
         // The existing minParticipationObservations knob double-duties as the leader-graduation gate
         // (selectLeaderWeighted below), so it can't be raised to a "high evidence" value without also
         // delaying leader eligibility — a different policy decision. The floor lets us require a long
@@ -317,7 +317,7 @@ object GlobalSnapshotConsensusStateCreator {
           )
           .whenA(abandonedMissing.nonEmpty)
 
-        // Prior-round-missing exclusion (Layer 2-Lite, 2026-05-16). Peers that were in the
+        // Prior-round-missing exclusion (Layer 2-Lite). Peers that were in the
         // prior round's round-start committee but did NOT sign the finalized outcome are
         // excluded from THIS round's committee. The signal is consensus-agreed: every honest
         // node sees the byte-identical `Signed[Artifact]` propagated by the prior round's
@@ -420,9 +420,9 @@ object GlobalSnapshotConsensusStateCreator {
         // reliable cohort keep running when chronic peers outnumber them, while still preventing
         // a real partition-and-both-sides-shrink fork.
         //
-        // 2026-04-22 testnet: committee=9, 5 chronic, 4 reliable. Old floor=5, filtered=4 → fallback
-        // to allEligible(9), re-admit chronic → QUORUM_INFEASIBLE_EVICTION loop. New floor (majority
-        // of potentiallyCompeting=4) = 3, filtered=4 ≥ 3 → use the 4 reliable, q=3, progress.
+        // Example: committee=9, 5 chronic, 4 reliable. Old floor=5, filtered=4 -> fallback
+        // to allEligible(9), re-admit chronic -> QUORUM_INFEASIBLE_EVICTION loop. New floor (majority
+        // of potentiallyCompeting=4) = 3, filtered=4 >= 3 -> use the 4 reliable, q=3, progress.
         // B2: probation peers are excluded BEFORE minViableQuorum is computed. Without
         // this, the quorum floor would be derived from a pool that includes probation
         // peers, producing a false-high floor that the escape hatch would then have to
@@ -620,10 +620,10 @@ object GlobalSnapshotConsensusStateCreator {
         // enough history yet), OR in a solo-bootstrap tail (only one peer graduated),
         // fall back to `active` — same as the pre-filter behavior, self-healing once
         // more peers reach the threshold.
-        // v11 (2026-04-30): kick-fast leader graduation. Two conditions, both required:
-        //   (a) participated >= minParticipationObservations — peer has enough history that
+        // Kick-fast leader graduation. Two conditions, both required:
+        //   (a) participated >= minParticipationObservations -- peer has enough history that
         //       quality stats are meaningful (rejects unproven new peers)
-        //   (b) completed >= 1 — peer has ACTUALLY FINALIZED at least one round as a member
+        //   (b) completed >= 1 -- peer has ACTUALLY FINALIZED at least one round as a member
         //       of `roundStartFacilitators`. Closes the apr30 trap where chronic-flaky peers
         //       (890a641e, c96c3a41) accumulated `participated` counts in past rounds but had
         //       `completed == 0`, kept getting elected leader, never delivered a proposal, and
@@ -636,7 +636,7 @@ object GlobalSnapshotConsensusStateCreator {
           participated >= config.minParticipationObservations && completed >= 1
         }
         leaderPool = if (graduatedLeaderPool.size >= 2) graduatedLeaderPool else active
-        // Layer 1 view-carry-forward (2026-05-16): seed `selectLeaderWeighted` with
+        // Layer 1 view-carry-forward: seed `selectLeaderWeighted` with
         // `priorAbandonmentCount` so each same-key retry deterministically picks a different
         // initial leader (`sorted[N % size]`). Without this every retry reset to view=0 and
         // re-elected the same peer that caused the prior abandonment. The viewNumber is also

@@ -73,10 +73,10 @@ object snapshot {
     ordinal: SnapshotOrdinal,
     hash: Hash,
     lastSnapshotHash: Hash,
-    // v10.x (2026-04-30) addition: lets cheap consumers (e.g. the L1 alignment loop's
+    // Lets cheap consumers (e.g. the L1 alignment loop's
     // TooFarEpochProgress sync-check) read the epoch progress without pulling the
     // ~60 MB combined-snapshot body. Option for forward+backward wire compatibility:
-    // pre-v10.x servers omit the field; pre-v10.x clients ignore it. Consumers should
+    // older servers omit the field; older clients ignore it. Consumers should
     // always provide a fallback for `None` to handle mixed-version deployments.
     epochProgress: Option[EpochProgress] = None
   )

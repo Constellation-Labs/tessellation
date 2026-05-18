@@ -13,10 +13,10 @@ import weaver.SimpleIOSuite
   * tests drive the same filter predicate against a `MapRef[IO, Long, Unit]` shaped identically to `resourcesR`, verifying the "keep active
   * key AND any future keys within the declaration window" invariant.
   *
-  * Observed 2026-04-24 E2E: pre-arrived Facility declarations for key=N+1 were being wiped when key=N completed, because the prune
-  * predicate was `filterNot(_ === activeKey)` (drop everything except activeKey) instead of `filter(_ < activeKey)` (drop only strictly
-  * past rounds). Combined with gossip first-write-wins semantics, pruned peers never retransmitted, leaving the new round with
-  * `progress=3/5 missing=2` for minutes.
+  * Observed in E2E: pre-arrived Facility declarations for key=N+1 were being wiped when key=N completed, because the prune predicate was
+  * `filterNot(_ === activeKey)` (drop everything except activeKey) instead of `filter(_ < activeKey)` (drop only strictly past rounds).
+  * Combined with gossip first-write-wins semantics, pruned peers never retransmitted, leaving the new round with `progress=3/5 missing=2`
+  * for minutes.
   */
 object ConsensusStoragePruneSuite extends SimpleIOSuite {
 

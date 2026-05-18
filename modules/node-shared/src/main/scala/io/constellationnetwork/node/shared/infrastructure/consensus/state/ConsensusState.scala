@@ -97,9 +97,9 @@ object AdmittedFacilitators {
   * outcome-extraction step can credit `peerQuality.completed` only for peers who actually participated, not for any non-fork-evicted
   * facilitator (the v3-codex-flagged "silent peers score (1,1)" blindness).
   *
-  * '''REPLACE semantics on accept''', NOT union (codex turn 2 review 2026-04-28). The field is canonically the latest accepted proposal's
-  * observedResponders; view-N accepting a new proposal must REPLACE state.observedResponders, never `++`. Otherwise an honest view change
-  * would over-credit late peers from view-K-1.
+  * '''REPLACE semantics on accept''', NOT union. The field is canonically the latest accepted proposal's observedResponders; view-N
+  * accepting a new proposal must REPLACE state.observedResponders, never `++`. Otherwise an honest view change would over-credit late peers
+  * from view-K-1.
   *
   * Determinism source: leader's signed rumor envelope (RumorValidator.scala:50 enforces signers.contains(rumor.origin)) cryptographically
   * binds the leader to their stated set under the trusted-allowlist + flaky-byzantine threat model.
@@ -110,9 +110,9 @@ object ObservedResponders {
   def empty: ObservedResponders = ObservedResponders(Set.empty)
 }
 
-/** v15 (2026-05-15) self-health throttle: leader's canonical view of each observed responder's `SelfHealthHint`, copied into local state
-  * when a Proposal is accepted. Carried forward into the next round's Outcome (`peerSelfHealth`) which then feeds `selectLeaderWeighted` to
-  * demote Degraded peers to tier 1 and Critical peers to tier 2.
+/** Self-health throttle: leader's canonical view of each observed responder's `SelfHealthHint`, copied into local state when a Proposal is
+  * accepted. Carried forward into the next round's Outcome (`peerSelfHealth`) which then feeds `selectLeaderWeighted` to demote Degraded
+  * peers to tier 1 and Critical peers to tier 2.
   *
   * REPLACE semantics on accept (mirrors `ObservedResponders` REPLACE rationale): an honest view change adopts the new proposal's map; old
   * view's hints are discarded so a stale Healthy claim cannot bleed into view-N+1 selection.
@@ -145,7 +145,7 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   // `facilitators` / `completedFacilitators` / `facilitatorsHash` are derived
   // from the mutable set, nodes write divergent `lastOutcome` → divergent
   // next-round committees → fork. Deriving those from `roundStartFacilitators`
-  // restores cross-node determinism. Observed 2026-04-23 at ord 4→5 where
+  // restores cross-node determinism. Observed at ord 4->5 where
   // gl0-4's withdrawal was captured by half the cluster pre-finish and half
   // post-finish; see `.workspace/codex-response-ord5-facilitator-fork-apr23.md`.
   //
@@ -198,7 +198,7 @@ trait ConsensusOps[S, Kind] {
   /** True while the round is collecting MajoritySignature declarations. Consumed by StallDetector to pump periodic CheckUpdate commands —
     * the signature-grace path in the advancer returns `none[Transition]` when quorum is met but the committee isn't full yet, and that
     * decision only re-evaluates on subsequent `checkUpdate` invocations. Without a heartbeat in this phase, a round that met quorum and
-    * received no further peer signatures would wedge until an unrelated resource event fired (observed 2026-04-24 E2E, 14.7s wedge).
+    * received no further peer signatures would wedge until an unrelated resource event fired (observed in E2E, 14.7s wedge).
     */
   def isSignaturesPhase(status: S): Boolean
 

@@ -157,8 +157,8 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
             val facilitatorsHashCandidates = votes.values.map(_.value.facilitatorsHash).toSet
             facilitatorsHashCandidates.toList match {
               case singleHash :: Nil =>
-                // v17 (2026-05-11): widen VCC witness pool to match EvictionCertificateBuilder's
-                // v17 widening. The proposal-validation path in the advancer derives the same pool
+                // Widen VCC witness pool to match EvictionCertificateBuilder's widening.
+                // The proposal-validation path in the advancer derives the same pool
                 // from the same consensus-agreed inputs, so this is the canonical pool for the
                 // round. Quorum stays committee-sized (passed in q above).
                 val vccPool = widerWitnessPoolAll(state)
@@ -323,8 +323,8 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                 val reasons = matchingVotes.values.map(_.value.reason).toSet
                 reasons.toList match {
                   case singleReason :: Nil =>
-                    // v17 (2026-05-11): pool widens further to include `lastOutcome.peerQuality` peers
-                    // (participated >= minParticipationObservations). The v9 widening to
+                    // Pool widens further to include `lastOutcome.peerQuality` peers
+                    // (participated >= minParticipationObservations). The earlier widening to
                     // `eligibleFacilitators` did not cover the post-rollback wedge at ord 3122488 where
                     // the chronic-classifier excluded most non-source peers AND the committee was the
                     // entire eligibleFacilitators set. Adding historical participants -- peers consensus-
@@ -438,7 +438,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                 val reasons = matchingVotes.values.map(_.value.reason).toSet
                 reasons.toList match {
                   case singleReason :: Nil =>
-                    // v17 (2026-05-11): symmetric widening with B1 -- pool extended to include
+                    // Symmetric widening with B1 -- pool extended to include
                     // historical participants from `peerQuality` (see `widerWitnessPool` for the
                     // determinism analysis). Quorum stays committee-sized.
                     val witnessPool = widerWitnessPool(state, target)
@@ -704,7 +704,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
           }
         }
       // B2 readmission gate: refuse to facilitate while self is on probation per the carried
-      // outcome. Codex review 2026-04-24: a peer that was B1-evicted during isolation comes back
+      // outcome. A peer that was B1-evicted during isolation comes back
       // via recovery with a downloaded snapshot containing `readmissionCountdown[selfId] > 0`. The
       // cluster's state creator excludes probation peers from `state.facilitators`; if we
       // ignore that and emit Facility/Proposal/Signature anyway, our declarations land in nobody's
