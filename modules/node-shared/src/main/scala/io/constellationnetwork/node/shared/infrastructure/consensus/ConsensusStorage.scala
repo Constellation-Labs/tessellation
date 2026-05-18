@@ -590,34 +590,39 @@ object ConsensusStorage {
             assembledAdmissionCertsR(key).set(none)
 
         def clearResourcesPreservingDeclarations(key: Key): F[Unit] =
-          // evictionVotes and assembledEvictionCerts are preserved across abandonment
-          // retries because they are round-scoped (keyed by `key`), not view-scoped.
-          // A peer's vote to evict a target at round N is still valid on round N retry;
-          // clearing would force the voter to re-accumulate N stall cycles each retry,
-          // defeating the purpose of the mechanism on unstable rounds. (The `cb2031286`
-          // tip-binding check in the cert builder filters stale votes at assembly time
-          // anyway, so preserving them is safe even if later retries run at a different
-          // tip.)
+          // evictionVotes, assembledEvictionCerts, viewChangeVotes, and assembledVcc
+          // are preserved across abandonment retries because their identifying keys
+          // remain stable across retry:
+          //   - evictionVotes / assembledEvictionCerts: round-scoped (keyed by `key`);
+          //     a vote to evict a target at round N is still valid on round N retry.
+          //   - viewChangeVotes / assembledVcc: (fromView, toView)-keyed within the
+          //     round. A peer's "advance from view N to N+1" assertion remains valid
+          //     after retry, and wiping forces partial accumulations (e.g., 4-of-q)
+          //     to drop to 0 on each retry. Observed on alpha.81 testnet 2026-05-18:
+          //     cluster spent 30+ min stuck at ordinal 3126794 with votes oscillating
+          //     between 1 and 4 against a quorum of 5, never closing the certificate
+          //     because the abandon-clear race wiped progress every ~45s. The cert
+          //     builder filters stale signers at assembly time via the witness-pool
+          //     gate (ViewChangeCertificateBuilder), so preserving these is safe
+          //     even if facilitators rotate between retries.
           //
-          // admissionVotes and assembledAdmissionCerts are NOT preserved. Admission votes
-          // are based on an instantaneous mesh-chain-tip observation and become stale
-          // immediately — preserving them would mean "peer was seen at tip once during
-          // this round" rather than "peer is currently at tip" (non-blocker correctness
-          // item #1). Clearing forces fresh witness evidence for
-          // each retry, which keeps the B2 semantics honest.
+          // admissionVotes and assembledAdmissionCerts are NOT preserved. Admission
+          // votes are based on an instantaneous mesh-chain-tip observation and become
+          // stale immediately. Preserving would assert "peer was seen at tip once
+          // during this round" rather than "peer is currently at tip" (non-blocker
+          // correctness item #1). Clearing forces fresh witness evidence for each
+          // retry, keeping the B2 semantics honest.
           updateResources(key) { resources =>
             resources.copy(
               acksMap = Map.empty,
               withdrawalsMap = Map.empty,
               ackKinds = Set.empty,
               artifacts = Map.empty,
-              viewChangeVotes = Map.empty,
               proposalQcs = Map.empty,
               admissionVotes = Map.empty
             )
           }.void >>
             voteLocksR(key).set(none) >>
-            assembledVccR(key).set(none) >>
             assembledAdmissionCertsR(key).set(none)
 
         def getOwnRegistrationKey: F[Option[Key]] = observationKeyR.get.map(_.map(_.next))
