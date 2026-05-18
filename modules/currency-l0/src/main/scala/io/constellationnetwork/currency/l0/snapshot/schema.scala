@@ -3,7 +3,7 @@ package io.constellationnetwork.currency.l0.snapshot
 import cats.Show
 import cats.syntax.show._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.schema.currency.CurrencySnapshotContext
 import io.constellationnetwork.node.shared.infrastructure.consensus._
@@ -140,7 +140,11 @@ object schema {
     peerSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty,
     // v16 (2026-05-17) cumulative view-change-caused counts mirror of dag-l0 schema; see
     // dag-l0 schema for the full pack/unpack + recompute-at-finalize contract.
-    peerViewChanges: SortedMap[PeerId, Long] = SortedMap.empty
+    peerViewChanges: SortedMap[PeerId, Long] = SortedMap.empty,
+    // Recent-signers sliding window mirror of dag-l0 schema. See dag-l0 mirror for
+    // the full rationale on window semantics, Option-wrap at the snapshot boundary,
+    // and FacilitatorSelector consumption.
+    recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = SortedMap.empty
   ) {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value
@@ -170,7 +174,11 @@ object schema {
             )
           }
         )
-      ConsensusOperationalState(perPeer = perPeer, recentProofSizes = recentProofSizes)
+      ConsensusOperationalState(
+        perPeer = perPeer,
+        recentProofSizes = recentProofSizes,
+        recentSigners = if (recentSigners.nonEmpty) Some(recentSigners) else None
+      )
     }
   }
 

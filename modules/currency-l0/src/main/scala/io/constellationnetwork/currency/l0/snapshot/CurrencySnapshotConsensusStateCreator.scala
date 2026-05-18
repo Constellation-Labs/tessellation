@@ -303,6 +303,53 @@ object CurrencySnapshotConsensusStateCreator {
           )
           .whenA(priorRoundMissing.nonEmpty)
 
+        // Active-set tightening: when the recent-signers window is full, narrow the active
+        // committee to peers that have signed at least `minParticipationInWindow` of the last
+        // `tighteningWindow` rounds. Mirror of dag-l0 state creator; see
+        // GlobalSnapshotConsensusStateCreator for the full rationale.
+        tighteningWindowFull = lastOutcome.recentSigners.size >= config.tighteningWindow
+        recentParticipants: Set[PeerId] =
+          if (!tighteningWindowFull) Set.empty[PeerId]
+          else {
+            val counts: Map[PeerId, Int] =
+              lastOutcome.recentSigners.values.iterator.flatten.toList
+                .groupBy(identity)
+                .view
+                .mapValues(_.size)
+                .toMap
+            counts.collect {
+              case (pid, n) if n >= config.minParticipationInWindow => pid
+            }.toSet
+          }
+        tighteningTentativeExcluded: Set[PeerId] =
+          if (!tighteningWindowFull) Set.empty[PeerId]
+          else allEligible.toSet -- recentParticipants -- allDeferred
+        tighteningPostFilterSize = allEligible.size - tighteningTentativeExcluded.size
+        tighteningExcluded: Set[PeerId] =
+          if (tighteningWindowFull && tighteningPostFilterSize >= config.activeFacilitatorFloor)
+            tighteningTentativeExcluded
+          else
+            Set.empty[PeerId]
+
+        _ <- ConsensusLog
+          .info(
+            logger,
+            Category.Facilitator,
+            key.show,
+            "n/a",
+            Event.ActiveSetTightened,
+            "windowSize" -> lastOutcome.recentSigners.size.toString,
+            "tighteningWindow" -> config.tighteningWindow.toString,
+            "minParticipationInWindow" -> config.minParticipationInWindow.toString,
+            "activeFacilitatorFloor" -> config.activeFacilitatorFloor.toString,
+            "filterApplied" -> tighteningExcluded.nonEmpty.toString,
+            "tentativeExcludedCount" -> tighteningTentativeExcluded.size.toString,
+            "appliedExcludedCount" -> tighteningExcluded.size.toString,
+            "postFilterSize" -> tighteningPostFilterSize.toString,
+            "peers" -> tighteningExcluded.toList.map(_.value.value.take(8)).sorted.mkString(",")
+          )
+          .whenA(tighteningWindowFull)
+
         // For THIS round only: exclude recently removed and penalized peers from active selection.
         // They remain in allEligible so they can be re-selected in future rounds.
         // NOTE: abandonedMissing is intentionally NOT included — it's a local-only tracker that
@@ -339,8 +386,11 @@ object CurrencySnapshotConsensusStateCreator {
           // making it non-bypassable. See dag-l0 mirror for full rationale.
           // priorRoundMissing acts like a penalty: excluded normally, bypassable via
           // withoutPenaltiesOnly when liveness is at risk.
+          // tighteningExcluded shares penalty semantics: excluded normally, lifts on
+          // the withoutPenaltiesOnly bypass so a flaky cohort can still close rounds.
           val excluded =
-            previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers ++ priorRoundMissing
+            previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers ++ priorRoundMissing ++
+              tighteningExcluded
           val filtered = allEligible.filterNot(excluded.contains)
           val withoutPenaltiesOnly =
             allEligible.filterNot((previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ probationPeers).contains)
@@ -355,7 +405,8 @@ object CurrencySnapshotConsensusStateCreator {
 
         penaltyBypassed = {
           val excluded =
-            previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers ++ priorRoundMissing
+            previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers ++ priorRoundMissing ++
+              tighteningExcluded
           val filtered = allEligible.filterNot(excluded.contains)
           filtered.size < minViableQuorum && allEligible.size > filtered.size
         }

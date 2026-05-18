@@ -1,6 +1,6 @@
 package io.constellationnetwork.schema
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.schema.peer.PeerId
 
@@ -81,16 +81,29 @@ object PerPeerOperationalRecord {
 //
 // `perPeer` holds the five PeerId-keyed dimensions. `recentProofSizes` is
 // keyed by SnapshotOrdinal so it stays separate.
+//
+// `recentSigners` is the per-ordinal signer set for the last K successful
+// outcomes, used by FacilitatorSelector to narrow the next-round committee to
+// peers who have signed M of the last K outcomes. MUST be Option-wrapped
+// because the derevo-derived JSON decoder treats Scala defaults as required
+// keys: a snapshot written before the field existed would have peerHistory
+// containing only {perPeer, recentProofSizes} and would fail decode if
+// `recentSigners` were a plain SortedMap with default empty. With Option +
+// dropNullValues=true, older snapshots decode None and readers treat absent
+// as bootstrap (window-not-yet-full). Same migration pattern as the Option
+// wrap on `viewChangesCaused` in PerPeerOperationalRecord above.
 @derive(eqv, show, encoder, decoder)
 final case class ConsensusOperationalState(
   perPeer: SortedMap[PeerId, PerPeerOperationalRecord],
-  recentProofSizes: SortedMap[SnapshotOrdinal, Int]
+  recentProofSizes: SortedMap[SnapshotOrdinal, Int],
+  recentSigners: Option[SortedMap[SnapshotOrdinal, SortedSet[PeerId]]] = None
 )
 
 object ConsensusOperationalState {
   val empty: ConsensusOperationalState =
     ConsensusOperationalState(
       perPeer = SortedMap.empty,
-      recentProofSizes = SortedMap.empty
+      recentProofSizes = SortedMap.empty,
+      recentSigners = None
     )
 }

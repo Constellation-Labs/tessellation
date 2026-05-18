@@ -7,7 +7,7 @@ import cats.data.{NonEmptySet, StateT}
 import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
@@ -229,6 +229,18 @@ object CurrencySnapshotConsensusStateAdvancer {
               withCurrent.filter { case (ord, _) => ord.value.value >= minOrdinalValue }
             }
 
+            // Recent-signers sliding window mirror of dag-l0 advancer.
+            val tighteningMinOrdinalValue =
+              math.max(0L, currentOrdValue - config.tighteningWindow.toLong + 1L)
+            val newRecentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = {
+              val withCurrent =
+                state.lastOutcome.recentSigners.updated(
+                  state.key,
+                  SortedSet.from(completedFacilitators)
+                )
+              withCurrent.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
+            }
+
             // B2 readmissionCountdown maintenance (v12 sticky-probation, see dag-l0 mirror for
             // full rationale). decrement (clamped at 0) → seed justUnpenalized → clear admitted.
             // Pre-v12 auto-cleared the entry when countdown hit 0; v12 keeps the key so only
@@ -297,7 +309,9 @@ object CurrencySnapshotConsensusStateAdvancer {
               // v15: carry the accepted Proposal's `observedSelfHealth` forward, mirror of dag-l0.
               peerSelfHealth = state.observedSelfHealth.value,
               // v16: per-peer cumulative view-change-caused, mirror of dag-l0.
-              peerViewChanges = accumulatedPeerViewChanges
+              peerViewChanges = accumulatedPeerViewChanges,
+              // Sliding signer-set window, mirror of dag-l0.
+              recentSigners = newRecentSigners
             )
             (Previous(state.lastOutcome.key), outcome).some
           case _ =>

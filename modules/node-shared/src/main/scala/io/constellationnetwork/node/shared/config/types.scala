@@ -217,6 +217,20 @@ object types {
     // operators force VCV at the same count, ensuring all honest nodes converge on the same
     // (fromView, toView) for VCC assembly within bounded skew.
     forceViewChangeAbandonments: Int = 3,
+    // Active-set tightening parameters. The committee for round N+1 is narrowed to
+    // peers who signed at least `minParticipationInWindow` of the last
+    // `tighteningWindow` successful outcomes (plus grace candidates: peers in
+    // `genuinelyNewCandidates` / `deferredByCountdown`). If the surviving candidate
+    // set is below `activeFacilitatorFloor`, the filter is bypassed and the full
+    // eligibleFacilitators is used; BFT safety requires N >= 3f+1, so floor=4
+    // prevents dropping below f=1 tolerance. Default K=10, M=6, floor=4: a peer
+    // needs to sign 60% of the last K outcomes to stay in the committee. Same
+    // window size as `recentProofSizes` so the two are pinned to the same horizon.
+    // Consensus-critical: in `deterministicConfigHash` so honest nodes compute
+    // identical committees.
+    tighteningWindow: Int = 10,
+    minParticipationInWindow: Int = 6,
+    activeFacilitatorFloor: Int = 4,
     monitorSummaryInterval: FiniteDuration = FiniteDuration(10, "s"),
     peerScoreLogInterval: FiniteDuration = FiniteDuration(60, "s"),
     qualityDecayThreshold: Int = 100,
@@ -500,7 +514,25 @@ object types {
     //     deterministicConfigHash so a v16-config and v17-config cluster reject each other at
     //     handshake; jar hash also enforces. Currency-l0 unaffected (defaults to 1.0
     //     unanimity, applies to small metagraph clusters where unanimity is preferred).
-    consensusSchemaVersion: Int = 17,
+    //   v18: Active-set tightening via the recentSigners window. Adds an Option-wrapped
+    //     `recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]]` to
+    //     `ConsensusOperationalState`, populated at outcome finalization by reading the
+    //     prior round's `Signed[Snapshot].proofs` and trimming to the last
+    //     `tighteningWindow` entries. The next-round facilitator candidate pool is
+    //     narrowed to peers who signed at least `minParticipationInWindow` of those K
+    //     entries (union with grace candidates: `genuinelyNewCandidates` and
+    //     `deferredByCountdown`). If the surviving pool is below
+    //     `activeFacilitatorFloor`, the filter is bypassed (fallback to full
+    //     eligibility) so BFT safety (N >= 3f+1, floor 4) is preserved during cluster-
+    //     wide outages. Excluded peers remain eligible for the existing
+    //     `chronicReinstatementInterval` rotation so they can re-enter without operator
+    //     intervention. Mid-round mutation is intentionally avoided (prior TC-based
+    //     eviction attempts forked on local-observation divergence); the next-round
+    //     committee is locked at outcome finalization from consensus-agreed inputs.
+    //     v17 readers lack the `recentSigners` field and would treat absent as empty,
+    //     computing different candidate pools after any round populates the window.
+    //     Cold restart required across the cluster.
+    consensusSchemaVersion: Int = 18,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with
@@ -541,8 +573,9 @@ object types {
       *     pool)
       *   - `minLeaderPoolSize`: v16 (2026-05-17) fallback threshold when too few peers clear the hard floor
       *   - `minObservationHistoryFloor`: v8 (2026-04-29) minimum participated count before chronic classification can fire
-      *   - `forceViewChangeAbandonments`: v22 (2026-05-18) defensive force-VCV threshold (bypasses missing-still-responsive gate after N
-      *     same-key abandons)
+      *   - `forceViewChangeAbandonments`: defensive force-VCV threshold (bypasses missing-still-responsive gate after N same-key abandons)
+      *   - `tighteningWindow`, `minParticipationInWindow`, `activeFacilitatorFloor`: active-set narrowing parameters; control which peers
+      *     are committee members for the next round (recent signer history + grace candidates with floor fallback for cluster-wide outages)
       *   - `bootstrapDeclarationTimeoutMultiplier`: affects phase-transition timing during bootstrap
       *
       * '''Non-critical fields''' (excluded — affect timing/performance, not deterministic outcomes):
@@ -588,6 +621,12 @@ object types {
           // produce divergent VCV-emission timing, splitting the cluster across (fromView, toView)
           // pairs and starving VCC assembly.
           s"forceViewChangeAbandonments=$forceViewChangeAbandonments," +
+          // Active-set tightening: three parameters together determine the next-round
+          // committee membership; divergent operator values would produce silently-
+          // divergent facilitator sets and fork the cluster.
+          s"tighteningWindow=$tighteningWindow," +
+          s"minParticipationInWindow=$minParticipationInWindow," +
+          s"activeFacilitatorFloor=$activeFacilitatorFloor," +
           s"chronicReinstatementInterval=$chronicReinstatementInterval," +
           s"lockOnVoteProtocolVersion=$lockOnVoteProtocolVersion," +
           s"bootstrapCompleteProofsThreshold=$bootstrapCompleteProofsThreshold," +
