@@ -654,94 +654,83 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
           // Graduated response: first stall warns and waits, second stall evicts.
           // This gives slow peers (gossip delay, network jitter) an extra timeout window
           // before being removed, preventing premature eviction cascades.
-          if (stallCount == 0) {
-            // First timeout — warn only, give peers one more cycle to respond
-            ConsensusLog.warn(
-              logger,
-              Category.Stall,
-              key.toString,
-              selfRole(state),
-              LogEvent.PeerStallWarning,
-              "phase" -> statusName,
-              "elapsed" -> s"${statusDuration.toSeconds}s",
-              "timeout" -> s"${declarationTimeout.toSeconds}s",
-              "progress" -> s"$declaredCount/$activeCount",
-              "missing" -> missingPeers.size.toString,
-              "missingPeers" -> ConsensusLog.pids(missingPeers),
-              "view" -> state.viewNumber.toString,
-              "action" -> "waiting one more cycle before eviction"
-            ) >>
-              Metrics[F].incrementCounter("dag_consensus_stall_warning") >>
-              Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
-              StallResult(didStall = true, quorumInfeasible = false).pure[F] // Count as stall but don't evict
-          } else if (quorumInfeasible) {
-            // Quorum unreachable (>1/3 missing) — last resort: evict missing peers to restore quorum.
-            // This is the ONLY path that performs mid-round eviction.
-            //
-            // IMPORTANT gate: only evict peers that are ALSO Unresponsive in cluster storage.
-            // A peer whose Facility declaration is just slow to arrive at THIS node (gossip jitter,
-            // bootstrap stagger) but who is still gossiping and Responsive in clusterStorage is NOT
-            // genuinely missing — they'll declare soon. Evicting them splits the cluster:
-            // each node's `missingPeers` set reflects local receive timing, not cluster-wide
-            // liveness. Different nodes evict different peers → divergent committees
-            // (observed Apr 18 E2E: gl0-0/1/3 evicted gl0-2/4 at round 14 while gl0-2/4 evicted
-            // the other three, producing a permanent 3-vs-2 split).
-            //
-            // Cluster storage responsiveness is the authoritative signal: Unresponsive = failed
-            // gossip probes over a bounded window, NOT a single late declaration.
-            (clusterStorage.getResponsivePeers, getPeerChainTips).tupled.flatMap {
-              case (responsivePeersForEviction, chainTips) =>
-                val responsiveIds = responsivePeersForEviction.map(_.id).toSet
-                // Bounded patience: skip eviction while missing peers are still evidence-of-life —
-                // either Responsive in cluster storage OR gossiping chain tips on the mesh — BUT
-                // only within the stall-cycle grace window. After that, BOTH protections drop and
-                // anyone still missing from declarations is evictable regardless of liveness signals.
-                //
-                // The gossip-tip escape hatch matters: `MeshState.getChainTips` returns peers with
-                // retained `(ordinal, hash)` entries that persist until the mesh ages them out. A
-                // zombie node whose consensus fiber wedged at ordinal N but whose gossip fiber
-                // keeps advertising the stale tip would be indefinitely protected if we treated
-                // "has any chain-tip entry" as permanent liveness evidence (codex review
-                // 2026-04-24). Bounding the chain-tip shield to the same `EvictionSkipMaxStalls`
-                // window as the cluster-storage shield prevents that.
-                //
-                // Observed Apr 18: with an unbounded cluster-responsive gate, a 3-of-5 surviving
-                // group froze at ord 13 forever because supermajority required 4 signers and 2
-                // peers had stopped declaring yet clusterStorage still reported them Responsive.
-                // Same category of bug; fix is the same: bounded patience window.
-                val inGracePeriod = stallCount < StallDetector.EvictionSkipMaxStalls
-                val gossipingTips: Set[PeerId] = chainTips.keySet
-                val unresponsiveMissing = {
-                  val clusterUnresponsive = missingPeers.filterNot(responsiveIds.contains)
-                  if (inGracePeriod) clusterUnresponsive.filterNot(gossipingTips.contains)
-                  else clusterUnresponsive
-                }
-                val bootstrapAllowsSkip = inGracePeriod
-                if (unresponsiveMissing.isEmpty && bootstrapAllowsSkip) {
-                  // All missing peers are still Responsive — their declarations haven't arrived at
-                  // this node yet but they're alive. Wait another cycle rather than split.
-                  ConsensusLog.info(
-                    logger,
-                    Category.Stall,
-                    key.toString,
-                    selfRole(state),
-                    LogEvent.StallDetected,
-                    "phase" -> statusName,
-                    "elapsed" -> s"${statusDuration.toSeconds}s",
-                    "progress" -> s"$declaredCount/$activeCount",
-                    "missing" -> missingPeers.size.toString,
-                    "missingPeers" -> ConsensusLog.pids(missingPeers),
-                    "view" -> state.viewNumber.toString,
-                    "stallCount" -> stallCount.toString,
-                    "reason" -> "WAITING_MISSING_STILL_RESPONSIVE",
-                    "action" -> "skipping eviction — all missing peers still gossiping"
-                  ) >>
-                    Metrics[F].incrementCounter("dag_consensus_eviction_skipped_still_responsive") >>
-                    Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
-                    StallResult(didStall = true, quorumInfeasible = false).pure[F]
-                } else {
-                  logger.warn(
-                    ConsensusLog.format(
+          //
+          // v22 (2026-05-18): the existing chain below is the "graduated response" path
+          // (stall warn -> eviction or normal). It runs only when the same key has NOT
+          // already been abandoned `config.forceViewChangeAbandonments` times. Once that
+          // threshold is crossed, the wrapper below short-circuits to a VCV emission
+          // regardless of the "missing-still-responsive" gate inside the quorumInfeasible
+          // branch -- otherwise the cluster wedges indefinitely at view=0 because the
+          // silent peers' lingering chain-tip gossip keeps the gate satisfied.
+          val existingHandle: F[StallResult] =
+            if (stallCount == 0) {
+              // First timeout — warn only, give peers one more cycle to respond
+              ConsensusLog.warn(
+                logger,
+                Category.Stall,
+                key.toString,
+                selfRole(state),
+                LogEvent.PeerStallWarning,
+                "phase" -> statusName,
+                "elapsed" -> s"${statusDuration.toSeconds}s",
+                "timeout" -> s"${declarationTimeout.toSeconds}s",
+                "progress" -> s"$declaredCount/$activeCount",
+                "missing" -> missingPeers.size.toString,
+                "missingPeers" -> ConsensusLog.pids(missingPeers),
+                "view" -> state.viewNumber.toString,
+                "action" -> "waiting one more cycle before eviction"
+              ) >>
+                Metrics[F].incrementCounter("dag_consensus_stall_warning") >>
+                Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
+                StallResult(didStall = true, quorumInfeasible = false).pure[F] // Count as stall but don't evict
+            } else if (quorumInfeasible) {
+              // Quorum unreachable (>1/3 missing) — last resort: evict missing peers to restore quorum.
+              // This is the ONLY path that performs mid-round eviction.
+              //
+              // IMPORTANT gate: only evict peers that are ALSO Unresponsive in cluster storage.
+              // A peer whose Facility declaration is just slow to arrive at THIS node (gossip jitter,
+              // bootstrap stagger) but who is still gossiping and Responsive in clusterStorage is NOT
+              // genuinely missing — they'll declare soon. Evicting them splits the cluster:
+              // each node's `missingPeers` set reflects local receive timing, not cluster-wide
+              // liveness. Different nodes evict different peers → divergent committees
+              // (observed Apr 18 E2E: gl0-0/1/3 evicted gl0-2/4 at round 14 while gl0-2/4 evicted
+              // the other three, producing a permanent 3-vs-2 split).
+              //
+              // Cluster storage responsiveness is the authoritative signal: Unresponsive = failed
+              // gossip probes over a bounded window, NOT a single late declaration.
+              (clusterStorage.getResponsivePeers, getPeerChainTips).tupled.flatMap {
+                case (responsivePeersForEviction, chainTips) =>
+                  val responsiveIds = responsivePeersForEviction.map(_.id).toSet
+                  // Bounded patience: skip eviction while missing peers are still evidence-of-life —
+                  // either Responsive in cluster storage OR gossiping chain tips on the mesh — BUT
+                  // only within the stall-cycle grace window. After that, BOTH protections drop and
+                  // anyone still missing from declarations is evictable regardless of liveness signals.
+                  //
+                  // The gossip-tip escape hatch matters: `MeshState.getChainTips` returns peers with
+                  // retained `(ordinal, hash)` entries that persist until the mesh ages them out. A
+                  // zombie node whose consensus fiber wedged at ordinal N but whose gossip fiber
+                  // keeps advertising the stale tip would be indefinitely protected if we treated
+                  // "has any chain-tip entry" as permanent liveness evidence (codex review
+                  // 2026-04-24). Bounding the chain-tip shield to the same `EvictionSkipMaxStalls`
+                  // window as the cluster-storage shield prevents that.
+                  //
+                  // Observed Apr 18: with an unbounded cluster-responsive gate, a 3-of-5 surviving
+                  // group froze at ord 13 forever because supermajority required 4 signers and 2
+                  // peers had stopped declaring yet clusterStorage still reported them Responsive.
+                  // Same category of bug; fix is the same: bounded patience window.
+                  val inGracePeriod = stallCount < StallDetector.EvictionSkipMaxStalls
+                  val gossipingTips: Set[PeerId] = chainTips.keySet
+                  val unresponsiveMissing = {
+                    val clusterUnresponsive = missingPeers.filterNot(responsiveIds.contains)
+                    if (inGracePeriod) clusterUnresponsive.filterNot(gossipingTips.contains)
+                    else clusterUnresponsive
+                  }
+                  val bootstrapAllowsSkip = inGracePeriod
+                  if (unresponsiveMissing.isEmpty && bootstrapAllowsSkip) {
+                    // All missing peers are still Responsive — their declarations haven't arrived at
+                    // this node yet but they're alive. Wait another cycle rather than split.
+                    ConsensusLog.info(
+                      logger,
                       Category.Stall,
                       key.toString,
                       selfRole(state),
@@ -749,99 +738,164 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
                       "phase" -> statusName,
                       "elapsed" -> s"${statusDuration.toSeconds}s",
                       "progress" -> s"$declaredCount/$activeCount",
-                      "evicted" -> missingPeers.size.toString,
-                      "remaining" -> remaining.toString,
-                      "minQuorum" -> minQuorum.toString,
-                      "quorumFeasible" -> "false",
-                      "evictedPeers" -> ConsensusLog.pids(missingPeers),
-                      "unresponsiveMissing" -> ConsensusLog.pids(unresponsiveMissing),
+                      "missing" -> missingPeers.size.toString,
+                      "missingPeers" -> ConsensusLog.pids(missingPeers),
                       "view" -> state.viewNumber.toString,
                       "stallCount" -> stallCount.toString,
-                      "reason" -> "QUORUM_INFEASIBLE_EVICTION"
-                    )
-                  ) >>
-                    Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>
-                    Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >> {
-                      // Phase B1 EvictionVote emission. Entering this branch already implies:
-                      //   - stallCount > 0 (stallCount == 0 short-circuited to PEER_STALL_WARNING above)
-                      //   - quorumInfeasible (the outer condition)
-                      //   - NOT (unresponsiveMissing.isEmpty && bootstrapAllowsSkip) — so
-                      //     unresponsiveMissing has at least one peer, or we waited past the
-                      //     `EvictionSkipMaxStalls` window for slow-but-responsive peers.
-                      // Those conditions are sufficient evidence to emit eviction votes for the
-                      // peers that are both missing AND Unresponsive in clusterStorage. Per-target
-                      // gates (per-voter cap, not-already-voted, committee membership) are applied
-                      // by `selectEvictionTargets`.
-                      val committeeSet: Set[PeerId] = state.facilitators.value.toSet
-                      val inBootstrap = ctx.isInBootstrap(state.lastOutcome)
-                      val evictionEmission = if (inBootstrap) {
-                        // Phase B1 gate: no emission during bootstrap. Peers flicker Ready/Unresponsive
-                        // during initial sync and recovery, and clusterStorage's view of who is
-                        // unresponsive is unreliable until at least one full-committee snapshot
-                        // exists. Emitting here produced cascading committee splits in the
-                        // 2026-04-21 E2E failures. Matches Phase 4's penalty-suppression pattern.
-                        Async[F].unit
-                      } else
-                        storage.getResources(key).flatMap { resources =>
-                          val alreadyVotedBySelf: Set[PeerId] =
-                            resources.evictionVotes.collect {
-                              case (target, voters) if voters.contains(selfId) => target
-                            }.toSet
-                          // Proposal-phase stalls: only the leader is expected to declare a Proposal, so
-                          // "nobody declared" means the leader is the unique culprit — everyone else is
-                          // correctly waiting. `unresponsiveMissing` would mostly be responsive followers,
-                          // and voting to evict them is a false positive. Target the leader specifically.
-                          // Observed 2026-04-23 ord 3107095: leader cd6362ae (Responsive but pipeline-stalled)
-                          // never emitted a Proposal; the cluster abandoned 4x without producing an eviction
-                          // vote because the existing target computation matched neither.
-                          val candidates: Set[PeerId] =
-                            if (ops.isProposalPhase(state.status)) Set(state.leader)
-                            else unresponsiveMissing
-                          val newTargets: List[PeerId] = StallDetector.selectEvictionTargets(
-                            selfId = selfId,
-                            unresponsiveMissing = candidates,
-                            committee = committeeSet,
-                            alreadyVotedBySelf = alreadyVotedBySelf,
-                            minQuorum = minQuorum
-                          )
-                          newTargets.traverse_ { target =>
-                            evictionVoter.emitEvictionVote(key, target, EvictionReason.Silent) >>
-                              queue.offer(ConsensusCommand.CheckEvictionAssembly(key, target))
-                          }
-                        }
-                      evictionEmission >>
-                        // Phase 2+: no mid-round eviction. View change here is leader-rotation
-                        // only (gossip a VCV, wait for quorum-certified VCC to advance the view).
-                        // If the round can't complete due to genuinely-unresponsive peers, the
-                        // stall-cycle abandonment path in the outer monitor takes over.
-                        //
-                        // Propagate quorumInfeasible=true so the outer monitor's abandonment
-                        // classification can distinguish a genuine quorum-infeasible stall (this
-                        // branch) from ordinary stall-cycle expiry (the `else` below). Without
-                        // this, AbandonReason.QuorumInfeasible never fires and the new
-                        // escalate-vs-suppress logic in AbandonmentTracker is unreachable.
-                        viewChangeManager
-                          .performViewChange(key, state)
-                          .as(
-                            StallResult(
-                              didStall = true,
-                              quorumInfeasible = true,
-                              activeFacilitators = remaining,
-                              quorumSize = minQuorum,
-                              clusterSize = clusterSize,
-                              evictionEscalated = false
+                      "reason" -> "WAITING_MISSING_STILL_RESPONSIVE",
+                      "action" -> "skipping eviction — all missing peers still gossiping"
+                    ) >>
+                      Metrics[F].incrementCounter("dag_consensus_eviction_skipped_still_responsive") >>
+                      Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
+                      StallResult(didStall = true, quorumInfeasible = false).pure[F]
+                  } else {
+                    logger.warn(
+                      ConsensusLog.format(
+                        Category.Stall,
+                        key.toString,
+                        selfRole(state),
+                        LogEvent.StallDetected,
+                        "phase" -> statusName,
+                        "elapsed" -> s"${statusDuration.toSeconds}s",
+                        "progress" -> s"$declaredCount/$activeCount",
+                        "evicted" -> missingPeers.size.toString,
+                        "remaining" -> remaining.toString,
+                        "minQuorum" -> minQuorum.toString,
+                        "quorumFeasible" -> "false",
+                        "evictedPeers" -> ConsensusLog.pids(missingPeers),
+                        "unresponsiveMissing" -> ConsensusLog.pids(unresponsiveMissing),
+                        "view" -> state.viewNumber.toString,
+                        "stallCount" -> stallCount.toString,
+                        "reason" -> "QUORUM_INFEASIBLE_EVICTION"
+                      )
+                    ) >>
+                      Metrics[F].incrementCounter("dag_consensus_peer_eviction") >>
+                      Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >> {
+                        // Phase B1 EvictionVote emission. Entering this branch already implies:
+                        //   - stallCount > 0 (stallCount == 0 short-circuited to PEER_STALL_WARNING above)
+                        //   - quorumInfeasible (the outer condition)
+                        //   - NOT (unresponsiveMissing.isEmpty && bootstrapAllowsSkip) — so
+                        //     unresponsiveMissing has at least one peer, or we waited past the
+                        //     `EvictionSkipMaxStalls` window for slow-but-responsive peers.
+                        // Those conditions are sufficient evidence to emit eviction votes for the
+                        // peers that are both missing AND Unresponsive in clusterStorage. Per-target
+                        // gates (per-voter cap, not-already-voted, committee membership) are applied
+                        // by `selectEvictionTargets`.
+                        val committeeSet: Set[PeerId] = state.facilitators.value.toSet
+                        val inBootstrap = ctx.isInBootstrap(state.lastOutcome)
+                        val evictionEmission = if (inBootstrap) {
+                          // Phase B1 gate: no emission during bootstrap. Peers flicker Ready/Unresponsive
+                          // during initial sync and recovery, and clusterStorage's view of who is
+                          // unresponsive is unreliable until at least one full-committee snapshot
+                          // exists. Emitting here produced cascading committee splits in the
+                          // 2026-04-21 E2E failures. Matches Phase 4's penalty-suppression pattern.
+                          Async[F].unit
+                        } else
+                          storage.getResources(key).flatMap { resources =>
+                            val alreadyVotedBySelf: Set[PeerId] =
+                              resources.evictionVotes.collect {
+                                case (target, voters) if voters.contains(selfId) => target
+                              }.toSet
+                            // Proposal-phase stalls: only the leader is expected to declare a Proposal, so
+                            // "nobody declared" means the leader is the unique culprit — everyone else is
+                            // correctly waiting. `unresponsiveMissing` would mostly be responsive followers,
+                            // and voting to evict them is a false positive. Target the leader specifically.
+                            // Observed 2026-04-23 ord 3107095: leader cd6362ae (Responsive but pipeline-stalled)
+                            // never emitted a Proposal; the cluster abandoned 4x without producing an eviction
+                            // vote because the existing target computation matched neither.
+                            val candidates: Set[PeerId] =
+                              if (ops.isProposalPhase(state.status)) Set(state.leader)
+                              else unresponsiveMissing
+                            val newTargets: List[PeerId] = StallDetector.selectEvictionTargets(
+                              selfId = selfId,
+                              unresponsiveMissing = candidates,
+                              committee = committeeSet,
+                              alreadyVotedBySelf = alreadyVotedBySelf,
+                              minQuorum = minQuorum
                             )
-                          )
-                    }
-                }
+                            newTargets.traverse_ { target =>
+                              evictionVoter.emitEvictionVote(key, target, EvictionReason.Silent) >>
+                                queue.offer(ConsensusCommand.CheckEvictionAssembly(key, target))
+                            }
+                          }
+                        evictionEmission >>
+                          // Phase 2+: no mid-round eviction. View change here is leader-rotation
+                          // only (gossip a VCV, wait for quorum-certified VCC to advance the view).
+                          // If the round can't complete due to genuinely-unresponsive peers, the
+                          // stall-cycle abandonment path in the outer monitor takes over.
+                          //
+                          // Propagate quorumInfeasible=true so the outer monitor's abandonment
+                          // classification can distinguish a genuine quorum-infeasible stall (this
+                          // branch) from ordinary stall-cycle expiry (the `else` below). Without
+                          // this, AbandonReason.QuorumInfeasible never fires and the new
+                          // escalate-vs-suppress logic in AbandonmentTracker is unreachable.
+                          viewChangeManager
+                            .performViewChange(key, state)
+                            .as(
+                              StallResult(
+                                didStall = true,
+                                quorumInfeasible = true,
+                                activeFacilitators = remaining,
+                                quorumSize = minQuorum,
+                                clusterSize = clusterSize,
+                                evictionEscalated = false
+                              )
+                            )
+                      }
+                  }
+              }
+            } else {
+              // Normal stall with quorum still feasible — just count the cycle.
+              // The round will complete at quorum threshold (ceil(N*2/3)) without
+              // needing to evict anyone. Non-responding peers become non-signers
+              // in the outcome and get penalized between rounds.
+              Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
+                StallResult(didStall = true, quorumInfeasible = false).pure[F]
             }
-          } else {
-            // Normal stall with quorum still feasible — just count the cycle.
-            // The round will complete at quorum threshold (ceil(N*2/3)) without
-            // needing to evict anyone. Non-responding peers become non-signers
-            // in the outcome and get penalized between rounds.
-            Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
-              StallResult(didStall = true, quorumInfeasible = false).pure[F]
+
+          // v22 (2026-05-18) defensive force-VCV short-circuit. Reads the cluster-tracked
+          // consecutiveAbandonments counter (same one logged as `consecutiveAbandonments=` in
+          // ROUND_ABANDONED_TRACKED / RETRIABLE_ESCALATED). When it crosses the threshold for
+          // THIS ordinal, emit a ViewChangeVote unconditionally so all responsive peers
+          // converge on (fromView=v, toView=v+1) via the existing VCC machinery. We do not
+          // mutate the facilitator set (April 2026's failed approach was mid-round eviction);
+          // the round retries with view=v+1, a deterministically-different leader, and the
+          // same supermajority threshold. Honest nodes that cross the abandonment threshold
+          // within bounded skew of each other emit byte-identical VCVs at the same
+          // (fromView, toView, facilitatorsHash) tuple; VCC assembly succeeds once
+          // ceil(N*2/3) of the round-start committee has voted. Stragglers catch up via the
+          // existing "advance localView on observing higher-view message" path.
+          abandonmentTracker.consecutiveAbandonmentsFor(key).flatMap { consecutiveAbandonments =>
+            if (consecutiveAbandonments >= config.forceViewChangeAbandonments) {
+              ConsensusLog
+                .warn(
+                  logger,
+                  Category.Stall,
+                  key.toString,
+                  selfRole(state),
+                  LogEvent.ForcedViewChange,
+                  "consecutiveAbandonments" -> consecutiveAbandonments.toString,
+                  "threshold" -> config.forceViewChangeAbandonments.toString,
+                  "phase" -> statusName,
+                  "view" -> state.viewNumber.toString,
+                  "progress" -> s"$declaredCount/$activeCount",
+                  "leader" -> ConsensusLog.pid(state.leader),
+                  "missingPeers" -> ConsensusLog.pids(missingPeers)
+                ) >>
+                Metrics[F].incrementCounter("dag_consensus_forced_view_change_total") >>
+                Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
+                viewChangeManager
+                  .performViewChange(key, state)
+                  .as(
+                    StallResult(
+                      didStall = true,
+                      quorumInfeasible = quorumInfeasible,
+                      activeFacilitators = remaining,
+                      quorumSize = minQuorum,
+                      clusterSize = clusterSize
+                    )
+                  )
+            } else existingHandle
           }
         }
       } else if (ops.isProposalPhase(state.status)) {
