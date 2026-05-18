@@ -4,7 +4,7 @@ import cats.Parallel
 import cats.effect._
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.BuildInfo
 import io.constellationnetwork.dag.l0.StoragesInitializer.initializeStorages
@@ -379,6 +379,10 @@ object Main
                   seedRecentProofSizes =
                     if (seedOperational.recentProofSizes.nonEmpty) seedOperational.recentProofSizes
                     else SortedMap(snapshot.ordinal -> rollbackProofSize)
+                  // Recent-signers window unwrapped from the Option. Snapshots written before
+                  // the field existed decode None -> empty map; FacilitatorSelector treats an
+                  // empty window as bootstrap (use full eligibility until the window fills).
+                  seedRecentSigners = seedOperational.recentSigners.getOrElse(SortedMap.empty[SnapshotOrdinal, SortedSet[PeerId]])
                   result <- services.consensus.manager.startFacilitatingAfterRollback(
                     snapshot.ordinal,
                     GlobalConsensusOutcome(
@@ -394,7 +398,8 @@ object Main
                       cumulativeMissCounts = seedCumulativeMissCounts,
                       recentProofSizes = seedRecentProofSizes,
                       readmissionCountdown = seedReadmissionCountdown,
-                      peerViewChanges = seedPeerViewChanges
+                      peerViewChanges = seedPeerViewChanges,
+                      recentSigners = seedRecentSigners
                     )
                   )
                 } yield result

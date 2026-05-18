@@ -3,7 +3,7 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 import cats.Show
 import cats.syntax.show._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
@@ -158,7 +158,19 @@ object schema {
     // peers below the configured floor. Default empty: pre-v16 outcomes decode with no
     // view-change history (matches v15 peerSelfHealth pattern). Persisted via v20/v21
     // PerPeerOperationalRecord so the chronic-leader filter survives cold-restart.
-    peerViewChanges: SortedMap[PeerId, Long] = SortedMap.empty
+    peerViewChanges: SortedMap[PeerId, Long] = SortedMap.empty,
+    // Sliding window of (ordinal -> proofs-signer-set) for the last `tighteningWindow`
+    // outcomes. Used by FacilitatorSelector to narrow the next-round committee to
+    // peers who signed at least `minParticipationInWindow` of these K outcomes. Window
+    // grows by one entry per round; entries older than K are dropped at outcome
+    // finalization. Each entry is the prior round's signer set, byte-identically
+    // derived on every honest node since `completedFacilitators` (roundStartFacilitators
+    // minus evictedPeers) is canonical round-start state. Persisted via
+    // toOperationalState below; survives cold-restart so a freshly-rebooted cluster
+    // doesn't lose K rounds of history. Default empty: outcomes that pre-date the
+    // window have no signer history; FacilitatorSelector treats this as a bootstrap
+    // window (use full eligibility until window fills).
+    recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = SortedMap.empty
   ) {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value
@@ -196,7 +208,15 @@ object schema {
             )
           }
         )
-      ConsensusOperationalState(perPeer = perPeer, recentProofSizes = recentProofSizes)
+      ConsensusOperationalState(
+        perPeer = perPeer,
+        recentProofSizes = recentProofSizes,
+        // Emit `Some(nonEmptyMap)` so `dropNullValues=true` keeps the field out of
+        // byte-stable encodings written before this field existed; emit `None` while
+        // the window is empty (bootstrap, rollback to an old snapshot) so
+        // FacilitatorSelector defaults to full-eligibility behavior.
+        recentSigners = if (recentSigners.nonEmpty) Some(recentSigners) else None
+      )
     }
   }
 

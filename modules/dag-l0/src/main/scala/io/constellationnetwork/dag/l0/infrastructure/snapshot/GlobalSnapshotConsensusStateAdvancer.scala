@@ -8,7 +8,7 @@ import cats.effect.{Async, Outcome, Ref}
 import cats.syntax.all._
 import cats.{Applicative, MonadThrow, Parallel}
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
@@ -358,6 +358,24 @@ object GlobalSnapshotConsensusStateAdvancer {
               withCurrent.filter { case (ord, _) => ord.value.value >= minOrdinalValue }
             }
 
+            // Same sliding-window pattern as recentProofSizes above, but stores the
+            // actual signer set per ordinal (not just the count) so the next round's
+            // FacilitatorSelector can compute participantsLastK. Bounded by
+            // `config.tighteningWindow`. `completedFacilitators` is the consensus-
+            // agreed signer set (roundStartFacilitators minus evictedPeers): byte-
+            // identical on every honest node since both inputs are canonical round-
+            // start state.
+            val tighteningMinOrdinalValue =
+              math.max(0L, currentOrdValue - config.tighteningWindow.toLong + 1L)
+            val newRecentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = {
+              val withCurrent =
+                state.lastOutcome.recentSigners.updated(
+                  state.key,
+                  SortedSet.from(completedFacilitators)
+                )
+              withCurrent.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
+            }
+
             // B2 readmissionCountdown maintenance (v12 sticky-probation, codex turn-2 2026-05-02):
             //   1) Decrement any active probation counters by 1 — but CLAMP at 0 instead of
             //      auto-clearing the entry. Pre-v12 had `.filter(_._2 > 0)` here, which dropped
@@ -464,7 +482,10 @@ object GlobalSnapshotConsensusStateAdvancer {
               peerSelfHealth = state.observedSelfHealth.value,
               // v16: per-peer cumulative view-change-caused, deterministic from this round's
               // (entropy, viewNumber, lastOutcome, roundStartFacilitators) inputs above.
-              peerViewChanges = accumulatedPeerViewChanges
+              peerViewChanges = accumulatedPeerViewChanges,
+              // Sliding window of per-ord signers; consumed by next round's
+              // FacilitatorSelector to narrow the candidate pool.
+              recentSigners = newRecentSigners
             )
             (Previous(state.lastOutcome.key), outcome).some
           case _ =>

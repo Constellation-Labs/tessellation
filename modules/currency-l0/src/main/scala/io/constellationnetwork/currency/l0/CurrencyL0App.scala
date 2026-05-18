@@ -34,13 +34,13 @@ import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
 import io.constellationnetwork.node.shared.resources.{ConsensusExecutor, MkHttpServer}
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.node.shared.{NodeSharedOrSharedRegistrationIdRange, nodeSharedKryoRegistrar}
-import io.constellationnetwork.schema.ConsensusOperationalState
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.gossip.{Ordinal => GossipOrdinal}
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
+import io.constellationnetwork.schema.{ConsensusOperationalState, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -442,6 +442,8 @@ abstract class CurrencyL0App(
                           SortedMap(
                             currencySnapshot.ordinal -> currencySnapshot.proofs.size.toInt
                           )
+                      // Recent-signers window unwrap mirror of dag-l0 Main.scala.
+                      seedRecentSigners = seedOperational.recentSigners.getOrElse(SortedMap.empty[SnapshotOrdinal, SortedSet[PeerId]])
                       _ <- services.consensus.manager.startFacilitatingAfterRollback(
                         currencySnapshot.ordinal,
                         CurrencyConsensusOutcome(
@@ -465,7 +467,8 @@ abstract class CurrencyL0App(
                           cumulativeMissCounts = seedCumulativeMissCounts,
                           recentProofSizes = rollbackRecentProofSizes,
                           readmissionCountdown = seedReadmissionCountdown,
-                          peerViewChanges = seedPeerViewChanges
+                          peerViewChanges = seedPeerViewChanges,
+                          recentSigners = seedRecentSigners
                         )
                       )
                     } yield ()

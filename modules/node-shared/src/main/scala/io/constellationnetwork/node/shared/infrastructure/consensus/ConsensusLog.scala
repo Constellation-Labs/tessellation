@@ -99,6 +99,11 @@ object ConsensusLog {
     case object MinQuorumFloorApplied extends Event { val show = "MIN_QUORUM_FLOOR_APPLIED" }
     case object CandidateObserving extends Event { val show = "CANDIDATE_OBSERVING" }
     case object ChronicNonSignersExcluded extends Event { val show = "CHRONIC_NON_SIGNERS_EXCLUDED" }
+    // Active-set tightening based on the recent-signers window. Logged at round-start
+    // when the M-of-K filter is evaluated. The `filterApplied` field distinguishes
+    // whether the filter actually excluded peers or fell through to the bootstrap/floor
+    // fallback.
+    case object ActiveSetTightened extends Event { val show = "ACTIVE_SET_TIGHTENED" }
     case object TcaFilterApplied extends Event { val show = "TCA_FILTER_APPLIED" }
     case object AbandonedMissingLogged extends Event { val show = "ABANDONED_MISSING_LOGGED" }
     case object PriorRoundMissingExcluded extends Event { val show = "PRIOR_ROUND_MISSING_EXCLUDED" }

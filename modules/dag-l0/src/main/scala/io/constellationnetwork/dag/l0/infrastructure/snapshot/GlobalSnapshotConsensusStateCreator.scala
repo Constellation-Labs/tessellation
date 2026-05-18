@@ -350,6 +350,60 @@ object GlobalSnapshotConsensusStateCreator {
           )
           .whenA(priorRoundMissing.nonEmpty)
 
+        // Active-set tightening via the recentSigners window. Narrows the candidate
+        // pool to peers who signed at least `config.minParticipationInWindow` of the
+        // last `config.tighteningWindow` outcomes, plus `allDeferred` (new + countdown
+        // peers that don't have a fair chance to have signed yet). If the surviving
+        // pool is below `config.activeFacilitatorFloor`, the filter is bypassed for
+        // THIS round so BFT safety (N >= 3f+1) is preserved. The window itself is
+        // filled at outcome finalization by the StateAdvancer from `completedFacilitators`
+        // (roundStartFacilitators minus evictedPeers), which is consensus-agreed, so
+        // every honest node computes the same `participantsLastK` set. Bootstrap:
+        // `recentSigners.size < tighteningWindow` -> no filter applied; the candidate
+        // pool matches prior behavior for the first K outcomes.
+        tighteningWindowFull = lastOutcome.recentSigners.size >= config.tighteningWindow
+        recentParticipants: Set[PeerId] =
+          if (!tighteningWindowFull) Set.empty[PeerId]
+          else {
+            val counts: Map[PeerId, Int] =
+              lastOutcome.recentSigners.values.iterator.flatten.toList
+                .groupBy(identity)
+                .view
+                .mapValues(_.size)
+                .toMap
+            counts.collect {
+              case (pid, n) if n >= config.minParticipationInWindow => pid
+            }.toSet
+          }
+        tighteningTentativeExcluded: Set[PeerId] =
+          if (!tighteningWindowFull) Set.empty[PeerId]
+          else allEligible.toSet -- recentParticipants -- allDeferred
+        tighteningPostFilterSize = allEligible.size - tighteningTentativeExcluded.size
+        tighteningExcluded: Set[PeerId] =
+          if (tighteningWindowFull && tighteningPostFilterSize >= config.activeFacilitatorFloor)
+            tighteningTentativeExcluded
+          else
+            Set.empty[PeerId]
+
+        _ <- ConsensusLog
+          .info(
+            logger,
+            Facilitator,
+            key.show,
+            "n/a",
+            ActiveSetTightened,
+            "windowSize" -> lastOutcome.recentSigners.size.toString,
+            "tighteningWindow" -> config.tighteningWindow.toString,
+            "minParticipationInWindow" -> config.minParticipationInWindow.toString,
+            "activeFacilitatorFloor" -> config.activeFacilitatorFloor.toString,
+            "filterApplied" -> tighteningExcluded.nonEmpty.toString,
+            "tentativeExcludedCount" -> tighteningTentativeExcluded.size.toString,
+            "appliedExcludedCount" -> tighteningExcluded.size.toString,
+            "postFilterSize" -> tighteningPostFilterSize.toString,
+            "peers" -> tighteningExcluded.toList.map(_.value.value.take(8)).sorted.mkString(",")
+          )
+          .whenA(tighteningWindowFull)
+
         // For THIS round only: exclude recently removed and penalized peers from active selection.
         // They remain in allEligible so they can be re-selected in future rounds.
         // NOTE: abandonedMissing is intentionally NOT included — it's a local-only tracker that
@@ -410,22 +464,31 @@ object GlobalSnapshotConsensusStateCreator {
         eligibleThisRound = {
           // Exclude: previously removed peers, penalized peers, chronic non-signers (minus any
           // reinstated for this round), deferred candidates (brand-new or in countdown),
-          // B2 probation peers (waiting for AdmissionCertificate re-admission), AND
+          // B2 probation peers (waiting for AdmissionCertificate re-admission),
           // priorRoundMissing (facilitators of the previous round that did not sign; see
-          // the `priorRoundMissing` computation above for the determinism rationale).
+          // the `priorRoundMissing` computation above for the determinism rationale),
+          // AND tighteningExcluded (active-set tightening; the per-round floor is applied
+          // inside tighteningExcluded so we don't need to re-check it here).
           // Deferred/probation candidates remain in allEligible so they remain tracked.
           val excluded =
-            previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers ++ priorRoundMissing
+            previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers ++ priorRoundMissing ++
+              tighteningExcluded
           val filtered = allEligible.filterNot(excluded.contains)
           // Bypass chain for liveness when filtering would drop below minViableQuorum:
-          //   1. withoutPenaltiesOnly — lift penalties + deferral, keep chronic, reinstatement
-          //      rotation, AND probation. Probation is NON-BYPASSABLE: the only way out of
-          //      probation is a quorum-witnessed AdmissionCertificate embedded in a Proposal.
-          //   2. filtered itself (even below floor) — accept degraded committee over re-admitting chronic/probation peers
-          //   3. allEligible MINUS probation — last-resort full re-admit of chronic peers, but never probation
-          //   4. allEligible — only if even step 3 is empty (pathological case, falls through to selfId)
+          //   1. withoutPenaltiesOnly: lift penalties + deferral + tightening window-exclusion,
+          //      keep chronic, reinstatement rotation, AND probation. Probation is
+          //      NON-BYPASSABLE: the only way out of probation is a quorum-witnessed
+          //      AdmissionCertificate embedded in a Proposal.
+          //   2. filtered itself (even below floor): accept degraded committee over
+          //      re-admitting chronic/probation peers
+          //   3. allEligible MINUS probation: last-resort full re-admit of chronic peers,
+          //      but never probation
+          //   4. allEligible: only if even step 3 is empty (pathological case, falls
+          //      through to selfId)
           // This is the fork-safety critical path: we never re-admit `chronicNonSigners` or
-          // `probationPeers` except via their respective re-entry gates.
+          // `probationPeers` except via their respective re-entry gates. tighteningExcluded lifts
+          // with penalties because it shares their semantics (round-by-round penalty for
+          // non-participation, not a permanent classification).
           val withoutPenaltiesOnly =
             allEligible.filterNot((previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ probationPeers).contains)
           val allEligibleMinusProbation = allEligible.filterNot(probationPeers.contains)
@@ -439,7 +502,8 @@ object GlobalSnapshotConsensusStateCreator {
 
         penaltyBypassed = {
           val excluded =
-            previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers ++ priorRoundMissing
+            previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers ++ priorRoundMissing ++
+              tighteningExcluded
           val filtered = allEligible.filterNot(excluded.contains)
           filtered.size < minViableQuorum && allEligible.size > filtered.size
         }
