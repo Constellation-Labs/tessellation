@@ -4,36 +4,47 @@ import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.schema.peer.PeerId
 
-/** Deterministic derivation of the three v19 committees from a flat candidate set and the carried-forward per-peer tier map.
+/** Deterministic derivation of the three v19 committees from a flat candidate set, the carried-forward per-peer tier map, AND the
+  * consensus-agreed per-peer participation history.
   *
   * ==Three committees==
   *
   *   - '''Core''' (Tier 2): full facilitators, in the LIVENESS quorum. Quorum threshold is computed against `coreFacilitators.value.size`
-  *     only; demotions out of Core never change the active quorum denominator without consensus-agreement.
-  *   - '''Tier1''': witness-eligible (B1/B2/VCC witness pool), not in the LIVENESS quorum. Demoted by `TierTransitions.computeNextTier` on
-  *     completed rounds where they were in `roundStartFacilitators` but missing from `recentSigners`.
+  *     only; Tier 1 and Tier 0 peers do not count toward the active quorum denominator.
+  *   - '''Tier1''': witness-eligible (B1/B2/VCC witness pool), not in the LIVENESS quorum. Tier 1 peers sign rounds and earn rewards
+  *     proportionally; their absence cannot wedge consensus.
   *   - '''Witness''' (Tier 0): observation only. Open membership; peers fall here only via explicit eviction outside this builder.
   *
-  * ==Bootstrap default==
+  * ==Tier assignment rule==
   *
-  * Peers with no carried-forward tier (`priorTiers.get(pid) == None`) default to Core. No seedlist allowlist is required: the cluster boots
-  * with all eligible peers in Core, and `TierTransitions` propagates demotions only after the first round completes and signers are
-  * observed.
+  * Each peer's effective tier for the round is computed by consulting, in order:
+  *
+  *   1. '''Quality degradation override''': if `peerQuality(pid)` shows `participated >= minObservations` AND `completed/participated <
+  *      minRatio`, the peer is Tier 1 regardless of `priorTiers`. This is the structural protection: a peer whose cumulative track record
+  *      has fallen below the quality bar cannot gate liveness, even if their previously-recorded `peerTiers` entry said Core. Re-derived
+  *      every round, so a peer that recovers ratio above the threshold returns to whatever `priorTiers` says next round. 2.
+  *      '''Carried-forward classification''': `priorTiers.get(pid)`, if present. 3. '''Quality-proven bootstrap''': for peers absent from
+  *      `priorTiers` (new joiners), Core IFF `peerQuality` shows them above `minRatio` with `participated >= minObservations`. This lets
+  *      demonstrated-good peers enter Core on their first appearance. 4. '''Default''': Tier 1. New peers without proven participation join
+  *      the witness pool, not the liveness quorum. This is the replacement for the original v19 "everyone defaults to Core" bootstrap,
+  *      which let chronic-but-unclassified community peers wedge the cluster.
   *
   * ==Core floor==
   *
-  * If the derived Core committee is below the per-environment `coreCommitteeSize`, peers are promoted from Tier1 (deterministically:
-  * lexicographic-sorted by PeerId hex value so every honest node selects the same promotion set) until the floor is met. If Tier1 is also
-  * insufficient, the floor is honored to whatever degree the candidate pool can supply -- the builder never invents peers.
+  * If the derived Core committee is below the per-environment `coreCommitteeSize`, peers are promoted from Tier 1 deterministically. The
+  * promotion order ranks Tier 1 peers by their `peerQuality` (descending ratio, then descending completed count, then PeerId lex as
+  * tie-break) so the floor pulls in the most demonstrably reliable Tier 1 peers first. At genesis (empty `peerQuality`), this collapses to
+  * pure lex ordering so the cluster bootstraps from scratch.
   *
   * The floor is consensus-critical: divergent values across operators would derive divergent Core committees and silently fork the cluster.
   * `coreCommitteeSize` is keyed by `AppEnvironment` and is NOT included in `deterministicConfigHash` (the jar hash gates peer connection;
-  * same precedent as `maxFacilitatorCount`).
+  * same precedent as `maxFacilitatorCount`). `minObservations` and `minRatio` reuse the existing `minParticipationObservations` /
+  * `minParticipationRatio` config knobs.
   *
   * ==Determinism contract==
   *
-  * Every input is a consensus-agreed signed outcome field (carried `priorTiers`) or a deterministic local computation from one (the
-  * candidate set produced by the same filtering pipeline on every node). Output is byte-stable across honest nodes.
+  * Every input is a consensus-agreed signed outcome field (carried `priorTiers`, `peerQuality`) or a deterministic local computation from
+  * one (the candidate set, produced by the same filtering pipeline on every node). Output is byte-stable across honest nodes.
   */
 object CommitteeBuilder {
 
@@ -42,8 +53,9 @@ object CommitteeBuilder {
   /** Final per-committee classification result. `core`, `tier1`, `witness` partition `candidates` exactly: every peer in `candidates` lands
     * in exactly one of the three.
     *
-    * `effectiveTiers` is the tier map AFTER applying the bootstrap default and any Core floor promotions. This is what the StateCreator
-    * persists into the round's `roundStartFacilitators` -- the round's view of who is Core vs Tier 1 vs Witness.
+    * `effectiveTiers` is the tier map AFTER applying the bootstrap default, the quality-degradation override, and any Core-floor
+    * promotions. This is what the StateCreator persists into the round's `roundStartFacilitators` -- the round's view of who is Core vs
+    * Tier 1 vs Witness.
     */
   final case class Committees(
     core: List[PeerId],
@@ -52,34 +64,78 @@ object CommitteeBuilder {
     effectiveTiers: SortedMap[PeerId, Int]
   )
 
-  /** Derive (core, tier1, witness) from the candidate set, applying tier defaults and Core-floor promotion.
+  /** Derive (core, tier1, witness) from the candidate set, applying quality-aware tier defaults and Core-floor promotion.
     *
     * @param candidates
     *   The set of eligible peers for the next round (already filtered by the chronic-non-signer / penalized / deferred / probation /
-    *   tightening pipeline in the StateCreator). Order preserved in the output via stable lexicographic-by-PeerId sorting of the promotion
-    *   set.
+    *   tightening pipeline in the StateCreator). Order preserved in the output via stable PeerId-hex sorting of the promotion set.
     * @param priorTiers
-    *   `lastOutcome.peerTiers` -- the carried-forward classification. Absent peers default to Tier 2 (Core).
+    *   `lastOutcome.peerTiers` -- the carried-forward classification. Absent peers fall through to quality-based default.
+    * @param peerQuality
+    *   `lastOutcome.peerQuality` -- per-peer `(completed, participated)` participation history. Used for the quality-degradation override
+    *   (any-tier -> Tier 1 if cumulative ratio drops below `minRatio`), the quality-proven bootstrap (Tier 1 -> Core for new peers above
+    *   the bar), and the Core-floor promotion ranking. Empty at genesis -> ranking falls back to lex order.
     * @param coreFloor
-    *   Per-environment minimum Core size. Promotions from Tier1 are applied deterministically (lex-sorted) until the floor is met or Tier1
-    *   is exhausted.
+    *   Per-environment minimum Core size.
+    * @param minObservations
+    *   Minimum `participated` count before the quality criteria fire. Peers below this threshold are treated as "insufficient evidence" and
+    *   fall through to the default. Reuses `config.minParticipationObservations`.
+    * @param minRatio
+    *   Minimum `completed/participated` ratio for Core eligibility. Reuses `config.minParticipationRatio`.
     */
   def build(
     candidates: List[PeerId],
     priorTiers: SortedMap[PeerId, Int],
-    coreFloor: Int
+    peerQuality: Map[PeerId, (Int, Int)],
+    coreFloor: Int,
+    minObservations: Int,
+    minRatio: Double
   ): Committees = {
-    val effectiveTier: PeerId => Int = pid => priorTiers.getOrElse(pid, Core)
+    def hasSufficientHistory(pid: PeerId): Option[Double] =
+      peerQuality.get(pid).flatMap {
+        case (completed, participated) if participated >= minObservations =>
+          Some(completed.toDouble / participated.toDouble)
+        case _ => None
+      }
+
+    def isQualityDegraded(pid: PeerId): Boolean =
+      hasSufficientHistory(pid).exists(_ < minRatio)
+
+    def isQualityProven(pid: PeerId): Boolean =
+      hasSufficientHistory(pid).exists(_ >= minRatio)
+
+    val effectiveTier: PeerId => Int = pid =>
+      if (isQualityDegraded(pid)) Tier1
+      else
+        priorTiers.get(pid) match {
+          case Some(tier) => tier
+          case None       => if (isQualityProven(pid)) Core else Tier1
+        }
 
     val (rawCore, rawNonCore) = candidates.partition(effectiveTier(_) == Core)
     val (rawTier1, rawWitness) = rawNonCore.partition(effectiveTier(_) == Tier1)
 
     // Core-floor promotion: if rawCore.size < coreFloor, deterministically promote
-    // lexicographic-sorted Tier1 peers into Core until the floor is met. Promotion
-    // is by stable PeerId-hex ordering so every honest node makes the same call.
+    // Tier 1 peers into Core until the floor is met. Ranking pulls the most
+    // demonstrably reliable Tier 1 peers first (high ratio, high completed count);
+    // at genesis with empty peerQuality this collapses to pure lex order, preserving
+    // bootstrap behavior. Every honest node sees the same peerQuality + priorTiers
+    // and therefore makes the same promotion choices.
     val promotionDeficit = math.max(0, coreFloor - rawCore.size)
-    val sortedTier1ByHex = rawTier1.sortBy(_.value.value)
-    val (promoted, remainingTier1Sorted) = sortedTier1ByHex.splitAt(promotionDeficit)
+    val sortedTier1ForPromotion = {
+      def rank(pid: PeerId): (Int, Int, Int, String) =
+        peerQuality.get(pid) match {
+          case Some((completed, participated)) if participated > 0 =>
+            val ratioScaled = ((completed.toDouble / participated.toDouble) * 1000000).toInt
+            // Sort key: hasHistory(0=has, 1=none) asc, -ratio asc, -completed asc, peerId asc
+            // (0, ...) sorts before (1, ...) so peers with data rank ahead of bootstrap-blank peers.
+            (0, -ratioScaled, -completed, pid.value.value)
+          case _ =>
+            (1, 0, 0, pid.value.value)
+        }
+      rawTier1.sortBy(rank)
+    }
+    val (promoted, _) = sortedTier1ForPromotion.splitAt(promotionDeficit)
     // Preserve original ordering for the un-promoted tier1 set so the StateCreator's
     // upstream candidate order (FacilitatorSelector.select output) is respected.
     val promotedSet = promoted.toSet
@@ -89,9 +145,11 @@ object CommitteeBuilder {
     val finalWitness: List[PeerId] = rawWitness
 
     // Stamp the effective tier on every classified peer for the round's persisted view.
-    // We DO NOT modify entries for peers outside `candidates`: those are carried forward
-    // unchanged so demoted peers retain their classification across rounds where they were
-    // not in the eligible pool (mirrors `peerQuality` carry-forward semantics).
+    // Carry-forward semantics: peers in priorTiers but NOT in candidates retain their
+    // classification across rounds where they were not in the eligible pool. The
+    // quality-degradation override is applied every round so a degraded peer in
+    // priorTiers as Core appears as Tier 1 in effectiveTiers for THIS round; if their
+    // quality recovers, next round they revert to whatever priorTiers said.
     val effectiveTiers: SortedMap[PeerId, Int] =
       priorTiers ++
         finalCore.iterator.map(_ -> Core) ++

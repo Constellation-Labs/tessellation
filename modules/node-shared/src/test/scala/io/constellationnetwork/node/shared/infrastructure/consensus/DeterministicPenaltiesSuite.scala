@@ -278,8 +278,14 @@ object DeterministicPenaltiesSuite extends FunSuite {
     // p5 was selected into the committee but is in its post-Ready observation period.
     // The local advancer's Facility/Proposal/Signature pipeline is cold — it may miss
     // the signature window for this first round even though the committee did reach
-    // quorum. peerQuality must not record that as a (0,1) failure, because doing so
-    // triggers `chronicNonSigners` classification once participated >= threshold.
+    // quorum. peerQuality must not record that as a (0,1) failure.
+    //
+    // v19 cleanup note: production `deferralCountdown` is now inert. This test exercises
+    // `computeOutcomeFields`, a test-local replica of the OLD advancer math. It remains
+    // valid as a deterministic-algorithm property test (same inputs -> same outputs across
+    // hypothetical operators); v19's tier-aware partition supersedes the production grace
+    // mechanism (new peers land in Tier 1, sign but do not gate liveness, so a missed first
+    // round demotes nothing it didn't already classify).
     val deferredPrev: SortedMap[PeerId, Int] = SortedMap(p5 -> 2)
     val result = computeOutcomeFields(
       key = ord(2L),
