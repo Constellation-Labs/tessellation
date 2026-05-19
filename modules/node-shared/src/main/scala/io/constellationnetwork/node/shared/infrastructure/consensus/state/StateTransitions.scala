@@ -151,7 +151,12 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
         val toView = fromView + 1L
         storage.getResources(key).flatMap { resources =>
           val votes = resources.viewChangeVotes.getOrElse((fromView, toView), Map.empty)
-          val n = state.facilitators.value.size
+          // v19: VCC assembly quorum threshold computed against the Core committee --
+          // mirrors `validateProposalVcc` in the advancer. The signer pool stays open to
+          // all of `roundStartFacilitators` (Tier 1 and Tier 0 peers may sign view changes
+          // and earn rewards), but the LIVENESS denominator that determines when q votes
+          // have arrived is Core-sized.
+          val n = state.coreFacilitators.value.size
           val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
           if (votes.size >= q) {
             val facilitatorsHashCandidates = votes.values.map(_.value.facilitatorsHash).toSet
@@ -298,13 +303,13 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
       case Some(state) =>
         storage.getResources(key).flatMap { resources =>
           val votes = resources.evictionVotes.getOrElse(target, Map.empty)
-          // Quorum denominator MUST be the canonical round-start committee, not mutable
-          // state.facilitators. The vote payloads hash roundStartFacilitators (see
-          // GossipingEvictionVoter) and proposal validation also derives q from
-          // roundStartFacilitators. Using state.facilitators here lets a node with a locally
-          // shrunken committee (mid-round withdrawals) assemble an under-quorum cert that every
-          // follower rejects — visible as locally-built but globally-invalid certs.
-          val n = state.roundStartFacilitators.value.size
+          // v19: ECS assembly quorum threshold computed against the Core committee --
+          // mirrors `validateProposalEcs` in the advancer. The signer pool stays open to
+          // all of `roundStartFacilitators` (witness widening still adds historical
+          // participants from peerQuality), but the LIVENESS denominator is Core-sized so
+          // a leader assembling with q Core-derived signatures will validate against
+          // every follower's matching denominator.
+          val n = state.coreFacilitators.value.size
           val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
           if (votes.size >= q) {
             // All votes for a given target must agree on facilitatorsHash; otherwise some
@@ -425,9 +430,11 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
       case Some(state) =>
         storage.getResources(key).flatMap { resources =>
           val votes = resources.admissionVotes.getOrElse(target, Map.empty)
-          // See B1 eviction-cert assembly above for the rationale: quorum denominator must be
-          // the canonical roundStartFacilitators, not mutable state.facilitators.
-          val n = state.roundStartFacilitators.value.size
+          // v19: ACS assembly quorum threshold computed against the Core committee --
+          // mirrors `validateProposalAcs` in the advancer. See ECS assembly above for the
+          // full rationale on decoupling LIVENESS quorum (Core-sized) from signing pool
+          // (witness-widened from `roundStartFacilitators`).
+          val n = state.coreFacilitators.value.size
           val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
           if (votes.size >= q) {
             val byHash: Map[Hash, Int] =

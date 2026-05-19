@@ -163,7 +163,10 @@ object CurrencySnapshotConsensus {
           peerQualityTracker,
           tcaFilter,
           eventMempool,
-          localHealthMonitor
+          localHealthMonitor,
+          // v19 per-environment Core floor mirror of dag-l0. Defaults to 3 for
+          // single-node test rigs when the environment is not present in the map.
+          snapshotConfig.coreCommitteeSize.get(environment).map(_.value).getOrElse(3)
         )
 
       consensusStateRemover =

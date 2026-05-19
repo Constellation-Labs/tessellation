@@ -241,6 +241,24 @@ object CurrencySnapshotConsensusStateAdvancer {
               withCurrent.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
             }
 
+            // v19 multi-committee tier transitions mirror of dag-l0.
+            val newPeerTiers: SortedMap[PeerId, Int] = TierTransitions.computeNextTiers(
+              priorTiers = state.lastOutcome.peerTiers,
+              roundStartFacilitators = state.roundStartFacilitators.value.toSet,
+              recentSignersForRound = SortedSet.from(completedFacilitators),
+              roundCompleted = true
+            )
+
+            // v19 phase 2 view-from-time anchor window, mirror of dag-l0.
+            val newRecentRoundEndTimes: SortedMap[SnapshotOrdinal, Long] =
+              state.outcomeEndTime match {
+                case Some(endTime) =>
+                  val withCurrent = state.lastOutcome.recentRoundEndTimes.updated(state.key, endTime)
+                  withCurrent.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
+                case None =>
+                  state.lastOutcome.recentRoundEndTimes.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
+              }
+
             // B2 readmissionCountdown maintenance (v12 sticky-probation, see dag-l0 mirror for
             // full rationale). decrement (clamped at 0) → seed justUnpenalized → clear admitted.
             // Pre-v12 auto-cleared the entry when countdown hit 0; v12 keeps the key so only
@@ -254,9 +272,10 @@ object CurrencySnapshotConsensusStateAdvancer {
             )
             // Per-peer cumulative view-change-caused credits.
             // Mirror of dag-l0; see GlobalSnapshotConsensusStateAdvancer for full rationale and
-            // the determinism contract.
+            // the determinism contract. v19: priorActive draws from `state.coreFacilitators`
+            // (Core committee = leader pool), not the full round-start committee.
             val priorPeerQuality = state.lastOutcome.peerQuality
-            val priorActive = state.roundStartFacilitators.value
+            val priorActive = state.coreFacilitators.value
             val priorGraduated = priorActive.filter { pid =>
               val (completed, participated) = priorPeerQuality.getOrElse(pid, (0, 0))
               participated >= config.minParticipationObservations && completed >= 1
@@ -311,7 +330,11 @@ object CurrencySnapshotConsensusStateAdvancer {
               // v16: per-peer cumulative view-change-caused, mirror of dag-l0.
               peerViewChanges = accumulatedPeerViewChanges,
               // Sliding signer-set window, mirror of dag-l0.
-              recentSigners = newRecentSigners
+              recentSigners = newRecentSigners,
+              // v19 multi-committee tier classification carried forward, mirror of dag-l0.
+              peerTiers = newPeerTiers,
+              // v19 phase 2 view-from-time anchor window, mirror of dag-l0.
+              recentRoundEndTimes = newRecentRoundEndTimes
             )
             (Previous(state.lastOutcome.key), outcome).some
           case _ =>
@@ -445,6 +468,19 @@ object CurrencySnapshotConsensusStateAdvancer {
         }
           .groupMap(_._1)(_._2)
 
+        // v19 phase 2 view-from-time anchor: compute median proposerClockMs across the
+        // accepted Facility set, clamped against parent's consensusEndTime. Mirror of
+        // dag-l0 toProposalsPhase; the helper returns None if below the strict-majority
+        // threshold, in which case the next round will fall back to phase 1 view derivation.
+        val parentEndTime: Option[Long] = state.lastOutcome.recentRoundEndTimes.lastOption.map(_._2)
+        val outcomeEndTime: Option[Long] = ConsensusEndTime.compute(facilities.values, parentEndTime)
+        // Type-arg-elaborated copy mirrors the forkEviction site above so the Kind
+        // type parameter stays as `CurrencyConsensusKind` and doesn't widen to Nothing.
+        val stateWithEndTime: CurrencySnapshotConsensusState =
+          state.copy[CurrencySnapshotKey, CurrencySnapshotStatus, CurrencyConsensusOutcome, CurrencyConsensusKind](
+            outcomeEndTime = outcomeEndTime
+          )
+
         for {
           // Get local hashes and identify what we're missing
           localHashes <- eventMempool.getEventHashes
@@ -456,7 +492,7 @@ object CurrencySnapshotConsensusStateAdvancer {
           _ <- Metrics[F].updateGauge("dag_currency_consensus_observed_responders_count", observedResponders.size.toLong)
           _ <- Metrics[F].updateGauge("dag_currency_consensus_facility_quorum_ratio", responderRatio)
 
-          result <- buildProposalTransition(state, unionHashes, candidates, trigger, observedResponders, observedSelfHealth)
+          result <- buildProposalTransition(stateWithEndTime, unionHashes, candidates, trigger, observedResponders, observedSelfHealth)
         } yield result
       }
 
@@ -725,7 +761,8 @@ object CurrencySnapshotConsensusStateAdvancer {
         proposal: Proposal,
         facilitatorsHash: Hash
       ): Either[ProposalRejection, Unit] = {
-        val n = state.facilitators.value.size
+        // v19: quorum computed against the Core committee. Mirror of dag-l0.
+        val n = state.coreFacilitators.value.size
         val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
         if (proposal.view === 0L) {
           if (proposal.vcc.nonEmpty) Left(ProposalRejection("view0_proposal_must_not_carry_vcc"))
@@ -780,9 +817,9 @@ object CurrencySnapshotConsensusStateAdvancer {
       ): Either[ProposalRejection, Unit] = {
         if (isInBootstrap(state) && proposal.evictionCertificates.nonEmpty)
           return Left(ProposalRejection(s"ecs_rejected_in_bootstrap count=${proposal.evictionCertificates.size}"))
-        // Canonical round-start committee — voter/target membership and quorum threshold must be
-        // computed against the fixed committee for cross-node determinism.
-        val n = state.roundStartFacilitators.value.size
+        // v19: quorum threshold computed against the Core committee; target membership
+        // remains the full round-start view. Mirror of dag-l0.
+        val n = state.coreFacilitators.value.size
         val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
         val committee = state.roundStartFacilitators.value.toSet
         val expectedLastSnap: Hash = state.lastOutcome.finished.snapshotHash
@@ -881,8 +918,9 @@ object CurrencySnapshotConsensusStateAdvancer {
       ): Either[ProposalRejection, Unit] = {
         if (isInBootstrap(state) && proposal.admissionCertificates.nonEmpty)
           return Left(ProposalRejection(s"acs_rejected_in_bootstrap count=${proposal.admissionCertificates.size}"))
-        // Canonical round-start committee — see validateProposalEcs rationale.
-        val n = state.roundStartFacilitators.value.size
+        // v19: quorum threshold computed against the Core committee; target membership
+        // remains the full round-start view. Mirror of dag-l0.
+        val n = state.coreFacilitators.value.size
         val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
         val committee = state.roundStartFacilitators.value.toSet
         val probation = state.lastOutcome.readmissionCountdown.keySet
@@ -1054,7 +1092,8 @@ object CurrencySnapshotConsensusStateAdvancer {
               case Left(rejection) =>
                 logger.warn(s"[CONSENSUS] obs_resp_validation failed key=${state.key.show} reason=${rejection.code}").as(none[Transition])
               case Right(_) =>
-                val n = state.roundStartFacilitators.value.size
+                // v19: observedResponders quorum gate computed against the Core committee.
+                val n = state.coreFacilitators.value.size
                 val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
                 val below = leaderProposal.observedResponders.size < q && !isInBootstrap(state)
                 logger

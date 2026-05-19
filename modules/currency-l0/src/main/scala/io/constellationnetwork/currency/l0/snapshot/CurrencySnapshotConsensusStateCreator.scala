@@ -56,7 +56,10 @@ object CurrencySnapshotConsensusStateCreator {
     peerQualityTracker: PeerQualityTracker[F],
     tcaFilter: TrailingCommonAncestorFilter[F],
     eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey],
-    localHealthMonitor: LocalHealthMonitor[F]
+    localHealthMonitor: LocalHealthMonitor[F],
+    // v19 multi-committee Core floor. Mirror of dag-l0 -- per-environment value
+    // routed through `SnapshotConfig.coreCommitteeSize`.
+    coreCommitteeSize: Int
   ): CurrencySnapshotConsensusStateCreator[F] = new CurrencySnapshotConsensusStateCreator[F] {
     val config: ConsensusConfig = consensusConfig
 
@@ -475,13 +478,15 @@ object CurrencySnapshotConsensusStateCreator {
         lastGlobalSnapshotOrdinal <- lastGlobalSnapshotStorage.getOrdinal.map(_.getOrElse(SnapshotOrdinal.MinValue))
 
         // Build Facility once, self-store locally (no reliance on gossip self-loopback), then
-        // direct-push to the active facilitator set. Matches the dag-l0 creator — see rationale there.
+        // direct-push to the active facilitator set. Matches the dag-l0 creator -- see rationale there.
         effect = for {
           eventHashes <- eventMempool.getEventHashes
           // v15: see GlobalSnapshotConsensusStateCreator for full rationale -- the hint is
           // captured at effect run time so the most recent LocalHealthMonitor sample rides
           // with the outgoing Facility.
           selfHealth <- localHealthMonitor.current
+          // v19 phase 2: wall-clock millis at signing time. See dag-l0 mirror.
+          proposerClockMs <- Clock[F].realTime.map(_.toMillis)
           facility = Facility(
             eventHashes,
             candidates,
@@ -490,27 +495,41 @@ object CurrencySnapshotConsensusStateCreator {
             lastGlobalSnapshotOrdinal,
             lastOutcome.finished.snapshotHash,
             consensusConfigHash = consensusConfigHash.some,
-            selfHealthHint = selfHealth.some
+            selfHealthHint = selfHealth.some,
+            proposerClockMs = proposerClockMs.some
           )
           declaration = ConsensusPeerDeclaration(key, facility)
           _ <- consensusStorage.addFacility(selfId, key, facility)
           _ <- gossip.spreadDirect(declaration, active.toSet)
         } yield ()
 
+        // v19 multi-committee derivation. Mirror of dag-l0.
+        committees = CommitteeBuilder.build(
+          candidates = active,
+          priorTiers = lastOutcome.peerTiers,
+          coreFloor = coreCommitteeSize
+        )
+
+        _ <- ConsensusLog.info(
+          logger,
+          Category.Facilitator,
+          key.show,
+          "n/a",
+          Event.FacilitatorsFinalized,
+          "core" -> committees.core.size.toString,
+          "tier1" -> committees.tier1.size.toString,
+          "witness" -> committees.witness.size.toString,
+          "coreFloor" -> coreCommitteeSize.toString
+        )
+
         // Quality-weighted leader selection using consensus-agreed integer quality scores.
-        // Graduation filter: restrict leader pool to peers with `participated >=
-        // minParticipationObservations`, but require at least 2 graduated peers so
-        // view rotation can actually rotate. See GlobalSnapshotConsensusStateCreator
-        // for the full rationale.
-        // Kick-fast leader graduation. Mirror of dag-l0; see
-        // GlobalSnapshotConsensusStateCreator for full rationale. Adds `completed >= 1` so a
-        // peer that has never finalized a round cannot lead -- closes the same chronic-flaky
-        // leader trap on metagraph layer.
-        graduatedLeaderPool = active.filter { pid =>
+        // v19: leader pool draws ONLY from the Core committee. See dag-l0 mirror.
+        coreList = committees.core
+        graduatedLeaderPool = coreList.filter { pid =>
           val (completed, participated) = lastOutcome.peerQuality.getOrElse(pid, (0, 0))
           participated >= config.minParticipationObservations && completed >= 1
         }
-        leaderPool = if (graduatedLeaderPool.size >= 2) graduatedLeaderPool else active
+        leaderPool = if (graduatedLeaderPool.size >= 2) graduatedLeaderPool else coreList
         // Layer 1 view-carry-forward: see dag-l0 mirror. priorAbandonmentCount
         // seeds the leader pick so same-key retries rotate to different initial leaders.
         leader = facilitatorSelector.selectLeaderWeighted(
@@ -533,6 +552,7 @@ object CurrencySnapshotConsensusStateCreator {
           Event.FacilitatorsFinalized,
           "eligible" -> allEligible.size.toString,
           "active" -> active.size.toString,
+          "core" -> coreList.size.toString,
           "excluded" -> (allEligible.size - eligibleThisRound.size).toString,
           "leader" -> ConsensusLog.pid(leader)
         )
@@ -541,7 +561,7 @@ object CurrencySnapshotConsensusStateCreator {
           key,
           lastOutcome,
           Facilitators(active),
-          // Canonical round-start committee — frozen at creation, never mutated by withdrawals.
+          // Canonical round-start committee -- frozen at creation, never mutated by withdrawals.
           Facilitators(active),
           CollectingFacilities(
             maybeTrigger,
@@ -551,6 +571,8 @@ object CurrencySnapshotConsensusStateCreator {
           time,
           withdrawnFacilitators = WithdrawnFacilitators(withdrawn.toSet),
           eligibleFacilitators = EligibleFacilitators(allEligible),
+          coreFacilitators = CoreFacilitators(committees.core),
+          tier1Facilitators = Tier1Facilitators(committees.tier1),
           leader = leader,
           // Mirror dag-l0: start at the retry count so view-change continues monotonically.
           viewNumber = priorAbandonmentCount,
