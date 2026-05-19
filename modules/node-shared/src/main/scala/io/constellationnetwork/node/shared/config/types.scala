@@ -532,7 +532,31 @@ object types {
     //     v17 readers lack the `recentSigners` field and would treat absent as empty,
     //     computing different candidate pools after any round populates the window.
     //     Cold restart required across the cluster.
-    consensusSchemaVersion: Int = 18,
+    //   v19: Multi-committee architecture plus phase 2 view-from-time timestamp
+    //     fields. Three deterministic committees -- Core (Tier 2, gates LIVENESS),
+    //     Tier 1 (Witness-eligible), Witness (Tier 0) -- derived per round by
+    //     `CommitteeBuilder.build` from the consensus-agreed `lastOutcome.peerTiers`
+    //     map. Quorum sites switch from `state.facilitators.value.size` /
+    //     `state.roundStartFacilitators.value.size` to `state.coreFacilitators.value.size`,
+    //     so the LIVENESS denominator is now the Core committee only. Per-peer tier
+    //     is carried via `Option[Int]` on `PerPeerOperationalRecord` (Option-wrapped
+    //     for derevo back-compat); absent peers default to Tier 2 (Core) at consume
+    //     time. Demotion to Tier 1 fires deterministically ONLY when round N
+    //     completed AND the peer was in `roundStartFacilitators[N]` AND was NOT in
+    //     `recentSigners[N]`; failed rounds do not cascade-demote. Per-environment
+    //     `coreCommitteeSize` floor (testnet 5, mainnet 15, integrationnet 9, dev 3)
+    //     ensures the Core committee never shrinks below a viable BFT denominator.
+    //     v19 additionally folds in the phase 2 view-from-time anchor: Facility gains
+    //     `proposerClockMs: Option[Long]`, ConsensusOperationalState gains
+    //     `recentRoundEndTimes: Option[SortedMap[SnapshotOrdinal, Long]]`,
+    //     `computeConsensusEndTime` produces the median+clamp from the agreed
+    //     Facility set at outcome finalization. v18 nodes do not populate either
+    //     of these fields and would derive different committee composition (no
+    //     peerTiers), different quorum denominator (Core vs full roundStart), and
+    //     no recentRoundEndTimes entries; mixed v18/v19 cluster is unsafe. Cold
+    //     restart required across the cluster; jar hash gates v18 <-> v19 peer
+    //     connection at handshake.
+    consensusSchemaVersion: Int = 19,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with
@@ -722,6 +746,15 @@ object types {
   case class SnapshotConfig(
     consensus: ConsensusConfig,
     maxFacilitatorCount: Map[AppEnvironment, PosInt] = Map.empty,
+    // v19 multi-committee minimum Core size, keyed by AppEnvironment. Targets observed
+    // committee sizes: testnet ~14 peers -> Core 5, mainnet ~150 peers -> Core 15,
+    // integrationnet ~10 peers -> Core 9, dev (single-node test rigs) -> Core 3.
+    // Consensus-critical because the LIVENESS quorum threshold is computed against
+    // `coreFacilitators.value.size`; divergent operator values would derive divergent
+    // Core committees and silently fork. The jar hash already gates peer connections,
+    // and this field follows the same precedent as `maxFacilitatorCount` (env-keyed
+    // PosInt, NOT in `deterministicConfigHash`).
+    coreCommitteeSize: Map[AppEnvironment, PosInt] = Map.empty,
     inMemoryCapacity: NonNegLong,
     snapshotPath: Path,
     snapshotInfoPath: Path,

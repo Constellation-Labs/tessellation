@@ -170,7 +170,30 @@ object schema {
     // doesn't lose K rounds of history. Default empty: outcomes that pre-date the
     // window have no signer history; FacilitatorSelector treats this as a bootstrap
     // window (use full eligibility until window fills).
-    recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = SortedMap.empty
+    recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = SortedMap.empty,
+    // v19 multi-committee tier classification per peer. Computed at round-finalize by
+    // `TierTransitions.computeNextTier(prior tier, roundStartFacilitators, recentSigners[N],
+    // roundCompleted)`. Consensus-agreed: all inputs are deterministic outcome fields, so
+    // every honest node produces the byte-identical map.
+    //
+    // Tier 2 (Core): full facilitator, in the LIVENESS quorum.
+    // Tier 1: witness-eligible, not in the LIVENESS quorum.
+    // Tier 0 (Witness): open membership, observation only.
+    //
+    // Persisted via `toOperationalState` -> `PerPeerOperationalRecord.tier`; restored on
+    // cold-restart at Main.scala. Default empty: pre-v19 outcomes have no tier history,
+    // and `CommitteeBuilder` defaults absent peers to Tier 2 (bootstrap), preserving
+    // current committee behavior for the first round after upgrade.
+    peerTiers: SortedMap[PeerId, Int] = SortedMap.empty,
+    // v19 phase 2 view-from-time anchor: sliding window of (ordinal -> consensusEndTime).
+    // `consensusEndTime` = `max(median(Facility.proposerClockMs), parent.consensusEndTime + 1)`,
+    // computed from the consensus-agreed Facility set at outcome finalization. Bounded by
+    // the same `tighteningWindow` as `recentSigners`. Consumed by the next round's
+    // view-from-time mechanism. Persisted via `toOperationalState` (Option-wrapped at the
+    // snapshot boundary for derevo back-compat with pre-v19 snapshots). Default empty:
+    // window has not yet been populated; view derivation falls back to phase 1
+    // `viewChangeVotes.maxToView`.
+    recentRoundEndTimes: SortedMap[SnapshotOrdinal, Long] = SortedMap.empty
   ) {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value
@@ -191,7 +214,8 @@ object schema {
           cumulativeMissCounts.keysIterator ++
           readmissionCountdown.keysIterator ++
           deferralCountdown.keysIterator ++
-          peerViewChanges.keysIterator).toSet
+          peerViewChanges.keysIterator ++
+          peerTiers.keysIterator).toSet
       val perPeer: SortedMap[PeerId, PerPeerOperationalRecord] =
         SortedMap.from(
           keys.iterator.map { pid =>
@@ -204,7 +228,11 @@ object schema {
               // v16: Option-wrap so absent peers / pre-v16 readers see no key under
               // dropNullValues=true. Some(0) would render as "0" and break byte-stable
               // back-compat; only emit Some when there is actual history to persist.
-              viewChangesCaused = peerViewChanges.get(pid).filter(_ > 0L)
+              viewChangesCaused = peerViewChanges.get(pid).filter(_ > 0L),
+              // v19: only emit Some when there is an actual tier classification on this
+              // peer. Absent peers / no-history readers see no key under dropNullValues=true,
+              // and CommitteeBuilder defaults `None` to bootstrap-Tier-2 at consume time.
+              tier = peerTiers.get(pid)
             )
           }
         )
@@ -215,7 +243,12 @@ object schema {
         // byte-stable encodings written before this field existed; emit `None` while
         // the window is empty (bootstrap, rollback to an old snapshot) so
         // FacilitatorSelector defaults to full-eligibility behavior.
-        recentSigners = if (recentSigners.nonEmpty) Some(recentSigners) else None
+        recentSigners = if (recentSigners.nonEmpty) Some(recentSigners) else None,
+        // v19 phase 2: same Option-wrap pattern as recentSigners. None at the snapshot
+        // boundary means the cluster has not yet produced a round whose Facility set
+        // carried enough `proposerClockMs` values to compute the median (bootstrap or
+        // partial-deploy); view derivation falls back to phase 1 vote-driven tick.
+        recentRoundEndTimes = if (recentRoundEndTimes.nonEmpty) Some(recentRoundEndTimes) else None
       )
     }
   }
