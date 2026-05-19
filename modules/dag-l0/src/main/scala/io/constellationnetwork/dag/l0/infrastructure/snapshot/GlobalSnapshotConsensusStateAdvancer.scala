@@ -376,6 +376,31 @@ object GlobalSnapshotConsensusStateAdvancer {
               withCurrent.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
             }
 
+            // v19 multi-committee tier transitions. Round completed (we are in `Finished`),
+            // so every Tier 2 peer who was in `roundStartFacilitators` but is NOT in
+            // `recentSigners[N]` (the just-completed round's signer set) demotes to Tier 1.
+            // Inputs are all consensus-agreed deterministic outcome fields so the
+            // computation is byte-identical across honest nodes.
+            val newPeerTiers: SortedMap[PeerId, Int] = TierTransitions.computeNextTiers(
+              priorTiers = state.lastOutcome.peerTiers,
+              roundStartFacilitators = state.roundStartFacilitators.value.toSet,
+              recentSignersForRound = SortedSet.from(completedFacilitators),
+              roundCompleted = true
+            )
+
+            // v19 phase 2: append the round's `consensusEndTime` to the sliding window if
+            // it was computed (Facility set carried enough `proposerClockMs` to clear the
+            // strict-majority threshold). Otherwise the round produced no time anchor and
+            // the window carries forward unchanged; consume-site falls back to phase 1.
+            val newRecentRoundEndTimes: SortedMap[SnapshotOrdinal, Long] =
+              state.outcomeEndTime match {
+                case Some(endTime) =>
+                  val withCurrent = state.lastOutcome.recentRoundEndTimes.updated(state.key, endTime)
+                  withCurrent.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
+                case None =>
+                  state.lastOutcome.recentRoundEndTimes.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
+              }
+
             // B2 readmissionCountdown maintenance (sticky-probation):
             //   1) Decrement any active probation counters by 1 -- but CLAMP at 0 instead of
             //      auto-clearing the entry. Earlier versions had `.filter(_._2 > 0)` here, which dropped
@@ -409,12 +434,17 @@ object GlobalSnapshotConsensusStateAdvancer {
             // deterministic leader using the SAME inputs `selectLeaderWeighted` was called
             // with at round-start: state.lastOutcome.peerQuality, state.lastOutcome.peerSelfHealth,
             // state.lastOutcome.peerViewChanges, and a leaderPool derived from
-            // state.roundStartFacilitators via the same graduation rule the creator applied.
+            // state.coreFacilitators via the same graduation rule the creator applied.
             // Each resulting peer is credited with one view-change-caused. All inputs are
-            // consensus-agreed (lastOutcome is signed, roundStartFacilitators is canonical at
-            // round-start, entropy is derived from the prior snapshot hash, config is
-            // deterministicConfigHash-gated), so every honest node computes the same credit
-            // map byte-identically.
+            // consensus-agreed (lastOutcome is signed, coreFacilitators is canonical at
+            // round-start via CommitteeBuilder, entropy is derived from the prior snapshot hash,
+            // config is deterministicConfigHash-gated), so every honest node computes the same
+            // credit map byte-identically.
+            //
+            // v19: prior to multi-committee, this used `state.roundStartFacilitators` because
+            // the leader pool was derived from the full round-start committee. In v19 the
+            // creator restricts the leader pool to the Core committee, so the credit re-derivation
+            // here switches to `state.coreFacilitators` for the same determinism contract.
             //
             // Determinism contract: the leaderPool re-derivation here MUST mirror the
             // creator's logic at GlobalSnapshotConsensusStateCreator. If the creator changes
@@ -422,7 +452,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             // selectLeaderWeighted recomputation here will return a different peer than the
             // one the round actually elected at the same view -- producing a credit miss.
             val priorPeerQuality = state.lastOutcome.peerQuality
-            val priorActive = state.roundStartFacilitators.value
+            val priorActive = state.coreFacilitators.value
             val priorGraduated = priorActive.filter { pid =>
               val (completed, participated) = priorPeerQuality.getOrElse(pid, (0, 0))
               participated >= config.minParticipationObservations && completed >= 1
@@ -485,7 +515,12 @@ object GlobalSnapshotConsensusStateAdvancer {
               peerViewChanges = accumulatedPeerViewChanges,
               // Sliding window of per-ord signers; consumed by next round's
               // FacilitatorSelector to narrow the candidate pool.
-              recentSigners = newRecentSigners
+              recentSigners = newRecentSigners,
+              // v19: carried-forward multi-committee tier classification computed from this
+              // round's signer participation (above).
+              peerTiers = newPeerTiers,
+              // v19 phase 2: view-from-time anchor for the next round's view derivation.
+              recentRoundEndTimes = newRecentRoundEndTimes
             )
             (Previous(state.lastOutcome.key), outcome).some
           case _ =>
@@ -661,6 +696,25 @@ object GlobalSnapshotConsensusStateAdvancer {
           case (peerId, facility) => facility.eventHashes.map(_ -> peerId)
         }.groupMap(_._1)(_._2)
 
+        // v19 phase 2: compute the round's `consensusEndTime` from the accepted Facility
+        // set. Median + parent-clamp absorbs proposer-clock outliers; below-threshold
+        // facility counts produce `None` so the consume site falls back to phase 1 view
+        // derivation. The accepted Facility set is post-fork-eviction (clean facilities)
+        // so every honest node converges on the same value. Stashed onto state below
+        // and read at outcome-finalize for `recentRoundEndTimes`.
+        // SortedMap's `lastOption` returns the entry with the highest key (most recent
+        // ordinal); the corresponding `endTime` is the parent round's anchor used for
+        // the Bitcoin MTP-style clamp inside `compute`.
+        val parentEndTime: Option[Long] = state.lastOutcome.recentRoundEndTimes.lastOption.map(_._2)
+        val outcomeEndTime: Option[Long] = ConsensusEndTime.compute(facilities.values, parentEndTime)
+        // Type-arg-elaborated copy mirrors the pattern at the forkEviction site above:
+        // bare `state.copy(...)` would default the Kind type parameter to Nothing on
+        // anonymous classes when the original was inferred from the abstract type.
+        val stateWithEndTime: GlobalSnapshotConsensusState =
+          state.copy[GlobalSnapshotKey, GlobalSnapshotStatus, GlobalConsensusOutcome, GlobalConsensusKind](
+            outcomeEndTime = outcomeEndTime
+          )
+
         for {
           // Get local hashes and identify what we're missing
           localHashes <- eventMempool.getEventHashes
@@ -677,7 +731,7 @@ object GlobalSnapshotConsensusStateAdvancer {
           _ <- Metrics[F].updateGauge("dag_consensus_observed_responders_count", observedResponders.size.toLong)
           _ <- Metrics[F].updateGauge("dag_consensus_facility_quorum_ratio", responderRatio)
 
-          result <- buildProposalTransition(state, unionHashes, candidates, trigger, observedResponders, observedSelfHealth)
+          result <- buildProposalTransition(stateWithEndTime, unionHashes, candidates, trigger, observedResponders, observedSelfHealth)
         } yield result
       }
 
@@ -1072,7 +1126,11 @@ object GlobalSnapshotConsensusStateAdvancer {
         proposal: Proposal,
         facilitatorsHash: Hash
       ): Either[ProposalRejection, Unit] = {
-        val n = state.facilitators.value.size
+        // v19: quorum is computed against the Core committee only. Tier 1 and Witness
+        // peers are not in the LIVENESS quorum -- the threshold here governs VCC
+        // assembly which gates view advance, so the denominator must match the active
+        // facilitator denominator everywhere else in the round.
+        val n = state.coreFacilitators.value.size
         val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
         if (proposal.view === 0L) {
           if (proposal.vcc.nonEmpty) Left(ProposalRejection("view0_proposal_must_not_carry_vcc"))
@@ -1155,15 +1213,17 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): Either[ProposalRejection, Unit] = {
         if (isInBootstrap(state) && proposal.evictionCertificates.nonEmpty)
           return Left(ProposalRejection(s"ecs_rejected_in_bootstrap count=${proposal.evictionCertificates.size}"))
-        // Canonical round-start committee — quorum threshold and target-membership are computed
-        // against the fixed committee so validation is bit-identical across nodes that observed
-        // mid-round withdrawals at different times.
+        // v19: quorum threshold computed against the Core committee only. The
+        // `committee` set retains the full round-start view because eviction targets are
+        // checked for round-start membership (a Tier 1 or Tier 0 peer can still be the
+        // target of an eviction). Threshold and target-membership therefore decouple --
+        // quorum n = Core size, target membership = round-start membership.
         //
         // Voter/signer membership widened from `roundStartFacilitators` to
         // `eligibleFacilitators - target`. See StateTransitions.scala assembly site for full
         // rationale. Both the assembly site and this re-validation must agree on the witness
         // pool, otherwise leaders would assemble certs that followers reject.
-        val n = state.roundStartFacilitators.value.size
+        val n = state.coreFacilitators.value.size
         val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
         val committee = state.roundStartFacilitators.value.toSet
         val expectedLastSnap: Hash = state.lastOutcome.finished.snapshotHash
@@ -1277,8 +1337,9 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): Either[ProposalRejection, Unit] = {
         if (isInBootstrap(state) && proposal.admissionCertificates.nonEmpty)
           return Left(ProposalRejection(s"acs_rejected_in_bootstrap count=${proposal.admissionCertificates.size}"))
-        // Canonical round-start committee — see validateProposalEcs for rationale.
-        val n = state.roundStartFacilitators.value.size
+        // v19: quorum threshold computed against the Core committee only -- see
+        // validateProposalEcs for the full decoupled-threshold-vs-membership rationale.
+        val n = state.coreFacilitators.value.size
         val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
         val committee = state.roundStartFacilitators.value.toSet
         val probation = state.lastOutcome.readmissionCountdown.keySet
@@ -1494,7 +1555,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                   )
                   .as(none[Transition])
               case Right(_) =>
-                val n = state.roundStartFacilitators.value.size
+                // v19: observedResponders quorum gate computed against the Core committee.
+                val n = state.coreFacilitators.value.size
                 val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
                 val below = leaderProposal.observedResponders.size < q && !isInBootstrap(state)
                 ConsensusLog

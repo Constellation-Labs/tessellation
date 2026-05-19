@@ -383,6 +383,18 @@ object Main
                   // the field existed decode None -> empty map; FacilitatorSelector treats an
                   // empty window as bootstrap (use full eligibility until the window fills).
                   seedRecentSigners = seedOperational.recentSigners.getOrElse(SortedMap.empty[SnapshotOrdinal, SortedSet[PeerId]])
+                  // v19: per-peer tier classification seeded from `PerPeerOperationalRecord.tier`.
+                  // Tier is Option[Int], so peers with `None` are absent from this map and
+                  // CommitteeBuilder defaults them to bootstrap-Tier-2 at consume time.
+                  seedPeerTiers = SortedMap.from(seedOperational.perPeer.iterator.flatMap {
+                    case (pid, r) => r.tier.map(t => pid -> t)
+                  })
+                  // v19 phase 2: view-from-time window unwrapped from the Option. Snapshots
+                  // written before the field existed decode None -> empty map; the next
+                  // round's view derivation falls back to phase 1 `viewChangeVotes.maxToView`
+                  // until the window populates.
+                  seedRecentRoundEndTimes =
+                    seedOperational.recentRoundEndTimes.getOrElse(SortedMap.empty[SnapshotOrdinal, Long])
                   result <- services.consensus.manager.startFacilitatingAfterRollback(
                     snapshot.ordinal,
                     GlobalConsensusOutcome(
@@ -399,7 +411,9 @@ object Main
                       recentProofSizes = seedRecentProofSizes,
                       readmissionCountdown = seedReadmissionCountdown,
                       peerViewChanges = seedPeerViewChanges,
-                      recentSigners = seedRecentSigners
+                      recentSigners = seedRecentSigners,
+                      peerTiers = seedPeerTiers,
+                      recentRoundEndTimes = seedRecentRoundEndTimes
                     )
                   )
                 } yield result

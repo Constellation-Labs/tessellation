@@ -235,7 +235,11 @@ object GlobalSnapshotConsensus {
           peerQualityTracker,
           tcaFilter,
           eventMempool,
-          sharedServices.localHealthMonitor
+          sharedServices.localHealthMonitor,
+          // v19 per-environment Core floor. Falls back to 3 (the dev default) if the
+          // config does not carry an entry for this environment, matching the
+          // small-cluster-friendly value used by single-node test rigs.
+          appConfig.snapshot.coreCommitteeSize.get(appConfig.environment).map(_.value).getOrElse(3)
         )
 
       stateRemover =

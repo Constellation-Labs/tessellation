@@ -52,7 +52,13 @@ object GlobalSnapshotConsensusStateCreator {
     peerQualityTracker: PeerQualityTracker[F],
     tcaFilter: TrailingCommonAncestorFilter[F],
     eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey],
-    localHealthMonitor: LocalHealthMonitor[F]
+    localHealthMonitor: LocalHealthMonitor[F],
+    // v19 multi-committee floor for the Core committee. The Core committee is the
+    // active LIVENESS quorum -- quorum threshold is computed against
+    // `coreFacilitators.value.size`, NOT the full round-start committee. If Tier 2
+    // (carried-forward) peers fall below this floor, CommitteeBuilder deterministically
+    // promotes Tier 1 peers (lexicographic-sorted by PeerId hex) until the floor is met.
+    coreCommitteeSize: Int
   ): GlobalSnapshotConsensusStateCreator[F] = new GlobalSnapshotConsensusStateCreator[F] {
     val config: ConsensusConfig = consensusConfig
 
@@ -583,6 +589,10 @@ object GlobalSnapshotConsensusStateCreator {
         effect = for {
           eventHashes <- eventMempool.getEventHashes
           selfHealth <- localHealthMonitor.current
+          // v19 phase 2: wall-clock millis at signing time. Raw, no bucketing; the
+          // round-finalize median absorbs outliers and the consume-site clamp pins
+          // monotonicity against the parent. See docs/consensus/view-from-time-anchor.md.
+          proposerClockMs <- Clock[F].realTime.map(_.toMillis)
           facility = Facility(
             eventHashes,
             candidates,
@@ -591,51 +601,62 @@ object GlobalSnapshotConsensusStateCreator {
             lastOutcome.key,
             lastOutcome.finished.snapshotHash,
             consensusConfigHash = consensusConfigHash.some,
-            selfHealthHint = selfHealth.some
+            selfHealthHint = selfHealth.some,
+            proposerClockMs = proposerClockMs.some
           )
           declaration = ConsensusPeerDeclaration(key, facility)
           _ <- consensusStorage.addFacility(selfId, key, facility)
           _ <- gossip.spreadDirect(declaration, active.toSet)
         } yield ()
 
+        // v19 multi-committee derivation. Partition `active` into Core / Tier 1 / Witness
+        // using the carried-forward `lastOutcome.peerTiers` and applying the per-environment
+        // `coreCommitteeSize` floor. Peers without a tier classification default to Core
+        // (bootstrap default), so a freshly-deployed cluster lands all eligible peers in the
+        // Core committee and `TierTransitions` propagates demotions only after rounds
+        // complete with observed signers.
+        committees = CommitteeBuilder.build(
+          candidates = active,
+          priorTiers = lastOutcome.peerTiers,
+          coreFloor = coreCommitteeSize
+        )
+
+        _ <- ConsensusLog.info(
+          logger,
+          Facilitator,
+          key.show,
+          "n/a",
+          FacilitatorsFinalized,
+          "core" -> committees.core.size.toString,
+          "tier1" -> committees.tier1.size.toString,
+          "witness" -> committees.witness.size.toString,
+          "coreFloor" -> coreCommitteeSize.toString
+        )
+
         // Quality-weighted leader selection: use consensus-agreed quality scores
         // so all nodes compute the same leader deterministically.
-        // Pass raw (completed, participated) integers — the selector uses integer-only
+        // Pass raw (completed, participated) integers -- the selector uses integer-only
         // tier computation (tier = participated - completed = failure count) to avoid
         // platform-dependent float-to-long conversion differences.
         //
-        // Graduation filter: restrict the leader pool to peers with `participated >=
-        // minParticipationObservations` in the consensus-agreed peerQuality outcome.
-        // Without this filter, a peer with no history defaults to tier 0 inside the
-        // selector and ties with proven peers, handing the leader slot to unproven
-        // community peers that often cannot fulfill the proposer role (forces a view
-        // change that burns ~2 min of round time). Source nodes accumulate history
-        // quickly and always qualify; fresh community entrants must demonstrate they
-        // can complete rounds as facilitator before they can lead.
+        // v19: leader selection draws ONLY from the Core committee. Tier 1 and Witness
+        // peers are not eligible to lead -- they observe and witness, but the LIVENESS
+        // quorum is gated on Core. This makes Core both the quorum denominator and the
+        // leader pool, so a peer that loses its Core seat also loses its ability to lead.
         //
-        // The graduated pool must contain at least 2 peers for view rotation to be
-        // meaningful — with a single peer, `viewNumber % 1 = 0` always returns the
-        // same leader, making view change a no-op and deadlocking the cluster if the
-        // sole graduated peer ever stalls. At genesis / cold start (nobody has
-        // enough history yet), OR in a solo-bootstrap tail (only one peer graduated),
-        // fall back to `active` — same as the pre-filter behavior, self-healing once
-        // more peers reach the threshold.
-        // Kick-fast leader graduation. Two conditions, both required:
-        //   (a) participated >= minParticipationObservations -- peer has enough history that
-        //       quality stats are meaningful (rejects unproven new peers)
-        //   (b) completed >= 1 -- peer has ACTUALLY FINALIZED at least one round as a member
-        //       of `roundStartFacilitators`. Closes the apr30 trap where chronic-flaky peers
-        //       (890a641e, c96c3a41) accumulated `participated` counts in past rounds but had
-        //       `completed == 0`, kept getting elected leader, never delivered a proposal, and
-        //       stalled rounds indefinitely. Under the operator's kick-fast policy: a peer that
-        //       has NEVER finalized a round is not lead-eligible, regardless of how long they
-        //       have been around. Recovery path: if the peer comes back and finalizes a single
-        //       round (as a non-leader follower), they become lead-eligible again.
-        graduatedLeaderPool = active.filter { pid =>
+        // Graduation filter (unchanged from v18): restrict the leader pool to peers with
+        // `participated >= minParticipationObservations` AND `completed >= 1` in the
+        // consensus-agreed peerQuality outcome. The graduated pool must contain at least
+        // 2 peers for view rotation to be meaningful -- with a single peer,
+        // `viewNumber % 1 = 0` always returns the same peer and view change becomes a no-op.
+        // At genesis / cold start, OR in a solo-bootstrap tail (only one peer graduated),
+        // fall back to the full Core committee.
+        coreList = committees.core
+        graduatedLeaderPool = coreList.filter { pid =>
           val (completed, participated) = lastOutcome.peerQuality.getOrElse(pid, (0, 0))
           participated >= config.minParticipationObservations && completed >= 1
         }
-        leaderPool = if (graduatedLeaderPool.size >= 2) graduatedLeaderPool else active
+        leaderPool = if (graduatedLeaderPool.size >= 2) graduatedLeaderPool else coreList
         // Layer 1 view-carry-forward: seed `selectLeaderWeighted` with
         // `priorAbandonmentCount` so each same-key retry deterministically picks a different
         // initial leader (`sorted[N % size]`). Without this every retry reset to view=0 and
@@ -663,6 +684,7 @@ object GlobalSnapshotConsensusStateCreator {
           FacilitatorsFinalized,
           "eligible" -> allEligible.size.toString,
           "active" -> active.size.toString,
+          "core" -> coreList.size.toString,
           "excluded" -> (allEligible.size - eligibleThisRound.size).toString,
           "leader" -> ConsensusLog.pid(leader)
         )
@@ -671,7 +693,7 @@ object GlobalSnapshotConsensusStateCreator {
           key,
           lastOutcome,
           Facilitators(active),
-          // Canonical round-start committee — same set as `facilitators` at creation,
+          // Canonical round-start committee -- same set as `facilitators` at creation,
           // but frozen for the lifetime of the round even when peers withdraw.
           Facilitators(active),
           CollectingFacilities(
@@ -682,6 +704,8 @@ object GlobalSnapshotConsensusStateCreator {
           time,
           withdrawnFacilitators = WithdrawnFacilitators(withdrawn.toSet),
           eligibleFacilitators = EligibleFacilitators(allEligible),
+          coreFacilitators = CoreFacilitators(committees.core),
+          tier1Facilitators = Tier1Facilitators(committees.tier1),
           leader = leader,
           // Start the round at the retry-count view so view-change continues monotonically.
           // Pairs with the `viewNumber = priorAbandonmentCount` argument to selectLeaderWeighted

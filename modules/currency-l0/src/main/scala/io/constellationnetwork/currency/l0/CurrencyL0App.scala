@@ -444,6 +444,14 @@ abstract class CurrencyL0App(
                           )
                       // Recent-signers window unwrap mirror of dag-l0 Main.scala.
                       seedRecentSigners = seedOperational.recentSigners.getOrElse(SortedMap.empty[SnapshotOrdinal, SortedSet[PeerId]])
+                      // v19: per-peer tier classification seeded from PerPeerOperationalRecord.tier.
+                      // Mirror of dag-l0 Main.scala.
+                      seedPeerTiers = SortedMap.from(seedOperational.perPeer.iterator.flatMap {
+                        case (pid, r) => r.tier.map(t => pid -> t)
+                      })
+                      // v19 phase 2: view-from-time window unwrap mirror of dag-l0 Main.scala.
+                      seedRecentRoundEndTimes =
+                        seedOperational.recentRoundEndTimes.getOrElse(SortedMap.empty[SnapshotOrdinal, Long])
                       _ <- services.consensus.manager.startFacilitatingAfterRollback(
                         currencySnapshot.ordinal,
                         CurrencyConsensusOutcome(
@@ -468,7 +476,9 @@ abstract class CurrencyL0App(
                           recentProofSizes = rollbackRecentProofSizes,
                           readmissionCountdown = seedReadmissionCountdown,
                           peerViewChanges = seedPeerViewChanges,
-                          recentSigners = seedRecentSigners
+                          recentSigners = seedRecentSigners,
+                          peerTiers = seedPeerTiers,
+                          recentRoundEndTimes = seedRecentRoundEndTimes
                         )
                       )
                     } yield ()
