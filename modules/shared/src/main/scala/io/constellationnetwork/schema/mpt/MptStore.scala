@@ -222,20 +222,27 @@ object MptStore {
         } yield ()
 
     override def syncFullIfNeeded[V: Encoder](newState: => F[Map[K, V]], ordinal: SnapshotOrdinal): F[Unit] =
-      // Use atomic modify to prevent race condition where two threads both see needsSync=true
+      // Use atomic modify to prevent race condition where two threads both see needsSync=true.
+      // Returns (priorLastOrdinal, needsSync) so the caller can log the decision input
+      // alongside the resulting branch. This diagnostic targets the per-retry full-build
+      // cycle observed during the alpha.83 wedge: if priorLastSynced is consistently None
+      // across retries at the same ordinal, something is resetting lastSyncedOrdinalRef
+      // between rounds (a savepoint restore on the failed-round path is the prime suspect).
       lastSyncedOrdinalRef.modify { lastOrdinal =>
         val needsSync = lastOrdinal.forall(_ =!= ordinal)
         if (needsSync) {
           // Mark as syncing with this ordinal immediately to prevent concurrent syncs
-          (Some(ordinal), true)
+          (Some(ordinal), (lastOrdinal, true))
         } else {
-          (lastOrdinal, false)
+          (lastOrdinal, (lastOrdinal, false))
         }
-      }.flatMap { needsSync =>
-        if (needsSync)
-          newState.flatMap(syncFull(_, ordinal))
-        else
-          logger.debug(s"[MptStore] Skipping sync, already synced at ordinal $ordinal")
+      }.flatMap {
+        case (priorLastOrdinal, needsSync) =>
+          logger.info(
+            s"[MptStore.syncFullIfNeeded] ordinal=$ordinal priorLastSynced=$priorLastOrdinal needsSync=$needsSync"
+          ) >>
+            (if (needsSync) newState.flatMap(syncFull(_, ordinal))
+             else logger.debug(s"[MptStore] Skipping sync, already synced at ordinal $ordinal"))
       }
 
     override def sync[V: Encoder](updates: Map[K, V], ordinal: SnapshotOrdinal): F[Unit] =
