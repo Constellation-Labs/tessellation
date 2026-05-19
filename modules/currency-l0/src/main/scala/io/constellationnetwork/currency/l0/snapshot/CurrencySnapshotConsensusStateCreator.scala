@@ -331,12 +331,16 @@ object CurrencySnapshotConsensusStateCreator {
           participated >= config.minParticipationObservations && completed >= 1
         }
         leaderPool = if (graduatedLeaderPool.size >= 2) graduatedLeaderPool else coreList
-        // Layer 1 view-carry-forward: see dag-l0 mirror. priorAbandonmentCount
-        // seeds the leader pick so same-key retries rotate to different initial leaders.
+        // Phase 1 + phase 2 combined view seed. Mirror of dag-l0; see
+        // GlobalSnapshotConsensusStateCreator for full rationale.
+        nowMs <- Clock[F].realTime.map(_.toMillis)
+        parentEndTimeMs = lastOutcome.recentRoundEndTimes.lastOption.map(_._2)
+        timeView = ViewFromTime.compute(nowMs, parentEndTimeMs, config.viewInterval.toMillis)
+        initialView = math.max(priorAbandonmentCount, timeView)
         leader = facilitatorSelector.selectLeaderWeighted(
           leaderPool,
           entropy,
-          viewNumber = priorAbandonmentCount,
+          viewNumber = initialView,
           qualityScores = lastOutcome.peerQuality,
           selfHealthHints = lastOutcome.peerSelfHealth,
           peerViewChanges = lastOutcome.peerViewChanges.toMap,
@@ -375,8 +379,9 @@ object CurrencySnapshotConsensusStateCreator {
           coreFacilitators = CoreFacilitators(committees.core),
           tier1Facilitators = Tier1Facilitators(committees.tier1),
           leader = leader,
-          // Mirror dag-l0: start at the retry count so view-change continues monotonically.
-          viewNumber = priorAbandonmentCount,
+          // Mirror dag-l0: round-start view = max(priorAbandonmentCount, timeView). MUST match
+          // the viewNumber argument passed to selectLeaderWeighted above for leader consistency.
+          viewNumber = initialView,
           entropy = entropy
         )
 
