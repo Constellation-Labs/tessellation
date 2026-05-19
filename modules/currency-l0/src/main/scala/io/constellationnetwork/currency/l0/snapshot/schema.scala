@@ -144,7 +144,15 @@ object schema {
     // Recent-signers sliding window mirror of dag-l0 schema. See dag-l0 mirror for
     // the full rationale on window semantics, Option-wrap at the snapshot boundary,
     // and FacilitatorSelector consumption.
-    recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = SortedMap.empty
+    recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = SortedMap.empty,
+    // v19 multi-committee tier classification per peer. Mirror of dag-l0 schema. See
+    // dag-l0 mirror for the full Tier 2 / Tier 1 / Tier 0 semantics and the
+    // `TierTransitions.computeNextTier` round-finalize derivation.
+    peerTiers: SortedMap[PeerId, Int] = SortedMap.empty,
+    // v19 phase 2 view-from-time anchor mirror of dag-l0 schema. Sliding window of
+    // (ordinal -> consensusEndTime) computed as the median of Facility.proposerClockMs
+    // clamped against the parent. See dag-l0 mirror and docs/consensus/view-from-time-anchor.md.
+    recentRoundEndTimes: SortedMap[SnapshotOrdinal, Long] = SortedMap.empty
   ) {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value
@@ -158,7 +166,8 @@ object schema {
           cumulativeMissCounts.keysIterator ++
           readmissionCountdown.keysIterator ++
           deferralCountdown.keysIterator ++
-          peerViewChanges.keysIterator).toSet
+          peerViewChanges.keysIterator ++
+          peerTiers.keysIterator).toSet
       val perPeer: SortedMap[PeerId, PerPeerOperationalRecord] =
         SortedMap.from(
           keys.iterator.map { pid =>
@@ -170,14 +179,19 @@ object schema {
               deferralCountdown = deferralCountdown.getOrElse(pid, 0),
               // v16: Option-wrap so absent peers / pre-v16 readers see no key under
               // dropNullValues=true. Mirror of dag-l0 schema.
-              viewChangesCaused = peerViewChanges.get(pid).filter(_ > 0L)
+              viewChangesCaused = peerViewChanges.get(pid).filter(_ > 0L),
+              // v19: only emit Some when there is an actual tier classification.
+              tier = peerTiers.get(pid)
             )
           }
         )
       ConsensusOperationalState(
         perPeer = perPeer,
         recentProofSizes = recentProofSizes,
-        recentSigners = if (recentSigners.nonEmpty) Some(recentSigners) else None
+        recentSigners = if (recentSigners.nonEmpty) Some(recentSigners) else None,
+        // v19 phase 2: mirror of dag-l0 schema -- None at the snapshot boundary keeps
+        // pre-v19 encodings byte-stable; populated only once the median is computable.
+        recentRoundEndTimes = if (recentRoundEndTimes.nonEmpty) Some(recentRoundEndTimes) else None
       )
     }
   }

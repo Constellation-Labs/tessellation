@@ -57,7 +57,20 @@ object declaration {
     // `selectLeaderWeighted` in the next round demotes Degraded peers to tier 1 and Critical
     // peers to tier 2. Optional with default None so the field is wire-compatible with older
     // versions, although the jar hash gate already prevents cross-version peer connections.
-    selfHealthHint: Option[SelfHealthHint] = None
+    selfHealthHint: Option[SelfHealthHint] = None,
+    // v19 phase 2: per-facilitator wall-clock at signing time (raw millis, no bucketing).
+    // Acquired via `Clock[F].realTime.map(_.toMillis)` in the Facility build effect. The
+    // leader-elected outcome's `consensusEndTime` is the median of these values across the
+    // accepted Facility set, clamped against `parent.consensusEndTime + 1` for Bitcoin
+    // MTP-style anti-regression. See docs/consensus/view-from-time-anchor.md.
+    //
+    // Optional with default None: pre-v19 Facilities decode as `None`; the median
+    // computation skips `None` values and treats < n/2+1 carrying clocks as
+    // bootstrap (falls back to phase 1 viewChangeVotes-driven view derivation). Jar hash
+    // already gates v18 <-> v19 peer connection so the partial-deploy window is
+    // controlled at handshake; the field is Option-wrapped purely for derevo
+    // back-compat with snapshots / facilities written before this field existed.
+    proposerClockMs: Option[Long] = None
   ) extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)

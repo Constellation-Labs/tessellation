@@ -42,7 +42,33 @@ final case class PerPeerOperationalRecord(
   // `Printer(dropNullValues = true)` in production, `None` is dropped from JSON
   // entirely so v16-encoded snapshots are byte-identical to pre-v16 for peers that
   // have not yet caused a view change. Treat `None` as 0 at every read site.
-  viewChangesCaused: Option[Long] = None
+  viewChangesCaused: Option[Long] = None,
+  // v19 multi-committee tier classification. Three deterministic tiers govern the
+  // peer's role in a round:
+  //   - Tier 2 (Core): full facilitator, gates LIVENESS (quorum is computed against
+  //     coreFacilitators only). Bootstrap default for any peer with `tier = None` at
+  //     CommitteeBuilder time (no seedlist allowlist required).
+  //   - Tier 1: witness-eligible (B1/B2/VCC witness pool), not in the active LIVENESS
+  //     quorum. Demoted to Tier 1 when a Tier 2 peer was in roundStartFacilitators of
+  //     a SUCCESSFUL round N but was NOT in recentSigners[N]. Failed rounds do not
+  //     cascade demote -- only completed rounds with a witnessed signer set update tier.
+  //   - Tier 0 (Witness): open membership, observation only.
+  // Computed by `TierTransitions.computeNextTier` at every round-finalize from
+  // consensus-agreed inputs (prior tier + roundStartFacilitators + recentSigners + round
+  // outcome) so every honest node converges on the same per-peer tier byte-identically.
+  //
+  // MUST be `Option[Int]`, not `Int = 0`: same derevo-decoder caveat as
+  // `viewChangesCaused` above. Wrapping in Option makes the field truly optional at
+  // decode time; with `Printer(dropNullValues = true)` in production, `None` is dropped
+  // from JSON entirely so v19-encoded snapshots are byte-identical to pre-v19 for
+  // peers that have not yet been classified. `None` at the consume site is treated as
+  // bootstrap-Tier-2 by CommitteeBuilder, matching the no-allowlist initialization
+  // contract documented in the multi-committee architecture.
+  //
+  // NOT in deterministicConfigHash: the tier value is per-peer-derived, not a
+  // cluster-wide config knob. Operators do not configure tiers; the round-finalize
+  // pure function computes them.
+  tier: Option[Int] = None
 )
 
 object PerPeerOperationalRecord {
@@ -53,7 +79,8 @@ object PerPeerOperationalRecord {
       cumulativeMissCount = 0L,
       readmissionCountdown = 0,
       deferralCountdown = 0,
-      viewChangesCaused = None
+      viewChangesCaused = None,
+      tier = None
     )
 }
 
@@ -96,7 +123,26 @@ object PerPeerOperationalRecord {
 final case class ConsensusOperationalState(
   perPeer: SortedMap[PeerId, PerPeerOperationalRecord],
   recentProofSizes: SortedMap[SnapshotOrdinal, Int],
-  recentSigners: Option[SortedMap[SnapshotOrdinal, SortedSet[PeerId]]] = None
+  recentSigners: Option[SortedMap[SnapshotOrdinal, SortedSet[PeerId]]] = None,
+  // v19 phase 2 view-from-time anchor: per-ordinal canonical `consensusEndTime`
+  // derived from the median of `Facility.proposerClockMs` values agreed in the round
+  // and clamped against the parent's value (Bitcoin MTP-style anti-regression). All
+  // facilitators reading the same Facility set converge byte-identically, so the
+  // result is consensus-agreed and safe to persist. Consumed by the next round's
+  // `view_in_progress = floor((local_now - parent.consensusEndTime) / viewInterval)`
+  // view-from-time mechanism (replacing pure vote-driven view derivation).
+  //
+  // Bounded window: same K as `recentSigners` (`tighteningWindow`). On finalize, append
+  // `(ordinal -> consensusEndTime)` and prune outside the window.
+  //
+  // MUST be Option-wrapped: same derevo-decoder caveat as `recentSigners` above. Older
+  // snapshots have no key under `peerHistory`; with `dropNullValues=true` an Option(None)
+  // is dropped from JSON entirely and byte-stable encoding for pre-v19 snapshots is
+  // preserved. `None` at read time means the window has not yet been populated (bootstrap
+  // / rollback to a pre-v19 snapshot / partial-deploy with <n/2+1 facilities carrying
+  // proposerClockMs) and the round continues to derive view from `viewChangeVotes.maxToView`
+  // (phase 1) until the median becomes computable across the cluster.
+  recentRoundEndTimes: Option[SortedMap[SnapshotOrdinal, Long]] = None
 )
 
 object ConsensusOperationalState {
@@ -104,6 +150,7 @@ object ConsensusOperationalState {
     ConsensusOperationalState(
       perPeer = SortedMap.empty,
       recentProofSizes = SortedMap.empty,
-      recentSigners = None
+      recentSigners = None,
+      recentRoundEndTimes = None
     )
 }
