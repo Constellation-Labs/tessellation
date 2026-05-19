@@ -134,7 +134,8 @@ object CurrencySnapshotConsensusStateAdvancer {
             val previousPenalties = state.lastOutcome.removalPenalties
             val previousCumulative = state.lastOutcome.cumulativeMissCounts
 
-            val deferredInCommittee = state.lastOutcome.deferralCountdown.filter(_._2 > 0).keySet
+            // v19 cleanup: deferralCountdown is inert; no deferral cohort to exclude. Mirror of dag-l0.
+            val deferredInCommittee = Set.empty[PeerId]
 
             // Canonical committee (not mutable state.facilitators) — see
             // GlobalSnapshotConsensusStateAdvancer for the ord-5 fork rationale.
@@ -166,21 +167,9 @@ object CurrencySnapshotConsensusStateAdvancer {
               val penalty = math.min(scaled, config.maxRemovalPenaltyRounds.toDouble).toInt
               acc.updated(pid, math.max(1, penalty))
             }
-            // Compute deferral countdown: same pattern as removal penalties.
-            val previousEligibleSet = state.lastOutcome.eligibleOrFacilitators.toSet
-            val currentEligibleSet = state.eligibleFacilitators.value.toSet
-            val newlyEligible = (currentEligibleSet -- previousEligibleSet).filterNot(completedFacilitators.contains)
-            // B2 codex corrective #3: rejoiners funnel into readmissionCountdown below,
-            // not deferralCountdown. See dag-l0 mirror for full rationale.
+            // v19 cleanup: deferralCountdown is inert; justUnpenalized seeds readmissionCountdown.
+            // Mirror of dag-l0.
             val justUnpenalized = previousPenalties.filter(_._2 == 1).keySet
-            val needsDeferral = newlyEligible // rejoiners no longer funnel here
-            val previousDeferrals = state.lastOutcome.deferralCountdown
-            val decrementedDeferrals = previousDeferrals.view.mapValues(_ - 1).filter(_._2 > 0).to(SortedMap)
-            val newDeferrals = needsDeferral.foldLeft(decrementedDeferrals) { (acc, pid) =>
-              if (!acc.contains(pid)) acc.updated(pid, config.candidateDeferralRounds)
-              else acc
-            }
-            val finalDeferrals = if (config.candidateDeferralRounds > 0) newDeferrals else SortedMap.empty[PeerId, Int]
 
             // Grace window: peers with active deferralCountdown don't accrue participated
             // or completed. Symmetric suppression prevents the "freshly-Ready peer misses
@@ -229,17 +218,12 @@ object CurrencySnapshotConsensusStateAdvancer {
               withCurrent.filter { case (ord, _) => ord.value.value >= minOrdinalValue }
             }
 
-            // Recent-signers sliding window mirror of dag-l0 advancer.
+            // v19 cleanup: recentSigners is inert (only consumer was the retired tightening
+            // filter). TierTransitions reads the single just-completed round's signer set inline.
+            // tighteningMinOrdinalValue is retained because recentRoundEndTimes uses the same
+            // window-trim arithmetic. Mirror of dag-l0.
             val tighteningMinOrdinalValue =
               math.max(0L, currentOrdValue - config.tighteningWindow.toLong + 1L)
-            val newRecentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = {
-              val withCurrent =
-                state.lastOutcome.recentSigners.updated(
-                  state.key,
-                  SortedSet.from(completedFacilitators)
-                )
-              withCurrent.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
-            }
 
             // v19 multi-committee tier transitions mirror of dag-l0.
             val newPeerTiers: SortedMap[PeerId, Int] = TierTransitions.computeNextTiers(
@@ -320,7 +304,8 @@ object CurrencySnapshotConsensusStateAdvancer {
               state.eligibleFacilitators,
               f,
               removalPenalties = if (config.removalPenaltyRounds > 0) newPenalties else SortedMap.empty,
-              deferralCountdown = finalDeferrals,
+              // v19 cleanup: inert -- no StateCreator consumer. Mirror of dag-l0.
+              deferralCountdown = SortedMap.empty[PeerId, Int],
               peerQuality = accumulatedQuality,
               cumulativeMissCounts = newCumulative,
               recentProofSizes = newRecentProofSizes,
@@ -329,8 +314,9 @@ object CurrencySnapshotConsensusStateAdvancer {
               peerSelfHealth = state.observedSelfHealth.value,
               // v16: per-peer cumulative view-change-caused, mirror of dag-l0.
               peerViewChanges = accumulatedPeerViewChanges,
-              // Sliding signer-set window, mirror of dag-l0.
-              recentSigners = newRecentSigners,
+              // v19 cleanup: inert -- rolling-window consumer (active-set tightening) retired.
+              // Mirror of dag-l0.
+              recentSigners = SortedMap.empty[SnapshotOrdinal, SortedSet[PeerId]],
               // v19 multi-committee tier classification carried forward, mirror of dag-l0.
               peerTiers = newPeerTiers,
               // v19 phase 2 view-from-time anchor window, mirror of dag-l0.

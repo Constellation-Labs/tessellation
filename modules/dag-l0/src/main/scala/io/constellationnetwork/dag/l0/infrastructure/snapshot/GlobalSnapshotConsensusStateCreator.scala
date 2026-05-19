@@ -119,34 +119,21 @@ object GlobalSnapshotConsensusStateCreator {
 
         previousEligibleSet = filteredPreviousEligible.toSet
 
-        // Peers that failed to participate in the previous round.
-        // Derived only from consensus-agreed lastOutcome.removedFacilitators (peers evicted by the
-        // facility-phase fork-eviction path). Previously we also computed a "non-signers" set via
-        // `lastFacilitators - signedMajorityArtifact.proofs`, but `proofs` is per-node-local —
-        // different nodes see different proof subsets for the same snapshot, so the "non-signers"
-        // set varied per node → divergent `previouslyRemoved` → divergent committees → forks. See
-        // Phase 3 canonical-signers fix for the same bug in outcome-layer penalty derivation.
-        lastRoundEvicted = lastOutcome.removedFacilitators.value
-        previouslyRemoved = lastRoundEvicted
-
-        // Full base WITHOUT removal filter — so removed peers can re-enter in future rounds.
-        // The removal filter is only applied for active selection THIS round (see eligibleThisRound below).
-        // Note: selfId is NOT unconditionally added here. Each node adding its own selfId creates
-        // a unique facilitator set per node, causing fork detection (facilitatorsHash mismatch) and
-        // permanent divergence. Instead, nodes join via the candidate registration mechanism:
-        //   1. New node registers as candidate → included in next Facility declaration's candidates
-        //   2. Next round: filteredCandidates includes the new node → enters fullBase
-        //   3. deferralCountdown observes for candidateDeferralRounds → active after countdown expires
-        // Genesis ordinal 1 (empty previousEligible + empty candidates) is handled by the
-        // allEligible fallback below: `if (list.isEmpty) List(selfId)`.
+        // Full base. Removed peers stay in this set so they can re-enter in future rounds;
+        // the multi-round penalty filter (penalizedPeers below) is the only behavioural gate
+        // that suppresses them. selfId is NOT unconditionally added: each node adding its own
+        // selfId creates a divergent facilitator set per node, causing fork detection
+        // (facilitatorsHash mismatch) and permanent divergence. Instead, nodes join via the
+        // candidate registration mechanism (filteredCandidates above). Genesis ordinal 1 (empty
+        // previousEligible + empty candidates) is handled by the allEligible fallback below:
+        // `if (list.isEmpty) List(selfId)`.
         fullBase = (filteredPreviousEligible ++ filteredCandidates).distinct
 
         _ <- logger.debug(
           s"Facilitator selection for key=$key: " +
             s"previousEligible=${filteredPreviousEligible.size}, " +
             s"candidates=${filteredCandidates.size}, " +
-            s"fullBase=${fullBase.size}" +
-            (if (previouslyRemoved.nonEmpty) s", excludedFromPreviousRound=${previouslyRemoved.size}" else "")
+            s"fullBase=${fullBase.size}"
         )
 
         // TCA (Trailing Common Ancestor): exclude degraded peers. Degraded = peers who were
@@ -198,33 +185,25 @@ object GlobalSnapshotConsensusStateCreator {
             if (list.isEmpty) List(selfId) else list
           }
 
-        // Multi-round candidate deferral: new peers must observe for candidateDeferralRounds
-        // before actively participating. Uses a countdown carried in the consensus outcome
-        // (same pattern as removalPenalties) for deterministic, consensus-agreed tracking.
-        //
-        // genuinelyNewCandidates: peers appearing in allEligible for the first time this round.
-        // These will have their countdown initialized in the advancer.
-        // deferredByCountdown: peers with an active countdown from previous rounds.
-        // allDeferred: union of both, used for exclusion from eligibleThisRound.
-        genuinelyNewCandidates = allEligible.filterNot(previousEligibleSet.contains).toSet
-        deferredByCountdown = lastOutcome.deferralCountdown.filter(_._2 > 0).keySet.intersect(allEligible.toSet)
-        allDeferred = genuinelyNewCandidates ++ deferredByCountdown
-
         filteredOutByCollateral = fullBase.filterNot(allEligible.contains)
         _ <- filteredOutByCollateral.traverse_ { peerId =>
           logger.debug(s"Facilitator ${peerId.show} removed by facilitatorFilter for key=$key")
         }
 
-        // Multi-round removal penalty: peers removed in prior rounds stay excluded
-        // for removalPenaltyRounds rounds. Deterministic: derived from agreed-upon lastOutcome.
+        // Multi-round removal penalty (the security tier of the eligibility pipeline). Peers
+        // evicted via consensus-witnessed fork-eviction stay excluded for `removalPenaltyRounds`
+        // rounds before they can re-enter at all. v19 cleanup: this is the ONLY behavioural
+        // filter remaining; chronic-non-signer / prior-round-missing / tightening-window /
+        // candidate-deferral filters were retired in favour of CommitteeBuilder's tier-aware
+        // partition (peers with degraded peerQuality land in Tier 1, still sign, no longer
+        // gate the liveness quorum). Deterministic: derived from consensus-agreed lastOutcome.
         penalizedPeers = lastOutcome.removalPenalties.filter(_._2 > 0).keySet
 
         // B2 re-admission probation: peers whose `removalPenalty` just expired sit in
         // `readmissionCountdown` for `readmissionProbationRounds` before they can re-enter
-        // the committee. Excluded from the round NON-BYPASSABLY: even the `withoutPenaltiesOnly`
-        // escape below cannot drag them back in, because re-admission requires a
+        // the committee. Excluded from the round NON-BYPASSABLY: re-admission requires a
         // consensus-witnessed AdmissionCertificate embedded in a Proposal (cleared at
-        // round-finish in the advancer). Deterministic: derived from agreed-upon lastOutcome.
+        // round-finish in the advancer). Deterministic: derived from consensus-agreed lastOutcome.
         probationPeers = lastOutcome.readmissionCountdown.filter(_._2 > 0).keySet
 
         _ <- logger
@@ -245,37 +224,9 @@ object GlobalSnapshotConsensusStateCreator {
           )
           .whenA(probationPeers.nonEmpty)
 
-        // Chronic non-signer filter: exclude peers from the committee if their historical
-        // participation rate is below config.minParticipationRatio AFTER they have been
-        // observed for at least config.minParticipationObservations rounds. Uses the
-        // consensus-agreed peerQuality outcome field (completed, participated), so every
-        // node computes the same chronicNonSigners set. This prevents flaky community peers
-        // from being selected into the committee where they would cause mid-round stalls
-        // and force eviction cascades (the "3-of-4-unresponsive" death spiral).
-        //
-        // Only peers with participated >= minParticipationObservations are subject to the
-        // filter — new peers get a grace period to establish a track record.
-        //
-        // Minimum-history floor: also require participated >= minObservationHistoryFloor.
-        // The existing minParticipationObservations knob double-duties as the leader-graduation gate
-        // (selectLeaderWeighted below), so it can't be raised to a "high evidence" value without also
-        // delaying leader eligibility — a different policy decision. The floor lets us require a long
-        // observation window before chronic exclusion kicks in (where false positives wedge the cluster)
-        // without restricting the leader pool. See codex-followups-apr28.md Design B.
-        chronicNonSigners = lastOutcome.peerQuality.collect {
-          case (pid, (completed, participated))
-              if participated >= config.minParticipationObservations &&
-                participated >= config.minObservationHistoryFloor &&
-                (completed.toDouble / participated.toDouble) < config.minParticipationRatio =>
-            pid
-        }.toSet
-
-        // Expose chronic-classification state to Prometheus so operators can correlate
-        // peer-quality data with snapshot-rate dashboards. One gauge for the total
-        // count, plus per-peer ratio gauges for any peer that's currently in
-        // lastOutcome.peerQuality with at least one participated round (cardinality
-        // is bounded by the historical-facilitator set, which is small).
-        _ <- Metrics[F].updateGauge("dag_consensus_chronic_non_signers_count", chronicNonSigners.size.toLong)
+        // Per-peer quality gauges (Prometheus). With v19 cleanup, the quality-degradation
+        // override in CommitteeBuilder demotes peers with cumulative ratio < minRatio to Tier 1,
+        // so these gauges remain the key operator signal for "who's drifting toward Tier 1?"
         peerIdLabel = Metrics.unsafeLabelName("peer_id")
         _ <- lastOutcome.peerQuality.toList.traverse_ {
           case (pid, (completed, participated)) =>
@@ -286,29 +237,8 @@ object GlobalSnapshotConsensusStateCreator {
               Metrics[F].updateGauge("dag_consensus_peer_quality_completed", completed.toLong, pidTag)
         }
 
-        _ <- ConsensusLog
-          .info(
-            logger,
-            Facilitator,
-            key.show,
-            "n/a",
-            ChronicNonSignersExcluded,
-            "count" -> chronicNonSigners.size.toString,
-            "minObservations" -> config.minParticipationObservations.toString,
-            "historyFloor" -> config.minObservationHistoryFloor.toString,
-            "minRatio" -> f"${config.minParticipationRatio}%.2f",
-            "peers" -> chronicNonSigners.toList.map { pid =>
-              val (c, p) = lastOutcome.peerQuality.getOrElse(pid, (0, 0))
-              s"${pid.value.value.take(8)}:$c/$p"
-            }
-              .mkString(",")
-          )
-          .whenA(chronicNonSigners.nonEmpty)
-
-        // Clear abandoned-missing tracking (but don't use it for exclusion — it's local-only and
-        // causes non-deterministic facilitator sets across nodes, leading to fork detection failures).
-        // The deterministic mechanisms (previouslyRemoved + penalizedPeers from consensus-agreed
-        // lastOutcome) already handle unresponsive peer exclusion.
+        // Clear the abandoned-missing tracker every round (local-only state, never used for
+        // exclusion -- the deterministic mechanisms above cover unresponsive peers).
         abandonedMissing <- peerQualityTracker.getAndClearAbandonedMissingPeers
 
         _ <- ConsensusLog
@@ -323,232 +253,23 @@ object GlobalSnapshotConsensusStateCreator {
           )
           .whenA(abandonedMissing.nonEmpty)
 
-        // Prior-round-missing exclusion (Layer 2-Lite). Peers that were in the
-        // prior round's round-start committee but did NOT sign the finalized outcome are
-        // excluded from THIS round's committee. The signal is consensus-agreed: every honest
-        // node sees the byte-identical `Signed[Artifact]` propagated by the prior round's
-        // leader, so `signers = proofs.map(_.id.toPeerId)` is the same set on every node, and
-        // `priorRoundFacilitators - signers` therefore yields the same exclusion set
-        // everywhere. No schema change required.
-        //
-        // One-round memory: a peer excluded here re-enters the eligible pool for the round
-        // after next (because they won't be in *that* round's `lastOutcome.facilitators` if
-        // they were excluded here). This gives recovered peers a quick path back without
-        // letting persistently-silent peers stay in the committee.
-        //
-        // Motivation: alpha.76 wedge at ord 3126034 where 63adf853 was in the round-start
-        // committee of every retry despite being silent in ord 3126033's outcome. With this
-        // exclusion the wedge round's committee shrinks from 6 to 5, quorum drops from 5 to
-        // 4, and the 4 responsive peers complete the round even with another peer silent.
-        priorRoundSigners = lastOutcome.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet
-        priorRoundFacilitators = lastOutcome.facilitators.value.toSet
-        priorRoundMissing = priorRoundFacilitators -- priorRoundSigners
-
-        _ <- ConsensusLog
-          .info(
-            logger,
-            Facilitator,
-            key.show,
-            "n/a",
-            PriorRoundMissingExcluded,
-            "count" -> priorRoundMissing.size.toString,
-            "peers" -> priorRoundMissing.toList.map(_.value.value.take(8)).sorted.mkString(",")
-          )
-          .whenA(priorRoundMissing.nonEmpty)
-
-        // Active-set tightening via the recentSigners window. Narrows the candidate
-        // pool to peers who signed at least `config.minParticipationInWindow` of the
-        // last `config.tighteningWindow` outcomes, plus `allDeferred` (new + countdown
-        // peers that don't have a fair chance to have signed yet). If the surviving
-        // pool is below `config.activeFacilitatorFloor`, the filter is bypassed for
-        // THIS round so BFT safety (N >= 3f+1) is preserved. The window itself is
-        // filled at outcome finalization by the StateAdvancer from `completedFacilitators`
-        // (roundStartFacilitators minus evictedPeers), which is consensus-agreed, so
-        // every honest node computes the same `participantsLastK` set. Bootstrap:
-        // `recentSigners.size < tighteningWindow` -> no filter applied; the candidate
-        // pool matches prior behavior for the first K outcomes.
-        tighteningWindowFull = lastOutcome.recentSigners.size >= config.tighteningWindow
-        recentParticipants: Set[PeerId] =
-          if (!tighteningWindowFull) Set.empty[PeerId]
-          else {
-            val counts: Map[PeerId, Int] =
-              lastOutcome.recentSigners.values.iterator.flatten.toList
-                .groupBy(identity)
-                .view
-                .mapValues(_.size)
-                .toMap
-            counts.collect {
-              case (pid, n) if n >= config.minParticipationInWindow => pid
-            }.toSet
-          }
-        tighteningTentativeExcluded: Set[PeerId] =
-          if (!tighteningWindowFull) Set.empty[PeerId]
-          else allEligible.toSet -- recentParticipants -- allDeferred
-        tighteningPostFilterSize = allEligible.size - tighteningTentativeExcluded.size
-        tighteningExcluded: Set[PeerId] =
-          if (tighteningWindowFull && tighteningPostFilterSize >= config.activeFacilitatorFloor)
-            tighteningTentativeExcluded
-          else
-            Set.empty[PeerId]
-
-        _ <- ConsensusLog
-          .info(
-            logger,
-            Facilitator,
-            key.show,
-            "n/a",
-            ActiveSetTightened,
-            "windowSize" -> lastOutcome.recentSigners.size.toString,
-            "tighteningWindow" -> config.tighteningWindow.toString,
-            "minParticipationInWindow" -> config.minParticipationInWindow.toString,
-            "activeFacilitatorFloor" -> config.activeFacilitatorFloor.toString,
-            "filterApplied" -> tighteningExcluded.nonEmpty.toString,
-            "tentativeExcludedCount" -> tighteningTentativeExcluded.size.toString,
-            "appliedExcludedCount" -> tighteningExcluded.size.toString,
-            "postFilterSize" -> tighteningPostFilterSize.toString,
-            "peers" -> tighteningExcluded.toList.map(_.value.value.take(8)).sorted.mkString(",")
-          )
-          .whenA(tighteningWindowFull)
-
-        // For THIS round only: exclude recently removed and penalized peers from active selection.
-        // They remain in allEligible so they can be re-selected in future rounds.
-        // NOTE: abandonedMissing is intentionally NOT included — it's a local-only tracker that
-        // can diverge between nodes, causing different facilitator sets → fork detection → Leaving state.
-        //
-        // MINIMUM VIABLE QUORUM — fork safety invariant:
-        // Two independent cohorts both forming a valid quorum is the fork scenario we must prevent.
-        // Historically this floor used (allEligible.size / 2) + 1 so a minority partition could never
-        // shrink its committee enough to finalize on its own. But that over-counted: chronic
-        // non-signers — by definition of their classification — cannot form a competing quorum.
-        // They are consensus-agreed (derived from lastOutcome.peerQuality) as peers that do not sign,
-        // so every honest node excludes the same chronic set, and the "minority that could compete"
-        // is exactly `allEligible - chronicNonSigners`. Computing majority over that set lets the
-        // reliable cohort keep running when chronic peers outnumber them, while still preventing
-        // a real partition-and-both-sides-shrink fork.
-        //
-        // Example: committee=9, 5 chronic, 4 reliable. Old floor=5, filtered=4 -> fallback
-        // to allEligible(9), re-admit chronic -> QUORUM_INFEASIBLE_EVICTION loop. New floor (majority
-        // of potentiallyCompeting=4) = 3, filtered=4 >= 3 -> use the 4 reliable, q=3, progress.
-        // B2: probation peers are excluded BEFORE minViableQuorum is computed. Without
-        // this, the quorum floor would be derived from a pool that includes probation
-        // peers, producing a false-high floor that the escape hatch would then have to
-        // bypass by re-admitting them — defeating the whole point of the probation gate.
-        potentiallyCompeting = allEligible.filterNot(pid => chronicNonSigners.contains(pid) || probationPeers.contains(pid))
-        minViableQuorum = math.max(3, (potentiallyCompeting.size / 2) + 1)
-
-        // Periodic reinstatement (Option A): every chronicReinstatementInterval ordinals, rotate
-        // ONE chronic non-signer back into the eligible pool for a single round so they can
-        // re-enter peerQuality's completed/participated accounting. Without this the `participated`
-        // counter stops growing once a peer is excluded → chronic classification is effectively
-        // permanent even if the peer recovers. Deterministic: every honest node computes the
-        // same (isReinstatementRound, rotation index) from consensus-agreed data.
-        reinstatedThisRound = {
-          val interval = config.chronicReinstatementInterval
-          val ordinalValue = key.value.value
-          val isReinstatementRound = interval > 0 && ordinalValue % interval == 0L
-          if (!isReinstatementRound || chronicNonSigners.isEmpty) Set.empty[PeerId]
-          else {
-            val sorted = chronicNonSigners.toList.sortBy(_.value.value)
-            val idx = ((ordinalValue / interval) % sorted.size.toLong).toInt
-            Set(sorted(idx))
-          }
-        }
-        effectiveChronic = chronicNonSigners -- reinstatedThisRound
-
-        _ <- ConsensusLog
-          .info(
-            logger,
-            Facilitator,
-            key.show,
-            "n/a",
-            ChronicNonSignersExcluded,
-            "reinstated" -> reinstatedThisRound.toList.map(_.value.value.take(8)).mkString(","),
-            "interval" -> config.chronicReinstatementInterval.toString
-          )
-          .whenA(reinstatedThisRound.nonEmpty)
-
+        // Eligibility: penalty + probation are the only behavioural gates. Everything else
+        // that was previously filtered out (chronic non-signers, prior-round-missing,
+        // tightening-window exclusions, new-peer deferrals) is now handled at CommitteeBuilder
+        // by partitioning into Core / Tier 1 / Witness rather than excluding -- Tier 1 peers
+        // sign and earn but do not count toward the liveness quorum, so chronic peers cannot
+        // wedge consensus by being absent. Fallback ladder preserves probation as non-bypassable.
         eligibleThisRound = {
-          // Exclude: previously removed peers, penalized peers, chronic non-signers (minus any
-          // reinstated for this round), deferred candidates (brand-new or in countdown),
-          // B2 probation peers (waiting for AdmissionCertificate re-admission),
-          // priorRoundMissing (facilitators of the previous round that did not sign; see
-          // the `priorRoundMissing` computation above for the determinism rationale),
-          // AND tighteningExcluded (active-set tightening; the per-round floor is applied
-          // inside tighteningExcluded so we don't need to re-check it here).
-          // Deferred/probation candidates remain in allEligible so they remain tracked.
-          val excluded =
-            previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers ++ priorRoundMissing ++
-              tighteningExcluded
+          val excluded = penalizedPeers ++ probationPeers
           val filtered = allEligible.filterNot(excluded.contains)
-          // Bypass chain for liveness when filtering would drop below minViableQuorum:
-          //   1. withoutPenaltiesOnly: lift penalties + deferral + tightening window-exclusion,
-          //      keep chronic, reinstatement rotation, AND probation. Probation is
-          //      NON-BYPASSABLE: the only way out of probation is a quorum-witnessed
-          //      AdmissionCertificate embedded in a Proposal.
-          //   2. filtered itself (even below floor): accept degraded committee over
-          //      re-admitting chronic/probation peers
-          //   3. allEligible MINUS probation: last-resort full re-admit of chronic peers,
-          //      but never probation
-          //   4. allEligible: only if even step 3 is empty (pathological case, falls
-          //      through to selfId)
-          // This is the fork-safety critical path: we never re-admit `chronicNonSigners` or
-          // `probationPeers` except via their respective re-entry gates. tighteningExcluded lifts
-          // with penalties because it shares their semantics (round-by-round penalty for
-          // non-participation, not a permanent classification).
-          val withoutPenaltiesOnly =
-            allEligible.filterNot((previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ probationPeers).contains)
-          val allEligibleMinusProbation = allEligible.filterNot(probationPeers.contains)
-          if (filtered.size >= minViableQuorum) filtered
-          else if (withoutPenaltiesOnly.size >= 2 && allDeferred.nonEmpty) withoutPenaltiesOnly
-          else if (filtered.nonEmpty) filtered
-          else if (allEligibleMinusProbation.nonEmpty) allEligibleMinusProbation
-          else if (allEligible.nonEmpty) allEligible
-          else List(selfId)
+          if (filtered.nonEmpty) filtered
+          else {
+            val allEligibleMinusProbation = allEligible.filterNot(probationPeers.contains)
+            if (allEligibleMinusProbation.nonEmpty) allEligibleMinusProbation
+            else if (allEligible.nonEmpty) allEligible
+            else List(selfId)
+          }
         }
-
-        penaltyBypassed = {
-          val excluded =
-            previouslyRemoved ++ penalizedPeers ++ effectiveChronic ++ allDeferred ++ probationPeers ++ priorRoundMissing ++
-              tighteningExcluded
-          val filtered = allEligible.filterNot(excluded.contains)
-          filtered.size < minViableQuorum && allEligible.size > filtered.size
-        }
-
-        _ <- ConsensusLog
-          .info(
-            logger,
-            Facilitator,
-            key.show,
-            "n/a",
-            MinQuorumFloorApplied,
-            "filteredCount" -> allEligible
-              .filterNot((previouslyRemoved ++ penalizedPeers ++ allDeferred).contains)
-              .size
-              .toString,
-            "minViableQuorum" -> minViableQuorum.toString,
-            "usingAll" -> allEligible.size.toString,
-            "penalizedBypassed" -> penalizedPeers.size.toString,
-            "removedBypassed" -> previouslyRemoved.size.toString,
-            "deferredBypassed" -> allDeferred.size.toString
-          )
-          .whenA(penaltyBypassed)
-
-        _ <- ConsensusLog
-          .info(
-            logger,
-            Facilitator,
-            key.show,
-            "n/a",
-            CandidateObserving,
-            "deferredCount" -> allDeferred.size.toString,
-            "deferredPeers" -> allDeferred.toList.map(ConsensusLog.pid).mkString(","),
-            "newThisRound" -> genuinelyNewCandidates.size.toString,
-            "countdownActive" -> deferredByCountdown.size.toString,
-            "actuallyDeferred" -> (!penaltyBypassed).toString,
-            "eligibleThisRound" -> eligibleThisRound.size.toString,
-            "allEligible" -> allEligible.size.toString
-          )
-          .whenA(allDeferred.nonEmpty)
 
         // Apply deterministic subset selection using hash-distance ordering
         // Uses the previous round's snapshot hash as entropy for randomization
@@ -610,15 +331,30 @@ object GlobalSnapshotConsensusStateCreator {
         } yield ()
 
         // v19 multi-committee derivation. Partition `active` into Core / Tier 1 / Witness
-        // using the carried-forward `lastOutcome.peerTiers` and applying the per-environment
-        // `coreCommitteeSize` floor. Peers without a tier classification default to Core
-        // (bootstrap default), so a freshly-deployed cluster lands all eligible peers in the
-        // Core committee and `TierTransitions` propagates demotions only after rounds
-        // complete with observed signers.
+        // using the carried-forward `lastOutcome.peerTiers` plus the consensus-agreed
+        // `lastOutcome.peerQuality` history. Tier assignment rule (re-derived every round):
+        //   1. Quality-degradation override -- any peer with observed `participated >=
+        //      minParticipationObservations` AND `completed/participated < minParticipationRatio`
+        //      is forced to Tier 1, even if `priorTiers` says Core. Structural protection so a
+        //      chronic-but-classified peer cannot gate liveness; recovers on its own next round
+        //      if the ratio climbs back above the bar.
+        //   2. Carried-forward classification from `priorTiers`.
+        //   3. Quality-proven bootstrap -- new joiners (absent from `priorTiers`) land in Core
+        //      iff their `peerQuality` shows them above the ratio bar with enough observations.
+        //   4. Default Tier 1 -- new peers without proven participation join the witness pool,
+        //      NOT the liveness quorum. Replaces the original "everyone defaults to Core"
+        //      bootstrap that let chronic-but-unclassified peers wedge the cluster.
+        // Core-floor promotion then tops Core up to `coreCommitteeSize` by ranking the Tier 1
+        // pool on `peerQuality` (descending ratio, descending completed, then PeerId lex).
+        // At genesis (empty `peerQuality`) ranking collapses to pure lex order so the cluster
+        // bootstraps deterministically from scratch.
         committees = CommitteeBuilder.build(
           candidates = active,
           priorTiers = lastOutcome.peerTiers,
-          coreFloor = coreCommitteeSize
+          peerQuality = lastOutcome.peerQuality,
+          coreFloor = coreCommitteeSize,
+          minObservations = config.minParticipationObservations,
+          minRatio = config.minParticipationRatio
         )
 
         _ <- ConsensusLog.info(
@@ -731,10 +467,8 @@ object GlobalSnapshotConsensusStateCreator {
           val optionalPairs =
             (if (withdrawn.nonEmpty) Seq("withdrawn" -> withdrawn.size.toString) else Seq.empty) ++
               (if (penalizedPeers.nonEmpty) Seq("penalized" -> penalizedPeers.size.toString) else Seq.empty) ++
-              (if (previouslyRemoved.nonEmpty) Seq("previouslyRemoved" -> previouslyRemoved.size.toString) else Seq.empty) ++
+              (if (probationPeers.nonEmpty) Seq("probation" -> probationPeers.size.toString) else Seq.empty) ++
               (if (abandonedMissing.nonEmpty) Seq("abandonedMissing" -> abandonedMissing.size.toString) else Seq.empty) ++
-              (if (priorRoundMissing.nonEmpty) Seq("priorRoundMissing" -> priorRoundMissing.size.toString) else Seq.empty) ++
-              (if (allDeferred.nonEmpty) Seq("deferredCandidates" -> allDeferred.size.toString) else Seq.empty) ++
               (if (priorAbandonmentCount > 0) Seq("retryCount" -> priorAbandonmentCount.toString) else Seq.empty)
           ConsensusLog.info(logger, Lifecycle, key.show, role, RoundStarted, (basePairs ++ optionalPairs): _*)
         }

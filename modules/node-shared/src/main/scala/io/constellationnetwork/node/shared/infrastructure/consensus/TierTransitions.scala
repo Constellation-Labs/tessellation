@@ -26,11 +26,15 @@ import io.constellationnetwork.schema.peer.PeerId
   * entry exists) keeps Tier 2. Only completed rounds with a witnessed signer set update tier. This closes the failure-mode where a single
   * network flap during a round that would have failed anyway would have collapsed the Core committee.
   *
-  * ==Bootstrap default at the consume site==
+  * ==Bootstrap default: round-completion vs committee derivation==
   *
-  * `computeNextTier` returns `2` (Tier 2 Core) for peers with `priorTier = None`. The `CommitteeBuilder` applies the same default at
-  * committee derivation, so bootstrap peers land in Core without requiring a seedlist allowlist. Once a round completes and signers are
-  * observed, demotions begin propagating normally.
+  * `computeNextTier` returns `2` (Tier 2 Core) for peers with `priorTier = None`. This default is scoped to ROUND-COMPLETION outcomes: a
+  * peer appearing in `roundStartFacilitators[N]` but missing from `priorTiers` must have been promoted into Core by the floor mechanism for
+  * round N, so the round-completion outcome treats them as Core (and demotes them to Tier 1 iff they were in roundStart but did NOT sign).
+  *
+  * `CommitteeBuilder` no longer mirrors this default at COMMITTEE-DERIVATION time. As of the structural fix, an unknown peer at derivation
+  * time defaults to Tier 1 unless `peerQuality` proves they belong in Core. The two defaults are intentionally asymmetric: derivation gates
+  * Core entry on demonstrated participation; round-completion gates demotion on demonstrated absence.
   */
 object TierTransitions {
 
@@ -85,7 +89,7 @@ object TierTransitions {
     *   `true` iff the round produced a signed `Finished` outcome.
     * @return
     *   The next round's `peerTiers` map. Peers absent from both `priorTiers` and the round's committee are not included (CommitteeBuilder
-    *   defaults absent peers to Core at consume time).
+    *   classifies absent peers at consume time using `peerQuality` -- defaults to Tier 1 unless quality proves Core).
     */
   def computeNextTiers(
     priorTiers: SortedMap[PeerId, Int],

@@ -235,10 +235,10 @@ object GlobalSnapshotConsensusStateAdvancer {
             val previousPenalties = state.lastOutcome.removalPenalties
             val previousCumulative = state.lastOutcome.cumulativeMissCounts
 
-            // Don't penalize peers who were in committee via deferral bypass. They were
-            // KNOWN to be deferred (still in observation period) — the state creator included
-            // them to prevent genesis from racing ahead solo.
-            val deferredInCommittee = state.lastOutcome.deferralCountdown.filter(_._2 > 0).keySet
+            // v19 cleanup: the deferralCountdown field is now inert (StateCreator no longer
+            // reads it), so there is no "deferral bypass" cohort to exclude from penalty.
+            // Every non-evicted facilitator participates fully in penalty accounting.
+            val deferredInCommittee = Set.empty[PeerId]
 
             // Decay: every non-evicted facilitator earns a 1-unit credit against their
             // cumulative miss count. Prevents the exponential penalty formula from
@@ -284,29 +284,12 @@ object GlobalSnapshotConsensusStateAdvancer {
             }
             val finalPenalties = if (config.removalPenaltyRounds > 0) newPenalties else SortedMap.empty[PeerId, Int]
 
-            // Compute deferral countdown: same pattern as removal penalties.
-            // Decrement previous countdowns, add new entries for peers entering allEligible
-            // for the first time. Deterministic: uses `state.eligibleFacilitators` and
-            // `completedFacilitators` (both consensus-agreed).
-            val previousEligibleSet = state.lastOutcome.eligibleOrFacilitators.toSet
-            val currentEligibleSet = state.eligibleFacilitators.value.toSet
-            val newlyEligible = (currentEligibleSet -- previousEligibleSet).filterNot(completedFacilitators.contains)
-            // B2 codex corrective #3: rejoiners (peers whose removalPenalty just expired)
-            // take the re-admission path, NOT the deferral path. First-time joiners
-            // (`newlyEligible`) keep using `deferralCountdown`; `justUnpenalized` peers
-            // enter `readmissionCountdown` and wait for a quorum-witnessed
-            // `AdmissionCertificate` to re-enter the committee. This separation prevents
-            // a rejoiner from silently re-entering via the deferral countdown while the
-            // cluster has no evidence they've resynced to the current tip.
+            // v19 cleanup: deferralCountdown is inert (no StateCreator consumer). justUnpenalized
+            // is still computed because it seeds the B2 readmissionCountdown path below --
+            // rejoiners whose removalPenalty just expired enter probation and wait for a
+            // quorum-witnessed AdmissionCertificate. The deferralCountdown field is written
+            // as empty going forward (see outcome construction below).
             val justUnpenalized = previousPenalties.filter(_._2 == 1).keySet
-            val needsDeferral = newlyEligible // rejoiners no longer funnel here
-            val previousDeferrals = state.lastOutcome.deferralCountdown
-            val decrementedDeferrals = previousDeferrals.view.mapValues(_ - 1).filter(_._2 > 0).to(SortedMap)
-            val newDeferrals = needsDeferral.foldLeft(decrementedDeferrals) { (acc, pid) =>
-              if (!acc.contains(pid)) acc.updated(pid, config.candidateDeferralRounds)
-              else acc
-            }
-            val finalDeferrals = if (config.candidateDeferralRounds > 0) newDeferrals else SortedMap.empty[PeerId, Int]
 
             // v7 (flaky-byzantine): the peerQuality "completed" signal now reflects ACTUAL
             // facility-phase participation, not "non-fork-evicted" as it did before. Source is
@@ -358,23 +341,15 @@ object GlobalSnapshotConsensusStateAdvancer {
               withCurrent.filter { case (ord, _) => ord.value.value >= minOrdinalValue }
             }
 
-            // Same sliding-window pattern as recentProofSizes above, but stores the
-            // actual signer set per ordinal (not just the count) so the next round's
-            // FacilitatorSelector can compute participantsLastK. Bounded by
-            // `config.tighteningWindow`. `completedFacilitators` is the consensus-
-            // agreed signer set (roundStartFacilitators minus evictedPeers): byte-
-            // identical on every honest node since both inputs are canonical round-
-            // start state.
+            // v19 cleanup: recentSigners (the rolling K-round signer window) is inert. Its
+            // only consumer was the active-set tightening filter at StateCreator, now retired
+            // in favour of CommitteeBuilder's tier partition. TierTransitions reads only the
+            // SINGLE just-completed round's signer set (passed inline below), not the rolling
+            // window. The field is written as empty going forward (see outcome construction).
+            // tighteningMinOrdinalValue stays defined here because recentRoundEndTimes (v19
+            // phase 2 time anchor) still uses the same window-trim arithmetic.
             val tighteningMinOrdinalValue =
               math.max(0L, currentOrdValue - config.tighteningWindow.toLong + 1L)
-            val newRecentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = {
-              val withCurrent =
-                state.lastOutcome.recentSigners.updated(
-                  state.key,
-                  SortedSet.from(completedFacilitators)
-                )
-              withCurrent.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
-            }
 
             // v19 multi-committee tier transitions. Round completed (we are in `Finished`),
             // so every Tier 2 peer who was in `roundStartFacilitators` but is NOT in
@@ -501,7 +476,8 @@ object GlobalSnapshotConsensusStateAdvancer {
               state.eligibleFacilitators,
               Finished(f.signedMajorityArtifact, f.context, f.majorityTrigger, f.candidates, f.facilitatorsHash, f.snapshotHash),
               removalPenalties = finalPenalties,
-              deferralCountdown = finalDeferrals,
+              // v19 cleanup: inert -- no StateCreator consumer.
+              deferralCountdown = SortedMap.empty[PeerId, Int],
               peerQuality = accumulatedQuality,
               cumulativeMissCounts = newCumulative,
               recentProofSizes = newRecentProofSizes,
@@ -513,9 +489,9 @@ object GlobalSnapshotConsensusStateAdvancer {
               // v16: per-peer cumulative view-change-caused, deterministic from this round's
               // (entropy, viewNumber, lastOutcome, roundStartFacilitators) inputs above.
               peerViewChanges = accumulatedPeerViewChanges,
-              // Sliding window of per-ord signers; consumed by next round's
-              // FacilitatorSelector to narrow the candidate pool.
-              recentSigners = newRecentSigners,
+              // v19 cleanup: inert -- the rolling-window field had only one consumer
+              // (active-set tightening filter), which has been retired.
+              recentSigners = SortedMap.empty[SnapshotOrdinal, SortedSet[PeerId]],
               // v19: carried-forward multi-committee tier classification computed from this
               // round's signer participation (above).
               peerTiers = newPeerTiers,
