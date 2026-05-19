@@ -1,6 +1,7 @@
 package io.constellationnetwork.schema.mpt
 
 import cats.Parallel
+import cats.effect.std.Semaphore
 import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
@@ -51,15 +52,29 @@ object MptStore {
     producer: StatefulMerklePatriciaProducer[F],
     toHex: K => F[Hex]
   ): F[MptStore[F, K]] =
-    Ref.of[F, Option[SnapshotOrdinal]](None).map { lastSyncedOrdinalRef =>
-      new Impl[F, K](producer, toHex, lastSyncedOrdinalRef): MptStore[F, K]
-    }
+    for {
+      lastSyncedOrdinalRef <- Ref.of[F, Option[SnapshotOrdinal]](None)
+      // Serializes the heavy mutation methods (syncFull/sync/update/deleteAbove) and the
+      // multi-Ref savepoint capture+restore so that concurrent callers (FSM proposal path,
+      // download path, state-channel sync) cannot tear the producer's internal state.
+      // Today the consensus state machine implicitly prevents overlap by filtering
+      // commands during WaitingForDownload / DownloadInProgress, but that invariant is
+      // fragile: this Semaphore makes the API self-protecting regardless of caller fiber.
+      // Note: insert/remove/clear/build are NOT externally invoked (verified by grep) and
+      // are called only from inside the wrapped outer methods, so wrapping them would
+      // deadlock. If a new external caller appears, wrap that method too or add an
+      // unsafe-internal variant.
+      mutationLock <- Semaphore[F](1)
+    } yield new Impl[F, K](producer, toHex, lastSyncedOrdinalRef, mutationLock): MptStore[F, K]
 
   private final class Impl[F[_]: Async: Parallel: Hasher: JsonSerializer, K](
     producer: StatefulMerklePatriciaProducer[F],
     toHex: K => F[Hex],
-    lastSyncedOrdinalRef: Ref[F, Option[SnapshotOrdinal]]
+    lastSyncedOrdinalRef: Ref[F, Option[SnapshotOrdinal]],
+    mutationLock: Semaphore[F]
   ) extends MptStore[F, K] {
+
+    private def withLock[A](fa: F[A]): F[A] = mutationLock.permit.use(_ => fa)
 
     private val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
     private val BatchSize = 5000
@@ -207,19 +222,21 @@ object MptStore {
       producer.buildForOrdinal(snapshotOrdinal)
 
     override def syncFull[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit] =
-      if (newState.isEmpty) {
-        logger.info("[MptStore] Empty sync, skipping") >>
-          clear >> lastSyncedOrdinalRef.set(Some(ordinal))
-      } else
-        for {
-          _ <- logger.info(s"[MptStore] Full sync with ${newState.size} entries")
-          _ <- clear
-          newEntries <- toHexEntries(newState)
-          _ <- producer.insertBytes(newEntries).void
-          _ <- persistAsync(ordinal)
-          _ <- build(ordinal)
-          _ <- lastSyncedOrdinalRef.set(Some(ordinal))
-        } yield ()
+      withLock {
+        if (newState.isEmpty) {
+          logger.info("[MptStore] Empty sync, skipping") >>
+            clear >> lastSyncedOrdinalRef.set(Some(ordinal))
+        } else
+          for {
+            _ <- logger.info(s"[MptStore] Full sync with ${newState.size} entries")
+            _ <- clear
+            newEntries <- toHexEntries(newState)
+            _ <- producer.insertBytes(newEntries).void
+            _ <- persistAsync(ordinal)
+            _ <- build(ordinal)
+            _ <- lastSyncedOrdinalRef.set(Some(ordinal))
+          } yield ()
+      }
 
     override def syncFullIfNeeded[V: Encoder](newState: => F[Map[K, V]], ordinal: SnapshotOrdinal): F[Unit] =
       // Use atomic modify to prevent race condition where two threads both see needsSync=true.
@@ -248,40 +265,48 @@ object MptStore {
     override def sync[V: Encoder](updates: Map[K, V], ordinal: SnapshotOrdinal): F[Unit] =
       if (updates.isEmpty) Async[F].unit
       else
-        for {
-          _ <- logger.debug(s"[MptStore] Incremental sync with ${updates.size} entries at ordinal=$ordinal")
-          _ <- insert(updates)
-          _ <- persistAsync(ordinal)
-          // Build the trie and cache root hash for this ordinal
-          // This is critical for validation - without this, getRootHashForOrdinal returns None
-          _ <- build(ordinal).void
-          _ <- lastSyncedOrdinalRef.set(Some(ordinal))
-        } yield ()
+        withLock {
+          for {
+            _ <- logger.debug(s"[MptStore] Incremental sync with ${updates.size} entries at ordinal=$ordinal")
+            _ <- insert(updates)
+            _ <- persistAsync(ordinal)
+            // Build the trie and cache root hash for this ordinal
+            // This is critical for validation - without this, getRootHashForOrdinal returns None
+            _ <- build(ordinal).void
+            _ <- lastSyncedOrdinalRef.set(Some(ordinal))
+          } yield ()
+        }
 
     override def update[V: Encoder](toUpsert: Map[K, V], toRemove: Set[K]): F[Unit] =
-      for {
-        _ <- remove(toRemove.toList)
-        _ <- insert(toUpsert)
-      } yield ()
+      withLock {
+        for {
+          _ <- remove(toRemove.toList)
+          _ <- insert(toUpsert)
+        } yield ()
+      }
 
     override def underlying: StatefulMerklePatriciaProducer[F] = producer
 
     override def deleteAbove(ordinal: SnapshotOrdinal): F[Unit] =
-      producer match {
-        case p: StatefulWithPersistenceMerklePatriciaProducer[F] =>
-          logger.info(s"[MptStore] Deleting above ordinal=$ordinal") >> p.deleteAbove(ordinal)
-        case _ =>
-          Async[F].unit
+      withLock {
+        producer match {
+          case p: StatefulWithPersistenceMerklePatriciaProducer[F] =>
+            logger.info(s"[MptStore] Deleting above ordinal=$ordinal") >> p.deleteAbove(ordinal)
+          case _ =>
+            Async[F].unit
+        }
       }
 
     override def savepoint: F[MptStoreSavepoint[F]] =
-      for {
-        producerSP <- producer.savepoint
-        savedOrdinal <- lastSyncedOrdinalRef.get
-      } yield
-        new MptStoreSavepoint[F] {
-          def restore: F[Unit] =
-            producerSP.restore >> lastSyncedOrdinalRef.set(savedOrdinal)
-        }
+      withLock {
+        for {
+          producerSP <- producer.savepoint
+          savedOrdinal <- lastSyncedOrdinalRef.get
+        } yield
+          new MptStoreSavepoint[F] {
+            def restore: F[Unit] =
+              withLock(producerSP.restore >> lastSyncedOrdinalRef.set(savedOrdinal))
+          }
+      }
   }
 }
