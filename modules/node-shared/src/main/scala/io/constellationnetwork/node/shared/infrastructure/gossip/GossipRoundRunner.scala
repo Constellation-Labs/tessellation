@@ -12,7 +12,7 @@ import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.errorShow
 import io.constellationnetwork.schema.node.NodeState
-import io.constellationnetwork.schema.peer.Peer
+import io.constellationnetwork.schema.peer.{Peer, PeerId}
 
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -35,9 +35,20 @@ object GossipRoundRunner {
     for {
       selectedPeersQueue <- Queue.bounded[F, Peer](cfg.maxConcurrentRounds.value * 2)
       selectedPeersR <- Ref.of(Set.empty[Peer])
+      // Per-peer recent-failure timestamps (millis). A peer is excluded from this
+      // runner's peer selection while it has at least `cfg.failureCountThreshold`
+      // failure timestamps within `cfg.failureWindow` of the present. The 15s gossip
+      // client timeout (application.conf:33) means each chronic-but-session-healthy
+      // peer otherwise costs a full slot in `cfg.maxConcurrentRounds` every cycle, and
+      // LocalHealthcheck restores it to Responsive as soon as `/session` succeeds.
+      // This bypasses that loop without changing the healthcheck semantics for other
+      // callers. State is per-runner so peer-round and common-round track independently.
+      gossipFailuresR <- Ref.of(Map.empty[PeerId, Vector[Long]])
     } yield
       new GossipRoundRunner[F] {
         private val logger = Slf4jLogger.getLogger[F]
+        private val failureWindowMs = cfg.failureWindow.toMillis
+        private val failureThreshold = cfg.failureCountThreshold.value
 
         def runForever: F[Unit] = S.supervise {
           Stream
@@ -51,6 +62,38 @@ object GossipRoundRunner {
         private val transientStates: Set[NodeState] =
           Set(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.WaitingForObserving, NodeState.Leaving)
 
+        private def recordFailure(pid: PeerId): F[Unit] =
+          Clock[F].realTime.map(_.toMillis).flatMap { now =>
+            val cutoff = now - failureWindowMs
+            gossipFailuresR.update { m =>
+              val prior = m.getOrElse(pid, Vector.empty[Long]).filter(_ >= cutoff)
+              // Cap retained timestamps at threshold; we only care whether we hit it,
+              // not how far past we are, so this also bounds the per-peer memory.
+              val updated = (prior :+ now).takeRight(failureThreshold)
+              m.updated(pid, updated)
+            }
+          }
+
+        private def recordSuccess(pid: PeerId): F[Unit] =
+          gossipFailuresR.update(_ - pid)
+
+        private def excludedPeerIds: F[Set[PeerId]] =
+          Clock[F].realTime.map(_.toMillis).flatMap { now =>
+            val cutoff = now - failureWindowMs
+            gossipFailuresR.modify { m =>
+              // Prune timestamps that aged out of the window. Peers whose surviving
+              // list is below threshold are dropped from the map entirely so memory
+              // does not accumulate. The set of excluded peers is what's returned.
+              val pruned = m.flatMap {
+                case (pid, ts) =>
+                  val live = ts.filter(_ >= cutoff)
+                  if (live.isEmpty) None else Some(pid -> live)
+              }
+              val excluded = pruned.collect { case (pid, ts) if ts.length >= failureThreshold => pid }.toSet
+              (pruned, excluded)
+            }
+          }
+
         private def evalRound(peer: Peer): F[Unit] =
           MonadCancel[F].guarantee(
             Temporal[F]
@@ -59,13 +102,14 @@ object GossipRoundRunner {
                 case (duration, _) => metrics.recordRoundDuration(duration, roundLabel)
               }
               .flatMap(_ => metrics.incrementGossipRoundSucceeded)
+              .flatMap(_ => recordSuccess(peer.id))
               .handleErrorWith { err =>
                 val logEffect =
                   if (transientStates.contains(peer.state))
                     logger.debug(s"Gossip round failed for peer in ${peer.state} {peer=${peer.show}, reason=${err.show}}")
                   else
                     logger.error(s"Error running gossip round {peer=${peer.show}, reason=${err.show}")
-                logEffect >> localHealthcheck.start(peer)
+                logEffect >> recordFailure(peer.id) >> localHealthcheck.start(peer)
               },
             selectedPeersR.update(_.excl(peer))
           )
@@ -74,9 +118,11 @@ object GossipRoundRunner {
           for {
             _ <- Temporal[F].sleep(cfg.interval)
             allPeers <- clusterStorage.getResponsivePeers
-            _ <- ExitOnFork.exitOnCheck("CL_EXIT_ON_FOLLOWER_GOSSIP", () => allPeers.map(_.id))
+            excluded <- excludedPeerIds
+            eligiblePeers = if (excluded.isEmpty) allPeers else allPeers.filterNot(p => excluded.contains(p.id))
+            _ <- ExitOnFork.exitOnCheck("CL_EXIT_ON_FOLLOWER_GOSSIP", () => eligiblePeers.map(_.id))
             selectedPeers <- selectedPeersR.get
-            availablePeers = allPeers.diff(selectedPeers)
+            availablePeers = eligiblePeers.diff(selectedPeers)
             drawnPeers <- Random[F].shuffleList(availablePeers.toList).map(_.take(cfg.fanout.value))
             _ <- drawnPeers.traverse { peer =>
               selectedPeersR.modify { selectedPeers =>
