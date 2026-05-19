@@ -226,6 +226,17 @@ object types {
     // operators force VCV at the same count, ensuring all honest nodes converge on the same
     // (fromView, toView) for VCC assembly within bounded skew.
     forceViewChangeAbandonments: Int = 3,
+    // v19 phase 2 view-from-time anchor: divisor for deriving an initial view number from
+    // wall-clock progress since the parent snapshot's `consensusEndTime`. Pairs with the
+    // producer side (`Facility.proposerClockMs` + `ConsensusEndTime` median + `recentRoundEndTimes`
+    // window). At round start, each peer computes
+    //   timeView = (local_now - parent.consensusEndTime) / viewInterval
+    // and the round seeds `max(priorAbandonmentCount, timeView)` as its initial `viewNumber`.
+    // NTP skew across honest nodes is +/- 10ms on AWS-class infra; with a 30s default the boundary
+    // resolution is 3 parts in 10,000 -- well below view-transition granularity. Consensus-critical:
+    // included in `deterministicConfigHash` so honest peers with the same parent + same `now`
+    // compute the same timeView. See `docs/consensus/view-from-time-anchor.md`.
+    viewInterval: FiniteDuration = 30.seconds,
     // Active-set tightening parameters. The committee for round N+1 is narrowed to
     // peers who signed at least `minParticipationInWindow` of the last
     // `tighteningWindow` successful outcomes (plus grace candidates: peers in
@@ -652,6 +663,10 @@ object types {
           // produce divergent VCV-emission timing, splitting the cluster across (fromView, toView)
           // pairs and starving VCC assembly.
           s"forceViewChangeAbandonments=$forceViewChangeAbandonments," +
+          // v19 phase 2 view-from-time anchor divisor. Mutates the round-start `viewNumber` (and
+          // therefore the initial leader) under wall-clock progress; divergent operator values would
+          // produce divergent leader selection from the same parent snapshot and silently fork.
+          s"viewIntervalMs=${viewInterval.toMillis}," +
           // Active-set tightening: three parameters together determine the next-round
           // committee membership; divergent operator values would produce silently-
           // divergent facilitator sets and fork the cluster.

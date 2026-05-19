@@ -9,11 +9,20 @@ import io.constellationnetwork.schema.peer.PeerId
   *
   * ==Three committees==
   *
-  *   - '''Core''' (Tier 2): full facilitators, in the LIVENESS quorum. Quorum threshold is computed against `coreFacilitators.value.size`
-  *     only; Tier 1 and Tier 0 peers do not count toward the active quorum denominator.
-  *   - '''Tier1''': witness-eligible (B1/B2/VCC witness pool), not in the LIVENESS quorum. Tier 1 peers sign rounds and earn rewards
-  *     proportionally; their absence cannot wedge consensus.
-  *   - '''Witness''' (Tier 0): observation only. Open membership; peers fall here only via explicit eviction outside this builder.
+  *   - '''Core''' (Tier 2): full facilitators. The CERT quorum (B1 / B2 / VCC builders) is gated on Core: `q = ceil(coreFacilitators.size *
+  *     quorumThresholdFraction)`. Core peers also form the leader pool (only Core peers are eligible to lead a round).
+  *   - '''Tier1''': witness-eligible (B1/B2/VCC witness pool). Tier 1 peers DO sign each round's `signedMajorityArtifact` and earn rewards
+  *     proportionally. They cannot lead, and they do NOT count toward the cert quorum denominator -- a Tier 1 peer being silent cannot
+  *     wedge a B1/B2/VCC certificate. The SNAPSHOT finalization threshold is a separate, more permissive `(roundStartFacilitators.size / 2)
+  *     + 1` computed over Core + Tier 1; safety in finalization is enforced via VoteLock + VCC, not by tightening the threshold.
+  *   - '''Witness''' (Tier 0): observation only. Open membership; peers fall here only via explicit eviction outside this builder. In
+  *     practice the v19 tier-transition path never writes Witness; this tier is reserved for future explicit-eviction policy.
+  *
+  * ==Reward and signer pool==
+  *
+  * `lastArtifact.proofs.map(_.id)` is the reward facilitator set (see `Rewards.distribute`). Anyone who signs the finalized snapshot earns
+  * an equal share. Tier 1 peers are in `roundStartFacilitators`, sign just like Core peers, and split the facilitator reward pool evenly.
+  * There is no Core-vs-Tier-1 stratification in today's reward math.
   *
   * ==Tier assignment rule==
   *
