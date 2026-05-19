@@ -157,7 +157,16 @@ object types {
     fanout: PosInt,
     interval: FiniteDuration,
     maxConcurrentRounds: PosInt,
-    maxOrdinalsPerRequest: Option[PosInt] = None
+    maxOrdinalsPerRequest: Option[PosInt] = None,
+    // Per-peer cooldown for chronic gossip failures. After `failureCountThreshold`
+    // failed gossip rounds within `failureWindow`, the peer is excluded from this
+    // runner's peer selection until enough failure timestamps age out of the window.
+    // This bypasses the `/session`-based LocalHealthcheck recovery loop that keeps
+    // chronic non-signers (peers whose `/session` works but who don't participate
+    // in consensus rumor exchange) cycling back into the gossip pool every cycle.
+    // Per-runner state: peer-round and common-round track failures independently.
+    failureCountThreshold: PosInt = PosInt.unsafeFrom(3),
+    failureWindow: FiniteDuration = 60.seconds
   )
 
   case class GossipTimeoutsConfig(
