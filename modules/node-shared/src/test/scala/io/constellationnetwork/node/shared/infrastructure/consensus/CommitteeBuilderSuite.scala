@@ -9,8 +9,8 @@ import weaver.SimpleIOSuite
 
 /** Locks in the v19 multi-committee derivation contract.
   *
-  * Each test encodes one rule from the multi-committee design: bootstrap default,
-  * tier carry-forward, deterministic Core-floor promotion, and stable witness ordering.
+  * Each test encodes one rule from the multi-committee design: bootstrap default, tier carry-forward, deterministic Core-floor promotion,
+  * and stable witness ordering.
   */
 object CommitteeBuilderSuite extends SimpleIOSuite {
 
@@ -26,9 +26,7 @@ object CommitteeBuilderSuite extends SimpleIOSuite {
       priorTiers = SortedMap.empty[PeerId, Int],
       coreFloor = 0
     )
-    expect.same(cands, result.core) and
-      expect.same(List.empty[PeerId], result.tier1) and
-      expect.same(List.empty[PeerId], result.witness)
+    expect.same(cands, result.core).and(expect.same(List.empty[PeerId], result.tier1)).and(expect.same(List.empty[PeerId], result.witness))
   }
 
   pureTest("priorTiers partitions candidates: Tier 2 -> core, Tier 1 -> tier1, Tier 0 -> witness") {
@@ -41,9 +39,7 @@ object CommitteeBuilderSuite extends SimpleIOSuite {
       priorTiers = priorTiers,
       coreFloor = 0
     )
-    expect.same(List(p1), result.core) and
-      expect.same(List(p2), result.tier1) and
-      expect.same(List(p3), result.witness)
+    expect.same(List(p1), result.core).and(expect.same(List(p2), result.tier1)).and(expect.same(List(p3), result.witness))
   }
 
   pureTest("Core-floor promotion: lex-sort Tier 1 peers into Core to satisfy the floor") {
@@ -63,9 +59,7 @@ object CommitteeBuilderSuite extends SimpleIOSuite {
       priorTiers = priorTiers,
       coreFloor = 3
     )
-    expect.same(List(pA, pB, pC), result.core) and
-      expect.same(List(pD), result.tier1) and
-      expect.same(List.empty[PeerId], result.witness)
+    expect.same(List(pA, pB, pC), result.core).and(expect.same(List(pD), result.tier1)).and(expect.same(List.empty[PeerId], result.witness))
   }
 
   pureTest("Core-floor honored only to candidate supply (builder never invents peers)") {
@@ -78,9 +72,10 @@ object CommitteeBuilderSuite extends SimpleIOSuite {
       coreFloor = 10
     )
     // Tier 1 exhausted -> floor honored to whatever we have.
-    expect.same(List(p1, p2), result.core) and
-      expect.same(List.empty[PeerId], result.tier1) and
-      expect.same(List.empty[PeerId], result.witness)
+    expect
+      .same(List(p1, p2), result.core)
+      .and(expect.same(List.empty[PeerId], result.tier1))
+      .and(expect.same(List.empty[PeerId], result.witness))
   }
 
   pureTest("Core-floor promotion is deterministic across honest nodes (same input -> same output)") {
@@ -91,9 +86,10 @@ object CommitteeBuilderSuite extends SimpleIOSuite {
     // floor=2 -> promote lex-smallest 2: aaaa, mmmm. zzzz stays Tier 1.
     val resultA = CommitteeBuilder.build(List(p1, p2, p3), priorTiers, coreFloor = 2)
     val resultB = CommitteeBuilder.build(List(p3, p1, p2), priorTiers, coreFloor = 2)
-    expect.same(resultA.core.toSet, resultB.core.toSet) and
-      expect.same(Set(p2, p3), resultA.core.toSet) and
-      expect.same(List(p1), resultA.tier1)
+    expect
+      .same(resultA.core.toSet, resultB.core.toSet)
+      .and(expect.same(Set(p2, p3), resultA.core.toSet))
+      .and(expect.same(List(p1), resultA.tier1))
   }
 
   pureTest("Candidates outside priorTiers are bootstrap-Core: counted toward the floor") {
@@ -106,9 +102,10 @@ object CommitteeBuilderSuite extends SimpleIOSuite {
       priorTiers = priorTiers,
       coreFloor = 2
     )
-    expect.same(List(pOldCore, pNew), result.core) and
-      expect.same(List.empty[PeerId], result.tier1) and
-      expect.same(List.empty[PeerId], result.witness)
+    expect
+      .same(List(pOldCore, pNew), result.core)
+      .and(expect.same(List.empty[PeerId], result.tier1))
+      .and(expect.same(List.empty[PeerId], result.witness))
   }
 
   pureTest("effectiveTiers stamps Core for every Core peer (including promoted Tier 1)") {
@@ -122,9 +119,10 @@ object CommitteeBuilderSuite extends SimpleIOSuite {
       coreFloor = 2
     )
     // pA, pB promoted into Core; pC remains Tier 1.
-    expect.same(Some(Core), result.effectiveTiers.get(pA)) and
-      expect.same(Some(Core), result.effectiveTiers.get(pB)) and
-      expect.same(Some(Tier1), result.effectiveTiers.get(pC))
+    expect
+      .same(Some(Core), result.effectiveTiers.get(pA))
+      .and(expect.same(Some(Core), result.effectiveTiers.get(pB)))
+      .and(expect.same(Some(Tier1), result.effectiveTiers.get(pC)))
   }
 
   pureTest("effectiveTiers carries forward un-candidate peers unchanged") {
@@ -137,8 +135,7 @@ object CommitteeBuilderSuite extends SimpleIOSuite {
       coreFloor = 0
     )
     // absent stays Tier 1 in effectiveTiers (carried forward, never elevated nor dropped).
-    expect.same(Some(Tier1), result.effectiveTiers.get(absent)) and
-      expect.same(Some(Core), result.effectiveTiers.get(active))
+    expect.same(Some(Tier1), result.effectiveTiers.get(absent)).and(expect.same(Some(Core), result.effectiveTiers.get(active)))
   }
 
   pureTest("Empty candidate set produces empty committees (degenerate edge)") {
@@ -147,9 +144,10 @@ object CommitteeBuilderSuite extends SimpleIOSuite {
       priorTiers = SortedMap.empty,
       coreFloor = 5
     )
-    expect.same(List.empty[PeerId], result.core) and
-      expect.same(List.empty[PeerId], result.tier1) and
-      expect.same(List.empty[PeerId], result.witness)
+    expect
+      .same(List.empty[PeerId], result.core)
+      .and(expect.same(List.empty[PeerId], result.tier1))
+      .and(expect.same(List.empty[PeerId], result.witness))
   }
 
   pureTest("Mixed candidates: Witness peers never promoted by Core-floor mechanism") {
@@ -163,8 +161,9 @@ object CommitteeBuilderSuite extends SimpleIOSuite {
       priorTiers = priorTiers,
       coreFloor = 10
     )
-    expect.same(List(cCore, cTier1), result.core) and
-      expect.same(List.empty[PeerId], result.tier1) and
-      expect.same(List(cWit), result.witness)
+    expect
+      .same(List(cCore, cTier1), result.core)
+      .and(expect.same(List.empty[PeerId], result.tier1))
+      .and(expect.same(List(cWit), result.witness))
   }
 }

@@ -9,9 +9,8 @@ import weaver.SimpleIOSuite
 
 /** Locks in the v19 phase 2 view-from-time anchor contract.
   *
-  * Each test pins one rule from the design: strict-majority threshold, integer
-  * lower-median (deterministic on even counts), Bitcoin MTP-style clamp,
-  * and bootstrap parent-None handling.
+  * Each test pins one rule from the design: strict-majority threshold, integer lower-median (deterministic on even counts), Bitcoin
+  * MTP-style clamp, and bootstrap parent-None handling.
   */
 object ConsensusEndTimeSuite extends SimpleIOSuite {
 
@@ -137,6 +136,6 @@ object ConsensusEndTimeSuite extends SimpleIOSuite {
     val c = facilityWithClock(Some(300L))
     val original = ConsensusEndTime.compute(List(a, b, c), parentEndTime = None)
     val shuffled = ConsensusEndTime.compute(List(c, a, b), parentEndTime = None)
-    expect.same(original, shuffled) and expect.same(Some(300L), original)
+    expect.same(original, shuffled).and(expect.same(Some(300L), original))
   }
 }

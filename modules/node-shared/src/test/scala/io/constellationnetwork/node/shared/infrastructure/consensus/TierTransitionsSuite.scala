@@ -7,9 +7,8 @@ import io.constellationnetwork.security.hex.Hex
 
 import weaver.SimpleIOSuite
 
-/** Locks in the v19 tier transition contract. Every assertion encodes one rule from
-  * `docs/consensus/multi-committee-architecture.md`; do not weaken these without re-reading
-  * the design doc.
+/** Locks in the v19 tier transition contract. Every assertion encodes one rule from `docs/consensus/multi-committee-architecture.md`; do
+  * not weaken these without re-reading the design doc.
   */
 object TierTransitionsSuite extends SimpleIOSuite {
 
@@ -148,8 +147,7 @@ object TierTransitionsSuite extends SimpleIOSuite {
     val roundStart = Set[PeerId](a)
     val signers = SortedSet[PeerId](a)
     val nextTiers = computeNextTiers(priorTiers, roundStart, signers, roundCompleted = true)
-    expect(!nextTiers.contains(b)) and
-      expect.same(SortedMap[PeerId, Int](a -> Core), nextTiers)
+    expect(!nextTiers.contains(b)).and(expect.same(SortedMap[PeerId, Int](a -> Core), nextTiers))
   }
 
   pureTest("computeNextTiers: a peer in roundStart but absent from priorTiers gets bootstrap-Core") {
