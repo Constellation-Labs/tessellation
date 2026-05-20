@@ -466,9 +466,22 @@ object ConsensusStorage {
           }
 
         def storeAssembledEvictionCertificate(key: Key, cert: EvictionCertificate): F[Unit] =
+          // Dedup by `targetPeer`: `CheckEvictionAssembly(key, target)` is enqueued once per
+          // arriving vote for that target (RumorHandler). Each invocation re-reads votes from
+          // storage, re-runs the quorum check, and on success builds and stores a cert. After
+          // the first cert is stored, later invocations with the same vote set OR a strict
+          // superset still pass quorum and build a cert -- but the new cert can differ from the
+          // first by signature-set membership (extra later-arriving votes) so `existing + cert`
+          // appends rather than dedupes via case-class equality. The downstream proposal
+          // validator then rejects the ECS with `ecs_duplicate_target`, wedging the round.
+          // First-write-wins on `targetPeer`: the initial cert already carries quorum sigs; later
+          // certs with the same target add no liveness value. This makes the storage operation
+          // idempotent on (key, targetPeer) and matches the symmetric dedup applied to
+          // assembled admission certificates below.
           assembledEvictionCertsR(key).update {
-            case Some(existing) => (existing + cert).some
-            case None           => Set(cert).some
+            case Some(existing) if existing.exists(_.targetPeer === cert.targetPeer) => existing.some
+            case Some(existing)                                                      => (existing + cert).some
+            case None                                                                => Set(cert).some
           }
 
         def getAssembledEvictionCertificates(key: Key): F[Set[EvictionCertificate]] =
@@ -492,9 +505,13 @@ object ConsensusStorage {
           }
 
         def storeAssembledAdmissionCertificate(key: Key, cert: AdmissionCertificate): F[Unit] =
+          // Dedup by `targetPeer`: mirror of eviction-cert storage above. The B2 admission
+          // assembly path uses the same vote-arrival -> CheckAdmissionAssembly trigger pattern,
+          // so it carries the same duplicate-target risk if not deduped at store time.
           assembledAdmissionCertsR(key).update {
-            case Some(existing) => (existing + cert).some
-            case None           => Set(cert).some
+            case Some(existing) if existing.exists(_.targetPeer === cert.targetPeer) => existing.some
+            case Some(existing)                                                      => (existing + cert).some
+            case None                                                                => Set(cert).some
           }
 
         def getAssembledAdmissionCertificates(key: Key): F[Set[AdmissionCertificate]] =

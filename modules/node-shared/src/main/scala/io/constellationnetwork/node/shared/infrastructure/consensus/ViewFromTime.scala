@@ -11,9 +11,9 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
   *
   *   - `parentEndTimeMs` is a consensus-agreed signed-outcome field on the L0 layer. Every honest node sees the same value.
   *   - `viewIntervalMs` is gated by `deterministicConfigHash`. Operators with divergent values reject each other at peer connection.
-  *   - `nowMs` is the only local input. NTP skew across nodes typically sits at +/- 10ms on AWS-class infra. With a 30s
-  *     `viewInterval`, that's 3 parts in 10,000 — below view-transition resolution. At the boundary itself a peer can briefly disagree by
-  *     one view; the existing VCC machinery resolves this within one `viewInterval`.
+  *   - `nowMs` is the only local input. NTP skew across nodes typically sits at +/- 10ms on AWS-class infra. With a 30s `viewInterval`,
+  *     that's 3 parts in 10,000 -- below view-transition resolution. At the boundary itself a peer can briefly disagree by one view; the
+  *     existing VCC machinery resolves this within one `viewInterval`.
   *
   * Combined with phase 1 (`priorAbandonmentCount`) via `math.max` at the call site: whichever signal is higher wins. Phase 1 reflects
   * accumulated view-change-vote history; phase 2 reflects wall-clock progress. Neither can backdate the other.
