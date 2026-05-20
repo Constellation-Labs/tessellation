@@ -160,6 +160,15 @@ object GlobalSnapshotConsensus {
           loggerBundle
         )
 
+      // v20: env-resolved Core committee size threaded into `ConsensusConfig.coreCommitteeSize`
+      // so it folds into `deterministicConfigHash`. Resolution happens here (single point) and
+      // the resulting `effectiveConsensusConfig` is what every downstream component reads --
+      // ConsensusStorage, consensusFunctions, stateAdvancer, stateCreator, ConsensusEventLoop.
+      // The default `3` mirrors the dev-environment value used by
+      // `GlobalSnapshotConsensusStateCreator.make` and `CurrencySnapshotConsensus`.
+      resolvedCoreCommitteeSize = appConfig.snapshot.coreCommitteeSize.get(appConfig.environment).map(_.value).getOrElse(3)
+      effectiveConsensusConfig = appConfig.snapshot.consensus.copy(coreCommitteeSize = Some(resolvedCoreCommitteeSize))
+
       consensusStorage <- ConsensusStorage.make[
         F,
         GlobalSnapshotEvent,
@@ -169,7 +178,7 @@ object GlobalSnapshotConsensus {
         GlobalSnapshotStatus,
         GlobalConsensusOutcome,
         GlobalConsensusKind
-      ](appConfig.snapshot.consensus)
+      ](effectiveConsensusConfig)
 
       consensusFunctions =
         GlobalSnapshotConsensusFunctions.make[F](
@@ -177,10 +186,10 @@ object GlobalSnapshotConsensus {
           collateral,
           rewardsService,
           GlobalSnapshotEventCutter.make(
-            appConfig.snapshot.consensus.eventCutter.maxBinarySizeBytes,
+            effectiveConsensusConfig.eventCutter.maxBinarySizeBytes,
             SnapshotBinaryFeeCalculator.make(appConfig.shared.feeConfigs, mptStore)
           ),
-          UpdateNodeParametersCutter.make(appConfig.snapshot.consensus.eventCutter.maxUpdateNodeParametersSize),
+          UpdateNodeParametersCutter.make(effectiveConsensusConfig.eventCutter.maxUpdateNodeParametersSize),
           appConfig.environment,
           DefaultDelegatedRewardsConfigProvider,
           sharedCfg.fieldsAddedOrdinals.tessellation3Migration
@@ -198,7 +207,7 @@ object GlobalSnapshotConsensus {
 
       stateAdvancer =
         GlobalSnapshotConsensusStateAdvancer.make(
-          appConfig.snapshot.consensus,
+          effectiveConsensusConfig,
           keyPair,
           consensusStorage,
           globalSnapshotStorage,
@@ -230,16 +239,16 @@ object GlobalSnapshotConsensus {
           selfId,
           seedlist,
           facilitatorSelector,
-          appConfig.snapshot.consensus.deterministicConfigHash,
-          appConfig.snapshot.consensus,
+          effectiveConsensusConfig.deterministicConfigHash,
+          effectiveConsensusConfig,
           peerQualityTracker,
           tcaFilter,
           eventMempool,
           sharedServices.localHealthMonitor,
-          // v19 per-environment Core floor. Falls back to 3 (the dev default) if the
-          // config does not carry an entry for this environment, matching the
-          // small-cluster-friendly value used by single-node test rigs.
-          appConfig.snapshot.coreCommitteeSize.get(appConfig.environment).map(_.value).getOrElse(3)
+          // v19 per-environment Core floor. v20 routes the env-resolved value through
+          // `effectiveConsensusConfig.coreCommitteeSize`, so this single binding is what
+          // both the state creator and `deterministicConfigHash` see.
+          resolvedCoreCommitteeSize
         )
 
       stateRemover =
@@ -339,14 +348,13 @@ object GlobalSnapshotConsensus {
           clusterStorage,
           consensusFunctions,
           consensusClient,
-          appConfig.snapshot.consensus,
+          effectiveConsensusConfig,
           facilitatorSelector,
           peerQualityTracker,
           viewChangeVoter,
           evictionVoter,
           admissionVoter,
-          (o: GlobalConsensusOutcome) =>
-            !o.recentProofSizes.values.exists(_ >= appConfig.snapshot.consensus.bootstrapCompleteProofsThreshold),
+          (o: GlobalConsensusOutcome) => !o.recentProofSizes.values.exists(_ >= effectiveConsensusConfig.bootstrapCompleteProofsThreshold),
           (o: GlobalConsensusOutcome) => o.readmissionCountdown.filter(_._2 > 0).keySet,
           (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
           (o: GlobalConsensusOutcome) => o.peerQuality.toMap,

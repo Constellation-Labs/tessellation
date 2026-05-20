@@ -151,4 +151,90 @@ object PerIpBandwidthLimitMiddlewareSuite extends SimpleIOSuite {
         expect(heavy.status == Status.TooManyRequests, "heavy route is bandwidth-limited")
       )
   }
+
+  // ----- routeSizeEstimator: pre-flight reject -----
+
+  // A route that records how many times its handler ran. The estimator-rejected case
+  // must show this counter still at zero -- proving the inner route was never invoked
+  // (the whole point of the pre-flight path: avoid the 100 MB response construction).
+  private def countingRoute(bytes: Long, counter: cats.effect.Ref[IO, Int]): HttpRoutes[IO] =
+    Kleisli(_ =>
+      OptionT.liftF(
+        counter.update(_ + 1) >>
+          IO.pure(Response[IO](status = Status.Ok, headers = Headers(`Content-Length`.unsafeFromLong(bytes))))
+      )
+    )
+
+  test("routeSizeEstimator: over-cap estimate rejects with 429 WITHOUT invoking the inner route") {
+    val cap = 100L * 1024L * 1024L // 100 MB
+    val window = 1.minute
+    val estimatedBytes = 200L * 1024L * 1024L // 200 MB -- intentionally larger than cap
+    for {
+      counter <- cats.effect.Ref[IO].of(0)
+      estimator = (_: Request[IO]) => IO.pure(Option(estimatedBytes))
+      mw <- PerIpBandwidthLimitMiddleware[IO](cap, window, routeSizeEstimator = Some(estimator))
+      wrapped = mw(countingRoute(estimatedBytes, counter))
+      resp <- wrapped(reqFromIp("203.0.113.50")).getOrElse(Response.notFound[IO])
+      invocations <- counter.get
+    } yield
+      expect(resp.status == Status.TooManyRequests, "pre-flight reject returns 429").and(
+        expect.eql(0, invocations)
+      )
+  }
+
+  test("routeSizeEstimator: under-cap estimate runs the inner route and accepts (reserves once)") {
+    val cap = 100L * 1024L * 1024L
+    val window = 1.minute
+    val responseBytes = 10L * 1024L * 1024L // 10 MB
+    for {
+      counter <- cats.effect.Ref[IO].of(0)
+      estimator = (_: Request[IO]) => IO.pure(Option(responseBytes))
+      mw <- PerIpBandwidthLimitMiddleware[IO](cap, window, routeSizeEstimator = Some(estimator))
+      wrapped = mw(countingRoute(responseBytes, counter))
+      r1 <- wrapped(reqFromIp("203.0.113.51")).getOrElse(Response.notFound[IO])
+      invocations <- counter.get
+    } yield
+      expect(r1.status == Status.Ok, "request under cap accepted").and(
+        expect.eql(1, invocations)
+      )
+  }
+
+  test("routeSizeEstimator: None means estimator absent -- legacy Content-Length post-check still applies") {
+    val cap = 100L * 1024L * 1024L
+    val window = 1.minute
+    val responseSize = 60L * 1024L * 1024L // 60 MB; two = 120 MB > cap
+    for {
+      // No estimator passed: the middleware falls back to the legacy post-response path.
+      mw <- PerIpBandwidthLimitMiddleware[IO](cap, window)
+      wrapped = mw(fixedSizeRoute(responseSize))
+      r1 <- wrapped(reqFromIp("203.0.113.52")).getOrElse(Response.notFound[IO])
+      r2 <- wrapped(reqFromIp("203.0.113.52")).getOrElse(Response.notFound[IO])
+    } yield
+      expect(r1.status == Status.Ok, "first request accepted via post-check")
+        .and(expect(r2.status == Status.TooManyRequests, "second exceeds cap via post-check"))
+  }
+
+  test("routeSizeEstimator: allowlisted IP bypasses estimator + cap entirely") {
+    val streaming = "13.57.169.99"
+    val cap = 1L
+    val window = 1.minute
+    // Estimator would say 200 MB and reject under normal IPs at cap=1, but the
+    // allowlist branch fires BEFORE the estimator check.
+    val estimator = (_: Request[IO]) => IO.pure(Option(200L * 1024L * 1024L))
+    for {
+      counter <- cats.effect.Ref[IO].of(0)
+      mw <- PerIpBandwidthLimitMiddleware[IO](
+        cap,
+        window,
+        allowlist = Set(streaming),
+        routeSizeEstimator = Some(estimator)
+      )
+      wrapped = mw(countingRoute(80L * 1024L * 1024L, counter))
+      r1 <- wrapped(reqFromIp(streaming)).getOrElse(Response.notFound[IO])
+      invocations <- counter.get
+    } yield
+      expect(r1.status == Status.Ok, "allowlisted IP accepted").and(
+        expect.eql(1, invocations)
+      )
+  }
 }

@@ -576,13 +576,21 @@ object CurrencySnapshotConsensusStateAdvancer {
             )
 
             leaderLock <- consensusStorage.getVoteLock(state.key)
+            // Mirror dag-l0: stale-VCC suppression gate + alpha.90 P0 #1 round-start bypass.
+            // `clearResourcesPreservingDeclarations` preserves `assembledVccR` across retries; the
+            // initialViewNumber-aware fetch gate keeps the cluster from consulting a stale 0->1
+            // cert on a fresh seed-view round. See GlobalSnapshotConsensusStateAdvancer for the
+            // full rationale.
             maybeAssembledVcc <-
-              if (state.viewNumber > 0) consensusStorage.getAssembledVcc(state.key) else none[ViewChangeCertificate].pure[F]
+              if (state.viewNumber > state.initialViewNumber) consensusStorage.getAssembledVcc(state.key)
+              else none[ViewChangeCertificate].pure[F]
             vccHighestQc = maybeAssembledVcc.flatMap(_.highestQcInVcc)
-            vccMismatch = isLeader && state.viewNumber > 0 && vccHighestQc.exists(_.proposalHash =!= hash)
+            vccMismatch = isLeader && state.viewNumber > state.initialViewNumber && vccHighestQc.exists(_.proposalHash =!= hash)
             // v19 alpha.89: solo-mode bypass -- see dag-l0 mirror for full rationale.
             isSoloCore = state.coreFacilitators.value.size <= 1
-            vccMissing = isLeader && state.viewNumber > 0 && maybeAssembledVcc.isEmpty && !isSoloCore
+            // alpha.90 P0 #1: round-start seed-view bypass -- see dag-l0 mirror.
+            isRoundStartView = state.viewNumber === state.initialViewNumber
+            vccMissing = isLeader && state.viewNumber > 0 && maybeAssembledVcc.isEmpty && !isSoloCore && !isRoundStartView
             aborted = (isLeader && leaderLock.flatMap(_.lockedQc).exists(_.proposalHash =!= hash)) || vccMismatch || vccMissing
             _ <- logger
               .warn(
@@ -743,57 +751,27 @@ object CurrencySnapshotConsensusStateAdvancer {
         }
       }
 
-      /** Validate view/VCC invariants on an incoming proposal. Mirrors GlobalSnapshotConsensusStateAdvancer.validateProposalVcc. */
+      /** Validate view/VCC invariants on an incoming proposal. Thin delegate to the shared `ProposalVccValidator.validate` helper -- see
+        * GlobalSnapshotConsensusStateAdvancer for the full rationale on the alpha.90 P0 #1 + alpha.90 issue 2 changes that the helper
+        * encapsulates.
+        */
       private def validateProposalVcc(
         state: CurrencySnapshotConsensusState,
         proposal: Proposal,
         facilitatorsHash: Hash
-      ): Either[ProposalRejection, Unit] = {
-        // v19: quorum computed against the Core committee. Mirror of dag-l0.
-        val n = state.coreFacilitators.value.size
-        val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
-        // v19 alpha.89: solo-mode VCC bypass -- see dag-l0 mirror.
-        val isSoloCore = n <= 1
-        if (proposal.view === 0L) {
-          if (proposal.vcc.nonEmpty) Left(ProposalRejection("view0_proposal_must_not_carry_vcc"))
-          else Right(())
-        } else {
-          proposal.vcc match {
-            case None if isSoloCore => Right(())
-            case None               => Left(ProposalRejection(s"view${proposal.view}_proposal_missing_vcc"))
-            case Some(vcc) if vcc.votes.size < q =>
-              Left(ProposalRejection(s"vcc_under_quorum votes=${vcc.votes.size} required=$q"))
-            case Some(vcc) if vcc.facilitatorsHash =!= facilitatorsHash =>
-              Left(
-                ProposalRejection(
-                  s"vcc_facilitators_mismatch vccFacHash=${vcc.facilitatorsHash.show.take(8)} ours=${facilitatorsHash.show.take(8)}"
-                )
-              )
-            case Some(vcc) =>
-              // Symmetric with B1/B2 -- see dag-l0 mirror.
-              val witnessPool = WitnessPool.all(
-                state.eligibleFacilitators.value.toSet,
-                state.lastOutcome.peerQuality.toMap,
-                config.minParticipationObservations
-              )
-              val nonWitnessPoolVoter = vcc.votes.toNonEmptyList.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
-              nonWitnessPoolVoter match {
-                case Some(bad) =>
-                  Left(ProposalRejection(s"vcc_voter_not_in_pool voter=${bad.proofs.head.id.show.take(8)}"))
-                case None =>
-                  vcc.highestQcInVcc match {
-                    case Some(qc) if qc.proposalHash =!= proposal.hash =>
-                      Left(
-                        ProposalRejection(
-                          s"highest_qc_carry_forward_violation qcHash=${qc.proposalHash.show.take(8)} proposalHash=${proposal.hash.show.take(8)}"
-                        )
-                      )
-                    case _ => Right(())
-                  }
-              }
-          }
-        }
-      }
+      ): Either[ProposalRejection, Unit] =
+        ProposalVccValidator.validate(
+          proposalView = proposal.view,
+          proposalHash = proposal.hash,
+          proposalVcc = proposal.vcc,
+          initialViewNumber = state.initialViewNumber,
+          coreSize = state.coreFacilitators.value.size,
+          facilitatorsHash = facilitatorsHash,
+          eligibleFacilitators = state.eligibleFacilitators.value.toSet,
+          peerQuality = state.lastOutcome.peerQuality.toMap,
+          quorumThresholdFraction = config.quorumThresholdFraction,
+          minParticipationObservations = config.minParticipationObservations
+        )
 
       /** Verify cryptographic signatures on every `Signed[ViewChangeVote]` inside the VCC. Mirrors the dag-l0 helper. */
       // Phase B1 bootstrap gate. Mirrors dag-l0 / Phase 4 warmup.
@@ -809,9 +787,10 @@ object CurrencySnapshotConsensusStateAdvancer {
         if (isInBootstrap(state) && proposal.evictionCertificates.nonEmpty)
           return Left(ProposalRejection(s"ecs_rejected_in_bootstrap count=${proposal.evictionCertificates.size}"))
         // v19: quorum threshold computed against the Core committee; target membership
-        // remains the full round-start view. Mirror of dag-l0.
+        // remains the full round-start view. Mirror of dag-l0. Integer math via
+        // `QuorumPolicy.fromFraction`.
         val n = state.coreFacilitators.value.size
-        val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+        val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
         val committee = state.roundStartFacilitators.value.toSet
         val expectedLastSnap: Hash = state.lastOutcome.finished.snapshotHash
 
@@ -910,9 +889,10 @@ object CurrencySnapshotConsensusStateAdvancer {
         if (isInBootstrap(state) && proposal.admissionCertificates.nonEmpty)
           return Left(ProposalRejection(s"acs_rejected_in_bootstrap count=${proposal.admissionCertificates.size}"))
         // v19: quorum threshold computed against the Core committee; target membership
-        // remains the full round-start view. Mirror of dag-l0.
+        // remains the full round-start view. Mirror of dag-l0. Integer math via
+        // `QuorumPolicy.fromFraction`.
         val n = state.coreFacilitators.value.size
-        val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+        val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
         val committee = state.roundStartFacilitators.value.toSet
         val probation = state.lastOutcome.readmissionCountdown.keySet
         val expectedLastSnap: Hash = state.lastOutcome.finished.snapshotHash
@@ -1084,8 +1064,9 @@ object CurrencySnapshotConsensusStateAdvancer {
                 logger.warn(s"[CONSENSUS] obs_resp_validation failed key=${state.key.show} reason=${rejection.code}").as(none[Transition])
               case Right(_) =>
                 // v19: observedResponders quorum gate computed against the Core committee.
+                // Integer math via `QuorumPolicy.fromFraction`.
                 val n = state.coreFacilitators.value.size
-                val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+                val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
                 val below = leaderProposal.observedResponders.size < q && !isInBootstrap(state)
                 logger
                   .warn(s"[CONSENSUS] obs_resp_below_quorum key=${state.key.show} size=${leaderProposal.observedResponders.size} quorum=$q")

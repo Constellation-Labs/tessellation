@@ -170,9 +170,9 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           // mirrors `validateProposalVcc` in the advancer. The signer pool stays open to
           // all of `roundStartFacilitators` (Tier 1 and Tier 0 peers may sign view changes
           // and earn rewards), but the LIVENESS denominator that determines when q votes
-          // have arrived is Core-sized.
+          // have arrived is Core-sized. Integer math via `QuorumPolicy.fromFraction`.
           val n = state.coreFacilitators.value.size
-          val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+          val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
           if (votes.size >= q) {
             val facilitatorsHashCandidates = votes.values.map(_.value.facilitatorsHash).toSet
             facilitatorsHashCandidates.toList match {
@@ -334,9 +334,9 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           // all of `roundStartFacilitators` (witness widening still adds historical
           // participants from peerQuality), but the LIVENESS denominator is Core-sized so
           // a leader assembling with q Core-derived signatures will validate against
-          // every follower's matching denominator.
+          // every follower's matching denominator. Integer math via `QuorumPolicy.fromFraction`.
           val n = state.coreFacilitators.value.size
-          val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+          val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
           if (votes.size >= q) {
             // All votes for a given target must agree on facilitatorsHash; otherwise some
             // voter was signing against a different committee view and the certificate
@@ -459,9 +459,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           // v19: ACS assembly quorum threshold computed against the Core committee --
           // mirrors `validateProposalAcs` in the advancer. See ECS assembly above for the
           // full rationale on decoupling LIVENESS quorum (Core-sized) from signing pool
-          // (witness-widened from `roundStartFacilitators`).
+          // (witness-widened from `roundStartFacilitators`). Integer math via
+          // `QuorumPolicy.fromFraction`.
           val n = state.coreFacilitators.value.size
-          val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+          val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
           if (votes.size >= q) {
             val byHash: Map[Hash, Int] =
               votes.values.groupBy(_.value.facilitatorsHash).view.mapValues(_.size).toMap

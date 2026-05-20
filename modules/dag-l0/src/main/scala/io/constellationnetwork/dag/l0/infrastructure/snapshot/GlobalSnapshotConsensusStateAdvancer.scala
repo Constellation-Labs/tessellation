@@ -877,14 +877,19 @@ object GlobalSnapshotConsensusStateAdvancer {
           // a different hash, abort and let the next view handle it. This prevents the leader from
           // proposing a new hash while a previous-view proposal commitment still stands.
           leaderLock <- consensusStorage.getVoteLock(state.key)
-          // For view > 0, fetch the VCC that was assembled by checkViewChangeAssembly. We embed it
-          // in the outgoing proposal so followers can validate the view transition end-to-end.
+          // Stale-VCC suppression: only fetch when the round has advanced past the seed view.
+          // `clearResourcesPreservingDeclarations` preserves `assembledVccR` across retries; without
+          // gating the fetch, a seed view > 0 round could embed/consult a stale cert from a prior
+          // attempt. The alpha.90 P0 #1 self-wedge fix stamps `initialViewNumber` on the state at
+          // creation; this gate uses that stamp instead of bare `viewNumber > 0`.
           maybeAssembledVcc <-
-            if (state.viewNumber > 0) consensusStorage.getAssembledVcc(state.key) else none[ViewChangeCertificate].pure[F]
+            if (state.viewNumber > state.initialViewNumber) consensusStorage.getAssembledVcc(state.key)
+            else none[ViewChangeCertificate].pure[F]
           vccHighestQc = maybeAssembledVcc.flatMap(_.highestQcInVcc)
           // Highest-QC carry-forward: if the VCC carries a QC, the leader MUST propose that hash.
-          // If our locally-built artifact hash differs, abort and let the next view retry.
-          vccMismatch = isLeader && state.viewNumber > 0 && vccHighestQc.exists(_.proposalHash =!= hash)
+          // If our locally-built artifact hash differs, abort and let the next view retry. Mirror
+          // the fetch gate above -- only enforce when post-seed.
+          vccMismatch = isLeader && state.viewNumber > state.initialViewNumber && vccHighestQc.exists(_.proposalHash =!= hash)
           // Missing VCC at view > 0 is normally a race (VCC was cleared between assembly and
           // proposal build) -- but if Core has degenerated to a single peer there is no quorum
           // to assemble from, so no VCC is achievable. Suppress the abort in that case: the
@@ -895,7 +900,13 @@ object GlobalSnapshotConsensusStateAdvancer {
           // alpha.88 monitor saw repeated `ROUND_STARTED facs=1 leader=e2f4496e view=0` with
           // vcc_missing_for_view_gt_0 on every retry).
           isSoloCore = state.coreFacilitators.value.size <= 1
-          vccMissing = isLeader && state.viewNumber > 0 && maybeAssembledVcc.isEmpty && !isSoloCore
+          // alpha.90 P0 #1: a round that STARTS at `viewNumber == initialViewNumber > 0` (because
+          // priorAbandonmentCount or timeView was non-zero at construction) implies a deterministic
+          // `0..initialView` seed jump -- not a certified VCC transition -- so the leader must be
+          // allowed to propose without a VCC at the seed view. Once `viewNumber > initialViewNumber`
+          // a real view-change has occurred and the VCC requirement re-engages.
+          isRoundStartView = state.viewNumber === state.initialViewNumber
+          vccMissing = isLeader && state.viewNumber > 0 && maybeAssembledVcc.isEmpty && !isSoloCore && !isRoundStartView
           aborted = (isLeader && leaderLock.flatMap(_.lockedQc).exists(_.proposalHash =!= hash)) || vccMismatch || vccMissing
           _ <- ConsensusLog
             .warn(
@@ -1100,72 +1111,28 @@ object GlobalSnapshotConsensusStateAdvancer {
           }
         }
 
-      /** Validate view/VCC invariants on an incoming proposal:
-        *   - view == 0 must NOT carry a VCC
-        *   - view > 0 MUST carry a VCC, with quorum-sized votes and matching facilitatorsHash
-        *   - if VCC carries a highest-QC, the proposal hash MUST equal that QC's proposal hash (highest-QC carry-forward: a leader at V+1
-        *     must re-propose the committed V hash if any voter saw it)
+      /** Validate view/VCC invariants on an incoming proposal. Thin delegate to the shared `ProposalVccValidator.validate` helper so the
+        * dag-l0 and currency-l0 advancers cannot drift on consensus-adjacent logic. See the helper's scaladoc for the full branch summary;
+        * ProposalVccValidatorSuite pins every positive/negative path including the alpha.90 P0 #1 seed-view bypass and the alpha.90 issue 2
+        * stale-VCC view-mismatch gate.
         */
       private def validateProposalVcc(
         state: GlobalSnapshotConsensusState,
         proposal: Proposal,
         facilitatorsHash: Hash
-      ): Either[ProposalRejection, Unit] = {
-        // v19: quorum is computed against the Core committee only. Tier 1 and Witness
-        // peers are not in the LIVENESS quorum -- the threshold here governs VCC
-        // assembly which gates view advance, so the denominator must match the active
-        // facilitator denominator everywhere else in the round.
-        val n = state.coreFacilitators.value.size
-        val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
-        // v19 alpha.89: solo-mode VCC bypass. When Core <= 1 there is no quorum to assemble
-        // a VCC from, so a no-VCC proposal at view > 0 is the only achievable outcome. The
-        // leader-side proposal-build path skips the vcc_missing abort under the same
-        // condition (see `vccMissing` in toProposalsPhase). Without this symmetric bypass,
-        // the leader's self-validation of its own no-VCC proposal would reject it.
-        val isSoloCore = n <= 1
-        if (proposal.view === 0L) {
-          if (proposal.vcc.nonEmpty) Left(ProposalRejection("view0_proposal_must_not_carry_vcc"))
-          else Right(())
-        } else {
-          proposal.vcc match {
-            case None if isSoloCore => Right(())
-            case None               => Left(ProposalRejection(s"view${proposal.view}_proposal_missing_vcc"))
-            case Some(vcc) if vcc.votes.size < q =>
-              Left(ProposalRejection(s"vcc_under_quorum votes=${vcc.votes.size} required=$q"))
-            case Some(vcc) if vcc.facilitatorsHash =!= facilitatorsHash =>
-              Left(
-                ProposalRejection(
-                  s"vcc_facilitators_mismatch vccFacHash=${vcc.facilitatorsHash.show.take(8)} ours=${facilitatorsHash.show.take(8)}"
-                )
-              )
-            case Some(vcc) =>
-              // Symmetric with B1/B2 -- every VCC voter must be in the deterministic
-              // wider witness pool. The assembler (StateTransitions.checkViewChangeAssembly) filters by
-              // the same pool; without this re-check on the follower side, an adversarial leader could
-              // embed a VCC built from out-of-pool voters and the rest of the cluster would accept it.
-              val witnessPool = WitnessPool.all(
-                state.eligibleFacilitators.value.toSet,
-                state.lastOutcome.peerQuality.toMap,
-                config.minParticipationObservations
-              )
-              val nonWitnessPoolVoter = vcc.votes.toNonEmptyList.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
-              nonWitnessPoolVoter match {
-                case Some(bad) =>
-                  Left(ProposalRejection(s"vcc_voter_not_in_pool voter=${bad.proofs.head.id.show.take(8)}"))
-                case None =>
-                  vcc.highestQcInVcc match {
-                    case Some(qc) if qc.proposalHash =!= proposal.hash =>
-                      Left(
-                        ProposalRejection(
-                          s"highest_qc_carry_forward_violation qcHash=${qc.proposalHash.show.take(8)} proposalHash=${proposal.hash.show.take(8)}"
-                        )
-                      )
-                    case _ => Right(())
-                  }
-              }
-          }
-        }
-      }
+      ): Either[ProposalRejection, Unit] =
+        ProposalVccValidator.validate(
+          proposalView = proposal.view,
+          proposalHash = proposal.hash,
+          proposalVcc = proposal.vcc,
+          initialViewNumber = state.initialViewNumber,
+          coreSize = state.coreFacilitators.value.size,
+          facilitatorsHash = facilitatorsHash,
+          eligibleFacilitators = state.eligibleFacilitators.value.toSet,
+          peerQuality = state.lastOutcome.peerQuality.toMap,
+          quorumThresholdFraction = config.quorumThresholdFraction,
+          minParticipationObservations = config.minParticipationObservations
+        )
 
       /** Verify that every `Signed[ViewChangeVote]` inside the VCC has a valid cryptographic signature over the voter's actual payload.
         * Protects against an adversarial leader constructing a VCC with fabricated/unsigned votes. Each vote must have exactly one
@@ -1214,9 +1181,10 @@ object GlobalSnapshotConsensusStateAdvancer {
         // Voter/signer membership widened from `roundStartFacilitators` to
         // `eligibleFacilitators - target`. See StateTransitions.scala assembly site for full
         // rationale. Both the assembly site and this re-validation must agree on the witness
-        // pool, otherwise leaders would assemble certs that followers reject.
+        // pool, otherwise leaders would assemble certs that followers reject. Integer math via
+        // `QuorumPolicy.fromFraction`.
         val n = state.coreFacilitators.value.size
-        val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+        val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
         val committee = state.roundStartFacilitators.value.toSet
         val expectedLastSnap: Hash = state.lastOutcome.finished.snapshotHash
 
@@ -1331,8 +1299,9 @@ object GlobalSnapshotConsensusStateAdvancer {
           return Left(ProposalRejection(s"acs_rejected_in_bootstrap count=${proposal.admissionCertificates.size}"))
         // v19: quorum threshold computed against the Core committee only -- see
         // validateProposalEcs for the full decoupled-threshold-vs-membership rationale.
+        // Integer math via `QuorumPolicy.fromFraction`.
         val n = state.coreFacilitators.value.size
-        val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+        val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
         val committee = state.roundStartFacilitators.value.toSet
         val probation = state.lastOutcome.readmissionCountdown.keySet
         val expectedLastSnap: Hash = state.lastOutcome.finished.snapshotHash
@@ -1548,8 +1517,9 @@ object GlobalSnapshotConsensusStateAdvancer {
                   .as(none[Transition])
               case Right(_) =>
                 // v19: observedResponders quorum gate computed against the Core committee.
+                // Integer math via `QuorumPolicy.fromFraction`.
                 val n = state.coreFacilitators.value.size
-                val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+                val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
                 val below = leaderProposal.observedResponders.size < q && !isInBootstrap(state)
                 ConsensusLog
                   .warn(

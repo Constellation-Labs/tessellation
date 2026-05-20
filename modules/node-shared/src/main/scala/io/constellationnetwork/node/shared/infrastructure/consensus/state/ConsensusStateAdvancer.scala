@@ -114,9 +114,11 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     // Testnet/mainnet use 0.67 (supermajority) so community peers don't block rounds.
     // Dev uses 1.0 (unanimity) for clean E2E convergence. With the Core-only denominator
     // and quorumFraction=1.0, this requires ALL Core peers to declare -- still strict but
-    // small (Core=3 in testnet).
+    // small (Core=3 in testnet). Integer arithmetic via `QuorumPolicy.fromFraction` removes
+    // the `Double` from consensus math; the value is identical to the legacy
+    // `ceil(coreSize * fraction)` for every n in the operating range (see `QuorumPolicySuite`).
     val quorumFraction = config.quorumThresholdFraction
-    val quorumThreshold = math.max(1, math.ceil(coreSize * quorumFraction).toInt)
+    val quorumThreshold = math.max(1, QuorumPolicy.fromFraction(coreSize, quorumFraction))
 
     for {
       result <-

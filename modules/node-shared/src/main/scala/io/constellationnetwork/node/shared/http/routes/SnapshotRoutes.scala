@@ -402,7 +402,12 @@ object SnapshotRoutes {
             retryAfterSeconds = cfg.perIpBandwidthRetryAfterSeconds,
             appliesTo = (req: Request[F]) => isHeavyweightSnapshotRoute(req),
             allowlist = cfg.perIpAllowlist.split(",").iterator.map(_.trim).filter(_.nonEmpty).toSet,
-            selfExternalIp = selfExternalIp
+            selfExternalIp = selfExternalIp,
+            // Pre-flight reject: estimator returns the on-disk checkpoint size for the heavy
+            // combined-stream routes so the limiter can reject 100MB requests BEFORE the route
+            // handler builds the response body. Other routes get `None` and fall through to
+            // the legacy post-response Content-Length path (defense in depth).
+            routeSizeEstimator = Some(combinedStreamRouteSizeEstimator[F, S, SI](combinedSnapshotCheckpointFileSystemStorage))
           )
         }
       heavyRouteCapacity: PosInt = snapshotServingConfig.map(_.heavyRouteConcurrency).getOrElse(PosInt(6))
@@ -428,7 +433,7 @@ object SnapshotRoutes {
 
   /** Predicate identifying heavyweight snapshot routes that PerIpBandwidthLimitMiddleware should enforce on. Scope is intentionally narrow:
     * only the routes that materialize multi-MB snapshot bodies. Lightweight metadata routes (`/latest/ordinal`, `/latest/metadata`,
-    * `/latest/combined/checkpoint/info`) bypass so they remain available to a client that just burned its bandwidth budget — those are the
+    * `/latest/combined/checkpoint/info`) bypass so they remain available to a client that just burned its bandwidth budget - those are the
     * very probes a well-behaved client should use to back off.
     */
   def isHeavyweightSnapshotRoute[F[_]](req: Request[F]): Boolean = {
@@ -437,6 +442,37 @@ object SnapshotRoutes {
       case "latest" :: "combined" :: "stream" :: Nil                             => true
       case "latest" :: "combined" :: "checkpoint" :: ord :: Nil if ord != "info" => true
       case _                                                                     => false
+    }
+  }
+
+  /** Pre-flight size estimator for the per-IP bandwidth limiter. Maps the combined-snapshot routes to their on-disk byte size so the
+    * limiter can refuse over-budget requests BEFORE the heavy route handler builds the ~100 MB response. Returns `None` for any other route
+    * (including the lightweight probes) so they fall through to the legacy post-response Content-Length accounting.
+    *
+    * Resolution:
+    *   - `/latest/combined/stream`: resolve latest ordinal via the checkpoint storage, then ask for its on-disk size.
+    *   - `/latest/combined/checkpoint/{ord}`: parse the ordinal from the path, look up its on-disk size.
+    *
+    * The estimator is best-effort: when the checkpoint is absent (e.g. cold-start before first write) it returns `None` and the limiter
+    * falls back to running the route. The route will 404 in that case, which the post-response Content-Length check accounts as 0 bytes -
+    * the right outcome for a missing checkpoint.
+    */
+  def combinedStreamRouteSizeEstimator[F[_]: Async, S <: Snapshot, SI <: SnapshotInfo[_]](
+    storage: CombinedSnapshotCheckpointFileSystemStorage[F, S, SI]
+  ): Request[F] => F[Option[Long]] = { req =>
+    val path = req.uri.path.segments.map(_.encoded).toList
+    path match {
+      case "latest" :: "combined" :: "stream" :: Nil =>
+        storage.getLatestOrdinal.flatMap {
+          case Some(ord) => storage.getCheckpointSize(ord)
+          case None      => Option.empty[Long].pure[F]
+        }
+      case "latest" :: "combined" :: "checkpoint" :: ord :: Nil if ord != "info" =>
+        ord.toLongOption.flatMap(SnapshotOrdinal(_)) match {
+          case Some(o) => storage.getCheckpointSize(o)
+          case None    => Option.empty[Long].pure[F]
+        }
+      case _ => Option.empty[Long].pure[F]
     }
   }
 }

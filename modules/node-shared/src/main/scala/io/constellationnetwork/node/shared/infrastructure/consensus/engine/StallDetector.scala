@@ -648,7 +648,10 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
           // "quorum infeasible" means the round genuinely cannot advance.
           // With unanimity (1.0), losing ANY peer is infeasible → eviction fires.
           // With supermajority (0.67), only >1/3 missing triggers eviction.
-          val minQuorum = math.max(1, math.ceil(totalFacilitators * config.quorumThresholdFraction).toInt)
+          // Integer math via `QuorumPolicy.fromFraction` -- matches the legacy
+          // `ceil(totalFacilitators * fraction)` for every n in the operating range
+          // (see `QuorumPolicySuite`), no behavioural change.
+          val minQuorum = math.max(1, QuorumPolicy.fromFraction(totalFacilitators, config.quorumThresholdFraction))
           val quorumInfeasible = remaining < minQuorum
 
           // Graduated response: first stall warns and waits, second stall evicts.

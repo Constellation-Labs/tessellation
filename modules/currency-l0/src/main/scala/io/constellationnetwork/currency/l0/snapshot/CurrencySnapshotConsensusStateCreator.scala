@@ -382,6 +382,10 @@ object CurrencySnapshotConsensusStateCreator {
           // Mirror dag-l0: round-start view = max(priorAbandonmentCount, timeView). MUST match
           // the viewNumber argument passed to selectLeaderWeighted above for leader consistency.
           viewNumber = initialView,
+          // Mirror dag-l0 alpha.90 P0 #1 self-wedge fix -- see GlobalSnapshotConsensusStateCreator
+          // for the full rationale on `initialViewNumber`. Frozen at construction so the validator
+          // can accept the no-VCC seed-view proposal.
+          initialViewNumber = initialView,
           entropy = entropy
         )
 

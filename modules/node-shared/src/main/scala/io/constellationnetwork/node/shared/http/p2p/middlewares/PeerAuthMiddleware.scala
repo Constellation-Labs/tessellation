@@ -42,6 +42,31 @@ object PeerAuthMiddleware {
   private def getPeerId[F[_]](res: Response[F]): Option[PeerId] =
     res.headers.get[`X-Id`].map(_.id)
 
+  /** Heavyweight snapshot stream routes whose response bodies must NOT be buffered for peer-auth body signing/verification.
+    *
+    * Body-level peer-auth verification (md5 over the entire response body) is redundant for the combined-snapshot stream and per-ordinal
+    * checkpoint endpoints: the embedded `Signed[S]` snapshot carries its own deterministic cryptographic signature, which is what the
+    * caller actually applies and trusts. The peer-auth wrapper only confirms transport-layer authenticity of the peer; that authenticity is
+    * already established by the `X-Id` + `X-Session-Token` header pair (verified statelessly on the client by
+    * `responseTokenVerifierMiddleware`).
+    *
+    * The buffering itself is what we are eliminating: server-side, `Http4sResponseSigner` accumulates the entire body into a
+    * `ByteArrayOutputStream` to compute the signature md5; client-side, `responseVerifierMiddleware` keeps every chunk in a `Ref[F].of`
+    * `Vector[Chunk[Byte]]` so the verifier and the downstream consumer can both re-read it. For a 100 MB combined checkpoint that is ~100
+    * MB retained per concurrent download. Skipping for these routes avoids both copies.
+    *
+    * The predicate matches by URI suffix because the route prefix differs per layer (`global-snapshots` for GL0, `snapshots` for CL0).
+    * Other routes (small JSON probes, cluster/peer routes, etc.) retain the existing per-message peer-auth signing/verification.
+    */
+  def isLargeStreamRoute[F[_]](req: Request[F]): Boolean = {
+    val path = req.uri.path.segments.map(_.encoded).toList
+    path.takeRight(3) match {
+      case "latest" :: "combined" :: "stream" :: Nil                 => true
+      case "combined" :: "checkpoint" :: ord :: Nil if ord != "info" => true
+      case _                                                         => false
+    }
+  }
+
   def responseSignerMiddleware[F[_]: Async: SecurityProvider](
     privateKey: PrivateKey,
     sessionStorage: SessionStorage[F],
@@ -55,10 +80,14 @@ object PeerAuthMiddleware {
         headerToken <- getOwnTokenHeader(sessionStorage).attemptT.toOption
         newHeaders = headerToken.fold(res.headers)(h => res.headers.put(h)).put(`X-Id`(selfId))
         resWithHeader = res.copy(headers = newHeaders)
-        signedResponse <- signer
-          .sign(resWithHeader)
-          .attemptT
-          .toOption
+        // Heavyweight stream routes (combined-snapshot stream + per-ordinal checkpoint) skip
+        // body-level peer-auth signing: `Http4sResponseSigner` buffers the entire body to compute
+        // the signature md5, which inflates heap by the full response size per concurrent serve.
+        // The embedded `Signed[S]` payload's own signature is what the caller applies; transport
+        // authenticity is still proven by the `X-Id` + `X-Session-Token` header pair attached above.
+        signedResponse <-
+          if (isLargeStreamRoute(req)) OptionT.pure[F](resWithHeader)
+          else signer.sign(resWithHeader).attemptT.toOption
       } yield signedResponse
     }
   }
@@ -89,30 +118,39 @@ object PeerAuthMiddleware {
         new Http4sResponseVerifier[F](getVerifier(publicKey), new TessellationHttpCryptoConfig {})
       }
 
-      client.run(req).flatMap { response =>
-        Resource.suspend {
-          Ref[F].of(Vector.empty[Chunk[Byte]]).map { vec =>
-            Resource.liftK {
-              val copiedBody = Stream
-                .eval(vec.get)
-                .flatMap(v => Stream.emits(v).covary[F])
-                .flatMap(c => Stream.chunk(c).covary[F])
+      // Heavyweight stream routes bypass the body-buffering verifier. The verifier observes every
+      // chunk into a `Ref[F].of(Vector[Chunk[Byte]])` so a single-shot md5 signature can be computed
+      // over the entire body; for a 100 MB combined checkpoint that retains ~100 MB per concurrent
+      // download in addition to whatever the caller decoder allocates. The server-side
+      // `responseSignerMiddleware` symmetrically skips signing this same set of routes, so there is
+      // no signature to check; the embedded `Signed[S]` snapshot's own signature is what the caller
+      // applies. Transport authenticity remains established by the `X-Id` header on the response.
+      if (isLargeStreamRoute(req)) client.run(req)
+      else
+        client.run(req).flatMap { response =>
+          Resource.suspend {
+            Ref[F].of(Vector.empty[Chunk[Byte]]).map { vec =>
+              Resource.liftK {
+                val copiedBody = Stream
+                  .eval(vec.get)
+                  .flatMap(v => Stream.emits(v).covary[F])
+                  .flatMap(c => Stream.chunk(c).covary[F])
 
-              response
-                .copy(body = response.body.observe(_.chunks.flatMap(s => Stream.exec(vec.update(_ :+ s)))))
-                .pure[F]
-                .flatMap { res =>
-                  verifier.flatMap(_.verify(res))
-                }
-                .flatMap {
-                  case SignatureValid => response.withBodyStream(copiedBody).pure[F]
-                  case _              => unauthorized[F].pure[F]
-                }
+                response
+                  .copy(body = response.body.observe(_.chunks.flatMap(s => Stream.exec(vec.update(_ :+ s)))))
+                  .pure[F]
+                  .flatMap { res =>
+                    verifier.flatMap(_.verify(res))
+                  }
+                  .flatMap {
+                    case SignatureValid => response.withBodyStream(copiedBody).pure[F]
+                    case _              => unauthorized[F].pure[F]
+                  }
 
+              }
             }
           }
         }
-      }
     }
 
   def requestSignerMiddleware[F[_]: Async: SecurityProvider](
