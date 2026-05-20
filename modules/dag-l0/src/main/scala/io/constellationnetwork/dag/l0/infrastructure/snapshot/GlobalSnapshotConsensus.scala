@@ -328,6 +328,7 @@ object GlobalSnapshotConsensus {
           GlobalConsensusKind
         ](
           selfId,
+          gossip,
           consensusStorage,
           stateCreator,
           stateUpdater,

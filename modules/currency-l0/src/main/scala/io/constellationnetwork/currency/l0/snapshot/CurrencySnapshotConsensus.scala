@@ -255,6 +255,7 @@ object CurrencySnapshotConsensus {
           CurrencyConsensusKind
         ](
           selfId,
+          gossip,
           consensusStorage,
           consensusStateCreator,
           stateUpdater,

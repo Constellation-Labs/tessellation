@@ -70,6 +70,7 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
       case v: ConsensusPeerVote[_]                   => handlePeerVote(origin, v)
       case e: ConsensusPeerEvictionVote[_]           => handleEvictionVote(origin, e)
       case av: ConsensusPeerAdmissionVote[_]         => handleAdmissionVote(origin, av)
+      case vc: ConsensusAssembledVcc[_]              => handleAssembledVcc(origin, vc)
       case a: ConsensusPeerDeclarationAck[_, _]      => handleDeclarationAck(origin, a)
       case w: ConsensusWithdrawPeerDeclaration[_, _] => handleWithdrawDeclaration(origin, w)
       case ConsensusArtifact(key, artifact)          =>
@@ -269,4 +270,29 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
     HasherSelector[F].withCurrent { implicit h =>
       storage.addArtifact(key, artifact)
     }.flatMap(triggerUpdateIfChanged(queue, key))
+
+  /** Receive a locally-assembled `ViewChangeCertificate` from a peer that DID reach quorum for some `(fromView, toView)` transition and
+    * store it on this node, even if this node has not yet seen enough VCV votes locally to assemble its own. Closes the per-peer assembly
+    * asymmetry that would otherwise leave a lagging peer with an empty `assembledVccR` slot at the current view, wedging the leader path
+    * with `vcc_missing_for_view_gt_0` on the next round. Trust model: the rumor envelope is signed by the gossip layer; the VCC itself
+    * carries the per-vote `Signed[ViewChangeVote]` proofs that validators re-verify at proposal-acceptance time. Storing a malformed VCC
+    * locally cannot finalize a round on its own -- it can only lead to this node's leadership turn failing its own proposal validation,
+    * which is no worse than the current behaviour with `vcc_missing`.
+    */
+  private def handleAssembledVcc(origin: PeerId, vc: ConsensusAssembledVcc[_]): F[Unit] = {
+    val key = vc.key.asInstanceOf[Key]
+    storage.observePeerAtKey(origin, key) >>
+      ConsensusLog.info(
+        log,
+        Category.Phase,
+        key.toString,
+        "n/a",
+        LogEvent.ViewChange,
+        "received" -> "assembled_vcc",
+        "from" -> ConsensusLog.pid(origin),
+        "fromView" -> vc.vcc.fromView.toString,
+        "toView" -> vc.vcc.toView.toString
+      ) >>
+      storage.storeAssembledVcc(key, vc.vcc)
+  }
 }
