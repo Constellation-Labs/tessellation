@@ -18,7 +18,7 @@ import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.env.AppEnvironment
-import io.constellationnetwork.node.shared.config.types.SnapshotConfig
+import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, SnapshotConfig}
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
@@ -99,6 +99,15 @@ object CurrencySnapshotConsensus {
     implicit val daEncoder: Encoder[DataTransaction] = DataTransactionCodecs.encoder(maybeDataApplication)
     implicit val hs: HasherSelector[F] = hasherSelector
 
+    // v20: env-resolved Core committee size threaded into `ConsensusConfig.coreCommitteeSize`
+    // so it folds into `deterministicConfigHash`. Mirror of GlobalSnapshotConsensus -- one
+    // env-resolution point feeds every downstream component (storage, advancer, state creator,
+    // event loop). Default `3` mirrors the dev-environment value.
+    val resolvedCoreCommitteeSize: Int =
+      snapshotConfig.coreCommitteeSize.get(environment).map(_.value).getOrElse(3)
+    val effectiveConsensusConfig: ConsensusConfig =
+      snapshotConfig.consensus.copy(coreCommitteeSize = Some(resolvedCoreCommitteeSize))
+
     for {
       consensusStorage <- ConsensusStorage.make[
         F,
@@ -109,7 +118,7 @@ object CurrencySnapshotConsensus {
         CurrencySnapshotStatus,
         CurrencyConsensusOutcome,
         CurrencyConsensusKind
-      ](snapshotConfig.consensus)
+      ](effectiveConsensusConfig)
 
       consensusFns =
         CurrencySnapshotConsensusFunctions.make[F](
@@ -128,7 +137,7 @@ object CurrencySnapshotConsensus {
 
       consensusStateAdvancer =
         CurrencySnapshotConsensusStateAdvancer.make(
-          snapshotConfig.consensus,
+          effectiveConsensusConfig,
           keyPair,
           consensusStorage,
           consensusFns,
@@ -158,15 +167,16 @@ object CurrencySnapshotConsensus {
           selfId,
           seedlist,
           facilitatorSelector,
-          snapshotConfig.consensus.deterministicConfigHash,
-          snapshotConfig.consensus,
+          effectiveConsensusConfig.deterministicConfigHash,
+          effectiveConsensusConfig,
           peerQualityTracker,
           tcaFilter,
           eventMempool,
           localHealthMonitor,
-          // v19 per-environment Core floor mirror of dag-l0. Defaults to 3 for
-          // single-node test rigs when the environment is not present in the map.
-          snapshotConfig.coreCommitteeSize.get(environment).map(_.value).getOrElse(3)
+          // v19 per-environment Core floor mirror of dag-l0. v20 routes the env-resolved
+          // value through `effectiveConsensusConfig.coreCommitteeSize`, so this binding is
+          // what both the state creator and `deterministicConfigHash` see.
+          resolvedCoreCommitteeSize
         )
 
       consensusStateRemover =
@@ -266,14 +276,14 @@ object CurrencySnapshotConsensus {
           clusterStorage,
           consensusFns,
           consensusClient,
-          snapshotConfig.consensus,
+          effectiveConsensusConfig,
           facilitatorSelector,
           peerQualityTracker,
           viewChangeVoter,
           evictionVoter,
           admissionVoter,
           (o: CurrencyConsensusOutcome) =>
-            !o.recentProofSizes.values.exists(_ >= snapshotConfig.consensus.bootstrapCompleteProofsThreshold),
+            !o.recentProofSizes.values.exists(_ >= effectiveConsensusConfig.bootstrapCompleteProofsThreshold),
           (o: CurrencyConsensusOutcome) => o.readmissionCountdown.filter(_._2 > 0).keySet,
           (o: CurrencyConsensusOutcome) => o.finished.snapshotHash,
           (o: CurrencyConsensusOutcome) => o.peerQuality.toMap,

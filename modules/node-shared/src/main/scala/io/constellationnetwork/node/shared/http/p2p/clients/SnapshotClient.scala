@@ -1,7 +1,7 @@
 package io.constellationnetwork.node.shared.http.p2p.clients
 
 import cats.data.Kleisli
-import cats.effect.Async
+import cats.effect.{Async, Resource}
 import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
@@ -14,14 +14,17 @@ import io.constellationnetwork.security.SecurityProvider
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
-import fs2.text
+import _root_.io.circe.fs2._
+import fs2.Stream
+import fs2.io.file.{Files, Flags}
 import io.circe.magnolia.derivation.decoder.semiauto._
 import io.circe.refined._
-import io.circe.{Decoder, Json, parser}
+import io.circe.{Decoder, Json}
 import org.http4s.Method.GET
 import org.http4s._
 import org.http4s.client.Client
 import org.http4s.headers.`If-None-Match`
+import org.typelevel.jawn.AsyncParser
 
 abstract class SnapshotClient[
   F[_]: Async: SecurityProvider,
@@ -86,27 +89,29 @@ abstract class SnapshotClient[
     }
   }
 
-  private def decodeCombinedBody(body: fs2.Stream[F, Byte]): F[(Signed[S], SI)] =
-    body
-      .through(text.utf8.decode)
-      .compile
-      .string
-      .flatMap { json =>
-        for {
-          arr <- Async[F].fromEither(parser.decode[List[Json]](json))
-          tuple <- arr match {
-            case List(snapshotJson, stateJson) =>
-              for {
-                snapshot <- Async[F].fromEither(snapshotJson.as[Signed[S]])
-                state <- Async[F].fromEither(stateJson.as[SI])
-              } yield (snapshot, state)
-            case other =>
-              Async[F].raiseError[(Signed[S], SI)](
-                new RuntimeException(s"Unexpected combined snapshot JSON structure: $other")
-              )
-          }
-        } yield tuple
-      }
+  /** Decode the combined-snapshot stream `[snapshotJson, stateJson]` without materializing the whole body in heap.
+    *
+    * Previous shape:
+    *   1. `body.through(text.utf8.decode).compile.string` -- entire body becomes one Java `String` (~2x raw bytes due to UTF-16 internal
+    *      representation). 2. `parser.decode[List[Json]](json)` -- Circe builds an in-memory `Json` tree (~3-4x the String size for
+    *      snapshot JSON). 3. `as[Signed[S]]` and `as[SI]` -- typed decode adds another full allocation.
+    *
+    * Cumulative transient heap per 100 MB download: ~600-800 MB. Concurrent downloads on cluster recovery multiplied that into multi-GB
+    * pressure and triggered GC pauses long enough to abandon consensus rounds.
+    *
+    * New shape:
+    *   1. Spool the response body to a `Files[F].tempFile` Resource (chunked write, no heap accumulation, deterministic cleanup on
+    *      error/cancel via the surrounding `use { ... }`). 2. Read the temp file back through
+    *      `circeFs2.byteParser(AsyncParser.UnwrapArray)` -- Jawn produces one `Json` per top-level array element incrementally. 3. Decode
+    *      element 1 to `Signed[S]`, then drop the source `Json` reference before pulling element 2 via `decodeFirstTwo`.
+    *
+    * Peak heap per concurrent download is bounded to one element's `Json` tree plus one decoded typed value, instead of the entire body
+    * times three or four. The temp file is the durable backing store; the OS page cache handles re-read locality.
+    *
+    * The temp-file path is closed via Resource bracketing so it is freed on error, cancellation, or successful completion -- never leaked.
+    */
+  private def decodeCombinedBody(body: Stream[F, Byte]): F[(Signed[S], SI)] =
+    SnapshotClient.decodeCombinedBodyStreaming[F, Signed[S], SI](body)
 
   def get(ordinal: SnapshotOrdinal): PeerResponse[F, Signed[S]] = {
     import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
@@ -152,4 +157,87 @@ object SnapshotClient {
           new RuntimeException(s"Unexpected response status from latest/combined/stream: $other")
         )
     }
+
+  /** Streaming variant of the combined-snapshot decode. Static and parameterized over the element types so unit tests can exercise the
+    * spool-to-disk + incremental Jawn parse without having to construct a full `SnapshotClient` instance. The instance method
+    * `decodeCombinedBody` delegates here, supplying `Signed[S]` and `SI` for `A` and `B`.
+    *
+    * Wire format: a single top-level JSON array of exactly two elements -- `[firstJson, secondJson]`. Empty, single-element, or 3+ element
+    * bodies raise with a clear message; malformed JSON propagates from Jawn as a parse error.
+    *
+    * Heap discipline:
+    *   1. The response body is spooled to a `Files[F].tempFile`, so the body bytes do not accumulate in heap during transfer. 2. The temp
+    *      file is read back through `circeFs2.byteParser(AsyncParser.UnwrapArray)`, which emits each top-level array element as its own
+    *      `Json` value -- no `List[Json]` intermediate. 3. The pull pattern decodes element 1, releases the raw `Json` reference for
+    *      element 1, then pulls element 2 and decodes it. Peak resident set is one raw `Json` plus one decoded typed value, not two of
+    *      each.
+    *
+    * The temp file is closed via Resource bracketing on every termination path (success, parse error, cancellation), so concurrent
+    * downloads cannot leak temp files on disk.
+    */
+  def decodeCombinedBodyStreaming[F[_]: Async, A: Decoder, B: Decoder](
+    body: Stream[F, Byte]
+  ): F[(A, B)] =
+    decodeCombinedBodyStreaming[F, A, B](body, "combined-snapshot-")
+
+  /** Test-friendly variant of `decodeCombinedBodyStreaming` accepting a custom temp-file prefix.
+    *
+    * The cleanup-leak test snapshots the temp directory before/after the decode and asserts no files matching the prefix remain. Without an
+    * isolating prefix the snapshot is racy with concurrent in-suite tests that all use the production `"combined-snapshot-"` prefix --
+    * those other tests' in-flight temp files surface as a false-positive leak. Production calls still use the original prefix; only the
+    * leak-test passes a unique value (e.g., a UUID) so its snapshot is isolated to this decode's files alone. The deletion finalizer is the
+    * same `Resource.make` discipline regardless of prefix, so the prefix is a purely cosmetic partition for test determinism.
+    */
+  def decodeCombinedBodyStreaming[F[_]: Async, A: Decoder, B: Decoder](
+    body: Stream[F, Byte],
+    tempFilePrefix: String
+  ): F[(A, B)] = {
+    val files = Files.forAsync[F]
+    // Explicit `Resource.make` over `files.tempFile` so the deletion finalizer is sequential
+    // with the F[(A,B)] action: when this returns (success or error), the spool file is
+    // guaranteed gone. `tempFile` in fs2 3.12 already uses Resource.make under the hood, but
+    // pinning the discipline here keeps the cleanup invariant local to this helper -- the
+    // cleanup-leak test pivots on a directory snapshot that compares before/after byte-identical
+    // and cannot tolerate any deferred-deletion lag from upstream changes.
+    Resource
+      .make(files.createTempFile(None, tempFilePrefix, ".json", None))(spool => files.deleteIfExists(spool).void)
+      .use { spool =>
+        val parsedElements: Stream[F, Json] =
+          files
+            .readAll(spool, 64 * 1024, Flags.Read)
+            .through(byteParser[F](AsyncParser.UnwrapArray))
+
+        body.through(files.writeAll(spool, Flags.Write)).compile.drain >>
+          decodeFirstTwo[F, A, B](parsedElements)
+      }
+  }
+
+  /** Pull exactly two elements from the parsed `Json` stream, decoding each to its typed value and releasing the source `Json` before
+    * pulling the next element. See [[decodeCombinedBodyStreaming]] for the heap-discipline rationale.
+    */
+  private def decodeFirstTwo[F[_]: Async, A: Decoder, B: Decoder](
+    elements: Stream[F, Json]
+  ): F[(A, B)] = {
+    import fs2.Pull
+
+    def fail(message: String): Pull[F, (A, B), Unit] =
+      Pull.raiseError[F](new RuntimeException(s"Unexpected combined snapshot JSON structure: $message"))
+
+    elements.pull.uncons1.flatMap {
+      case None => fail("stream is empty")
+      case Some((firstJson, tail)) =>
+        Pull.eval(Async[F].fromEither(firstJson.as[A])).flatMap { first =>
+          tail.pull.uncons1.flatMap {
+            case None => fail("only one element, expected two")
+            case Some((secondJson, rest)) =>
+              Pull.eval(Async[F].fromEither(secondJson.as[B])).flatMap { second =>
+                rest.pull.uncons1.flatMap {
+                  case None    => Pull.output1((first, second))
+                  case Some(_) => fail("more than two elements")
+                }
+              }
+          }
+        }
+    }.stream.compile.lastOrError
+  }
 }

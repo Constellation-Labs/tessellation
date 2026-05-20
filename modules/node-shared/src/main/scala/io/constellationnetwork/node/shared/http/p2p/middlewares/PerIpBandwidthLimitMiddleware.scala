@@ -56,6 +56,16 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
   */
 object PerIpBandwidthLimitMiddleware {
 
+  /** Default route size estimator that never predicts a size. Wired in when the caller has not registered a route-specific estimator; the
+    * middleware then falls through to its legacy post-response Content-Length accounting. Top-level rather than an inline default because
+    * Scala-2 default values cannot see the caller's implicit scope (the `Async[F]` constraint), so we cannot reference `Async[F].pure(...)`
+    * directly in the `apply` parameter default.
+    */
+  def noRouteSizeEstimator[F[_]: Async](req: Request[F]): F[Option[Long]] = {
+    val _ = req
+    Async[F].pure(Option.empty[Long])
+  }
+
   private final case class IpState(timestampedBytesDesc: List[(Long, Long)])
 
   /** Build the middleware.
@@ -78,6 +88,12 @@ object PerIpBandwidthLimitMiddleware {
     *   the local node's external IP. When provided, the middleware detects the XFF-self-injection case (LB injected our own IP into
     *   `X-Forwarded-For`) and falls back to the TCP remote address. Mirrors [[PerIpRateLimitMiddleware]]'s guard; see that header doc for
     *   the full rationale (.193 self-loop SIGTERM cascade observed on testnet).
+    * @param routeSizeEstimator
+    *   per-request pre-flight size estimator. `Some(estimator)` enables the pre-flight reject path: when the estimator returns
+    *   `Some(bytes)` and `sumKept + bytes > maxBytesPerWindow`, the middleware returns 429 BEFORE invoking the inner route. Estimator
+    *   returning `None` falls through to the legacy post-response `Content-Length` accounting (covers routes the caller has not registered
+    *   an estimator for). The intent is to avoid constructing a 100 MB response just to drain it on an over-cap IP. The post-response check
+    *   is still applied for defense in depth in case the estimator under-reports. `None` preserves the legacy behavior end-to-end.
     */
   def apply[F[_]: Async](
     maxBytesPerWindow: Long,
@@ -85,10 +101,13 @@ object PerIpBandwidthLimitMiddleware {
     retryAfterSeconds: Long = 5,
     appliesTo: Request[F] => Boolean = (_: Request[F]) => true,
     allowlist: Set[String] = Set.empty,
-    selfExternalIp: Option[String] = None
+    selfExternalIp: Option[String] = None,
+    routeSizeEstimator: Option[Request[F] => F[Option[Long]]] = None
   ): F[HttpRoutes[F] => HttpRoutes[F]] = {
     val logger = Slf4jLogger.getLogger[F]
     val windowMillis = windowDuration.toMillis
+    val effectiveEstimator: Request[F] => F[Option[Long]] =
+      routeSizeEstimator.getOrElse(noRouteSizeEstimator[F] _)
 
     Ref.of[F, Map[String, IpState]](Map.empty).map { stateRef => routes: HttpRoutes[F] =>
       Kleisli { req =>
@@ -132,35 +151,48 @@ object PerIpBandwidthLimitMiddleware {
                   if (sumKept >= maxBytesPerWindow) {
                     OptionT.liftF(rejectFast(ip, maxBytesPerWindow, sumKept, retryAfterSeconds, logger))
                   } else {
-                    // Run inner route, then check Content-Length and reserve atomically.
-                    routes(req).semiflatMap { resp =>
-                      val responseBytes = resp.contentLength.getOrElse(0L)
-                      Async[F].realTime.flatMap { now2 =>
-                        val nowMs2 = now2.toMillis
-                        val cutoff2 = nowMs2 - windowMillis
-                        // Return type encodes the decision: None = accepted, Some(observed) = rejected.
-                        // Keeps the `sumNow` value out of the modify closure so the post-modify
-                        // branches can report the observed total in the rejection log.
-                        stateRef
-                          .modify[Option[Long]] { m =>
-                            val prev = m.getOrElse(ip, IpState(Nil))
-                            val keptNow = prev.timestampedBytesDesc.takeWhile(_._1 >= cutoff2)
-                            val sumNow = keptNow.iterator.map(_._2).sum
-                            if (sumNow + responseBytes > maxBytesPerWindow) {
-                              // Don't record — we're rejecting. Trimmed list is preserved.
-                              (m.updated(ip, IpState(keptNow)), Some(sumNow + responseBytes))
-                            } else {
-                              (m.updated(ip, IpState((nowMs2, responseBytes) :: keptNow)), None)
-                            }
+                    // Pre-flight estimator check: if a route-specific estimator can predict the
+                    // response size, reject before the route executes. The key win is avoiding
+                    // the ~100 MB response-body construction (and resource acquire/drain) for the
+                    // combined-stream routes when the IP would be over the cap anyway. Estimators
+                    // returning None fall through to the post-response Content-Length path so
+                    // routes without estimators preserve legacy behavior.
+                    OptionT.liftF(effectiveEstimator(req)).flatMap {
+                      case Some(estimated) if sumKept + estimated > maxBytesPerWindow =>
+                        OptionT.liftF(rejectFast(ip, maxBytesPerWindow, sumKept + estimated, retryAfterSeconds, logger))
+                      case _ =>
+                        // Run inner route, then check Content-Length and reserve atomically.
+                        // This second check stays even when the estimator accepted, so an
+                        // under-reporting estimator can't silently bypass the cap (defense in depth).
+                        routes(req).semiflatMap { resp =>
+                          val responseBytes = resp.contentLength.getOrElse(0L)
+                          Async[F].realTime.flatMap { now2 =>
+                            val nowMs2 = now2.toMillis
+                            val cutoff2 = nowMs2 - windowMillis
+                            // Return type encodes the decision: None = accepted, Some(observed) = rejected.
+                            // Keeps the `sumNow` value out of the modify closure so the post-modify
+                            // branches can report the observed total in the rejection log.
+                            stateRef
+                              .modify[Option[Long]] { m =>
+                                val prev = m.getOrElse(ip, IpState(Nil))
+                                val keptNow = prev.timestampedBytesDesc.takeWhile(_._1 >= cutoff2)
+                                val sumNow = keptNow.iterator.map(_._2).sum
+                                if (sumNow + responseBytes > maxBytesPerWindow) {
+                                  // Don't record - we're rejecting. Trimmed list is preserved.
+                                  (m.updated(ip, IpState(keptNow)), Some(sumNow + responseBytes))
+                                } else {
+                                  (m.updated(ip, IpState((nowMs2, responseBytes) :: keptNow)), None)
+                                }
+                              }
+                              .flatMap {
+                                case None           => resp.pure[F]
+                                case Some(observed) =>
+                                  // Drain the unused inner body so any held resources release. Then return 429.
+                                  resp.body.compile.drain.attempt.void >>
+                                    rejectFast(ip, maxBytesPerWindow, observed, retryAfterSeconds, logger)
+                              }
                           }
-                          .flatMap {
-                            case None           => resp.pure[F]
-                            case Some(observed) =>
-                              // Drain the unused inner body so any held resources release. Then return 429.
-                              resp.body.compile.drain.attempt.void >>
-                                rejectFast(ip, maxBytesPerWindow, observed, retryAfterSeconds, logger)
-                          }
-                      }
+                        }
                     }
                   }
                 }

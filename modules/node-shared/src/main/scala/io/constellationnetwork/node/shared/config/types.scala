@@ -576,7 +576,32 @@ object types {
     //     no recentRoundEndTimes entries; mixed v18/v19 cluster is unsafe. Cold
     //     restart required across the cluster; jar hash gates v18 <-> v19 peer
     //     connection at handshake.
-    consensusSchemaVersion: Int = 19,
+    //   - v20: `coreCommitteeSize` is now part of `deterministicConfigHash` so a
+    //     cluster with divergent Core size values handshake-rejects rather than
+    //     silently forking on divergent Core committee derivation. The env-resolved
+    //     value is threaded through `ConsensusConfig.coreCommitteeSize: Option[Int]`
+    //     (populated at the construction site that resolves
+    //     `SnapshotConfig.coreCommitteeSize.get(env)`) and folded into the hash.
+    //     v19 nodes lacked the field in the hash and would compute different hashes
+    //     for the same Core size config; mixed v19/v20 clusters cannot form.
+    //     Cold restart required across the cluster; jar hash gates v19 <-> v20 peer
+    //     connection at handshake.
+    //     v20 additionally stamps `ConsensusState.initialViewNumber: Int` at round
+    //     construction from `max(priorAbandonmentCount, timeView)`, frozen for the
+    //     lifetime of the round. Validator-side `validateProposalVcc` (via the shared
+    //     `ProposalVccValidator.validate` helper) reads it to accept a no-VCC proposal
+    //     at the seed view (deterministic `0..initialView` jump, no quorum to assemble
+    //     from) while still rejecting a no-VCC proposal once the round has advanced
+    //     past the seed (`view{N}_proposal_missing_vcc`). Leader-side proposal-build
+    //     gates `vccMissing` / `vccMismatch` and the assembled-VCC fetch on
+    //     `viewNumber > initialViewNumber` symmetrically. Pre-alpha.90 the validator
+    //     rejected every round-start proposal at `viewNumber > 0` and the cluster
+    //     self-wedged on every retry. Not in `deterministicConfigHash` (the field is
+    //     on state, not config); behaviour is gated by the schema-version anyway since
+    //     v19 and v20 cannot interoperate. Operator dashboards grep on
+    //     `view{N}_proposal_missing_vcc` and `vcc_view_mismatch` rejection codes --
+    //     the latter is the alpha.90 issue 2 stale-VCC view-mismatch gate.
+    consensusSchemaVersion: Int = 20,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with
@@ -592,7 +617,21 @@ object types {
     // cores on the typical 4-8 vCPU validator. Larger pools rarely help because the consume
     // loop is single-threaded by construction; the pool size matters only for the fanned-out
     // round handlers that elect to shift back via `evalOn`.
-    consensusDispatcherThreads: Int = 2
+    consensusDispatcherThreads: Int = 2,
+    // v20: env-resolved Core committee size, populated by the consensus construction site
+    // (GlobalSnapshotConsensus / CurrencySnapshotConsensus) from
+    // `SnapshotConfig.coreCommitteeSize.get(env).map(_.value).getOrElse(3)` BEFORE
+    // `deterministicConfigHash` is read. Threading the env-resolved value through here lets
+    // the hash include it without restructuring the HOCON layer or duplicating env resolution.
+    // The `Option` default is `None` so unit tests / construction sites that don't go through
+    // the snapshot wiring continue to compile; the hash treats `None` as the default `3` (the
+    // dev value matching the pre-v20 `getOrElse(3)` behaviour). Consensus-critical because the
+    // LIVENESS quorum threshold is computed against `coreFacilitators.value.size`; divergent
+    // operator values would derive divergent Core committees and silently fork. Now in
+    // `deterministicConfigHash` so a v19 (no-hash) and v20 (with-hash) cluster compute
+    // different hashes and reject each other at the Facility handshake. Jar hash also gates
+    // peer connection.
+    coreCommitteeSize: Option[Int] = None
   ) {
 
     /** Deterministic hash of consensus-critical config values.
@@ -620,6 +659,9 @@ object types {
       *   - `tighteningWindow`, `minParticipationInWindow`, `activeFacilitatorFloor`: active-set narrowing parameters; control which peers
       *     are committee members for the next round (recent signer history + grace candidates with floor fallback for cluster-wide outages)
       *   - `bootstrapDeclarationTimeoutMultiplier`: affects phase-transition timing during bootstrap
+      *   - `coreCommitteeSize`: env-resolved Core committee floor; changes Core derivation and the LIVENESS quorum denominator. Populated
+      *     by the consensus construction site from `SnapshotConfig.coreCommitteeSize.get(env)` (defaults to dev value 3 when absent). v20
+      *     pulls this into the hash so divergent operator values handshake-reject rather than silently forking.
       *
       * '''Non-critical fields''' (excluded — affect timing/performance, not deterministic outcomes):
       *   - `timeTriggerInterval`, `declarationTimeout`, `lockDuration`, `reStallTimeout`, `noProgressTimeout`: timing only
@@ -681,6 +723,11 @@ object types {
           // (advancer:330 decay path); must be in the hash so divergent operator values can't
           // produce silently-divergent peerQuality maps.
           s"qualityDecayThreshold=$qualityDecayThreshold," +
+          // v20: env-resolved Core committee size. Divergent operator values would produce
+          // divergent Core committee derivation and silently fork. Treated as the dev default
+          // `3` when absent (matches the pre-v20 `SnapshotConfig.coreCommitteeSize.get(env)
+          // .map(_.value).getOrElse(3)` resolution at the consensus construction site).
+          s"coreCommitteeSize=${coreCommitteeSize.getOrElse(3)}," +
           // v7 schema-version anchor; explicit fence against mixed-wire-version cluster joins.
           s"consensusSchemaVersion=$consensusSchemaVersion"
       Hash.fromBytes(configString.getBytes("UTF-8"))
@@ -775,9 +822,15 @@ object types {
     // integrationnet ~10 peers -> Core 9, dev (single-node test rigs) -> Core 3.
     // Consensus-critical because the LIVENESS quorum threshold is computed against
     // `coreFacilitators.value.size`; divergent operator values would derive divergent
-    // Core committees and silently fork. The jar hash already gates peer connections,
-    // and this field follows the same precedent as `maxFacilitatorCount` (env-keyed
-    // PosInt, NOT in `deterministicConfigHash`).
+    // Core committees and silently fork. The jar hash already gates peer connections.
+    //
+    // v20 update: the env-resolved value is now also folded into `ConsensusConfig.coreCommitteeSize`
+    // at the consensus construction site, which in turn folds into `deterministicConfigHash`,
+    // so a Facility-time handshake refusal is the second line of defence against divergent
+    // operator values (in addition to the jar hash). The `Map[AppEnvironment, PosInt]` shape is
+    // preserved -- env resolution still happens at the construction site
+    // (GlobalSnapshotConsensus / CurrencySnapshotConsensus); only the resolved scalar is
+    // additionally threaded into the hash.
     coreCommitteeSize: Map[AppEnvironment, PosInt] = Map.empty,
     inMemoryCapacity: NonNegLong,
     snapshotPath: Path,

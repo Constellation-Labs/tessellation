@@ -204,6 +204,23 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   outcomeEndTime: Option[Long] = None,
   leader: PeerId,
   viewNumber: Int = 0,
+  // Round-start seed view stamped by the state creator from `max(priorAbandonmentCount, timeView)`.
+  // Frozen for the lifetime of the round -- VCC-driven view advances in
+  // `StateTransitions.scala` (`s.copy(viewNumber = toView.toInt, ...)`) bump `viewNumber` but
+  // leave `initialViewNumber` unchanged so the validator can distinguish the deterministic
+  // round-start seed from a real certified transition.
+  //
+  // Why: a round that STARTS at `viewNumber > 0` (because priorAbandonmentCount or timeView is
+  // non-zero at construction) has no VCC for the implied `0..initialView` jump -- that jump is
+  // a deterministic seed, not a view-change quorum. Pre-alpha.90 the validator rejected every
+  // such round-start proposal with `view{N}_proposal_missing_vcc` and the cluster self-wedged
+  // on every retry. Read sites:
+  //   - leader-side proposal-build (`vccMissing`): suppress the abort when `viewNumber == initialViewNumber`.
+  //   - validator-side `validateProposalVcc` (via `ProposalVccValidator.validate`): accept a
+  //     no-VCC proposal when `proposalView == initialViewNumber`.
+  // Defaulted to 0 so all pre-alpha.90 construction sites continue to compile; the dag-l0 and
+  // currency-l0 state creators populate it.
+  initialViewNumber: Int = 0,
   entropy: Hash
 )
 
@@ -213,6 +230,7 @@ object ConsensusState {
        |key=${cs.key.show},
        |leader=${cs.leader.show},
        |viewNumber=${cs.viewNumber.show},
+       |initialViewNumber=${cs.initialViewNumber.show},
        |facilitatorCount=${cs.facilitators.value.size.show},
        |removedFacilitators=${cs.removedFacilitators.value.show},
        |withdrawnFacilitators=${cs.withdrawnFacilitators.value.show},

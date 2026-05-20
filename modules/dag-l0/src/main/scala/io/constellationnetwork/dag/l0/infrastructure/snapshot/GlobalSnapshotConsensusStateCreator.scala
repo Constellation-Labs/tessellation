@@ -459,6 +459,13 @@ object GlobalSnapshotConsensusStateCreator {
           // leader the round believes it has at view=N matches the leader the selector returns
           // at view=N. View-change continues monotonically from this seed (HotStuff-style).
           viewNumber = initialView,
+          // Frozen round-start view for the alpha.90 P0 #1 self-wedge fix. VCC-driven advances
+          // (StateTransitions.scala `s.copy(viewNumber = toView.toInt, ...)`) bump `viewNumber`
+          // but never this field, so `validateProposalVcc` and the leader-side `vccMissing`
+          // gate can distinguish the deterministic `0..initialView` seed jump (no VCC required)
+          // from a real view-change quorum (VCC required). Without this stamping the validator
+          // rejected every round-start proposal at `viewNumber > 0` with `view{N}_proposal_missing_vcc`.
+          initialViewNumber = initialView,
           entropy = entropy
         )
 
