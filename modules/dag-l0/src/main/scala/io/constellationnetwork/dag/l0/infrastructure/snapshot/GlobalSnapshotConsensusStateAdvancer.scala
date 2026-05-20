@@ -885,8 +885,17 @@ object GlobalSnapshotConsensusStateAdvancer {
           // Highest-QC carry-forward: if the VCC carries a QC, the leader MUST propose that hash.
           // If our locally-built artifact hash differs, abort and let the next view retry.
           vccMismatch = isLeader && state.viewNumber > 0 && vccHighestQc.exists(_.proposalHash =!= hash)
-          // Missing VCC at view > 0 is a race (VCC was cleared between assembly and proposal build).
-          vccMissing = isLeader && state.viewNumber > 0 && maybeAssembledVcc.isEmpty
+          // Missing VCC at view > 0 is normally a race (VCC was cleared between assembly and
+          // proposal build) -- but if Core has degenerated to a single peer there is no quorum
+          // to assemble from, so no VCC is achievable. Suppress the abort in that case: the
+          // solo leader proposes without a VCC. With Core=1 there are no other validators to
+          // reject the no-VCC proposal; the proposal validates locally and the snapshot
+          // finalizes solo. Without this bypass, alpha.88 wedged whenever a node entered
+          // a momentary solo state after self-rejoin or community-peer drop-off (overnight
+          // alpha.88 monitor saw repeated `ROUND_STARTED facs=1 leader=e2f4496e view=0` with
+          // vcc_missing_for_view_gt_0 on every retry).
+          isSoloCore = state.coreFacilitators.value.size <= 1
+          vccMissing = isLeader && state.viewNumber > 0 && maybeAssembledVcc.isEmpty && !isSoloCore
           aborted = (isLeader && leaderLock.flatMap(_.lockedQc).exists(_.proposalHash =!= hash)) || vccMismatch || vccMissing
           _ <- ConsensusLog
             .warn(
@@ -1108,12 +1117,19 @@ object GlobalSnapshotConsensusStateAdvancer {
         // facilitator denominator everywhere else in the round.
         val n = state.coreFacilitators.value.size
         val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+        // v19 alpha.89: solo-mode VCC bypass. When Core <= 1 there is no quorum to assemble
+        // a VCC from, so a no-VCC proposal at view > 0 is the only achievable outcome. The
+        // leader-side proposal-build path skips the vcc_missing abort under the same
+        // condition (see `vccMissing` in toProposalsPhase). Without this symmetric bypass,
+        // the leader's self-validation of its own no-VCC proposal would reject it.
+        val isSoloCore = n <= 1
         if (proposal.view === 0L) {
           if (proposal.vcc.nonEmpty) Left(ProposalRejection("view0_proposal_must_not_carry_vcc"))
           else Right(())
         } else {
           proposal.vcc match {
-            case None => Left(ProposalRejection(s"view${proposal.view}_proposal_missing_vcc"))
+            case None if isSoloCore => Right(())
+            case None               => Left(ProposalRejection(s"view${proposal.view}_proposal_missing_vcc"))
             case Some(vcc) if vcc.votes.size < q =>
               Left(ProposalRejection(s"vcc_under_quorum votes=${vcc.votes.size} required=$q"))
             case Some(vcc) if vcc.facilitatorsHash =!= facilitatorsHash =>
@@ -2287,22 +2303,28 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): F[Option[Transition]] =
         loggerBundle.app.withOrdinal(status.majorityArtifactInfo.artifact.ordinal) {
           HasherSelector[F].withCurrent { implicit hasher =>
-            // Finalization threshold: strict majority of the canonical round-start committee.
+            // Finalization threshold: strict majority of the CORE committee only (v19 alpha.89).
             //
-            // Denominator uses `roundStartFacilitators.value.size` (not the mutable
-            // `state.facilitators.value.size`) so the threshold stays stable across the round —
-            // mid-round withdrawals cannot lower the bar. This is the canonical-committee
-            // invariant from fix #2 applied to the threshold calculation.
+            // Denominator uses `state.coreFacilitators.value.size` rather than
+            // `roundStartFacilitators.value.size` (Core + Tier 1). The v19 design decouples
+            // liveness gating from the signer pool: Tier 1 peers may sign and earn rewards,
+            // but their absence must not block finalization. Pre-alpha.89 the threshold gated
+            // on the full canonical committee, which wedged alpha.88 overnight at "3 active < 4
+            // required (clusterSize=6)" -- 3 source nodes signing, 3 community Tier 1 peers
+            // silent, threshold over Core+Tier1 unreachable.
             //
-            // Formula is `(n/2)+1` rather than `ceil(n * quorumThresholdFraction)` for liveness
-            // reasons: at n=5 with fraction=0.67, supermajority=4 leaves zero headroom (any one
-            // peer drop wedges the round, and the B1/VCC paths also need 4 so nothing can
-            // auto-recover -- observed in the E2E ord-10 wedge). Majority=3 gives slack.
-            // The forking risk that supermajority addresses (two disjoint finalized sets under
-            // view-change splits) is protected against elsewhere via VoteLock + VCC; finalization
+            // Formula stays `(n/2)+1` (strict majority, not supermajority) for liveness slack.
+            // Safety against view-change splits is enforced by VoteLock + VCC, both of which
+            // already gate on Core only via the cert-quorum formula
+            // `ceil(coreFacilitators.size * quorumThresholdFraction)`. The finalization
             // threshold is a liveness lever, not the primary safety lever.
+            //
+            // `fullCommittee` (used by the signature grace window below) stays as the full
+            // canonical committee so we wait for late-arriving Tier 1 sigs before declaring
+            // the artifact "fully signed".
             val canonicalCommitteeSize = state.roundStartFacilitators.value.size
-            val quorumThreshold = (canonicalCommitteeSize / 2) + 1
+            val coreSize = state.coreFacilitators.value.size
+            val quorumThreshold = (coreSize / 2) + 1
             val fullCommittee = canonicalCommitteeSize
             for {
               // Hash over canonical committee: this hash lands in Finished (and
