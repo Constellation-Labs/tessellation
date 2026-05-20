@@ -8,10 +8,12 @@ import cats.kernel.{Eq, Next, Order}
 import cats.syntax.all._
 
 import scala.concurrent.duration._
+import scala.reflect.runtime.universe.TypeTag
 
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
+import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger._
@@ -26,6 +28,7 @@ import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import fs2.Stream
+import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 /** Builds and wires together all consensus engine components.
@@ -73,7 +76,7 @@ object ConsensusEventLoop {
   def build[
     F[_]: Async: HasherSelector: Metrics: Random: Supervisor,
     Event,
-    Key: Order: Show: Next,
+    Key: Order: Show: Next: TypeTag: Encoder,
     Artifact: Eq,
     Ctx: Eq,
     Status,
@@ -81,6 +84,7 @@ object ConsensusEventLoop {
     Kind
   ](
     selfId: PeerId,
+    gossip: Gossip[F],
     storage: ConsensusStorage[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
     stateCreator: ConsensusStateCreator[F, Key, Artifact, Ctx, Status, Outcome, Kind],
     stateUpdater: ConsensusStateUpdater[F, Key, Artifact, Ctx, Status, Outcome, Kind],
@@ -120,6 +124,7 @@ object ConsensusEventLoop {
         selfId,
         queue,
         pending,
+        gossip,
         storage,
         stateCreator,
         stateUpdater,

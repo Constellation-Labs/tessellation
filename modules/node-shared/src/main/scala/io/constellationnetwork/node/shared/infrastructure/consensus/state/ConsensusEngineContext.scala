@@ -7,6 +7,7 @@ import cats.syntax.all._
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
+import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, PendingTriggersF}
 import io.constellationnetwork.node.shared.infrastructure.consensus.{FacilitatorSelector, _}
@@ -52,6 +53,12 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   queue: Queue[F, ConsensusCommand[Key, Artifact, Context, Outcome]],
   isRoundRunning: Ref[F, Boolean],
   pending: PendingTriggersF[F],
+  // Gossip handle for re-distributing locally-derived consensus artifacts that downstream
+  // peers need but might miss via the per-peer assembly path. Currently used to broadcast
+  // an assembled `ViewChangeCertificate` from `StateTransitions.checkViewChangeAssembly` so
+  // peers that didn't reach quorum locally (gossip lag) still store the VCC and can propose
+  // at view > 0 without hitting `vcc_missing_for_view_gt_0`.
+  gossip: Gossip[F],
   storage: ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind],
   creator: ConsensusStateCreator[F, Key, Artifact, Context, Status, Outcome, Kind],
   updater: ConsensusStateUpdater[F, Key, Artifact, Context, Status, Outcome, Kind],
@@ -134,6 +141,7 @@ object ConsensusEngineContext {
     selfId: PeerId,
     queue: Queue[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]],
     pending: PendingTriggersF[F],
+    gossip: Gossip[F],
     storage: ConsensusStorage[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
     creator: ConsensusStateCreator[F, Key, Artifact, Ctx, Status, Outcome, Kind],
     updater: ConsensusStateUpdater[F, Key, Artifact, Ctx, Status, Outcome, Kind],
@@ -163,6 +171,7 @@ object ConsensusEngineContext {
         queue,
         running,
         pending,
+        gossip,
         storage,
         creator,
         updater,

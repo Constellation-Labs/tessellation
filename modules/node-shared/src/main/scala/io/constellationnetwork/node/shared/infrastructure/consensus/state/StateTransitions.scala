@@ -6,6 +6,7 @@ import cats.syntax.all._
 import cats.{Eq, Show}
 
 import scala.concurrent.duration._
+import scala.reflect.runtime.universe.TypeTag
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand._
@@ -21,6 +22,7 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
+import io.circe.Encoder
 import monocle.Lens
 import retry.RetryDetails
 import retry.RetryPolicies.{constantDelay, limitRetries}
@@ -67,7 +69,7 @@ import retry.syntax.all._
   * @see
   *   ConsensusStateAdvancer for advancement logic
   */
-class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artifact: Eq, Ctx: Eq, Status, Outcome, Kind](
+class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeTag: Encoder, Artifact: Eq, Ctx: Eq, Status, Outcome, Kind](
   ctx: ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]
 )(
   implicit outcomeKey: Lens[Outcome, Key],
@@ -76,7 +78,20 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
   outcomeTrigger: Lens[Outcome, ConsensusTrigger]
 ) {
 
-  import ctx.{advancer, config, facilitatorSelector, logger => log, peerQualityOf, peerQualityTracker, queue, remover, storage, updater}
+  import ctx.{
+    advancer,
+    config,
+    facilitatorSelector,
+    gossip,
+    logger => log,
+    peerQualityOf,
+    peerQualityTracker,
+    queue,
+    remover,
+    storage,
+    updater
+  }
+  import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusAssembledVcc
 
   /** Deterministic witness pool for B1/B2/VCC certificate assembly.
     *
@@ -222,6 +237,17 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show, Artif
                       }
                     for {
                       _ <- storage.storeAssembledVcc(key, vcc)
+                      // Re-distribute the assembled VCC so peers that did NOT reach quorum
+                      // locally for this (fromView, toView) -- e.g. due to gossip lag -- still
+                      // store the VCC and can build a valid proposal when they next lead at
+                      // `view > 0`. Without this, the per-peer assembly path leaves a lagging
+                      // peer with an empty `assembledVccR` slot even though state.viewNumber
+                      // advances via gossip, and the next leadership turn wedges with
+                      // `vcc_missing_for_view_gt_0`. Targets the canonical round-start committee
+                      // (excluding self) -- the cohort that could become leader at any future
+                      // view of THIS round.
+                      vccGossipTargets = state.roundStartFacilitators.value.toSet - ctx.selfId
+                      _ <- gossip.spreadDirect(ConsensusAssembledVcc[Key](key, vcc), vccGossipTargets)
                       advanced <- storage.condModifyState[Boolean](key)(modify)
                       didAdvance = advanced.getOrElse(false)
                       _ <- ConsensusLog

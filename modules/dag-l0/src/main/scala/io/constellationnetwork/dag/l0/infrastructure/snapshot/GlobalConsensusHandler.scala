@@ -34,6 +34,7 @@ object GlobalConsensusHandler {
       all.withdrawHandler <+>
       all.viewChangeVoteHandler <+>
       all.evictionVoteHandler <+>
-      all.admissionVoteHandler
+      all.admissionVoteHandler <+>
+      all.assembledVccHandler
   }
 }

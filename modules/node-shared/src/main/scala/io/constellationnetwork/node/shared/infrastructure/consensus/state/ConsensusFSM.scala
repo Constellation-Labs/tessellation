@@ -6,6 +6,7 @@ import cats.syntax.all._
 import cats.{Eq, Show}
 
 import scala.concurrent.duration._
+import scala.reflect.runtime.universe.TypeTag
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
@@ -19,6 +20,7 @@ import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
+import io.circe.Encoder
 import monocle.Lens
 
 /** Finite State Machine that routes consensus commands to appropriate handlers.
@@ -42,7 +44,9 @@ import monocle.Lens
   * @see
   *   RumorHandler for rumor processing
   */
-class ConsensusFSM[F[_]: Async: Metrics: HasherSelector: Random, Event, Key: Eq: Show, Artifact: Eq, Ctx: Eq, Status, Outcome, Kind](
+class ConsensusFSM[F[
+  _
+]: Async: Metrics: HasherSelector: Random, Event, Key: Eq: Show: TypeTag: Encoder, Artifact: Eq, Ctx: Eq, Status, Outcome, Kind](
   ctx: ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   roundRunner: ConsensusRoundRunner[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]
 )(

@@ -74,4 +74,12 @@ class ConsensusRumorHandlers[F[
     */
   val admissionVoteHandler: RumorHandler[F] =
     RumorHandlerWithQueue.peer[F, ConsensusPeerAdmissionVote[Key]](queue.offer)
+
+  /** 12. AssembledVcc (re-distribution of a locally-built ViewChangeCertificate). Lets peers that did NOT see local quorum for a
+    * `(fromView, toView)` transition still store the VCC locally, so they can build a valid proposal when they next lead at `view > 0`.
+    * Symmetric wiring to the other vote handlers -- without registration, inbound ConsensusAssembledVcc rumors are silently dropped at the
+    * rumor-router layer.
+    */
+  val assembledVccHandler: RumorHandler[F] =
+    RumorHandlerWithQueue.peer[F, ConsensusAssembledVcc[Key]](queue.offer)
 }

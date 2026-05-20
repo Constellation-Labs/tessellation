@@ -41,6 +41,17 @@ object message {
   @derive(encoder, decoder)
   case class ConsensusPeerAdmissionVote[K](key: K, vote: Signed[AdmissionVote])
 
+  /** Re-distribution of a locally-assembled `ViewChangeCertificate` so peers that did NOT see local quorum for the same `(fromView,
+    * toView)` transition (due to gossip lag) can still store the VCC and proceed when they become leader at the advanced view. Without
+    * this, any peer whose local view-change-vote count was below the quorum threshold at assembly time advances state via gossip-of-state
+    * but never calls `storeAssembledVcc`, and the next time it leads at `view > 0` the proposal builder wedges with
+    * `vcc_missing_for_view_gt_0`. Wedge observed on testnet alpha.87 at ord 3127026: .193 saw only 1 of 2 required VCVs for the 14->15
+    * transition before state advanced, so .193's local VCC slot remained empty; when .193 became leader at view 16 the proposal builder
+    * bailed. With this rumor, the first peer that assembles the VCC broadcasts it to the committee and every receiver stores it locally.
+    */
+  @derive(encoder, decoder)
+  case class ConsensusAssembledVcc[K](key: K, vcc: ViewChangeCertificate)
+
   @derive(encoder, decoder)
   case class RegistrationResponse[Key](
     maybeKey: Option[Key]
