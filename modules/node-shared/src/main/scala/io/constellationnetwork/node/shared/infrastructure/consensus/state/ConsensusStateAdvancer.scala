@@ -86,8 +86,18 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
   )(
     getter: PeerDeclarations => Option[A]
   )(implicit asyncF: Async[F]): F[Option[SortedMap[PeerId, A]]] = {
+    // v19 alpha.89: phase-quorum gates on the Core committee only. Tier 1 peers may declare
+    // (Facility / MajoritySignature / BinarySignature) and their declarations are RETURNED in
+    // the result so they earn rewards proportionally -- but their absence cannot block the
+    // phase from advancing. Pre-alpha.89 this gated on `state.facilitators.value.size` (full
+    // committee including Tier 1), which wedged overnight at alpha.88 with "3 active < 4
+    // required" when source nodes were signing but community Tier 1 peers stayed silent.
+    //
+    // Collection: still iterate the full active set so Tier 1 declarations land in the result.
+    // Gate: count only Core declarations against `ceil(coreSize * quorumFraction)`.
     val activeFacilitators = state.facilitators.value
-    val totalRequired = activeFacilitators.size
+    val coreSet = state.coreFacilitators.value.toSet
+    val coreSize = state.coreFacilitators.value.size
 
     val declarations = activeFacilitators.flatMap { peerId =>
       resources.peerDeclarationsMap
@@ -98,18 +108,21 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
 
     val declarationsMap = SortedMap.from(declarations)
     val receivedCount = declarationsMap.size
+    val coreReceivedCount = declarationsMap.keys.count(coreSet.contains)
 
     // Quorum threshold from config. Default: unanimity (1.0 = all must respond).
     // Testnet/mainnet use 0.67 (supermajority) so community peers don't block rounds.
-    // Dev uses 1.0 (unanimity) for clean 5-node E2E convergence.
+    // Dev uses 1.0 (unanimity) for clean E2E convergence. With the Core-only denominator
+    // and quorumFraction=1.0, this requires ALL Core peers to declare -- still strict but
+    // small (Core=3 in testnet).
     val quorumFraction = config.quorumThresholdFraction
-    val quorumThreshold = math.max(1, math.ceil(totalRequired * quorumFraction).toInt)
+    val quorumThreshold = math.max(1, math.ceil(coreSize * quorumFraction).toInt)
 
     for {
       result <-
-        if (receivedCount >= quorumThreshold) {
+        if (coreReceivedCount >= quorumThreshold) {
           logger.debug(
-            s"Quorum reached: ${receivedCount}/${totalRequired} declared (need ${quorumThreshold}) for key=${state.key}"
+            s"Quorum reached: ${coreReceivedCount}/${coreSize} core declared (total received ${receivedCount}/${activeFacilitators.size}, need ${quorumThreshold} core) for key=${state.key}"
           ) >>
             declarationsMap.some.pure[F]
         } else {

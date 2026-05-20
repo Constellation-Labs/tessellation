@@ -580,7 +580,9 @@ object CurrencySnapshotConsensusStateAdvancer {
               if (state.viewNumber > 0) consensusStorage.getAssembledVcc(state.key) else none[ViewChangeCertificate].pure[F]
             vccHighestQc = maybeAssembledVcc.flatMap(_.highestQcInVcc)
             vccMismatch = isLeader && state.viewNumber > 0 && vccHighestQc.exists(_.proposalHash =!= hash)
-            vccMissing = isLeader && state.viewNumber > 0 && maybeAssembledVcc.isEmpty
+            // v19 alpha.89: solo-mode bypass -- see dag-l0 mirror for full rationale.
+            isSoloCore = state.coreFacilitators.value.size <= 1
+            vccMissing = isLeader && state.viewNumber > 0 && maybeAssembledVcc.isEmpty && !isSoloCore
             aborted = (isLeader && leaderLock.flatMap(_.lockedQc).exists(_.proposalHash =!= hash)) || vccMismatch || vccMissing
             _ <- logger
               .warn(
@@ -750,12 +752,15 @@ object CurrencySnapshotConsensusStateAdvancer {
         // v19: quorum computed against the Core committee. Mirror of dag-l0.
         val n = state.coreFacilitators.value.size
         val q = math.max(1, math.ceil(n.toDouble * config.quorumThresholdFraction).toInt)
+        // v19 alpha.89: solo-mode VCC bypass -- see dag-l0 mirror.
+        val isSoloCore = n <= 1
         if (proposal.view === 0L) {
           if (proposal.vcc.nonEmpty) Left(ProposalRejection("view0_proposal_must_not_carry_vcc"))
           else Right(())
         } else {
           proposal.vcc match {
-            case None => Left(ProposalRejection(s"view${proposal.view}_proposal_missing_vcc"))
+            case None if isSoloCore => Right(())
+            case None               => Left(ProposalRejection(s"view${proposal.view}_proposal_missing_vcc"))
             case Some(vcc) if vcc.votes.size < q =>
               Left(ProposalRejection(s"vcc_under_quorum votes=${vcc.votes.size} required=$q"))
             case Some(vcc) if vcc.facilitatorsHash =!= facilitatorsHash =>
