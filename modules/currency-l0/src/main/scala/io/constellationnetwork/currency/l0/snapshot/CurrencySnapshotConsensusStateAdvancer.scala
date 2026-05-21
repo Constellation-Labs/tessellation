@@ -1013,10 +1013,28 @@ object CurrencySnapshotConsensusStateAdvancer {
         resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind],
         leaderProposal: Proposal
       )(implicit hasher: Hasher[F]): F[Option[Transition]] = {
-        def logVccReject(rejection: ProposalRejection): F[Option[Transition]] =
+        // Alpha.93 Fix A + Fix C: mirror dag-l0 GlobalSnapshotConsensusStateAdvancer. The stale-proposal
+        // deadlock (project_alpha92_wedge_may21.md) is structural to the FSM, so the currency-l0 advancer
+        // must apply the same self-heal -- prune the frozen leader slot when the rejection is the
+        // proposalView < initialViewNumber AND vcc.isEmpty pattern, and increment the same metric.
+        def logVccReject(rejection: ProposalRejection): F[Option[Transition]] = {
+          val isStaleSlotPattern =
+            leaderProposal.view < state.initialViewNumber.toLong &&
+              leaderProposal.vcc.isEmpty &&
+              rejection.code.startsWith("view") &&
+              rejection.code.endsWith("_proposal_missing_vcc")
+          val maybePruneAndMeter =
+            if (isStaleSlotPattern)
+              Metrics[F].incrementCounter(
+                "dag_currency_consensus_stale_proposal_rejection_total",
+                Seq(Metrics.unsafeLabelName("peer_id") -> state.leader.show.take(8))
+              ) >>
+                consensusStorage.pruneStaleProposalSlots(state.key, state.initialViewNumber.toLong)
+            else Applicative[F].unit
           logger
-            .warn(s"[CONSENSUS] VCC validation failed key=${state.key.show} view=${state.viewNumber} reason=${rejection.code}")
-            .as(none[Transition])
+            .warn(s"[CONSENSUS] VCC validation failed key=${state.key.show} view=${state.viewNumber} reason=${rejection.code}") >>
+            maybePruneAndMeter.as(none[Transition])
+        }
         def logEcsReject(rejection: ProposalRejection): F[Option[Transition]] =
           logger
             .warn(s"[CONSENSUS] ECS validation failed key=${state.key.show} view=${state.viewNumber} reason=${rejection.code}")

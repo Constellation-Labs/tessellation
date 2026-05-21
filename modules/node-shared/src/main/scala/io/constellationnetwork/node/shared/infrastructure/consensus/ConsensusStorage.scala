@@ -162,6 +162,21 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     */
   private[consensus] def clearResourcesPreservingDeclarations(key: Key): F[Unit]
 
+  /** Drop entries in `peerDeclarationsMap[*].proposal` where the stored proposal's view is below `minViewToKeep` AND has no VCC.
+    *
+    * These slots are guaranteed never to validate: `ProposalVccValidator` only bypasses the missing-VCC check at exact match `proposalView
+    * \== initialViewNumber` (alpha.90 seed-view) or in solo-core mode. Once `initialViewNumber` has advanced past the stored view, the slot
+    * will be rejected on every CollectingProposals re-evaluation forever -- and `addProposal`'s first-write-wins for
+    * higher-view-without-VCC means a fresh broadcast cannot replace it. This is the alpha.92 stale-proposal deadlock (see
+    * `project_alpha92_wedge_may21.md`): cluster wedged at ord 3127095 for ~9h with .193 logging 10,333 `view16_proposal_missing_vcc`
+    * rejections against its own frozen slot, no path to self-heal short of operator restart.
+    *
+    * Called by the state advancer's `logVccReject` when the rejection IS the stale-slot pattern, and idempotently by the abandonment path
+    * once `initialViewNumber` for the next attempt is known. Public (not private[consensus]) because the dag-l0 and currency-l0 advancers
+    * live outside this package and need to invoke it from the validation-failure path.
+    */
+  def pruneStaleProposalSlots(key: Key, minViewToKeep: Long): F[Unit]
+
   private[consensus] def trySetInitialConsensusOutcome(data: Outcome): F[Boolean]
 
   private[consensus] def clearAndGetLastConsensusOutcome: F[Option[Outcome]]
@@ -360,8 +375,21 @@ object ConsensusStorage {
           }.void >> clearResources(key)
 
         def addFacility(peerId: PeerId, key: Key, facility: Facility): F[Option[ConsensusResources[Artifact, Kind]]] =
+          // Latest-write-wins. The previous `.orElse(facility.some)` first-write-wins semantics produced the
+          // alpha.92 follow-on wedge at ord 3127110 (project_alpha92_wedge_may21.md): a peer's earlier-view
+          // Facility carries the facilitator set known at that point, but the set legitimately rotates across
+          // intra-round view-changes (committee shrinkage, eviction certs applied, admissions). The first-stored
+          // Facility's `facilitatorsHash` then mismatches every later view's locally-computed hash, triggering
+          // the `facilitator_set_mismatch_revalidate` path in `GlobalSnapshotConsensusStateAdvancer.scala:1618`
+          // which infinitely withdraws self-signatures. `Facility` has no `view` field so view-based comparison
+          // is not available without a schema bump; latest-wins is the smallest correct change.
+          //
+          // Safety: every received Facility is rumor-signature-verified upstream (`RumorValidator` binds the
+          // Facility to its signer's PeerId), so the replacement can only originate from the peer itself --
+          // an attacker cannot inject a stale Facility on behalf of someone else. Honest peers only re-emit a
+          // Facility after a real view-change, in which case the newer set is what they currently believe.
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
-            peerDeclaration.focus(_.facility).modify(_.orElse(facility.some))
+            peerDeclaration.focus(_.facility).replace(facility.some)
           }
 
         def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[Option[ConsensusResources[Artifact, Kind]]] =
@@ -518,8 +546,14 @@ object ConsensusStorage {
           assembledAdmissionCertsR(key).get.map(_.getOrElse(Set.empty))
 
         def addBinarySignature(peerId: PeerId, key: Key, signature: BinarySignature): F[Option[ConsensusResources[Artifact, Kind]]] =
+          // Latest-write-wins, same rationale as `addFacility`. `BinarySignature` has no `view` field
+          // (declaration.scala:381) but carries `facilitatorsHash` and `lastSnapshotHash`, both of which can
+          // legitimately shift across intra-round view-changes. A first-stored binary signature anchored on a
+          // stale facilitatorsHash would mismatch every later view's locally-computed hash. Rumor signature
+          // verification upstream binds the BinarySignature to its signer; replacement can only come from the
+          // same peer. Symmetric with the `addFacility` fix shipped in the alpha.92 follow-on.
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
-            peerDeclaration.focus(_.binarySignature).modify(_.orElse(signature.some))
+            peerDeclaration.focus(_.binarySignature).replace(signature.some)
           }
 
         def addPeerDeclarationAck(
@@ -641,6 +675,21 @@ object ConsensusStorage {
           }.void >>
             voteLocksR(key).set(none) >>
             assembledAdmissionCertsR(key).set(none)
+
+        def pruneStaleProposalSlots(key: Key, minViewToKeep: Long): F[Unit] =
+          updateResources(key) { resources =>
+            resources.copy(
+              peerDeclarationsMap = resources.peerDeclarationsMap.map {
+                case (peerId, decl) =>
+                  val updated = decl.proposal match {
+                    case Some(p) if p.view < minViewToKeep && p.vcc.isEmpty =>
+                      decl.focus(_.proposal).replace(none)
+                    case _ => decl
+                  }
+                  peerId -> updated
+              }
+            )
+          }.void
 
         def getOwnRegistrationKey: F[Option[Key]] = observationKeyR.get.map(_.map(_.next))
 
