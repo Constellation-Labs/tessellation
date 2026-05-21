@@ -5,17 +5,16 @@ import io.constellationnetwork.security.hex.Hex
 
 import weaver.FunSuite
 
-/** Alpha.91 regression coverage for `StallDetector.computeCoreQuorumStatus` -- the Core-only
-  * quorum-infeasibility gate that replaces the pre-alpha.91 full-facilitator denominator.
+/** Alpha.91 regression coverage for `StallDetector.computeCoreQuorumStatus` -- the Core-only quorum-infeasibility gate that replaces the
+  * pre-alpha.91 full-facilitator denominator.
   *
   * The bug being locked: pre-alpha.91 StallDetector computed `quorumInfeasible = (totalFacilitators
-  * - missingPeers.size) < ceil(totalFacilitators * fraction)`. Post-alpha.89 the phase-quorum
-  * advancer gated on Core only, so a 3/3 Core could close a 2-of-3 phase quorum -- but
-  * StallDetector kept abandoning the round first because it saw `5 active < 6 required` against
-  * the full 8-facilitator denominator. Observed post-alpha.90 at ord 3127058 stuck for 30+ min.
+  *   - missingPeers.size) < ceil(totalFacilitators * fraction)`. Post-alpha.89 the phase-quorum advancer gated on Core only, so a 3/3 Core
+  *     could close a 2-of-3 phase quorum -- but StallDetector kept abandoning the round first because it saw `5 active < 6 required`
+  *     against the full 8-facilitator denominator. Observed post-alpha.90 at ord 3127058 stuck for 30+ min.
   *
-  * The post-deploy abandon reason this suite locks against:
-  * `ROUND_ABANDONED reason=quorum infeasible: 2 active < 6 required (clusterSize=8)`
+  * The post-deploy abandon reason this suite locks against: `ROUND_ABANDONED reason=quorum infeasible: 2 active < 6 required
+  * (clusterSize=8)`
   */
 object StallDetectorCoreQuorumSuite extends FunSuite {
 
@@ -52,7 +51,8 @@ object StallDetectorCoreQuorumSuite extends FunSuite {
       missingPeers = tier1of5,
       quorumThresholdFraction = Supermajority
     )
-    expect.same(3, status.coreSize)
+    expect
+      .same(3, status.coreSize)
       .and(expect.same(3, status.coreRemaining))
       .and(expect.same(2, status.coreRequired))
       .and(expect(!status.quorumInfeasible, "Core has 3/3 signers; round must NOT be quorum-infeasible despite 5 missing Tier 1 peers"))
@@ -68,7 +68,8 @@ object StallDetectorCoreQuorumSuite extends FunSuite {
       missingPeers = Set(core1),
       quorumThresholdFraction = Supermajority
     )
-    expect.same(3, status.coreSize)
+    expect
+      .same(3, status.coreSize)
       .and(expect.same(2, status.coreRemaining))
       .and(expect.same(2, status.coreRequired))
       .and(expect(!status.quorumInfeasible, "2-of-3 is the BFT quorum minimum; must stay feasible"))
@@ -80,7 +81,8 @@ object StallDetectorCoreQuorumSuite extends FunSuite {
       missingPeers = Set(core1, core2),
       quorumThresholdFraction = Supermajority
     )
-    expect.same(3, status.coreSize)
+    expect
+      .same(3, status.coreSize)
       .and(expect.same(1, status.coreRemaining))
       .and(expect.same(2, status.coreRequired))
       .and(expect(status.quorumInfeasible, "Only 1 of 3 Core peers active; cannot reach 2/3 quorum"))
@@ -92,7 +94,8 @@ object StallDetectorCoreQuorumSuite extends FunSuite {
       missingPeers = core3of3,
       quorumThresholdFraction = Supermajority
     )
-    expect.same(0, status.coreRemaining)
+    expect
+      .same(0, status.coreRemaining)
       .and(expect.same(2, status.coreRequired))
       .and(expect(status.quorumInfeasible, "All Core peers missing; round is starved"))
   }
@@ -107,7 +110,8 @@ object StallDetectorCoreQuorumSuite extends FunSuite {
       missingPeers = Set(core1) ++ tier1of5,
       quorumThresholdFraction = Supermajority
     )
-    expect.same(3, status.coreSize)
+    expect
+      .same(3, status.coreSize)
       .and(expect.same(2, status.coreRemaining))
       .and(expect.same(2, status.coreRequired))
       .and(expect(!status.quorumInfeasible, "Core has 2/3, satisfies BFT supermajority; Tier 1 absence is irrelevant"))
@@ -119,7 +123,8 @@ object StallDetectorCoreQuorumSuite extends FunSuite {
       missingPeers = Set(core1, core2, tier1a, tier1b, tier1c),
       quorumThresholdFraction = Supermajority
     )
-    expect.same(1, status.coreRemaining)
+    expect
+      .same(1, status.coreRemaining)
       .and(expect.same(2, status.coreRequired))
       .and(expect(status.quorumInfeasible, "Core falls below quorum even though some Tier 1 peers signed"))
   }
@@ -136,7 +141,8 @@ object StallDetectorCoreQuorumSuite extends FunSuite {
       missingPeers = onlyTier1Missing,
       quorumThresholdFraction = Supermajority
     )
-    expect.same(3, status.coreRemaining)
+    expect
+      .same(3, status.coreRemaining)
       .and(expect(!status.quorumInfeasible))
   }
 
@@ -150,7 +156,8 @@ object StallDetectorCoreQuorumSuite extends FunSuite {
       missingPeers = Set(core1),
       quorumThresholdFraction = Unanimity
     )
-    expect.same(3, status.coreSize)
+    expect
+      .same(3, status.coreSize)
       .and(expect.same(2, status.coreRemaining))
       .and(expect.same(3, status.coreRequired))
       .and(expect(status.quorumInfeasible, "Unanimity policy requires all 3; missing 1 trips the gate"))
@@ -162,7 +169,8 @@ object StallDetectorCoreQuorumSuite extends FunSuite {
       missingPeers = tier1of5,
       quorumThresholdFraction = Unanimity
     )
-    expect.same(3, status.coreRemaining)
+    expect
+      .same(3, status.coreRemaining)
       .and(expect.same(3, status.coreRequired))
       .and(expect(!status.quorumInfeasible))
   }
@@ -177,7 +185,8 @@ object StallDetectorCoreQuorumSuite extends FunSuite {
       missingPeers = Set.empty[PeerId],
       quorumThresholdFraction = Supermajority
     )
-    expect.same(0, status.coreSize)
+    expect
+      .same(0, status.coreSize)
       .and(expect.same(0, status.coreRemaining))
       .and(expect.same(1, status.coreRequired))
       .and(expect(status.quorumInfeasible, "0 < 1: an empty Core cannot reach quorum"))
@@ -189,7 +198,8 @@ object StallDetectorCoreQuorumSuite extends FunSuite {
       missingPeers = Set(core1),
       quorumThresholdFraction = Supermajority
     )
-    expect.same(1, status.coreSize)
+    expect
+      .same(1, status.coreSize)
       .and(expect.same(0, status.coreRemaining))
       .and(expect.same(1, status.coreRequired))
       .and(expect(status.quorumInfeasible))
@@ -202,7 +212,8 @@ object StallDetectorCoreQuorumSuite extends FunSuite {
       missingPeers = Set(core1),
       quorumThresholdFraction = Supermajority
     )
-    expect.same(5, status.coreSize)
+    expect
+      .same(5, status.coreSize)
       .and(expect.same(4, status.coreRemaining))
       .and(expect.same(4, status.coreRequired))
       .and(expect(!status.quorumInfeasible))
@@ -215,7 +226,8 @@ object StallDetectorCoreQuorumSuite extends FunSuite {
       missingPeers = Set(core1, core2),
       quorumThresholdFraction = Supermajority
     )
-    expect.same(3, status.coreRemaining)
+    expect
+      .same(3, status.coreRemaining)
       .and(expect.same(4, status.coreRequired))
       .and(expect(status.quorumInfeasible))
   }

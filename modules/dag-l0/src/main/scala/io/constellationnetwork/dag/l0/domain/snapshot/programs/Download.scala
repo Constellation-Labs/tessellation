@@ -709,23 +709,57 @@ object Download {
       downloadLoop(lastFullGlobalSnapshotOrdinal, none[DownloadResult])
     }
 
-    def observeWithLimit(result: DownloadResult, observationLimit: ObservationLimit)(
+    def observeWithLimit(result: DownloadResult, initialObservationLimit: ObservationLimit)(
       implicit hasherSelector: HasherSelector[F]
     ): F[(DownloadResult, ObservationLimit)] = {
-      def go(result: DownloadResult): F[DownloadResult] = {
+      // Re-evaluate the observation limit against a fresh peer-tip view. Used when fetchNextSnapshot's
+      // bounded retry cap exhausts: if the cluster has reached a stable tip at our local ordinal
+      // (shortcut condition fires), exit observe successfully. Otherwise return the new (possibly
+      // unchanged) limit and the next go() invocation will try fetchNextSnapshot with another bounded
+      // retry. This is the tip+1 recovery loop fix: prevents an indefinite 10s loop asking for an
+      // ordinal that will never finalize because the cluster is at our tip but lastSnapshot.ordinal+1
+      // is the round being worked on rather than a finalized snapshot.
+      def reEvaluateLimit(lastSnapshot: Signed[GlobalIncrementalSnapshot]): F[(ObservationLimit, Boolean)] =
+        for {
+          hashed <- hasherSelector.withCurrent(implicit h => lastSnapshot.toHashed)
+          readyPeerTips <- getReadyPeerTips
+          newLimit = chooseObservationLimit(hashed.ordinal, hashed.hash, readyPeerTips, observationOffset)
+          isShortcut = newLimit === hashed.ordinal && readyPeerTips.size >= minReadyQuorum
+        } yield (newLimit, isShortcut)
+
+      def go(result: DownloadResult, currentLimit: ObservationLimit): F[(DownloadResult, ObservationLimit)] = {
         val (lastSnapshot, lastState) = result
 
         for {
           _ <- updateStoragesWithDownloadedSnapshot(lastSnapshot, lastState)
-          result <-
-            if (lastSnapshot.ordinal === observationLimit) {
-              result.pure[F]
-            } else fetchNextSnapshot(result) >>= go
-        } yield result
+          out <-
+            if (lastSnapshot.ordinal === currentLimit)
+              (result, currentLimit).pure[F]
+            else
+              fetchNextSnapshot(result)
+                .flatMap(nextResult => go(nextResult, currentLimit))
+                .recoverWith {
+                  case err @ (CannotFetchSnapshot | InvalidChain) =>
+                    reEvaluateLimit(lastSnapshot).flatMap {
+                      case (newLimit, true) =>
+                        logger.info(
+                          s"[observeWithLimit] Mid-loop stable-tip shortcut: local=${lastSnapshot.ordinal.show}, " +
+                            s"prior limit=${currentLimit.show}, re-evaluated limit=${newLimit.show}, " +
+                            s"majority of Ready peers at or behind; exiting observe (err=${err.getClass.getSimpleName})"
+                        ) >> (result, newLimit).pure[F]
+                      case (newLimit, false) =>
+                        logger.info(
+                          s"[observeWithLimit] Retries exhausted at ordinal ${lastSnapshot.ordinal.show}, " +
+                            s"re-evaluated limit ${currentLimit.show} -> ${newLimit.show}; continuing " +
+                            s"(err=${err.getClass.getSimpleName})"
+                        ) >> go(result, newLimit)
+                    }
+                }
+        } yield out
       }
 
-      consensus.manager.registerForConsensus(observationLimit) >>
-        go(result).map((_, observationLimit))
+      consensus.manager.registerForConsensus(initialObservationLimit) >>
+        go(result, initialObservationLimit)
     }
 
     // Per-peer timeout for metadata probes. A single slow or half-partitioned Ready peer cannot
@@ -777,8 +811,18 @@ object Download {
       } yield out
     }
 
+    // Bounded retry cap for fetchNextSnapshot. With fetchSnapshotDelayBetweenTrials=10s this caps
+    // a single fetch loop at ~60s before raising. Previously this was unbounded, which caused the
+    // tip+1 recovery loop bug: if recoveryObserve fixed observationLimit to lastSnapshot.ordinal+1
+    // while the cluster never finalized that ordinal (e.g. the cluster tip equals our local tip
+    // and there is no next snapshot to fetch), retryingOnSomeErrors would loop forever on
+    // CannotFetchSnapshot 404s and the outer observe loop never got a chance to re-evaluate the
+    // limit against fresh peer tips. The cap lets the outer observeWithLimit.go.recoverWith
+    // re-query getReadyPeerTips and call chooseObservationLimit again.
+    val fetchNextRetryCap: Int = 6
+
     def fetchNextSnapshot(result: DownloadResult)(implicit hasherSelector: HasherSelector[F]): F[DownloadResult] = {
-      def retryPolicy = constantDelay(fetchSnapshotDelayBetweenTrials)
+      def retryPolicy = limitRetries[F](fetchNextRetryCap).join(constantDelay(fetchSnapshotDelayBetweenTrials))
 
       def isWorthRetrying(err: Throwable): F[Boolean] = err match {
         case CannotFetchSnapshot | InvalidChain => true.pure[F]
