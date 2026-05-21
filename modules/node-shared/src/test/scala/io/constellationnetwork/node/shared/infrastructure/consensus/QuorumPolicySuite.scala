@@ -8,16 +8,13 @@ import weaver.SimpleIOSuite
   *
   * ==Why this suite exists==
   *
-  * Prior to `QuorumPolicy`, every consensus quorum site computed
-  * `math.max(1, math.ceil(n.toDouble * quorumThresholdFraction).toInt)`, with the testnet fraction
-  * pinned to `0.6666666666666666` (max-precision Double of 2/3). The pattern was duplicated across
-  * StallDetector, StateTransitions, ProposalVccValidator, ConsensusStateAdvancer, and both
-  * env-specific advancers in dag-l0 and currency-l0.
+  * Prior to `QuorumPolicy`, every consensus quorum site computed `math.max(1, math.ceil(n.toDouble * quorumThresholdFraction).toInt)`, with
+  * the testnet fraction pinned to `0.6666666666666666` (max-precision Double of 2/3). The pattern was duplicated across StallDetector,
+  * StateTransitions, ProposalVccValidator, ConsensusStateAdvancer, and both env-specific advancers in dag-l0 and currency-l0.
   *
-  * The codex GL0 scaled-liveness action plan (Phase 0 #2) calls for a single integer helper. This
-  * suite asserts that `QuorumPolicy.supermajority(n) = (2 * n + 2) / 3` reproduces the legacy
-  * `ceil(n * 0.6666...)` result byte-identically for every cluster size in the operating range,
-  * so the migration is safe.
+  * The codex GL0 scaled-liveness action plan (Phase 0 #2) calls for a single integer helper. This suite asserts that
+  * `QuorumPolicy.supermajority(n) = (2 * n + 2) / 3` reproduces the legacy `ceil(n * 0.6666...)` result byte-identically for every cluster
+  * size in the operating range, so the migration is safe.
   *
   * Any regression here would re-introduce the drift risk the helper was created to eliminate.
   */

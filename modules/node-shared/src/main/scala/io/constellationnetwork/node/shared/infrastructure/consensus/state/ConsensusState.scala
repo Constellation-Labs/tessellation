@@ -172,8 +172,14 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   // Read-sites that MUST use this field: outcome.facilitators construction,
   // completedFacilitators derivation, Finished.facilitatorsHash, VCV/eviction
   // vote facilitatorsHash. Read-sites that MUST keep `facilitators`: in-round
-  // liveness (StallDetector, gossip spread targets, quorum-threshold calc,
-  // active-committee validation).
+  // liveness observability (StallDetector full-facilitator `missingPeers`,
+  // gossip spread targets, active-committee validation). NOTE: post-alpha.91
+  // the quorum-threshold calculation in StallDetector ALSO gates on
+  // `coreFacilitators` (mirroring `ConsensusStateAdvancer.maybeGetAllDeclarations`
+  // from alpha.89 and `StateTransitions.checkViewChangeAssembly`). StallDetector
+  // keeps the full-facilitator set only for observability logging and PeerQuality
+  // bookkeeping; the abandon decision and eviction-target candidate set are
+  // Core-only.
   roundStartFacilitators: Facilitators,
   status: Status,
   createdAt: FiniteDuration,

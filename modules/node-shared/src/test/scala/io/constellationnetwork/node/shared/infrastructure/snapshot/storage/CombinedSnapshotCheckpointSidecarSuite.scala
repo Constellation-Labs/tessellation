@@ -21,8 +21,8 @@ import weaver.MutableIOSuite
 
 /** Durable-ETag sidecar tests for [[CombinedSnapshotCheckpointFileSystemStorage]]. Each test creates a fresh tmpdir, writes a checkpoint
   * through the storage, then RECREATES the storage instance against the same tmpdir to simulate a process restart. The post-restart
-  * `getCachedHash` must hydrate from the on-disk sidecar (item 1 of the Phase 3 action plan) and the bandwidth limiter's `getCheckpointSize`
-  * must report the correct byte count (item 2).
+  * `getCachedHash` must hydrate from the on-disk sidecar (item 1 of the Phase 3 action plan) and the bandwidth limiter's
+  * `getCheckpointSize` must report the correct byte count (item 2).
   */
 object CombinedSnapshotCheckpointSidecarSuite extends MutableIOSuite {
 

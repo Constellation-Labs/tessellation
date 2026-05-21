@@ -10,10 +10,10 @@ import weaver.SimpleIOSuite
   * response body into a `Vector[Chunk[Byte]]` per concurrent download (the root cause of the multi-GB transient heap pressure observed on
   * recovery).
   *
-  * Scope: the predicate is a pure URI inspection so we exercise it directly. The end-to-end "no buffering happens" assertion would
-  * require standing up an actual http4s client/server pair; that is out of scope for the unit suite. The downstream guarantee here is
-  * structural: any route the predicate accepts will skip the body-buffering path in both directions, and only paths matching the layer
-  * prefixes (`global-snapshots` and `snapshots`) plus the heavyweight suffixes will be accepted.
+  * Scope: the predicate is a pure URI inspection so we exercise it directly. The end-to-end "no buffering happens" assertion would require
+  * standing up an actual http4s client/server pair; that is out of scope for the unit suite. The downstream guarantee here is structural:
+  * any route the predicate accepts will skip the body-buffering path in both directions, and only paths matching the layer prefixes
+  * (`global-snapshots` and `snapshots`) plus the heavyweight suffixes will be accepted.
   */
 object PeerAuthMiddlewareLargeStreamSuite extends SimpleIOSuite {
 
