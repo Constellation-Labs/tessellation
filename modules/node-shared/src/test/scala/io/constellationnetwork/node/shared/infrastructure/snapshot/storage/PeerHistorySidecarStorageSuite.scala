@@ -22,8 +22,8 @@ import weaver.MutableIOSuite
   *   - structurally-defective payload returns None (no fabricated value);
   *   - delete is best-effort and idempotent.
   *
-  * No mock storage layer is needed -- `Files[F]` (fs2.io.file) operates on a real temp directory and matches the production write
-  * path byte-for-byte.
+  * No mock storage layer is needed -- `Files[F]` (fs2.io.file) operates on a real temp directory and matches the production write path
+  * byte-for-byte.
   */
 object PeerHistorySidecarStorageSuite extends MutableIOSuite {
 
@@ -49,8 +49,24 @@ object PeerHistorySidecarStorageSuite extends MutableIOSuite {
     )
 
   private val nonTrivial: ConsensusOperationalState = sample(
-    peerA -> PerPeerOperationalRecord(quality = (12, 15), removalPenalty = 2, cumulativeMissCount = 7L, readmissionCountdown = 0, deferralCountdown = 0, viewChangesCaused = 4L.some, tier = None),
-    peerB -> PerPeerOperationalRecord(quality = (0, 8), removalPenalty = 0, cumulativeMissCount = 1L, readmissionCountdown = 5, deferralCountdown = 1, viewChangesCaused = None, tier = None)
+    peerA -> PerPeerOperationalRecord(
+      quality = (12, 15),
+      removalPenalty = 2,
+      cumulativeMissCount = 7L,
+      readmissionCountdown = 0,
+      deferralCountdown = 0,
+      viewChangesCaused = 4L.some,
+      tier = None
+    ),
+    peerB -> PerPeerOperationalRecord(
+      quality = (0, 8),
+      removalPenalty = 0,
+      cumulativeMissCount = 1L,
+      readmissionCountdown = 5,
+      deferralCountdown = 1,
+      viewChangesCaused = None,
+      tier = None
+    )
   )
 
   test("write then read returns the same ConsensusOperationalState") { base =>
@@ -81,7 +97,17 @@ object PeerHistorySidecarStorageSuite extends MutableIOSuite {
 
   test("multiple ordinals coexist independently") { base =>
     val sampleA = nonTrivial
-    val sampleB = sample(peerB -> PerPeerOperationalRecord(quality = (3, 3), removalPenalty = 0, cumulativeMissCount = 0L, readmissionCountdown = 0, deferralCountdown = 0, viewChangesCaused = None, tier = None))
+    val sampleB = sample(
+      peerB -> PerPeerOperationalRecord(
+        quality = (3, 3),
+        removalPenalty = 0,
+        cumulativeMissCount = 0L,
+        readmissionCountdown = 0,
+        deferralCountdown = 0,
+        viewChangesCaused = None,
+        tier = None
+      )
+    )
     for {
       sidecar <- PeerHistorySidecarStorage.make[IO](base)
       _ <- sidecar.write(ord100, sampleA)
@@ -94,7 +120,17 @@ object PeerHistorySidecarStorageSuite extends MutableIOSuite {
   test("write is overwriting for the same ordinal (re-write replaces prior content)") { base =>
     val ord = SnapshotOrdinal.unsafeApply(555L)
     val first = nonTrivial
-    val second = sample(peerA -> PerPeerOperationalRecord(quality = (99, 99), removalPenalty = 0, cumulativeMissCount = 0L, readmissionCountdown = 0, deferralCountdown = 0, viewChangesCaused = None, tier = None))
+    val second = sample(
+      peerA -> PerPeerOperationalRecord(
+        quality = (99, 99),
+        removalPenalty = 0,
+        cumulativeMissCount = 0L,
+        readmissionCountdown = 0,
+        deferralCountdown = 0,
+        viewChangesCaused = None,
+        tier = None
+      )
+    )
     for {
       sidecar <- PeerHistorySidecarStorage.make[IO](base)
       _ <- sidecar.write(ord, first)

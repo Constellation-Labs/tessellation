@@ -232,9 +232,13 @@ object Main
         )
       )
 
-      _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
-      _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
-      _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)
+      // Alpha.95: env-resolved listener caps. Lifts the alpha.76 blanket maxConnections=100
+      // ceiling that caused the May 17 testnet regression by saturating p2p sockets under
+      // 13+ peer load. See `HttpMaxConnectionsDefaults` for per-env values.
+      httpResolved = cfg.http.envResolved(cfg.environment)
+      _ <- MkHttpServer[IO].newEmber(ServerName("public"), httpResolved.publicHttp, api.publicApp)
+      _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), httpResolved.p2pHttp, api.p2pApp)
+      _ <- MkHttpServer[IO].newEmber(ServerName("cli"), httpResolved.cliHttp, api.cliApp)
 
       gossipDaemon = GossipDaemon.make[IO](
         storages.rumor,
