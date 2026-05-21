@@ -52,6 +52,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
   GlobalSnapshotStateChannelAcceptanceManager,
   GlobalSnapshotStateChannelEventsProcessor
 }
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.PeerHistorySidecarStorage
 import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedValidators}
 import io.constellationnetwork.schema._
@@ -205,6 +206,13 @@ object GlobalSnapshotConsensus {
         appConfig.snapshot.maxFacilitatorCount.get(appConfig.environment).map(_.value)
       )
 
+      // Alpha.94: node-local sidecar for the post-finalization `ConsensusOperationalState`.
+      // Closes the one-round-stale `snapshot.peerHistory` gap surfaced in `project_alpha92_wedge_may21.md`.
+      // Co-located under the snapshot path so retention sweeps can clean both with the same ordinal
+      // discriminator. Best-effort writes; rollback reads fall back to `snapshot.peerHistory` when
+      // the sidecar is absent or malformed.
+      peerHistorySidecar <- PeerHistorySidecarStorage.make[F](appConfig.snapshot.snapshotPath / "peerHistory")
+
       stateAdvancer =
         GlobalSnapshotConsensusStateAdvancer.make(
           effectiveConsensusConfig,
@@ -224,7 +232,8 @@ object GlobalSnapshotConsensus {
           eventGossipClient,
           loggerBundle,
           mptStore,
-          facilitatorSelector
+          facilitatorSelector,
+          peerHistorySidecar
         )
 
       peerQualityTracker <- PeerQualityTracker.make[F]

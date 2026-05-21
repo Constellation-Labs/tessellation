@@ -36,6 +36,7 @@ import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalArtifactMismatch
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.PeerHistorySidecarStorage
 import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.schema.gossip.Ordinal
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
@@ -126,7 +127,12 @@ object GlobalSnapshotConsensusStateAdvancer {
     eventGossipClient: EventGossipClient[F, GlobalSnapshotEvent],
     loggerBundle: LoggerBundle[F],
     mptStore: MptStore[F, GlobalStateKey],
-    facilitatorSelector: FacilitatorSelector
+    facilitatorSelector: FacilitatorSelector,
+    // Alpha.94: best-effort node-local cache of `Outcome[N].toOperationalState` keyed by snapshot ordinal.
+    // Written after each successful `persistAndGossip` so a future rollback to N seeds `state.lastOutcome`
+    // from the post-finalization view instead of the one-round-stale `snapshot.peerHistory` field
+    // (see `PeerHistorySidecarStorage` scaladoc + `project_alpha92_wedge_may21.md`).
+    peerHistorySidecar: PeerHistorySidecarStorage[F]
   )(implicit globalStateProofSelector: GlobalStateProofSelector): GlobalSnapshotConsensusStateAdvancer[F] =
     new GlobalSnapshotConsensusStateAdvancer[F] {
 
@@ -853,7 +859,21 @@ object GlobalSnapshotConsensusStateAdvancer {
               "self" -> ConsensusLog.pid(selfId),
               "view" -> state.viewNumber.toString,
               "facilitatorsHash" -> facilitatorsHash.show.take(8),
-              "lastSnapshotHash" -> state.lastOutcome.finished.snapshotHash.show.take(8)
+              "lastSnapshotHash" -> state.lastOutcome.finished.snapshotHash.show.take(8),
+              // Alpha.94: parent + current committee diagnostics. When two peers transition into
+              // CollectingProposals for the same ordinal but compute different `facilitatorsHash`
+              // values, we can grep across log files for (ordinal, parentKey) and see whether the
+              // disagreement is on the CURRENT round's committee composition (different
+              // eligibleFacilitators -> different sets -> different hashes) or on the PARENT
+              // state (different lastOutcome -> different starting point). The earlier
+              // `facilitator_set_mismatch_revalidate` log conflated these two and produced
+              // misleading wedge signals; see `project_alpha92_wedge_may21.md`. Costs one extra
+              // log line per round transition.
+              "parentFacilitatorsHash" -> state.lastOutcome.finished.facilitatorsHash.show.take(8),
+              "parentKey" -> state.lastOutcome.key.show,
+              "roundStartFacilitators" -> state.roundStartFacilitators.value.size.toString,
+              "coreFacilitators" -> state.coreFacilitators.value.size.toString,
+              "tier1Facilitators" -> state.tier1Facilitators.value.size.toString
             ) ++ (if (withdrawnCount > 0) Seq("withdrawn" -> withdrawnCount.toString) else Seq.empty)): _*
           )
           _ <- ConsensusLog.info(
@@ -1606,48 +1626,63 @@ object GlobalSnapshotConsensusStateAdvancer {
               leaderProposal.observedSelfHealth
             )
         } else {
-          // HotStuff-inspired leader adoption: when the facilitator set diverges (follower
-          // joined with a different view than the leader), accept the leader's artifact
-          // directly instead of re-deriving it. Re-deriving with a different facilitator set
-          // always fails because rewards depend on the facilitator list.
+          // Leader proposed a different artifact -- apply it via the follower path.
           //
-          // This is safe because:
-          //   1. The leader's artifact is signature-verified
-          //   2. Fork detection catches Byzantine leaders within 1-2 rounds
-          //   3. The follower adopts the leader's view, converging facilitator sets
-          val leaderFacilitatorsHash = resources.peerDeclarationsMap.get(state.leader).flatMap(_.facility).map(_.facilitatorsHash)
-          val localFacilitatorsHash = status.facilitatorsHash
-          val facilitatorSetDiverged = leaderFacilitatorsHash.exists(_ =!= localFacilitatorsHash)
-
-          val leaderFacilitatorSet = state.facilitators.value.toSet - selfId
-          if (facilitatorSetDiverged && leaderFacilitatorSet.nonEmpty) {
-            // Facilitator set mismatch — typically because selfId was added to the local
-            // set but the leader doesn't know about this node yet. Re-validate using the
-            // leader's presumed facilitator set (local set minus selfId). This follows the
-            // HotStuff principle: the leader's view is authoritative for the round.
-            // If removing selfId yields an empty set, the node is the only facilitator —
-            // fall through to normal validation.
-            // The artifact is still fully validated — just with the leader's facilitator set.
-            resources.artifacts.get(leaderProposal.hash) match {
-              case Some(leaderArtifact) =>
-                ConsensusLog.info(
-                  logger,
-                  Category.Validation,
-                  state.key.show,
-                  role,
-                  Event.ValidatingLeaderArtifact,
-                  "reason" -> "facilitator_set_mismatch_revalidate",
-                  "leaderFacHash" -> leaderFacilitatorsHash.map(_.show.take(8)).getOrElse("none"),
-                  "localFacHash" -> localFacilitatorsHash.show.take(8),
-                  "leaderFacCount" -> leaderFacilitatorSet.size.toString
-                ) >>
-                  // Restore proposal savepoint before re-deriving
-                  proposalSavepointRef.get.flatMap(_.filter(_._1 === state.key).traverse_(_._2.restore)) >>
-                  mptStore.savepoint.flatMap { sp =>
-                    val validate =
-                      validateLeaderArtifact(state, status, leaderArtifact, leaderProposal.hash, leaderFacilitatorSet).flatMap {
+          // Note (alpha.94): a previous HotStuff-inspired "facilitator-set-mismatch adoption"
+          // branch lived here. It compared `Facility.facilitatorsHash` (which by construction
+          // carries the PARENT outcome's hash, see `GlobalSnapshotConsensusStateCreator.scala`
+          // build site) against `status.facilitatorsHash` (CURRENT round's hash) and treated any
+          // mismatch as evidence the leader had a different live committee, then "adopted" the
+          // leader's view by validating against `state.facilitators - selfId`. The comparison
+          // was unsound (parent vs current) so it false-positive fired every time the committee
+          // changed between rounds, and the adoption set was a heuristic that did not reflect
+          // what the leader actually declared. Net effect was the alpha.93 observation loop
+          // (`facilitator_set_mismatch_revalidate` repeating every ~300ms with self-signature
+          // withdrawal). `checkForkByFacilitatorsHash` at line ~1046 already does correct
+          // current-vs-current validation against the leader's PROPOSAL, so mismatches at this
+          // layer abandon cleanly and let view-change rotate the leader -- the right behavior
+          // for a node that genuinely disagrees with the leader. The 5-arg
+          // `validateLeaderArtifact` overload taking a custom facilitator set was removed with
+          // this block; the canonical roundStartFacilitators path is the only validator now.
+          //
+          // createContext (follower path) mutates the shared MptStore. We take a savepoint so
+          // we can restore on IO-level failure to prevent partial state from cascading to
+          // future rounds.
+          resources.artifacts.get(leaderProposal.hash) match {
+            case Some(leaderArtifact) =>
+              // Restore the proposal savepoint (from line 466) to undo PATH 1's MPT
+              // mutations before re-deriving the leader's artifact. Without this,
+              // PATH 2's sync stacks on top of PATH 1's entries, corrupting the MPT
+              // with a mix of both computations' state changes.
+              proposalSavepointRef.get.flatMap(_.filter(_._1 === state.key).traverse_(_._2.restore)) >>
+                mptStore.savepoint.flatMap { sp =>
+                  val validate =
+                    ConsensusLog.info(
+                      logger,
+                      Category.Validation,
+                      state.key.show,
+                      "Validator",
+                      Event.ValidatingLeaderArtifact,
+                      "leaderHash" -> leaderProposal.hash.show.take(8),
+                      "ownHash" -> status.proposalArtifactInfo.hash.show.take(8)
+                    ) >>
+                      validateLeaderArtifact(state, status, leaderArtifact, leaderProposal.hash).flatMap {
                         case Right(leaderInfo) =>
-                          Metrics[F].incrementCounter("dag_consensus_leader_adopted_on_mismatch") >>
+                          // Validation succeeded -- MptStore mutations are correct, keep them
+                          ConsensusLog.info(
+                            logger,
+                            Category.Validation,
+                            state.key.show,
+                            role,
+                            Event.ArtifactRevalidated,
+                            "matchesOwn" -> "false",
+                            "leaderHash" -> leaderProposal.hash.show.take(8),
+                            "ownHash" -> status.proposalArtifactInfo.hash.show.take(8),
+                            "trigger" -> status.majorityTrigger.toString,
+                            "leader" -> ConsensusLog.pid(state.leader),
+                            "view" -> state.viewNumber.toString
+                          ) >>
+                            Metrics[F].incrementCounter("dag_consensus_proposal_affinity_mismatch_accepted") >>
                             buildSignatureTransition(
                               state,
                               status,
@@ -1659,166 +1694,97 @@ object GlobalSnapshotConsensusStateAdvancer {
                               leaderProposal.observedResponders,
                               leaderProposal.observedSelfHealth
                             )
-                        case Left(_) =>
+                        case Left(invalidArtifact) =>
+                          // Validation failed -- restore MptStore to pre-validation state
+                          val diffDetail = describeInvalidArtifact(invalidArtifact)
+                          val ownCtx = status.proposalArtifactInfo.context
+                          val ctxDigest = contextDigest(ownCtx)
                           sp.restore >>
-                            gossip.spread(
-                              ConsensusWithdrawPeerDeclaration(state.key, GlobalConsensusKind.Signature: GlobalConsensusKind)
+                            ConsensusLog.warn(
+                              logger,
+                              Category.Validation,
+                              state.key.show,
+                              role,
+                              Event.ValidationFailed,
+                              "leaderHash" -> leaderProposal.hash.show.take(8),
+                              "ownHash" -> status.proposalArtifactInfo.hash.show.take(8),
+                              "leader" -> ConsensusLog.pid(state.leader),
+                              "view" -> state.viewNumber.toString,
+                              "reason" -> diffDetail
                             ) >>
-                            Metrics[F].incrementCounter("dag_consensus_proposal_validation_failure") >>
-                            none[Transition].pure[F]
-                      }
-                    Async[F].guaranteeCase(validate) {
-                      case Outcome.Errored(_) | Outcome.Canceled() =>
-                        sp.restore >> ConsensusLog.error(logger, Category.Lifecycle, state.key.show, role, Event.MptRestoredAfterFailure)
-                      case Outcome.Succeeded(_) => Applicative[F].unit
-                    }
-                  }
-              case None =>
-                none[Transition].pure[F]
-            }
-          } else {
-            // Leader proposed a different artifact — apply it via the follower path.
-            // createContext (follower path) mutates the shared MptStore.
-            // We take a savepoint so we can restore on IO-level failure to prevent
-            // partial state from cascading to future rounds.
-            resources.artifacts.get(leaderProposal.hash) match {
-              case Some(leaderArtifact) =>
-                // Restore the proposal savepoint (from line 466) to undo PATH 1's MPT
-                // mutations before re-deriving the leader's artifact. Without this,
-                // PATH 2's sync stacks on top of PATH 1's entries, corrupting the MPT
-                // with a mix of both computations' state changes.
-                proposalSavepointRef.get.flatMap(_.filter(_._1 === state.key).traverse_(_._2.restore)) >>
-                  mptStore.savepoint.flatMap { sp =>
-                    val validate =
-                      ConsensusLog.info(
-                        logger,
-                        Category.Validation,
-                        state.key.show,
-                        "Validator",
-                        Event.ValidatingLeaderArtifact,
-                        "leaderHash" -> leaderProposal.hash.show.take(8),
-                        "ownHash" -> status.proposalArtifactInfo.hash.show.take(8)
-                      ) >>
-                        validateLeaderArtifact(state, status, leaderArtifact, leaderProposal.hash).flatMap {
-                          case Right(leaderInfo) =>
-                            // Validation succeeded — MptStore mutations are correct, keep them
                             ConsensusLog.info(
                               logger,
                               Category.Validation,
                               state.key.show,
                               role,
-                              Event.ArtifactRevalidated,
-                              "matchesOwn" -> "false",
-                              "leaderHash" -> leaderProposal.hash.show.take(8),
-                              "ownHash" -> status.proposalArtifactInfo.hash.show.take(8),
-                              "trigger" -> status.majorityTrigger.toString,
-                              "leader" -> ConsensusLog.pid(state.leader),
-                              "view" -> state.viewNumber.toString
+                              Event.OwnContextDigest,
+                              "detail" -> ctxDigest
                             ) >>
-                              Metrics[F].incrementCounter("dag_consensus_proposal_affinity_mismatch_accepted") >>
-                              buildSignatureTransition(
-                                state,
-                                status,
-                                leaderInfo,
-                                List(leaderProposal.hash),
-                                leaderProposal.vcc,
-                                leaderProposal.evictionCertificates,
-                                leaderProposal.admissionCertificates,
-                                leaderProposal.observedResponders,
-                                leaderProposal.observedSelfHealth
-                              )
-                          case Left(invalidArtifact) =>
-                            // Validation failed — restore MptStore to pre-validation state
-                            val diffDetail = describeInvalidArtifact(invalidArtifact)
-                            val ownCtx = status.proposalArtifactInfo.context
-                            val ctxDigest = contextDigest(ownCtx)
-                            sp.restore >>
-                              ConsensusLog.warn(
-                                logger,
-                                Category.Validation,
-                                state.key.show,
-                                role,
-                                Event.ValidationFailed,
-                                "leaderHash" -> leaderProposal.hash.show.take(8),
-                                "ownHash" -> status.proposalArtifactInfo.hash.show.take(8),
-                                "leader" -> ConsensusLog.pid(state.leader),
-                                "view" -> state.viewNumber.toString,
-                                "reason" -> diffDetail
-                              ) >>
-                              ConsensusLog.info(
-                                logger,
-                                Category.Validation,
-                                state.key.show,
-                                role,
-                                Event.OwnContextDigest,
-                                "detail" -> ctxDigest
-                              ) >>
-                              ConsensusLog.info(
-                                logger,
-                                Category.Phase,
-                                state.key.show,
-                                role,
-                                Event.WithdrawValidationFail,
-                                "reason" -> "proposal_validation_failed",
-                                "mptStoreRestored" -> "true"
-                              ) >>
-                              gossip.spread(
-                                ConsensusWithdrawPeerDeclaration(state.key, GlobalConsensusKind.Signature: GlobalConsensusKind)
-                              ) >>
-                              Metrics[F].incrementCounter("dag_consensus_proposal_validation_failure") >>
-                              Metrics[F].incrementCounter("dag_consensus_withdrawal_sent") >>
-                              // Track consecutive validation failures at this ordinal. After repeated
-                              // failures (e.g., divergent MPT from network isolation), trigger an
-                              // incremental recovery. The incremental path resyncs MptStore from the
-                              // downloaded checkpoint data, which clears the divergent local state
-                              // without the cost of a full re-download from genesis.
-                              validationFailureCountRef.modify {
-                                case (Some(k), count) if k === state.key => ((state.key.some, count + 1), count + 1)
-                                case _                                   => ((state.key.some, 1), 1)
-                              }.flatMap { count =>
-                                if (count >= maxConsecutiveValidationFailures)
-                                  ConsensusLog.warn(
-                                    logger,
-                                    Category.Recovery,
-                                    state.key.show,
-                                    role,
-                                    Event.RecoveryStateTransition,
-                                    "trigger" -> "consecutive_validation_failures",
-                                    "count" -> count.toString,
-                                    "action" -> "incremental_recovery"
-                                  ) >>
-                                    validationFailureCountRef.set((none, 0)) >>
-                                    // Set recovery download flag so DownloadDaemon uses the incremental
-                                    // recovery path. The incremental path now properly syncs MptStore from
-                                    // the downloaded snapshot's checkpoint data (no full rebuild needed).
-                                    nodeStorage.setRecoveryDownload >>
-                                    nodeStorage
-                                      .tryModifyState(
-                                        Set[NodeState](NodeState.Ready, NodeState.WaitingForReady),
-                                        NodeState.WaitingForDownload
-                                      )
-                                      .void
-                                else
-                                  Async[F].unit
-                              } >>
-                              none[Transition].pure[F]
-                        }
+                            ConsensusLog.info(
+                              logger,
+                              Category.Phase,
+                              state.key.show,
+                              role,
+                              Event.WithdrawValidationFail,
+                              "reason" -> "proposal_validation_failed",
+                              "mptStoreRestored" -> "true"
+                            ) >>
+                            gossip.spread(
+                              ConsensusWithdrawPeerDeclaration(state.key, GlobalConsensusKind.Signature: GlobalConsensusKind)
+                            ) >>
+                            Metrics[F].incrementCounter("dag_consensus_proposal_validation_failure") >>
+                            Metrics[F].incrementCounter("dag_consensus_withdrawal_sent") >>
+                            // Track consecutive validation failures at this ordinal. After repeated
+                            // failures (e.g., divergent MPT from network isolation), trigger an
+                            // incremental recovery. The incremental path resyncs MptStore from the
+                            // downloaded checkpoint data, which clears the divergent local state
+                            // without the cost of a full re-download from genesis.
+                            validationFailureCountRef.modify {
+                              case (Some(k), count) if k === state.key => ((state.key.some, count + 1), count + 1)
+                              case _                                   => ((state.key.some, 1), 1)
+                            }.flatMap { count =>
+                              if (count >= maxConsecutiveValidationFailures)
+                                ConsensusLog.warn(
+                                  logger,
+                                  Category.Recovery,
+                                  state.key.show,
+                                  role,
+                                  Event.RecoveryStateTransition,
+                                  "trigger" -> "consecutive_validation_failures",
+                                  "count" -> count.toString,
+                                  "action" -> "incremental_recovery"
+                                ) >>
+                                  validationFailureCountRef.set((none, 0)) >>
+                                  // Set recovery download flag so DownloadDaemon uses the incremental
+                                  // recovery path. The incremental path now properly syncs MptStore from
+                                  // the downloaded snapshot's checkpoint data (no full rebuild needed).
+                                  nodeStorage.setRecoveryDownload >>
+                                  nodeStorage
+                                    .tryModifyState(
+                                      Set[NodeState](NodeState.Ready, NodeState.WaitingForReady),
+                                      NodeState.WaitingForDownload
+                                    )
+                                    .void
+                              else
+                                Async[F].unit
+                            } >>
+                            none[Transition].pure[F]
+                      }
 
-                    // Use guaranteeCase to restore MptStore on any unexpected exception.
-                    // Without this, an IO-level failure in validateLeaderArtifact would skip
-                    // sp.restore, leaving partial MptStore state that poisons future rounds.
-                    Async[F].guaranteeCase(validate) {
-                      case Outcome.Errored(_) | Outcome.Canceled() =>
-                        sp.restore >>
-                          ConsensusLog.error(logger, Category.Lifecycle, state.key.show, role, Event.MptRestoredAfterFailure)
-                      case Outcome.Succeeded(_) =>
-                        Applicative[F].unit
-                    }
+                  // Use guaranteeCase to restore MptStore on any unexpected exception.
+                  // Without this, an IO-level failure in validateLeaderArtifact would skip
+                  // sp.restore, leaving partial MptStore state that poisons future rounds.
+                  Async[F].guaranteeCase(validate) {
+                    case Outcome.Errored(_) | Outcome.Canceled() =>
+                      sp.restore >>
+                        ConsensusLog.error(logger, Category.Lifecycle, state.key.show, role, Event.MptRestoredAfterFailure)
+                    case Outcome.Succeeded(_) =>
+                      Applicative[F].unit
                   }
-              case None =>
-                // Leader's artifact not yet received via gossip — wait
-                none[Transition].pure[F]
-            }
+                }
+            case None =>
+              // Leader's artifact not yet received via gossip — wait
+              none[Transition].pure[F]
           }
         }
       }
@@ -1833,15 +1799,10 @@ object GlobalSnapshotConsensusStateAdvancer {
         // decision regardless of the order in which they observed mid-round withdrawals. Using the
         // mutable state.facilitators allowed artifact validation to diverge across nodes (same
         // class as the ord-5 facilitatorsHash fork, but in the artifact plane).
-        validateLeaderArtifact(state, status, artifact, hash, state.roundStartFacilitators.value.toSet)
-
-      private def validateLeaderArtifact(
-        state: GlobalSnapshotConsensusState,
-        status: CollectingProposals,
-        artifact: GlobalSnapshotArtifact,
-        hash: Hash,
-        facilitators: Set[PeerId]
-      )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext]]] =
+        //
+        // Alpha.94: 5-arg overload (custom facilitator set) was removed with the deletion of the
+        // facilitator-set-mismatch adoption branch above. The roundStartFacilitators set is the
+        // only sanctioned committee for artifact re-derivation.
         state.lastOutcome.finished.signedMajorityArtifact.toHashed.flatMap { hashedLast =>
           consensusFns
             .validateArtifact(
@@ -1849,7 +1810,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               state.lastOutcome.finished.context,
               status.majorityTrigger,
               artifact,
-              facilitators,
+              state.roundStartFacilitators.value.toSet,
               getGlobalSnapshotByOrdinal,
               // v20: re-pack from validator's own lastOutcome -- consensus-agreed,
               // so leader and validator produce byte-identical artifact.peerHistory.
@@ -2511,8 +2472,20 @@ object GlobalSnapshotConsensusStateAdvancer {
           } yield ok
         }
 
+        // Alpha.94: after a successful persist, write the post-finalization peerHistory sidecar.
+        // `consensusStorage.getLastConsensusOutcome` returns the freshly-committed `Outcome[N]` since
+        // `StateTransitions.tryUpdateLastConsensusOutcomeWithCleanup` has already run upstream.
+        // `toOperationalState` produces the same ConsensusOperationalState the leader packed into the
+        // SIGNED snapshot's `peerHistory` field at proposal time, except this one corresponds to N
+        // rather than N-1. Best-effort -- write failures log and continue (the sidecar miss only
+        // affects future rollback freshness; the persist itself has already succeeded).
+        val writeSidecar: F[Unit] =
+          consensusStorage.getLastConsensusOutcome.flatMap(_.traverse_ { outcome =>
+            peerHistorySidecar.write(signedArtifact.value.ordinal, outcome.toOperationalState)
+          })
+
         persist.ifM(
-          recordMetrics(signedArtifact),
+          recordMetrics(signedArtifact) >> writeSidecar,
           ConsensusLog.error(logger, Category.Lifecycle, signedArtifact.ordinal.show, "n/a", Event.PersistFailed) >> MonadThrow[F]
             .raiseError(
               new RuntimeException("Persist failed")
