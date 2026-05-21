@@ -1421,7 +1421,32 @@ object GlobalSnapshotConsensusStateAdvancer {
         leaderProposal: Proposal
       )(implicit hasher: Hasher[F]): F[Option[Transition]] = {
         val role = if (selfId === state.leader) "LEADER" else "FOLLOWER"
-        def logVccReject(rejection: ProposalRejection): F[Option[Transition]] =
+        // Alpha.93 Fix A + Fix C (see `project_alpha92_wedge_may21.md`):
+        // The alpha.92 9h wedge at ord 3127095 was caused by a frozen `peerDeclarationsMap[leader].proposal`
+        // slot. .45's view-16 proposal arrived at .193 BEFORE .193 entered the round under .45's leadership;
+        // .193 then re-attempted at `initialViewNumber=18` but the cached `Proposal(view=16, vcc=None)` no
+        // longer matched the seed-view bypass (`16 != 18`), so the validator rejected on every
+        // CollectingProposals re-evaluation -- 10,333 times in ~9h. `addProposal` first-write-wins for
+        // higher-view-without-VCC blocked replacement, and the leader couldn't re-emit because `vccMissing`
+        // aborted at every higher view. Self-heal: when the rejection IS this stale-slot pattern
+        // (proposalView < initialViewNumber AND vcc.isEmpty), prune the slot so a fresh broadcast can
+        // populate it (or, if the leader stays stuck, the round abandons cleanly without 1000+ rejections).
+        // Fix C: increment `dag_consensus_stale_proposal_rejection_total{peer_id=<leader>}` so future
+        // occurrences are visible in seconds via Prometheus alerts instead of after hours of log review.
+        def logVccReject(rejection: ProposalRejection): F[Option[Transition]] = {
+          val isStaleSlotPattern =
+            leaderProposal.view < state.initialViewNumber.toLong &&
+              leaderProposal.vcc.isEmpty &&
+              rejection.code.startsWith("view") &&
+              rejection.code.endsWith("_proposal_missing_vcc")
+          val maybePruneAndMeter =
+            if (isStaleSlotPattern)
+              Metrics[F].incrementCounter(
+                "dag_consensus_stale_proposal_rejection_total",
+                Seq(Metrics.unsafeLabelName("peer_id") -> ConsensusLog.pid(state.leader))
+              ) >>
+                consensusStorage.pruneStaleProposalSlots(state.key, state.initialViewNumber.toLong)
+            else Applicative[F].unit
           ConsensusLog
             .warn(
               logger,
@@ -1432,8 +1457,8 @@ object GlobalSnapshotConsensusStateAdvancer {
               "reason" -> s"vcc_validation: ${rejection.code}",
               "leader" -> ConsensusLog.pid(state.leader),
               "view" -> state.viewNumber.toString
-            )
-            .as(none[Transition])
+            ) >> maybePruneAndMeter.as(none[Transition])
+        }
         def logEcsReject(rejection: ProposalRejection): F[Option[Transition]] =
           ConsensusLog
             .warn(
