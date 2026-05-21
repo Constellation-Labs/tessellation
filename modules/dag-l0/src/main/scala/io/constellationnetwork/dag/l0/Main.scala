@@ -27,7 +27,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.Even
 import io.constellationnetwork.node.shared.infrastructure.genesis.{GenesisFS => GenesisLoader}
 import io.constellationnetwork.node.shared.infrastructure.gossip.event._
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.GlobalSnapshotLocalFileSystemStorage
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{GlobalSnapshotLocalFileSystemStorage, PeerHistorySidecarStorage}
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
 import io.constellationnetwork.node.shared.resources.{ConsensusExecutor, MkHttpServer}
 import io.constellationnetwork.schema._
@@ -338,14 +338,24 @@ object Main
                   // chronic-classifier history, B2 readmission, and removal-penalty
                   // escalation across the cold-restart boundary.
                   //
-                  // Known one-round off-by-one: `snapshot[N].peerHistory` was packed at round-N
-                  // proposal time, before Outcome[N] existed, so it actually carries
-                  // `pack(Outcome[N-1])`. Seeded state.lastOutcome is therefore one round
-                  // stale relative to the live cluster at ordinal N. Drift is at most one
-                  // round per cold-restart -- well below the chronic-classifier floor
-                  // (10-30 observations) -- and we accept it rather than introduce a sidecar
-                  // file or a wire-format participation field.
-                  seedOperational = snapshot.value.peerHistory.getOrElse(ConsensusOperationalState.empty)
+                  // Alpha.94: prefer the post-finalization peerHistory sidecar written by
+                  // `GlobalSnapshotConsensusStateAdvancer.persistAndGossip` on the previous run.
+                  // The signed `snapshot[N].peerHistory` field is packed at round-N proposal time
+                  // (before Outcome[N] existed) so it actually carries `pack(Outcome[N-1])`. The
+                  // sidecar at `<snapshotPath>/peerHistory/<ordinal>.meta` contains
+                  // `pack(Outcome[N])`, eliminating the previously-documented one-round-stale
+                  // seed. Pre-v19 this stale drift was harmless (below the chronic-classifier
+                  // floor of 10-30 observations); post-v19 the same fields drive eligible-
+                  // facilitator computation, so the stale seed produced the
+                  // `facilitator_set_mismatch_revalidate` wedge observed at ord 3127130 (see
+                  // `project_alpha92_wedge_may21.md`). On missing/malformed sidecar the read
+                  // returns None and we fall back to `snapshot.peerHistory` -- pre-alpha.94
+                  // behavior, which is the right thing for snapshots written by older nodes.
+                  peerHistorySidecar <- PeerHistorySidecarStorage.make[IO](cfg.snapshot.snapshotPath / "peerHistory")
+                  sidecarPeerHistory <- peerHistorySidecar.read(snapshot.value.ordinal)
+                  seedOperational = sidecarPeerHistory
+                    .orElse(snapshot.value.peerHistory)
+                    .getOrElse(ConsensusOperationalState.empty)
                   // Project the consolidated per-peer record back out to the five PeerId-keyed
                   // dimensions on the outcome. A peer absent from `perPeer` is treated as
                   // `PerPeerOperationalRecord.empty` (= no penalty, no probation, etc.) on the
