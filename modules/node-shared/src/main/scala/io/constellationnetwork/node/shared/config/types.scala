@@ -853,10 +853,19 @@ object types {
   // Ember-level connection cap. Backstops the per-route ConcurrencyLimitMiddleware from
   // PR-1: a buggy or hostile client cannot open unlimited concurrent connections regardless
   // of which route they target, so fd exhaustion and excessive concurrent handler scheduling
-  // are bounded at the server. Default 100 is a coarse safety ceiling, not a sizing knob;
-  // workload-shaping should still be done via the per-route caps. CLI/env override allowed
-  // (see e.g. dag-l0/cli/http.scala publicMaxConnectionsOpts) for environments that need a
-  // different ceiling.
+  // are bounded at the server.
+  //
+  // Alpha.95: the field's static default is 100 but the operational value is environment-
+  // resolved at boot via `HttpConfig.envResolved` -- testnet/intnet/mainnet each have different
+  // peer-count expectations so a single number cannot fit all. PR-1's blanket 100 default
+  // (alpha.76 commit `2cbff6aee`) caused the May 17 chain-growth regression on testnet:
+  // 13+ peers each running gossip/observation/snapshot-pull/consensus-retransmit in parallel
+  // saturated the p2p socket, intermittently dropping calls to community peers and shrinking
+  // the eligible facilitator pool from ~10 to ~6 then ~3. The blanket cap was the wrong knob;
+  // per-route shaping (PerIpRateLimitMiddleware + heavyRouteConcurrency) is the right knob.
+  //
+  // Static 100 stays as the no-environment-resolved fallback (smaller than any real env, so
+  // catches misconfiguration loudly rather than silently using a too-high cap).
   case class HttpServerConfig(
     host: Host,
     port: Port,
@@ -869,8 +878,81 @@ object types {
     client: HttpClientConfig,
     publicHttp: HttpServerConfig,
     p2pHttp: HttpServerConfig,
-    cliHttp: HttpServerConfig
-  )
+    cliHttp: HttpServerConfig,
+    // Compiled-in per-environment defaults for `maxConnections`, populated by each module's
+    // `cli/http.scala` from `HttpMaxConnectionsDefaults`. NOT loaded from HOCON -- HttpConfig
+    // is built by the CLI flow (see `CliMethod.scala`), not by `SharedConfigReader`. Operators
+    // who need a value different from the compiled default use the corresponding override
+    // CLI flag / env var (see `*MaxConnectionsOverride` below), which has higher precedence.
+    //
+    // Public listener scales with end-client load (block explorers, wallets, RPC users);
+    // mainnet needs the highest ceiling.
+    publicMaxConnections: Map[AppEnvironment, PosInt] = Map.empty,
+    // P2P listener scales with peer count -- every other validator opens persistent and
+    // burst connections (gossip, observation, snapshot pull, consensus push-rumor). This
+    // is the field whose 100 ceiling caused the May 17 testnet regression.
+    p2pMaxConnections: Map[AppEnvironment, PosInt] = Map.empty,
+    // CLI listener is localhost-only and only the operator talks to it. No need to scale
+    // with cluster size; the field is here for symmetry / future use.
+    cliMaxConnections: Map[AppEnvironment, PosInt] = Map.empty,
+    // Explicit operator overrides via CLI flag / env var:
+    //   --public-max-connections / CL_PUBLIC_HTTP_MAX_CONNECTIONS
+    //   --p2p-max-connections    / CL_P2P_HTTP_MAX_CONNECTIONS
+    //   --cli-max-connections    / CL_CLI_HTTP_MAX_CONNECTIONS
+    // When `Some`, the corresponding listener uses this value regardless of the env-map
+    // default. None means "no operator override, fall through to compiled env default,
+    // then to `HttpServerConfig.maxConnections` field default".
+    publicMaxConnectionsOverride: Option[PosInt] = None,
+    p2pMaxConnectionsOverride: Option[PosInt] = None,
+    cliMaxConnectionsOverride: Option[PosInt] = None
+  ) {
+
+    /** Returns a copy of this HttpConfig with each listener's `maxConnections` resolved against the supplied environment.
+      *
+      * Precedence (highest first):
+      *   1. Explicit operator override via CLI flag / env var (`*MaxConnectionsOverride`). 2. Compiled per-environment default from
+      *      `HttpMaxConnectionsDefaults` (populated by each module's CLI into the env maps). 3. The underlying
+      *      `HttpServerConfig.maxConnections` field default (`PosInt(100)`).
+      *
+      * Called from each Main once `AppConfig` is loaded and before `MkHttpServer.newEmber` binds the listeners.
+      */
+    def envResolved(env: AppEnvironment): HttpConfig = {
+      def resolve(listener: HttpServerConfig, override_ : Option[PosInt], m: Map[AppEnvironment, PosInt]): HttpServerConfig =
+        override_
+          .orElse(m.get(env))
+          .fold(listener)(v => listener.copy(maxConnections = v))
+      copy(
+        publicHttp = resolve(publicHttp, publicMaxConnectionsOverride, publicMaxConnections),
+        p2pHttp = resolve(p2pHttp, p2pMaxConnectionsOverride, p2pMaxConnections),
+        cliHttp = resolve(cliHttp, cliMaxConnectionsOverride, cliMaxConnections)
+      )
+    }
+  }
+
+  /** Compiled-in per-environment defaults for HTTP listener `maxConnections`. Each module's `cli/http.scala` populates the corresponding
+    * `HttpConfig` Map field with these values. Operators tune per-deployment via the explicit CLI flag / env var (see
+    * `HttpConfig.envResolved` scaladoc), NOT via HOCON -- HttpConfig is built by the CLI flow, not the HOCON reader.
+    */
+  object HttpMaxConnectionsDefaults {
+    val publicHttp: Map[AppEnvironment, PosInt] = Map(
+      AppEnvironment.Dev -> PosInt(200),
+      AppEnvironment.Testnet -> PosInt(1000),
+      AppEnvironment.Integrationnet -> PosInt(2000),
+      AppEnvironment.Mainnet -> PosInt(4000)
+    )
+    val p2pHttp: Map[AppEnvironment, PosInt] = Map(
+      AppEnvironment.Dev -> PosInt(200),
+      AppEnvironment.Testnet -> PosInt(1000),
+      AppEnvironment.Integrationnet -> PosInt(2000),
+      AppEnvironment.Mainnet -> PosInt(4000)
+    )
+    val cliHttp: Map[AppEnvironment, PosInt] = Map(
+      AppEnvironment.Dev -> PosInt(100),
+      AppEnvironment.Testnet -> PosInt(100),
+      AppEnvironment.Integrationnet -> PosInt(100),
+      AppEnvironment.Mainnet -> PosInt(100)
+    )
+  }
 
   case class CollateralConfig(
     amount: Amount

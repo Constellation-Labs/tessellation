@@ -22,21 +22,21 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
   *
   * This sidecar is the post-finalization companion to the snapshot file: after `Outcome[N]` becomes the new `lastOutcome` on a node, we
   * persist the corresponding `ConsensusOperationalState` (i.e. `Outcome[N].toOperationalState`) under `<base>/<ordinal>.meta`. On a future
-  * rollback to ordinal `N`, `RollbackLoader` reads the sidecar first and only falls back to `snapshot.value.peerHistory` (the stale
-  * value) if the sidecar is absent or malformed.
+  * rollback to ordinal `N`, `RollbackLoader` reads the sidecar first and only falls back to `snapshot.value.peerHistory` (the stale value)
+  * if the sidecar is absent or malformed.
   *
-  * Trust model: this sidecar is node-local. It is NOT signed and NOT gossiped; only the writing node trusts its own sidecar on rollback.
-  * If a snapshot directory is copied between machines, sidecars may not be transferred -- in that case the read falls through to the
-  * existing peerHistory field and behavior matches pre-alpha.94. There is no cross-node sidecar comparison.
+  * Trust model: this sidecar is node-local. It is NOT signed and NOT gossiped; only the writing node trusts its own sidecar on rollback. If
+  * a snapshot directory is copied between machines, sidecars may not be transferred -- in that case the read falls through to the existing
+  * peerHistory field and behavior matches pre-alpha.94. There is no cross-node sidecar comparison.
   *
-  * Patterned after `CombinedSnapshotCheckpointFileSystemStorage`'s ETag sidecar -- same swallow-on-error policy, same orphan-tolerant
-  * read, same compact ASCII filename. JSON payload rather than key=value because `ConsensusOperationalState` has too many fields for a
+  * Patterned after `CombinedSnapshotCheckpointFileSystemStorage`'s ETag sidecar -- same swallow-on-error policy, same orphan-tolerant read,
+  * same compact ASCII filename. JSON payload rather than key=value because `ConsensusOperationalState` has too many fields for a
   * flat-string format; the existing circe codec on the case class is the canonical encoder.
   */
 trait PeerHistorySidecarStorage[F[_]] {
 
-  /** Best-effort write. Errors are logged and swallowed: a failed sidecar must not abort whatever consensus / snapshot work is
-    * happening on the caller path. Worst case is the next cold-restart falls back to `snapshot.peerHistory` (pre-alpha.94 behavior).
+  /** Best-effort write. Errors are logged and swallowed: a failed sidecar must not abort whatever consensus / snapshot work is happening on
+    * the caller path. Worst case is the next cold-restart falls back to `snapshot.peerHistory` (pre-alpha.94 behavior).
     */
   def write(ordinal: SnapshotOrdinal, state: ConsensusOperationalState): F[Unit]
 
@@ -44,8 +44,8 @@ trait PeerHistorySidecarStorage[F[_]] {
     *   - the sidecar file is absent (legacy snapshots written before alpha.94, or snapshots copied without their sidecars),
     *   - the file is structurally defective (partial write / disk corruption / hand-edited).
     *
-    * On any defect, the WARN is emitted and the caller treats the result as "no sidecar" -- falling back to `snapshot.peerHistory`,
-    * which is the existing one-round-stale behavior that pre-alpha.94 nodes relied on. We never fabricate a value.
+    * On any defect, the WARN is emitted and the caller treats the result as "no sidecar" -- falling back to `snapshot.peerHistory`, which
+    * is the existing one-round-stale behavior that pre-alpha.94 nodes relied on. We never fabricate a value.
     */
   def read(ordinal: SnapshotOrdinal): F[Option[ConsensusOperationalState]]
 
@@ -102,7 +102,9 @@ object PeerHistorySidecarStorage {
                   case Right(state) => state.some.pure[F]
                   case Left(err) =>
                     logger
-                      .warn(s"peerHistory sidecar for ordinal ${ordinal.value.value} failed JSON decode (${err.getMessage}); treating as miss")
+                      .warn(
+                        s"peerHistory sidecar for ordinal ${ordinal.value.value} failed JSON decode (${err.getMessage}); treating as miss"
+                      )
                       .as(none[ConsensusOperationalState])
                 }
               case Left(t) =>
@@ -116,7 +118,9 @@ object PeerHistorySidecarStorage {
     def delete(ordinal: SnapshotOrdinal): F[Unit] = {
       val target = pathFor(ordinal)
       Files[F].deleteIfExists(target).void.handleErrorWith { t =>
-        logger.warn(t)(s"Failed to delete peerHistory sidecar for ordinal ${ordinal.value.value}; orphan tolerated by read-time exists check")
+        logger.warn(t)(
+          s"Failed to delete peerHistory sidecar for ordinal ${ordinal.value.value}; orphan tolerated by read-time exists check"
+        )
       }
     }
   }
