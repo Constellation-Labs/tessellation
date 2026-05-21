@@ -763,10 +763,12 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
             ) >> new SelfStillInProbation(ctx.selfId, key.toString)
             .raiseError[F, Unit]
         } else Async[F].unit
-      // Mark recovery completion at this key. Layer-specific advancers consult this when self is
-      // elected leader: if `state.key - recoveredAtKey <= recoveryLeaderCooldownRounds`, they
-      // self-defer into a view change instead of attempting to propose. See
-      // ConsensusEngineContext.recoveredAtKeyRef docstring for full rationale.
+      // Mark recovery completion at this key. The local self-yield this used to drive
+      // (StallDetector EARLY_VIEW_CHANGE on `self_recently_recovered_leader_cooldown`) was
+      // removed in alpha.96 because it broke committee symmetry and caused a leader
+      // split-brain. The marker is still written so a future deterministic-across-committee
+      // reintroduction can reuse it without new plumbing. See
+      // `ConsensusEngineContext.recoveredAtKeyRef` for full rationale.
       _ <- ctx.recoveredAtKeyRef.set(Some(key))
       _ <- storage
         .trySetInitialConsensusOutcome(outcome)

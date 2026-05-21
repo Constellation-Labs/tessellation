@@ -107,17 +107,22 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // behavior.
   peerQualityOf: Outcome => Map[PeerId, (Int, Int)],
   // Local-only marker: the consensus key at which this node most recently completed
-  // `initFromDownload` (recovery path). Read by layer-specific advancers — when this node is
-  // elected leader within `recoveryLeaderCooldownRounds` of recovery completion, the advancer
-  // should emit a ViewChangeVote instead of attempting to propose, because the just-recovered
-  // node's storage / gossip mesh / proposal-build pipeline isn't primed yet (gl0-4 in E2E:
-  // recovered, won leader lottery for the next round, wedged the round for 98s on `progress=1/5`
-  // before the cluster's stall detector forced the view change). Self-deferred view change makes
-  // that wedge a ~5s rotation instead of a 98s timeout.
+  // `initFromDownload` (recovery path). Set by `StateTransitions.initFromDownload`.
   //
-  // Local-only because the deferral is a self-defense decision, not a consensus rule. Other peers
-  // still elect this node deterministically; this node refuses and emits a VCV. The view-change
-  // certificate then assembles deterministically across the cluster as designed.
+  // History: was previously read by `StallDetector` to self-yield (emit a VCV) when this
+  // node was elected leader within `recoveryLeaderCooldownRounds` of recovery completion,
+  // targeting a ~98s wedge on the recently-recovered leader's first round. Removed in
+  // alpha.96: the local self-yield advanced this node's view ahead of peers that came up
+  // via different state-machine paths (e.g. Rollback vs Download), producing a leader
+  // split-brain where two peers each treated themselves as the elected leader, signed
+  // different artifacts (artifact hash bakes in viewNumber), and rejected each other's
+  // signatures as invalid. Observed on testnet alpha.95 at ord 3127144: round wedged
+  // 1h+ at `signatures=1/2` with "Removed 1 invalid signatures" on the wrong-view follower.
+  //
+  // The marker is still set on each download completion so a future reintroduction that
+  // makes the cooldown deterministic across the committee (e.g. by carrying recoveredAtKey
+  // on-chain as part of the outcome, then filtering it in `selectLeaderWeighted` input)
+  // does not need to plumb new state. Until then this field is write-only.
   recoveredAtKeyRef: Ref[F, Option[Key]],
   // Per-key abandonment-retry counter. Owned by `AbandonmentTracker`, which increments on every
   // `ROUND_ABANDONED_RETRIABLE` at the same key and resets when a new key arrives. Read by

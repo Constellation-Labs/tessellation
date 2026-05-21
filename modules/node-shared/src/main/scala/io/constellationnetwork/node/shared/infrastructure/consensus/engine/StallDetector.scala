@@ -2,12 +2,10 @@ package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
 import cats.Order
 import cats.effect.kernel._
-import cats.kernel.Next
 import cats.syntax.all._
 
 import scala.concurrent.duration._
 
-import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{AdmissionReason, EvictionReason}
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
@@ -43,7 +41,7 @@ import eu.timepit.refined.auto._
   * }}}
   */
 @scala.annotation.nowarn("msg=type parameter Outcome.*shadows")
-class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx, Status, Outcome, Kind](
+class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Status, Outcome, Kind](
   ctx: ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   viewChangeManager: ViewChangeManager[F, Key, Artifact, Ctx, Status, Outcome, Kind],
   abandonmentTracker: AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
@@ -246,46 +244,25 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
           viewChangeManager.performViewChange(key, state)
       ).whenA(earlyViewChange)
 
-      // --- Self-recovered-leader fast view change ---
-      // When this node has just completed `initFromDownload` (recovery), its consensus storage
-      // and gossip mesh need a few rounds to fully prime before it can be a competent leader.
-      // If it wins the leader lottery for one of those primings rounds, it can't propose in
-      // time and the cluster wedges for the full proposal-phase timeout (~98s observed
-      // in E2E). Per codex review ("Option A aggressive"): immediately self-defer
-      // into a view change, converting the 98s wedge into a ~5s rotation.
-      //
-      // Cooldown window: `state.key` within `recoveryLeaderCooldownRounds` of the recovery key.
-      // Local-only decision (other peers still elect us deterministically); we just refuse and
-      // emit a VCV. The standard quorum-certified VCC mechanism handles the rotation.
-      recoveredAtKey <- ctx.recoveredAtKeyRef.get
-      cooldownThreshold = recoveredAtKey.map(
-        _.nextN(eu.timepit.refined.types.numeric.NonNegLong.unsafeFrom(config.recoveryLeaderCooldownRounds.toLong))
-      )
-      withinRecoveryCooldown = cooldownThreshold.exists(thr => Order[Key].lteqv(state.key, thr))
-      isSelfLeader = selfId === state.leader
-      recoveredLeaderViewChange = isSelfLeader &&
-        withinRecoveryCooldown &&
-        ops.isProposalPhase(state.status) &&
-        !earlyViewChange
-      _ <- (
-        ConsensusLog.warn(
-          logger,
-          Category.Stall,
-          key.toString,
-          selfRole(state),
-          LogEvent.EarlyViewChange,
-          "leader" -> ConsensusLog.pid(state.leader),
-          "reason" -> "self_recently_recovered_leader_cooldown",
-          "currentKey" -> key.toString,
-          "recoveredAtKey" -> recoveredAtKey.map(_.toString).getOrElse("none"),
-          "cooldownRounds" -> config.recoveryLeaderCooldownRounds.toString
-        ) >>
-          viewChangeManager.performViewChange(key, state)
-      ).whenA(recoveredLeaderViewChange)
+      // Self-recovered-leader cooldown removed (alpha.96). Was a local-only check here: if
+      // this node had just completed initFromDownload and got elected leader within
+      // `recoveryLeaderCooldownRounds`, it self-yielded via performViewChange to avoid a
+      // ~98s wedge while its mesh/storage primed. In production that local self-yield broke
+      // committee symmetry: the recently-recovered peer would advance its view while peers
+      // that came up via a different path stayed on the natural view, producing a leader
+      // split-brain where both sides treated themselves as leader, signed different
+      // artifacts, and rejected each other's signatures as invalid (testnet 2026-05-21
+      // alpha.95 wedge at ord 3127144, signatures stuck 1/2 across many minutes). The
+      // recoveredAtKeyRef set in StateTransitions.scala still records recovery completion
+      // but is no longer consulted here; a deterministic-across-committee re-introduction
+      // would require putting the marker on-chain (schema change), which is out of scope
+      // for this patch. The natural stall-detector view-change in handleStall below still
+      // rotates a wedged leader, just on the normal ~30s declarationTimeout cadence instead
+      // of the aggressive ~5s cooldown rotation.
 
       // --- Handle stall: view change for proposal phase, count toward abandon for others ---
       stallResult <-
-        if (earlyViewChange || recoveredLeaderViewChange) StallResult(didStall = true, quorumInfeasible = false).pure[F]
+        if (earlyViewChange) StallResult(didStall = true, quorumInfeasible = false).pure[F]
         else
           handleStall(
             key = key,
