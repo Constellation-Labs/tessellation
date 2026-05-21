@@ -34,13 +34,16 @@ sealed trait AbandonReason {
 
 object AbandonReason {
 
-  /** Not enough peers to reach quorum — wait for peers to come back.
+  /** Not enough peers to reach quorum -- wait for peers to come back.
     *
-    * Invariant: `active < required`. Constructed only by `StallDetector` inside the `quorumInfeasible = remaining < minQuorum` branch with
-    * `active = remaining` and `required = minQuorum`. The retriable handler in `AbandonmentTracker` relies on this.
+    * Invariant: `active < required`. Constructed only by `StallDetector` inside the `quorumInfeasible = coreRemaining < coreQuorum` branch
+    * with `active = coreRemaining` and `required = coreQuorum` (alpha.91: Core-only gate; pre-alpha.91 the gate used the full-facilitator
+    * set). The retriable handler in `AbandonmentTracker` relies on this invariant for its isolated-vs-quorum-impossible classification.
+    * `clusterSize` carries the round-start full-facilitator count for observability only.
     */
   final case class QuorumInfeasible(active: Int, required: Int, clusterSize: Int) extends AbandonReason {
-    def message: String = s"quorum infeasible: $active active < $required required (clusterSize=$clusterSize)"
+    def message: String =
+      s"quorum infeasible (Core gate): $active active < $required required (clusterSize=$clusterSize)"
     def label: String = "quorum_infeasible"
     def retriable: Boolean = true
     override def quorumPair: Option[(Int, Int)] = Some((active, required))

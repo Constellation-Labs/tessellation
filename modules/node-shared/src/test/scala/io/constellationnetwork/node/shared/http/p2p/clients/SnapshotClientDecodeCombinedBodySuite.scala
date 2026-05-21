@@ -10,15 +10,15 @@ import weaver.SimpleIOSuite
 
 /** Coverage for `SnapshotClient.decodeCombinedBodyStreaming`, the new spool-to-disk + incremental Jawn-parse path.
   *
-  * The previous decoder accumulated the whole body into a Java `String` and then into a `List[Json]` tree, which scaled the transient
-  * heap to 6-8x the body size and triggered GC pauses long enough to abandon consensus rounds during recovery. The new decoder spools to
-  * a `Files[F].tempFile` and then walks the array via `byteParser(AsyncParser.UnwrapArray)`, so the resident set is bounded by one
-  * decoded element plus the parser working set, regardless of body size.
+  * The previous decoder accumulated the whole body into a Java `String` and then into a `List[Json]` tree, which scaled the transient heap
+  * to 6-8x the body size and triggered GC pauses long enough to abandon consensus rounds during recovery. The new decoder spools to a
+  * `Files[F].tempFile` and then walks the array via `byteParser(AsyncParser.UnwrapArray)`, so the resident set is bounded by one decoded
+  * element plus the parser working set, regardless of body size.
   *
-  * We exercise the streaming framing layer in isolation using a minimal pair of element types with hand-rolled Circe codecs. The
-  * framing guarantees are agnostic to the element shape: empty body raises, single-element raises, well-formed 2-element decodes, 3+
-  * raises, malformed JSON raises, and many-small-chunks input still decodes correctly. Concrete-type wire-format coverage lives in the
-  * integration tests that round-trip through the actual `SnapshotRoutes`; those are unchanged by this work.
+  * We exercise the streaming framing layer in isolation using a minimal pair of element types with hand-rolled Circe codecs. The framing
+  * guarantees are agnostic to the element shape: empty body raises, single-element raises, well-formed 2-element decodes, 3+ raises,
+  * malformed JSON raises, and many-small-chunks input still decodes correctly. Concrete-type wire-format coverage lives in the integration
+  * tests that round-trip through the actual `SnapshotRoutes`; those are unchanged by this work.
   */
 object SnapshotClientDecodeCombinedBodySuite extends SimpleIOSuite {
 

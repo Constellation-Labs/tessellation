@@ -12,28 +12,25 @@ import weaver.SimpleIOSuite
   *
   * ==Why this suite exists==
   *
-  * Pre-v20 `SnapshotConfig.coreCommitteeSize: Map[AppEnvironment, PosInt]` was env-keyed and resolved
-  * at the consensus construction site without participating in the hash. Two operators with divergent
-  * Core size values would compute different Core committees (the LIVENESS quorum denominator) but
-  * compute IDENTICAL `deterministicConfigHash` values, so their Facility messages would carry
-  * matching `configHash` and they would proceed to silently fork.
+  * Pre-v20 `SnapshotConfig.coreCommitteeSize: Map[AppEnvironment, PosInt]` was env-keyed and resolved at the consensus construction site
+  * without participating in the hash. Two operators with divergent Core size values would compute different Core committees (the LIVENESS
+  * quorum denominator) but compute IDENTICAL `deterministicConfigHash` values, so their Facility messages would carry matching `configHash`
+  * and they would proceed to silently fork.
   *
-  * v20 routes the env-resolved value through `ConsensusConfig.coreCommitteeSize: Option[Int]`
-  * (populated by `GlobalSnapshotConsensus` / `CurrencySnapshotConsensus` at the construction site)
-  * and folds it into the hash. Honest operators with divergent Core size values now compute
-  * different hashes and handshake-reject before any consensus state is exchanged.
+  * v20 routes the env-resolved value through `ConsensusConfig.coreCommitteeSize: Option[Int]` (populated by `GlobalSnapshotConsensus` /
+  * `CurrencySnapshotConsensus` at the construction site) and folds it into the hash. Honest operators with divergent Core size values now
+  * compute different hashes and handshake-reject before any consensus state is exchanged.
   *
   * This suite asserts the invariant directly on `ConsensusConfig.deterministicConfigHash`:
   *
   *   - Same Core size -> same hash (positive case);
   *   - Different Core size -> different hash (regression-guard);
-  *   - Absent vs `Some(3)` -> same hash (back-compat: the `None` default is treated as `3`, matching
-  *     the pre-v20 `getOrElse(3)` resolution).
+  *   - Absent vs `Some(3)` -> same hash (back-compat: the `None` default is treated as `3`, matching the pre-v20 `getOrElse(3)`
+  *     resolution).
   *
-  * The "different env -> different hash because Core size differs by env" case is established by
-  * the same mechanism: the construction site resolves the value differently per env (via
-  * `SnapshotConfig.coreCommitteeSize.get(env)`), so the resulting `ConsensusConfig` has different
-  * `coreCommitteeSize` values and therefore different hashes. We assert that programmatically.
+  * The "different env -> different hash because Core size differs by env" case is established by the same mechanism: the construction site
+  * resolves the value differently per env (via `SnapshotConfig.coreCommitteeSize.get(env)`), so the resulting `ConsensusConfig` has
+  * different `coreCommitteeSize` values and therefore different hashes. We assert that programmatically.
   */
 object ConsensusConfigHashSuite extends SimpleIOSuite {
 
@@ -83,7 +80,7 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     val t = baseConfig.copy(coreCommitteeSize = Some(5)).deterministicConfigHash
     val m = baseConfig.copy(coreCommitteeSize = Some(15)).deterministicConfigHash
     val i = baseConfig.copy(coreCommitteeSize = Some(9)).deterministicConfigHash
-    expect(t != m) and expect(t != i) and expect(m != i)
+    expect(t != m).and(expect(t != i)).and(expect(m != i))
   }
 
   pureTest("regression marker: divergent Core size between operators is detected before consensus") {

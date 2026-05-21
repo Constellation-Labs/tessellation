@@ -24,9 +24,9 @@ import io.constellationnetwork.security.hash.Hash
   *   - `proposalView > 0` && None && `coreSize <= 1`: accept (alpha.89 solo-core bypass)
   *   - `proposalView > 0` && None && `proposalView == initialViewNumber`: accept (alpha.90 round-start seed bypass)
   *   - `proposalView > 0` && None: reject `view{N}_proposal_missing_vcc`
-  *   - `proposalView > 0` && Some(vcc) && `vcc.toView != proposalView`: reject `vcc_view_mismatch`
-  *     (alpha.90 issue 2 -- closes the latent gap that the alpha.90 seed-view bypass would otherwise expose: a stale 0->1 VCC could
-  *     be embedded on a view=2 proposal without this check)
+  *   - `proposalView > 0` && Some(vcc) && `vcc.toView != proposalView`: reject `vcc_view_mismatch` (alpha.90 issue 2 -- closes the latent
+  *     gap that the alpha.90 seed-view bypass would otherwise expose: a stale 0->1 VCC could be embedded on a view=2 proposal without this
+  *     check)
   *   - `vcc.votes.size < quorum`: reject `vcc_under_quorum`
   *   - `vcc.facilitatorsHash =!= facilitatorsHash`: reject `vcc_facilitators_mismatch`
   *   - any VCC voter outside the wider witness pool: reject `vcc_voter_not_in_pool`
@@ -45,9 +45,9 @@ object ProposalVccValidator {
     * @param proposalVcc
     *   `Proposal.vcc`
     * @param initialViewNumber
-    *   `ConsensusState.initialViewNumber` -- the round-start view stamped by the state creator. A round that STARTS at
-    *   `viewNumber > 0` (because `priorAbandonmentCount` or `timeView` was non-zero at construction) needs to accept a no-VCC
-    *   proposal at that seed view; the implied `0..initialView` jump is a deterministic seed, not a certified VCC transition.
+    *   `ConsensusState.initialViewNumber` -- the round-start view stamped by the state creator. A round that STARTS at `viewNumber > 0`
+    *   (because `priorAbandonmentCount` or `timeView` was non-zero at construction) needs to accept a no-VCC proposal at that seed view;
+    *   the implied `0..initialView` jump is a deterministic seed, not a certified VCC transition.
     * @param coreSize
     *   `ConsensusState.coreFacilitators.value.size` -- the LIVENESS-quorum denominator (Tier 0 / Core).
     * @param facilitatorsHash
@@ -55,8 +55,8 @@ object ProposalVccValidator {
     * @param eligibleFacilitators
     *   `ConsensusState.eligibleFacilitators.value.toSet` -- the eligibility set used to compute the wider VCC witness pool.
     * @param peerQuality
-    *   `ConsensusState.lastOutcome.peerQuality.toMap` -- historical (completed, participated) counters that widen the pool to
-    *   long-running participants.
+    *   `ConsensusState.lastOutcome.peerQuality.toMap` -- historical (completed, participated) counters that widen the pool to long-running
+    *   participants.
     * @param quorumThresholdFraction
     *   `ConsensusConfig.quorumThresholdFraction`.
     * @param minParticipationObservations

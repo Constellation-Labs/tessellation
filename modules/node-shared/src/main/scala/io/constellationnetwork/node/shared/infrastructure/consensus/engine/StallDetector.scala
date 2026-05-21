@@ -626,8 +626,38 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
       val phaseLabel = Seq((Metrics.unsafeLabelName("phase"), statusName))
 
       if (missingPeers.nonEmpty) {
+        // Dual-set accounting (alpha.91): the full-facilitator set is retained for OBSERVABILITY
+        // (log lines, peer-quality records) while quorum-infeasibility gates on Core only --
+        // mirroring `ConsensusStateAdvancer.maybeGetAllDeclarations` (alpha.89) and
+        // `StateTransitions.checkViewChangeAssembly` (alpha.89). Pre-alpha.91 the gate used
+        // `state.facilitators.value.size`, which abandoned rounds with `clusterSize=8 required=6`
+        // even when Core (3/3) could close a 2-of-3 phase quorum -- task #123 in the user tracker,
+        // observed post-alpha.90 at ord 3127058 stuck for 30+ min.
+        //
+        // Eviction-target candidates are also Core-only to avoid penalising Tier 1 peers for
+        // missing a non-Core signing opportunity: the eviction signal exists to restore quorum,
+        // and only Core membership affects quorum.
         val totalFacilitators = state.facilitators.value.size
         val remaining = totalFacilitators - missingPeers.size
+        val activeCore = state.coreFacilitators.value.toSet -- state.withdrawnFacilitators.value
+        val missingCore = activeCore.intersect(missingPeers)
+        // Pure helper `computeCoreQuorumStatus` is unit-tested in
+        // `StallDetectorCoreQuorumSuite`. Inline aliases below retain the names the
+        // surrounding code, logs, and StallResult fields already reference.
+        val coreStatus = StallDetector.computeCoreQuorumStatus(
+          activeCore = activeCore,
+          missingPeers = missingPeers,
+          quorumThresholdFraction = config.quorumThresholdFraction
+        )
+        val coreSize = coreStatus.coreSize
+        val coreRemaining = coreStatus.coreRemaining
+        val coreQuorum = coreStatus.coreRequired
+        // Backwards-compatible alias for the surrounding code that still reports against
+        // `minQuorum` in logs / `StallResult.quorumSize`. The Core-only value is what gates
+        // the abandon decision; the field name is retained to keep AbandonReason call sites
+        // and downstream metrics labels stable.
+        val minQuorum = coreQuorum
+        val quorumInfeasible = coreStatus.quorumInfeasible
         // Quorum floor uses the MINIMUM of cluster-wide and round-level quorum:
         //
         // - Cluster quorum (Ready peers): prevents eviction cascades from shrinking quorum
@@ -637,22 +667,13 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
         //   (maxFacilitatorCount < clusterSize), the round may have fewer facilitators
         //   than Ready peers. Using only cluster quorum would make every round with a
         //   missing facilitator quorum-infeasible (e.g., 3 facilitators, 1 missing,
-        //   remaining=2 < clusterQuorum=5 → false QUORUM_INFEASIBLE).
+        //   remaining=2 < clusterQuorum=5 -> false QUORUM_INFEASIBLE).
         //
         // The min() ensures both invariants hold:
         // - Without subsetting: roundQuorum == clusterQuorum (all nodes are facilitators)
         // - With subsetting: roundQuorum governs (smaller group, lower threshold)
         clusterStorage.getResponsivePeers.map(_.count(_.state === NodeState.Ready)).flatMap { readyPeerCount =>
           val clusterSize = math.max(readyPeerCount + 1, totalFacilitators)
-          // Use the same quorum threshold as maybeGetAllDeclarations so that
-          // "quorum infeasible" means the round genuinely cannot advance.
-          // With unanimity (1.0), losing ANY peer is infeasible → eviction fires.
-          // With supermajority (0.67), only >1/3 missing triggers eviction.
-          // Integer math via `QuorumPolicy.fromFraction` -- matches the legacy
-          // `ceil(totalFacilitators * fraction)` for every n in the operating range
-          // (see `QuorumPolicySuite`), no behavioural change.
-          val minQuorum = math.max(1, QuorumPolicy.fromFraction(totalFacilitators, config.quorumThresholdFraction))
-          val quorumInfeasible = remaining < minQuorum
 
           // Graduated response: first stall warns and waits, second stall evicts.
           // This gives slow peers (gossip delay, network jitter) an extra timeout window
@@ -667,7 +688,9 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
           // silent peers' lingering chain-tip gossip keeps the gate satisfied.
           val existingHandle: F[StallResult] =
             if (stallCount == 0) {
-              // First timeout — warn only, give peers one more cycle to respond
+              // First timeout -- warn only, give peers one more cycle to respond.
+              // Surface both denominators so post-deploy log triage can tell whether the
+              // Core gate is the actual blocker or just Tier 1 peers are slow.
               ConsensusLog.warn(
                 logger,
                 Category.Stall,
@@ -680,6 +703,10 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
                 "progress" -> s"$declaredCount/$activeCount",
                 "missing" -> missingPeers.size.toString,
                 "missingPeers" -> ConsensusLog.pids(missingPeers),
+                "coreActive" -> coreSize.toString,
+                "coreRemaining" -> coreRemaining.toString,
+                "coreRequired" -> coreQuorum.toString,
+                "coreMissing" -> ConsensusLog.pids(missingCore),
                 "view" -> state.viewNumber.toString,
                 "action" -> "waiting one more cycle before eviction"
               ) >>
@@ -723,15 +750,22 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
                   // Same category of bug; fix is the same: bounded patience window.
                   val inGracePeriod = stallCount < StallDetector.EvictionSkipMaxStalls
                   val gossipingTips: Set[PeerId] = chainTips.keySet
+                  // Restrict eviction-target candidates to missing CORE peers. Tier 1 peers
+                  // outside Core don't gate quorum, so evicting them cannot restore
+                  // feasibility and would only penalise them for missing a non-Core signing
+                  // opportunity. Per codex's alpha.91 dual-set guidance: keep the
+                  // full-facilitator `missingPeers` set for observability, but feed only
+                  // `missingCore` into the eviction/VCV-targeting path.
                   val unresponsiveMissing = {
-                    val clusterUnresponsive = missingPeers.filterNot(responsiveIds.contains)
+                    val clusterUnresponsive = missingCore.filterNot(responsiveIds.contains)
                     if (inGracePeriod) clusterUnresponsive.filterNot(gossipingTips.contains)
                     else clusterUnresponsive
                   }
                   val bootstrapAllowsSkip = inGracePeriod
                   if (unresponsiveMissing.isEmpty && bootstrapAllowsSkip) {
-                    // All missing peers are still Responsive — their declarations haven't arrived at
-                    // this node yet but they're alive. Wait another cycle rather than split.
+                    // All missing Core peers are still Responsive -- their declarations haven't
+                    // arrived at this node yet but they're alive. Wait another cycle rather
+                    // than split.
                     ConsensusLog.info(
                       logger,
                       Category.Stall,
@@ -743,10 +777,11 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
                       "progress" -> s"$declaredCount/$activeCount",
                       "missing" -> missingPeers.size.toString,
                       "missingPeers" -> ConsensusLog.pids(missingPeers),
+                      "coreMissing" -> ConsensusLog.pids(missingCore),
                       "view" -> state.viewNumber.toString,
                       "stallCount" -> stallCount.toString,
                       "reason" -> "WAITING_MISSING_STILL_RESPONSIVE",
-                      "action" -> "skipping eviction — all missing peers still gossiping"
+                      "action" -> "skipping eviction -- all missing Core peers still gossiping"
                     ) >>
                       Metrics[F].incrementCounter("dag_consensus_eviction_skipped_still_responsive") >>
                       Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
@@ -761,11 +796,15 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
                         "phase" -> statusName,
                         "elapsed" -> s"${statusDuration.toSeconds}s",
                         "progress" -> s"$declaredCount/$activeCount",
-                        "evicted" -> missingPeers.size.toString,
-                        "remaining" -> remaining.toString,
+                        "coreActive" -> coreSize.toString,
+                        "coreRemaining" -> coreRemaining.toString,
+                        "coreRequired" -> coreQuorum.toString,
+                        "coreMissing" -> ConsensusLog.pids(missingCore),
+                        "facilitatorActive" -> totalFacilitators.toString,
+                        "facilitatorRemaining" -> remaining.toString,
+                        "facilitatorMissing" -> ConsensusLog.pids(missingPeers),
                         "minQuorum" -> minQuorum.toString,
                         "quorumFeasible" -> "false",
-                        "evictedPeers" -> ConsensusLog.pids(missingPeers),
                         "unresponsiveMissing" -> ConsensusLog.pids(unresponsiveMissing),
                         "view" -> state.viewNumber.toString,
                         "stallCount" -> stallCount.toString,
@@ -835,11 +874,15 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
                           viewChangeManager
                             .performViewChange(key, state)
                             .as(
+                              // Propagate the Core-only numbers so the resulting
+                              // `AbandonReason.QuorumInfeasible` satisfies its `active < required`
+                              // invariant and `AbandonmentTracker`'s isolated/quorum-impossible
+                              // classifier reads the correct active count.
                               StallResult(
                                 didStall = true,
                                 quorumInfeasible = true,
-                                activeFacilitators = remaining,
-                                quorumSize = minQuorum,
+                                activeFacilitators = coreRemaining,
+                                quorumSize = coreQuorum,
                                 clusterSize = clusterSize,
                                 evictionEscalated = false
                               )
@@ -890,11 +933,15 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order: Next, Artifact, Ctx
                 viewChangeManager
                   .performViewChange(key, state)
                   .as(
+                    // Same Core-only propagation as the quorumInfeasible eviction branch:
+                    // when this path emits a forced view change AND `quorumInfeasible` is true,
+                    // the outer monitor builds `AbandonReason.QuorumInfeasible` from these
+                    // fields; the invariant `active < required` must hold against Core numbers.
                     StallResult(
                       didStall = true,
                       quorumInfeasible = quorumInfeasible,
-                      activeFacilitators = remaining,
-                      quorumSize = minQuorum,
+                      activeFacilitators = coreRemaining,
+                      quorumSize = coreQuorum,
                       clusterSize = clusterSize
                     )
                   )
@@ -1187,6 +1234,46 @@ object StallDetector {
       val capMillis = FacilityRetransmitMaxDelay.toMillis
       FiniteDuration(math.min(rawMillis, capMillis), MILLISECONDS)
     }
+
+  /** Outcome of the Core-only quorum infeasibility check performed inside `handleStall`. Pure data so the gate can be exercised in unit
+    * tests without a live consensus context.
+    */
+  private[consensus] case class CoreQuorumStatus(
+    coreSize: Int,
+    coreRemaining: Int,
+    coreRequired: Int,
+    quorumInfeasible: Boolean
+  )
+
+  /** Pure helper for the alpha.91 Core-only quorum-infeasibility gate.
+    *
+    * Mirrors the inline computation in `handleStall`: from `activeCore` and `missingPeers` (the full-facilitator missing set, which we
+    * intersect with Core), produce the `(coreSize, coreRemaining, coreRequired, quorumInfeasible)` tuple that drives the abandon decision.
+    * Tier 1 peers outside Core appear in `missingPeers` for observability but do NOT affect the gate, matching
+    * `ConsensusStateAdvancer.maybeGetAllDeclarations` (alpha.89) and `StateTransitions.checkViewChangeAssembly` (alpha.89).
+    *
+    * Pre-alpha.91 the gate was `state.facilitators.value.size - missingPeers.size <
+    * QuorumPolicy.fromFraction(state.facilitators.value.size, fraction)`, which abandoned rounds with healthy Core (3/3) when Tier 1 was
+    * silent -- observed post-alpha.90 at ord 3127058. Codex flagged this as task #123 in the user tracker.
+    *
+    * Exposed for unit testing; the production gate inlines the same arithmetic.
+    */
+  private[consensus] def computeCoreQuorumStatus(
+    activeCore: Set[PeerId],
+    missingPeers: Set[PeerId],
+    quorumThresholdFraction: Double
+  ): CoreQuorumStatus = {
+    val coreSize = activeCore.size
+    val missingCore = activeCore.intersect(missingPeers)
+    val coreRemaining = coreSize - missingCore.size
+    val coreRequired = math.max(1, QuorumPolicy.fromFraction(coreSize, quorumThresholdFraction))
+    CoreQuorumStatus(
+      coreSize = coreSize,
+      coreRemaining = coreRemaining,
+      coreRequired = coreRequired,
+      quorumInfeasible = coreRemaining < coreRequired
+    )
+  }
 
   /** Deterministic selection of eviction-vote targets for a single node emission pass.
     *
