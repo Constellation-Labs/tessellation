@@ -399,6 +399,31 @@ object types {
     // Default 3: at ~22s/round that's ~66s of cooldown, enough to fully prime fresh consensus
     // state without materially eating recovery budget. K=1 is too optimistic; K=10 is too long.
     recoveryLeaderCooldownRounds: Int = 3,
+    // Alpha.97 same-key soft-reset budget. Caps the number of times the in-place soft
+    // reset can fire at the same key before the caller (layer advancer's logVccReject or
+    // artifact-mismatch path) falls through to the existing heavy `triggerRecoveryDownload`.
+    //
+    // The soft reset clears volatile round state (artifacts, VCC, vote locks, withdrawals)
+    // while PRESERVING the per-peer declaration map, so the round re-evaluates from
+    // observed peer declarations without taking this node out of Ready. Without this
+    // budget the same wedge could trigger a silent reset loop; with it, three attempts
+    // means the local view is unrecoverable in place and the heavy Download is justified.
+    //
+    // NOT in `deterministicConfigHash`: local self-defense, not consensus rule.
+    //
+    // Default 3 aligns with `maxConsecutiveValidationFailures` (the existing pre-Download
+    // threshold on the artifact-hash mismatch path).
+    maxSoftResetsAtSameKey: Int = 3,
+    // Alpha.97 stale-local-view detection threshold. Number of consecutive VCC-validation
+    // rejections (`view{N}_proposal_missing_vcc` outside the stale-slot pattern, or
+    // `vcc_view_mismatch`) at the same key before the layer advancer attempts a soft
+    // reset. Distinct from `maxConsecutiveValidationFailures` (which gates the artifact-
+    // hash mismatch path).
+    //
+    // NOT in `deterministicConfigHash`: same rationale.
+    //
+    // Default 3: at ~22s/round, fires ~66s after the wedge starts.
+    maxStaleLocalViewRejections: Int = 3,
     // Local-only LIVENESS knob: time the same divergent majority hash must persist before
     // `recoverIfForking` flips this node from Ready/Observing/WaitingForReady -> WaitingForDownload.
     // A first observation only RECORDS the divergence; recovery is triggered on a subsequent

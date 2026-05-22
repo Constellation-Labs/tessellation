@@ -1131,6 +1131,132 @@ object GlobalSnapshotConsensusStateAdvancer {
           }
         }
 
+      /** Alpha.97 same-key soft-reset outcome. The boolean shape was insufficient because callers must react DIFFERENTLY to the two
+        * suppression cases:
+        *   - `BudgetExhausted` -- the wedge is unrecoverable in place at this key, caller should escalate to heavy Download recovery.
+        *   - `NoReadyPeerWithUsefulDeclarations` -- the cluster lacks a proven bootstrap source RIGHT NOW. Forcing this peer out of Ready
+        *     here would just feed the recovery cascade (a Core peer leaves Ready precisely when the network lacks a recovery source).
+        *     Caller should log + fall through to NORMAL stall handling (the existing StallDetector / AbandonmentTracker path will
+        *     eventually fire if the situation persists).
+        */
+      private sealed trait SoftResetOutcome
+      private object SoftResetOutcome {
+        case object Fired extends SoftResetOutcome
+        case object SuppressedBudgetExhausted extends SoftResetOutcome
+        case object SuppressedNoReadyPeerWithUsefulDeclarations extends SoftResetOutcome
+      }
+
+      /** Alpha.97 same-key soft-reset attempt. See `SoftResetOutcome` for the per-outcome action contract. The helper logs each outcome
+        * with `category` + `triggerCount` + `softResetCount` and increments the appropriate Prometheus counter.
+        *
+        * On `Fired`: clears the volatile round state via `consensusStorage.softResetRoundState` (state, artifacts, VCC, vote locks,
+        * eviction/admission cert slots; peer declarations preserved as the bootstrap source for the rebuild), increments the soft-reset
+        * budget counter, clears the stale-local-view rejection counter.
+        *
+        * NOTE on latency (codex follow-up, alpha.98 candidate): the cleared state is re-created on the next normal time-trigger (~22s at
+        * default cadence) when the FSM next polls. We do not currently queue an immediate restart because the advancer does not hold a
+        * handle to the consensus command queue (it is wired AFTER the advancer in `GlobalSnapshotConsensus.make`). Adding that handle
+        * threads `Queue[F, ConsensusCommand[...]]` through the advancer factory and is deferred to keep this patch surgical.
+        *
+        * Category labels distinguish the two call sites in Prometheus + structured logs: `stale_local_view` (VCC-validation rejections from
+        * `logVccReject`) and `artifact_mismatch` (consecutive_validation_failures from the artifact-hash mismatch path below).
+        */
+      private def trySoftResetAtSameKey(
+        key: GlobalSnapshotKey,
+        category: String,
+        triggerCount: Int,
+        role: String
+      ): F[SoftResetOutcome] = {
+        // The bootstrap source must be Ready (not WaitingForReady / WFD / etc.), at
+        // the same or higher key (so they have a current-or-ahead view of the round),
+        // with a non-empty facility or proposal we can read locally. The peer-current-
+        // keys map is the same source AbandonmentTracker uses for its `peersAtHigherKey`
+        // check.
+        def gateAllowsReset: F[Boolean] =
+          for {
+            responsivePeers <- clusterStorage.getResponsivePeers
+            readyIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
+            peerKeys <- consensusStorage.getPeerCurrentKeys
+            decls <- consensusStorage.getPeerDeclarations(key)
+          } yield
+            decls.exists {
+              case (peerId, d) =>
+                // Explicitly exclude self: self's Facility is locally self-stored at round
+                // start (see GlobalSnapshotConsensusStateCreator) and would otherwise let
+                // us "bootstrap" from our own (wedged) view. The reset must rebuild from
+                // external cluster evidence only. `getResponsivePeers` likely excludes
+                // self today, but this is recovery code -- the safety condition should
+                // not depend on indirect behavior of other components.
+                peerId =!= selfId &&
+                readyIds.contains(peerId) &&
+                peerKeys.get(peerId).exists(_ >= key) &&
+                (d.facility.nonEmpty || d.proposal.nonEmpty)
+            }
+
+        consensusStorage.getSoftResetCountAtSameKey(key).flatMap { softResetCount =>
+          val budgetExhausted = softResetCount >= consensusConfig.maxSoftResetsAtSameKey
+          if (budgetExhausted)
+            ConsensusLog.warn(
+              logger,
+              Category.Recovery,
+              key.show,
+              role,
+              Event.SoftResetSuppressed,
+              "category" -> category,
+              "triggerCount" -> triggerCount.toString,
+              "softResetCount" -> softResetCount.toString,
+              "maxSoftResetsAtSameKey" -> consensusConfig.maxSoftResetsAtSameKey.toString,
+              "reason" -> "budget_exhausted"
+            ) >>
+              Metrics[F].incrementCounter(
+                "dag_consensus_soft_reset_suppressed_total",
+                Seq(Metrics.unsafeLabelName("reason") -> "budget_exhausted")
+              ) >>
+              (SoftResetOutcome.SuppressedBudgetExhausted: SoftResetOutcome).pure[F]
+          else
+            gateAllowsReset.flatMap { allowed =>
+              if (!allowed)
+                ConsensusLog.info(
+                  logger,
+                  Category.Recovery,
+                  key.show,
+                  role,
+                  Event.SoftResetSuppressed,
+                  "category" -> category,
+                  "triggerCount" -> triggerCount.toString,
+                  "softResetCount" -> softResetCount.toString,
+                  "reason" -> "no_ready_peer_with_useful_declarations"
+                ) >>
+                  Metrics[F].incrementCounter(
+                    "dag_consensus_soft_reset_suppressed_total",
+                    Seq(Metrics.unsafeLabelName("reason") -> "no_ready_peer_with_useful_declarations")
+                  ) >>
+                  (SoftResetOutcome.SuppressedNoReadyPeerWithUsefulDeclarations: SoftResetOutcome).pure[F]
+              else
+                consensusStorage.softResetRoundState(key) >>
+                  consensusStorage.tickSoftResetAtSameKey(key).flatMap { newCount =>
+                    ConsensusLog.warn(
+                      logger,
+                      Category.Recovery,
+                      key.show,
+                      role,
+                      Event.SoftResetTriggered,
+                      "category" -> category,
+                      "triggerCount" -> triggerCount.toString,
+                      "softResetCount" -> newCount.toString,
+                      "maxSoftResetsAtSameKey" -> consensusConfig.maxSoftResetsAtSameKey.toString
+                    ) >>
+                      Metrics[F].incrementCounter(
+                        "dag_consensus_soft_reset_total",
+                        Seq(Metrics.unsafeLabelName("category") -> category)
+                      ) >>
+                      consensusStorage.clearStaleLocalViewAtSameKey >>
+                      (SoftResetOutcome.Fired: SoftResetOutcome).pure[F]
+                  }
+            }
+        }
+      }
+
       /** Validate view/VCC invariants on an incoming proposal. Thin delegate to the shared `ProposalVccValidator.validate` helper so the
         * dag-l0 and currency-l0 advancers cannot drift on consensus-adjacent logic. See the helper's scaladoc for the full branch summary;
         * ProposalVccValidatorSuite pins every positive/negative path including the alpha.90 P0 #1 seed-view bypass and the alpha.90 issue 2
@@ -1459,6 +1585,16 @@ object GlobalSnapshotConsensusStateAdvancer {
               leaderProposal.vcc.isEmpty &&
               rejection.code.startsWith("view") &&
               rejection.code.endsWith("_proposal_missing_vcc")
+          // Alpha.97 stale-local-view detection. Distinct from the stale-slot pattern
+          // above: the stale-slot fires when our recorded `initialViewNumber` advanced
+          // past the leader's proposalView (the slot self-heals via prune). Stale-local-
+          // view fires the opposite way: leader is AHEAD of our local view, our local
+          // round state is the wedge. Recover via the in-place soft reset.
+          val isStaleLocalViewPattern =
+            !isStaleSlotPattern && (
+              (rejection.code.startsWith("view") && rejection.code.endsWith("_proposal_missing_vcc")) ||
+                rejection.code.startsWith("vcc_view_mismatch")
+            )
           val maybePruneAndMeter =
             if (isStaleSlotPattern)
               Metrics[F].incrementCounter(
@@ -1466,6 +1602,48 @@ object GlobalSnapshotConsensusStateAdvancer {
                 Seq(Metrics.unsafeLabelName("peer_id") -> ConsensusLog.pid(state.leader))
               ) >>
                 consensusStorage.pruneStaleProposalSlots(state.key, state.initialViewNumber.toLong)
+            else Applicative[F].unit
+          val maybeTrySoftReset =
+            if (isStaleLocalViewPattern)
+              consensusStorage.tickStaleLocalViewAtSameKey(state.key).flatMap { rejectionCount =>
+                Metrics[F].incrementCounter("dag_consensus_stale_local_view_rejection_total") >>
+                  Applicative[F].whenA(rejectionCount >= consensusConfig.maxStaleLocalViewRejections) {
+                    trySoftResetAtSameKey(state.key, "stale_local_view", rejectionCount, role).flatMap {
+                      case SoftResetOutcome.Fired =>
+                        Applicative[F].unit
+                      case SoftResetOutcome.SuppressedBudgetExhausted =>
+                        // Wedge is unrecoverable in place at this key. Escalate to the
+                        // existing heavy Download recovery -- DownloadDaemon will pick up
+                        // the NodeState flip and resync from peers.
+                        ConsensusLog.warn(
+                          logger,
+                          Category.Recovery,
+                          state.key.show,
+                          role,
+                          Event.RecoveryStateTransition,
+                          "trigger" -> "stale_local_view_soft_reset_budget_exhausted",
+                          "rejectionCount" -> rejectionCount.toString,
+                          "action" -> "incremental_recovery"
+                        ) >>
+                          consensusStorage.clearStaleLocalViewAtSameKey >>
+                          nodeStorage.setRecoveryDownload >>
+                          nodeStorage
+                            .tryModifyState(
+                              Set[NodeState](NodeState.Ready, NodeState.WaitingForReady),
+                              NodeState.WaitingForDownload
+                            )
+                            .void
+                      case SoftResetOutcome.SuppressedNoReadyPeerWithUsefulDeclarations =>
+                        // No Ready peer with usable declarations -- the cluster lacks a
+                        // proven recovery source. Going to WFD here would just feed the
+                        // recovery cascade (Core peer leaves Ready precisely when the
+                        // network has nothing to recover FROM). Fall through to normal
+                        // stall handling; StallDetector / AbandonmentTracker will fire
+                        // when the situation persists with peers actually ahead.
+                        Applicative[F].unit
+                    }
+                  }
+              }
             else Applicative[F].unit
           ConsensusLog
             .warn(
@@ -1477,7 +1655,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               "reason" -> s"vcc_validation: ${rejection.code}",
               "leader" -> ConsensusLog.pid(state.leader),
               "view" -> state.viewNumber.toString
-            ) >> maybePruneAndMeter.as(none[Transition])
+            ) >> maybePruneAndMeter >> maybeTrySoftReset.as(none[Transition])
         }
         def logEcsReject(rejection: ProposalRejection): F[Option[Transition]] =
           ConsensusLog
@@ -1743,28 +1921,48 @@ object GlobalSnapshotConsensusStateAdvancer {
                               case (Some(k), count) if k === state.key => ((state.key.some, count + 1), count + 1)
                               case _                                   => ((state.key.some, 1), 1)
                             }.flatMap { count =>
+                              // Alpha.97: when the artifact-hash mismatch count crosses the heavy-
+                              // recovery threshold, FIRST attempt an in-place soft reset that keeps
+                              // the node Ready. The soft reset clears volatile round state
+                              // (artifacts, VCC, vote locks, withdrawals) while preserving the per-
+                              // peer declaration map, so the round can re-evaluate from observed
+                              // peer declarations without taking the node out of Core. Falls through
+                              // to the existing heavy Download recovery only when the soft reset is
+                              // suppressed (budget exhausted, or no useful declarations) or has
+                              // already fired its budget at this key without resolving.
                               if (count >= maxConsecutiveValidationFailures)
-                                ConsensusLog.warn(
-                                  logger,
-                                  Category.Recovery,
-                                  state.key.show,
-                                  role,
-                                  Event.RecoveryStateTransition,
-                                  "trigger" -> "consecutive_validation_failures",
-                                  "count" -> count.toString,
-                                  "action" -> "incremental_recovery"
-                                ) >>
-                                  validationFailureCountRef.set((none, 0)) >>
-                                  // Set recovery download flag so DownloadDaemon uses the incremental
-                                  // recovery path. The incremental path now properly syncs MptStore from
-                                  // the downloaded snapshot's checkpoint data (no full rebuild needed).
-                                  nodeStorage.setRecoveryDownload >>
-                                  nodeStorage
-                                    .tryModifyState(
-                                      Set[NodeState](NodeState.Ready, NodeState.WaitingForReady),
-                                      NodeState.WaitingForDownload
-                                    )
-                                    .void
+                                trySoftResetAtSameKey(state.key, "artifact_mismatch", count, role).flatMap {
+                                  case SoftResetOutcome.Fired =>
+                                    validationFailureCountRef.set((none, 0))
+                                  case SoftResetOutcome.SuppressedBudgetExhausted =>
+                                    ConsensusLog.warn(
+                                      logger,
+                                      Category.Recovery,
+                                      state.key.show,
+                                      role,
+                                      Event.RecoveryStateTransition,
+                                      "trigger" -> "consecutive_validation_failures",
+                                      "count" -> count.toString,
+                                      "action" -> "incremental_recovery"
+                                    ) >>
+                                      validationFailureCountRef.set((none, 0)) >>
+                                      // Set recovery download flag so DownloadDaemon uses the incremental
+                                      // recovery path. The incremental path now properly syncs MptStore from
+                                      // the downloaded snapshot's checkpoint data (no full rebuild needed).
+                                      nodeStorage.setRecoveryDownload >>
+                                      nodeStorage
+                                        .tryModifyState(
+                                          Set[NodeState](NodeState.Ready, NodeState.WaitingForReady),
+                                          NodeState.WaitingForDownload
+                                        )
+                                        .void
+                                  case SoftResetOutcome.SuppressedNoReadyPeerWithUsefulDeclarations =>
+                                    // No Ready peer with usable declarations -- the cluster lacks a
+                                    // proven recovery source. Forcing WFD here would worsen the cascade.
+                                    // Keep the validation-failure count so the next failure can re-try
+                                    // soft reset once a Ready peer surfaces.
+                                    Async[F].unit
+                                }
                               else
                                 Async[F].unit
                             } >>
