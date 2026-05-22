@@ -177,6 +177,46 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     */
   def pruneStaleProposalSlots(key: Key, minViewToKeep: Long): F[Unit]
 
+  /** Alpha.97 stale-local-view rejection counter. Called by each layer's advancer from `logVccReject` when the rejection signature
+    * indicates this node's local view-state has fallen behind (`view{N}_proposal_missing_vcc` outside the stale-slot pattern, or
+    * `vcc_view_mismatch`). Returns the new tally for `key`. Resets to 1 when a different key is observed.
+    */
+  def tickStaleLocalViewAtSameKey(key: Key): F[Int]
+
+  def getStaleLocalViewAtSameKey(key: Key): F[Int]
+
+  def clearStaleLocalViewAtSameKey: F[Unit]
+
+  /** Alpha.97 soft-reset book-keeping. Counts how many in-place soft resets the caller has performed at the same key. Caller checks this
+    * against `config.maxSoftResetsAtSameKey` to decide whether to attempt another soft reset or escalate to heavy Download. Resets on key
+    * advance.
+    */
+  def tickSoftResetAtSameKey(key: Key): F[Int]
+
+  def getSoftResetCountAtSameKey(key: Key): F[Int]
+
+  /** Returns the per-peer declarations map for `key`. Used by the layer advancer's soft-reset gate to inspect which peers have non-empty
+    * `facility` / `proposal` entries, and cross-reference those peers against `clusterStorage.getResponsivePeers` to check for Ready
+    * bootstrap sources. Exposed because the gate needs both consensus-resources data (here) and cluster state (in clusterStorage) which the
+    * advancer has access to but ConsensusStorage does not.
+    */
+  def getPeerDeclarations(key: Key): F[Map[PeerId, PeerDeclarations]]
+
+  /** Alpha.97 in-place soft reset for `key`. Wipes ALL volatile round state so the FSM re-creates a fresh `ConsensusState` (with the
+    * cluster's current view) on the next `StartRound`:
+    *   - the stored `ConsensusState` for `key` is removed (so the state creator runs again from scratch -- views, leader, status,
+    *     facilitator set);
+    *   - `ConsensusResources` is cleared of artifacts, acks, withdrawals, proposalQcs, admissionVotes, AND -- unlike
+    *     `clearResourcesPreservingDeclarations` -- `viewChangeVotes`, `assembledVcc`, and the assembled eviction/admission cert slots, all
+    *     of which are anchored to the now-stale local view and would corrupt the rebuild;
+    *   - `voteLockR(key)` is cleared (stale view-lock would block the new view's vote);
+    *   - `peerDeclarationsMap` is PRESERVED. The map contains the bootstrap source the fresh round uses to re-derive its view from observed
+    *     peer state (the gate in the layer advancer ensures at least one Ready peer entry is useful).
+    *
+    * NodeState is intentionally NOT touched -- the peer stays Ready, Core does not lose a member to this reset.
+    */
+  def softResetRoundState(key: Key): F[Unit]
+
   private[consensus] def trySetInitialConsensusOutcome(data: Outcome): F[Boolean]
 
   private[consensus] def clearAndGetLastConsensusOutcome: F[Option[Outcome]]
@@ -241,7 +281,11 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
   /** Snapshot of the observed per-peer tip keys (`max(seen)`). Populated by `observePeerAtKey` on every incoming keyed rumor. Cleared by
     * `clearAllPeerRegistrations`; entries pruned by `pruneStalePeerRegistrations` to match the active peer set.
     */
-  private[consensus] def getPeerCurrentKeys: F[Map[PeerId, Key]]
+  // Public (was private[consensus]): the layer advancer's soft-reset gate
+  // (alpha.97) cross-references this with `clusterStorage.getResponsivePeers`
+  // to find Ready peers at our key or ahead, matching the existing
+  // peersAtHigherKey check pattern in StallDetector / AbandonmentTracker.
+  def getPeerCurrentKeys: F[Map[PeerId, Key]]
 
   /** Clean up state and resources for a key whose outcome conflicted with a concurrent finalization.
     *
@@ -285,6 +329,8 @@ object ConsensusStorage {
       timeTriggerR <- Ref.of(none[FiniteDuration])
       observationKeyR <- Ref.of(Option.empty[Key])
       peerRegistrationsR <- Ref.of(Map.empty[PeerId, Key])
+      staleLocalViewAtSameKeyR <- Ref.of[F, (Option[Key], Int)]((none[Key], 0))
+      softResetAtSameKeyR <- Ref.of[F, (Option[Key], Int)]((none[Key], 0))
       statesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusState[Key, Status, Outcome, Kind]]()
       resourcesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusResources[Artifact, Kind]]()
       voteLocksR <- MapRef.ofConcurrentHashMap[F, Key, VoteLock]()
@@ -690,6 +736,72 @@ object ConsensusStorage {
               }
             )
           }.void
+
+        def tickStaleLocalViewAtSameKey(key: Key): F[Int] =
+          staleLocalViewAtSameKeyR.modify {
+            case (Some(lastKey), count) if lastKey === key =>
+              val newCount = count + 1
+              ((key.some, newCount), newCount)
+            case _ =>
+              ((key.some, 1), 1)
+          }
+
+        def getStaleLocalViewAtSameKey(key: Key): F[Int] =
+          staleLocalViewAtSameKeyR.get.map {
+            case (Some(lastKey), count) if lastKey === key => count
+            case _                                         => 0
+          }
+
+        def clearStaleLocalViewAtSameKey: F[Unit] =
+          staleLocalViewAtSameKeyR.set((none[Key], 0))
+
+        def tickSoftResetAtSameKey(key: Key): F[Int] =
+          softResetAtSameKeyR.modify {
+            case (Some(lastKey), count) if lastKey === key =>
+              val newCount = count + 1
+              ((key.some, newCount), newCount)
+            case _ =>
+              ((key.some, 1), 1)
+          }
+
+        def getSoftResetCountAtSameKey(key: Key): F[Int] =
+          softResetAtSameKeyR.get.map {
+            case (Some(lastKey), count) if lastKey === key => count
+            case _                                         => 0
+          }
+
+        def getPeerDeclarations(key: Key): F[Map[PeerId, PeerDeclarations]] =
+          resourcesR(key).get.map {
+            case None            => Map.empty[PeerId, PeerDeclarations]
+            case Some(resources) => resources.peerDeclarationsMap
+          }
+
+        def softResetRoundState(key: Key): F[Unit] =
+          // Aggressive reset: clear everything anchored to the (now-stale) local view,
+          // keep only the peer declarations map so the next round-start can re-derive
+          // view/leader from observed peer state. NodeState is intentionally not
+          // touched -- the peer stays Ready, Core does not lose a member to this reset.
+          Clock[F].monotonic.flatMap { now =>
+            updateResources(key) { resources =>
+              ConsensusResources[Artifact, Kind](
+                peerDeclarationsMap = resources.peerDeclarationsMap,
+                acksMap = Map.empty,
+                withdrawalsMap = Map.empty,
+                ackKinds = Set.empty,
+                artifacts = Map.empty,
+                updatedAt = now,
+                viewChangeVotes = Map.empty,
+                proposalQcs = Map.empty,
+                evictionVotes = Map.empty,
+                admissionVotes = Map.empty
+              )
+            }.void >>
+              voteLocksR(key).set(none) >>
+              assembledVccR(key).set(none) >>
+              assembledEvictionCertsR(key).set(none) >>
+              assembledAdmissionCertsR(key).set(none) >>
+              statesR(key).set(none)
+          }
 
         def getOwnRegistrationKey: F[Option[Key]] = observationKeyR.get.map(_.map(_.next))
 

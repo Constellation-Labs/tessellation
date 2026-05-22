@@ -212,6 +212,15 @@ object ConsensusLog {
     case object ForceLeaveFailed extends Event { val show = "FORCE_LEAVE_FAILED" }
     case object ForceLeaveTriggered extends Event { val show = "FORCE_LEAVE_TRIGGERED" }
     case object RecoveryDownloadTriggered extends Event { val show = "RECOVERY_DOWNLOAD_TRIGGERED" }
+    // Alpha.97 same-key soft reset: an in-place clear of round-volatile state
+    // (artifacts, VCC, vote locks, withdrawals) while preserving the per-peer declaration
+    // map, so a wedged round can re-evaluate without flipping NodeState out of Ready.
+    // Fired when consecutive VCC-validation rejections (stale-local-view category) or
+    // artifact-hash-mismatch failures (artifact-mismatch category) at the same key cross
+    // their respective thresholds, AND useful peer declarations are present to rebuild
+    // from, AND the per-key soft-reset budget is not exhausted.
+    case object SoftResetTriggered extends Event { val show = "SOFT_RESET_TRIGGERED" }
+    case object SoftResetSuppressed extends Event { val show = "SOFT_RESET_SUPPRESSED" }
 
     // ── MPT (Merkle Patricia Trie) events ─────────────────────────
     case object MptSavepointRestored extends Event { val show = "MPT_SAVEPOINT_RESTORED" }
