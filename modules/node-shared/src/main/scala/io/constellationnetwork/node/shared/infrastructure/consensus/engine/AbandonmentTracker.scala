@@ -70,6 +70,26 @@ object AbandonReason {
     def retriable: Boolean = false
   }
 
+  /** Alpha.98 round-start participation feasibility: the round committee includes peers that are locally observed as NOT Ready AND whose
+    * tip is at or before our `lastOutcome.key`, and excluding them drops the active count below quorum. Emitted purely as a local "I am not
+    * going to burn cycles on a round that cannot make progress" guard -- the committee, the facilitator hash, the quorum derivation, and
+    * the proposal validity rules are unchanged (no determinism implications). Retriable so the next time-trigger can re-evaluate with
+    * possibly fresher peer-state observations; this is NOT counted as an eviction-grade signal and should not heavily penalize the missing
+    * peers.
+    */
+  final case class ReadyParticipationQuorumInfeasible(
+    activeReady: Int,
+    required: Int,
+    excludedCount: Int
+  ) extends AbandonReason {
+    def message: String =
+      s"ready-participation quorum infeasible: $activeReady ready-and-current < $required required, " +
+        s"excluding $excludedCount not-ready-or-behind peers"
+    def label: String = "ready_participation_quorum_infeasible"
+    def retriable: Boolean = true
+    override def quorumPair: Option[(Int, Int)] = Some((activeReady, required))
+  }
+
   implicit val show: Show[AbandonReason] = Show.show(_.message)
 }
 

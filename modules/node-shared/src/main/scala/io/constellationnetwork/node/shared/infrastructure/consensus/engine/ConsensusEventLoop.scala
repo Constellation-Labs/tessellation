@@ -142,7 +142,8 @@ object ConsensusEventLoop {
         isInBootstrap,
         lastSnapshotHashOf,
         probationPeersOf,
-        peerQualityOf
+        peerQualityOf,
+        _key.get _
       )
       healthRef <- injectedHealthRef.fold(ConsensusHealthStatus.ref[F])(Async[F].pure)
       viewChangeManager = new ViewChangeManager[F, Key, Artifact, Ctx, Status, Outcome, Kind](

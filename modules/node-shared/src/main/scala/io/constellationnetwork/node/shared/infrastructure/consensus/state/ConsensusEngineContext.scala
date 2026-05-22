@@ -106,6 +106,13 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // in which case the wider-pool reduces to `eligibleFacilitators` and preserves prior
   // behavior.
   peerQualityOf: Outcome => Map[PeerId, (Int, Int)],
+  // Layer-specific extraction of the consensus-agreed Key of the carried outcome (the
+  // last finalized snapshot ordinal). Used by `StallDetector`'s alpha.98 round-start
+  // feasibility check: a peer whose locally-observed tip is < `lastOutcomeKeyOf(state.lastOutcome)`
+  // is more than one ordinal behind us and is not "current/useful" as a facilitator for
+  // this round. Local guard only -- decision does not mutate the round committee or the
+  // facilitator hash, so determinism is preserved.
+  lastOutcomeKeyOf: Outcome => Key,
   // Local-only marker: the consensus key at which this node most recently completed
   // `initFromDownload` (recovery path). Set by `StateTransitions.initFromDownload`.
   //
@@ -164,7 +171,8 @@ object ConsensusEngineContext {
     isInBootstrap: Outcome => Boolean,
     lastSnapshotHashOf: Outcome => Hash,
     probationPeersOf: Outcome => Set[PeerId],
-    peerQualityOf: Outcome => Map[PeerId, (Int, Int)] = (_: Outcome) => Map.empty[PeerId, (Int, Int)]
+    peerQualityOf: Outcome => Map[PeerId, (Int, Int)] = (_: Outcome) => Map.empty[PeerId, (Int, Int)],
+    lastOutcomeKeyOf: Outcome => Key
   ): F[ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =
     for {
       running <- Ref.of[F, Boolean](false)
@@ -195,6 +203,7 @@ object ConsensusEngineContext {
         lastSnapshotHashOf,
         probationPeersOf,
         peerQualityOf,
+        lastOutcomeKeyOf,
         recoveredAtKey,
         retriableAtSameKey
       )

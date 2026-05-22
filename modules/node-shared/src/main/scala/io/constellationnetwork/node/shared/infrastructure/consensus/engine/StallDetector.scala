@@ -382,6 +382,57 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // When eviction would breach quorum, it skips the eviction and propagates quorumInfeasible=true.
       quorumInfeasible = stallResult.quorumInfeasible
 
+      // --- Alpha.98: ready-participation feasibility ---
+      // Detects rounds whose Core committee includes peers that are LOCALLY observed as
+      // not-Ready. These peers cannot contribute (sign / lead) regardless of how long we
+      // wait, so abandoning EARLY (before the stall-cycle / declaration-timeout window
+      // expires) lets the next round-start re-attempt with the cluster's then-current
+      // observable state.
+      //
+      // Safety constraint: this is purely a local "yield this round" decision. It does NOT
+      // mutate `roundStartFacilitators`, `coreFacilitators`, the facilitator hash, the
+      // quorum derivation, or proposal validity. Other peers may make different decisions
+      // based on their own local observations; that's fine because the abandon emits no
+      // cross-peer state. Determinism of committee derivation is preserved.
+      //
+      // Condition (codex 2026-05-22 v2 review): peer is in `coreFacilitators` AND not in
+      // `readyPeerIdsWithSelf` (current cluster Ready set + selfId; `getResponsivePeers`
+      // does not return self, so we MUST add selfId explicitly to avoid classifying self
+      // as not-Ready and false-abandoning healthy 2-Core rounds). Once-Ready check is the
+      // ONLY exclusion test -- a peer that is WFR-but-caught-up still cannot sign / lead,
+      // so excluding them is correct (codex's WFR-promotion-starvation point). The
+      // peer-tip-behind subset is computed only as a diagnostic dimension for the log.
+      //
+      // After excluding non-Ready Core peers, if `activeReady < coreQuorum`, emit
+      // `ReadyParticipationQuorumInfeasible`.
+      lastOutcomeKey = ctx.lastOutcomeKeyOf(state.lastOutcome)
+      readyParticipationStatus = StallDetector.computeReadyParticipationStatus(
+        coreFacilitators = state.coreFacilitators.value.toSet,
+        readyPeerIds = readyPeerIds,
+        selfId = selfId,
+        peerCurrentKeysContains = peerCurrentKeys.contains _,
+        peerCurrentKeyAtOrAfter = (peerId: PeerId) => peerCurrentKeys.get(peerId).exists(k => Order[Key].gteqv(k, lastOutcomeKey)),
+        quorumThresholdFraction = config.quorumThresholdFraction
+      )
+      readyParticipationInfeasible = readyParticipationStatus.infeasible
+      _ <- (
+        ConsensusLog.warn(
+          logger,
+          Category.Stall,
+          key.toString,
+          selfRole(state),
+          LogEvent.StallDetected,
+          "trigger" -> "ready_participation_quorum_infeasible",
+          "coreSize" -> readyParticipationStatus.coreSize.toString,
+          "activeReady" -> readyParticipationStatus.activeReady.toString,
+          "coreQuorum" -> readyParticipationStatus.coreQuorum.toString,
+          "notReadyCore" -> readyParticipationStatus.notReadyCore.toString,
+          "behindNonReady" -> readyParticipationStatus.behindNonReady.toString,
+          "lastOutcomeKey" -> lastOutcomeKey.toString
+        ) >>
+          Metrics[F].incrementCounter("dag_consensus_ready_participation_quorum_infeasible_total")
+      ).whenA(readyParticipationInfeasible)
+
       // --- Round timeout / abandon check ---
       // roundElapsed is measured from the current view's start (reset on view change above),
       // and the deadline scales linearly per view with a hard cap — see maxRoundDurationForView.
@@ -394,10 +445,16 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // give up. Without this, solo-eviction fires on the same cycle as maxStallCycles
       // abandonment, wasting the eviction.
       stallCycleExceeded = finalStallCount >= config.maxStallCycles && !stallResult.evictionEscalated
-      shouldAbandon = stallCycleExceeded || roundTimedOut || quorumInfeasible || isLagging
+      shouldAbandon = stallCycleExceeded || roundTimedOut || quorumInfeasible || isLagging || readyParticipationInfeasible
 
       abandonReason: AbandonReason =
         if (isLagging) AbandonReason.Lagging(peersAtHigherKey, totalRegisteredPeers, totalAllRegs)
+        else if (readyParticipationInfeasible)
+          AbandonReason.ReadyParticipationQuorumInfeasible(
+            readyParticipationStatus.activeReady,
+            readyParticipationStatus.coreQuorum,
+            readyParticipationStatus.notReadyCore
+          )
         else if (quorumInfeasible)
           AbandonReason.QuorumInfeasible(stallResult.activeFacilitators, stallResult.quorumSize, stallResult.clusterSize)
         else if (roundTimedOut) AbandonReason.RoundTimeout(roundElapsed.toSeconds, effectiveRoundDeadline.map(_.toSeconds))
@@ -1249,6 +1306,61 @@ object StallDetector {
       coreRemaining = coreRemaining,
       coreRequired = coreRequired,
       quorumInfeasible = coreRemaining < coreRequired
+    )
+  }
+
+  /** Outcome of the alpha.98 ready-participation feasibility check. Pure data so the gate can be exercised in unit tests without a live
+    * consensus context. `behindNonReady` is a diagnostic subset (count of `notReadyCore` peers whose observed tip is also behind our last
+    * outcome key); it does not affect the abandon decision -- that depends only on `notReadyCore`.
+    */
+  private[consensus] case class ReadyParticipationStatus(
+    coreSize: Int,
+    activeReady: Int,
+    coreQuorum: Int,
+    notReadyCore: Int,
+    behindNonReady: Int,
+    infeasible: Boolean
+  )
+
+  /** Pure helper for the alpha.98 ready-participation feasibility check. From the Core committee, the cluster's currently-Ready peer ids,
+    * self's id, and per-peer observed tip keys, produce the (activeReady, coreQuorum, notReadyCore, behindNonReady, infeasible) tuple that
+    * drives the new abandon path in `StallDetector`.
+    *
+    * Codex's v2 review notes the two subtle invariants this helper locks down:
+    *   1. self MUST be counted as Ready/current. `getResponsivePeers` does not return self; checking `!readyPeerIds.contains(selfId)`
+    *      against the raw responsive-peers set would classify self as not-Ready and false-abandon healthy rounds (most damaging in 2-Core
+    *      rounds where self + 1 peer == quorum). Caller adds `selfId` to `readyPeerIds` before invoking this helper. 2. The exclusion test
+    *      is ONLY `not in Ready`. A peer that is WaitingForReady-but-caught-up still cannot sign or lead the round, so treating "caught up"
+    *      as "Ready enough" misses the WFR-promotion-starvation wedge. The `behindNonReady` field is recorded only as a diagnostic
+    *      dimension for the log line.
+    *
+    * Local-guard semantics: this helper does NOT modify the committee, facilitator hash, or quorum derivation. It only computes whether the
+    * local observation supports proceeding with the round. Honest peers may disagree on the result based on their own gossip-derived Ready
+    * sets; that disagreement only changes WHEN each peer abandons locally, never WHAT the committee looks like.
+    */
+  private[consensus] def computeReadyParticipationStatus(
+    coreFacilitators: Set[PeerId],
+    readyPeerIds: Set[PeerId],
+    selfId: PeerId,
+    peerCurrentKeysContains: PeerId => Boolean,
+    peerCurrentKeyAtOrAfter: PeerId => Boolean,
+    quorumThresholdFraction: Double
+  ): ReadyParticipationStatus = {
+    val coreSize = coreFacilitators.size
+    val readyPeerIdsWithSelf = readyPeerIds + selfId
+    val notReadyCore = coreFacilitators.filterNot(readyPeerIdsWithSelf.contains)
+    val behindNonReady = notReadyCore.count { peerId =>
+      !peerCurrentKeysContains(peerId) || !peerCurrentKeyAtOrAfter(peerId)
+    }
+    val activeReady = coreSize - notReadyCore.size
+    val coreQuorum = math.max(1, QuorumPolicy.fromFraction(coreSize, quorumThresholdFraction))
+    ReadyParticipationStatus(
+      coreSize = coreSize,
+      activeReady = activeReady,
+      coreQuorum = coreQuorum,
+      notReadyCore = notReadyCore.size,
+      behindNonReady = behindNonReady,
+      infeasible = coreSize >= 2 && activeReady < coreQuorum
     )
   }
 
