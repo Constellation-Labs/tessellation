@@ -58,7 +58,7 @@ import retry.syntax.all._
   *
   * '''initFromDownload(key, artifact, context):''' Fetches outcome from cluster peers, initializes storage, starts first round.
   *
-  * '''initFromRollback(key, outcome):''' Sets outcome in storage, starts first round.
+  * '''initFromRollback(key, outcome):''' Sets outcome in storage, then starts or defers the first round.
   *
   * '''withdraw():''' Spreads withdrawal declaration, cleans up state.
   *
@@ -825,7 +825,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
       .flatTap(_ => initDownloadOutcome("success"))
       .onError { case err => initDownloadOutcome(classifyInitDownloadError(err)) }
 
-  def initFromRollback(key: Key, outcome: Outcome): F[Unit] =
+  def initFromRollback(key: Key, outcome: Outcome, deferFirstRound: Boolean = false): F[Unit] =
     for {
       _ <- ConsensusLog.info(log, Category.Lifecycle, key.toString, "n/a", LogEvent.RollbackInitStart)
       // Clear ALL stale consensus state before initializing from rollback.
@@ -841,16 +841,89 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
       _ <- ctx.pending.clear()
       _ <- ConsensusLog.info(log, Category.Lifecycle, key.toString, "n/a", LogEvent.RollbackStateCleared)
       _ <- storage.trySetInitialConsensusOutcome(outcome)
+      _ <- ConsensusLog.info(
+        log,
+        Category.Lifecycle,
+        key.toString,
+        "n/a",
+        LogEvent.RollbackBootstrapActive,
+        "mode" -> "checkpoint_server",
+        "action" -> "serving_initial_outcome_before_first_round"
+      )
+      _ <- Metrics[F].incrementCounter("dag_consensus_rollback_bootstrap_active_total")
       // Set joining grace period to use relaxed timeouts for first rounds after rollback.
       // Without this, the rollback node uses aggressive timeouts while peers are still
       // downloading to the rollback ordinal, leading to premature stall detection.
       _ <- ctx.nodeStorage.setJoiningGracePeriod
-      // Start immediately after rollback. Rollback is a bootstrap operation — the node
-      // may be genesis (first/only node) where solo consensus is correct and necessary.
-      // Recovery after fork uses initFromDownload with isRecovery=true, which has its
-      // own TimeTrigger deferral to prevent solo divergent snapshots.
-      _ <- queue.offer(StartRound(TimeTrigger.some))
+      // GL0 full-network rollback orchestration starts one rollback node first, then
+      // validators join and confirm the downloaded outcome. Deferring the first round
+      // lets those validators reach Ready before readiness gates evaluate the cluster.
+      _ <-
+        if (deferFirstRound) scheduleRollbackFirstRound(key)
+        else queue.offer(StartRound(TimeTrigger.some))
     } yield ()
+
+  private def scheduleRollbackFirstRound(key: Key): F[Unit] = {
+    val pollInterval = ctx.config.timeTriggerInterval
+    val maxDelay = pollInterval * 2L
+
+    def status: F[StateTransitions.RollbackFirstRoundQuorumStatus] =
+      (ctx.nodeStorage.getNodeState, ctx.clusterStorage.getResponsivePeers).mapN { (nodeState, peers) =>
+        StateTransitions.rollbackFirstRoundQuorumStatus(
+          selfReady = nodeState === NodeState.Ready,
+          externalReadyPeers = peers.count(_.state === NodeState.Ready),
+          activeFacilitatorFloor = ctx.config.activeFacilitatorFloor,
+          quorumThresholdFraction = ctx.config.quorumThresholdFraction
+        )
+      }
+
+    def logAndStart(s: StateTransitions.RollbackFirstRoundQuorumStatus, elapsed: FiniteDuration, reason: String): F[Unit] =
+      ConsensusLog.info(
+        log,
+        Category.Lifecycle,
+        key.toString,
+        "n/a",
+        LogEvent.RollbackQuorumFeasible,
+        "nodeReady" -> s.selfReady.toString,
+        "externalReadyPeers" -> s.externalReadyPeers.toString,
+        "participantsIncludingSelf" -> s.participantsIncludingSelf.toString,
+        "required" -> s.required.toString,
+        "activeFacilitatorFloor" -> s.activeFacilitatorFloor.toString,
+        "quorumFeasible" -> s.quorumFeasible.toString,
+        "elapsed" -> elapsed.toString,
+        "reason" -> reason
+      ) >>
+        Metrics[F].incrementCounter(
+          "dag_consensus_rollback_quorum_feasible_before_first_round_total",
+          Seq(unsafeLabelName("feasible") -> s.quorumFeasible.toString, unsafeLabelName("reason") -> reason)
+        ) >>
+        queue.offer(StartRound(TimeTrigger.some))
+
+    def waitLoop(elapsed: FiniteDuration): F[Unit] =
+      Temporal[F].sleep(pollInterval) >>
+        status.flatMap { s =>
+          val nextElapsed = elapsed + pollInterval
+          if (s.selfReady && s.quorumFeasible) logAndStart(s, nextElapsed, "ready_quorum_feasible")
+          else if (s.selfReady && nextElapsed >= maxDelay) logAndStart(s, nextElapsed, "max_delay_elapsed")
+          else waitLoop(nextElapsed)
+        }
+
+    ConsensusLog.info(
+      log,
+      Category.Lifecycle,
+      key.toString,
+      "n/a",
+      LogEvent.RollbackFirstRoundDeferred,
+      "pollInterval" -> pollInterval.toString,
+      "maxDelay" -> maxDelay.toString
+    ) >>
+      Metrics[F].incrementCounter("dag_consensus_rollback_first_round_deferred_total") >>
+      Async[F]
+        .start(
+          waitLoop(0.seconds).handleErrorWith(err => log.error(err)("Rollback first-round scheduler failed"))
+        )
+        .void
+  }
 
   private def fetchOutcomeFromCluster(
     key: Key,
@@ -1055,6 +1128,15 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
 
 object StateTransitions {
 
+  private[consensus] final case class RollbackFirstRoundQuorumStatus(
+    selfReady: Boolean,
+    externalReadyPeers: Int,
+    participantsIncludingSelf: Int,
+    required: Int,
+    activeFacilitatorFloor: Int,
+    quorumFeasible: Boolean
+  )
+
   /** View-change certificates use a Core-sized quorum, so the certified next leader must come from Core as well. The fallback preserves
     * startup/fork-recovery behavior if a malformed or transitional state has not populated Core yet.
     */
@@ -1069,4 +1151,27 @@ object StateTransitions {
   private[consensus] def readyPromotionAllowed(readyCandidates: Int, externalAligned: Int, required: Int): Boolean =
     if (readyCandidates === 1) externalAligned === 1
     else readyCandidates > 1 && externalAligned === readyCandidates && externalAligned + 1 >= required
+
+  private[consensus] def rollbackFirstRoundQuorumStatus(
+    selfReady: Boolean,
+    externalReadyPeers: Int,
+    activeFacilitatorFloor: Int,
+    quorumThresholdFraction: Double
+  ): RollbackFirstRoundQuorumStatus = {
+    val participantsIncludingSelf = externalReadyPeers + (if (selfReady) 1 else 0)
+    val required = math.max(1, QuorumPolicy.fromFraction(participantsIncludingSelf, quorumThresholdFraction))
+    val quorumFeasible =
+      selfReady &&
+        participantsIncludingSelf >= activeFacilitatorFloor &&
+        participantsIncludingSelf >= required
+
+    RollbackFirstRoundQuorumStatus(
+      selfReady,
+      externalReadyPeers,
+      participantsIncludingSelf,
+      required,
+      activeFacilitatorFloor,
+      quorumFeasible
+    )
+  }
 }

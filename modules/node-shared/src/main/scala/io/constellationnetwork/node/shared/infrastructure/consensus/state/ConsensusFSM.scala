@@ -105,9 +105,9 @@ class ConsensusFSM[F[
         log.warn(ConsensusLog.format(Category.Lifecycle, "n/a", "n/a", LogEvent.IdleConsensusFinished))
       case InitializeFromDownload(key, art, c, isRecovery) =>
         transitions.initFromDownload(key, art, c, isRecovery)
-      case InitializeFromRollback(key, outcome) => transitions.initFromRollback(key, outcome)
-      case WithdrawFromConsensus                => transitions.withdraw
-      case _                                    => Async[F].unit
+      case InitializeFromRollback(key, outcome, deferFirstRound) => transitions.initFromRollback(key, outcome, deferFirstRound)
+      case WithdrawFromConsensus                                 => transitions.withdraw
+      case _                                                     => Async[F].unit
     }
 
   private def handleWhileBusy(cmd: ConsensusCommand[Key, Artifact, Ctx, Outcome]): F[Unit] =

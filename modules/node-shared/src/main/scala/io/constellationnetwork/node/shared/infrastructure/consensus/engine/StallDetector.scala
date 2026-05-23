@@ -415,6 +415,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
         quorumThresholdFraction = config.quorumThresholdFraction
       )
       readyParticipationInfeasible = readyParticipationStatus.infeasible
+      readyParticipationDuringJoiningGrace <- ctx.nodeStorage.isInJoiningGracePeriod
       _ <- (
         ConsensusLog.warn(
           logger,
@@ -428,9 +429,13 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
           "coreQuorum" -> readyParticipationStatus.coreQuorum.toString,
           "notReadyCore" -> readyParticipationStatus.notReadyCore.toString,
           "behindNonReady" -> readyParticipationStatus.behindNonReady.toString,
+          "joiningGrace" -> readyParticipationDuringJoiningGrace.toString,
           "lastOutcomeKey" -> lastOutcomeKey.toString
         ) >>
-          Metrics[F].incrementCounter("dag_consensus_ready_participation_quorum_infeasible_total")
+          Metrics[F].incrementCounter("dag_consensus_ready_participation_quorum_infeasible_total") >>
+          Metrics[F]
+            .incrementCounter("dag_consensus_ready_participation_quorum_infeasible_joining_grace_total")
+            .whenA(readyParticipationDuringJoiningGrace)
       ).whenA(readyParticipationInfeasible)
 
       // --- Round timeout / abandon check ---

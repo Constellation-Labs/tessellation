@@ -5,18 +5,17 @@ import io.constellationnetwork.security.hex.Hex
 
 import weaver.FunSuite
 
-/** Alpha.98 regression coverage for `StallDetector.computeReadyParticipationStatus` -- the local-only round-start participation
-  * feasibility check that fires when the Core committee includes peers we cannot locally observe as Ready, and excluding them would drop
-  * us below quorum. The check is a LOCAL-ABANDON-ONLY guard; it does not mutate the committee, facilitator hash, or quorum derivation
-  * (verified by inspection -- this suite locks the arithmetic of the helper used by the inline path).
+/** Alpha.98 regression coverage for `StallDetector.computeReadyParticipationStatus` -- the local-only round-start participation feasibility
+  * check that fires when the Core committee includes peers we cannot locally observe as Ready, and excluding them would drop us below
+  * quorum. The check is a LOCAL-ABANDON-ONLY guard; it does not mutate the committee, facilitator hash, or quorum derivation (verified by
+  * inspection -- this suite locks the arithmetic of the helper used by the inline path).
   *
   * Codex v2 review (testnet 2026-05-22) locked down two specific bugs in the v1 version of this check:
   *   1. self was NOT counted as Ready, causing 2-Core rounds to falsely fire as infeasible because self + 1 peer = activeReady = 1 <
-  *      quorum=2. Fixed by adding `selfId` to the Ready set before the predicate runs.
-  *   2. The exclusion predicate originally required peer to be "not Ready AND tip-behind". A WFR-but-caught-up peer (the .79
-  *      WFR-promotion-starvation case) would pass that filter (not Ready, but at-key) and be counted as active even though it cannot
-  *      sign or lead. Fixed by classifying ALL non-Ready Core peers as non-participatory; the tip-behind subset is now a diagnostic
-  *      dimension only.
+  *      quorum=2. Fixed by adding `selfId` to the Ready set before the predicate runs. 2. The exclusion predicate originally required peer
+  *      to be "not Ready AND tip-behind". A WFR-but-caught-up peer (the .79 WFR-promotion-starvation case) would pass that filter (not
+  *      Ready, but at-key) and be counted as active even though it cannot sign or lead. Fixed by classifying ALL non-Ready Core peers as
+  *      non-participatory; the tip-behind subset is now a diagnostic dimension only.
   */
 object StallDetectorReadyParticipationSuite extends FunSuite {
 

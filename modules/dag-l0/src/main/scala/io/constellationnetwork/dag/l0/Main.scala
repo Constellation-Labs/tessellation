@@ -65,6 +65,9 @@ object Main
 
   protected val configFiles: List[String] = List("dag-l0.conf")
 
+  private[dag] def rollbackBootstrapFacilitators(nodeId: PeerId): List[PeerId] =
+    List(nodeId)
+
   type KryoRegistrationIdRange = DagL0KryoRegistrationIdRange
 
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
@@ -321,15 +324,14 @@ object Main
               case (snapshotInfo, snapshot) =>
                 for {
                   hashedSnapshot <- hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[IO])
-                  // Derive Facilitators/EligibleFacilitators from the signed snapshot's proofs so
-                  // every node rolling back to the same hash seeds an IDENTICAL outcome. This
-                  // prevents the asymmetric previousEligibleSet that caused silent deferralCountdown
-                  // drift. However, if this node was NOT a signer of the rollback snapshot, using
-                  // signers-only would lock it out of its own committee. In that case fall back to
-                  // self-only so the node can solo-produce until validators catch up and re-sign
-                  // (this is the rollback-lead case: a non-signer rolling the cluster forward).
-                  signers = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
-                  bootstrapFacilitators = if (signers.contains(nodeId)) signers else List(nodeId)
+                  // Alpha.101 rollback bootstrap: the rollback node seeds the initial checkpoint
+                  // outcome as self-only. The snapshot's proof set is historical evidence, not the
+                  // live startup committee. Seeding from it makes the rollback lead start a round
+                  // against validators that have not downloaded or joined yet, causing early
+                  // quorum/ready-participation churn. Operational history below is still preserved
+                  // so deterministic selection has the old evidence again after the first committed
+                  // post-rollback snapshot.
+                  bootstrapFacilitators = rollbackBootstrapFacilitators(nodeId)
                   // Seed the bootstrap-warmup window with the rollback snapshot's proof count.
                   // If we're rolling back to a healthy multi-node snapshot (proofs.size >= threshold),
                   // the window classifies as post-bootstrap and penalties apply immediately. If we're
@@ -428,7 +430,8 @@ object Main
                       recentSigners = seedRecentSigners,
                       peerTiers = seedPeerTiers,
                       recentRoundEndTimes = seedRecentRoundEndTimes
-                    )
+                    ),
+                    deferFirstRound = true
                   )
                 } yield result
             }

@@ -54,4 +54,43 @@ object StateTransitionsSuite extends SimpleIOSuite {
   pureTest("ready promotion allows multiple Ready witnesses only when all visible Ready peers agree") {
     expect(StateTransitions.readyPromotionAllowed(readyCandidates = 2, externalAligned = 2, required = 2))
   }
+
+  pureTest("rollback first-round status is infeasible before rollback node is Ready") {
+    val status = StateTransitions.rollbackFirstRoundQuorumStatus(
+      selfReady = false,
+      externalReadyPeers = 2,
+      activeFacilitatorFloor = 3,
+      quorumThresholdFraction = 2.0 / 3.0
+    )
+
+    expect.same(2, status.participantsIncludingSelf) &&
+    expect.same(2, status.required) &&
+    expect(!status.quorumFeasible)
+  }
+
+  pureTest("rollback first-round status is feasible once Ready peers meet the active floor") {
+    val status = StateTransitions.rollbackFirstRoundQuorumStatus(
+      selfReady = true,
+      externalReadyPeers = 2,
+      activeFacilitatorFloor = 3,
+      quorumThresholdFraction = 2.0 / 3.0
+    )
+
+    expect.same(3, status.participantsIncludingSelf) &&
+    expect.same(2, status.required) &&
+    expect(status.quorumFeasible)
+  }
+
+  pureTest("rollback first-round status remains infeasible for rollback lead alone under testnet floor") {
+    val status = StateTransitions.rollbackFirstRoundQuorumStatus(
+      selfReady = true,
+      externalReadyPeers = 0,
+      activeFacilitatorFloor = 3,
+      quorumThresholdFraction = 2.0 / 3.0
+    )
+
+    expect.same(1, status.participantsIncludingSelf) &&
+    expect.same(1, status.required) &&
+    expect(!status.quorumFeasible)
+  }
 }

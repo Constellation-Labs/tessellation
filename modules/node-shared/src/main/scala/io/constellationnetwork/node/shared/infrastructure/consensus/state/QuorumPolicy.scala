@@ -60,7 +60,7 @@ object QuorumPolicy {
     *   - `fraction == 1.0` -> [[unanimity]] (dev / currency-l0 default)
     *   - `fraction == 2/3` (max-precision Double `0.6666666666666666`) -> [[supermajority]]
     *
-    * Any other fraction is rejected with [[IllegalArgumentException]] at the call site. This is deliberate: a fraction like `0.5` or `0.7`
+    * Any other fraction is rejected with `IllegalArgumentException` at the call site. This is deliberate: a fraction like `0.5` or `0.7`
     * would silently bypass the named-mode discipline (and the schema-hash gate that goes with it), so an operator who needs a new threshold
     * must add a named [[QuorumPolicy]] mode and route it explicitly. The throw is a config-load-time failure, not a runtime concern, and
     * matches the style of refined-type validation elsewhere in the codebase.
