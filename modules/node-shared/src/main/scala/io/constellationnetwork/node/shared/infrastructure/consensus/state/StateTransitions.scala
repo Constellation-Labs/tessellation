@@ -780,7 +780,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
         .trySetInitialConsensusOutcome(outcome)
         .ifM(
           ifFalse = new Throwable(s"[DownloadInit] Failed to initialize consensus storage").raiseError[F, Unit],
-          ifTrue = recoveryReadyPromotionAllowed(outcome, isRecoveryEffective).flatMap { promoteToReady =>
+          ifTrue = downloadReadyPromotionAllowed(outcome).flatMap { promoteToReady =>
             val targetState = if (promoteToReady) NodeState.Ready else NodeState.WaitingForReady
             storage.clearObservationKey.whenA(promoteToReady) >>
               ctx.nodeStorage.tryModifyState(NodeState.Observing, targetState) >>
@@ -975,67 +975,69 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     )
   }
 
-  private def recoveryReadyPromotionAllowed(outcome: Outcome, isRecoveryEffective: Boolean): F[Boolean] =
-    if (!isRecoveryEffective) false.pure[F]
-    else {
-      val outcomeConsensusKey = outcomeKey.get(outcome)
-      val expectedArtifact = outcomeArtifact.get(outcome)
-      val expectedContext = outcomeContext.get(outcome)
-      val outcomeHash = ctx.lastSnapshotHashOf(outcome)
+  private def downloadReadyPromotionAllowed(outcome: Outcome): F[Boolean] = {
+    val outcomeConsensusKey = outcomeKey.get(outcome)
+    val expectedArtifact = outcomeArtifact.get(outcome)
+    val expectedContext = outcomeContext.get(outcome)
+    val outcomeHash = ctx.lastSnapshotHashOf(outcome)
 
-      def alignedWithDownloaded(peer: Peer): F[Boolean] =
-        ctx.consensusClient
-          .getSpecificConsensusOutcome(GetConsensusOutcomeRequest(outcomeConsensusKey))
-          .run(peer)
-          .map {
-            case Some(peerOutcome) =>
-              outcomeKey.get(peerOutcome) === outcomeConsensusKey &&
-              outcomeArtifact.get(peerOutcome) === expectedArtifact &&
-              outcomeContext.get(peerOutcome) === expectedContext &&
-              ctx.lastSnapshotHashOf(peerOutcome) === outcomeHash
-            case None => false
-          }
-          .handleErrorWith { err =>
-            ConsensusLog
-              .warn(
-                log,
-                Category.Lifecycle,
-                outcomeConsensusKey.show,
-                "n/a",
-                LogEvent.DownloadInitReadyPromotion,
-                "peer" -> ConsensusLog.pid(peer.id),
-                "result" -> "peer_check_failed",
-                "error" -> Option(err.getMessage).getOrElse(err.getClass.getSimpleName)
-              )
-              .as(false)
-          }
-
-      ctx.clusterStorage.getResponsivePeers.flatMap { peers =>
-        val readyCandidates = peers.filter(_.state == NodeState.Ready).toList
-        val required = StateTransitions.readyPromotionQuorum(readyCandidates.size + 1, config.quorumThresholdFraction)
-        val requiredExternalReady = StateTransitions.readyPromotionExternalReadyFloor(config.activeFacilitatorFloor)
-
-        readyCandidates.traverse(alignedWithDownloaded).flatMap { results =>
-          val externalAligned = results.count(identity)
-          val alignedWithSelf = externalAligned + 1
-          val promote = externalAligned >= requiredExternalReady && alignedWithSelf >= required
-          ConsensusLog.info(
-            log,
-            Category.Lifecycle,
-            outcomeConsensusKey.show,
-            "n/a",
-            LogEvent.DownloadInitReadyPromotion,
-            "result" -> (if (promote) "promoted" else "waiting_for_ready"),
-            "externalAligned" -> externalAligned.toString,
-            "alignedWithSelf" -> alignedWithSelf.toString,
-            "readyCandidates" -> readyCandidates.size.toString,
-            "requiredExternalReady" -> requiredExternalReady.toString,
-            "required" -> required.toString
-          ) >>
-            promote.pure[F]
+    def alignedWithDownloaded(peer: Peer): F[Boolean] =
+      ctx.consensusClient
+        .getSpecificConsensusOutcome(GetConsensusOutcomeRequest(outcomeConsensusKey))
+        .run(peer)
+        .map {
+          case Some(peerOutcome) =>
+            outcomeKey.get(peerOutcome) === outcomeConsensusKey &&
+            outcomeArtifact.get(peerOutcome) === expectedArtifact &&
+            outcomeContext.get(peerOutcome) === expectedContext &&
+            ctx.lastSnapshotHashOf(peerOutcome) === outcomeHash
+          case None => false
         }
+        .handleErrorWith { err =>
+          ConsensusLog
+            .warn(
+              log,
+              Category.Lifecycle,
+              outcomeConsensusKey.show,
+              "n/a",
+              LogEvent.DownloadInitReadyPromotion,
+              "peer" -> ConsensusLog.pid(peer.id),
+              "result" -> "peer_check_failed",
+              "error" -> Option(err.getMessage).getOrElse(err.getClass.getSimpleName)
+            )
+            .as(false)
+        }
+
+    ctx.clusterStorage.getResponsivePeers.flatMap { peers =>
+      val readyCandidates = peers.filter(_.state == NodeState.Ready).toList
+      val required = StateTransitions.readyPromotionQuorum(readyCandidates.size + 1, config.quorumThresholdFraction)
+      val requiredExternalReady = StateTransitions.readyPromotionExternalReadyFloor
+
+      readyCandidates.traverse(alignedWithDownloaded).flatMap { results =>
+        val externalAligned = results.count(identity)
+        val alignedWithSelf = externalAligned + 1
+        val promote = StateTransitions.readyPromotionAllowed(
+          readyCandidates.size,
+          externalAligned,
+          required
+        )
+        ConsensusLog.info(
+          log,
+          Category.Lifecycle,
+          outcomeConsensusKey.show,
+          "n/a",
+          LogEvent.DownloadInitReadyPromotion,
+          "result" -> (if (promote) "promoted" else "waiting_for_ready"),
+          "externalAligned" -> externalAligned.toString,
+          "alignedWithSelf" -> alignedWithSelf.toString,
+          "readyCandidates" -> readyCandidates.size.toString,
+          "requiredExternalReady" -> requiredExternalReady.toString,
+          "required" -> required.toString
+        ) >>
+          promote.pure[F]
       }
     }
+  }
 
   class NoValidPeersException(message: String) extends RuntimeException(message)
 
@@ -1062,6 +1064,9 @@ object StateTransitions {
   private[consensus] def readyPromotionQuorum(peerCountIncludingSelf: Int, quorumThresholdFraction: Double): Int =
     math.max(2, math.max(1, QuorumPolicy.fromFraction(peerCountIncludingSelf, quorumThresholdFraction)))
 
-  private[consensus] def readyPromotionExternalReadyFloor(activeFacilitatorFloor: Int): Int =
-    math.max(1, activeFacilitatorFloor - 1)
+  private[consensus] def readyPromotionExternalReadyFloor: Int = 1
+
+  private[consensus] def readyPromotionAllowed(readyCandidates: Int, externalAligned: Int, required: Int): Boolean =
+    if (readyCandidates === 1) externalAligned === 1
+    else readyCandidates > 1 && externalAligned === readyCandidates && externalAligned + 1 >= required
 }
