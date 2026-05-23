@@ -184,6 +184,7 @@ object ConsensusLog {
     case object DownloadInitError extends Event { val show = "DOWNLOAD_INIT_ERROR" }
     case object DownloadInitRecoveryImmediate extends Event { val show = "DOWNLOAD_INIT_RECOVERY_IMMEDIATE" }
     case object DownloadInitRecoveryDeferred extends Event { val show = "DOWNLOAD_INIT_RECOVERY_DEFERRED" }
+    case object DownloadInitReadyPromotion extends Event { val show = "DOWNLOAD_INIT_READY_PROMOTION" }
     case object InitDownloadFailureTracked extends Event { val show = "INIT_DOWNLOAD_FAILURE_TRACKED" }
 
     // ── Rollback events ───────────────────────────────────────────
