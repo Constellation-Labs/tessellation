@@ -35,8 +35,23 @@ object StateTransitionsSuite extends SimpleIOSuite {
     expect.same(4, StateTransitions.readyPromotionQuorum(5, 2.0 / 3.0))
   }
 
-  pureTest("ready promotion external Ready floor requires the configured floor minus self") {
-    expect.same(2, StateTransitions.readyPromotionExternalReadyFloor(3)) &&
-    expect.same(3, StateTransitions.readyPromotionExternalReadyFloor(4))
+  pureTest("ready promotion external Ready floor accepts a single rollback lead witness") {
+    expect.same(1, StateTransitions.readyPromotionExternalReadyFloor)
+  }
+
+  pureTest("ready promotion allows the rollback-lead topology with one aligned Ready witness") {
+    expect(StateTransitions.readyPromotionAllowed(readyCandidates = 1, externalAligned = 1, required = 2))
+  }
+
+  pureTest("ready promotion rejects no Ready witnesses") {
+    expect(!StateTransitions.readyPromotionAllowed(readyCandidates = 0, externalAligned = 0, required = 2))
+  }
+
+  pureTest("ready promotion rejects mixed Ready witnesses") {
+    expect(!StateTransitions.readyPromotionAllowed(readyCandidates = 2, externalAligned = 1, required = 2))
+  }
+
+  pureTest("ready promotion allows multiple Ready witnesses only when all visible Ready peers agree") {
+    expect(StateTransitions.readyPromotionAllowed(readyCandidates = 2, externalAligned = 2, required = 2))
   }
 }
