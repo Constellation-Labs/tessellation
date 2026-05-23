@@ -77,7 +77,8 @@ object ConsensusCommand {
     context: Ctx,
     isRecovery: Boolean = false
   ) extends ConsensusCommand[Key, Artifact, Ctx, Nothing]
-  final case class InitializeFromRollback[Key, Outcome](key: Key, outcome: Outcome) extends ConsensusCommand[Key, Nothing, Nothing, Outcome]
+  final case class InitializeFromRollback[Key, Outcome](key: Key, outcome: Outcome, deferFirstRound: Boolean = false)
+      extends ConsensusCommand[Key, Nothing, Nothing, Outcome]
   case object WithdrawFromConsensus extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
   final case class ConsensusFinished[Key, Outcome](key: Key, outcome: Outcome, trigger: ConsensusTrigger)
       extends ConsensusCommand[Key, Nothing, Nothing, Outcome]
