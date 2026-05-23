@@ -199,8 +199,12 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                       "quorum" -> q.toString
                     )
                   case Right(vcc) =>
+                    val leaderPool = StateTransitions.viewChangeLeaderPool(
+                      state.coreFacilitators.value,
+                      state.facilitators.value
+                    )
                     val newLeader =
-                      facilitatorSelector.selectLeader(state.facilitators.value, state.entropy, toView.toInt)
+                      facilitatorSelector.selectLeader(leaderPool, state.entropy, toView.toInt)
                     val resetStatus = ctx.ops.freshCollectingFacilities(state.status)
                     val modify: ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] =
                       new ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] {
@@ -262,6 +266,8 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                           "toView" -> toView.toString,
                           "votes" -> votes.size.toString,
                           "quorum" -> q.toString,
+                          "leaderPool" -> (if (leaderPool == state.coreFacilitators.value) "core" else "facilitators_fallback"),
+                          "leaderPoolSize" -> leaderPool.size.toString,
                           "newLeader" -> ConsensusLog.pid(newLeader),
                           "statusReset" -> resetStatus.isDefined.toString
                         )
@@ -774,38 +780,46 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
         .trySetInitialConsensusOutcome(outcome)
         .ifM(
           ifFalse = new Throwable(s"[DownloadInit] Failed to initialize consensus storage").raiseError[F, Unit],
-          ifTrue = ctx.nodeStorage.tryModifyState(NodeState.Observing, NodeState.WaitingForReady) >>
-            ctx.nodeStorage.setJoiningGracePeriod >>
-            ctx.nodeStorage.isValidatorMode.flatMap { isValidator =>
-              if (isValidator && isRecoveryEffective) {
-                // Validator recovery: start round immediately. The validator solo block
-                // prevents solo production, and starting immediately avoids the 43s deferral
-                // that caused ordinal mismatch deadlocks with the leader.
-                ConsensusLog.info(
-                  log,
-                  Category.Lifecycle,
-                  key.toString,
-                  "n/a",
-                  LogEvent.DownloadInitRecoveryImmediate,
-                  "note" -> "Validator recovery: starting round immediately (solo blocked)"
-                ) >>
-                  queue.offer(StartRound(TimeTrigger.some))
-              } else {
-                // Initial join (all node types) or non-validator recovery: defer to align
-                // with the cluster's TimeTrigger cadence. Without this delay on initial join,
-                // validators form a majority without genesis, causing an irrecoverable split.
-                ConsensusLog.info(
-                  log,
-                  Category.Lifecycle,
-                  key.toString,
-                  "n/a",
-                  if (isRecoveryEffective) LogEvent.DownloadInitRecoveryDeferred else LogEvent.DownloadInitDeferred,
-                  "deferral" -> s"${ctx.config.timeTriggerInterval.toSeconds}s"
-                ) >>
-                  Temporal[F].sleep(ctx.config.timeTriggerInterval) >>
-                  queue.offer(StartRound(TimeTrigger.some))
+          ifTrue = recoveryReadyPromotionAllowed(outcome, isRecoveryEffective).flatMap { promoteToReady =>
+            val targetState = if (promoteToReady) NodeState.Ready else NodeState.WaitingForReady
+            storage.clearObservationKey.whenA(promoteToReady) >>
+              ctx.nodeStorage.tryModifyState(NodeState.Observing, targetState) >>
+              Metrics[F].incrementCounter(
+                "dag_consensus_init_download_ready_promotion_total",
+                Seq(unsafeLabelName("result") -> (if (promoteToReady) "promoted" else "waiting_for_ready"))
+              ) >>
+              ctx.nodeStorage.setJoiningGracePeriod >>
+              ctx.nodeStorage.isValidatorMode.flatMap { isValidator =>
+                if (isValidator && isRecoveryEffective) {
+                  // Validator recovery: start round immediately. The validator solo block
+                  // prevents solo production, and starting immediately avoids the 43s deferral
+                  // that caused ordinal mismatch deadlocks with the leader.
+                  ConsensusLog.info(
+                    log,
+                    Category.Lifecycle,
+                    key.toString,
+                    "n/a",
+                    LogEvent.DownloadInitRecoveryImmediate,
+                    "note" -> "Validator recovery: starting round immediately (solo blocked)"
+                  ) >>
+                    queue.offer(StartRound(TimeTrigger.some))
+                } else {
+                  // Initial join (all node types) or non-validator recovery: defer to align
+                  // with the cluster's TimeTrigger cadence. Without this delay on initial join,
+                  // validators form a majority without genesis, causing an irrecoverable split.
+                  ConsensusLog.info(
+                    log,
+                    Category.Lifecycle,
+                    key.toString,
+                    "n/a",
+                    if (isRecoveryEffective) LogEvent.DownloadInitRecoveryDeferred else LogEvent.DownloadInitDeferred,
+                    "deferral" -> s"${ctx.config.timeTriggerInterval.toSeconds}s"
+                  ) >>
+                    Temporal[F].sleep(ctx.config.timeTriggerInterval) >>
+                    queue.offer(StartRound(TimeTrigger.some))
+                }
               }
-            }
+          }
         )
     } yield ())
       .flatTap(_ => initDownloadOutcome("success"))
@@ -961,6 +975,68 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     )
   }
 
+  private def recoveryReadyPromotionAllowed(outcome: Outcome, isRecoveryEffective: Boolean): F[Boolean] =
+    if (!isRecoveryEffective) false.pure[F]
+    else {
+      val outcomeConsensusKey = outcomeKey.get(outcome)
+      val expectedArtifact = outcomeArtifact.get(outcome)
+      val expectedContext = outcomeContext.get(outcome)
+      val outcomeHash = ctx.lastSnapshotHashOf(outcome)
+
+      def alignedWithDownloaded(peer: Peer): F[Boolean] =
+        ctx.consensusClient
+          .getSpecificConsensusOutcome(GetConsensusOutcomeRequest(outcomeConsensusKey))
+          .run(peer)
+          .map {
+            case Some(peerOutcome) =>
+              outcomeKey.get(peerOutcome) === outcomeConsensusKey &&
+              outcomeArtifact.get(peerOutcome) === expectedArtifact &&
+              outcomeContext.get(peerOutcome) === expectedContext &&
+              ctx.lastSnapshotHashOf(peerOutcome) === outcomeHash
+            case None => false
+          }
+          .handleErrorWith { err =>
+            ConsensusLog
+              .warn(
+                log,
+                Category.Lifecycle,
+                outcomeConsensusKey.show,
+                "n/a",
+                LogEvent.DownloadInitReadyPromotion,
+                "peer" -> ConsensusLog.pid(peer.id),
+                "result" -> "peer_check_failed",
+                "error" -> Option(err.getMessage).getOrElse(err.getClass.getSimpleName)
+              )
+              .as(false)
+          }
+
+      ctx.clusterStorage.getResponsivePeers.flatMap { peers =>
+        val readyCandidates = peers.filter(_.state == NodeState.Ready).toList
+        val required = StateTransitions.readyPromotionQuorum(readyCandidates.size + 1, config.quorumThresholdFraction)
+        val requiredExternalReady = StateTransitions.readyPromotionExternalReadyFloor(config.activeFacilitatorFloor)
+
+        readyCandidates.traverse(alignedWithDownloaded).flatMap { results =>
+          val externalAligned = results.count(identity)
+          val alignedWithSelf = externalAligned + 1
+          val promote = externalAligned >= requiredExternalReady && alignedWithSelf >= required
+          ConsensusLog.info(
+            log,
+            Category.Lifecycle,
+            outcomeConsensusKey.show,
+            "n/a",
+            LogEvent.DownloadInitReadyPromotion,
+            "result" -> (if (promote) "promoted" else "waiting_for_ready"),
+            "externalAligned" -> externalAligned.toString,
+            "alignedWithSelf" -> alignedWithSelf.toString,
+            "readyCandidates" -> readyCandidates.size.toString,
+            "requiredExternalReady" -> requiredExternalReady.toString,
+            "required" -> required.toString
+          ) >>
+            promote.pure[F]
+        }
+      }
+    }
+
   class NoValidPeersException(message: String) extends RuntimeException(message)
 
   /** Raised when `initFromDownload` resolves an outcome that still lists `selfId` in `readmissionCountdown` (B2 probation). The outer
@@ -973,4 +1049,19 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           s"deferring facilitation until cluster clears probation."
       )
       with scala.util.control.NoStackTrace
+}
+
+object StateTransitions {
+
+  /** View-change certificates use a Core-sized quorum, so the certified next leader must come from Core as well. The fallback preserves
+    * startup/fork-recovery behavior if a malformed or transitional state has not populated Core yet.
+    */
+  private[consensus] def viewChangeLeaderPool(coreFacilitators: List[PeerId], facilitators: List[PeerId]): List[PeerId] =
+    if (coreFacilitators.nonEmpty) coreFacilitators else facilitators
+
+  private[consensus] def readyPromotionQuorum(peerCountIncludingSelf: Int, quorumThresholdFraction: Double): Int =
+    math.max(2, math.max(1, QuorumPolicy.fromFraction(peerCountIncludingSelf, quorumThresholdFraction)))
+
+  private[consensus] def readyPromotionExternalReadyFloor(activeFacilitatorFloor: Int): Int =
+    math.max(1, activeFacilitatorFloor - 1)
 }
