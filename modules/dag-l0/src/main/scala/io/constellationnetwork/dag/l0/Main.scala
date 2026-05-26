@@ -68,7 +68,7 @@ object Main
   protected val configFiles: List[String] = List("dag-l0.conf")
 
   private[dag] def rollbackBootstrapFacilitators(nodeId: PeerId, proofSigners: List[PeerId]): List[PeerId] =
-    if (proofSigners.contains(nodeId)) proofSigners else List(nodeId)
+    if (proofSigners.nonEmpty) proofSigners else List(nodeId)
 
   type KryoRegistrationIdRange = DagL0KryoRegistrationIdRange
 
@@ -326,10 +326,11 @@ object Main
               case (snapshotInfo, snapshot) =>
                 for {
                   hashedSnapshot <- hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[IO])
-                  // Rollback bootstrap: preserve the rolled-back snapshot's proof signers when
-                  // this node was one of those signers. That keeps lastSigners/Core anchored to the
-                  // signed checkpoint instead of turning every rollback into a self-only chain tip.
-                  // If this node was not a signer, fall back to self-only checkpoint serving.
+                  // Rollback bootstrap: preserve the rolled-back snapshot's proof signers as
+                  // the checkpoint's live seed committee. That keeps lastSigners/Core anchored
+                  // to signed evidence instead of turning a non-signer rollback server into a
+                  // self-only chain tip. Only fall back to self-only when the checkpoint has no
+                  // proofs at all (genesis / malformed legacy edge).
                   proofSigners = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
                   bootstrapFacilitators = rollbackBootstrapFacilitators(nodeId, proofSigners)
                   bootstrapMode = if (bootstrapFacilitators === proofSigners) "proof_signers" else "self_only_fallback"
@@ -343,6 +344,7 @@ object Main
                     "mode" -> bootstrapMode,
                     "proofSignerCount" -> proofSigners.size.toString,
                     "bootstrapFacilitatorCount" -> bootstrapFacilitators.size.toString,
+                    "selfSignedCheckpoint" -> proofSigners.contains(nodeId).toString,
                     "proofSigners" -> proofSigners.map(ConsensusLog.pid).sorted.mkString(","),
                     "bootstrapFacilitators" -> bootstrapFacilitators.map(ConsensusLog.pid).sorted.mkString(",")
                   )

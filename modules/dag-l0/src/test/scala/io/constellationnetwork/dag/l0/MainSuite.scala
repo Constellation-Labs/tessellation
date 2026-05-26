@@ -17,8 +17,14 @@ object MainSuite extends SimpleIOSuite {
     expect.same(signers, Main.rollbackBootstrapFacilitators(self, signers))
   }
 
-  pureTest("rollback bootstrap falls back to self-only when self did not sign the checkpoint") {
+  pureTest("rollback bootstrap preserves snapshot proof signers when self did not sign the checkpoint") {
     val signers = List(peerB, peerC)
+
+    expect.same(signers, Main.rollbackBootstrapFacilitators(self, signers))
+  }
+
+  pureTest("rollback bootstrap falls back to self-only only when checkpoint has no proof signers") {
+    val signers = List.empty[PeerId]
 
     expect.same(List(self), Main.rollbackBootstrapFacilitators(self, signers))
   }
