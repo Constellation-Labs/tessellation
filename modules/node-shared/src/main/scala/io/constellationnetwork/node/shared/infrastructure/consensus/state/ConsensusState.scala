@@ -210,17 +210,15 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   outcomeEndTime: Option[Long] = None,
   leader: PeerId,
   viewNumber: Int = 0,
-  // Round-start seed view stamped by the state creator from `max(priorAbandonmentCount, timeView)`.
+  // Round-start seed view stamped by the state creator from certified state.
   // Frozen for the lifetime of the round -- VCC-driven view advances in
   // `StateTransitions.scala` (`s.copy(viewNumber = toView.toInt, ...)`) bump `viewNumber` but
   // leave `initialViewNumber` unchanged so the validator can distinguish the deterministic
   // round-start seed from a real certified transition.
   //
-  // Why: a round that STARTS at `viewNumber > 0` (because priorAbandonmentCount or timeView is
-  // non-zero at construction) has no VCC for the implied `0..initialView` jump -- that jump is
-  // a deterministic seed, not a view-change quorum. Pre-alpha.90 the validator rejected every
-  // such round-start proposal with `view{N}_proposal_missing_vcc` and the cluster self-wedged
-  // on every retry. Read sites:
+  // Why: a round that STARTS at a non-zero certified view may not have a local VCC cached yet.
+  // The validator accepts the seed view, while any later view still requires assembled VCC.
+  // Read sites:
   //   - leader-side proposal-build (`vccMissing`): suppress the abort when `viewNumber == initialViewNumber`.
   //   - validator-side `validateProposalVcc` (via `ProposalVccValidator.validate`): accept a
   //     no-VCC proposal when `proposalView == initialViewNumber`.

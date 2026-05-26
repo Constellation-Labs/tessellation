@@ -36,10 +36,9 @@ abstract class ConsensusStateCreator[F[_]: Sync, Key: Show, Artifact, Context, S
 
   type StateCreateResult = Option[ConsensusState[Key, Status, Outcome, Kind]]
 
-  /** Builds a new consensus state for `key`. `priorAbandonmentCount` is the number of consecutive abandonment retries already observed at
-    * this key (read from `ConsensusEngineContext.retriableAtSameKeyRef` by the caller). Implementations should pass it as the initial
-    * `viewNumber` to `selectLeaderWeighted` so each retry deterministically rotates to a different leader, breaking the loop where every
-    * retry of a wedged key re-elected the same silent peer.
+  /** Builds a new consensus state for `key`. `priorAbandonmentCount` is retained for compatibility and diagnostics, but implementations
+    * should not treat it as certified view evidence. Round-start view should remain at the committed/certified view; subsequent view
+    * movement must be driven by signed VCV quorum / assembled VCC.
     */
   def tryFacilitateConsensus(
     key: Key,

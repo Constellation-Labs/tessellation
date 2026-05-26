@@ -17,10 +17,10 @@ import weaver.FunSuite
 /** Regression coverage for the alpha.93 stale-proposal-slot prune predicate.
   *
   * Closes the alpha.92 9h wedge at ord 3127095 (`project_alpha92_wedge_may21.md`). A leader's `Proposal(view=16, vcc=None)` arrived at
-  * peers BEFORE they entered the round under that leader; once the round restarted at `initialViewNumber > 16`, the cached slot was
-  * guaranteed to fail validation forever (`view16_proposal_missing_vcc` -- 10,333 rejections in 9h on .193) because `ProposalVccValidator`
-  * only bypasses the missing-VCC check when `proposalView == initialViewNumber` (alpha.90 seed-view) or in solo-core mode.
-  * `ConsensusStorage.addProposal` first-write-wins for higher-view-without-VCC also blocked replacement.
+  * peers BEFORE they entered the round under that leader; once the round advanced past view 16, the cached slot was guaranteed to fail
+  * validation forever (`view16_proposal_missing_vcc` -- 10,333 rejections in 9h on .193) because `ProposalVccValidator` only bypasses the
+  * missing-VCC check when `proposalView == initialViewNumber` (certified seed-view) or in solo-core mode. `ConsensusStorage.addProposal`
+  * first-write-wins for higher-view-without-VCC also blocked replacement.
   *
   * The fix in `ConsensusStorage.pruneStaleProposalSlots` drops slots where `proposal.view < minViewToKeep && proposal.vcc.isEmpty`. This
   * suite drives the same predicate against an in-memory map shaped identically to `peerDeclarationsMap` so we cover every cell of the truth

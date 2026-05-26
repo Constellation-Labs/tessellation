@@ -90,24 +90,9 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
   private def facilitateRound(lastOutcome: Outcome, key: Key, trigger: Option[ConsensusTrigger]): F[Unit] =
     for {
       resources <- storage.getResources(key)
-      // Initial view for the next round-attempt at this key. Replaces the previous local-Ref
-      // retry counter (`AbandonmentTracker.retriableAtSameKeyRef`), which drifted between nodes
-      // when they processed ROUND_ABANDONED events at different rates. Observed on testnet:
-      // .193 retryCount=4, .45 retryCount=2, .79 retryCount=4 for the same wedged key.
-      // Different counts produced different initial leader picks via `sorted[N % size]`, splitting
-      // the committee's view of who the leader was and starving view-change of quorum.
-      //
-      // Now derived from `resources.viewChangeVotes`: the per-key map keyed by (fromView, toView)
-      // that accumulates signed VC votes from every facilitator. The highest `toView` observed
-      // here is the highest view the cluster has TRIED to advance to at this key, and it's
-      // gossip-propagated to all participants. Honest nodes that received the same gossip have
-      // the same max; gossip-lag divergence is bounded to ~one gossip cycle (seconds), versus
-      // the unbounded local-counter drift the old logic produced.
-      //
-      // Falls back to 0 when no VC vote has been gossiped yet at this key (clean first attempt).
-      // We use `max + 1` so the retry starts at a view strictly past the highest view the wedged
-      // round reached. Otherwise restarting at the same view picks the same leader that just
-      // abandoned (sorted[N % size] is deterministic), defeating the rotation we want.
+      // Retry/view-change history is passed as a compatibility and diagnostic signal only. Consensus
+      // implementations must not treat a local counter or single VCV as quorum evidence for
+      // proposal-critical view/leader seeding.
       priorAbandonmentCount = (resources.viewChangeVotes.keys.map(_._2).maxOption match {
         case Some(maxToView) => maxToView + 1
         case None            => 0L

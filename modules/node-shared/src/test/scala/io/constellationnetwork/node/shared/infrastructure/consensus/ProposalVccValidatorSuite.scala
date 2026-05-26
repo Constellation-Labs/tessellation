@@ -16,11 +16,11 @@ import weaver.FunSuite
 /** Pure-function coverage for the shared `ProposalVccValidator.validate` helper. Both the dag-l0 and currency-l0 advancers delegate to this
   * helper, so tests here cover both code paths.
   *
-  * The alpha.90 P0 #1 work introduced `state.initialViewNumber` to distinguish a round that STARTS at view > 0 (deterministic seed from
-  * `max(priorAbandonmentCount, timeView)`) from a round that ADVANCED to view > 0 via a real VCC. The validator must accept a no-VCC
-  * proposal at the seed view (positive case) but still reject a no-VCC proposal once the round has advanced past the seed (negative case).
-  * Issue 2 from the codex follow-up additionally requires that any embedded VCC's `(fromView, toView)` matches the proposal's view -- a
-  * stale 0->1 cert preserved across retries must not slip onto a view=2 proposal.
+  * `state.initialViewNumber` distinguishes a certified/non-default round seed from a round that ADVANCED to view > 0 via a real VCC. The
+  * validator must accept a no-VCC proposal at the seed view (positive case) but still reject a no-VCC proposal once the round has advanced
+  * past the seed (negative case). Local retry counters and wall-clock pacemaker hints are intentionally not valid seed evidence. Issue 2
+  * from the codex follow-up additionally requires that any embedded VCC's `(fromView, toView)` matches the proposal's view -- a stale 0->1
+  * cert preserved across retries must not slip onto a view=2 proposal.
   */
 object ProposalVccValidatorSuite extends FunSuite {
 

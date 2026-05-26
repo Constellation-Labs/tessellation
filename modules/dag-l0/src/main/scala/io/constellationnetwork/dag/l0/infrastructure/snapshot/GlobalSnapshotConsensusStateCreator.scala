@@ -401,7 +401,10 @@ object GlobalSnapshotConsensusStateCreator {
         nowMs <- Clock[F].realTime.map(_.toMillis)
         parentEndTimeMs = lastOutcome.recentRoundEndTimes.lastOption.map(_._2)
         timeView = ViewFromTime.compute(nowMs, parentEndTimeMs, config.viewInterval.toMillis)
-        initialView = priorAbandonmentCount
+        // Round-start view must be certificate-derived. `priorAbandonmentCount` is a local retry
+        // diagnostic, and `timeView` is only a pacemaker hint for signed VCV emission. Neither is
+        // quorum evidence, so neither may directly seed proposal-critical view/leader selection.
+        initialView = 0
         leader = facilitatorSelector.selectLeaderWeighted(
           leaderPool,
           entropy,
@@ -445,7 +448,7 @@ object GlobalSnapshotConsensusStateCreator {
           coreFacilitators = CoreFacilitators(committees.core),
           tier1Facilitators = Tier1Facilitators(committees.tier1),
           leader = leader,
-          // Round-start view = priorAbandonmentCount. MUST match the
+          // Round-start view = certified initial view. MUST match the
           // `viewNumber = initialView` argument passed to selectLeaderWeighted above so the
           // leader the round believes it has at view=N matches the leader the selector returns
           // at view=N. View-change continues monotonically from certified VCC advancement.
@@ -453,9 +456,9 @@ object GlobalSnapshotConsensusStateCreator {
           // Frozen round-start view for the alpha.90 P0 #1 self-wedge fix. VCC-driven advances
           // (StateTransitions.scala `s.copy(viewNumber = toView.toInt, ...)`) bump `viewNumber`
           // but never this field, so `validateProposalVcc` and the leader-side `vccMissing`
-          // gate can distinguish the deterministic `0..initialView` seed jump (no VCC required)
-          // from a real view-change quorum (VCC required). Without this stamping the validator
-          // rejected every round-start proposal at `viewNumber > 0` with `view{N}_proposal_missing_vcc`.
+          // gate can distinguish the round-start view from a real view-change quorum
+          // (VCC required). Without this stamping the validator rejected every round-start
+          // proposal at `viewNumber > 0` with `view{N}_proposal_missing_vcc`.
           initialViewNumber = initialView,
           entropy = entropy
         )
@@ -473,6 +476,7 @@ object GlobalSnapshotConsensusStateCreator {
             "self" -> ConsensusLog.pid(selfId),
             "view" -> initialView.toString,
             "priorAbandonmentCount" -> priorAbandonmentCount.toString,
+            "viewSeed" -> "certified_or_zero",
             "timeViewTimeoutHint" -> timeView.toString,
             "parentEndTimeMs" -> parentEndTimeMs.fold("none")(_.toString),
             "nowMs" -> nowMs.toString
@@ -482,7 +486,7 @@ object GlobalSnapshotConsensusStateCreator {
               (if (penalizedPeers.nonEmpty) Seq("penalized" -> penalizedPeers.size.toString) else Seq.empty) ++
               (if (probationPeers.nonEmpty) Seq("probation" -> probationPeers.size.toString) else Seq.empty) ++
               (if (abandonedMissing.nonEmpty) Seq("abandonedMissing" -> abandonedMissing.size.toString) else Seq.empty) ++
-              (if (priorAbandonmentCount > 0) Seq("retryCount" -> priorAbandonmentCount.toString) else Seq.empty)
+              (if (priorAbandonmentCount > 0) Seq("suppressedRetryViewSeed" -> priorAbandonmentCount.toString) else Seq.empty)
           ConsensusLog.info(logger, Lifecycle, key.show, role, RoundStarted, (basePairs ++ optionalPairs): _*)
         }
 

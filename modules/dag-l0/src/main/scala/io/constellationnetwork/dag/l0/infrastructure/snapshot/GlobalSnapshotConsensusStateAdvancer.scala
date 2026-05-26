@@ -920,11 +920,9 @@ object GlobalSnapshotConsensusStateAdvancer {
           // alpha.88 monitor saw repeated `ROUND_STARTED facs=1 leader=e2f4496e view=0` with
           // vcc_missing_for_view_gt_0 on every retry).
           isSoloCore = state.coreFacilitators.value.size <= 1
-          // alpha.90 P0 #1: a round that STARTS at `viewNumber == initialViewNumber > 0` (because
-          // priorAbandonmentCount or timeView was non-zero at construction) implies a deterministic
-          // `0..initialView` seed jump -- not a certified VCC transition -- so the leader must be
-          // allowed to propose without a VCC at the seed view. Once `viewNumber > initialViewNumber`
-          // a real view-change has occurred and the VCC requirement re-engages.
+          // A round-start seed view is accepted without consulting a locally cached VCC. Once
+          // `viewNumber > initialViewNumber`, a real view-change has occurred and the VCC
+          // requirement re-engages.
           isRoundStartView = state.viewNumber === state.initialViewNumber
           vccMissing = isLeader && state.viewNumber > 0 && maybeAssembledVcc.isEmpty && !isSoloCore && !isRoundStartView
           aborted = (isLeader && leaderLock.flatMap(_.lockedQc).exists(_.proposalHash =!= hash)) || vccMismatch || vccMissing

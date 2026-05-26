@@ -568,7 +568,14 @@ object Main
                                         hashedSnapshot.hash
                                       ),
                                       recentProofSizes = genesisRecentProofSizes
-                                    )
+                                    ),
+                                    // Genesis is also a checkpoint-serving bootstrap. If the
+                                    // genesis node starts round 2 immediately, it can finalize a
+                                    // self-only snapshot before joining validators register, which
+                                    // makes `lastSigners` and Core collapse to one peer forever.
+                                    // Deferring gives validators time to download the genesis
+                                    // outcome, promote Ready, and register as candidates.
+                                    deferFirstRound = true
                                   )
                               } yield ()
                           }
