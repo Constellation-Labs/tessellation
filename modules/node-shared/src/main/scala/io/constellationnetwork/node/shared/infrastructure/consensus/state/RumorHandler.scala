@@ -1,8 +1,9 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
-import cats.Applicative
 import cats.effect.kernel.Async
 import cats.syntax.all._
+
+import scala.concurrent.duration._
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
@@ -120,8 +121,17 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
         // (signed wire wrapper) via handlePeerVote. Any other unknown declaration is an error.
         new IllegalArgumentException(s"Unexpected declaration: ${other.getClass.getName}").raiseError[F, Option[Any]]
     }
-    observeTip >> logReceipt >> op.flatMap(triggerUpdateIfChanged(queue, key))
+    observeTip >> logReceipt >> op.flatMap(triggerUpdateIfChanged(queue, key)) >>
+      schedulePostSignatureGraceCheck(key).whenA(kindLabel === "Signature" || kindLabel === "BinarySignature")
   }
+
+  private def schedulePostSignatureGraceCheck(key: Key): F[Unit] =
+    Async[F]
+      .start(
+        Async[F].sleep(ctx.config.signatureGracePeriod + 50.millis) >>
+          queue.offer(ConsensusCommand.CheckUpdate(key))
+      )
+      .void
 
   private def handlePeerVote(origin: PeerId, v: ConsensusPeerVote[_]): F[Unit] = {
     val key = v.key.asInstanceOf[Key]
@@ -272,15 +282,16 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
     }.flatMap(triggerUpdateIfChanged(queue, key))
 
   /** Receive a locally-assembled `ViewChangeCertificate` from a peer that DID reach quorum for some `(fromView, toView)` transition and
-    * store it on this node, even if this node has not yet seen enough VCV votes locally to assemble its own. Closes the per-peer assembly
-    * asymmetry that would otherwise leave a lagging peer with an empty `assembledVccR` slot at the current view, wedging the leader path
-    * with `vcc_missing_for_view_gt_0` on the next round. Trust model: the rumor envelope is signed by the gossip layer; the VCC itself
-    * carries the per-vote `Signed[ViewChangeVote]` proofs that validators re-verify at proposal-acceptance time. Storing a malformed VCC
-    * locally cannot finalize a round on its own -- it can only lead to this node's leadership turn failing its own proposal validation,
-    * which is no worse than the current behaviour with `vcc_missing`.
+    * store it on this node, even if this node has not yet seen enough VCV votes locally to assemble its own.
+    *
+    * The VCC also rehydrates its signed votes into `resources.viewChangeVotes` and queues the normal assembly path. This makes a received
+    * certificate an active pacemaker input: a peer that missed local quorum can still advance its view via the same builder/validation path
+    * as peers that assembled the certificate locally. The VCC itself is not trusted as an imperative state mutation; malformed or
+    * out-of-pool votes are rejected by `ViewChangeCertificateBuilder` in `CheckViewChangeAssembly`.
     */
   private def handleAssembledVcc(origin: PeerId, vc: ConsensusAssembledVcc[_]): F[Unit] = {
     val key = vc.key.asInstanceOf[Key]
+    val votes = vc.vcc.votes.toSortedSet.toList
     storage.observePeerAtKey(origin, key) >>
       ConsensusLog.info(
         log,
@@ -291,8 +302,14 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
         "received" -> "assembled_vcc",
         "from" -> ConsensusLog.pid(origin),
         "fromView" -> vc.vcc.fromView.toString,
-        "toView" -> vc.vcc.toView.toString
+        "toView" -> vc.vcc.toView.toString,
+        "votes" -> votes.size.toString
       ) >>
-      storage.storeAssembledVcc(key, vc.vcc)
+      storage.storeAssembledVcc(key, vc.vcc) >>
+      votes.traverse_ { signedVote =>
+        val signer = signedVote.proofs.head.id.toPeerId
+        storage.addViewChangeVote(signer, key, vc.vcc.fromView, vc.vcc.toView, signedVote).void
+      } >>
+      queue.offer(ConsensusCommand.CheckViewChangeAssembly(key))
   }
 }
