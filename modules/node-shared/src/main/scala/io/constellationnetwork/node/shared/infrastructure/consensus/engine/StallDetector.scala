@@ -435,6 +435,12 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       )
       readyParticipationInfeasible = readyParticipationStatus.infeasible
       readyParticipationDuringJoiningGrace <- ctx.nodeStorage.isInJoiningGracePeriod
+      // Joining grace exists specifically to let a freshly restarted/downloaded source cohort
+      // converge on Ready/current observations before aggressive local liveness gates fire. In
+      // alpha.103, this gate fired with joiningGrace=true during rollback restart, causing a
+      // tight abandon/retry loop at view 0 before sibling validators finished promotion. Keep
+      // the diagnostic log/metric, but do not abandon until the grace window has elapsed.
+      readyParticipationShouldAbandon = readyParticipationInfeasible && !readyParticipationDuringJoiningGrace
       _ <- (
         ConsensusLog.warn(
           logger,
@@ -469,11 +475,11 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // give up. Without this, solo-eviction fires on the same cycle as maxStallCycles
       // abandonment, wasting the eviction.
       stallCycleExceeded = finalStallCount >= config.maxStallCycles && !stallResult.evictionEscalated
-      shouldAbandon = stallCycleExceeded || roundTimedOut || quorumInfeasible || isLagging || readyParticipationInfeasible
+      shouldAbandon = stallCycleExceeded || roundTimedOut || quorumInfeasible || isLagging || readyParticipationShouldAbandon
 
       abandonReason: AbandonReason =
         if (isLagging) AbandonReason.Lagging(peersAtHigherKey, totalRegisteredPeers, totalAllRegs)
-        else if (readyParticipationInfeasible)
+        else if (readyParticipationShouldAbandon)
           AbandonReason.ReadyParticipationQuorumInfeasible(
             readyParticipationStatus.activeReady,
             readyParticipationStatus.coreQuorum,
