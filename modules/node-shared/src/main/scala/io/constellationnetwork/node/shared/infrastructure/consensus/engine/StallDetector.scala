@@ -9,7 +9,7 @@ import scala.concurrent.duration._
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{AdmissionReason, EvictionReason}
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
-import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusResources}
+import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusResources, ViewFromTime}
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.node.NodeState
@@ -91,7 +91,11 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     // per-view, not to the entire life of the round. Without this, a round that view-changes
     // late in the 300s window runs out of budget in view-1 CollectingSignatures even though
     // the new view is making steady progress -- observed in fork-recovery E2E.
-    lastView: Int = 0
+    lastView: Int = 0,
+    // Local duplicate-suppression for timestamp-driven ViewChangeVote emission. The vote still
+    // goes through the normal signed VCV/VCC path; this only avoids re-signing the same
+    // current->next view transition on every monitor tick.
+    lastTimestampPacemakerVoteView: Option[Int] = None
   )
 
   private val basePollInterval = 100L
@@ -216,6 +220,12 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // --- Timeout calculation ---
       effectiveTimeout <- calculateTimeout(ms.stallCount, info, state)
 
+      // --- Timestamp pacemaker ---
+      // The parent outcome's consensus end-time is signed outcome data. Use it as timeout
+      // evidence only: emit a VCV when the current view is overdue, then let VCC assembly
+      // decide whether the view actually advances.
+      timestampPacemakerFired <- maybeEmitTimestampPacemakerVote(key, state, ms.lastTimestampPacemakerVoteView)
+
       // --- Early view change for unresponsive leader ---
       // Gate on a minimum round-elapsed window so a stale Unresponsive flag carried
       // over from bootstrap gossip failures (now eagerly set by LocalHealthcheck) does
@@ -226,10 +236,14 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // healthcheck recovery has time to clear false positives before the check fires.
       roundElapsedForViewChange = now - ms.roundStartTime
       leaderUnresponsive <- isLeaderUnresponsive(state.leader)
-      earlyViewChange = leaderUnresponsive &&
+      earlyViewChangeDue = leaderUnresponsive &&
         ops.isProposalPhase(state.status) &&
         ms.stallCount == 0 &&
         roundElapsedForViewChange >= EarlyViewChangeMinRoundElapsed
+      // If the timestamp pacemaker already emitted a VCV for this view on this tick, do not
+      // emit a second identical leader-unresponsive VCV. The duplicate should be harmless at
+      // storage level, but it pollutes VCV/VCC telemetry and wastes gossip.
+      earlyViewChange = earlyViewChangeDue && !timestampPacemakerFired
       _ <- (
         ConsensusLog.warn(
           logger,
@@ -262,7 +276,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
 
       // --- Handle stall: view change for proposal phase, count toward abandon for others ---
       stallResult <-
-        if (earlyViewChange) StallResult(didStall = true, quorumInfeasible = false).pure[F]
+        if (earlyViewChange || timestampPacemakerFired) StallResult(didStall = true, quorumInfeasible = false).pure[F]
         else
           handleStall(
             key = key,
@@ -353,6 +367,11 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       peerCurrentKeys <- storage.getPeerCurrentKeys
       responsivePeers <- clusterStorage.getResponsivePeers
       readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
+      waitingForReadyPeerCount = responsivePeers.count(_.state === NodeState.WaitingForReady)
+      sessionStartedPeerCount = responsivePeers.count(_.state === NodeState.SessionStarted)
+      _ <- Metrics[F].updateGauge("dag_consensus_cluster_ready_peer_count", readyPeerIds.size.toLong)
+      _ <- Metrics[F].updateGauge("dag_consensus_cluster_waiting_for_ready_peer_count", waitingForReadyPeerCount.toLong)
+      _ <- Metrics[F].updateGauge("dag_consensus_cluster_session_started_peer_count", sessionStartedPeerCount.toLong)
       readyPeerRegs = peerCurrentKeys.view.filterKeys(readyPeerIds.contains).toMap
       peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key }
       totalRegisteredPeers = readyPeerRegs.size
@@ -554,9 +573,55 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
             // phase gets any retransmit attempts.
             retransmitAttempt = if (statusChanged || stallResult.evictionEscalated) 0 else newRetransmitAttempt,
             lastRetransmitAt = if (statusChanged || stallResult.evictionEscalated) None else newLastRetransmitAt,
-            lastView = state.viewNumber
+            lastView = state.viewNumber,
+            lastTimestampPacemakerVoteView =
+              if (timestampPacemakerFired) state.viewNumber.some
+              else if (viewAdvanced) None
+              else ms.lastTimestampPacemakerVoteView
           )
         )
+
+  private def maybeEmitTimestampPacemakerVote(
+    key: Key,
+    state: ConsensusState[Key, Status, Outcome, Kind],
+    lastTimestampPacemakerVoteView: Option[Int]
+  ): F[Boolean] =
+    ctx.lastOutcomeEndTimeMsOf(state.lastOutcome).fold(false.pure[F]) { parentEndTimeMs =>
+      for {
+        nowWallMs <- Async[F].realTime.map(_.toMillis)
+        timeViewHint = ViewFromTime.compute(nowWallMs, parentEndTimeMs.some, config.viewInterval.toMillis)
+        selfIsActiveFacilitator = state.facilitators.value.contains(selfId) &&
+          !state.withdrawnFacilitators.value.contains(selfId)
+        // Timeout-driven VCVs are intentionally limited to facilities/proposal phases. In
+        // signatures phase, a timeout is evidence that signature collection or delivery is
+        // unhealthy, not necessarily that the leader failed before proposing; the existing
+        // grace/heartbeat and abandonment paths handle that narrower failure mode.
+        eligiblePhase = ops.phaseIndex(state.status) == 0 || ops.isProposalPhase(state.status)
+        alreadyEmitted = lastTimestampPacemakerVoteView.contains(state.viewNumber)
+        shouldEmit = selfIsActiveFacilitator &&
+          eligiblePhase &&
+          timeViewHint > state.viewNumber &&
+          !alreadyEmitted
+        _ <- (
+          ConsensusLog.info(
+            logger,
+            Category.Phase,
+            key.toString,
+            selfRole(state),
+            LogEvent.ForcedViewChange,
+            "reason" -> "timestamp_pacemaker_timeout",
+            "view" -> state.viewNumber.toString,
+            "targetView" -> (state.viewNumber + 1).toString,
+            "timeViewHint" -> timeViewHint.toString,
+            "parentEndTimeMs" -> parentEndTimeMs.toString,
+            "nowMs" -> nowWallMs.toString,
+            "viewIntervalMs" -> config.viewInterval.toMillis.toString
+          ) >>
+            Metrics[F].incrementCounter("dag_consensus_timestamp_pacemaker_vcv_total") >>
+            viewChangeManager.performViewChange(key, state)
+        ).whenA(shouldEmit)
+      } yield shouldEmit
+    }
 
   // ── Timeout Calculation ───────────────────────────────────────────
 

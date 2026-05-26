@@ -22,11 +22,13 @@ import io.constellationnetwork.ext.kryo._
 import io.constellationnetwork.node.shared.app.{DagL0, NodeShared, TessellationIOApp}
 import io.constellationnetwork.node.shared.domain.collateral.OwnCollateralNotSatisfied
 import io.constellationnetwork.node.shared.ext.pureconfig._
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.genesis.{GenesisFS => GenesisLoader}
 import io.constellationnetwork.node.shared.infrastructure.gossip.event._
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{GlobalSnapshotLocalFileSystemStorage, PeerHistorySidecarStorage}
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
 import io.constellationnetwork.node.shared.resources.{ConsensusExecutor, MkHttpServer}
@@ -65,8 +67,8 @@ object Main
 
   protected val configFiles: List[String] = List("dag-l0.conf")
 
-  private[dag] def rollbackBootstrapFacilitators(nodeId: PeerId): List[PeerId] =
-    List(nodeId)
+  private[dag] def rollbackBootstrapFacilitators(nodeId: PeerId, proofSigners: List[PeerId]): List[PeerId] =
+    if (proofSigners.contains(nodeId)) proofSigners else List(nodeId)
 
   type KryoRegistrationIdRange = DagL0KryoRegistrationIdRange
 
@@ -324,14 +326,32 @@ object Main
               case (snapshotInfo, snapshot) =>
                 for {
                   hashedSnapshot <- hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[IO])
-                  // Alpha.101 rollback bootstrap: the rollback node seeds the initial checkpoint
-                  // outcome as self-only. The snapshot's proof set is historical evidence, not the
-                  // live startup committee. Seeding from it makes the rollback lead start a round
-                  // against validators that have not downloaded or joined yet, causing early
-                  // quorum/ready-participation churn. Operational history below is still preserved
-                  // so deterministic selection has the old evidence again after the first committed
-                  // post-rollback snapshot.
-                  bootstrapFacilitators = rollbackBootstrapFacilitators(nodeId)
+                  // Rollback bootstrap: preserve the rolled-back snapshot's proof signers when
+                  // this node was one of those signers. That keeps lastSigners/Core anchored to the
+                  // signed checkpoint instead of turning every rollback into a self-only chain tip.
+                  // If this node was not a signer, fall back to self-only checkpoint serving.
+                  proofSigners = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
+                  bootstrapFacilitators = rollbackBootstrapFacilitators(nodeId, proofSigners)
+                  bootstrapMode = if (bootstrapFacilitators === proofSigners) "proof_signers" else "self_only_fallback"
+                  _ <- ConsensusLog.info(
+                    logger,
+                    ConsensusLog.Category.Recovery,
+                    snapshot.ordinal.toString,
+                    "n/a",
+                    ConsensusLog.Event.DownloadInitStart,
+                    "reason" -> "rollback_bootstrap_facilitators",
+                    "mode" -> bootstrapMode,
+                    "proofSignerCount" -> proofSigners.size.toString,
+                    "bootstrapFacilitatorCount" -> bootstrapFacilitators.size.toString,
+                    "proofSigners" -> proofSigners.map(ConsensusLog.pid).sorted.mkString(","),
+                    "bootstrapFacilitators" -> bootstrapFacilitators.map(ConsensusLog.pid).sorted.mkString(",")
+                  )
+                  _ <- Metrics[IO].incrementCounter(
+                    "dag_consensus_rollback_bootstrap_total",
+                    Seq(Metrics.unsafeLabelName("mode") -> bootstrapMode)
+                  )
+                  _ <- Metrics[IO].updateGauge("dag_consensus_rollback_proof_signer_count", proofSigners.size.toLong)
+                  _ <- Metrics[IO].updateGauge("dag_consensus_rollback_bootstrap_facilitator_count", bootstrapFacilitators.size.toLong)
                   // Seed the bootstrap-warmup window with the rollback snapshot's proof count.
                   // If we're rolling back to a healthy multi-node snapshot (proofs.size >= threshold),
                   // the window classifies as post-bootstrap and penalties apply immediately. If we're

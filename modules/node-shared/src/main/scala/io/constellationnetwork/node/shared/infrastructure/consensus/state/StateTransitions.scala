@@ -197,7 +197,14 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                       "toView" -> toView.toString,
                       "votes" -> votes.size.toString,
                       "quorum" -> q.toString
-                    )
+                    ) >>
+                      Metrics[F].incrementCounter(
+                        "dag_consensus_vcc_assembly_total",
+                        Seq(
+                          unsafeLabelName("outcome") -> "build_failed",
+                          unsafeLabelName("reason") -> error.code
+                        )
+                      )
                   case Right(vcc) =>
                     val leaderPool = StateTransitions.viewChangeLeaderPool(
                       state.coreFacilitators.value,
@@ -272,6 +279,24 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                           "statusReset" -> resetStatus.isDefined.toString
                         )
                         .whenA(didAdvance)
+                      _ <- Metrics[F]
+                        .incrementCounter(
+                          "dag_consensus_vcc_assembly_total",
+                          Seq(
+                            unsafeLabelName("outcome") -> "advanced",
+                            unsafeLabelName("reason") -> "none"
+                          )
+                        )
+                        .whenA(didAdvance)
+                      _ <- Metrics[F]
+                        .incrementCounter(
+                          "dag_consensus_vcc_assembly_total",
+                          Seq(
+                            unsafeLabelName("outcome") -> "not_advanced_race",
+                            unsafeLabelName("reason") -> "state_already_advanced"
+                          )
+                        )
+                        .unlessA(didAdvance)
                       _ <- Metrics[F].updateGauge("dag_consensus_view_number", toView).whenA(didAdvance)
                       _ <- queue.offer(ConsensusCommand.CheckUpdate(key)).whenA(didAdvance)
                     } yield ()
@@ -287,7 +312,14 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                   "hashes" -> multiple.size.toString,
                   "fromView" -> fromView.toString,
                   "toView" -> toView.toString
-                )
+                ) >>
+                  Metrics[F].incrementCounter(
+                    "dag_consensus_vcc_assembly_total",
+                    Seq(
+                      unsafeLabelName("outcome") -> "divergent_facilitators_hash",
+                      unsafeLabelName("reason") -> "multiple_hashes"
+                    )
+                  )
             }
           } else {
             log.debug(
@@ -606,6 +638,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
               val signedArtifact = outcomeArtifact.get(outcome)
               val signerIds = signedArtifact.proofs.toList.map(p => ConsensusLog.pid(p.id.toPeerId)).sorted.mkString(",")
               val facilitatorIds = newState.facilitators.value.toList.map(ConsensusLog.pid).sorted.mkString(",")
+              val signerCount = signedArtifact.proofs.size
 
               ConsensusLog.info(
                 log,
@@ -618,7 +651,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                   "duration" -> s"${duration.toMillis}ms",
                   "facilitators" -> newState.facilitators.value.size.toString,
                   "facilitatorIds" -> facilitatorIds,
-                  "signerCount" -> signedArtifact.proofs.size.toString,
+                  "signerCount" -> signerCount.toString,
                   "signerIds" -> signerIds,
                   "leader" -> ConsensusLog.pid(newState.leader),
                   "leaderScore" -> f"$leaderScore%.2f",
@@ -626,7 +659,12 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                 ) ++
                   (if (withdrawnCount > 0) Seq("withdrawn" -> withdrawnCount.toString) else Seq.empty) ++
                   (if (removedCount > 0) Seq("removed" -> removedCount.toString) else Seq.empty)): _*
-              )
+              ) >>
+                Metrics[F].updateGauge("dag_consensus_last_signer_count", signerCount.toLong) >>
+                Metrics[F].incrementCounter(
+                  "dag_consensus_outcome_signer_count_total",
+                  Seq(unsafeLabelName("signer_count") -> signerCount.toString)
+                )
             } >> {
               // Per-peer observed_responders accounting: for each canonical committee member,
               // increment either `credited` (peer was in observedResponders, will get

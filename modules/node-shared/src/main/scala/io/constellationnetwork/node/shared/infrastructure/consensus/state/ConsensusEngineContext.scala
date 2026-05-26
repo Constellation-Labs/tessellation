@@ -113,6 +113,12 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // this round. Local guard only -- decision does not mutate the round committee or the
   // facilitator hash, so determinism is preserved.
   lastOutcomeKeyOf: Outcome => Key,
+  // Layer-specific extraction of the consensus-agreed end timestamp for the carried outcome.
+  // The timestamp is used only as pacemaker evidence: once the local clock observes that the
+  // current view has exceeded the parent outcome's end-time + viewInterval budget,
+  // `StallDetector` emits a signed ViewChangeVote. It does not seed `ConsensusState.viewNumber`
+  // directly; view advancement still requires quorum assembly into a VCC.
+  lastOutcomeEndTimeMsOf: Outcome => Option[Long],
   // Local-only marker: the consensus key at which this node most recently completed
   // `initFromDownload` (recovery path). Set by `StateTransitions.initFromDownload`.
   //
@@ -172,7 +178,8 @@ object ConsensusEngineContext {
     lastSnapshotHashOf: Outcome => Hash,
     probationPeersOf: Outcome => Set[PeerId],
     peerQualityOf: Outcome => Map[PeerId, (Int, Int)] = (_: Outcome) => Map.empty[PeerId, (Int, Int)],
-    lastOutcomeKeyOf: Outcome => Key
+    lastOutcomeKeyOf: Outcome => Key,
+    lastOutcomeEndTimeMsOf: Outcome => Option[Long] = (_: Outcome) => None
   ): F[ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =
     for {
       running <- Ref.of[F, Boolean](false)
@@ -204,6 +211,7 @@ object ConsensusEngineContext {
         probationPeersOf,
         peerQualityOf,
         lastOutcomeKeyOf,
+        lastOutcomeEndTimeMsOf,
         recoveredAtKey,
         retriableAtSameKey
       )
