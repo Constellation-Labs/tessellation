@@ -393,24 +393,15 @@ object GlobalSnapshotConsensusStateCreator {
           participated >= config.minParticipationObservations && completed >= 1
         }
         leaderPool = if (graduatedLeaderPool.size >= 2) graduatedLeaderPool else coreList
-        // Phase 1 + phase 2 combined view seed:
-        //   - Phase 1 (`priorAbandonmentCount`): each same-key retry deterministically picks a
-        //     different initial leader (`sorted[N % size]`). Without this every retry reset to
-        //     view=0 and re-elected the abandoning peer.
-        //   - Phase 2 (`timeView`): wall-clock progress since the parent's `consensusEndTime`,
-        //     divided by `viewInterval`. Closes the failure mode where rounds abandon WITHOUT
-        //     incrementing `priorAbandonmentCount` (e.g., Tier 1 silence stalling the round at
-        //     view=0 indefinitely). `parentEndTime = None` at bootstrap or after a pre-phase-2
-        //     rollback -> timeView = 0 -> phase 1 alone drives the seed.
-        // `math.max` combines both: whichever signal is higher wins. Neither can backdate the
-        // other. The same `initialView` is stamped on the freshly-created ConsensusState below
-        // so the leader the round believes it has at view=N matches the leader the selector
-        // returns at view=N (HotStuff-style monotonic-view discipline). See
-        // `docs/consensus/view-from-time-anchor.md`.
+        // Deterministic GL0 view seed:
+        // `timeView` remains computed from the timestamp window, but it is treated as a pacemaker
+        // timeout hint, not as unilateral proposal-critical state. A local wall clock must not pick
+        // the proposal view/leader directly; view movement needs to arrive through the signed VCV/VCC
+        // path so all honest peers converge on the same view before accepting proposals.
         nowMs <- Clock[F].realTime.map(_.toMillis)
         parentEndTimeMs = lastOutcome.recentRoundEndTimes.lastOption.map(_._2)
         timeView = ViewFromTime.compute(nowMs, parentEndTimeMs, config.viewInterval.toMillis)
-        initialView = math.max(priorAbandonmentCount, timeView)
+        initialView = priorAbandonmentCount
         leader = facilitatorSelector.selectLeaderWeighted(
           leaderPool,
           entropy,
@@ -454,10 +445,10 @@ object GlobalSnapshotConsensusStateCreator {
           coreFacilitators = CoreFacilitators(committees.core),
           tier1Facilitators = Tier1Facilitators(committees.tier1),
           leader = leader,
-          // Round-start view = max(priorAbandonmentCount, timeView). MUST match the
+          // Round-start view = priorAbandonmentCount. MUST match the
           // `viewNumber = initialView` argument passed to selectLeaderWeighted above so the
           // leader the round believes it has at view=N matches the leader the selector returns
-          // at view=N. View-change continues monotonically from this seed (HotStuff-style).
+          // at view=N. View-change continues monotonically from certified VCC advancement.
           viewNumber = initialView,
           // Frozen round-start view for the alpha.90 P0 #1 self-wedge fix. VCC-driven advances
           // (StateTransitions.scala `s.copy(viewNumber = toView.toInt, ...)`) bump `viewNumber`
@@ -480,7 +471,11 @@ object GlobalSnapshotConsensusStateCreator {
             "leader" -> ConsensusLog.pid(leader),
             "leaderScore" -> f"$leaderScore%.2f",
             "self" -> ConsensusLog.pid(selfId),
-            "view" -> priorAbandonmentCount.toString
+            "view" -> initialView.toString,
+            "priorAbandonmentCount" -> priorAbandonmentCount.toString,
+            "timeViewTimeoutHint" -> timeView.toString,
+            "parentEndTimeMs" -> parentEndTimeMs.fold("none")(_.toString),
+            "nowMs" -> nowMs.toString
           )
           val optionalPairs =
             (if (withdrawn.nonEmpty) Seq("withdrawn" -> withdrawn.size.toString) else Seq.empty) ++

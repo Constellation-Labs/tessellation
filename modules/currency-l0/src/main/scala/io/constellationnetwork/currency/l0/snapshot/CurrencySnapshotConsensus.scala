@@ -287,6 +287,7 @@ object CurrencySnapshotConsensus {
           (o: CurrencyConsensusOutcome) => o.readmissionCountdown.filter(_._2 > 0).keySet,
           (o: CurrencyConsensusOutcome) => o.finished.snapshotHash,
           (o: CurrencyConsensusOutcome) => o.peerQuality.toMap,
+          (o: CurrencyConsensusOutcome) => o.recentRoundEndTimes.lastOption.map(_._2),
           getPeerChainTips
         )
 

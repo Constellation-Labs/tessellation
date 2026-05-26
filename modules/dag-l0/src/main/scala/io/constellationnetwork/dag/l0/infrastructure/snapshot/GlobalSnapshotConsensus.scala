@@ -367,6 +367,7 @@ object GlobalSnapshotConsensus {
           (o: GlobalConsensusOutcome) => o.readmissionCountdown.filter(_._2 > 0).keySet,
           (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
           (o: GlobalConsensusOutcome) => o.peerQuality.toMap,
+          (o: GlobalConsensusOutcome) => o.recentRoundEndTimes.lastOption.map(_._2),
           getPeerChainTips,
           injectedHealthRef
         )

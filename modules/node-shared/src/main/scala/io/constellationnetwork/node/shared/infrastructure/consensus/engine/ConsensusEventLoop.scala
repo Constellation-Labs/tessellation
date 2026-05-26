@@ -105,6 +105,7 @@ object ConsensusEventLoop {
     probationPeersOf: Outcome => Set[PeerId],
     lastSnapshotHashOf: Outcome => Hash,
     peerQualityOf: Outcome => Map[PeerId, (Int, Int)],
+    lastOutcomeEndTimeMsOf: Outcome => Option[Long],
     getPeerChainTips: F[Map[PeerId, ChainTip]],
     // Optional externally-owned health Ref. When provided, AbandonmentTracker writes to it so
     // a sibling reader (e.g. `Cluster.leave()`'s wedge guard in SharedServices) observes the
@@ -143,7 +144,8 @@ object ConsensusEventLoop {
         lastSnapshotHashOf,
         probationPeersOf,
         peerQualityOf,
-        _key.get _
+        _key.get _,
+        lastOutcomeEndTimeMsOf
       )
       healthRef <- injectedHealthRef.fold(ConsensusHealthStatus.ref[F])(Async[F].pure)
       viewChangeManager = new ViewChangeManager[F, Key, Artifact, Ctx, Status, Outcome, Kind](
