@@ -226,12 +226,13 @@ object types {
     // operators force VCV at the same count, ensuring all honest nodes converge on the same
     // (fromView, toView) for VCC assembly within bounded skew.
     forceViewChangeAbandonments: Int = 3,
-    // v19 phase 2 view-from-time anchor: divisor for deriving an initial view number from
+    // v19 phase 2 view-from-time anchor: divisor for deriving a pacemaker timeout hint from
     // wall-clock progress since the parent snapshot's `consensusEndTime`. Pairs with the
     // producer side (`Facility.proposerClockMs` + `ConsensusEndTime` median + `recentRoundEndTimes`
     // window). At round start, each peer computes
     //   timeView = (local_now - parent.consensusEndTime) / viewInterval
-    // and the round seeds `max(priorAbandonmentCount, timeView)` as its initial `viewNumber`.
+    // and the stall detector may emit a signed VCV when local view lags this hint. The hint must
+    // not directly seed proposal-critical `viewNumber`; view advancement requires VCV quorum/VCC.
     // NTP skew across honest nodes is +/- 10ms on AWS-class infra; with a 30s default the boundary
     // resolution is 3 parts in 10,000 -- well below view-transition granularity. Consensus-critical:
     // included in `deterministicConfigHash` so honest peers with the same parent + same `now`
@@ -612,11 +613,10 @@ object types {
     //     Cold restart required across the cluster; jar hash gates v19 <-> v20 peer
     //     connection at handshake.
     //     v20 additionally stamps `ConsensusState.initialViewNumber: Int` at round
-    //     construction from `max(priorAbandonmentCount, timeView)`, frozen for the
-    //     lifetime of the round. Validator-side `validateProposalVcc` (via the shared
-    //     `ProposalVccValidator.validate` helper) reads it to accept a no-VCC proposal
-    //     at the seed view (deterministic `0..initialView` jump, no quorum to assemble
-    //     from) while still rejecting a no-VCC proposal once the round has advanced
+    //     construction, frozen for the lifetime of the round. Validator-side
+    //     `validateProposalVcc` (via the shared `ProposalVccValidator.validate`
+    //     helper) reads it to accept a no-VCC proposal at the seed view while still
+    //     rejecting a no-VCC proposal once the round has advanced
     //     past the seed (`view{N}_proposal_missing_vcc`). Leader-side proposal-build
     //     gates `vccMissing` / `vccMismatch` and the assembled-VCC fetch on
     //     `viewNumber > initialViewNumber` symmetrically. Pre-alpha.90 the validator

@@ -138,18 +138,10 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // does not need to plumb new state. Until then this field is write-only.
   recoveredAtKeyRef: Ref[F, Option[Key]],
   // Per-key abandonment-retry counter. Owned by `AbandonmentTracker`, which increments on every
-  // `ROUND_ABANDONED_RETRIABLE` at the same key and resets when a new key arrives. Read by
-  // `ConsensusRoundRunner` at round-facilitation time and fed into the state creator as the
-  // initial `viewNumber` argument to `selectLeaderWeighted`. The deterministic effect: each
-  // same-key retry picks a different initial leader because `selectLeaderWeighted` indexes
-  // `sorted[viewNumber % size]`. Without this, every retry of a wedged key reset view to 0 and
-  // re-elected the same silent peer that caused the prior abandonment (observed at
-  // ord 3126034: 7 abandons in a row with leader=63adf853, score decaying but never crossing
-  // the chronic threshold).
-  //
-  // Deterministic across honest nodes that observed the same abandonment sequence. Slight
-  // divergence is possible if a node joins/restarts mid-wedge, but view-change converges within
-  // ~10 seconds of round start when leaders disagree.
+  // `ROUND_ABANDONED_RETRIABLE` at the same key and resets when a new key arrives. This is
+  // diagnostic/local liveness state only. It must not seed proposal-critical `viewNumber` or
+  // leader selection; alpha.104 showed nodes can restart the same key with different local retry
+  // counts and then emit non-coalescing VCVs from different views.
   retriableAtSameKeyRef: Ref[F, (Option[Key], Int)]
 )
 

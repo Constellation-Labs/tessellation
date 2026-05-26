@@ -22,7 +22,7 @@ import io.constellationnetwork.security.hash.Hash
   *   - `proposalView == 0` && Some(vcc): reject `view0_proposal_must_not_carry_vcc`
   *   - `proposalView == 0` && None: accept
   *   - `proposalView > 0` && None && `coreSize <= 1`: accept (alpha.89 solo-core bypass)
-  *   - `proposalView > 0` && None && `proposalView == initialViewNumber`: accept (alpha.90 round-start seed bypass)
+  *   - `proposalView > 0` && None && `proposalView == initialViewNumber`: accept (round-start certified seed bypass)
   *   - `proposalView > 0` && None: reject `view{N}_proposal_missing_vcc`
   *   - `proposalView > 0` && Some(vcc) && `vcc.toView != proposalView`: reject `vcc_view_mismatch` (alpha.90 issue 2 -- closes the latent
   *     gap that the alpha.90 seed-view bypass would otherwise expose: a stale 0->1 VCC could be embedded on a view=2 proposal without this
@@ -45,9 +45,8 @@ object ProposalVccValidator {
     * @param proposalVcc
     *   `Proposal.vcc`
     * @param initialViewNumber
-    *   `ConsensusState.initialViewNumber` -- the round-start view stamped by the state creator. A round that STARTS at `viewNumber > 0`
-    *   (because `priorAbandonmentCount` or `timeView` was non-zero at construction) needs to accept a no-VCC proposal at that seed view;
-    *   the implied `0..initialView` jump is a deterministic seed, not a certified VCC transition.
+    *   `ConsensusState.initialViewNumber` -- the round-start view stamped by the state creator. A round that starts at a non-zero certified
+    *   seed view may need to accept a no-VCC proposal at that seed view if the local VCC cache is not rehydrated yet.
     * @param coreSize
     *   `ConsensusState.coreFacilitators.value.size` -- the LIVENESS-quorum denominator (Tier 0 / Core).
     * @param facilitatorsHash

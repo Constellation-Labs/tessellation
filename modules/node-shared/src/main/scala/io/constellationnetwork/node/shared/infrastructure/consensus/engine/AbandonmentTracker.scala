@@ -137,9 +137,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
   /** Tracks consecutive retriable abandonments at the same key. If the node is stuck at the same ordinal with quorum-infeasible for too
     * long (e.g., post-chaos where one node forked ahead), this escalates to non-retriable after `maxRetriableAtSameKey` attempts.
     *
-    * Lives on `ConsensusEngineContext` rather than being a private field here so `ConsensusRoundRunner` can read the same counter when
-    * constructing a fresh retry: it passes the count to the state creator as the initial `viewNumber` so each retry deterministically
-    * rotates the leader pick (sorted[N % facilitator_count] instead of always sorted[0]).
+    * Lives on `ConsensusEngineContext` so other components can observe the retry pattern. It must not be used as consensus-critical view
+    * input: nodes can process abandonments at different rates, and seeding `viewNumber` from this local counter fragments VCV/VCC assembly.
     */
   private val retriableAtSameKeyRef: Ref[F, (Option[Key], Int)] = ctx.retriableAtSameKeyRef
 
