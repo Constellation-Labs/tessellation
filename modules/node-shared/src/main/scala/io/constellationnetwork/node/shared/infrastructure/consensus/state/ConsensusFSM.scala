@@ -85,6 +85,7 @@ class ConsensusFSM[F[
           case RumorReceived(r)                    => rumorHandler.process(r)
           case CheckUpdate(key)                    => transitions.checkUpdate(key)
           case CheckViewChangeAssembly(key)        => transitions.checkViewChangeAssembly(key)
+          case CheckViewChangeApply(key, from, to) => transitions.checkViewChangeApply(key, from, to)
           case CheckEvictionAssembly(key, target)  => transitions.checkEvictionAssembly(key, target)
           case CheckAdmissionAssembly(key, target) => transitions.checkAdmissionAssembly(key, target)
           case InternalScheduled(inner)            => handle(inner)

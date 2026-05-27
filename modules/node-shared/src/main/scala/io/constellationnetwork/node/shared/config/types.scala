@@ -213,6 +213,14 @@ object types {
     // canonically — see buildFinishedTransition). Tune down if round throughput
     // becomes a bottleneck; tune up if network jitter routinely drops late signers.
     signatureGracePeriod: FiniteDuration = FiniteDuration(500, "ms"),
+    // Delay between assembling/receiving a certified view-change and locally applying it
+    // to reset the round into the next view. The VCC is still stored and gossiped immediately;
+    // this only gives ordinary proposal/signature traffic time to arrive before a timeout
+    // certificate rewinds useful local progress. Timing-only: not included in
+    // deterministicConfigHash because view advancement still requires the same signed VCC.
+    // Operators should keep values in the same practical band across a network; wildly
+    // divergent values are safe but can create noisy early-applier/late-applier behavior.
+    viewChangeApplyDelay: FiniteDuration = 7.seconds,
     maxConsecutiveAbandonments: Int = 5,
     // Defensive threshold for forcing a VCV emission when the cluster has
     // already abandoned the same ordinal this many times. Bypasses the "missing-still-responsive"
