@@ -51,7 +51,7 @@ import io.constellationnetwork.security.signature.signature._
 import io.constellationnetwork.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
-import io.circe.Json
+import io.circe.{Encoder, Json}
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -2264,9 +2264,11 @@ object GlobalSnapshotConsensusStateAdvancer {
         case GlobalArtifactMismatch(leader, own) =>
           (
             serializedArtifactDigest(leader),
-            serializedArtifactDigest(own)
+            serializedArtifactDigest(own),
+            artifactFieldDigests(leader),
+            artifactFieldDigests(own)
           ).mapN {
-            case ((leaderBytes, leaderSerializedHash), (ownBytes, ownSerializedHash)) =>
+            case ((leaderBytes, leaderSerializedHash), (ownBytes, ownSerializedHash), leaderFieldDigests, ownFieldDigests) =>
               Seq(
                 "leaderProposalHash" -> leaderProposalHash.show.take(12),
                 "ownProposalHash" -> ownProposalHash.show.take(12),
@@ -2276,6 +2278,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                 "ownSerializedHash" -> ownSerializedHash,
                 "leaderArtifactDigest" -> artifactDigest(leader),
                 "ownArtifactDigest" -> artifactDigest(own),
+                "leaderFieldDigests" -> leaderFieldDigests,
+                "ownFieldDigests" -> ownFieldDigests,
                 "leaderStateProof" -> describeStateProof(leader.stateProof),
                 "ownStateProof" -> describeStateProof(own.stateProof)
               )
@@ -2289,6 +2293,41 @@ object GlobalSnapshotConsensusStateAdvancer {
           .serialize(artifact)
           .flatMap(bytes => Hash.fromBytesForSync[F](bytes).map(hash => (bytes.length.toString, hash.show.take(12))))
           .handleError(e => (s"error:${e.getClass.getSimpleName}", "unavailable"))
+
+      private def serializedFieldDigest[A: Encoder](value: A): F[String] =
+        JsonSerializer[F]
+          .serialize(value)
+          .flatMap(bytes => Hash.fromBytesForSync[F](bytes).map(hash => s"${bytes.length}/${hash.show.take(12)}"))
+          .handleError(e => s"error:${e.getClass.getSimpleName}")
+
+      private def artifactFieldDigests(artifact: GlobalIncrementalSnapshot): F[String] =
+        List(
+          "ordinal" -> serializedFieldDigest(artifact.ordinal),
+          "height" -> serializedFieldDigest(artifact.height),
+          "subHeight" -> serializedFieldDigest(artifact.subHeight),
+          "lastSnapshotHash" -> serializedFieldDigest(artifact.lastSnapshotHash),
+          "blocks" -> serializedFieldDigest(artifact.blocks),
+          "stateChannelSnapshots" -> serializedFieldDigest(artifact.stateChannelSnapshots),
+          "rewards" -> serializedFieldDigest(artifact.rewards),
+          "delegateRewards" -> serializedFieldDigest(artifact.delegateRewards),
+          "epochProgress" -> serializedFieldDigest(artifact.epochProgress),
+          "nextFacilitators" -> serializedFieldDigest(artifact.nextFacilitators),
+          "tips" -> serializedFieldDigest(artifact.tips),
+          "deprecatedTips" -> serializedFieldDigest(artifact.tips.deprecated),
+          "activeTips" -> serializedFieldDigest(artifact.tips.remainedActive),
+          "stateProof" -> serializedFieldDigest(artifact.stateProof),
+          "allowSpendBlocks" -> serializedFieldDigest(artifact.allowSpendBlocks),
+          "tokenLockBlocks" -> serializedFieldDigest(artifact.tokenLockBlocks),
+          "spendActions" -> serializedFieldDigest(artifact.spendActions),
+          "updateNodeParameters" -> serializedFieldDigest(artifact.updateNodeParameters),
+          "artifacts" -> serializedFieldDigest(artifact.artifacts),
+          "activeDelegatedStakes" -> serializedFieldDigest(artifact.activeDelegatedStakes),
+          "delegatedStakesWithdrawals" -> serializedFieldDigest(artifact.delegatedStakesWithdrawals),
+          "activeNodeCollaterals" -> serializedFieldDigest(artifact.activeNodeCollaterals),
+          "nodeCollateralWithdrawals" -> serializedFieldDigest(artifact.nodeCollateralWithdrawals),
+          "peerHistory" -> serializedFieldDigest(artifact.peerHistory),
+          "version" -> serializedFieldDigest(artifact.version)
+        ).traverse { case (name, digest) => digest.map(value => s"$name=$value") }.map(_.mkString(" "))
 
       private def artifactDigest(artifact: GlobalIncrementalSnapshot): String =
         List(
