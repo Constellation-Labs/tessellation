@@ -42,7 +42,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.{
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.currencyMessage.fetchStakingAddress
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
+import io.constellationnetwork.schema.{ConsensusOperationalState, GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -1179,9 +1179,9 @@ object CurrencySnapshotConsensusStateAdvancer {
             // validators accept/reject against the same facilitator set. See dag-l0 equivalent.
             state.roundStartFacilitators.value.toSet,
             getGlobalSnapshotByOrdinal,
-            // v20: re-pack from validator's own lastOutcome -- consensus-agreed,
-            // so leader and validator produce byte-identical artifact.peerHistory.
-            Some(state.lastOutcome.toOperationalState)
+            // v20: re-pack from validator's own lastOutcome, but keep local time anchors out
+            // of the signed artifact. See the dag-l0 mirror.
+            Some(signedArtifactPeerHistory(state.lastOutcome))
           )
           .map {
             case Right((validatedArtifact, context)) =>
@@ -1564,8 +1564,14 @@ object CurrencySnapshotConsensusStateAdvancer {
           state.roundStartFacilitators.value.toSet,
           getGlobalSnapshotByOrdinal,
           // v20: see dag-l0 mirror.
-          Some(state.lastOutcome.toOperationalState)
+          Some(signedArtifactPeerHistory(state.lastOutcome))
         )
+
+      private def signedArtifactPeerHistory(outcome: CurrencyConsensusOutcome): ConsensusOperationalState =
+        // TODO(v20 cleanup): recentRoundEndTimes is intentionally omitted from signed artifacts.
+        // See the dag-l0 mirror for the determinism rationale and remove the field from
+        // peerHistory in the next schema cleanup if it remains pacemaker-local/sidecar-only.
+        outcome.toOperationalState.copy(recentRoundEndTimes = None)
 
       private val selfId: PeerId = PeerId.fromPublic(keyPair.getPublic)
 
