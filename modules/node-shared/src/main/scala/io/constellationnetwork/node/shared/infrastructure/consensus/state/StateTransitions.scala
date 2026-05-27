@@ -13,7 +13,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.engine.Conse
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine._
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.GetConsensusOutcomeRequest
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger._
-import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusStorage}
+import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusResources, ConsensusStorage}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
 import io.constellationnetwork.schema.node.NodeState
@@ -206,46 +206,6 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                         )
                       )
                   case Right(vcc) =>
-                    val leaderPool = StateTransitions.viewChangeLeaderPool(
-                      state.coreFacilitators.value,
-                      state.facilitators.value
-                    )
-                    val newLeader =
-                      facilitatorSelector.selectLeader(leaderPool, state.entropy, toView.toInt)
-                    val resetStatus = ctx.ops.freshCollectingFacilities(state.status)
-                    val modify: ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] =
-                      new ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] {
-                        def apply(
-                          maybeState: Option[ConsensusState[Key, Status, Outcome, Kind]]
-                        ): F[Option[(Option[ConsensusState[Key, Status, Outcome, Kind]], Boolean)]] =
-                          maybeState match {
-                            case Some(s) if s.viewNumber === state.viewNumber =>
-                              // Clear withdrawnFacilitators on view change. A withdrawal is scoped to
-                              // the (key, view) pair at which it was emitted; a fresh view is logically
-                              // a new commitment window. Without this reset, a view-0 withdrawal keeps
-                              // `alreadyWithdrawn` tripping in all subsequent views and the node bails
-                              // out of every proposal validation forever (the gl0-4 ord-3 stuck-for-11-min
-                              // pattern). Peers that still want to withdraw in the new view will re-emit.
-                              val updated: ConsensusState[Key, Status, Outcome, Kind] = resetStatus match {
-                                case Some(fresh) =>
-                                  s.copy(
-                                    viewNumber = toView.toInt,
-                                    leader = newLeader,
-                                    status = fresh,
-                                    withdrawnFacilitators = WithdrawnFacilitators.empty
-                                  )
-                                case None =>
-                                  s.copy(
-                                    viewNumber = toView.toInt,
-                                    leader = newLeader,
-                                    withdrawnFacilitators = WithdrawnFacilitators.empty
-                                  )
-                              }
-                              (updated.some, true).some.pure[F]
-                            case _ =>
-                              none[(Option[ConsensusState[Key, Status, Outcome, Kind]], Boolean)].pure[F]
-                          }
-                      }
                     for {
                       _ <- storage.storeAssembledVcc(key, vcc)
                       // Re-distribute the assembled VCC so peers that did NOT reach quorum
@@ -259,8 +219,6 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                       // view of THIS round.
                       vccGossipTargets = state.roundStartFacilitators.value.toSet - ctx.selfId
                       _ <- gossip.spreadDirect(ConsensusAssembledVcc[Key](key, vcc), vccGossipTargets)
-                      advanced <- storage.condModifyState[Boolean](key)(modify)
-                      didAdvance = advanced.getOrElse(false)
                       _ <- ConsensusLog
                         .info(
                           log,
@@ -268,37 +226,27 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                           key.show,
                           "n/a",
                           LogEvent.ViewChange,
-                          "assembly" -> "quorum_reached_advanced",
+                          "assembly" -> "quorum_reached_scheduled",
                           "fromView" -> fromView.toString,
                           "toView" -> toView.toString,
                           "votes" -> votes.size.toString,
                           "quorum" -> q.toString,
-                          "leaderPool" -> (if (leaderPool == state.coreFacilitators.value) "core" else "facilitators_fallback"),
-                          "leaderPoolSize" -> leaderPool.size.toString,
-                          "newLeader" -> ConsensusLog.pid(newLeader),
-                          "statusReset" -> resetStatus.isDefined.toString
+                          "applyDelayMs" -> config.viewChangeApplyDelay.toMillis.toString
                         )
-                        .whenA(didAdvance)
                       _ <- Metrics[F]
                         .incrementCounter(
                           "dag_consensus_vcc_assembly_total",
                           Seq(
-                            unsafeLabelName("outcome") -> "advanced",
-                            unsafeLabelName("reason") -> "none"
+                            unsafeLabelName("outcome") -> "scheduled",
+                            unsafeLabelName("reason") -> "apply_delay"
                           )
                         )
-                        .whenA(didAdvance)
-                      _ <- Metrics[F]
-                        .incrementCounter(
-                          "dag_consensus_vcc_assembly_total",
-                          Seq(
-                            unsafeLabelName("outcome") -> "not_advanced_race",
-                            unsafeLabelName("reason") -> "state_already_advanced"
-                          )
+                      _ <- Async[F]
+                        .start(
+                          Temporal[F].sleep(config.viewChangeApplyDelay) >>
+                            queue.offer(ConsensusCommand.CheckViewChangeApply(key, fromView, toView))
                         )
-                        .unlessA(didAdvance)
-                      _ <- Metrics[F].updateGauge("dag_consensus_view_number", toView).whenA(didAdvance)
-                      _ <- queue.offer(ConsensusCommand.CheckUpdate(key)).whenA(didAdvance)
+                        .void
                     } yield ()
                 }
               case multiple =>
@@ -336,6 +284,210 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           }
         }
     }
+
+  def checkViewChangeApply(key: Key, fromView: Long, toView: Long): F[Unit] =
+    storage.getState(key).flatMap {
+      case None => Async[F].unit
+      case Some(state) if state.viewNumber.toLong =!= fromView =>
+        Metrics[F].incrementCounter(
+          "dag_consensus_vcc_apply_total",
+          Seq(
+            unsafeLabelName("outcome") -> "stale",
+            unsafeLabelName("reason") -> "view_already_changed"
+          )
+        )
+      case Some(state) =>
+        storage.getResources(key).flatMap { resources =>
+          val phaseIndex = ctx.ops.phaseIndex(state.status)
+          val currentKindHasCoreDeclarations = ctx.ops
+            .maybeCollectingKind(state.status)
+            .exists(kind =>
+              resources.peerDeclarationsMap.exists {
+                case (peerId, declarations) =>
+                  state.coreFacilitators.value.contains(peerId) && ctx.ops.kindGetter(kind)(declarations).isDefined
+              }
+            )
+          val localProgress =
+            phaseIndex >= 2 || (ctx.ops.isProposalPhase(state.status) && currentKindHasCoreDeclarations)
+
+          if (localProgress)
+            ConsensusLog.info(
+              log,
+              Category.Phase,
+              key.show,
+              "n/a",
+              LogEvent.ViewChange,
+              "assembly" -> "deferred_local_progress",
+              "fromView" -> fromView.toString,
+              "toView" -> toView.toString,
+              "phaseIndex" -> phaseIndex.toString,
+              "currentKindHasCoreDeclarations" -> currentKindHasCoreDeclarations.toString,
+              "retryDelayMs" -> (config.viewChangeApplyDelay / 2).toMillis.toString
+            ) >>
+              Metrics[F].incrementCounter(
+                "dag_consensus_vcc_apply_total",
+                Seq(
+                  unsafeLabelName("outcome") -> "deferred_local_progress",
+                  unsafeLabelName("reason") -> "proposal_or_signature_in_progress"
+                )
+              ) >>
+              queue.offer(ConsensusCommand.CheckUpdate(key)) >>
+              Async[F]
+                .start(
+                  Temporal[F].sleep(config.viewChangeApplyDelay / 2) >>
+                    queue.offer(ConsensusCommand.CheckViewChangeApply(key, fromView, toView))
+                )
+                .void
+          else
+            applyCertifiedViewChange(key, state, resources, fromView, toView)
+        }
+    }
+
+  private def applyCertifiedViewChange(
+    key: Key,
+    state: ConsensusState[Key, Status, Outcome, Kind],
+    resources: ConsensusResources[Artifact, Kind],
+    fromView: Long,
+    toView: Long
+  ): F[Unit] = {
+    val votes = resources.viewChangeVotes.getOrElse((fromView, toView), Map.empty)
+    val n = state.coreFacilitators.value.size
+    val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
+
+    if (votes.size < q)
+      Metrics[F].incrementCounter(
+        "dag_consensus_vcc_apply_total",
+        Seq(
+          unsafeLabelName("outcome") -> "waiting_for_quorum",
+          unsafeLabelName("reason") -> "insufficient_votes"
+        )
+      )
+    else
+      votes.values.map(_.value.facilitatorsHash).toSet.toList match {
+        case singleHash :: Nil =>
+          val vccPool = widerWitnessPoolAll(state)
+          ViewChangeCertificateBuilder.build(fromView, toView, singleHash, votes, q, vccPool) match {
+            case Left(error) =>
+              ConsensusLog.warn(
+                log,
+                Category.Phase,
+                key.show,
+                "n/a",
+                LogEvent.ViewChange,
+                "assembly" -> "vcc_apply_build_failed",
+                "reason" -> error.code,
+                "fromView" -> fromView.toString,
+                "toView" -> toView.toString,
+                "votes" -> votes.size.toString,
+                "quorum" -> q.toString
+              ) >>
+                Metrics[F].incrementCounter(
+                  "dag_consensus_vcc_apply_total",
+                  Seq(
+                    unsafeLabelName("outcome") -> "build_failed",
+                    unsafeLabelName("reason") -> error.code
+                  )
+                )
+            case Right(vcc) =>
+              val leaderPool = StateTransitions.viewChangeLeaderPool(
+                state.coreFacilitators.value,
+                state.facilitators.value
+              )
+              val newLeader = facilitatorSelector.selectLeader(leaderPool, state.entropy, toView.toInt)
+              val resetStatus = ctx.ops.freshCollectingFacilities(state.status)
+              val modify: ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] =
+                new ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] {
+                  def apply(
+                    maybeState: Option[ConsensusState[Key, Status, Outcome, Kind]]
+                  ): F[Option[(Option[ConsensusState[Key, Status, Outcome, Kind]], Boolean)]] =
+                    maybeState match {
+                      case Some(s) if s.viewNumber.toLong === fromView =>
+                        val updated: ConsensusState[Key, Status, Outcome, Kind] = resetStatus match {
+                          case Some(fresh) =>
+                            s.copy(
+                              viewNumber = toView.toInt,
+                              leader = newLeader,
+                              status = fresh,
+                              withdrawnFacilitators = WithdrawnFacilitators.empty
+                            )
+                          case None =>
+                            s.copy(
+                              viewNumber = toView.toInt,
+                              leader = newLeader,
+                              withdrawnFacilitators = WithdrawnFacilitators.empty
+                            )
+                        }
+                        (updated.some, true).some.pure[F]
+                      case _ =>
+                        none[(Option[ConsensusState[Key, Status, Outcome, Kind]], Boolean)].pure[F]
+                    }
+                }
+
+              for {
+                _ <- storage.storeAssembledVcc(key, vcc)
+                advanced <- storage.condModifyState[Boolean](key)(modify)
+                didAdvance = advanced.getOrElse(false)
+                _ <- ConsensusLog
+                  .info(
+                    log,
+                    Category.Phase,
+                    key.show,
+                    "n/a",
+                    LogEvent.ViewChange,
+                    "assembly" -> "quorum_reached_advanced",
+                    "fromView" -> fromView.toString,
+                    "toView" -> toView.toString,
+                    "votes" -> votes.size.toString,
+                    "quorum" -> q.toString,
+                    "leaderPool" -> (if (leaderPool == state.coreFacilitators.value) "core" else "facilitators_fallback"),
+                    "leaderPoolSize" -> leaderPool.size.toString,
+                    "newLeader" -> ConsensusLog.pid(newLeader),
+                    "statusReset" -> resetStatus.isDefined.toString
+                  )
+                  .whenA(didAdvance)
+                _ <- Metrics[F]
+                  .incrementCounter(
+                    "dag_consensus_vcc_apply_total",
+                    Seq(
+                      unsafeLabelName("outcome") -> "advanced",
+                      unsafeLabelName("reason") -> "none"
+                    )
+                  )
+                  .whenA(didAdvance)
+                _ <- Metrics[F]
+                  .incrementCounter(
+                    "dag_consensus_vcc_apply_total",
+                    Seq(
+                      unsafeLabelName("outcome") -> "not_advanced_race",
+                      unsafeLabelName("reason") -> "state_already_advanced"
+                    )
+                  )
+                  .unlessA(didAdvance)
+                _ <- Metrics[F].updateGauge("dag_consensus_view_number", toView).whenA(didAdvance)
+                _ <- queue.offer(ConsensusCommand.CheckUpdate(key)).whenA(didAdvance)
+              } yield ()
+          }
+        case multiple =>
+          ConsensusLog.warn(
+            log,
+            Category.Phase,
+            key.show,
+            "n/a",
+            LogEvent.ViewChange,
+            "assembly" -> "vcc_apply_divergent_facilitators_hash",
+            "hashes" -> multiple.size.toString,
+            "fromView" -> fromView.toString,
+            "toView" -> toView.toString
+          ) >>
+            Metrics[F].incrementCounter(
+              "dag_consensus_vcc_apply_total",
+              Seq(
+                unsafeLabelName("outcome") -> "divergent_facilitators_hash",
+                unsafeLabelName("reason") -> "multiple_hashes"
+              )
+            )
+      }
+  }
 
   /** Handle `CheckEvictionAssembly(key, target)` command.
     *
@@ -820,7 +972,11 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           ifFalse = new Throwable(s"[DownloadInit] Failed to initialize consensus storage").raiseError[F, Unit],
           ifTrue = downloadReadyPromotionAllowed(outcome).flatMap { promoteToReady =>
             val targetState = if (promoteToReady) NodeState.Ready else NodeState.WaitingForReady
-            storage.clearObservationKey.whenA(promoteToReady) >>
+            // Initial download promotion is also the candidate-admission path. A peer exposes
+            // its next-round registration key through `observationKey`; clearing it here makes
+            // the peer visible as Ready but invisible to committee selection, so bootstrap can
+            // collapse back to a singleton facilitator.
+            storage.clearObservationKey.whenA(promoteToReady && isRecoveryEffective) >>
               ctx.nodeStorage.tryModifyState(NodeState.Observing, targetState) >>
               Metrics[F].incrementCounter(
                 "dag_consensus_init_download_ready_promotion_total",
