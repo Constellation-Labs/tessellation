@@ -108,7 +108,7 @@ case class GlobalIncrementalSnapshot(
   blocks: SortedSet[BlockAsActiveTip],
   stateChannelSnapshots: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
   rewards: SortedSet[RewardTransaction],
-  delegateRewards: Option[SortedMap[PeerId, Map[Address, Amount]]],
+  delegateRewards: Option[SortedMap[PeerId, SortedMap[Address, Amount]]],
   epochProgress: EpochProgress,
   nextFacilitators: NonEmptyList[PeerId],
   tips: SnapshotTips,

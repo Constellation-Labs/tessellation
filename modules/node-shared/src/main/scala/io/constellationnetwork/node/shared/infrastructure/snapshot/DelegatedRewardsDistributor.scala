@@ -30,7 +30,7 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 
 case class DelegatedRewardsResult(
-  delegatorRewardsMap: SortedMap[PeerId, Map[Address, Amount]],
+  delegatorRewardsMap: SortedMap[PeerId, SortedMap[Address, Amount]],
   updatedCreateDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
   updatedWithdrawDelegatedStakes: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
   nodeOperatorRewards: SortedSet[RewardTransaction],
@@ -101,7 +101,7 @@ object DelegatedRewardsDistributor {
     }.toSortedMap
 
   def getUpdatedCreateDelegatedStakes[F[_]: Async: Hasher](
-    delegatorRewardsMap: Map[PeerId, Map[Address, Amount]],
+    delegatorRewardsMap: SortedMap[PeerId, SortedMap[Address, Amount]],
     delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
     partitionedRecords: PartitionedStakeUpdates
   ): F[SortedMap[Address, SortedSet[DelegatedStakeRecord]]] = {
@@ -205,7 +205,7 @@ object DelegatedRewardsDistributor {
   def sumMintedAmount[F[_]: Async](
     reservedAddressRewards: SortedSet[RewardTransaction],
     nodeOperatorRewards: SortedSet[RewardTransaction],
-    delegatorRewardsMap: Map[PeerId, Map[Address, Amount]]
+    delegatorRewardsMap: SortedMap[PeerId, SortedMap[Address, Amount]]
   ): F[Amount] = {
     val reservedEmittedAmount = reservedAddressRewards.toList.map(_.amount.value.value).sum
     val validatorsEmittedAmount = nodeOperatorRewards.toList.map(_.amount.value.value).sum

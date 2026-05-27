@@ -287,7 +287,7 @@ object GlobalSnapshotContextFunctions {
 
                     DelegatedRewardsResult(
                       delegatorRewardsMap = signedArtifact.delegateRewards
-                        .getOrElse(SortedMap.empty[PeerId, Map[Address, Amount]]),
+                        .getOrElse(SortedMap.empty[PeerId, SortedMap[Address, Amount]]),
                       updatedCreateDelegatedStakes = transformedCreateDelegatedStakes,
                       updatedWithdrawDelegatedStakes = updatedWithdrawDelegatedStakes,
                       nodeOperatorRewards = txs,
@@ -312,7 +312,7 @@ object GlobalSnapshotContextFunctions {
 
                     DelegatedRewardsResult(
                       delegatorRewardsMap = signedArtifact.delegateRewards
-                        .getOrElse(SortedMap.empty[PeerId, Map[Address, Amount]]),
+                        .getOrElse(SortedMap.empty[PeerId, SortedMap[Address, Amount]]),
                       updatedCreateDelegatedStakes = transformedCreateDelegatedStakes,
                       updatedWithdrawDelegatedStakes = updatedWithdrawDelegatedStakes,
                       nodeOperatorRewards = txs,

@@ -285,8 +285,8 @@ object GlobalDelegatedRewardsDistributor {
       nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
       totalDelegationRewardPool: BigDecimal,
       acceptedCreates: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]]
-    ): F[SortedMap[PeerId, Map[Address, Amount]]] =
-      if (totalDelegationRewardPool === BigDecimal(0.0)) SortedMap.empty[PeerId, Map[Address, Amount]].pure[F]
+    ): F[SortedMap[PeerId, SortedMap[Address, Amount]]] =
+      if (totalDelegationRewardPool === BigDecimal(0.0)) SortedMap.empty[PeerId, SortedMap[Address, Amount]].pure[F]
       else {
         val modifiedStakes = DelegatedRewardsDistributor.identifyModifiedStakes(activeDelegatedStakes, acceptedCreates)
         val filteredActiveStakes = DelegatedRewardsDistributor.filterOutModifiedStakes(activeDelegatedStakes, modifiedStakes)
@@ -301,7 +301,7 @@ object GlobalDelegatedRewardsDistributor {
         getTotalActiveStake(filteredActiveStakes).flatMap { totalStakeAmount =>
           val totalStakeBD = BigDecimal(totalStakeAmount.value.value, mc)
 
-          if (activeDelegatedStakes.isEmpty || totalStakeBD === 0) SortedMap.empty[PeerId, Map[Address, Amount]].pure[F]
+          if (activeDelegatedStakes.isEmpty || totalStakeBD === 0) SortedMap.empty[PeerId, SortedMap[Address, Amount]].pure[F]
           else {
             adjustedActiveStakes.toList
               .groupBy(_._1)
@@ -351,10 +351,9 @@ object GlobalDelegatedRewardsDistributor {
                   } yield addressRewards
               }
               .map { pairs =>
-                // Use SortedMap for the outer (deterministic PeerId ordering) and
-                // construct inner Maps from sorted data for consistent iteration.
+                // Use SortedMap at both levels; delegateRewards is part of the signed snapshot artifact.
                 SortedMap.from(
-                  pairs.groupBy(_._1).view.mapValues(kvs => kvs.map(_._2).sortBy(_._1).toMap).toMap
+                  pairs.groupBy(_._1).view.mapValues(kvs => SortedMap.from(kvs.map(_._2))).toMap
                 )
               }
           }
