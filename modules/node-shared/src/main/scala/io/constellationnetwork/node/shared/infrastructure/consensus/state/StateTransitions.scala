@@ -207,6 +207,8 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                       )
                   case Right(vcc) =>
                     for {
+                      existingVcc <- storage.getAssembledVcc(key)
+                      shouldSchedule = !existingVcc.exists(existing => existing.fromView === fromView && existing.toView === toView)
                       _ <- storage.storeAssembledVcc(key, vcc)
                       // Re-distribute the assembled VCC so peers that did NOT reach quorum
                       // locally for this (fromView, toView) -- e.g. due to gossip lag -- still
@@ -218,7 +220,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                       // (excluding self) -- the cohort that could become leader at any future
                       // view of THIS round.
                       vccGossipTargets = state.roundStartFacilitators.value.toSet - ctx.selfId
-                      _ <- gossip.spreadDirect(ConsensusAssembledVcc[Key](key, vcc), vccGossipTargets)
+                      _ <- gossip.spreadDirect(ConsensusAssembledVcc[Key](key, vcc), vccGossipTargets).whenA(shouldSchedule)
                       _ <- ConsensusLog
                         .info(
                           log,
@@ -233,6 +235,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                           "quorum" -> q.toString,
                           "applyDelayMs" -> config.viewChangeApplyDelay.toMillis.toString
                         )
+                        .whenA(shouldSchedule)
                       _ <- Metrics[F]
                         .incrementCounter(
                           "dag_consensus_vcc_assembly_total",
@@ -241,12 +244,14 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                             unsafeLabelName("reason") -> "apply_delay"
                           )
                         )
+                        .whenA(shouldSchedule)
                       _ <- Async[F]
                         .start(
                           Temporal[F].sleep(config.viewChangeApplyDelay) >>
                             queue.offer(ConsensusCommand.CheckViewChangeApply(key, fromView, toView))
                         )
                         .void
+                        .whenA(shouldSchedule)
                     } yield ()
                 }
               case multiple =>
@@ -288,6 +293,14 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
   def checkViewChangeApply(key: Key, fromView: Long, toView: Long): F[Unit] =
     storage.getState(key).flatMap {
       case None => Async[F].unit
+      case Some(state) if ctx.ops.isFinished(state.status) =>
+        Metrics[F].incrementCounter(
+          "dag_consensus_vcc_apply_total",
+          Seq(
+            unsafeLabelName("outcome") -> "stale",
+            unsafeLabelName("reason") -> "round_finished"
+          )
+        )
       case Some(state) if state.viewNumber.toLong =!= fromView =>
         Metrics[F].incrementCounter(
           "dag_consensus_vcc_apply_total",
@@ -298,7 +311,6 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
         )
       case Some(state) =>
         storage.getResources(key).flatMap { resources =>
-          val phaseIndex = ctx.ops.phaseIndex(state.status)
           val currentKindHasCoreDeclarations = ctx.ops
             .maybeCollectingKind(state.status)
             .exists(kind =>
@@ -308,36 +320,17 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
               }
             )
           val localProgress =
-            phaseIndex >= 2 || (ctx.ops.isProposalPhase(state.status) && currentKindHasCoreDeclarations)
+            ctx.ops.isSignaturesPhase(state.status) || (ctx.ops.isProposalPhase(state.status) && currentKindHasCoreDeclarations)
 
           if (localProgress)
-            ConsensusLog.info(
-              log,
-              Category.Phase,
-              key.show,
-              "n/a",
-              LogEvent.ViewChange,
-              "assembly" -> "deferred_local_progress",
-              "fromView" -> fromView.toString,
-              "toView" -> toView.toString,
-              "phaseIndex" -> phaseIndex.toString,
-              "currentKindHasCoreDeclarations" -> currentKindHasCoreDeclarations.toString,
-              "retryDelayMs" -> (config.viewChangeApplyDelay / 2).toMillis.toString
+            Metrics[F].incrementCounter(
+              "dag_consensus_vcc_apply_total",
+              Seq(
+                unsafeLabelName("outcome") -> "deferred_local_progress",
+                unsafeLabelName("reason") -> "proposal_or_signature_in_progress"
+              )
             ) >>
-              Metrics[F].incrementCounter(
-                "dag_consensus_vcc_apply_total",
-                Seq(
-                  unsafeLabelName("outcome") -> "deferred_local_progress",
-                  unsafeLabelName("reason") -> "proposal_or_signature_in_progress"
-                )
-              ) >>
-              queue.offer(ConsensusCommand.CheckUpdate(key)) >>
-              Async[F]
-                .start(
-                  Temporal[F].sleep(config.viewChangeApplyDelay / 2) >>
-                    queue.offer(ConsensusCommand.CheckViewChangeApply(key, fromView, toView))
-                )
-                .void
+              queue.offer(ConsensusCommand.CheckUpdate(key))
           else
             applyCertifiedViewChange(key, state, resources, fromView, toView)
         }
