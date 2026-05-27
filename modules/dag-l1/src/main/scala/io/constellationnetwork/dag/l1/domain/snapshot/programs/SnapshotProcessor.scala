@@ -27,7 +27,7 @@ import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.swap.AllowSpendReference
 import io.constellationnetwork.schema.tokenLock.{TokenLockBlock, TokenLockReference}
-import io.constellationnetwork.schema.transaction.TransactionReference
+import io.constellationnetwork.schema.transaction.{Transaction, TransactionReference}
 import io.constellationnetwork.security.hash.{Hash, ProofsHash}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
@@ -578,9 +578,9 @@ abstract class SnapshotProcessor[
     acceptedInMajority: Map[ProofsHash, (Hashed[Block], NonNegLong)],
     state: SI
   ): Map[Address, TransactionReference] = {
-    val transactions = acceptedInMajority.values.flatMap(_._1.transactions.toSortedSet)
-    val sourceAddresses = transactions.map(_.source).toSet
-    val newDestinationAddresses = transactions.map(_.destination).toSet -- sourceAddresses
+    val transactions: Iterable[Signed[Transaction]] = acceptedInMajority.values.flatMap(_._1.transactions.toSortedSet)
+    val sourceAddresses: Set[Address] = transactions.map(_.source).toSet
+    val newDestinationAddresses: Set[Address] = transactions.map(_.destination).toSet -- sourceAddresses
 
     state.lastTxRefs.view.filterKeys(address => sourceAddresses.contains(address) || newDestinationAddresses.contains(address)).toMap
   }
