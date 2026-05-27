@@ -1260,7 +1260,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         *
         *   - it only runs after repeated artifact-validation failures,
         *   - it requires an external quorum of the round-start facilitators,
-        *   - every counted peer must be Ready and locally observed at-or-ahead of this key,
+        *   - every counted peer must be Ready and locally observed ahead of this key,
         *   - it does not mutate the committee, view, leader, or facilitator hash.
         *
         * In alpha.107, .79 failed leader-artifact validation for 3127560, withdrew, soft-reset, and remained Ready at 3127559 while an
@@ -1277,13 +1277,13 @@ object GlobalSnapshotConsensusStateAdvancer {
           readyIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
           peerKeys <- consensusStorage.getPeerCurrentKeys
           roundStart = state.roundStartFacilitators.value
-          currentExternal = roundStart.filter { peerId =>
+          aheadExternal = roundStart.filter { peerId =>
             peerId =!= selfId &&
             readyIds.contains(peerId) &&
-            peerKeys.get(peerId).exists(_ >= state.key)
+            peerKeys.get(peerId).exists(_ > state.key)
           }
           required = math.max(1, QuorumPolicy.fromFraction(roundStart.size, consensusConfig.quorumThresholdFraction))
-          shouldRecover = currentExternal.size >= required
+          shouldRecover = aheadExternal.size >= required
           _ <-
             if (shouldRecover)
               ConsensusLog.warn(
@@ -1294,9 +1294,9 @@ object GlobalSnapshotConsensusStateAdvancer {
                 Event.RecoveryStateTransition,
                 "trigger" -> "artifact_mismatch_same_chain_catchup",
                 "failureCount" -> failureCount.toString,
-                "currentExternal" -> currentExternal.size.toString,
+                "aheadExternal" -> aheadExternal.size.toString,
                 "required" -> required.toString,
-                "currentExternalPeers" -> ConsensusLog.pids(currentExternal.toList),
+                "aheadExternalPeers" -> ConsensusLog.pids(aheadExternal.toList),
                 "action" -> "incremental_recovery"
               ) >>
                 Metrics[F].incrementCounter(
@@ -1319,13 +1319,13 @@ object GlobalSnapshotConsensusStateAdvancer {
                 Event.RecoveryStateTransition,
                 "trigger" -> "artifact_mismatch_same_chain_catchup",
                 "failureCount" -> failureCount.toString,
-                "currentExternal" -> currentExternal.size.toString,
+                "aheadExternal" -> aheadExternal.size.toString,
                 "required" -> required.toString,
-                "action" -> "suppressed_not_enough_current_external_facilitators"
+                "action" -> "suppressed_not_enough_ahead_external_facilitators"
               ) >>
                 Metrics[F].incrementCounter(
                   "dag_consensus_artifact_mismatch_catchup_total",
-                  Seq(Metrics.unsafeLabelName("outcome") -> "suppressed_not_enough_current_external_facilitators")
+                  Seq(Metrics.unsafeLabelName("outcome") -> "suppressed_not_enough_ahead_external_facilitators")
                 )
         } yield shouldRecover
 
@@ -2096,9 +2096,10 @@ object GlobalSnapshotConsensusStateAdvancer {
               artifact,
               state.roundStartFacilitators.value.toSet,
               getGlobalSnapshotByOrdinal,
-              // v20: re-pack from validator's own lastOutcome -- consensus-agreed,
-              // so leader and validator produce byte-identical artifact.peerHistory.
-              Some(state.lastOutcome.toOperationalState)
+              // v20: re-pack from validator's own lastOutcome, but keep local time anchors out
+              // of the signed artifact. They are useful pacemaker hints, not quorum-certified
+              // artifact input.
+              Some(signedArtifactPeerHistory(state.lastOutcome))
             )
             .map {
               case Right((validatedArtifact, context)) =>
@@ -2212,7 +2213,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               s"epochProgress(leader=${leader.epochProgress.show},own=${own.epochProgress.show})"
             ),
             Option.when(leader.tips =!= own.tips)("tipsDiffer")
-          ).flatten ++ stateProofDiff ++ List(
+          ).flatten ++ stateProofDiff ++ peerHistoryDiffs(leader.peerHistory, own.peerHistory) ++ List(
             Option.when(leader.nextFacilitators =!= own.nextFacilitators)(
               s"nextFacilitators(leader=${leader.nextFacilitators.size},own=${own.nextFacilitators.size})"
             ),
@@ -2250,6 +2251,22 @@ object GlobalSnapshotConsensusStateAdvancer {
         case other =>
           other.getClass.getSimpleName
       }
+
+      private def peerHistoryDiffs(
+        leader: Option[ConsensusOperationalState],
+        own: Option[ConsensusOperationalState]
+      ): List[String] =
+        List(
+          Option.when(leader.isDefined != own.isDefined)(
+            s"peerHistory.present(leader=${leader.isDefined},own=${own.isDefined})"
+          ),
+          Option.when(leader.map(_.perPeer) =!= own.map(_.perPeer))("peerHistory.perPeerDiffer"),
+          Option.when(leader.flatMap(_.recentSigners) =!= own.flatMap(_.recentSigners))("peerHistory.recentSignersDiffer"),
+          Option.when(leader.map(_.recentProofSizes) =!= own.map(_.recentProofSizes))("peerHistory.recentProofSizesDiffer"),
+          Option.when(leader.flatMap(_.recentRoundEndTimes) =!= own.flatMap(_.recentRoundEndTimes))(
+            "peerHistory.recentRoundEndTimesDiffer"
+          )
+        ).flatten
 
       /** Bounded artifact-mismatch diagnostics for the next failure. The existing field-level diff can report "no diff" when the semantic
         * fields compare equal but the canonical artifact hash still differs. These fields give us enough to decide whether the mismatch is
@@ -2326,6 +2343,10 @@ object GlobalSnapshotConsensusStateAdvancer {
           "activeNodeCollaterals" -> serializedFieldDigest(artifact.activeNodeCollaterals),
           "nodeCollateralWithdrawals" -> serializedFieldDigest(artifact.nodeCollateralWithdrawals),
           "peerHistory" -> serializedFieldDigest(artifact.peerHistory),
+          "peerHistory.perPeer" -> serializedFieldDigest(artifact.peerHistory.map(_.perPeer)),
+          "peerHistory.recentSigners" -> serializedFieldDigest(artifact.peerHistory.flatMap(_.recentSigners)),
+          "peerHistory.recentProofSizes" -> serializedFieldDigest(artifact.peerHistory.map(_.recentProofSizes)),
+          "peerHistory.recentRoundEndTimes" -> serializedFieldDigest(artifact.peerHistory.flatMap(_.recentRoundEndTimes)),
           "version" -> serializedFieldDigest(artifact.version)
         ).traverse { case (name, digest) => digest.map(value => s"$name=$value") }.map(_.mkString(" "))
 
@@ -2791,13 +2812,20 @@ object GlobalSnapshotConsensusStateAdvancer {
               // and validators build/accept against the same facilitator set.
               state.roundStartFacilitators.value.toSet,
               getGlobalSnapshotByOrdinal,
-              // v20: snapshot the prev-round outcome's peer-behavior counters for persistence.
-              // `state.lastOutcome` is consensus-agreed (= same value on every facilitator), so
-              // every leader and every validator computes the same artifact.peerHistory.
-              Some(state.lastOutcome.toOperationalState)
+              // v20: snapshot the prev-round outcome's peer-behavior counters for persistence,
+              // but do not sign local time anchors into the artifact. Those anchors are derived
+              // from locally accepted facilities and can diverge during view-change startup.
+              Some(signedArtifactPeerHistory(state.lastOutcome))
             )
           }
         }
+
+      private def signedArtifactPeerHistory(outcome: GlobalConsensusOutcome): ConsensusOperationalState =
+        // TODO(v20 cleanup): recentRoundEndTimes is intentionally omitted from signed artifacts
+        // because it is derived from locally accepted facilities, which may differ during view-change
+        // startup. If we keep it pacemaker-local/sidecar-only, remove the field from
+        // GlobalIncrementalSnapshot peerHistory in the next schema cleanup.
+        outcome.toOperationalState.copy(recentRoundEndTimes = None)
 
       private val selfId: PeerId = PeerId.fromPublic(keyPair.getPublic)
 
