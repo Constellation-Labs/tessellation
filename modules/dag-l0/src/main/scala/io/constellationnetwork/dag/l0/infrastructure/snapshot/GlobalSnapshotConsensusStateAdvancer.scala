@@ -1255,6 +1255,80 @@ object GlobalSnapshotConsensusStateAdvancer {
         }
       }
 
+      /** Escalate repeated artifact mismatches to download recovery when the local node has strong external evidence that the round has
+        * moved past its local state. This is intentionally narrower than a generic "same key" recovery:
+        *
+        *   - it only runs after repeated artifact-validation failures,
+        *   - it requires an external quorum of the round-start facilitators,
+        *   - every counted peer must be Ready and locally observed at-or-ahead of this key,
+        *   - it does not mutate the committee, view, leader, or facilitator hash.
+        *
+        * In alpha.107, .79 failed leader-artifact validation for 3127560, withdrew, soft-reset, and remained Ready at 3127559 while an
+        * external quorum had already finalized 3127560. Keeping that peer Ready-but-stale poisoned the next round. This path turns that
+        * condition into the existing incremental DownloadDaemon recovery instead of another local reset.
+        */
+      private def maybeTriggerArtifactMismatchCatchup(
+        state: GlobalSnapshotConsensusState,
+        role: String,
+        failureCount: Int
+      ): F[Boolean] =
+        for {
+          responsivePeers <- clusterStorage.getResponsivePeers
+          readyIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
+          peerKeys <- consensusStorage.getPeerCurrentKeys
+          roundStart = state.roundStartFacilitators.value
+          currentExternal = roundStart.filter { peerId =>
+            peerId =!= selfId &&
+            readyIds.contains(peerId) &&
+            peerKeys.get(peerId).exists(_ >= state.key)
+          }
+          required = math.max(1, QuorumPolicy.fromFraction(roundStart.size, consensusConfig.quorumThresholdFraction))
+          shouldRecover = currentExternal.size >= required
+          _ <-
+            if (shouldRecover)
+              ConsensusLog.warn(
+                logger,
+                Category.Recovery,
+                state.key.show,
+                role,
+                Event.RecoveryStateTransition,
+                "trigger" -> "artifact_mismatch_same_chain_catchup",
+                "failureCount" -> failureCount.toString,
+                "currentExternal" -> currentExternal.size.toString,
+                "required" -> required.toString,
+                "currentExternalPeers" -> ConsensusLog.pids(currentExternal.toList),
+                "action" -> "incremental_recovery"
+              ) >>
+                Metrics[F].incrementCounter(
+                  "dag_consensus_artifact_mismatch_catchup_total",
+                  Seq(Metrics.unsafeLabelName("outcome") -> "triggered")
+                ) >>
+                nodeStorage.setRecoveryDownload >>
+                nodeStorage
+                  .tryModifyState(
+                    Set[NodeState](NodeState.Ready, NodeState.WaitingForReady, NodeState.Observing),
+                    NodeState.WaitingForDownload
+                  )
+                  .void
+            else
+              ConsensusLog.info(
+                logger,
+                Category.Recovery,
+                state.key.show,
+                role,
+                Event.RecoveryStateTransition,
+                "trigger" -> "artifact_mismatch_same_chain_catchup",
+                "failureCount" -> failureCount.toString,
+                "currentExternal" -> currentExternal.size.toString,
+                "required" -> required.toString,
+                "action" -> "suppressed_not_enough_current_external_facilitators"
+              ) >>
+                Metrics[F].incrementCounter(
+                  "dag_consensus_artifact_mismatch_catchup_total",
+                  Seq(Metrics.unsafeLabelName("outcome") -> "suppressed_not_enough_current_external_facilitators")
+                )
+        } yield shouldRecover
+
       /** Validate view/VCC invariants on an incoming proposal. Thin delegate to the shared `ProposalVccValidator.validate` helper so the
         * dag-l0 and currency-l0 advancers cannot drift on consensus-adjacent logic. See the helper's scaladoc for the full branch summary;
         * ProposalVccValidatorSuite pins every positive/negative path including the alpha.90 P0 #1 seed-view bypass and the alpha.90 issue 2
@@ -1875,19 +1949,28 @@ object GlobalSnapshotConsensusStateAdvancer {
                           val diffDetail = describeInvalidArtifact(invalidArtifact)
                           val ownCtx = status.proposalArtifactInfo.context
                           val ctxDigest = contextDigest(ownCtx)
+                          val baseFields = Seq(
+                            "leaderHash" -> leaderProposal.hash.show.take(8),
+                            "ownHash" -> status.proposalArtifactInfo.hash.show.take(8),
+                            "leader" -> ConsensusLog.pid(state.leader),
+                            "view" -> state.viewNumber.toString,
+                            "reason" -> diffDetail
+                          )
                           sp.restore >>
-                            ConsensusLog.warn(
-                              logger,
-                              Category.Validation,
-                              state.key.show,
-                              role,
-                              Event.ValidationFailed,
-                              "leaderHash" -> leaderProposal.hash.show.take(8),
-                              "ownHash" -> status.proposalArtifactInfo.hash.show.take(8),
-                              "leader" -> ConsensusLog.pid(state.leader),
-                              "view" -> state.viewNumber.toString,
-                              "reason" -> diffDetail
-                            ) >>
+                            artifactMismatchDiagnostics(
+                              invalidArtifact,
+                              leaderProposal.hash,
+                              status.proposalArtifactInfo.hash
+                            ).flatMap { diagnosticFields =>
+                              ConsensusLog.warn(
+                                logger,
+                                Category.Validation,
+                                state.key.show,
+                                role,
+                                Event.ValidationFailed,
+                                (baseFields ++ diagnosticFields): _*
+                              )
+                            } >>
                             ConsensusLog.info(
                               logger,
                               Category.Validation,
@@ -1929,37 +2012,42 @@ object GlobalSnapshotConsensusStateAdvancer {
                               // suppressed (budget exhausted, or no useful declarations) or has
                               // already fired its budget at this key without resolving.
                               if (count >= maxConsecutiveValidationFailures)
-                                trySoftResetAtSameKey(state.key, "artifact_mismatch", count, role).flatMap {
-                                  case SoftResetOutcome.Fired =>
+                                maybeTriggerArtifactMismatchCatchup(state, role, count).flatMap {
+                                  case true =>
                                     validationFailureCountRef.set((none, 0))
-                                  case SoftResetOutcome.SuppressedBudgetExhausted =>
-                                    ConsensusLog.warn(
-                                      logger,
-                                      Category.Recovery,
-                                      state.key.show,
-                                      role,
-                                      Event.RecoveryStateTransition,
-                                      "trigger" -> "consecutive_validation_failures",
-                                      "count" -> count.toString,
-                                      "action" -> "incremental_recovery"
-                                    ) >>
-                                      validationFailureCountRef.set((none, 0)) >>
-                                      // Set recovery download flag so DownloadDaemon uses the incremental
-                                      // recovery path. The incremental path now properly syncs MptStore from
-                                      // the downloaded snapshot's checkpoint data (no full rebuild needed).
-                                      nodeStorage.setRecoveryDownload >>
-                                      nodeStorage
-                                        .tryModifyState(
-                                          Set[NodeState](NodeState.Ready, NodeState.WaitingForReady),
-                                          NodeState.WaitingForDownload
-                                        )
-                                        .void
-                                  case SoftResetOutcome.SuppressedNoReadyPeerWithUsefulDeclarations =>
-                                    // No Ready peer with usable declarations -- the cluster lacks a
-                                    // proven recovery source. Forcing WFD here would worsen the cascade.
-                                    // Keep the validation-failure count so the next failure can re-try
-                                    // soft reset once a Ready peer surfaces.
-                                    Async[F].unit
+                                  case false =>
+                                    trySoftResetAtSameKey(state.key, "artifact_mismatch", count, role).flatMap {
+                                      case SoftResetOutcome.Fired =>
+                                        validationFailureCountRef.set((none, 0))
+                                      case SoftResetOutcome.SuppressedBudgetExhausted =>
+                                        ConsensusLog.warn(
+                                          logger,
+                                          Category.Recovery,
+                                          state.key.show,
+                                          role,
+                                          Event.RecoveryStateTransition,
+                                          "trigger" -> "consecutive_validation_failures",
+                                          "count" -> count.toString,
+                                          "action" -> "incremental_recovery"
+                                        ) >>
+                                          validationFailureCountRef.set((none, 0)) >>
+                                          // Set recovery download flag so DownloadDaemon uses the incremental
+                                          // recovery path. The incremental path now properly syncs MptStore from
+                                          // the downloaded snapshot's checkpoint data (no full rebuild needed).
+                                          nodeStorage.setRecoveryDownload >>
+                                          nodeStorage
+                                            .tryModifyState(
+                                              Set[NodeState](NodeState.Ready, NodeState.WaitingForReady),
+                                              NodeState.WaitingForDownload
+                                            )
+                                            .void
+                                      case SoftResetOutcome.SuppressedNoReadyPeerWithUsefulDeclarations =>
+                                        // No Ready peer with usable declarations -- the cluster lacks a
+                                        // proven recovery source. Forcing WFD here would worsen the cascade.
+                                        // Keep the validation-failure count so the next failure can re-try
+                                        // soft reset once a Ready peer surfaces.
+                                        Async[F].unit
+                                    }
                                 }
                               else
                                 Async[F].unit
@@ -2162,6 +2250,69 @@ object GlobalSnapshotConsensusStateAdvancer {
         case other =>
           other.getClass.getSimpleName
       }
+
+      /** Bounded artifact-mismatch diagnostics for the next failure. The existing field-level diff can report "no diff" when the semantic
+        * fields compare equal but the canonical artifact hash still differs. These fields give us enough to decide whether the mismatch is
+        * rooted in state proof roots, MPT/checkpoint state, collection cardinality, or canonical serialization/hash input without logging
+        * the large state payload itself.
+        */
+      private def artifactMismatchDiagnostics(
+        err: InvalidArtifact,
+        leaderProposalHash: Hash,
+        ownProposalHash: Hash
+      ): F[Seq[(String, String)]] = err match {
+        case GlobalArtifactMismatch(leader, own) =>
+          (
+            serializedArtifactDigest(leader),
+            serializedArtifactDigest(own)
+          ).mapN {
+            case ((leaderBytes, leaderSerializedHash), (ownBytes, ownSerializedHash)) =>
+              Seq(
+                "leaderProposalHash" -> leaderProposalHash.show.take(12),
+                "ownProposalHash" -> ownProposalHash.show.take(12),
+                "leaderSerializedBytes" -> leaderBytes,
+                "ownSerializedBytes" -> ownBytes,
+                "leaderSerializedHash" -> leaderSerializedHash,
+                "ownSerializedHash" -> ownSerializedHash,
+                "leaderArtifactDigest" -> artifactDigest(leader),
+                "ownArtifactDigest" -> artifactDigest(own),
+                "leaderStateProof" -> describeStateProof(leader.stateProof),
+                "ownStateProof" -> describeStateProof(own.stateProof)
+              )
+          }
+        case _ =>
+          Seq.empty[(String, String)].pure[F]
+      }
+
+      private def serializedArtifactDigest(artifact: GlobalIncrementalSnapshot): F[(String, String)] =
+        JsonSerializer[F]
+          .serialize(artifact)
+          .flatMap(bytes => Hash.fromBytesForSync[F](bytes).map(hash => (bytes.length.toString, hash.show.take(12))))
+          .handleError(e => (s"error:${e.getClass.getSimpleName}", "unavailable"))
+
+      private def artifactDigest(artifact: GlobalIncrementalSnapshot): String =
+        List(
+          s"ordinal=${artifact.ordinal.show}",
+          s"height=${artifact.height.show}",
+          s"subHeight=${artifact.subHeight.show}",
+          s"lastSnapshotHash=${artifact.lastSnapshotHash.show.take(12)}",
+          s"blocks=${artifact.blocks.size}",
+          s"stateChannels=${artifact.stateChannelSnapshots.size}",
+          s"rewards=${artifact.rewards.size}",
+          s"deprecatedTips=${artifact.tips.deprecated.size}",
+          s"activeTips=${artifact.tips.remainedActive.size}",
+          s"nextFacilitators=${artifact.nextFacilitators.size}",
+          s"delegateRewards=${artifact.delegateRewards.map(_.size).getOrElse(0)}",
+          s"allowSpendBlocks=${artifact.allowSpendBlocks.fold(0)(_.size)}",
+          s"tokenLockBlocks=${artifact.tokenLockBlocks.fold(0)(_.size)}",
+          s"spendActions=${artifact.spendActions.map(_.size).getOrElse(0)}",
+          s"activeDelegatedStakes=${artifact.activeDelegatedStakes.map(_.size).getOrElse(0)}",
+          s"delegatedStakesWithdrawals=${artifact.delegatedStakesWithdrawals.map(_.size).getOrElse(0)}",
+          s"activeNodeCollaterals=${artifact.activeNodeCollaterals.map(_.size).getOrElse(0)}",
+          s"nodeCollateralWithdrawals=${artifact.nodeCollateralWithdrawals.map(_.size).getOrElse(0)}",
+          s"updateNodeParameters=${artifact.updateNodeParameters.map(_.size).getOrElse(0)}",
+          s"version=${artifact.version.show}"
+        ).mkString(" ")
 
       /** Produces a compact representation of all stateProof sub-field hash prefixes for comparing leader vs follower. */
       private def describeStateProof(sp: GlobalSnapshotStateProof): String =
