@@ -14,6 +14,7 @@ import io.constellationnetwork.schema.errorShow
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 
+import eu.timepit.refined.auto._
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -49,6 +50,10 @@ object GossipRoundRunner {
         private val logger = Slf4jLogger.getLogger[F]
         private val failureWindowMs = cfg.failureWindow.toMillis
         private val failureThreshold = cfg.failureCountThreshold.value
+        private val peerIdLabel = Metrics.unsafeLabelName("peer_id")
+        private val peerStateLabel = Metrics.unsafeLabelName("peer_state")
+        private val reasonLabel = Metrics.unsafeLabelName("reason")
+        private val runnerLabel = Metrics.unsafeLabelName("runner")
 
         def runForever: F[Unit] = S.supervise {
           Stream
@@ -102,6 +107,7 @@ object GossipRoundRunner {
                 case (duration, _) => metrics.recordRoundDuration(duration, roundLabel)
               }
               .flatMap(_ => metrics.incrementGossipRoundSucceeded)
+              .flatMap(_ => recordPeerRoundSuccess(peer))
               .flatMap(_ => recordSuccess(peer.id))
               .handleErrorWith { err =>
                 val logEffect =
@@ -109,16 +115,57 @@ object GossipRoundRunner {
                     logger.debug(s"Gossip round failed for peer in ${peer.state} {peer=${peer.show}, reason=${err.show}}")
                   else
                     logger.error(s"Error running gossip round {peer=${peer.show}, reason=${err.show}")
-                logEffect >> recordFailure(peer.id) >> localHealthcheck.start(peer)
+                logEffect >> recordPeerRoundFailure(peer, err) >> recordFailure(peer.id) >> localHealthcheck.start(peer)
               },
             selectedPeersR.update(_.excl(peer))
           )
+
+        private def peerTags(peer: Peer): Metrics.TagSeq =
+          Seq(
+            peerIdLabel -> peer.id.value.value.take(8),
+            peerStateLabel -> peer.state.entryName,
+            runnerLabel -> roundLabel
+          )
+
+        private def recordPeerRoundSuccess(peer: Peer): F[Unit] =
+          Metrics[F].incrementCounter("dag_gossip_peer_round_success_total", peerTags(peer))
+
+        private def recordPeerRoundFailure(peer: Peer, err: Throwable): F[Unit] =
+          Metrics[F].incrementCounter(
+            "dag_gossip_peer_round_failure_total",
+            peerTags(peer) :+ (reasonLabel -> err.getClass.getSimpleName)
+          )
+
+        private def recordPeerSelectionSnapshot(allPeers: Set[Peer], excluded: Set[PeerId]): F[Unit] = {
+          val countsByState = allPeers.groupMapReduce(_.state)(_ => 1)(_ + _)
+          val stateGauges =
+            NodeState.values.toList.traverse_ { state =>
+              Metrics[F].updateGauge(
+                "dag_gossip_responsive_peer_state_count",
+                countsByState.getOrElse(state, 0).toLong,
+                Seq(peerStateLabel -> state.entryName, runnerLabel -> roundLabel)
+              )
+            }
+
+          val excludedByState = allPeers.filter(peer => excluded.contains(peer.id)).groupMapReduce(_.state)(_ => 1)(_ + _)
+          val excludedGauges =
+            NodeState.values.toList.traverse_ { state =>
+              Metrics[F].updateGauge(
+                "dag_gossip_excluded_peer_state_count",
+                excludedByState.getOrElse(state, 0).toLong,
+                Seq(peerStateLabel -> state.entryName, runnerLabel -> roundLabel)
+              )
+            }
+
+          stateGauges >> excludedGauges
+        }
 
         private def selectPeers: F[Unit] =
           for {
             _ <- Temporal[F].sleep(cfg.interval)
             allPeers <- clusterStorage.getResponsivePeers
             excluded <- excludedPeerIds
+            _ <- recordPeerSelectionSnapshot(allPeers, excluded)
             eligiblePeers = if (excluded.isEmpty) allPeers else allPeers.filterNot(p => excluded.contains(p.id))
             _ <- ExitOnFork.exitOnCheck("CL_EXIT_ON_FOLLOWER_GOSSIP", () => eligiblePeers.map(_.id))
             selectedPeers <- selectedPeersR.get

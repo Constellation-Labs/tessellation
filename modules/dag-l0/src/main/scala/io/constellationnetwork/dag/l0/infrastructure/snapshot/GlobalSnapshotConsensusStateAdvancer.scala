@@ -1277,6 +1277,11 @@ object GlobalSnapshotConsensusStateAdvancer {
           readyIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
           peerKeys <- consensusStorage.getPeerCurrentKeys
           roundStart = state.roundStartFacilitators.value
+          // TODO(certified-catchup): This ahead-only predicate prevents same-key no-op
+          // downloads, but it is still a tactical proxy. The production check should ask
+          // whether a verified downloadable/certified outcome exists for this ordinal or a
+          // higher ordinal. A peer can be behind by one snapshot while the recovery source is at
+          // the same round key but has already finalized it.
           aheadExternal = roundStart.filter { peerId =>
             peerId =!= selfId &&
             readyIds.contains(peerId) &&
@@ -2821,11 +2826,15 @@ object GlobalSnapshotConsensusStateAdvancer {
         }
 
       private def signedArtifactPeerHistory(outcome: GlobalConsensusOutcome): ConsensusOperationalState =
-        // TODO(v20 cleanup): recentRoundEndTimes is intentionally omitted from signed artifacts
-        // because it is derived from locally accepted facilities, which may differ during view-change
-        // startup. If we keep it pacemaker-local/sidecar-only, remove the field from
-        // GlobalIncrementalSnapshot peerHistory in the next schema cleanup.
-        outcome.toOperationalState.copy(recentRoundEndTimes = None)
+        // TODO(v20 cleanup): recentRoundEndTimes and perPeer are intentionally omitted from
+        // signed artifacts because they have both proven locally divergent in live testnet
+        // proposal validation. The full operational history is still written to
+        // PeerHistorySidecarStorage after finalization; remove or certify these fields in the
+        // next schema cleanup before putting them back in proposal-critical bytes.
+        outcome.toOperationalState.copy(
+          perPeer = SortedMap.empty,
+          recentRoundEndTimes = None
+        )
 
       private val selfId: PeerId = PeerId.fromPublic(keyPair.getPublic)
 
