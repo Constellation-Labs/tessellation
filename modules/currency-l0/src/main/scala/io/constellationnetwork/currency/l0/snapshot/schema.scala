@@ -141,13 +141,17 @@ object schema {
     // Cumulative view-change-caused counts mirror of dag-l0 schema; see
     // dag-l0 schema for the full pack/unpack + recompute-at-finalize contract.
     peerViewChanges: SortedMap[PeerId, Long] = SortedMap.empty,
-    // Recent-signers sliding window mirror of dag-l0 schema. See dag-l0 mirror for
-    // the full rationale on window semantics, Option-wrap at the snapshot boundary,
-    // and FacilitatorSelector consumption.
+    // v22: rolling K-round signer-set window, mirror of dag-l0 schema. Repopulated each
+    // round and consumed by `TierTransitions.computeNextTiers` as the tier-demotion
+    // hysteresis input (a Core peer absent from the most-recent
+    // `TierTransitions.DemotionConsecutiveMisses` signer sets is demoted). See dag-l0
+    // mirror for the full rationale on window semantics and Option-wrap at the snapshot
+    // boundary.
     recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = SortedMap.empty,
-    // v19 multi-committee tier classification per peer. Mirror of dag-l0 schema. See
+    // v19/v22 multi-committee tier classification per peer. Mirror of dag-l0 schema. See
     // dag-l0 mirror for the full Tier 2 / Tier 1 / Tier 0 semantics and the
-    // `TierTransitions.computeNextTier` round-finalize derivation.
+    // `TierTransitions.computeNextTiers` round-finalize derivation (Core peers absent from
+    // the most-recent `DemotionConsecutiveMisses` signer sets demote to Tier 1).
     peerTiers: SortedMap[PeerId, Int] = SortedMap.empty,
     // v19 phase 2 view-from-time anchor mirror of dag-l0 schema. Sliding window of
     // (ordinal -> consensusEndTime) computed as the median of Facility.proposerClockMs

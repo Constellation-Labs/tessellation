@@ -347,25 +347,31 @@ object GlobalSnapshotConsensusStateAdvancer {
               withCurrent.filter { case (ord, _) => ord.value.value >= minOrdinalValue }
             }
 
-            // v19 cleanup: recentSigners (the rolling K-round signer window) is inert. Its
-            // only consumer was the active-set tightening filter at StateCreator, now retired
-            // in favour of CommitteeBuilder's tier partition. TierTransitions reads only the
-            // SINGLE just-completed round's signer set (passed inline below), not the rolling
-            // window. The field is written as empty going forward (see outcome construction).
-            // tighteningMinOrdinalValue stays defined here because recentRoundEndTimes (v19
-            // phase 2 time anchor) still uses the same window-trim arithmetic.
+            // v22: recentSigners is repopulated as the rolling K-round signer-set window and is now
+            // the input to the tier-demotion hysteresis (TierTransitions.DemotionConsecutiveMisses).
+            // Append the just-completed round's signer set and trim to the tightening window. The map
+            // is SortedMap[SnapshotOrdinal, SortedSet[PeerId]] -- fully sorted, so it serializes
+            // order-independently (ArtifactSerializationDeterminismSuite covers exactly this field)
+            // and every honest node writes byte-identical bytes. Same window-trim arithmetic the
+            // recentProofSizes / recentRoundEndTimes windows use.
             val tighteningMinOrdinalValue =
               math.max(0L, currentOrdValue - config.tighteningWindow.toLong + 1L)
+            val newRecentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = {
+              val withCurrent =
+                state.lastOutcome.recentSigners.updated(state.key, SortedSet.from(completedFacilitators))
+              withCurrent.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
+            }
 
-            // v19 multi-committee tier transitions. Round completed (we are in `Finished`),
-            // so every Tier 2 peer who was in `roundStartFacilitators` but is NOT in
-            // `recentSigners[N]` (the just-completed round's signer set) demotes to Tier 1.
-            // Inputs are all consensus-agreed deterministic outcome fields so the
-            // computation is byte-identical across honest nodes.
+            // v19/v22 multi-committee tier transitions. Round completed (we are in `Finished`), so a
+            // Tier 2 peer in `roundStartFacilitators` demotes to Tier 1 ONLY if it has been absent
+            // from the most-recent `DemotionConsecutiveMisses` signer sets (sustained silence), not
+            // on a single missed signature -- the hysteresis that makes the lowered Core floor safe.
+            // Inputs are all consensus-agreed deterministic outcome fields so the computation is
+            // byte-identical across honest nodes.
             val newPeerTiers: SortedMap[PeerId, Int] = TierTransitions.computeNextTiers(
               priorTiers = state.lastOutcome.peerTiers,
               roundStartFacilitators = state.roundStartFacilitators.value.toSet,
-              recentSignersForRound = SortedSet.from(completedFacilitators),
+              recentSignersWindow = newRecentSigners,
               roundCompleted = true
             )
 
@@ -495,9 +501,10 @@ object GlobalSnapshotConsensusStateAdvancer {
               // v16: per-peer cumulative view-change-caused, deterministic from this round's
               // (entropy, viewNumber, lastOutcome, roundStartFacilitators) inputs above.
               peerViewChanges = accumulatedPeerViewChanges,
-              // v19 cleanup: inert -- the rolling-window field had only one consumer
-              // (active-set tightening filter), which has been retired.
-              recentSigners = SortedMap.empty[SnapshotOrdinal, SortedSet[PeerId]],
+              // v22: rolling K-round signer-set window, repopulated. Drives the tier-demotion
+              // hysteresis (TierTransitions.computeNextTiers above) and is carried forward as the
+              // next round's window input. Fully sorted -> deterministic across the cluster.
+              recentSigners = newRecentSigners,
               // v19: carried-forward multi-committee tier classification computed from this
               // round's signer participation (above).
               peerTiers = newPeerTiers,

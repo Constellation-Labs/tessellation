@@ -46,9 +46,10 @@ import io.constellationnetwork.schema.peer.PeerId
   * pure lex ordering so the cluster bootstraps from scratch.
   *
   * The floor is consensus-critical: divergent values across operators would derive divergent Core committees and silently fork the cluster.
-  * `coreCommitteeSize` is keyed by `AppEnvironment` and is NOT included in `deterministicConfigHash` (the jar hash gates peer connection;
-  * same precedent as `maxFacilitatorCount`). `minObservations` and `minRatio` reuse the existing `minParticipationObservations` /
-  * `minParticipationRatio` config knobs.
+  * `coreCommitteeSize` is keyed by `AppEnvironment`, resolved to a flat `Option[Int]` at the consensus construction site, and (as of v20)
+  * IS folded into `deterministicConfigHash` (treated as the dev default `3` when absent). Mismatched values are therefore rejected at
+  * handshake by the config hash, in addition to the jar hash already gating the peer connection. `minObservations` and `minRatio` reuse the
+  * existing `minParticipationObservations` / `minParticipationRatio` config knobs.
   *
   * ==Determinism contract==
   *
@@ -76,8 +77,10 @@ object CommitteeBuilder {
   /** Derive (core, tier1, witness) from the candidate set, applying quality-aware tier defaults and Core-floor promotion.
     *
     * @param candidates
-    *   The set of eligible peers for the next round (already filtered by the chronic-non-signer / penalized / deferred / probation /
-    *   tightening pipeline in the StateCreator). Order preserved in the output via stable PeerId-hex sorting of the promotion set.
+    *   The set of eligible peers for the next round (filtered in the StateCreator by the two remaining behavioural gates: removal-penalty
+    *   and re-admission probation; the chronic-non-signer / prior-round-missing / tightening-window / candidate-deferral filters were
+    *   retired in v19 and replaced by this tier partition). Order preserved in the output via stable PeerId-hex sorting of the promotion
+    *   set.
     * @param priorTiers
     *   `lastOutcome.peerTiers` -- the carried-forward classification. Absent peers fall through to quality-based default.
     * @param peerQuality

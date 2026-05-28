@@ -46,24 +46,30 @@ final case class PerPeerOperationalRecord(
   // v19 multi-committee tier classification. Three deterministic tiers govern the
   // peer's role in a round:
   //   - Tier 2 (Core): full facilitator, gates LIVENESS (quorum is computed against
-  //     coreFacilitators only). Bootstrap default for any peer with `tier = None` at
-  //     CommitteeBuilder time (no seedlist allowlist required).
+  //     coreFacilitators only).
   //   - Tier 1: witness-eligible (B1/B2/VCC witness pool), not in the active LIVENESS
-  //     quorum. Demoted to Tier 1 when a Tier 2 peer was in roundStartFacilitators of
-  //     a SUCCESSFUL round N but was NOT in recentSigners[N]. Failed rounds do not
-  //     cascade demote -- only completed rounds with a witnessed signer set update tier.
+  //     quorum. As of v22 a Tier 2 peer is demoted to Tier 1 only after SUSTAINED
+  //     silence -- absent from the most-recent `TierTransitions.DemotionConsecutiveMisses`
+  //     signer sets of the `recentSigners` window -- not on a single missed signature.
+  //     Failed rounds do not cascade demote; only completed rounds update tier.
   //   - Tier 0 (Witness): open membership, observation only.
-  // Computed by `TierTransitions.computeNextTier` at every round-finalize from
-  // consensus-agreed inputs (prior tier + roundStartFacilitators + recentSigners + round
-  // outcome) so every honest node converges on the same per-peer tier byte-identically.
+  // Computed by `TierTransitions.computeNextTiers` at every round-finalize from
+  // consensus-agreed inputs (prior tiers + roundStartFacilitators + the recentSigners
+  // window + round outcome) so every honest node converges on the same per-peer tier
+  // byte-identically.
+  //
+  // Two DIFFERENT defaults for an unclassified peer, intentionally asymmetric (see the
+  // `TierTransitions` header): at ROUND-COMPLETION `computeNextTier` treats `tier = None`
+  // as Core (a peer in roundStart with no prior classification was floor-promoted into
+  // Core for that round). At COMMITTEE-DERIVATION `CommitteeBuilder` defaults an unknown
+  // peer to Tier 1 unless `peerQuality` proves Core -- derivation gates Core entry on
+  // demonstrated participation. Do not conflate the two.
   //
   // MUST be `Option[Int]`, not `Int = 0`: same derevo-decoder caveat as
   // `viewChangesCaused` above. Wrapping in Option makes the field truly optional at
   // decode time; with `Printer(dropNullValues = true)` in production, `None` is dropped
   // from JSON entirely so v19-encoded snapshots are byte-identical to pre-v19 for
-  // peers that have not yet been classified. `None` at the consume site is treated as
-  // bootstrap-Tier-2 by CommitteeBuilder, matching the no-allowlist initialization
-  // contract documented in the multi-committee architecture.
+  // peers that have not yet been classified.
   //
   // NOT in deterministicConfigHash: the tier value is per-peer-derived, not a
   // cluster-wide config knob. Operators do not configure tiers; the round-finalize

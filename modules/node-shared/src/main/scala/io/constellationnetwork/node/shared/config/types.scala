@@ -241,22 +241,41 @@ object types {
     //   timeView = (local_now - parent.consensusEndTime) / viewInterval
     // and the stall detector may emit a signed VCV when local view lags this hint. The hint must
     // not directly seed proposal-critical `viewNumber`; view advancement requires VCV quorum/VCC.
-    // NTP skew across honest nodes is +/- 10ms on AWS-class infra; with a 30s default the boundary
-    // resolution is 3 parts in 10,000 -- well below view-transition granularity. Consensus-critical:
+    // NTP skew across honest nodes is +/- 10ms on AWS-class infra; with a 60s default the boundary
+    // resolution is ~1.7 parts in 10,000 -- well below view-transition granularity. Consensus-critical:
     // included in `deterministicConfigHash` so honest peers with the same parent + same `now`
     // compute the same timeView. See `docs/consensus/view-from-time-anchor.md`.
-    viewInterval: FiniteDuration = 30.seconds,
-    // Active-set tightening parameters. The committee for round N+1 is narrowed to
-    // peers who signed at least `minParticipationInWindow` of the last
-    // `tighteningWindow` successful outcomes (plus grace candidates: peers in
-    // `genuinelyNewCandidates` / `deferredByCountdown`). If the surviving candidate
-    // set is below `activeFacilitatorFloor`, the filter is bypassed and the full
-    // eligibleFacilitators is used; BFT safety requires N >= 3f+1, so floor=4
-    // prevents dropping below f=1 tolerance. Default K=10, M=6, floor=4: a peer
-    // needs to sign 60% of the last K outcomes to stay in the committee. Same
-    // window size as `recentProofSizes` so the two are pinned to the same horizon.
-    // Consensus-critical: in `deterministicConfigHash` so honest nodes compute
-    // identical committees.
+    //
+    // Raised 30s -> 60s: testnet log analysis (2026-05-28) showed median round duration ~45s, which
+    // EXCEEDS the old 30s interval, so `floor((now - parentEndTime) / viewInterval)` evaluated to >= 1
+    // in the proposal phase on EVERY round -- firing one timestamp-pacemaker VCV per round ~300ms
+    // before signatures even began. The round still finalized at view 0, so the VCV was wasted work
+    // AND it masked genuine stalls (every round carried a forced view change, so a real stall was
+    // indistinguishable in metrics/logs). At 60s, `floor(45/60)=0`, the per-round VCV disappears, and
+    // a genuine ~120s stall still trips `timeView >= 2` -> view advance. The cost is that a real stall
+    // now takes ~60s instead of ~30s to trip time-derived view advance; the abandon / StallDetector
+    // paths remain a faster backstop. Watch round duration: if it creeps toward 60s under load, move
+    // to an adaptive interval (codex pacemaker item #4) rather than another fixed bump.
+    viewInterval: FiniteDuration = 60.seconds,
+    // Signer-history window parameters.
+    //
+    // `tighteningWindow` is LIVE: it is the size (in ordinals) of the rolling `recentSigners`
+    // window the StateAdvancers maintain. As of v22 that window feeds the tier-demotion
+    // hysteresis (`TierTransitions` reads the most-recent `DemotionConsecutiveMisses` entries of
+    // it) and is pinned to the same horizon as `recentProofSizes`.
+    //
+    // `minParticipationInWindow` is INERT (dead config). It parameterized the original v19
+    // active-set tightening FILTER -- "narrow the round N+1 committee to peers who signed M of
+    // the last K outcomes" -- which was RETIRED when the multi-committee tier partition
+    // (`TierTransitions` + `CommitteeBuilder`) replaced it. No code reads it today; it survives
+    // only in this field, the `deterministicConfigHash` string, and the conf files. Kept (not
+    // removed) so the schema/hash is unchanged; a hard removal is deferred to a future schema
+    // cleanup. The v22 demotion hysteresis does NOT use it -- it uses the compiled-in
+    // `TierTransitions.DemotionConsecutiveMisses` constant instead.
+    //
+    // `activeFacilitatorFloor` is still read by the rollback/ready-participation gates. All three
+    // are consensus-critical (in `deterministicConfigHash`) so divergent operator values are
+    // rejected at handshake.
     tighteningWindow: Int = 10,
     minParticipationInWindow: Int = 6,
     activeFacilitatorFloor: Int = 4,
@@ -586,6 +605,10 @@ object types {
     //     v17 readers lack the `recentSigners` field and would treat absent as empty,
     //     computing different candidate pools after any round populates the window.
     //     Cold restart required across the cluster.
+    //     RETIRED in v19: the per-peer "signed M-of-K to stay in the committee" FILTER
+    //     described above was replaced by the multi-committee tier partition (below).
+    //     `minParticipationInWindow` became inert config. The `recentSigners` window itself
+    //     survives and, as of v22, feeds the tier-demotion hysteresis instead.
     //   v19: Multi-committee architecture plus phase 2 view-from-time timestamp
     //     fields. Three deterministic committees -- Core (Tier 2, gates LIVENESS),
     //     Tier 1 (Witness-eligible), Witness (Tier 0) -- derived per round by
@@ -634,7 +657,16 @@ object types {
     //     v19 and v20 cannot interoperate. Operator dashboards grep on
     //     `view{N}_proposal_missing_vcc` and `vcc_view_mismatch` rejection codes --
     //     the latter is the alpha.90 issue 2 stale-VCC view-mismatch gate.
-    consensusSchemaVersion: Int = 20,
+    //     v21: `viewInterval` raised 30s -> 60s (deploy unit A). Pure value change; it
+    //     alters `deterministicConfigHash` (viewIntervalMs is folded in below), so the
+    //     real cross-cluster gate is the config-hash + jar-hash mismatch at handshake.
+    //     This version bump is an audit anchor only, not the gate.
+    //     v22: testnet Core committee floor 3 -> 2 plus sustained-silence demotion
+    //     hysteresis (deploy unit B; a Core peer is demoted only after it is absent from
+    //     the most-recent `TierTransitions.DemotionConsecutiveMisses` signer sets, not on a
+    //     single missed signature). `coreCommitteeSize` is in `deterministicConfigHash`, so
+    //     the config-hash + jar-hash are the gate; v22 is the audit anchor for B.
+    consensusSchemaVersion: Int = 22,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with
@@ -689,8 +721,10 @@ object types {
       *   - `minLeaderPoolSize`: fallback threshold when too few peers clear the hard floor
       *   - `minObservationHistoryFloor`: minimum participated count before chronic classification can fire
       *   - `forceViewChangeAbandonments`: defensive force-VCV threshold (bypasses missing-still-responsive gate after N same-key abandons)
-      *   - `tighteningWindow`, `minParticipationInWindow`, `activeFacilitatorFloor`: active-set narrowing parameters; control which peers
-      *     are committee members for the next round (recent signer history + grace candidates with floor fallback for cluster-wide outages)
+      *   - `tighteningWindow`: size of the rolling `recentSigners` window; as of v22 it feeds the tier-demotion hysteresis (LIVE)
+      *   - `minParticipationInWindow`: INERT (dead config) -- parameterized the retired v19 active-set tightening filter; kept in the hash
+      *     only to avoid a schema change, read by no logic (the v22 hysteresis uses `TierTransitions.DemotionConsecutiveMisses`)
+      *   - `activeFacilitatorFloor`: floor read by the rollback / ready-participation gates
       *   - `bootstrapDeclarationTimeoutMultiplier`: affects phase-transition timing during bootstrap
       *   - `coreCommitteeSize`: env-resolved Core committee floor; changes Core derivation and the LIVENESS quorum denominator. Populated
       *     by the consensus construction site from `SnapshotConfig.coreCommitteeSize.get(env)` (defaults to dev value 3 when absent). v20

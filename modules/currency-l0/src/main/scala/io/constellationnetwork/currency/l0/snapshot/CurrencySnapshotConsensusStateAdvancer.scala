@@ -218,18 +218,23 @@ object CurrencySnapshotConsensusStateAdvancer {
               withCurrent.filter { case (ord, _) => ord.value.value >= minOrdinalValue }
             }
 
-            // v19 cleanup: recentSigners is inert (only consumer was the retired tightening
-            // filter). TierTransitions reads the single just-completed round's signer set inline.
-            // tighteningMinOrdinalValue is retained because recentRoundEndTimes uses the same
-            // window-trim arithmetic. Mirror of dag-l0.
+            // v22: recentSigners repopulated as the rolling K-round signer-set window; drives the
+            // tier-demotion hysteresis. Fully sorted -> deterministic. Mirror of dag-l0.
             val tighteningMinOrdinalValue =
               math.max(0L, currentOrdValue - config.tighteningWindow.toLong + 1L)
+            val newRecentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = {
+              val withCurrent =
+                state.lastOutcome.recentSigners.updated(state.key, SortedSet.from(completedFacilitators))
+              withCurrent.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
+            }
 
-            // v19 multi-committee tier transitions mirror of dag-l0.
+            // v19/v22 multi-committee tier transitions mirror of dag-l0: demote a Core peer only on
+            // sustained silence (absent from the most-recent DemotionConsecutiveMisses signer sets),
+            // not a single miss -- the hysteresis that makes the lowered Core floor safe.
             val newPeerTiers: SortedMap[PeerId, Int] = TierTransitions.computeNextTiers(
               priorTiers = state.lastOutcome.peerTiers,
               roundStartFacilitators = state.roundStartFacilitators.value.toSet,
-              recentSignersForRound = SortedSet.from(completedFacilitators),
+              recentSignersWindow = newRecentSigners,
               roundCompleted = true
             )
 
@@ -314,9 +319,9 @@ object CurrencySnapshotConsensusStateAdvancer {
               peerSelfHealth = state.observedSelfHealth.value,
               // v16: per-peer cumulative view-change-caused, mirror of dag-l0.
               peerViewChanges = accumulatedPeerViewChanges,
-              // v19 cleanup: inert -- rolling-window consumer (active-set tightening) retired.
-              // Mirror of dag-l0.
-              recentSigners = SortedMap.empty[SnapshotOrdinal, SortedSet[PeerId]],
+              // v22: rolling K-round signer-set window, repopulated to drive the tier-demotion
+              // hysteresis and carried forward as the next round's window. Mirror of dag-l0.
+              recentSigners = newRecentSigners,
               // v19 multi-committee tier classification carried forward, mirror of dag-l0.
               peerTiers = newPeerTiers,
               // v19 phase 2 view-from-time anchor window, mirror of dag-l0.
