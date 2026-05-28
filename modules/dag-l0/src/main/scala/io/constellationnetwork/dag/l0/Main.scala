@@ -17,14 +17,13 @@ import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{Finished, 
 import io.constellationnetwork.dag.l0.infrastructure.trust.handler.{ordinalTrustHandler, trustHandler}
 import io.constellationnetwork.dag.l0.modules._
 import io.constellationnetwork.ext.cats.effect._
-import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.kryo._
 import io.constellationnetwork.node.shared.app.{DagL0, NodeShared, TessellationIOApp}
 import io.constellationnetwork.node.shared.domain.collateral.OwnCollateralNotSatisfied
 import io.constellationnetwork.node.shared.ext.pureconfig._
-import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
+import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, TierTransitions}
 import io.constellationnetwork.node.shared.infrastructure.genesis.{GenesisFS => GenesisLoader}
 import io.constellationnetwork.node.shared.infrastructure.gossip.event._
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
@@ -33,7 +32,6 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{Glob
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
 import io.constellationnetwork.node.shared.resources.{ConsensusExecutor, MkHttpServer}
 import io.constellationnetwork.schema._
-import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
@@ -43,7 +41,6 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
-import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 
 import com.monovore.decline.Opts
@@ -69,6 +66,38 @@ object Main
 
   private[dag] def rollbackBootstrapFacilitators(nodeId: PeerId, proofSigners: List[PeerId]): List[PeerId] =
     if (proofSigners.nonEmpty) proofSigners else List(nodeId)
+
+  private[dag] final case class RecentCoreReconstructionDiagnostic(
+    source: String,
+    entries: SortedMap[SnapshotOrdinal, SortedSet[PeerId]]
+  )
+
+  private[dag] def reconstructRecentCoreFacilitatorsDiagnostic(
+    peerHistorySidecar: PeerHistorySidecarStorage[IO],
+    rollbackOrdinal: SnapshotOrdinal,
+    rollbackPeerHistory: Option[ConsensusOperationalState],
+    windowSize: Int
+  ): IO[RecentCoreReconstructionDiagnostic] = {
+    def coreFrom(state: ConsensusOperationalState): SortedSet[PeerId] =
+      SortedSet.from(state.perPeer.iterator.collect {
+        case (pid, record) if record.tier.contains(TierTransitions.Core) => pid
+      })
+
+    val start = math.max(0L, rollbackOrdinal.value.value - math.max(0, windowSize - 1).toLong)
+    val ordinals = (start to rollbackOrdinal.value.value).toList.flatMap(SnapshotOrdinal(_))
+
+    ordinals.traverse { ordinal =>
+      peerHistorySidecar.read(ordinal).map(_.map(state => ordinal -> coreFrom(state)))
+    }
+      .map(entries => SortedMap.from(entries.flatten))
+      .map { sidecarEntries =>
+        if (sidecarEntries.nonEmpty) RecentCoreReconstructionDiagnostic("sidecar", sidecarEntries)
+        else
+          rollbackPeerHistory
+            .map(state => RecentCoreReconstructionDiagnostic("replayed", SortedMap(rollbackOrdinal -> coreFrom(state))))
+            .getOrElse(RecentCoreReconstructionDiagnostic("unavailable", SortedMap.empty))
+      }
+  }
 
   type KryoRegistrationIdRange = DagL0KryoRegistrationIdRange
 
@@ -433,6 +462,42 @@ object Main
                   // until the window populates.
                   seedRecentRoundEndTimes =
                     seedOperational.recentRoundEndTimes.getOrElse(SortedMap.empty[SnapshotOrdinal, Long])
+                  recentCoreDiagnostic <- reconstructRecentCoreFacilitatorsDiagnostic(
+                    peerHistorySidecar,
+                    snapshot.value.ordinal,
+                    snapshot.value.peerHistory,
+                    cfg.snapshot.consensus.tighteningWindow
+                  )
+                  recentCoreSummary = recentCoreDiagnostic.entries.toList.map {
+                    case (ordinal, core) =>
+                      s"${ordinal.value.value}:${core.size}:${core.toList.map(ConsensusLog.pid).mkString(",")}"
+                  }
+                    .mkString(";")
+                  _ <- ConsensusLog.info(
+                    logger,
+                    ConsensusLog.Category.Recovery,
+                    snapshot.ordinal.toString,
+                    "n/a",
+                    ConsensusLog.Event.RollbackBootstrapActive,
+                    "reason" -> "recent_core_facilitators_reconstruction",
+                    "source" -> recentCoreDiagnostic.source,
+                    "entries" -> recentCoreDiagnostic.entries.size.toString,
+                    "windowSize" -> cfg.snapshot.consensus.tighteningWindow.toString,
+                    "method" -> "best_effort_effective_tier_core",
+                    "summary" -> recentCoreSummary
+                  )
+                  _ <- Metrics[IO].incrementCounter(
+                    "dag_consensus_recent_core_reconstruction_total",
+                    Seq(Metrics.unsafeLabelName("source") -> recentCoreDiagnostic.source)
+                  )
+                  _ <- Metrics[IO].updateGauge(
+                    "dag_consensus_recent_core_reconstruction_entries",
+                    recentCoreDiagnostic.entries.size.toLong
+                  )
+                  _ <- Metrics[IO].updateGauge(
+                    "dag_consensus_recent_core_reconstruction_latest_core_size",
+                    recentCoreDiagnostic.entries.lastOption.map(_._2.size.toLong).getOrElse(0L)
+                  )
                   result <- services.consensus.manager.startFacilitatingAfterRollback(
                     snapshot.ordinal,
                     GlobalConsensusOutcome(
