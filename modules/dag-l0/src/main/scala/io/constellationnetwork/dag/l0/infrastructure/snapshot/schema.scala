@@ -159,31 +159,38 @@ object schema {
     // view-change history (matches v15 peerSelfHealth pattern). Persisted via v20/v21
     // PerPeerOperationalRecord so the chronic-leader filter survives cold-restart.
     peerViewChanges: SortedMap[PeerId, Long] = SortedMap.empty,
-    // Sliding window of (ordinal -> proofs-signer-set) for the last `tighteningWindow`
-    // outcomes. Used by FacilitatorSelector to narrow the next-round committee to
-    // peers who signed at least `minParticipationInWindow` of these K outcomes. Window
-    // grows by one entry per round; entries older than K are dropped at outcome
-    // finalization. Each entry is the prior round's signer set, byte-identically
-    // derived on every honest node since `completedFacilitators` (roundStartFacilitators
-    // minus evictedPeers) is canonical round-start state. Persisted via
-    // toOperationalState below; survives cold-restart so a freshly-rebooted cluster
-    // doesn't lose K rounds of history. Default empty: outcomes that pre-date the
-    // window have no signer history; FacilitatorSelector treats this as a bootstrap
-    // window (use full eligibility until window fills).
+    // v22: rolling K-round signer-set window of (ordinal -> proofs-signer-set) for the
+    // last `tighteningWindow` outcomes. Repopulated every round (the just-completed
+    // round's signer set is appended) and used as the INPUT to the tier-demotion
+    // hysteresis: `TierTransitions.computeNextTiers` reads this window, and a Core peer
+    // absent from the most-recent `TierTransitions.DemotionConsecutiveMisses` signer
+    // sets is demoted to Tier 1. Window grows by one entry per round; entries older than
+    // K are dropped at outcome finalization. Each entry is the just-completed round's
+    // signer set, byte-identically derived on every honest node since
+    // `completedFacilitators` (roundStartFacilitators minus evictedPeers) is canonical
+    // round-start state. Persisted via toOperationalState below; survives cold-restart
+    // so a freshly-rebooted cluster doesn't lose K rounds of demotion history. Default
+    // empty: outcomes that pre-date the window have no signer history, treated as a
+    // bootstrap window (the window-deep-enough guard in computeNextTiers suppresses
+    // demotion until the window fills).
     recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = SortedMap.empty,
-    // v19 multi-committee tier classification per peer. Computed at round-finalize by
-    // `TierTransitions.computeNextTier(prior tier, roundStartFacilitators, recentSigners[N],
-    // roundCompleted)`. Consensus-agreed: all inputs are deterministic outcome fields, so
-    // every honest node produces the byte-identical map.
+    // v19/v22 multi-committee tier classification per peer. Computed at round-finalize by
+    // `TierTransitions.computeNextTiers(priorTiers, roundStartFacilitators,
+    // recentSignersWindow, roundCompleted)`, which per peer demotes a Core peer that was in
+    // roundStart but absent from the most-recent `DemotionConsecutiveMisses` signer sets.
+    // Consensus-agreed: all inputs are deterministic outcome fields, so every honest node
+    // produces the byte-identical map.
     //
     // Tier 2 (Core): full facilitator, in the LIVENESS quorum.
     // Tier 1: witness-eligible, not in the LIVENESS quorum.
     // Tier 0 (Witness): open membership, observation only.
     //
     // Persisted via `toOperationalState` -> `PerPeerOperationalRecord.tier`; restored on
-    // cold-restart at Main.scala. Default empty: pre-v19 outcomes have no tier history,
-    // and `CommitteeBuilder` defaults absent peers to Tier 2 (bootstrap), preserving
-    // current committee behavior for the first round after upgrade.
+    // cold-restart at Main.scala. Default empty: pre-v19 outcomes have no tier history. At
+    // committee-derivation time `CommitteeBuilder` defaults an absent peer to Tier 1 (not
+    // Core) unless `peerQuality` proves it above the ratio bar -- the replacement for the
+    // original "everyone defaults to Core" bootstrap that let unclassified peers wedge the
+    // cluster.
     peerTiers: SortedMap[PeerId, Int] = SortedMap.empty,
     // v19 phase 2 view-from-time anchor: sliding window of (ordinal -> consensusEndTime).
     // `consensusEndTime` = `max(median(Facility.proposerClockMs), parent.consensusEndTime + 1)`,
@@ -200,13 +207,20 @@ object schema {
       else facilitators.value
 
     // v20: package the consensus-derived peer-behavior counters for persistence
-    // on the next round's incremental snapshot. All inputs are consensus-agreed,
-    // so every facilitator produces a byte-identical result.
+    // on the next round's incremental snapshot.
+    //
+    // This is the FULL operational state (written to the snapshot / PeerHistorySidecar
+    // after finalization). The signed-artifact path is narrower: `signedArtifactPeerHistory`
+    // in the advancer strips `perPeer` and `recentRoundEndTimes` before they enter the
+    // proposal-critical bytes, because those two fields proved locally divergent in live
+    // testnet proposal validation. recentProofSizes / recentSigners stay in the signed
+    // artifact (fully sorted, byte-identical across honest nodes).
     //
     // v21 layout: peer-keyed dimensions collapsed into a single map keyed by
-    // PeerId so each id appears once. The union of keys across the five
-    // dimensions becomes the per-peer map's key set; absent peers contribute
-    // `PerPeerOperationalRecord.empty` semantics on the consumer side.
+    // PeerId so each id appears once. The union of keys across the seven peer-keyed
+    // source maps (quality, removalPenalty, cumulativeMissCount, readmissionCountdown,
+    // deferralCountdown, peerViewChanges, peerTiers) becomes the per-peer map's key set;
+    // absent peers contribute `PerPeerOperationalRecord.empty` semantics on the consumer side.
     def toOperationalState: ConsensusOperationalState = {
       val keys: Set[PeerId] =
         (peerQuality.keysIterator ++
@@ -241,8 +255,9 @@ object schema {
         recentProofSizes = recentProofSizes,
         // Emit `Some(nonEmptyMap)` so `dropNullValues=true` keeps the field out of
         // byte-stable encodings written before this field existed; emit `None` while
-        // the window is empty (bootstrap, rollback to an old snapshot) so
-        // FacilitatorSelector defaults to full-eligibility behavior.
+        // the window is empty (bootstrap, rollback to an old snapshot) so the restored
+        // window stays empty and the tier-demotion hysteresis stays in its bootstrap
+        // (no-demote) regime until the window refills.
         recentSigners = if (recentSigners.nonEmpty) Some(recentSigners) else None,
         // v19 phase 2: same Option-wrap pattern as recentSigners. None at the snapshot
         // boundary means the cluster has not yet produced a round whose Facility set
