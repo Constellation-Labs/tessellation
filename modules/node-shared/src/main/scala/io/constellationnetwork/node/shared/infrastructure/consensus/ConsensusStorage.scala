@@ -105,6 +105,28 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
   /** Read the currently-assembled VCC for a key, if any. */
   def getAssembledVcc(key: Key): F[Option[ViewChangeCertificate]]
 
+  /** Mark a VCC transition as already scheduled for delayed apply.
+    *
+    * The chain anchor is the parent snapshot hash carried by every VCV. It prevents fork/rollback contexts that reuse the same ordinal and
+    * view pair from suppressing each other.
+    */
+  private[consensus] def markAssembledVccApplyScheduled(key: Key, lastSnapshotHash: Hash, fromView: Long, toView: Long): F[Boolean]
+
+  /** Mark an assembled VCC rumor as already received from a peer. Returns true only for the first receipt of that anchored transition from
+    * origin.
+    *
+    * Origin is intentionally part of the key: processing is bounded by distinct senders, not globally O(1), so redundant cert relays can
+    * cover gossip loss without recreating the unbounded receipt storm.
+    */
+  private[consensus] def markAssembledVccReceived(
+    key: Key,
+    origin: PeerId,
+    lastSnapshotHash: Hash,
+    fromView: Long,
+    toView: Long,
+    voteSigners: Set[PeerId]
+  ): F[Boolean]
+
   /** Add an `EvictionVote` to the current round's accumulator. First-write-wins per (voter, target): a peer cannot replace their earlier
     * vote with a later one for the same target. Multiple targets per voter are allowed (up to the per-round cap enforced by the emitter).
     */
@@ -335,6 +357,8 @@ object ConsensusStorage {
       resourcesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusResources[Artifact, Kind]]()
       voteLocksR <- MapRef.ofConcurrentHashMap[F, Key, VoteLock]()
       assembledVccR <- MapRef.ofConcurrentHashMap[F, Key, ViewChangeCertificate]()
+      assembledVccApplyScheduledR <- MapRef.ofConcurrentHashMap[F, Key, Set[(Hash, Long, Long)]]()
+      assembledVccReceiptsR <- MapRef.ofConcurrentHashMap[F, Key, Set[(PeerId, Hash, Long, Long, Set[PeerId])]]()
       assembledEvictionCertsR <- MapRef.ofConcurrentHashMap[F, Key, Set[EvictionCertificate]]()
       assembledAdmissionCertsR <- MapRef.ofConcurrentHashMap[F, Key, Set[AdmissionCertificate]]()
       // Monotonic counter bumped on every successful state mutation via condModifyState. Used by
@@ -520,6 +544,29 @@ object ConsensusStorage {
         def getAssembledVcc(key: Key): F[Option[ViewChangeCertificate]] =
           assembledVccR(key).get
 
+        def markAssembledVccApplyScheduled(key: Key, lastSnapshotHash: Hash, fromView: Long, toView: Long): F[Boolean] =
+          assembledVccApplyScheduledR(key).modify { maybeScheduled =>
+            val transition = (lastSnapshotHash, fromView, toView)
+            val scheduled = maybeScheduled.getOrElse(Set.empty[(Hash, Long, Long)])
+            if (scheduled.contains(transition)) (maybeScheduled, false)
+            else (scheduled.incl(transition).some, true)
+          }
+
+        def markAssembledVccReceived(
+          key: Key,
+          origin: PeerId,
+          lastSnapshotHash: Hash,
+          fromView: Long,
+          toView: Long,
+          voteSigners: Set[PeerId]
+        ): F[Boolean] =
+          assembledVccReceiptsR(key).modify { maybeReceipts =>
+            val receipt = (origin, lastSnapshotHash, fromView, toView, voteSigners)
+            val receipts = maybeReceipts.getOrElse(Set.empty[(PeerId, Hash, Long, Long, Set[PeerId])])
+            if (receipts.contains(receipt)) (maybeReceipts, false)
+            else (receipts.incl(receipt).some, true)
+          }
+
         def addEvictionVote(
           origin: PeerId,
           key: Key,
@@ -683,6 +730,8 @@ object ConsensusStorage {
           resourcesR(key).set(none) >>
             voteLocksR(key).set(none) >>
             assembledVccR(key).set(none) >>
+            assembledVccApplyScheduledR(key).set(none) >>
+            assembledVccReceiptsR(key).set(none) >>
             assembledEvictionCertsR(key).set(none) >>
             assembledAdmissionCertsR(key).set(none)
 
@@ -798,6 +847,8 @@ object ConsensusStorage {
             }.void >>
               voteLocksR(key).set(none) >>
               assembledVccR(key).set(none) >>
+              assembledVccApplyScheduledR(key).set(none) >>
+              assembledVccReceiptsR(key).set(none) >>
               assembledEvictionCertsR(key).set(none) >>
               assembledAdmissionCertsR(key).set(none) >>
               statesR(key).set(none)
@@ -897,6 +948,10 @@ object ConsensusStorage {
             _ <- voteLockKeys.traverse_(k => voteLocksR(k).set(none))
             vccKeys <- assembledVccR.keys
             _ <- vccKeys.traverse_(k => assembledVccR(k).set(none))
+            vccScheduleKeys <- assembledVccApplyScheduledR.keys
+            _ <- vccScheduleKeys.traverse_(k => assembledVccApplyScheduledR(k).set(none))
+            vccReceiptKeys <- assembledVccReceiptsR.keys
+            _ <- vccReceiptKeys.traverse_(k => assembledVccReceiptsR(k).set(none))
             ecsKeys <- assembledEvictionCertsR.keys
             _ <- ecsKeys.traverse_(k => assembledEvictionCertsR(k).set(none))
             acsKeys <- assembledAdmissionCertsR.keys

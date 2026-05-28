@@ -10,9 +10,13 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
 import io.constellationnetwork.schema.gossip.{CommonRumor, Ordinal, PeerRumor}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.HasherSelector
+
+import eu.timepit.refined.auto._
 
 /** Processes incoming consensus rumors and stores them.
   *
@@ -49,7 +53,7 @@ import io.constellationnetwork.security.HasherSelector
   *
   * '''process(rumor):''' Routes to appropriate handler based on rumor type
   */
-class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
+class RumorHandler[F[_]: Async: HasherSelector: Metrics, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
   ctx: ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]
 ) {
 
@@ -292,24 +296,67 @@ class RumorHandler[F[_]: Async: HasherSelector, Event, Key, Artifact, Ctx, Statu
   private def handleAssembledVcc(origin: PeerId, vc: ConsensusAssembledVcc[_]): F[Unit] = {
     val key = vc.key.asInstanceOf[Key]
     val votes = vc.vcc.votes.toSortedSet.toList
-    storage.observePeerAtKey(origin, key) >>
-      ConsensusLog.info(
-        log,
-        Category.Phase,
-        key.toString,
-        "n/a",
-        LogEvent.ViewChange,
-        "received" -> "assembled_vcc",
-        "from" -> ConsensusLog.pid(origin),
-        "fromView" -> vc.vcc.fromView.toString,
-        "toView" -> vc.vcc.toView.toString,
-        "votes" -> votes.size.toString
-      ) >>
-      storage.storeAssembledVcc(key, vc.vcc) >>
-      votes.traverse_ { signedVote =>
-        val signer = signedVote.proofs.head.id.toPeerId
-        storage.addViewChangeVote(signer, key, vc.vcc.fromView, vc.vcc.toView, signedVote).void
-      } >>
-      queue.offer(ConsensusCommand.CheckViewChangeAssembly(key))
+    val voteSigners = votes.map(_.proofs.head.id.toPeerId).toSet
+    votes.map(_.value.lastSnapshotHash).toSet.toList match {
+      case lastSnapshotHash :: Nil =>
+        storage.observePeerAtKey(origin, key) >>
+          storage.markAssembledVccReceived(key, origin, lastSnapshotHash, vc.vcc.fromView, vc.vcc.toView, voteSigners).flatMap {
+            case true =>
+              Metrics[F].incrementCounter(
+                "dag_consensus_vcc_received_total",
+                Seq(
+                  unsafeLabelName("outcome") -> "processed",
+                  unsafeLabelName("reason") -> "first_origin_parent_view"
+                )
+              ) >>
+                ConsensusLog.info(
+                  log,
+                  Category.Phase,
+                  key.toString,
+                  "n/a",
+                  LogEvent.ViewChange,
+                  "received" -> "assembled_vcc",
+                  "from" -> ConsensusLog.pid(origin),
+                  "fromView" -> vc.vcc.fromView.toString,
+                  "toView" -> vc.vcc.toView.toString,
+                  "votes" -> votes.size.toString
+                ) >>
+                storage.storeAssembledVcc(key, vc.vcc) >>
+                votes.traverse_ { signedVote =>
+                  val signer = signedVote.proofs.head.id.toPeerId
+                  storage.addViewChangeVote(signer, key, vc.vcc.fromView, vc.vcc.toView, signedVote).void
+                } >>
+                queue.offer(ConsensusCommand.CheckViewChangeAssembly(key))
+            case false =>
+              Metrics[F].incrementCounter(
+                "dag_consensus_vcc_received_total",
+                Seq(
+                  unsafeLabelName("outcome") -> "suppressed",
+                  unsafeLabelName("reason") -> "same_origin_parent_view"
+                )
+              )
+          }
+      case hashes =>
+        ConsensusLog.warn(
+          log,
+          Category.Phase,
+          key.toString,
+          "n/a",
+          LogEvent.ViewChange,
+          "received" -> "assembled_vcc_rejected",
+          "reason" -> "mixed_last_snapshot_hash",
+          "from" -> ConsensusLog.pid(origin),
+          "fromView" -> vc.vcc.fromView.toString,
+          "toView" -> vc.vcc.toView.toString,
+          "hashes" -> hashes.size.toString
+        ) >>
+          Metrics[F].incrementCounter(
+            "dag_consensus_vcc_received_total",
+            Seq(
+              unsafeLabelName("outcome") -> "rejected",
+              unsafeLabelName("reason") -> "mixed_last_snapshot_hash"
+            )
+          )
+    }
   }
 }

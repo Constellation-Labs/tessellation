@@ -767,6 +767,7 @@ object CurrencySnapshotConsensusStateAdvancer {
           initialViewNumber = state.initialViewNumber,
           coreSize = state.coreFacilitators.value.size,
           facilitatorsHash = facilitatorsHash,
+          lastSnapshotHash = state.lastOutcome.finished.snapshotHash,
           eligibleFacilitators = state.eligibleFacilitators.value.toSet,
           peerQuality = state.lastOutcome.peerQuality.toMap,
           quorumThresholdFraction = config.quorumThresholdFraction,

@@ -19,7 +19,7 @@ object ViewChangeCertificateBuilder {
 
   /** Build a valid VCC from a collected map of votes for a specific (fromView, toView) transition.
     *
-    *   - Filter votes that match (fromView, toView, facilitatorsHash).
+    *   - Filter votes that match (fromView, toView, facilitatorsHash, lastSnapshotHash).
     *   - Filter signers that are not in `witnessPool` SILENTLY (mirror of `EvictionCertificateBuilder`'s v15 behavior -- a stale relay or
     *     mid-round eligibility shrinkage must not poison the assembly).
     *   - Deduplicate by signer (`proofs.head.id`) -- a relayed duplicate of the same signed vote must not count twice.
@@ -39,6 +39,7 @@ object ViewChangeCertificateBuilder {
     fromView: Long,
     toView: Long,
     facilitatorsHash: Hash,
+    lastSnapshotHash: Hash,
     votes: Map[PeerId, Signed[ViewChangeVote]],
     quorumSize: Int,
     witnessPool: Set[PeerId]
@@ -52,6 +53,12 @@ object ViewChangeCertificateBuilder {
     if (wrongFacHash.nonEmpty)
       Left(CertBuildError.FacilitatorsHashMismatch(wrongFacHash.size))
     else {
+      val wrongLastSnapshotHash = votes.toList.collect {
+        case (pid, signed)
+            if signed.value.fromView == fromView && signed.value.toView == toView && signed.value.lastSnapshotHash != lastSnapshotHash =>
+          pid
+      }
+
       // Filter to matching (fromView, toView) only; the facilitatorsHash filter above is fatal,
       // so anything reaching here already shares the correct round payload.
       val matchingByView = votes.values
@@ -65,7 +72,9 @@ object ViewChangeCertificateBuilder {
       val poolSigners: Map[PeerId, Signed[ViewChangeVote]] = bySigner.filter {
         case (signer, _) => witnessPool.contains(signer)
       }
-      if (poolSigners.size < quorumSize)
+      if (wrongLastSnapshotHash.nonEmpty)
+        Left(CertBuildError.LastSnapshotHashMismatch(wrongLastSnapshotHash.size))
+      else if (poolSigners.size < quorumSize)
         Left(CertBuildError.UnderQuorum(poolSigners.size, quorumSize))
       else {
         val matchingSigned = poolSigners.values.toList
