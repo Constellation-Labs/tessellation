@@ -1568,10 +1568,14 @@ object CurrencySnapshotConsensusStateAdvancer {
         )
 
       private def signedArtifactPeerHistory(outcome: CurrencyConsensusOutcome): ConsensusOperationalState =
-        // TODO(v20 cleanup): recentRoundEndTimes is intentionally omitted from signed artifacts.
-        // See the dag-l0 mirror for the determinism rationale and remove the field from
-        // peerHistory in the next schema cleanup if it remains pacemaker-local/sidecar-only.
-        outcome.toOperationalState.copy(recentRoundEndTimes = None)
+        // TODO(v20 cleanup): recentRoundEndTimes and perPeer are intentionally omitted from
+        // signed artifacts. See the dag-l0 mirror for the determinism rationale and remove or
+        // certify these fields in the next schema cleanup before putting them back in
+        // proposal-critical bytes.
+        outcome.toOperationalState.copy(
+          perPeer = SortedMap.empty,
+          recentRoundEndTimes = None
+        )
 
       private val selfId: PeerId = PeerId.fromPublic(keyPair.getPublic)
 
