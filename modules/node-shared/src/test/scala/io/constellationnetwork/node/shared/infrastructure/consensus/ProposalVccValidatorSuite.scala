@@ -52,11 +52,12 @@ object ProposalVccValidatorSuite extends FunSuite {
     fromView: Long,
     toView: Long,
     fac: Hash = facHash,
+    lastSnapshot: Hash = lastSnap,
     highestQc: Option[ProposalQC] = None,
     sigTag: String
   ): Signed[ViewChangeVote] =
     Signed(
-      ViewChangeVote(fromView, toView, fac, lastSnap, highestQc),
+      ViewChangeVote(fromView, toView, fac, lastSnapshot, highestQc),
       NonEmptySet.of(signerProof(sigTag))
     )
 
@@ -82,6 +83,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       initialViewNumber = 2,
       coreSize = 3,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
@@ -104,6 +106,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       initialViewNumber = 1, // round started at view 1, advanced to view 3 -- needs VCC
       coreSize = 3,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
@@ -129,6 +132,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       initialViewNumber = 0,
       coreSize = 3,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
@@ -163,6 +167,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       initialViewNumber = 0,
       coreSize = 3,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
@@ -190,6 +195,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       initialViewNumber = 0,
       coreSize = 3,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
@@ -215,6 +221,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       initialViewNumber = 0,
       coreSize = 3,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
@@ -234,6 +241,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       initialViewNumber = 0,
       coreSize = 3,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
@@ -262,6 +270,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       initialViewNumber = 0,
       coreSize = 3,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = 1.0, // q = 3
@@ -291,6 +300,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       initialViewNumber = 0,
       coreSize = 3,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
@@ -300,6 +310,37 @@ object ProposalVccValidatorSuite extends FunSuite {
     expect(
       result.swap.exists(_.code.startsWith("vcc_facilitators_mismatch")),
       s"rejection code must start with vcc_facilitators_mismatch, got $result"
+    )
+  }
+
+  test("lastSnapshotHash mismatch: rejected with vcc_last_snapshot_mismatch") {
+    val wrongLastSnap = Hash.fromBytes("wrong_last_snapshot_hash".getBytes("UTF-8"))
+    val mismatchedVcc = vcc(
+      fromView = 1L,
+      toView = 2L,
+      votes = NonEmptySet.of(
+        vote(1L, 2L, sigTag = signerA),
+        vote(1L, 2L, sigTag = signerB),
+        vote(1L, 2L, lastSnapshot = wrongLastSnap, sigTag = signerC)
+      )
+    )
+    val result = ProposalVccValidator.validate(
+      proposalView = 2L,
+      proposalHash = proposalHash,
+      proposalVcc = Some(mismatchedVcc),
+      initialViewNumber = 0,
+      coreSize = 3,
+      facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
+      eligibleFacilitators = poolABC,
+      peerQuality = Map.empty,
+      quorumThresholdFraction = quorum,
+      minParticipationObservations = minObs
+    )
+    expect(result.isLeft, s"lastSnapshotHash mismatch must be rejected, got $result")
+    expect(
+      result.swap.exists(_.code.startsWith("vcc_last_snapshot_mismatch")),
+      s"rejection code must start with vcc_last_snapshot_mismatch, got $result"
     )
   }
 
@@ -321,6 +362,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       initialViewNumber = 0,
       coreSize = 3,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolingExcludesDD,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
@@ -356,6 +398,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       initialViewNumber = 0,
       coreSize = 3,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
@@ -381,6 +424,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       initialViewNumber = 0,
       coreSize = 1,
       facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,

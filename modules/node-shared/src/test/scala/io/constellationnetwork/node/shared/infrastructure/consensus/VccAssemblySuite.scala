@@ -79,11 +79,11 @@ object DoubleSignRaceSuite extends SimpleIOSuite {
     val pool: Set[PeerId] = Set(p1, p2)
 
     // Build 0->1 VCC
-    val vcc01 = ViewChangeCertificateBuilder.build(0L, 1L, facHash, votes01, quorumSize = 2, witnessPool = pool)
+    val vcc01 = ViewChangeCertificateBuilder.build(0L, 1L, facHash, lastSnap, votes01, quorumSize = 2, witnessPool = pool)
     // Build 1->2 VCC
-    val vcc12 = ViewChangeCertificateBuilder.build(1L, 2L, facHash, votes12, quorumSize = 2, witnessPool = pool)
+    val vcc12 = ViewChangeCertificateBuilder.build(1L, 2L, facHash, lastSnap, votes12, quorumSize = 2, witnessPool = pool)
     // Build 0->1 but pass the 1->2 votes (mismatched transition) -- must fail under_quorum because none match
-    val mixed = ViewChangeCertificateBuilder.build(0L, 1L, facHash, votes12, quorumSize = 2, witnessPool = pool)
+    val mixed = ViewChangeCertificateBuilder.build(0L, 1L, facHash, lastSnap, votes12, quorumSize = 2, witnessPool = pool)
 
     IO.pure(
       expect(vcc01.isRight, s"0->1 VCC should succeed, got $vcc01")
@@ -183,11 +183,12 @@ object ViewChangeAssemblySuite extends FunSuite {
     fromView: Long,
     toView: Long,
     facilitatorsHash: Hash = facHash,
+    lastSnapshotHash: Hash = lastSnap,
     highestQc: Option[ProposalQC] = None,
     sigTag: String = "sig"
   ): Signed[ViewChangeVote] =
     Signed(
-      ViewChangeVote(fromView, toView, facilitatorsHash, lastSnap, highestQc),
+      ViewChangeVote(fromView, toView, facilitatorsHash, lastSnapshotHash, highestQc),
       NonEmptySet.of(proof(sigTag))
     )
 
@@ -199,7 +200,7 @@ object ViewChangeAssemblySuite extends FunSuite {
       peer("p2") -> vote(0L, 1L, sigTag = "s2"),
       peer("p3") -> vote(0L, 1L, sigTag = "s3")
     )
-    val result = ViewChangeCertificateBuilder.build(0L, 1L, facHash, votes, quorumSize = 3, witnessPool = poolS123)
+    val result = ViewChangeCertificateBuilder.build(0L, 1L, facHash, lastSnap, votes, quorumSize = 3, witnessPool = poolS123)
     expect(result.isRight, s"3-of-5 build should succeed, got $result").and(
       expect(result.exists(_.votes.size === 3), s"VCC should contain 3 votes, got ${result.map(_.votes.size)}")
     )
@@ -210,7 +211,7 @@ object ViewChangeAssemblySuite extends FunSuite {
       peer("p1") -> vote(0L, 1L, sigTag = "s1"),
       peer("p2") -> vote(0L, 1L, sigTag = "s2")
     )
-    val result = ViewChangeCertificateBuilder.build(0L, 1L, facHash, votes, quorumSize = 3, witnessPool = poolS123)
+    val result = ViewChangeCertificateBuilder.build(0L, 1L, facHash, lastSnap, votes, quorumSize = 3, witnessPool = poolS123)
     expect(result.isLeft, s"should fail when under quorum, got $result").and(
       expect(result.swap.exists(_.code.startsWith("under_quorum")), s"error should start with under_quorum, got $result")
     )
@@ -222,9 +223,25 @@ object ViewChangeAssemblySuite extends FunSuite {
       peer("p2") -> vote(0L, 1L, facilitatorsHash = facHash, sigTag = "s2"),
       peer("p3") -> vote(0L, 1L, facilitatorsHash = otherFacHash, sigTag = "s3")
     )
-    val result = ViewChangeCertificateBuilder.build(0L, 1L, facHash, votes, quorumSize = 3, witnessPool = poolS123)
+    val result = ViewChangeCertificateBuilder.build(0L, 1L, facHash, lastSnap, votes, quorumSize = 3, witnessPool = poolS123)
     expect(result.isLeft, s"should reject facilitators mismatch, got $result").and(
       expect(result.swap.exists(_.code.startsWith("facilitators_mismatch")), s"error should start with facilitators_mismatch, got $result")
+    )
+  }
+
+  test("vote carrying a different lastSnapshotHash returns Left(last_snapshot_hash_mismatch)") {
+    val otherLastSnap = Hash.fromBytes("vca_OTHER_LAST".getBytes("UTF-8"))
+    val votes: Map[PeerId, Signed[ViewChangeVote]] = Map(
+      peer("p1") -> vote(0L, 1L, lastSnapshotHash = lastSnap, sigTag = "s1"),
+      peer("p2") -> vote(0L, 1L, lastSnapshotHash = lastSnap, sigTag = "s2"),
+      peer("p3") -> vote(0L, 1L, lastSnapshotHash = otherLastSnap, sigTag = "s3")
+    )
+    val result = ViewChangeCertificateBuilder.build(0L, 1L, facHash, lastSnap, votes, quorumSize = 3, witnessPool = poolS123)
+    expect(result.isLeft, s"should reject lastSnapshotHash mismatch, got $result").and(
+      expect(
+        result.swap.exists(_.code.startsWith("last_snapshot_hash_mismatch")),
+        s"error should start with last_snapshot_hash_mismatch, got $result"
+      )
     )
   }
 
@@ -234,7 +251,7 @@ object ViewChangeAssemblySuite extends FunSuite {
       peer("p2") -> vote(0L, 1L, highestQc = qc(view = 5L, proposalHash = hashY).some, sigTag = "s2"),
       peer("p3") -> vote(0L, 1L, sigTag = "s3")
     )
-    val result = ViewChangeCertificateBuilder.build(0L, 1L, facHash, votes, quorumSize = 3, witnessPool = poolS123)
+    val result = ViewChangeCertificateBuilder.build(0L, 1L, facHash, lastSnap, votes, quorumSize = 3, witnessPool = poolS123)
     expect(result.isLeft, s"should reject divergent QCs at the same view, got $result").and(
       expect(result.swap.exists(_.code === "divergent_qcs"), s"error should be divergent_qcs, got $result")
     )
@@ -247,7 +264,7 @@ object ViewChangeAssemblySuite extends FunSuite {
       peer("p3") -> vote(0L, 1L, sigTag = "outOfPool")
     )
     // pool excludes "outOfPool" -> only s1 and s2 survive -> 2 < quorum 3
-    val result = ViewChangeCertificateBuilder.build(0L, 1L, facHash, votes, quorumSize = 3, witnessPool = poolS123)
+    val result = ViewChangeCertificateBuilder.build(0L, 1L, facHash, lastSnap, votes, quorumSize = 3, witnessPool = poolS123)
     expect(result.isLeft, s"out-of-pool signer must not count toward quorum, got $result").and(
       expect(result.swap.exists(_.code.startsWith("under_quorum")), s"error should start with under_quorum, got $result")
     )

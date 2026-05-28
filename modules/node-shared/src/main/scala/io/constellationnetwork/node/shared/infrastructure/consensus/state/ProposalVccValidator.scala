@@ -29,6 +29,7 @@ import io.constellationnetwork.security.hash.Hash
   *     check)
   *   - `vcc.votes.size < quorum`: reject `vcc_under_quorum`
   *   - `vcc.facilitatorsHash =!= facilitatorsHash`: reject `vcc_facilitators_mismatch`
+  *   - VCC votes do not all carry the current parent hash: reject `vcc_last_snapshot_mismatch`
   *   - any VCC voter outside the wider witness pool: reject `vcc_voter_not_in_pool`
   *   - `vcc.highestQcInVcc` exists and disagrees with `proposalHash`: reject `highest_qc_carry_forward_violation`
   *   - otherwise accept
@@ -51,6 +52,8 @@ object ProposalVccValidator {
     *   `ConsensusState.coreFacilitators.value.size` -- the LIVENESS-quorum denominator (Tier 0 / Core).
     * @param facilitatorsHash
     *   the round's facilitators hash as held by the validator (status-side).
+    * @param lastSnapshotHash
+    *   the current parent snapshot hash as held by the validator.
     * @param eligibleFacilitators
     *   `ConsensusState.eligibleFacilitators.value.toSet` -- the eligibility set used to compute the wider VCC witness pool.
     * @param peerQuality
@@ -68,6 +71,7 @@ object ProposalVccValidator {
     initialViewNumber: Int,
     coreSize: Int,
     facilitatorsHash: Hash,
+    lastSnapshotHash: Hash,
     eligibleFacilitators: Set[PeerId],
     peerQuality: Map[PeerId, (Int, Int)],
     quorumThresholdFraction: Double,
@@ -116,25 +120,40 @@ object ProposalVccValidator {
             )
           )
         case Some(vcc) =>
-          // Symmetric with B1/B2 -- every VCC voter must be in the deterministic wider witness pool. The assembler
-          // (StateTransitions.checkViewChangeAssembly) filters by the same pool; without this re-check on the follower
-          // side, an adversarial leader could embed a VCC built from out-of-pool voters and the rest of the cluster
-          // would accept it.
-          val witnessPool = WitnessPool.all(eligibleFacilitators, peerQuality, minParticipationObservations)
-          val nonWitnessPoolVoter = vcc.votes.toNonEmptyList.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
-          nonWitnessPoolVoter match {
-            case Some(bad) =>
-              Left(ProposalRejection(s"vcc_voter_not_in_pool voter=${bad.proofs.head.id.show.take(8)}"))
-            case None =>
-              vcc.highestQcInVcc match {
-                case Some(qc) if qc.proposalHash =!= proposalHash =>
-                  Left(
-                    ProposalRejection(
-                      s"highest_qc_carry_forward_violation qcHash=${qc.proposalHash.show.take(8)} proposalHash=${proposalHash.show.take(8)}"
+          val vccLastSnapshotHashes = vcc.votes.toNonEmptyList.toList.map(_.value.lastSnapshotHash).toSet
+          if (vccLastSnapshotHashes.sizeCompare(1) > 0)
+            Left(
+              ProposalRejection(
+                s"vcc_last_snapshot_mismatch hashes=${vccLastSnapshotHashes.size} expected=${lastSnapshotHash.show.take(8)}"
+              )
+            )
+          else if (!vccLastSnapshotHashes.contains(lastSnapshotHash))
+            Left(
+              ProposalRejection(
+                s"vcc_last_snapshot_mismatch vccLastSnap=${vccLastSnapshotHashes.head.show.take(8)} ours=${lastSnapshotHash.show.take(8)}"
+              )
+            )
+          else {
+            // Symmetric with B1/B2 -- every VCC voter must be in the deterministic wider witness pool. The assembler
+            // (StateTransitions.checkViewChangeAssembly) filters by the same pool; without this re-check on the follower
+            // side, an adversarial leader could embed a VCC built from out-of-pool voters and the rest of the cluster
+            // would accept it.
+            val witnessPool = WitnessPool.all(eligibleFacilitators, peerQuality, minParticipationObservations)
+            val nonWitnessPoolVoter = vcc.votes.toNonEmptyList.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
+            nonWitnessPoolVoter match {
+              case Some(bad) =>
+                Left(ProposalRejection(s"vcc_voter_not_in_pool voter=${bad.proofs.head.id.show.take(8)}"))
+              case None =>
+                vcc.highestQcInVcc match {
+                  case Some(qc) if qc.proposalHash =!= proposalHash =>
+                    Left(
+                      ProposalRejection(
+                        s"highest_qc_carry_forward_violation qcHash=${qc.proposalHash.show.take(8)} proposalHash=${proposalHash.show.take(8)}"
+                      )
                     )
-                  )
-                case _ => Right(())
-              }
+                  case _ => Right(())
+                }
+            }
           }
       }
     }

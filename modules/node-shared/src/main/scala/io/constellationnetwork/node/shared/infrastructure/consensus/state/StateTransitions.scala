@@ -182,8 +182,9 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                 // from the same consensus-agreed inputs, so this is the canonical pool for the
                 // round. Quorum stays committee-sized (passed in q above).
                 val vccPool = widerWitnessPoolAll(state)
+                val lastSnapshotHash = ctx.lastSnapshotHashOf(state.lastOutcome)
                 ViewChangeCertificateBuilder
-                  .build(fromView, toView, singleHash, votes, q, vccPool) match {
+                  .build(fromView, toView, singleHash, lastSnapshotHash, votes, q, vccPool) match {
                   case Left(error) =>
                     ConsensusLog.warn(
                       log,
@@ -207,8 +208,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                       )
                   case Right(vcc) =>
                     for {
-                      existingVcc <- storage.getAssembledVcc(key)
-                      shouldSchedule = !existingVcc.exists(existing => existing.fromView === fromView && existing.toView === toView)
+                      shouldSchedule <- storage.markAssembledVccApplyScheduled(key, lastSnapshotHash, fromView, toView)
                       _ <- storage.storeAssembledVcc(key, vcc)
                       // Re-distribute the assembled VCC so peers that did NOT reach quorum
                       // locally for this (fromView, toView) -- e.g. due to gossip lag -- still
@@ -359,7 +359,8 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
       votes.values.map(_.value.facilitatorsHash).toSet.toList match {
         case singleHash :: Nil =>
           val vccPool = widerWitnessPoolAll(state)
-          ViewChangeCertificateBuilder.build(fromView, toView, singleHash, votes, q, vccPool) match {
+          val lastSnapshotHash = ctx.lastSnapshotHashOf(state.lastOutcome)
+          ViewChangeCertificateBuilder.build(fromView, toView, singleHash, lastSnapshotHash, votes, q, vccPool) match {
             case Left(error) =>
               ConsensusLog.warn(
                 log,
