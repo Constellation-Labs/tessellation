@@ -440,7 +440,9 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // alpha.103, this gate fired with joiningGrace=true during rollback restart, causing a
       // tight abandon/retry loop at view 0 before sibling validators finished promotion. Keep
       // the diagnostic log/metric, but do not abandon until the grace window has elapsed.
-      readyParticipationShouldAbandon = readyParticipationInfeasible && !readyParticipationDuringJoiningGrace
+      vccApplyScheduled <- storage.hasAssembledVccApplyScheduled(key)
+      readyParticipationSuppressedForVcc = readyParticipationInfeasible && !readyParticipationDuringJoiningGrace && vccApplyScheduled
+      readyParticipationShouldAbandon = readyParticipationInfeasible && !readyParticipationDuringJoiningGrace && !vccApplyScheduled
       _ <- (
         ConsensusLog.warn(
           logger,
@@ -455,12 +457,17 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
           "notReadyCore" -> readyParticipationStatus.notReadyCore.toString,
           "behindNonReady" -> readyParticipationStatus.behindNonReady.toString,
           "joiningGrace" -> readyParticipationDuringJoiningGrace.toString,
+          "vccApplyScheduled" -> vccApplyScheduled.toString,
+          "abandonSuppressedForVcc" -> readyParticipationSuppressedForVcc.toString,
           "lastOutcomeKey" -> lastOutcomeKey.toString
         ) >>
           Metrics[F].incrementCounter("dag_consensus_ready_participation_quorum_infeasible_total") >>
           Metrics[F]
             .incrementCounter("dag_consensus_ready_participation_quorum_infeasible_joining_grace_total")
-            .whenA(readyParticipationDuringJoiningGrace)
+            .whenA(readyParticipationDuringJoiningGrace) >>
+          Metrics[F]
+            .incrementCounter("dag_consensus_ready_participation_quorum_infeasible_vcc_suppressed_total")
+            .whenA(readyParticipationSuppressedForVcc)
       ).whenA(readyParticipationInfeasible)
 
       // --- Round timeout / abandon check ---

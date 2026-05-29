@@ -112,6 +112,11 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     */
   private[consensus] def markAssembledVccApplyScheduled(key: Key, lastSnapshotHash: Hash, fromView: Long, toView: Long): F[Boolean]
 
+  /** True when any delayed VCC apply is pending for this key. Local liveness guards use this to yield to the certified pacemaker path
+    * instead of abandoning and immediately restarting the same round.
+    */
+  private[consensus] def hasAssembledVccApplyScheduled(key: Key): F[Boolean]
+
   /** Mark an assembled VCC rumor as already received from a peer. Returns true only for the first receipt of that anchored transition from
     * origin.
     *
@@ -551,6 +556,9 @@ object ConsensusStorage {
             if (scheduled.contains(transition)) (maybeScheduled, false)
             else (scheduled.incl(transition).some, true)
           }
+
+        def hasAssembledVccApplyScheduled(key: Key): F[Boolean] =
+          assembledVccApplyScheduledR(key).get.map(_.exists(_.nonEmpty))
 
         def markAssembledVccReceived(
           key: Key,
