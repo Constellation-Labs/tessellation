@@ -131,6 +131,33 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
   private def offerRoundCompleted: F[Unit] =
     storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(Some(id))))
 
+  private def retryAfterRetriableAbandon(key: Key, reason: AbandonReason): F[Unit] = {
+    val shouldBackoff = reason match {
+      case _: AbandonReason.ReadyParticipationQuorumInfeasible => true
+      case _                                                   => false
+    }
+    val retryDelay = config.viewChangeApplyDelay / 2
+
+    offerRoundCompleted >>
+      (if (shouldBackoff)
+         ConsensusLog.info(
+           logger,
+           Category.Lifecycle,
+           key.toString,
+           "n/a",
+           LogEvent.RoundAbandonedTracked,
+           "reason" -> reason.label,
+           "action" -> "delayed_retriable_retry",
+           "retryDelayMs" -> retryDelay.toMillis.toString
+         ) >>
+           Metrics[F].incrementCounter(
+             "dag_consensus_retriable_retry_delayed_total",
+             Seq(Metrics.unsafeLabelName("reason") -> reason.label)
+           ) >>
+           Async[F].start(Async[F].sleep(retryDelay) >> queue.offer(ConsensusCommand.TimeTick)).void
+       else queue.offer(ConsensusCommand.TimeTick))
+  }
+
   /** Tracks consecutive abandonments at the same key to detect infinite stuck loops. */
   private val consecutiveAbandonCountRef: Ref[F, (Option[Key], Int)] = Ref.unsafe((none[Key], 0))
 
@@ -399,13 +426,12 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
                             _ <- updateWedgeHealth(retriableCount, peersAtHigherKey, reason.label)
                             _ <-
                               if (networkAdvanced) triggerRecoveryDownload(key, consecutiveCount)
-                              else offerRoundCompleted >> queue.offer(ConsensusCommand.TimeTick)
+                              else retryAfterRetriableAbandon(key, reason)
                           } yield ()
                         }
                   }
               else
-                offerRoundCompleted >>
-                  queue.offer(ConsensusCommand.TimeTick))
+                retryAfterRetriableAbandon(key, reason))
          }
        else
          // Non-retriable path (MaxStalls / RoundTimeout). Historically this

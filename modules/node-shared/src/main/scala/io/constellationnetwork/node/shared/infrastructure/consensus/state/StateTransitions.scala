@@ -330,7 +330,13 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                 unsafeLabelName("reason") -> "proposal_or_signature_in_progress"
               )
             ) >>
-              queue.offer(ConsensusCommand.CheckUpdate(key))
+              queue.offer(ConsensusCommand.CheckUpdate(key)) >>
+              Async[F]
+                .start(
+                  Temporal[F].sleep(config.viewChangeApplyDelay / 2) >>
+                    queue.offer(ConsensusCommand.CheckViewChangeApply(key, fromView, toView))
+                )
+                .void
           else
             applyCertifiedViewChange(key, state, resources, fromView, toView)
         }
