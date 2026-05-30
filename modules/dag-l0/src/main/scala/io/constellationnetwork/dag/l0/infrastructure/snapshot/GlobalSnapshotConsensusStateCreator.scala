@@ -368,6 +368,23 @@ object GlobalSnapshotConsensusStateCreator {
           "witness" -> committees.witness.size.toString,
           "coreFloor" -> coreCommitteeSize.toString
         )
+        _ <- Metrics[F].updateGauge("dag_consensus_committee_core_size", committees.core.size.toLong)
+        _ <- Metrics[F].updateGauge(
+          "dag_consensus_committee_tier_size",
+          committees.core.size.toLong,
+          Seq(Metrics.unsafeLabelName("tier") -> "core")
+        )
+        _ <- Metrics[F].updateGauge(
+          "dag_consensus_committee_tier_size",
+          committees.tier1.size.toLong,
+          Seq(Metrics.unsafeLabelName("tier") -> "tier1")
+        )
+        _ <- Metrics[F].updateGauge(
+          "dag_consensus_committee_tier_size",
+          committees.witness.size.toLong,
+          Seq(Metrics.unsafeLabelName("tier") -> "witness")
+        )
+        _ <- Metrics[F].updateGauge("dag_consensus_committee_core_floor", coreCommitteeSize.toLong)
 
         // Quality-weighted leader selection: use consensus-agreed quality scores
         // so all nodes compute the same leader deterministically.

@@ -102,7 +102,8 @@ object PerIpBandwidthLimitMiddleware {
     appliesTo: Request[F] => Boolean = (_: Request[F]) => true,
     allowlist: Set[String] = Set.empty,
     selfExternalIp: Option[String] = None,
-    routeSizeEstimator: Option[Request[F] => F[Option[Long]]] = None
+    routeSizeEstimator: Option[Request[F] => F[Option[Long]]] = None,
+    onReject: Option[(Request[F], String, Long, Long) => F[Unit]] = None
   ): F[HttpRoutes[F] => HttpRoutes[F]] = {
     val logger = Slf4jLogger.getLogger[F]
     val windowMillis = windowDuration.toMillis
@@ -149,7 +150,10 @@ object PerIpBandwidthLimitMiddleware {
                     .getOrElse(Nil)
                   val sumKept = kept.iterator.map(_._2).sum
                   if (sumKept >= maxBytesPerWindow) {
-                    OptionT.liftF(rejectFast(ip, maxBytesPerWindow, sumKept, retryAfterSeconds, logger))
+                    OptionT.liftF(
+                      onReject.traverse_(_(req, ip, sumKept, maxBytesPerWindow)) >>
+                        rejectFast(ip, maxBytesPerWindow, sumKept, retryAfterSeconds, logger)
+                    )
                   } else {
                     // Pre-flight estimator check: if a route-specific estimator can predict the
                     // response size, reject before the route executes. The key win is avoiding
@@ -159,7 +163,10 @@ object PerIpBandwidthLimitMiddleware {
                     // routes without estimators preserve legacy behavior.
                     OptionT.liftF(effectiveEstimator(req)).flatMap {
                       case Some(estimated) if sumKept + estimated > maxBytesPerWindow =>
-                        OptionT.liftF(rejectFast(ip, maxBytesPerWindow, sumKept + estimated, retryAfterSeconds, logger))
+                        OptionT.liftF(
+                          onReject.traverse_(_(req, ip, sumKept + estimated, maxBytesPerWindow)) >>
+                            rejectFast(ip, maxBytesPerWindow, sumKept + estimated, retryAfterSeconds, logger)
+                        )
                       case _ =>
                         // Run inner route, then check Content-Length and reserve atomically.
                         // This second check stays even when the estimator accepted, so an
@@ -189,6 +196,7 @@ object PerIpBandwidthLimitMiddleware {
                                 case Some(observed) =>
                                   // Drain the unused inner body so any held resources release. Then return 429.
                                   resp.body.compile.drain.attempt.void >>
+                                    onReject.traverse_(_(req, ip, observed, maxBytesPerWindow)) >>
                                     rejectFast(ip, maxBytesPerWindow, observed, retryAfterSeconds, logger)
                               }
                           }

@@ -49,9 +49,13 @@ object NodeStateDaemon {
           nodeStorage.nodeStates.evalTap { newState =>
             prevRef.getAndSet(newState.some).flatMap {
               case Some(prev) if prev != newState =>
-                emitTransition(prev.entryName, newState.entryName) >> refreshStateEntryAt
+                emitTransition(prev.entryName, newState.entryName) >>
+                  emitCurrentState(prev.some, newState) >>
+                  refreshStateEntryAt
               case None =>
-                emitTransition("(initial)", newState.entryName) >> refreshStateEntryAt
+                emitTransition("(initial)", newState.entryName) >>
+                  emitCurrentState(none[NodeState], newState) >>
+                  refreshStateEntryAt
               case _ => Async[F].unit
             }
           }
@@ -74,6 +78,27 @@ object NodeStateDaemon {
             Metrics.unsafeLabelName("to") -> to
           )
         )
+
+      // Local state gauge, including non-broadcast recovery states like WaitingForDownload
+      // and DownloadInProgress. Source nodes may still see such peers as SessionStarted over
+      // gossip, so this is the metric to read from the peer itself when diagnosing join stalls.
+      private def emitCurrentState(previous: Option[NodeState], current: NodeState): F[Unit] = {
+        val stateLabel = Metrics.unsafeLabelName("state")
+        val clearPrevious = previous.filterNot(_ == current).fold(Async[F].unit) { state =>
+          Metrics[F].updateGauge(
+            "dag_node_state_current",
+            0L,
+            Seq(stateLabel -> state.entryName)
+          )
+        }
+
+        clearPrevious >>
+          Metrics[F].updateGauge(
+            "dag_node_state_current",
+            1L,
+            Seq(stateLabel -> current.entryName)
+          )
+      }
 
       // Reset the state-entry timestamp on every transition. The Cluster.leave() guard reads this
       // to refuse external leave requests that fire while a recovery-path state is still within

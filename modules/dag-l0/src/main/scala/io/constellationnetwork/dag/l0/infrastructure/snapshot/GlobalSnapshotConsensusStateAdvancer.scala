@@ -184,6 +184,77 @@ object GlobalSnapshotConsensusStateAdvancer {
 
       private case class Transition(newState: GlobalSnapshotConsensusState, sideEffect: F[Unit])
 
+      private def tierName(tier: Int): String =
+        tier match {
+          case TierTransitions.Core    => "core"
+          case TierTransitions.Tier1   => "tier1"
+          case TierTransitions.Witness => "witness"
+          case _                       => "unknown"
+        }
+
+      private def nextPeerTiersForFinished(state: GlobalSnapshotConsensusState): SortedMap[PeerId, Int] = {
+        val evictedPeers = state.removedFacilitators.value
+        val completedFacilitators = state.roundStartFacilitators.value.toSet -- evictedPeers
+        val currentOrdValue = state.key.value.value
+        val tighteningMinOrdinalValue =
+          math.max(0L, currentOrdValue - config.tighteningWindow.toLong + 1L)
+        val newRecentSigners =
+          state.lastOutcome.recentSigners
+            .updated(state.key, SortedSet.from(completedFacilitators))
+            .filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
+
+        TierTransitions.computeNextTiers(
+          priorTiers = state.lastOutcome.peerTiers,
+          roundStartFacilitators = state.roundStartFacilitators.value.toSet,
+          recentSignersWindow = newRecentSigners,
+          roundCompleted = true
+        )
+      }
+
+      private def recordPeerTierMetrics(
+        priorPeerTiers: SortedMap[PeerId, Int],
+        nextPeerTiers: SortedMap[PeerId, Int]
+      ): F[Unit] = {
+        val tierLabel = Metrics.unsafeLabelName("tier")
+        val fromTierLabel = Metrics.unsafeLabelName("from_tier")
+        val toTierLabel = Metrics.unsafeLabelName("to_tier")
+        val reasonLabel = Metrics.unsafeLabelName("reason")
+
+        val tierCounts =
+          nextPeerTiers.valuesIterator.toList.groupMapReduce(identity)(_ => 1)(_ + _)
+        val tierTransitions =
+          nextPeerTiers.toList.flatMap {
+            case (pid, nextTier) =>
+              val priorTier = priorPeerTiers.getOrElse(pid, TierTransitions.Tier1)
+              Option.when(priorTier =!= nextTier) {
+                val reason =
+                  if (priorTier === TierTransitions.Core && nextTier === TierTransitions.Tier1) "sustained_silence"
+                  else "classification_changed"
+                (tierName(priorTier), tierName(nextTier), reason)
+              }
+          }
+
+        def updateTierGauge(tier: Int): F[Unit] =
+          Metrics[F].updateGauge(
+            "dag_consensus_peer_tier_size",
+            tierCounts.getOrElse(tier, 0).toLong,
+            Seq(tierLabel -> tierName(tier))
+          )
+
+        updateTierGauge(TierTransitions.Core) >>
+          updateTierGauge(TierTransitions.Tier1) >>
+          updateTierGauge(TierTransitions.Witness) >>
+          Metrics[F].updateGauge("dag_consensus_peer_tier_tracked_size", nextPeerTiers.size.toLong) >>
+          Metrics[F].updateGauge("dag_consensus_peer_tier_transition_count", tierTransitions.size.toLong) >>
+          tierTransitions.traverse_ {
+            case (from, to, reason) =>
+              Metrics[F].incrementCounter(
+                "dag_consensus_peer_tier_transition_total",
+                Seq(fromTierLabel -> from, toTierLabel -> to, reasonLabel -> reason)
+              )
+          }
+      }
+
       override def isBootstrapActive(lastOutcome: GlobalConsensusOutcome): Boolean =
         !lastOutcome.recentProofSizes.values.exists(_ >= config.bootstrapCompleteProofsThreshold)
 
@@ -368,12 +439,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             // on a single missed signature -- the hysteresis that makes the lowered Core floor safe.
             // Inputs are all consensus-agreed deterministic outcome fields so the computation is
             // byte-identical across honest nodes.
-            val newPeerTiers: SortedMap[PeerId, Int] = TierTransitions.computeNextTiers(
-              priorTiers = state.lastOutcome.peerTiers,
-              roundStartFacilitators = state.roundStartFacilitators.value.toSet,
-              recentSignersWindow = newRecentSigners,
-              roundCompleted = true
-            )
+            val newPeerTiers: SortedMap[PeerId, Int] = nextPeerTiersForFinished(state)
 
             // v19 phase 2: append the round's `consensusEndTime` to the sliding window if
             // it was computed (Facility set carried enough `proposerClockMs` to clear the
@@ -387,7 +453,6 @@ object GlobalSnapshotConsensusStateAdvancer {
                 case None =>
                   state.lastOutcome.recentRoundEndTimes.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
               }
-
             // B2 readmissionCountdown maintenance (sticky-probation):
             //   1) Decrement any active probation counters by 1 -- but CLAMP at 0 instead of
             //      auto-clearing the entry. Earlier versions had `.filter(_._2 > 0)` here, which dropped
@@ -819,7 +884,16 @@ object GlobalSnapshotConsensusStateAdvancer {
             case (spKey, sp) =>
               if (spKey === state.key)
                 sp.restore >>
-                  ConsensusLog.info(logger, Category.Lifecycle, state.key.show, "n/a", Event.MptSavepointRestored)
+                  ConsensusLog.info(
+                    logger,
+                    Category.Lifecycle,
+                    state.key.show,
+                    "n/a",
+                    Event.MptSavepointRestored,
+                    "savepointKey" -> spKey.show,
+                    "currentKey" -> state.key.show
+                  ) >>
+                  Metrics[F].incrementCounter("dag_consensus_mpt_savepoint_restored_total")
               else
                 ConsensusLog.warn(
                   logger,
@@ -2775,6 +2849,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                       // (e.g., some nodes collect 3 signatures, others 4), causing non-deterministic snapshotHash
                       // and deadlocking the next round's Facility phase.
                       val snapshotHash = status.majorityArtifactInfo.hash
+                      val nextPeerTiers = nextPeerTiersForFinished(state)
                       Transition(
                         newState = state.copy(status =
                           Finished(
@@ -2786,7 +2861,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                             snapshotHash
                           )
                         ),
-                        sideEffect = persistAndGossip(signedArtifact, status.majorityArtifactInfo.context)
+                        sideEffect = persistAndGossip(signedArtifact, status.majorityArtifactInfo.context) >>
+                          recordPeerTierMetrics(state.lastOutcome.peerTiers, nextPeerTiers)
                       ).pure[F]
                     }
                 } else {

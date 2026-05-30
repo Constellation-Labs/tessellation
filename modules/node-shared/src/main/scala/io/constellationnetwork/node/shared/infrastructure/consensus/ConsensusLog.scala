@@ -198,6 +198,7 @@ object ConsensusLog {
     case object RecoveryStateTransition extends Event { val show = "RECOVERY_STATE_TRANSITION" }
     case object RecoveryTransitionFailed extends Event { val show = "RECOVERY_TRANSITION_FAILED" }
     case object ForcedRoundCompletionOnRecovery extends Event { val show = "FORCED_ROUND_COMPLETION_ON_RECOVERY" }
+    case object RecoveryDownloadPhase extends Event { val show = "RECOVERY_DOWNLOAD_PHASE" }
 
     // ── Declaration-receive events (for cross-node timeline reconstruction) ────
     // Phase transitions are already captured by STATE_UPDATED (Category.Phase) with

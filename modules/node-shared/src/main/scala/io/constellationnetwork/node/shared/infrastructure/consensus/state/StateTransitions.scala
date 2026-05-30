@@ -979,6 +979,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
             storage.clearObservationKey.whenA(promoteToReady && isRecoveryEffective) >>
               ctx.nodeStorage.tryModifyState(NodeState.Observing, targetState) >>
               Metrics[F].incrementCounter(
+                "dag_consensus_init_download_target_state_total",
+                Seq(unsafeLabelName("target_state") -> targetState.entryName)
+              ) >>
+              Metrics[F].incrementCounter(
                 "dag_consensus_init_download_ready_promotion_total",
                 Seq(unsafeLabelName("result") -> (if (promoteToReady) "promoted" else "waiting_for_ready"))
               ) >>
@@ -1288,6 +1292,13 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           externalAligned,
           required
         )
+        val reason =
+          if (promote) "aligned_quorum"
+          else if (readyCandidates.isEmpty) "no_ready_candidates"
+          else if (externalAligned === 0) "no_aligned_ready_candidates"
+          else if (externalAligned < readyCandidates.size) "mixed_ready_outcomes"
+          else if (alignedWithSelf < required) "below_quorum"
+          else "not_allowed"
         ConsensusLog.info(
           log,
           Category.Lifecycle,
@@ -1295,12 +1306,27 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           "n/a",
           LogEvent.DownloadInitReadyPromotion,
           "result" -> (if (promote) "promoted" else "waiting_for_ready"),
+          "reason" -> reason,
+          "outcomeHash" -> outcomeHash.value.take(12),
           "externalAligned" -> externalAligned.toString,
           "alignedWithSelf" -> alignedWithSelf.toString,
           "readyCandidates" -> readyCandidates.size.toString,
           "requiredExternalReady" -> requiredExternalReady.toString,
           "required" -> required.toString
-        ) >>
+        ) >> {
+          val resultLabel = unsafeLabelName("result")
+          val reasonLabel = unsafeLabelName("reason")
+          Metrics[F].incrementCounter(
+            "dag_consensus_init_download_ready_promotion_decision_total",
+            Seq(
+              resultLabel -> (if (promote) "promoted" else "waiting_for_ready"),
+              reasonLabel -> reason
+            )
+          ) >>
+            Metrics[F].updateGauge("dag_consensus_init_download_ready_candidates", readyCandidates.size.toLong) >>
+            Metrics[F].updateGauge("dag_consensus_init_download_external_aligned", externalAligned.toLong) >>
+            Metrics[F].updateGauge("dag_consensus_init_download_promotion_required", required.toLong)
+        } >>
           promote.pure[F]
       }
     }
