@@ -6,8 +6,8 @@ import cats.syntax.all._
 
 import scala.concurrent.duration._
 
+import org.http4s._
 import org.http4s.headers.{`Retry-After`, `X-Forwarded-For`}
-import org.http4s.{HttpRoutes, Response, Status}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 /** Per-client-IP sliding-window rate limiter for HTTP routes.
@@ -60,7 +60,8 @@ object PerIpRateLimitMiddleware {
     windowDuration: FiniteDuration,
     retryAfterSeconds: Long = 5,
     allowlist: Set[String] = Set.empty,
-    selfExternalIp: Option[String] = None
+    selfExternalIp: Option[String] = None,
+    onReject: Option[(Request[F], String, Int, Int) => F[Unit]] = None
   ): F[HttpRoutes[F] => HttpRoutes[F]] = {
     val logger = Slf4jLogger.getLogger[F]
     val windowMillis = windowDuration.toMillis
@@ -117,7 +118,8 @@ object PerIpRateLimitMiddleware {
                   routes(req)
                 case false =>
                   OptionT.liftF(
-                    logger.debug(s"Rate limit exceeded for IP $ip (max=$maxRequestsPerWindow per ${windowDuration.toSeconds}s)") >>
+                    onReject.traverse_(_(req, ip, maxRequestsPerWindow, maxRequestsPerWindow)) >>
+                      logger.debug(s"Rate limit exceeded for IP $ip (max=$maxRequestsPerWindow per ${windowDuration.toSeconds}s)") >>
                       Response[F](Status.TooManyRequests)
                         .putHeaders(`Retry-After`.unsafeFromLong(retryAfterSeconds))
                         .pure[F]

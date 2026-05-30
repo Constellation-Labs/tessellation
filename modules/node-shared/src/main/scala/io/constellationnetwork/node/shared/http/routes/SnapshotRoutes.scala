@@ -16,6 +16,7 @@ import io.constellationnetwork.node.shared.http.p2p.middlewares.{
   PerIpBandwidthLimitMiddleware,
   PerIpRateLimitMiddleware
 }
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
   CombinedSnapshotCheckpointFileSystemStorage,
   SnapshotLocalFileSystemStorage
@@ -27,6 +28,7 @@ import io.constellationnetwork.schema.{GlobalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.signature.Signed
 
+import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosInt
 import io.circe.shapes._
 import io.circe.{Encoder, Printer}
@@ -35,10 +37,11 @@ import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
 import org.http4s.headers._
 import org.http4s.server.middleware.Timeout
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 import shapeless.HNil
 import shapeless.syntax.singleton._
 
-final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: SnapshotInfo[_]: Encoder](
+final case class SnapshotRoutes[F[_]: Async: Metrics, S <: Snapshot: Encoder, SI <: SnapshotInfo[_]: Encoder](
   snapshotStorage: SnapshotStorage[F, S, SI],
   // On WaitingForReady peers reached via the download path, snapshotStorage.head returns None
   // (it's only populated as the node produces snapshots). lastNSnapshotStorage IS populated for
@@ -59,6 +62,7 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
   // peer-authenticated. Held only for the heavy handlers (`/latest/combined/stream` and
   // `/{ordinal}?full=true`); cheap probe routes are unbounded by this cap.
   heavyRouteConcurrency: Semaphore[F],
+  heavyRouteActiveRef: Ref[F, Map[String, Int]],
   // Retry-After value (seconds) returned with 503 responses when `heavyRouteConcurrency`
   // is saturated. Sourced from `SnapshotServingConfig.retryAfterSeconds` for parity with
   // the existing global cap response shape.
@@ -71,6 +75,102 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
     with P2PRoutes[F] {
 
   object FullSnapshotQueryParam extends FlagQueryParamMatcher("full")
+
+  private val logger = Slf4jLogger.getLogger[F]
+
+  private val endpointLabel = Metrics.unsafeLabelName("endpoint")
+  private val outcomeLabel = Metrics.unsafeLabelName("outcome")
+  private val limiterLabel = Metrics.unsafeLabelName("limiter")
+
+  private def snapshotStreamTags(endpoint: String, outcome: String): Metrics.TagSeq =
+    Seq(endpointLabel -> endpoint, outcomeLabel -> outcome)
+
+  private def snapshotStreamLimitTags(endpoint: String, limiter: String): Metrics.TagSeq =
+    Seq(endpointLabel -> endpoint, limiterLabel -> limiter, outcomeLabel -> "throttled")
+
+  private def requestClientIp(req: Request[F]): String =
+    req.headers
+      .get[`X-Forwarded-For`]
+      .flatMap(_.values.head)
+      .map(_.toString.split(",").head.trim)
+      .filter(_.nonEmpty)
+      .orElse(req.remote.map(_.host.toString))
+      .getOrElse("unknown")
+
+  private def classifySnapshotStreamOutcome(status: Status): String =
+    status match {
+      case Status.NotModified                 => "not_modified"
+      case Status.NotFound                    => "not_found"
+      case Status.TooManyRequests             => "throttled"
+      case Status.ServiceUnavailable          => "unavailable"
+      case s if s.code >= 200 && s.code < 300 => "served"
+      case s if s.code >= 400 && s.code < 500 => "client_error"
+      case s if s.code >= 500                 => "error"
+      case _                                  => "other"
+    }
+
+  private def updateSnapshotStreamActive(endpoint: String, delta: Int): F[Unit] =
+    heavyRouteActiveRef.modify { current =>
+      val next = math.max(0, current.getOrElse(endpoint, 0) + delta)
+      (current.updated(endpoint, next), next)
+    }.flatMap { active =>
+      Metrics[F].updateGauge("dag_snapshot_stream_active", active, Seq(endpointLabel -> endpoint))
+    }
+
+  private def observeSnapshotStreamLimit(req: Request[F], limiter: String, observed: Long, cap: Long): F[Unit] =
+    SnapshotRoutes.heavyweightEndpoint(req).traverse_ { endpoint =>
+      Metrics[F].incrementCounter("dag_snapshot_stream_limit_total", snapshotStreamLimitTags(endpoint, limiter)) >>
+        logger.debug(
+          s"Snapshot stream $limiter limit rejected endpoint=$endpoint ip=${requestClientIp(req)} observed=$observed cap=$cap"
+        )
+    }
+
+  /** Records the lifetime of heavyweight snapshot streams without labeling Prometheus by IP.
+    *
+    * The generic HTTP middleware records dispatch latency, but these routes spend most of their cost streaming the response body. The
+    * finalizer observes the body lifetime, including slow consumers. fs2 finalization here is intentionally low-cardinality; client IP is
+    * reserved for bounded debug/error logs only.
+    */
+  private def withSnapshotStreamObservability(
+    req: Request[F],
+    endpoint: String
+  )(action: F[Response[F]]): F[Response[F]] =
+    for {
+      start <- Async[F].realTime
+      _ <- updateSnapshotStreamActive(endpoint, 1)
+      response <- action.handleErrorWith { err =>
+        Async[F].realTime.flatMap { end =>
+          val duration = end - start
+          updateSnapshotStreamActive(endpoint, -1) >>
+            Metrics[F].incrementCounter("dag_snapshot_stream_request_total", snapshotStreamTags(endpoint, "error")) >>
+            Metrics[F].recordTimeHistogram("dag_snapshot_stream", duration, snapshotStreamTags(endpoint, "error")) >>
+            logger.warn(err)(s"Snapshot stream handler failed endpoint=$endpoint ip=${requestClientIp(req)}") >>
+            Async[F].raiseError[Response[F]](err)
+        }
+      }
+      outcome = classifySnapshotStreamOutcome(response.status)
+      tags = snapshotStreamTags(endpoint, outcome)
+      bytes = response.contentLength
+      finalize = Async[F].realTime.flatMap { end =>
+        val duration = end - start
+        updateSnapshotStreamActive(endpoint, -1) >>
+          Metrics[F].incrementCounter("dag_snapshot_stream_request_total", tags) >>
+          Metrics[F].recordTimeHistogram("dag_snapshot_stream", duration, tags) >>
+          bytes.traverse_ { size =>
+            Metrics[F].incrementCounterBy("dag_snapshot_stream_bytes_total", size, tags) >>
+              Metrics[F].recordSizeHistogram("dag_snapshot_stream_response", size, tags)
+          } >>
+          (response.status.code >= 500)
+            .pure[F]
+            .ifM(
+              logger.warn(
+                s"Snapshot stream completed with server error endpoint=$endpoint status=${response.status.code} ip=${requestClientIp(req)} bytes=${bytes
+                    .getOrElse(0L)} durationMs=${duration.toMillis}"
+              ),
+              Async[F].unit
+            )
+      }
+    } yield response.copy(body = response.body.onFinalizeWeak(finalize))
 
   // Use blocking encoder to prevent CPU starvation when serializing large snapshots
   implicit def jsonEncoders[A <: AnyRef: Encoder]: List[EntityEncoder[F, A]] =
@@ -132,15 +232,16 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
     * Layered INSIDE the public middleware chain (ConcurrencyLimitMiddleware / PerIpBandwidthLimitMiddleware / PerIpRateLimitMiddleware), so
     * it applies whether the request is anonymous or peer-authenticated. Cheap probe routes bypass this guard entirely.
     */
-  private def withHeavyRoutePermit(action: F[Response[F]]): F[Response[F]] = {
+  private def withHeavyRoutePermit(req: Request[F], endpoint: String)(action: F[Response[F]]): F[Response[F]] = {
     val release = heavyRouteConcurrency.release
     heavyRouteConcurrency.tryAcquire.flatMap {
       case false =>
-        Response[F](status = Status.ServiceUnavailable)
-          .putHeaders(`Retry-After`.unsafeFromLong(heavyRouteRetryAfterSeconds))
-          .pure[F]
+        observeSnapshotStreamLimit(req, "concurrency", 1L, 1L) >>
+          Response[F](status = Status.ServiceUnavailable)
+            .putHeaders(`Retry-After`.unsafeFromLong(heavyRouteRetryAfterSeconds))
+            .pure[F]
       case true =>
-        action
+        withSnapshotStreamObservability(req, endpoint)(action)
           .map(resp => resp.copy(body = resp.body.onFinalizeWeak(release)))
           .handleErrorWith(t => release >> Async[F].raiseError[Response[F]](t))
     }
@@ -216,7 +317,7 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
 
         case req @ GET -> Root / "latest" / "combined" / "stream" =>
           whenNodeReady {
-            withHeavyRoutePermit {
+            withHeavyRoutePermit(req, "latest_combined_stream") {
               // ETag/304 + correctness fix: the strong validator now encodes
               // the full immutable identity `(ordinal, snapshotHash)`. Ordinal alone is insufficient
               // -- ord-N can carry different bytes on different forks, so a stale-(N, H1) cache
@@ -261,27 +362,29 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
         case req @ GET -> Root / "latest" / "combined" / "checkpoint" / SnapshotOrdinalVar(ordinal) =>
           whenNodeReady {
             ordinalGuard(ordinal) {
-              // Per-ordinal ETag now encodes (ordinal, snapshotHash) for the
-              // same fork-correctness reason as the latest-stream variant above. We can only
-              // emit the ETag when the hash is in our cache (populated at write time, retained
-              // via the storage's bounded-size hashCache). Cold-restart historical reads with
-              // no cached hash bypass the conditional check entirely — strictly correct, just
-              // no optimization for that single request.
-              combinedSnapshotCheckpointFileSystemStorage.getCachedHash(ordinal).flatMap {
-                case Some(hash) =>
-                  val expectedTag = combinedSnapshotCheckpointFileSystemStorage.etagFor(ordinal, hash)
-                  if (matchesIfNoneMatch(req, expectedTag))
-                    Response[F](status = Status.NotModified, headers = Headers(ETag(expectedTag))).pure[F]
-                  else
+              withSnapshotStreamObservability(req, "combined_checkpoint") {
+                // Per-ordinal ETag now encodes (ordinal, snapshotHash) for the
+                // same fork-correctness reason as the latest-stream variant above. We can only
+                // emit the ETag when the hash is in our cache (populated at write time, retained
+                // via the storage's bounded-size hashCache). Cold-restart historical reads with
+                // no cached hash bypass the conditional check entirely -- strictly correct, just
+                // no optimization for that single request.
+                combinedSnapshotCheckpointFileSystemStorage.getCachedHash(ordinal).flatMap {
+                  case Some(hash) =>
+                    val expectedTag = combinedSnapshotCheckpointFileSystemStorage.etagFor(ordinal, hash)
+                    if (matchesIfNoneMatch(req, expectedTag))
+                      Response[F](status = Status.NotModified, headers = Headers(ETag(expectedTag))).pure[F]
+                    else
+                      combinedSnapshotCheckpointFileSystemStorage.getAsHttpResponse(ordinal).flatMap {
+                        case Some(resp) => resp.pure[F]
+                        case None       => NotFound()
+                      }
+                  case None =>
                     combinedSnapshotCheckpointFileSystemStorage.getAsHttpResponse(ordinal).flatMap {
                       case Some(resp) => resp.pure[F]
                       case None       => NotFound()
                     }
-                case None =>
-                  combinedSnapshotCheckpointFileSystemStorage.getAsHttpResponse(ordinal).flatMap {
-                    case Some(resp) => resp.pure[F]
-                    case None       => NotFound()
-                  }
+                }
               }
             }
           }
@@ -297,7 +400,7 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
                   }
                 }
               else
-                withHeavyRoutePermit {
+                withHeavyRoutePermit(req, "full_snapshot") {
                   fullGlobalSnapshotStorage.map { storage =>
                     resolveEncoder[F, Signed[GlobalSnapshot]](req) { implicit enc =>
                       storage.read(ordinal).flatMap {
@@ -355,7 +458,7 @@ final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, SI <: Snaps
 }
 
 object SnapshotRoutes {
-  def make[F[_]: Async, S <: Snapshot: Encoder, SI <: SnapshotInfo[_]: Encoder](
+  def make[F[_]: Async: Metrics, S <: Snapshot: Encoder, SI <: SnapshotInfo[_]: Encoder](
     snapshotStorage: SnapshotStorage[F, S, SI],
     lastNSnapshotStorage: Option[LastSnapshotStorage[F, S, SI]],
     fullGlobalSnapshotStorage: Option[SnapshotLocalFileSystemStorage[F, GlobalSnapshot]],
@@ -386,7 +489,19 @@ object SnapshotRoutes {
             cfg.perIpWindow,
             cfg.perIpRetryAfterSeconds,
             cfg.perIpAllowlist.split(",").iterator.map(_.trim).filter(_.nonEmpty).toSet,
-            selfExternalIp
+            selfExternalIp,
+            onReject = Some { (req, _, _, _) =>
+              heavyweightEndpoint(req).traverse_ { endpoint =>
+                Metrics[F].incrementCounter(
+                  "dag_snapshot_stream_limit_total",
+                  Seq(
+                    Metrics.unsafeLabelName("endpoint") -> endpoint,
+                    Metrics.unsafeLabelName("limiter") -> "request",
+                    Metrics.unsafeLabelName("outcome") -> "throttled"
+                  )
+                )
+              }
+            }
           )
         )
       // Only build the bandwidth limiter when the byte cap is positive. Restricted to heavyweight
@@ -407,12 +522,25 @@ object SnapshotRoutes {
             // combined-stream routes so the limiter can reject 100MB requests BEFORE the route
             // handler builds the response body. Other routes get `None` and fall through to
             // the legacy post-response Content-Length path (defense in depth).
-            routeSizeEstimator = Some(combinedStreamRouteSizeEstimator[F, S, SI](combinedSnapshotCheckpointFileSystemStorage))
+            routeSizeEstimator = Some(combinedStreamRouteSizeEstimator[F, S, SI](combinedSnapshotCheckpointFileSystemStorage)),
+            onReject = Some { (req, _, _, _) =>
+              heavyweightEndpoint(req).traverse_ { endpoint =>
+                Metrics[F].incrementCounter(
+                  "dag_snapshot_stream_limit_total",
+                  Seq(
+                    Metrics.unsafeLabelName("endpoint") -> endpoint,
+                    Metrics.unsafeLabelName("limiter") -> "bandwidth",
+                    Metrics.unsafeLabelName("outcome") -> "throttled"
+                  )
+                )
+              }
+            }
           )
         }
       heavyRouteCapacity: PosInt = snapshotServingConfig.map(_.heavyRouteConcurrency).getOrElse(PosInt(6))
       heavyRouteRetryAfter: Long = snapshotServingConfig.map(_.retryAfterSeconds).getOrElse(2L)
       heavyRoutePermit <- Semaphore[F](heavyRouteCapacity.value.toLong)
+      heavyRouteActiveRef <- Ref.of[F, Map[String, Int]](Map.empty)
     } yield
       new SnapshotRoutes[F, S, SI](
         snapshotStorage,
@@ -425,25 +553,31 @@ object SnapshotRoutes {
         cachedCombined,
         combinedSnapshotCheckpointFileSystemStorage,
         heavyRoutePermit,
+        heavyRouteActiveRef,
         heavyRouteRetryAfter,
         concurrencyLimit,
         perIpRateLimit,
         perIpBandwidthLimit
       )
 
+  def heavyweightEndpoint[F[_]](req: Request[F]): Option[String] = {
+    val path = req.uri.path.segments.map(_.encoded).toList
+    path match {
+      case "latest" :: "combined" :: "stream" :: Nil                             => Some("latest_combined_stream")
+      case "latest" :: "combined" :: "checkpoint" :: ord :: Nil if ord != "info" => Some("combined_checkpoint")
+      case ord :: Nil if ord.toLongOption.flatMap(SnapshotOrdinal(_)).isDefined && req.params.contains("full") =>
+        Some("full_snapshot")
+      case _ => None
+    }
+  }
+
   /** Predicate identifying heavyweight snapshot routes that PerIpBandwidthLimitMiddleware should enforce on. Scope is intentionally narrow:
     * only the routes that materialize multi-MB snapshot bodies. Lightweight metadata routes (`/latest/ordinal`, `/latest/metadata`,
     * `/latest/combined/checkpoint/info`) bypass so they remain available to a client that just burned its bandwidth budget - those are the
     * very probes a well-behaved client should use to back off.
     */
-  def isHeavyweightSnapshotRoute[F[_]](req: Request[F]): Boolean = {
-    val path = req.uri.path.segments.map(_.encoded).toList
-    path match {
-      case "latest" :: "combined" :: "stream" :: Nil                             => true
-      case "latest" :: "combined" :: "checkpoint" :: ord :: Nil if ord != "info" => true
-      case _                                                                     => false
-    }
-  }
+  def isHeavyweightSnapshotRoute[F[_]](req: Request[F]): Boolean =
+    heavyweightEndpoint(req).exists(endpoint => endpoint === "latest_combined_stream" || endpoint === "combined_checkpoint")
 
   /** Pre-flight size estimator for the per-IP bandwidth limiter. Maps the combined-snapshot routes to their on-disk byte size so the
     * limiter can refuse over-budget requests BEFORE the heavy route handler builds the ~100 MB response. Returns `None` for any other route

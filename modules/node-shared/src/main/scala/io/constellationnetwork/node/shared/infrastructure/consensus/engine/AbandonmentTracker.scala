@@ -425,7 +425,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
                             // (cluster has advanced) or when a round closes (resetOnSuccessfulRound).
                             _ <- updateWedgeHealth(retriableCount, peersAtHigherKey, reason.label)
                             _ <-
-                              if (networkAdvanced) triggerRecoveryDownload(key, consecutiveCount)
+                              if (networkAdvanced) triggerRecoveryDownload(key, consecutiveCount, reason.label, cause.label)
                               else retryAfterRetriableAbandon(key, reason)
                           } yield ()
                         }
@@ -479,7 +479,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
                "recoverySuppressed" -> (shouldRecover && !networkAdvanced).toString
              )
              _ <-
-               if (willRecover) triggerRecoveryDownload(key, consecutiveCount)
+               if (willRecover) triggerRecoveryDownload(key, consecutiveCount, reason.label, "non_retriable")
                else offerRoundCompleted >> queue.offer(ConsensusCommand.TimeTick)
            } yield ()
          })
@@ -523,7 +523,12 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
     */
   private val maxTotalRecoveryAttempts: Int = config.maxConsecutiveAbandonments * 3
 
-  private def triggerRecoveryDownload(key: Key, consecutiveCount: Int): F[Unit] =
+  private def triggerRecoveryDownload(
+    key: Key,
+    consecutiveCount: Int,
+    triggerReason: String,
+    triggerClass: String
+  ): F[Unit] =
     totalRecoveryAttemptsRef.updateAndGet(_ + 1).flatMap { totalAttempts =>
       val shouldForceLeave = totalAttempts >= maxTotalRecoveryAttempts
 
@@ -534,6 +539,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
            key.toString,
            "n/a",
            LogEvent.ForceLeaveTriggered,
+           "trigger" -> triggerReason,
+           "triggerClass" -> triggerClass,
            "consecutiveAbandonments" -> consecutiveCount.toString,
            "totalRecoveryAttempts" -> totalAttempts.toString,
            "maxTotalRecoveryAttempts" -> maxTotalRecoveryAttempts.toString,
@@ -546,6 +553,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
            key.toString,
            "n/a",
            LogEvent.RecoveryDownloadTriggered,
+           "trigger" -> triggerReason,
+           "triggerClass" -> triggerClass,
            "consecutiveAbandonments" -> consecutiveCount.toString,
            "totalRecoveryAttempts" -> totalAttempts.toString,
            "maxTotalRecoveryAttempts" -> maxTotalRecoveryAttempts.toString,
@@ -553,11 +562,19 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
          )) >>
         healthRef.update(_.copy(totalRecoveryAttempts = totalAttempts)) >>
         Metrics[F].incrementCounter("dag_consensus_recovery_download_triggered") >>
+        Metrics[F].incrementCounter(
+          "dag_consensus_recovery_trigger_total",
+          Seq(
+            Metrics.unsafeLabelName("trigger") -> triggerReason,
+            Metrics.unsafeLabelName("trigger_class") -> triggerClass,
+            Metrics.unsafeLabelName("action") -> (if (shouldForceLeave) "force_leave" else "waiting_for_download")
+          )
+        ) >>
         (if (shouldForceLeave)
            Metrics[F].incrementCounter("dag_consensus_force_leave_triggered") >>
              forceLeave(key, totalAttempts)
          else
-           attemptRecoveryDownload(key))
+           attemptRecoveryDownload(key, triggerReason, triggerClass))
     }
 
   /** Force the node to leave the cluster after exhausting all recovery attempts. This breaks pathological loops where downloaded state
@@ -628,13 +645,13 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
               LogEvent.ForceLeaveFailed,
               "reason" -> "could not transition to Leaving from any state, falling back to recovery download"
             ) >>
-              attemptRecoveryDownload(key)
+              attemptRecoveryDownload(key, "force_leave_failed", "force_leave_fallback")
         }
       }
     }
   }
 
-  private def attemptRecoveryDownload(key: Key): F[Unit] = {
+  private def attemptRecoveryDownload(key: Key, triggerReason: String, triggerClass: String): F[Unit] = {
     val recoveryStates = List(
       NodeState.Ready,
       NodeState.Observing,
@@ -662,9 +679,19 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
             key.toString,
             "n/a",
             LogEvent.RecoveryStateTransition,
+            "trigger" -> triggerReason,
+            "triggerClass" -> triggerClass,
             "from" -> fromState.toString,
             "to" -> "WaitingForDownload"
           ) >>
+            Metrics[F].incrementCounter(
+              "dag_consensus_recovery_state_transition_total",
+              Seq(
+                Metrics.unsafeLabelName("trigger") -> triggerReason,
+                Metrics.unsafeLabelName("trigger_class") -> triggerClass,
+                Metrics.unsafeLabelName("outcome") -> "transitioned"
+              )
+            ) >>
             consecutiveAbandonCountRef.set((none[Key], 0)) >>
             healthRef.update(_.copy(consecutiveAbandonments = 0)) >>
             // Clear ALL consensus state (states, resources, peer registrations, scheduling state)
@@ -694,9 +721,19 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
               key.toString,
               "n/a",
               LogEvent.RecoveryTransitionFailed,
+              "trigger" -> triggerReason,
+              "triggerClass" -> triggerClass,
               "reason" -> s"node in $currentState state, not Ready or Observing",
               "nodeState" -> currentState.show
             ) >>
+              Metrics[F].incrementCounter(
+                "dag_consensus_recovery_state_transition_total",
+                Seq(
+                  Metrics.unsafeLabelName("trigger") -> triggerReason,
+                  Metrics.unsafeLabelName("trigger_class") -> triggerClass,
+                  Metrics.unsafeLabelName("outcome") -> "invalid_state"
+                )
+              ) >>
               ctx.pending.clear() >>
               offerRoundCompleted
           }

@@ -32,7 +32,7 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.NodeState
-import io.constellationnetwork.schema.peer.Peer
+import io.constellationnetwork.schema.peer.{L0Peer, Peer}
 import io.constellationnetwork.schema.snapshot.SnapshotMetadata
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -253,6 +253,7 @@ object Download {
         _ <-
           if (alreadyInitializedStorage.isEmpty) setInitialSnapshots(hashedSnapshot, context)
           else updateSnapshots(hashedSnapshot, context)
+        _ <- Metrics[F].updateGauge("dag_download_latest_downloaded_ordinal", snapshot.ordinal.value.value.toDouble)
         // Emit fresh metrics when a snapshot is accepted via download, not just via consensus.
         // Without this, a peer that is catching up via download keeps stale ordinal/signer_count
         // metrics in Grafana until it completes a full consensus round. Pair with last_updated_epoch
@@ -267,13 +268,14 @@ object Download {
 
     def download(implicit hasherSelector: HasherSelector[F]): F[Unit] = {
       val guardedStart =
-        Async[F].timeoutTo(
-          start,
-          downloadStartMaxDuration,
-          DownloadStartTimedOut.raiseError[F, DownloadResult]
-        )
+        recordDownloadPhase("full", "start_entered") >>
+          Async[F].timeoutTo(
+            start,
+            downloadStartMaxDuration,
+            DownloadStartTimedOut.raiseError[F, DownloadResult]
+          )
       val instrumentedStart = guardedStart
-        .flatTap(_ => recordStartOutcome("full", DownloadOutcome.Success))
+        .flatTap(_ => recordStartOutcome("full", DownloadOutcome.Success) >> recordDownloadPhase("full", "start_success"))
         .onError {
           case err =>
             val outcome = classifyStartError(err)
@@ -283,15 +285,16 @@ object Download {
         }
 
       def instrumentedObserve(result: DownloadResult): F[(DownloadResult, ObservationLimit)] =
-        observe(result)
-          .flatTap(_ => recordObserveOutcome("full", DownloadOutcome.Success))
-          .onError {
-            case err =>
-              val outcome = classifyObserveError(err)
-              val maybeLog =
-                if (outcome.isUnclassified) logUnclassifiedObserveError(err) else Async[F].unit
-              maybeLog >> recordObserveOutcome("full", outcome)
-          }
+        recordDownloadPhase("full", "observe_entered") >>
+          observe(result)
+            .flatTap(_ => recordObserveOutcome("full", DownloadOutcome.Success) >> recordDownloadPhase("full", "observe_success"))
+            .onError {
+              case err =>
+                val outcome = classifyObserveError(err)
+                val maybeLog =
+                  if (outcome.isUnclassified) logUnclassifiedObserveError(err) else Async[F].unit
+                maybeLog >> recordObserveOutcome("full", outcome)
+            }
 
       nodeStorage
         .tryModifyState(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.WaitingForObserving)(instrumentedStart)
@@ -300,6 +303,7 @@ object Download {
           val ((snapshot, context), observationLimit) = result
           for {
             _ <- consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context)
+            _ <- recordDownloadPhase("full", "facilitate_enqueued")
           } yield ()
         }
         .onError(logger.error(_)("Unexpected failure during download!"))
@@ -391,16 +395,72 @@ object Download {
         )
       )
 
+    private def recordDownloadPhase(path: String, phase: String): F[Unit] =
+      Metrics[F].incrementCounter(
+        "dag_download_join_phase_total",
+        Seq(
+          Metrics.unsafeLabelName("path") -> path,
+          Metrics.unsafeLabelName("phase") -> phase
+        )
+      )
+
+    private def recordPeerTipAlignment(
+      path: String,
+      localOrdinal: SnapshotOrdinal,
+      localHash: Hash,
+      readyPeerTips: List[PeerTip],
+      observationLimit: SnapshotOrdinal
+    ): F[Unit] = {
+      val grouped = readyPeerTips.groupBy(t => (t.ordinal, t.hash))
+      val majority = grouped.toList.sortBy {
+        case ((ordinal, hash), peers) =>
+          (-peers.size, ordinal.value.value, hash.value)
+      }.headOption
+      val (majorityOrdinal, majorityHash, majorityCount, ordinalGap) = majority match {
+        case Some(((ordinal, hash), peers)) =>
+          (ordinal, hash, peers.size, ordinal.value.value - localOrdinal.value.value)
+        case None =>
+          (localOrdinal, localHash, 0, 0L)
+      }
+      val tags = Seq(Metrics.unsafeLabelName("path") -> path)
+
+      Metrics[F].updateGauge("dag_download_ready_peer_tip_count", readyPeerTips.size.toLong, tags) >>
+        Metrics[F].updateGauge("dag_download_ready_peer_tip_majority_count", majorityCount.toLong, tags) >>
+        Metrics[F].updateGauge("dag_download_ready_peer_tip_majority_ordinal", majorityOrdinal.value.value.toDouble, tags) >>
+        Metrics[F].updateGauge("dag_download_ready_peer_tip_gap_ordinals", ordinalGap.toDouble, tags) >>
+        Metrics[F].updateGauge("dag_download_observation_limit_ordinal", observationLimit.value.value.toDouble, tags) >>
+        logger.info(
+          s"[DownloadJoin] path=$path local=${localOrdinal.show} localHash=${localHash.value.take(8)} " +
+            s"readyPeerTips=${readyPeerTips.size} majorityCount=$majorityCount " +
+            s"majority=${majorityOrdinal.show}/${majorityHash.value.take(8)} gap=$ordinalGap " +
+            s"observationLimit=${observationLimit.show}"
+        )
+    }
+
     private def recordConvergenceOutcome(outcome: String): F[Unit] =
       Metrics[F].incrementCounter(
         "dag_recovery_convergence_iterations_total",
         Seq(Metrics.unsafeLabelName("outcome") -> outcome)
       )
 
+    private def recordRecoveryPhase(phase: String, outcome: String): F[Unit] =
+      Metrics[F].incrementCounter(
+        "dag_recovery_phase_total",
+        Seq(
+          Metrics.unsafeLabelName("phase") -> phase,
+          Metrics.unsafeLabelName("outcome") -> outcome
+        )
+      )
+
+    private def recoveryDirection(local: SnapshotOrdinal, remote: SnapshotOrdinal): String =
+      if (remote > local) "forward"
+      else if (remote === local) "same_ordinal"
+      else "rollback"
+
     def recoveryDownload(implicit hasherSelector: HasherSelector[F]): F[Unit] = {
-      def getLatestMetadata: F[SnapshotMetadata] = {
+      def getLatestMetadataWithPeer: F[(L0Peer, SnapshotMetadata)] = {
         val retryPolicy = RetryPolicies.exponentialBackoff[F](1.second).join(RetryPolicies.limitRetries(5))
-        retryingOnAllErrors[SnapshotMetadata](
+        retryingOnAllErrors[(L0Peer, SnapshotMetadata)](
           policy = retryPolicy,
           onError = (err: Throwable, details: RetryDetails) =>
             logger.error(err)(s"[RecoveryDownload] Error fetching metadata (attempt=${details.retriesSoFar})")
@@ -410,17 +470,27 @@ object Download {
           // StateTransitions.fetchOutcomeFromCluster. Doesn't fully solve the alpha.40 cascade where ALL
           // peers were in WaitingForDownload, but covers the partial case where some peers reached
           // Observing while others were still in download.
-          peerSelect.selectForRecovery.flatMap(p2pClient.globalSnapshot.getLatestMetadata.run(_))
+          peerSelect.selectForRecovery.flatMap(peer => p2pClient.globalSnapshot.getLatestMetadata.run(peer).tupleLeft(peer))
         }
       }
+
+      def getLatestMetadata: F[SnapshotMetadata] =
+        getLatestMetadataWithPeer.map(_._2)
 
       def recoveryStart: F[DownloadResult] = {
         val body =
           for {
-            metadata <- getLatestMetadata
+            _ <- recordDownloadPhase("recovery", "start_entered")
+            localHead <- lastNGlobalSnapshotStorage.get
+            (sourcePeer, metadata) <- getLatestMetadataWithPeer
+            localOrdinal = localHead.map(_.ordinal)
+            direction = localOrdinal.fold("unknown")(recoveryDirection(_, metadata.ordinal))
             _ <- logger.info(
-              s"[RecoveryDownload] Starting incremental recovery. Network tip: ordinal=${metadata.ordinal.show}, hash=${metadata.hash.show}"
+              s"[RecoveryDownload] Starting incremental recovery. Network tip: ordinal=${metadata.ordinal.show}, hash=${metadata.hash.show}, " +
+                s"source=${sourcePeer.ip}:${sourcePeer.port}, localOrdinal=${localOrdinal.map(_.show).getOrElse("none")}, " +
+                s"direction=$direction"
             )
+            _ <- recordRecoveryPhase("start", direction)
             // Clean up snapshots above the network tip (e.g. from a minority fork).
             _ <- snapshotStorage.cleanupAbove(metadata.ordinal)
             _ <- combinedSnapshotCheckpointFileSystemStorage.deleteAbove(metadata.ordinal)
@@ -441,7 +511,8 @@ object Download {
             // Fetch only the gap: the download() hash-chain walker already stops at persisted snapshots
             result <- download(metadata.hash, metadata.ordinal, none)
             _ <- logger.info(
-              s"[RecoveryDownload] Gap fetched. Latest downloaded: ordinal=${result._1.ordinal.show}"
+              s"[RecoveryDownload] Gap fetched. Latest downloaded: ordinal=${result._1.ordinal.show}, target=${metadata.ordinal.show}, " +
+                s"direction=${recoveryDirection(localOrdinal.getOrElse(result._1.ordinal), result._1.ordinal)}"
             )
           } yield result
         val guardedBody =
@@ -450,18 +521,21 @@ object Download {
             downloadStartMaxDuration,
             DownloadStartTimedOut.raiseError[F, DownloadResult]
           )
-        guardedBody.flatTap(_ => recordStartOutcome("recovery", DownloadOutcome.Success)).onError {
-          case err =>
-            val outcome = classifyStartError(err)
-            val maybeLog =
-              if (outcome.isUnclassified) logUnclassifiedStartError(err) else Async[F].unit
-            maybeLog >> recordStartOutcome("recovery", outcome)
-        }
+        guardedBody
+          .flatTap(_ => recordStartOutcome("recovery", DownloadOutcome.Success) >> recordDownloadPhase("recovery", "start_success"))
+          .onError {
+            case err =>
+              val outcome = classifyStartError(err)
+              val maybeLog =
+                if (outcome.isUnclassified) logUnclassifiedStartError(err) else Async[F].unit
+              maybeLog >> recordStartOutcome("recovery", outcome)
+          }
       }
 
       def recoveryObserve(result: DownloadResult): F[(DownloadResult, ObservationLimit)] = {
         val (lastSnapshot, lastContext) = result
         val body = for {
+          _ <- recordDownloadPhase("recovery", "observe_entered")
           // Random 1-5 rounds observation to stagger recovery re-entry and mitigate thundering herd.
           // Minimum of 1 ensures at least one round is observed before rejoining consensus.
           recoveryRounds <- Random[F].betweenLong(1L, 6L)
@@ -497,13 +571,22 @@ object Download {
             readyPeerTips,
             recoveryOffset
           )
+          _ <- recordPeerTipAlignment(
+            "recovery",
+            hashedSnapshot.ordinal,
+            hashedSnapshot.hash,
+            readyPeerTips,
+            recoveryObservationLimit
+          )
           isShortcut = recoveryObservationLimit === hashedSnapshot.ordinal && readyPeerTips.size >= minReadyQuorum
+          observeMode = if (isShortcut) "shortcut" else "forward_observe"
           _ <- Applicative[F].whenA(isShortcut)(
             logger.info(
               s"[RecoveryDownload] Caught-up shortcut: local=${hashedSnapshot.ordinal.show} " +
                 s"hash=${hashedSnapshot.hash.value.take(8)}, majority of ${readyPeerTips.size} Ready peers " +
                 s"at or behind; skipping forward observe"
-            ) >> recordObserveOutcome("recovery", DownloadOutcome.Shortcut)
+            ) >> recordObserveOutcome("recovery", DownloadOutcome.Shortcut) >>
+              recordRecoveryPhase("observe", "shortcut")
           )
           _ <- Applicative[F].unlessA(isShortcut)(
             logger.info(
@@ -526,9 +609,13 @@ object Download {
             globalSnapshotConsensusStorage.setHeadForRecovery(observedSnapshot, observedContext)
           }
           _ <- logger.info(
-            s"[RecoveryDownload] Consensus head synced to ordinal ${observedSnapshot.ordinal.show}"
+            s"[RecoveryDownload] Consensus head synced to ordinal ${observedSnapshot.ordinal.show}, observationLimit=${observationLimit.show}, mode=$observeMode"
           )
-          _ <- Applicative[F].unlessA(isShortcut)(recordObserveOutcome("recovery", DownloadOutcome.ForwardObserveSuccess))
+          _ <- Applicative[F].unlessA(isShortcut)(
+            recordObserveOutcome("recovery", DownloadOutcome.ForwardObserveSuccess) >>
+              recordRecoveryPhase("observe", "forward_observe_success")
+          )
+          _ <- recordDownloadPhase("recovery", "observe_success")
         } yield observeResult
 
         body.onError {
@@ -536,7 +623,8 @@ object Download {
             val outcome = classifyObserveError(err)
             val maybeLog =
               if (outcome.isUnclassified) logUnclassifiedObserveError(err) else Async[F].unit
-            maybeLog >> recordObserveOutcome("recovery", outcome)
+            maybeLog >> recordObserveOutcome("recovery", outcome) >>
+              recordRecoveryPhase("observe", outcome.label)
         }
       }
 
@@ -622,7 +710,8 @@ object Download {
 
       convergingRecoveryCycle.flatMap { result =>
         val ((snapshot, context), observationLimit) = result
-        consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context, isRecovery = true)
+        consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context, isRecovery = true) >>
+          recordDownloadPhase("recovery", "facilitate_enqueued")
       }
         .onError(logger.error(_)("[RecoveryDownload] Unexpected failure, will retry"))
         .handleErrorWith { err =>
@@ -800,6 +889,7 @@ object Download {
         hashed <- hasherSelector.withCurrent(implicit h => lastSnapshot.toHashed)
         readyPeerTips <- getReadyPeerTips
         observationLimit = chooseObservationLimit(hashed.ordinal, hashed.hash, readyPeerTips, observationOffset)
+        _ <- recordPeerTipAlignment("full", hashed.ordinal, hashed.hash, readyPeerTips, observationLimit)
         isShortcut = observationLimit === hashed.ordinal && readyPeerTips.size >= minReadyQuorum
         _ <- Applicative[F].whenA(isShortcut)(
           logger.warn(

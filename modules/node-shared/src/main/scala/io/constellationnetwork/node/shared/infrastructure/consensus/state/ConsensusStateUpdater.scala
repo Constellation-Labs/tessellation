@@ -474,7 +474,15 @@ object ConsensusStateUpdater {
             "from" -> fromState.toString,
             "to" -> "WaitingForDownload"
           )
-        )
+        ) >>
+          metrics.incrementCounter(
+            "dag_consensus_recovery_state_transition_total",
+            Seq(
+              unsafeLabelName("trigger") -> s"fork_detected_${observation.label}",
+              unsafeLabelName("trigger_class") -> "fork_detected",
+              unsafeLabelName("outcome") -> "transitioned"
+            )
+          )
       case None =>
         // Already in WaitingForDownload, DownloadInProgress, or other recovery state.
         // DownloadDaemon is already handling it.
@@ -487,7 +495,15 @@ object ConsensusStateUpdater {
             "trigger" -> s"fork_detected_${observation.label}",
             "action" -> "already_recovering"
           )
-        )
+        ) >>
+          metrics.incrementCounter(
+            "dag_consensus_recovery_state_transition_total",
+            Seq(
+              unsafeLabelName("trigger") -> s"fork_detected_${observation.label}",
+              unsafeLabelName("trigger_class") -> "fork_detected",
+              unsafeLabelName("outcome") -> "already_recovering"
+            )
+          )
     }
   }
 
