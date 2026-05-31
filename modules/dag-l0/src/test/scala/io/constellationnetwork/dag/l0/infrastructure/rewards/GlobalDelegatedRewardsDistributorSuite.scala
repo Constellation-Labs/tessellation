@@ -1711,4 +1711,314 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       expect(rewardWithOriginalStake.value.value > 0L) &&
         expect(rewardWithReplacementStake.value.value > rewardWithOriginalStake.value.value)
   }
+
+  test("delegator reward increases when its delegated stake increases") {
+    // Transition at epoch 100, single node so the emission pool is independent of stake size
+    val testConfig = delegatedRewardsConfig.copy(
+      emissionConfig = Map(
+        AppEnvironment.Dev -> { epochProgress: EpochProgress =>
+          EmissionConfigEntry(
+            epochsPerYear = PosLong(100L),
+            asOfEpoch = EpochProgress(100L), // Transition at epoch 100 (inclusive)
+            iTarget = NonNegFraction.unsafeFrom(1, 100), // 1% target
+            iInitial = NonNegFraction.unsafeFrom(2, 100), // 2% initial
+            lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda
+            iImpact = NonNegFraction.unsafeFrom(5, 10), // 0.5 iImpact
+            totalSupply = Amount(100_00000000L), // 100 tokens with 8 decimal places
+            dagPrices = SortedMap(
+              EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1) // 10 DAG per USD
+            ),
+            epochsPerMonth = NonNegLong(100L / 12)
+          )
+        }
+      )
+    )
+
+    // Both delegators stake on the same node; address2's stake is held fixed while
+    // address1's stake varies. Increasing address1's stake increases its share of the
+    // node's delegated stake and therefore its slice of the (fixed) delegation reward pool.
+    def stakeRecord(source: Address, amount: Long, incresedAmount: Option[Long]): DelegatedStakeRecord =
+      DelegatedStakeRecord(
+        Signed(
+          UpdateDelegatedStake.Create(
+            source = source,
+            nodeId = nodeId1,
+            amount = DelegatedStakeAmount(NonNegLong.unsafeFrom(amount)),
+            fee = DelegatedStakeFee(0L),
+            tokenLockRef = Hash.empty
+          ),
+          NonEmptySet.one[SignatureProof](SignatureProof(nodeId1.toId, Signature(Hex(Hash.empty.value))))
+        ),
+        SnapshotOrdinal(1L),
+        Balance.empty,
+        none,
+        incresedAmount.map(amount => DelegatedStakeAmount(NonNegLong.unsafeFrom(amount)))
+      )
+
+    val nodeParams = SortedMap(
+      nodeId1.toId -> (
+        Signed(
+          UpdateNodeParameters(
+            address3,
+            delegatedStakeRewardParameters = DelegatedStakeRewardParameters(
+              RewardFraction.unsafeFrom(80000000) // 80% to delegator
+            ),
+            NodeMetadataParameters("", ""),
+            UpdateNodeParametersReference(UpdateNodeParametersOrdinal(NonNegLong.unsafeFrom(0)), Hash.empty)
+          ),
+          NonEmptySet.one[SignatureProof](SignatureProof(nodeId1.toId, Signature(Hex(Hash.empty.value))))
+        ),
+        SnapshotOrdinal.unsafeApply(1L)
+      )
+    )
+
+    // No accepted creates/withdrawals so no stakes are filtered out of the reward calculation
+    val emptyAcceptanceResult = UpdateDelegatedStakeAcceptanceResult(
+      SortedMap.empty,
+      List.empty,
+      SortedMap.empty,
+      List.empty
+    )
+
+    def distributeWithAddress1Stake(
+                                     distributor: DelegatedRewardsDistributor[IO],
+                                     address1Stake: Long,
+                                     incresedAaddress1Stake: Option[Long]
+                                   ): IO[Amount] = {
+      val stakes = SortedMap(
+        address1 -> SortedSet(stakeRecord(address1, address1Stake, incresedAaddress1Stake)),
+        address2 -> SortedSet(stakeRecord(address2, 1000L, none))
+      )
+
+      val context = GlobalSnapshotInfo.empty.copy(
+        updateNodeParameters = Some(nodeParams),
+        activeDelegatedStakes = Some(stakes)
+      )
+
+      val partitionedUpdates = PartitionedStakeUpdates(
+        unexpiredCreateDelegatedStakes = stakes,
+        unexpiredWithdrawalsDelegatedStaking = SortedMap.empty,
+        expiredWithdrawalsDelegatedStaking = SortedMap.empty
+      )
+
+      distributor
+        .distribute(
+          context,
+          TimeTrigger,
+          EpochProgress(100L),
+          List(address1 -> nodeId1, address2 -> nodeId1),
+          emptyAcceptanceResult,
+          partitionedUpdates
+        )
+        .map(_.delegatorRewardsMap.get(nodeId1).flatMap(_.get(address1)).getOrElse(Amount.empty))
+    }
+
+    for {
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
+
+      distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, testConfig)
+
+      rewardWithSmallerStake <- distributeWithAddress1Stake(distributor, 1000L, none)
+      rewardWithLargerStake <- distributeWithAddress1Stake(distributor, 1000L, 2000L.some)
+    } yield
+      expect(rewardWithSmallerStake.value.value > 0L) &&
+        expect(rewardWithLargerStake.value.value > rewardWithSmallerStake.value.value)
+  }
+
+  test("distribute should emit one reward transaction per withdrawn stake") {
+    // Regression test for the multi-position unlock bug. When several delegated-stake
+    // positions held by the SAME address have their withdrawals expire in the SAME
+    // snapshot, each position's accrued reward must be paid out as its own reward
+    // transaction. The previous implementation collapsed them into a Map keyed by address
+    // (`.toMap`), keeping only the last position's reward and silently dropping the others
+    // (e.g. 3 positions unlocked -> 1 reward transaction emitted, 2 rewards lost).
+    val testConfig = delegatedRewardsConfig.copy(
+      emissionConfig = Map(
+        AppEnvironment.Dev -> { _: EpochProgress =>
+          EmissionConfigEntry(
+            epochsPerYear = PosLong(100L),
+            asOfEpoch = EpochProgress(100L),
+            iTarget = NonNegFraction.unsafeFrom(1, 100),
+            iInitial = NonNegFraction.unsafeFrom(2, 100),
+            lambda = NonNegFraction.unsafeFrom(1, 10),
+            iImpact = NonNegFraction.unsafeFrom(5, 10),
+            totalSupply = Amount(100_00000000L),
+            dagPrices = SortedMap(
+              EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1)
+            ),
+            epochsPerMonth = NonNegLong(100L / 12)
+          )
+        }
+      ),
+      oneTimeRewards = Map(
+        AppEnvironment.Dev -> List()
+      )
+    )
+
+    val stakeCreate1 = Signed(
+      UpdateDelegatedStake.Create(
+        source = address1,
+        nodeId = nodeId1,
+        amount = DelegatedStakeAmount(1000L),
+        fee = DelegatedStakeFee(0L),
+        tokenLockRef = Hash("lock-a")
+      ),
+      NonEmptySet.one[SignatureProof](SignatureProof(nodeId1.toId, Signature(Hex(Hash.empty.value))))
+    )
+
+    val stakeCreate2 = Signed(
+      UpdateDelegatedStake.Create(
+        source = address1,
+        nodeId = nodeId1,
+        amount = DelegatedStakeAmount(1000L),
+        fee = DelegatedStakeFee(0L),
+        tokenLockRef = Hash("lock-b")
+      ),
+      NonEmptySet.one[SignatureProof](SignatureProof(nodeId1.toId, Signature(Hex(Hash.empty.value))))
+    )
+
+    val stakeCreate3 = Signed(
+      UpdateDelegatedStake.Create(
+        source = address1,
+        nodeId = nodeId1,
+        amount = DelegatedStakeAmount(1000L),
+        fee = DelegatedStakeFee(0L),
+        tokenLockRef = Hash("lock-c")
+      ),
+      NonEmptySet.one[SignatureProof](SignatureProof(nodeId1.toId, Signature(Hex(Hash.empty.value))))
+    )
+
+    val stakeCreate4 = Signed(
+      UpdateDelegatedStake.Create(
+        source = address2,
+        nodeId = nodeId2,
+        amount = DelegatedStakeAmount(2000L),
+        fee = DelegatedStakeFee(0L),
+        tokenLockRef = Hash("lock-d")
+      ),
+      NonEmptySet.one[SignatureProof](SignatureProof(nodeId1.toId, Signature(Hex(Hash.empty.value))))
+    )
+
+    val stakes = SortedMap(
+      address1 -> SortedSet(
+        DelegatedStakeRecord(stakeCreate1, SnapshotOrdinal(1L), Balance(100L), none, none),
+        DelegatedStakeRecord(stakeCreate2, SnapshotOrdinal(1L), Balance(100L), none, none),
+        DelegatedStakeRecord(stakeCreate3, SnapshotOrdinal(1L), Balance(100L), none, none)
+      ),
+      address2 -> SortedSet(DelegatedStakeRecord(stakeCreate4, SnapshotOrdinal(1L), Balance(200L), none, none))
+    )
+
+    val nodeParams = SortedMap(
+      nodeId1.toId -> (
+        Signed(
+          UpdateNodeParameters(
+            address3,
+            delegatedStakeRewardParameters = DelegatedStakeRewardParameters(
+              RewardFraction.unsafeFrom(80000000)
+            ),
+            NodeMetadataParameters("", ""),
+            UpdateNodeParametersReference(UpdateNodeParametersOrdinal(NonNegLong.unsafeFrom(0)), Hash.empty)
+          ),
+          NonEmptySet.one[SignatureProof](SignatureProof(nodeId1.toId, Signature(Hex(Hash.empty.value))))
+        ),
+        SnapshotOrdinal.unsafeApply(1L)
+      ),
+      nodeId2.toId -> (
+        Signed(
+          UpdateNodeParameters(
+            address3,
+            delegatedStakeRewardParameters = DelegatedStakeRewardParameters(RewardFraction.unsafeFrom(80000000)),
+            NodeMetadataParameters("", ""),
+            UpdateNodeParametersReference(UpdateNodeParametersOrdinal(NonNegLong.unsafeFrom(0)), Hash.empty)
+          ),
+          NonEmptySet.one[SignatureProof](SignatureProof(nodeId2.toId, Signature(Hex(Hash.empty.value))))
+        ),
+        SnapshotOrdinal.unsafeApply(1L)
+      )
+    )
+
+    val context = GlobalSnapshotInfo(
+      lastStateChannelSnapshotHashes = SortedMap.empty,
+      lastTxRefs = SortedMap.empty,
+      balances = SortedMap.empty,
+      lastCurrencySnapshots = SortedMap.empty,
+      lastCurrencySnapshotsProofs = SortedMap.empty,
+      activeAllowSpends = None,
+      activeTokenLocks = None,
+      tokenLockBalances = None,
+      lastAllowSpendRefs = None,
+      lastTokenLockRefs = None,
+      updateNodeParameters = Some(nodeParams),
+      activeDelegatedStakes = Some(stakes),
+      delegatedStakesWithdrawals = None,
+      activeNodeCollaterals = None,
+      nodeCollateralWithdrawals = None,
+      priceState = None,
+      metagraphSyncData = None
+    )
+
+    // Builds an expired withdrawal record carrying a given accrued reward. Distinct
+    // token-lock refs and createdAt values keep them as separate elements of the
+    // address's SortedSet (which orders by createdAt, then rewards, then event).
+    def withdraw(stake: Signed[UpdateDelegatedStake.Create], reward: Long, createdAt: Long) =
+      PendingDelegatedStakeWithdrawal(
+        stake,
+        Amount(NonNegLong.unsafeFrom(reward)),
+        SnapshotOrdinal(1L),
+        EpochProgress(NonNegLong.unsafeFrom(createdAt))
+      )
+
+    // address1 unlocks THREE positions in the same snapshot (50 + 70 + 30 = 150);
+    // address2 unlocks ONE (40), to ensure rewards are not merged across addresses.
+    val withdrawals = SortedMap(
+      address1 -> SortedSet(
+        withdraw(stakeCreate1, 50L, 10L),
+        withdraw(stakeCreate2, 70L, 11L),
+        withdraw(stakeCreate3, 30L, 12L)
+      ),
+      address2 -> SortedSet(
+        withdraw(stakeCreate4, 40L, 10L)
+      )
+    )
+
+    val partitionedUpdates = PartitionedStakeUpdates(
+      unexpiredCreateDelegatedStakes = stakes,
+      unexpiredWithdrawalsDelegatedStaking = SortedMap.empty,
+      expiredWithdrawalsDelegatedStaking = withdrawals
+    )
+
+    for {
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
+
+      distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, testConfig)
+
+      stakeAcceptanceResult = UpdateDelegatedStakeAcceptanceResult(
+        SortedMap.empty,
+        List.empty,
+        SortedMap.empty,
+        List.empty
+      )
+
+      result <- distributor.distribute(
+        context,
+        TimeTrigger,
+        EpochProgress(100L),
+        List(address1 -> nodeId1, address2 -> nodeId2),
+        stakeAcceptanceResult,
+        partitionedUpdates
+      )
+
+      rewardsByAddress = result.withdrawalRewardTxs.toList.map(tx => tx.destination -> tx.amount.value.value).toMap
+    } yield
+      // One summed reward transaction per address (the data model cannot represent
+      // multiple distinct reward txs to the same destination), and no rewards dropped.
+      expect(result.withdrawalRewardTxs.size == 2) &&
+        // address1's three expired positions are summed (50 + 70 + 30), not collapsed to
+        // a single position's reward as the old `.toMap` did.
+        expect(rewardsByAddress.get(address1).contains(150L)) &&
+        // address2 is unaffected and not merged with address1.
+        expect(rewardsByAddress.get(address2).contains(40L))
+  }
 }
