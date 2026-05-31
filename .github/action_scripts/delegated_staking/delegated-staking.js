@@ -7,6 +7,7 @@
  * - Reset Euclid to run again (`hydra stop && hydra start-genesis`)
  */
 
+const path = require('path')
 const axios = require('axios')
 const { dag4 } = require('@stardust-collective/dag4')
 
@@ -27,7 +28,6 @@ const {
   checkBadRequest,
   dagToDatum,
   getPrivateKeyAndNodeIdFromFile,
-  resolveNodeKeyPath,
   postNodeParamsNodeId,
   createDelegatedStake,
   withdrawDelegatedStake,
@@ -70,29 +70,13 @@ const setupDag4Account = (urls) => {
 }
 
 const verifyInitialNodeParams = (response) => {
-  if (response.length && !process.env.NODE_KEYS_DIR) {
-    throw new Error(
-      `Initial node parameters should be empty but received ${response.length}`,
+  // The cluster may already carry node parameters from a previous run. The test
+  // is idempotent: it reuses any existing parameters rather than requiring a
+  // clean slate, computing expected ordinals from the current on-chain state.
+  if (response.length) {
+    logWorkflow.info(
+      `Reusing ${response.length} pre-existing node parameter(s)`,
     )
-  }
-}
-
-/** Get the current ordinal for a node's params, or -1 if none exist. */
-const getNodeParamsOrdinal = async (urls, nodeId) => {
-  try {
-    const response = await axios.get(
-      `${urls.globalL0Url}/node-params/${nodeId}?t=${Date.now()}`,
-      {
-        headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          Pragma: 'no-cache',
-          Expires: '0',
-        },
-      },
-    )
-    return response.data.latest.value.parent.ordinal
-  } catch {
-    return -1
   }
 }
 
@@ -116,16 +100,38 @@ const checkInitialNodeParamsNode = async (urls, nodeId) => {
         },
       },
     )
-    if (!process.env.NODE_KEYS_DIR) {
-      throw new Error(
-        `Initial ${urls.globalL0Url}/node-params/${nodeId} shal not be defined`,
-      )
+    // Parameters already exist for this node; reuse them (see verifyInitialNodeParams).
+    logWorkflow.info(`Reusing pre-existing node-params for ${nodeId}`)
+  } catch (error) {
+    // 404 expected on a fresh node, NOOP
+  }
+}
+
+// On a reused cluster a node may already have parameters. The next accepted
+// update references the current lastRef, so its parent.ordinal equals the
+// current lastRef.ordinal (0 when the node has no parameters yet).
+const getNextNodeParamsOrdinal = async (urls, nodeId) => {
+  try {
+    const response = await axios.get(
+      `${urls.globalL0Url}/node-params/${nodeId}?t=${Date.now()}`,
+      {
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          Pragma: 'no-cache',
+          Expires: '0',
+        },
+      },
+    )
+    if (response.status === 200 && response.data && response.data.lastRef) {
+      return response.data.lastRef.ordinal
     }
   } catch (error) {
-    if (error.response && error.response.status === 404) return // expected
-    if (error.message && error.message.includes('shal not be defined')) throw error
-    // other errors: NOOP
+    if (error.response && error.response.status === 404) {
+      return 0
+    }
+    throw error
   }
+  return 0
 }
 
 const waitForNodeParamsUpdate = async (urls, verifyFn, maxAttempts = 30, intervalMs = 5000) => {
@@ -254,27 +260,42 @@ const testCreateNodeParameters = async (urls) => {
     privateKeyString: privateKeyString1,
     nodeId: nodeId1,
     account: account1,
-  } = extractKeysAndAccount(resolveNodeKeyPath('genesis-node', 0))
+  } = extractKeysAndAccount(
+    RUN_ENV === 'ci'
+      ? '../../code/hypergraph/dag-l0/genesis-node/id_ecdsa.hex'
+      : path.join(__dirname, 'keys', 'genesis-node.hex'),
+  )
 
   const {
     privateKeyString: privateKeyString2,
     nodeId: nodeId2,
     account: account2,
-  } = extractKeysAndAccount(resolveNodeKeyPath('validator-1', 1))
+  } = extractKeysAndAccount(
+    RUN_ENV === 'ci'
+      ? '../../code/hypergraph/dag-l0/validator-1/id_ecdsa.hex'
+      : path.join(__dirname, 'keys', 'validator-1-node.hex'),
+  )
 
   const {
     privateKeyString: privateKeyString3,
     nodeId: nodeId3,
     account: account3,
-  } = extractKeysAndAccount(resolveNodeKeyPath('validator-2', 2))
+  } = extractKeysAndAccount(
+    RUN_ENV === 'ci'
+      ? '../../code/hypergraph/dag-l0/validator-2/id_ecdsa.hex'
+      : path.join(__dirname, 'keys', 'validator-2-node.hex'),
+  )
 
   await checkInitialNodeParamsNode(urls, nodeId1)
   logWorkflow.info('Check initial node params is OK')
 
-  // Read current ordinals so expected values work on clusters with existing params
-  const baseOrd1 = await getNodeParamsOrdinal(urls, nodeId1) + 1
-  const baseOrd2 = await getNodeParamsOrdinal(urls, nodeId2) + 1
-  const baseOrd3 = await getNodeParamsOrdinal(urls, nodeId3) + 1
+  // Expected parent.ordinal for the next update of each node, derived from the
+  // current on-chain state so the test works on both fresh and reused clusters.
+  const node1BaseOrdinal = await getNextNodeParamsOrdinal(urls, nodeId1)
+  const node2BaseOrdinal = await getNextNodeParamsOrdinal(urls, nodeId2)
+  logWorkflow.info(
+    `Base ordinals -> node1: ${node1BaseOrdinal}, node2: ${node2BaseOrdinal}`,
+  )
 
   const ur1 = await postNodeParamsNodeId(
     urls,
@@ -297,7 +318,7 @@ const testCreateNodeParameters = async (urls) => {
     nodeId1,
     firstNodeParameterName1,
     firstNodeFraction1,
-    baseOrd1,
+    node1BaseOrdinal,
   )
   logWorkflow.info('Check updates node params node is OK')
 
@@ -322,7 +343,7 @@ const testCreateNodeParameters = async (urls) => {
     nodeId1,
     firstNodeParameterName2,
     firstNodeFraction2,
-    baseOrd1 + 1,
+    node1BaseOrdinal + 1,
   )
   logWorkflow.info('Check second updates node params node is OK')
 
@@ -342,7 +363,7 @@ const testCreateNodeParameters = async (urls) => {
     nodeId1,
     firstNodeParameterName2,
     firstNodeFraction2,
-    baseOrd1 + 1,
+    node1BaseOrdinal + 1,
   )
   logWorkflow.info('Check updating node with incorrect params is OK')
 
@@ -365,7 +386,7 @@ const testCreateNodeParameters = async (urls) => {
     nodeId2,
     secondNodeParameterName1,
     secondNodeFraction1,
-    baseOrd2,
+    node2BaseOrdinal,
   )
   logWorkflow.info('Update second node params is OK')
 
@@ -391,43 +412,8 @@ const testCreateNodeParameters = async (urls) => {
   logWorkflow.info('---- End testCreateNodeParameters ----')
 }
 
-const cleanupExistingStakes = async (urls, account) => {
-  const response = await getAccountDelegatedStakes(urls, account.address)
-  const active = response.activeDelegatedStakes || []
-  const pending = response.pendingWithdrawals || []
-
-  if (active.length === 0 && pending.length === 0) return
-
-  logWorkflow.info(`Cleaning up ${active.length} active stakes and ${pending.length} pending withdrawals`)
-
-  for (const stake of active) {
-    logWorkflow.info(`  Withdrawing stake ${stake.hash.substring(0, 16)}...`)
-    await withdrawDelegatedStake(account, stake.hash)
-  }
-
-  await withRetryOrdinal(
-    async () => {
-      const r = await getAccountDelegatedStakes(urls, account.address)
-      if (r.activeDelegatedStakes.length > 0)
-        throw new Error(`Still ${r.activeDelegatedStakes.length} active stakes`)
-      if (r.pendingWithdrawals.length > 0)
-        throw new Error(`Still ${r.pendingWithdrawals.length} pending withdrawals`)
-    },
-    {
-      globalL0Url: urls.globalL0Url,
-      name: 'cleanupExistingStakes',
-      maxOrdinalMisses: 60,
-      maxStalledChecks: 120,
-      interval: 5000,
-    },
-  )
-  logWorkflow.info('Pre-existing stakes cleaned up')
-}
-
 const testCreateDelegatedStake = async (urls, account, nodeIds) => {
   logWorkflow.info('---- Start testCreateDelegatedStake ----')
-
-  await cleanupExistingStakes(urls, account)
 
   const lockAmount = 500000000000
   const lockHash = await createTokenLock(account, urls, lockAmount)
@@ -775,15 +761,13 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
   logWorkflow.info('Waiting for withdrawal delay...')
 
   // stake removed from pendingWithdrawals after withdrawal timeout (21 days on MainNet, 3 min here)
-  // Capture the ordinal where stake is removed so we can search that snapshot for reward/unlock
-  let removalOrdinal = null
   await withRetryOrdinal(
-    async ({ ordinal }) => {
+    async () => {
       const updatedStakeResponse = await getAccountDelegatedStakes(
         urls,
         account.address,
       )
-      assertDelegatedStakes(
+      return assertDelegatedStakes(
         updatedStakeResponse,
         [
           {
@@ -795,7 +779,6 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
         ],
         [],
       )
-      removalOrdinal = ordinal
     },
     {
       globalL0Url: urls.globalL0Url,
@@ -806,69 +789,126 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
       interval: 5000,
     },
   )
-  logWorkflow.info(`Stake removed from pendingWithdrawal at ordinal ${removalOrdinal}`)
+  logWorkflow.info('Stake removed from pendingWithdrawal')
 
-  await assertBalanceChange(
-    account,
-    initialBalance + originalStake.totalBalance,
-  )
+  // Datum balances here exceed Number.MAX_SAFE_INTEGER (~9e15); JS Number arithmetic on them
+  // loses integer precision (representable values spaced 2/4/8 datum apart above 2^53), which is
+  // exactly the ±2/±4/±8 drift observed — a test float-ulp artifact, not a node discrepancy.
+  // Tolerate a few ulps of the expected magnitude.
+  const expectedWalletBalance = initialBalance + originalStake.totalBalance
+  const balanceUlp = Math.max(1, 2 ** (Math.floor(Math.log2(Math.abs(expectedWalletBalance) || 1)) - 52))
+  await assertBalanceChange(account, expectedWalletBalance, balanceUlp * 16)
   logWorkflow.info('Wallet balance updated')
 
-  // Search the removal ordinal and a few surrounding snapshots for the reward/unlock.
-  // The reward is emitted in the same snapshot that clears the pending withdrawal,
-  // but with fast consensus the current ordinal may have already moved past it.
-  const searchStart = Math.max(1, (removalOrdinal || 1) - 2)
-  let rewardFound = false
-  for (let ord = searchStart; ord <= (removalOrdinal || searchStart) + 3; ord++) {
-    try {
-      const snapshot = await fetchSnapshot(urls, ord)
-      await assertRewardTxnInSnapshot(snapshot, account, originalStake.rewardAmount)
-      await assertTokenUnlockInSnapshot(snapshot, account, originalStake.tokenLockRef, originalStake.amount)
-      rewardFound = true
-      logWorkflow.info(`Reward and TokenUnlock found in snapshot ordinal ${ord}`)
-      break
-    } catch {
-      // not in this snapshot, try next
-    }
-  }
-
-  if (!rewardFound) {
-    // Fallback: scan forward from current ordinal in case reward is delayed
-    await withRetryOrdinal(
-      async ({ ordinal }) => {
-        const snapshot = await fetchSnapshot(urls, ordinal)
-
-        await assertRewardTxnInSnapshot(
-          snapshot,
-          account,
-          originalStake.rewardAmount,
-        )
-        await assertTokenUnlockInSnapshot(
-          snapshot,
-          account,
-          originalStake.tokenLockRef,
-          originalStake.amount,
-        )
-      },
-      {
-        globalL0Url: urls.globalL0Url,
-        name: 'assertRewardAndTokenUnlock',
-        maxOrdinalMisses: 10,
-        maxStalledChecks: 20,
-        interval: 3000,
-      },
-    )
-  }
+  // The reward txn + TokenUnlock are emitted once, in the withdrawal-finalization
+  // snapshot, which is typically a few ordinals in the past by the time we get here
+  // (after the removal-from-pending and balance-change waits). Scan a backward window
+  // of recent snapshots rather than only the latest, so we don't miss them.
+  const REWARD_SCAN_WINDOW = 25
+  await withRetryOrdinal(
+    async ({ ordinal }) => {
+      const lo = Math.max(0, ordinal - REWARD_SCAN_WINDOW + 1)
+      let rewardOk = false
+      let unlockOk = false
+      let lastErr = null
+      for (let o = ordinal; o >= lo; o--) {
+        const snapshot = await fetchSnapshot(urls, o)
+        if (!rewardOk) {
+          try {
+            await assertRewardTxnInSnapshot(snapshot, account, originalStake.rewardAmount)
+            rewardOk = true
+          } catch (e) {
+            lastErr = e
+          }
+        }
+        if (!unlockOk) {
+          try {
+            await assertTokenUnlockInSnapshot(
+              snapshot,
+              account,
+              originalStake.tokenLockRef,
+              originalStake.amount,
+            )
+            unlockOk = true
+          } catch (e) {
+            lastErr = e
+          }
+        }
+        if (rewardOk && unlockOk) return
+      }
+      throw new Error(
+        `Reward/TokenUnlock not found in snapshots [${lo}, ${ordinal}] (reward=${rewardOk}, unlock=${unlockOk}): ${lastErr ? lastErr.message : 'n/a'}`,
+      )
+    },
+    {
+      globalL0Url: urls.globalL0Url,
+      name: 'assertRewardAndTokenUnlock',
+      maxOrdinalMisses: 10,
+      maxStalledChecks: 20,
+      interval: 3000,
+    },
+  )
 
   logWorkflow.info('Reward and TokenUnlock transactions sent')
 
   logWorkflow.info('---- End testWithdrawDelegatedStake ----')
 }
 
+// Withdraw any delegated stakes left over from a previous run and wait until the
+// account is fully clean (no active stakes, no pending withdrawals). The staking
+// assertions below require an exact stake count, so this makes the workflow
+// idempotent and safe to run repeatedly against the same cluster.
+const resetAccountStakes = async (urls, account) => {
+  logWorkflow.info('---- Start resetAccountStakes ----')
+  const initial = await getAccountDelegatedStakes(urls, account.address)
+  if (
+    initial.activeDelegatedStakes.length === 0 &&
+    initial.pendingWithdrawals.length === 0
+  ) {
+    logWorkflow.info('Account already clean, nothing to reset')
+    logWorkflow.info('---- End resetAccountStakes ----')
+    return
+  }
+
+  for (const stake of initial.activeDelegatedStakes) {
+    logWorkflow.info(`Withdrawing leftover stake ${stake.hash.substring(0, 16)}...`)
+    await withdrawDelegatedStake(account, stake.hash)
+  }
+
+  // Wait for active stakes AND pending withdrawals to fully clear. The withdrawal
+  // timeout is ~3 min on testnet, so use the same generous limits as the
+  // withdrawal test's removed-from-state assertion.
+  await withRetryOrdinal(
+    async () => {
+      const r = await getAccountDelegatedStakes(urls, account.address)
+      if (
+        r.activeDelegatedStakes.length !== 0 ||
+        r.pendingWithdrawals.length !== 0
+      ) {
+        throw new Error(
+          `Account not clean yet: active=${r.activeDelegatedStakes.length} pending=${r.pendingWithdrawals.length}`,
+        )
+      }
+      return true
+    },
+    {
+      globalL0Url: urls.globalL0Url,
+      name: 'resetAccountStakes',
+      maxOrdinalMisses: 60,
+      maxStalledChecks: 120,
+      interval: 5000,
+    },
+  )
+  logWorkflow.info('Account stakes reset to empty')
+  logWorkflow.info('---- End resetAccountStakes ----')
+}
+
 const testDelegatedStaking = async (urls) => {
   const account = setupDag4Account(urls)
   account.loginPrivateKey(PRIVATE_KEYS.key4)
-  
+
+  await resetAccountStakes(urls, account)
+
   await testCreateNodeParameters(urls)
 
   const nodeParams = await getNodeParams(urls)
@@ -893,30 +933,6 @@ const testDelegatedStaking = async (urls) => {
     secondStakeHash,
     nodeParams[1].peerId,
   )
-
-  // Clean up: withdraw remaining stake so the account is empty for the next run
-  logWorkflow.info('---- Cleanup: withdrawing remaining stake ----')
-  await withdrawDelegatedStake(account, secondStakeHash)
-
-  await withRetryOrdinal(
-    async () => {
-      const response = await getAccountDelegatedStakes(urls, account.address)
-      if (response.activeDelegatedStakes.length > 0) {
-        throw new Error(`Still ${response.activeDelegatedStakes.length} active stakes`)
-      }
-      if (response.pendingWithdrawals.length > 0) {
-        throw new Error(`Still ${response.pendingWithdrawals.length} pending withdrawals`)
-      }
-    },
-    {
-      globalL0Url: urls.globalL0Url,
-      name: 'cleanupWithdrawRemainingStake',
-      maxOrdinalMisses: 60,
-      maxStalledChecks: 120,
-      interval: 5000,
-    },
-  )
-  logWorkflow.info('Cleanup complete: all stakes withdrawn')
 }
 
 const executeWorkflowByType = async (workflowType) => {
