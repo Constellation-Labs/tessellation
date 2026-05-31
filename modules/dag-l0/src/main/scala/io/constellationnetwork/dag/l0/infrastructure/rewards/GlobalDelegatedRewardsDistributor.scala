@@ -258,7 +258,7 @@ object GlobalDelegatedRewardsDistributor {
     }
 
     private def getStakedAmount(stakeRecord: DelegatedStakeRecord): Long =
-      stakeRecord.event.value.amount.value.value + stakeRecord.rewards.value
+      stakeRecord.amount.value.value + stakeRecord.rewards.value
 
     private def getTotalActiveStake(
       activeDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]]
