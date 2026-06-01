@@ -42,6 +42,9 @@ check_java() {
     Linux)
       if command -v apt >/dev/null 2>&1; then
         echo "Installing Java 21 using apt..."
+        # Refresh the package index first: CI runners can have a stale apt cache
+        # pinned to an openjdk-21 patch the mirror has since purged, causing a 404.
+        sudo apt update
         sudo apt install -y openjdk-21-jdk
       elif command -v yum >/dev/null 2>&1; then
         echo "Installing Java 21 using yum..."
