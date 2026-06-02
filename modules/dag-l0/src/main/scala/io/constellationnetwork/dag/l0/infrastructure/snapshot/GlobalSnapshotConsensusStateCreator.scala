@@ -109,15 +109,13 @@ object GlobalSnapshotConsensusStateCreator {
         candidates <- consensusStorage.getCandidates(key.next)
         previousEligible = lastOutcome.eligibleOrFacilitators
         approvedCandidates = lastOutcome.finished.candidates.value
-        seedlistPeerIds = seedlist.map(_.map(_.peerId)).getOrElse(Set.empty)
+        seedlistPeerIds = seedlist.fold(List.empty[PeerId])(_.toList.map(_.peerId))
 
         filteredPreviousEligible = previousEligible
           .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
 
         filteredCandidates = approvedCandidates
           .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
-
-        previousEligibleSet = filteredPreviousEligible.toSet
 
         // Full base. Removed peers stay in this set so they can re-enter in future rounds;
         // the multi-round penalty filter (penalizedPeers below) is the only behavioural gate
@@ -405,11 +403,38 @@ object GlobalSnapshotConsensusStateCreator {
         // At genesis / cold start, OR in a solo-bootstrap tail (only one peer graduated),
         // fall back to the full Core committee.
         coreList = committees.core
-        graduatedLeaderPool = coreList.filter { pid =>
-          val (completed, participated) = lastOutcome.peerQuality.getOrElse(pid, (0, 0))
-          participated >= config.minParticipationObservations && completed >= 1
-        }
-        leaderPool = if (graduatedLeaderPool.size >= 2) graduatedLeaderPool else coreList
+        leaderEligibility = LeaderEligibility.fromRecentSigners(
+          core = coreList,
+          peerQuality = lastOutcome.peerQuality,
+          recentSigners = lastOutcome.recentSigners,
+          minParticipationObservations = config.minParticipationObservations,
+          minLeaderPoolSize = config.minLeaderPoolSize
+        )
+        leaderPool = leaderEligibility.leaderPool
+        exclusionReasonLabel = Metrics.unsafeLabelName("reason")
+        exclusionDecisionLabel = Metrics.unsafeLabelName("decision")
+        _ <- leaderEligibility.exclusions
+          .groupBy(_.reason.label)
+          .toList
+          .traverse_ {
+            case (reason, exclusions) =>
+              Metrics[F].incrementCounterBy(
+                "dag_consensus_leader_eligibility_total",
+                exclusions.size,
+                Seq(
+                  exclusionDecisionLabel -> "excluded",
+                  exclusionReasonLabel -> reason
+                )
+              )
+          }
+        _ <- Metrics[F].incrementCounterBy(
+          "dag_consensus_leader_eligibility_total",
+          leaderPool.size,
+          Seq(
+            exclusionDecisionLabel -> "eligible",
+            exclusionReasonLabel -> "selected_pool"
+          )
+        )
         // Deterministic GL0 view seed:
         // `timeView` remains computed from the timestamp window, but it is treated as a pacemaker
         // timeout hint, not as unilateral proposal-critical state. A local wall clock must not pick
@@ -443,6 +468,12 @@ object GlobalSnapshotConsensusStateCreator {
           "eligible" -> allEligible.size.toString,
           "active" -> active.size.toString,
           "core" -> coreList.size.toString,
+          "leaderPool" -> leaderPool.size.toString,
+          "graduatedLeaderPool" -> leaderEligibility.graduatedPoolSize.toString,
+          "recentSignerLeaderPool" -> leaderEligibility.recentSignerPoolSize.toString,
+          "recentSignerWindow" -> leaderEligibility.recentWindowSize.toString,
+          "recentSignerFilterApplied" -> leaderEligibility.recentFilterApplied.toString,
+          "leaderExclusions" -> leaderEligibility.exclusions.size.toString,
           "excluded" -> (allEligible.size - eligibleThisRound.size).toString,
           "leader" -> ConsensusLog.pid(leader)
         )
