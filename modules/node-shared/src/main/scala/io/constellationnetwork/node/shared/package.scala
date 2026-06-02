@@ -66,6 +66,11 @@ package object shared {
       classOf[AdmissionVote] -> 539,
       classOf[AdmissionCertificate] -> 540,
       classOf[ConsensusPeerAdmissionVote[_]] -> 541,
-      AdmissionReason.ReadyAtTip.getClass -> 542
+      AdmissionReason.ReadyAtTip.getClass -> 542,
+      classOf[TimeoutVote] -> 543,
+      classOf[TimeoutCertificate] -> 544,
+      classOf[ConsensusPeerTimeoutVote[_]] -> 545,
+      TimeoutReason.NoProgress.getClass -> 546,
+      TimeoutReason.QuorumInfeasible.getClass -> 547
     ).union(sharedKryoRegistrar)
 }

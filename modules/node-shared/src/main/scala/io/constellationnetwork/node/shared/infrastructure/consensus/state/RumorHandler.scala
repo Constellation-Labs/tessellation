@@ -73,6 +73,7 @@ class RumorHandler[F[_]: Async: HasherSelector: Metrics, Event, Key, Artifact, C
     content match {
       case d: ConsensusPeerDeclaration[_, _]         => handleDeclaration(origin, d)
       case v: ConsensusPeerVote[_]                   => handlePeerVote(origin, v)
+      case tv: ConsensusPeerTimeoutVote[_]           => handleTimeoutVote(origin, tv)
       case e: ConsensusPeerEvictionVote[_]           => handleEvictionVote(origin, e)
       case av: ConsensusPeerAdmissionVote[_]         => handleAdmissionVote(origin, av)
       case vc: ConsensusAssembledVcc[_]              => handleAssembledVcc(origin, vc)
@@ -159,6 +160,48 @@ class RumorHandler[F[_]: Async: HasherSelector: Metrics, Event, Key, Artifact, C
         .addViewChangeVote(origin, key, fromView, toView, signedVote)
         .flatMap(triggerUpdateIfChanged(queue, key)) >>
       queue.offer(ConsensusCommand.CheckViewChangeAssembly(key))
+  }
+
+  private def handleTimeoutVote(origin: PeerId, v: ConsensusPeerTimeoutVote[_]): F[Unit] = {
+    val key = v.key.asInstanceOf[Key]
+    val observeTip = storage.observePeerAtKey(origin, key)
+    val signedVote = v.vote
+    val fromView = signedVote.value.fromView
+    val toView = signedVote.value.toView
+    val signer = signedVote.proofs.head.id.toPeerId
+    if (origin =!= signer) {
+      observeTip >> ConsensusLog.warn(
+        log,
+        Category.Facilitator,
+        key.toString,
+        "n/a",
+        LogEvent.DeclarationReceived,
+        "kind" -> "TimeoutVote",
+        "rejected" -> "origin_signer_mismatch",
+        "from" -> ConsensusLog.pid(origin),
+        "signer" -> ConsensusLog.pid(signer),
+        "fromView" -> fromView.toString,
+        "toView" -> toView.toString
+      )
+    } else {
+      observeTip >>
+        ConsensusLog.info(
+          log,
+          Category.Facilitator,
+          key.toString,
+          "n/a",
+          LogEvent.DeclarationReceived,
+          "kind" -> "TimeoutVote",
+          "from" -> ConsensusLog.pid(origin),
+          "fromView" -> fromView.toString,
+          "toView" -> toView.toString,
+          "reason" -> signedVote.value.reason.toString
+        ) >>
+        storage
+          .addTimeoutVote(origin, key, fromView, toView, signedVote)
+          .flatMap(triggerUpdateIfChanged(queue, key)) >>
+        queue.offer(ConsensusCommand.CheckTimeoutCertificateAssembly(key))
+    }
   }
 
   private def handleEvictionVote(origin: PeerId, e: ConsensusPeerEvictionVote[_]): F[Unit] = {

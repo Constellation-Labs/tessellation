@@ -217,6 +217,24 @@ object CurrencySnapshotConsensus {
         Slf4jLogger.getLogger[F]
       )
 
+      timeoutVoter = new GossipingTimeoutVoter[
+        F,
+        CurrencySnapshotEvent,
+        CurrencySnapshotKey,
+        CurrencySnapshotArtifact,
+        CurrencySnapshotContext,
+        CurrencySnapshotStatus,
+        CurrencyConsensusOutcome,
+        CurrencyConsensusKind
+      ](
+        selfId,
+        keyPair,
+        gossip,
+        consensusStorage,
+        (o: CurrencyConsensusOutcome) => o.finished.snapshotHash,
+        Slf4jLogger.getLogger[F]
+      )
+
       evictionVoter = new GossipingEvictionVoter[
         F,
         CurrencySnapshotEvent,
@@ -280,6 +298,7 @@ object CurrencySnapshotConsensus {
           facilitatorSelector,
           peerQualityTracker,
           viewChangeVoter,
+          timeoutVoter,
           evictionVoter,
           admissionVoter,
           (o: CurrencyConsensusOutcome) =>

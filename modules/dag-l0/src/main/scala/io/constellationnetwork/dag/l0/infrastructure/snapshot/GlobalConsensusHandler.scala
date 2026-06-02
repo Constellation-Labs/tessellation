@@ -33,6 +33,7 @@ object GlobalConsensusHandler {
       all.artifactHandler <+>
       all.withdrawHandler <+>
       all.viewChangeVoteHandler <+>
+      all.timeoutVoteHandler <+>
       all.evictionVoteHandler <+>
       all.admissionVoteHandler <+>
       all.assembledVccHandler

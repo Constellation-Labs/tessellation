@@ -162,6 +162,63 @@ object declaration {
     }
   }
 
+  @derive(eqv, show, encoder, decoder)
+  sealed trait TimeoutReason
+
+  object TimeoutReason {
+    case object NoProgress extends TimeoutReason
+    case object QuorumInfeasible extends TimeoutReason
+
+    implicit val ordering: Ordering[TimeoutReason] = Ordering.by(_.toString)
+  }
+
+  @derive(eqv, show, encoder, decoder)
+  case class TimeoutVote(
+    fromView: Long,
+    toView: Long,
+    facilitatorsHash: Hash,
+    lastSnapshotHash: Hash,
+    highestKnownQc: Option[ProposalQC],
+    reason: TimeoutReason
+  ) extends PeerDeclaration
+
+  object TimeoutVote {
+    implicit val ordering: Ordering[TimeoutVote] =
+      Ordering.by { v =>
+        val qcPart = v.highestKnownQc.fold("-") { qc =>
+          s"${qc.view}|${qc.proposalHash.value}|${qc.facilitatorsHash.value}"
+        }
+        (v.fromView, v.toView, v.facilitatorsHash.value, v.lastSnapshotHash.value, qcPart, v.reason.toString)
+      }
+    implicit val order: cats.kernel.Order[TimeoutVote] = cats.kernel.Order.fromOrdering(ordering)
+  }
+
+  implicit val signedTimeoutVoteEncoder: Encoder[Signed[TimeoutVote]] =
+    Encoder.instance { sv =>
+      Json.obj("value" -> sv.value.asJson, "proofs" -> sv.proofs.asJson)
+    }
+  implicit val signedTimeoutVoteDecoder: Decoder[Signed[TimeoutVote]] =
+    (c: HCursor) =>
+      for {
+        value <- c.downField("value").as[TimeoutVote]
+        proofs <- c.downField("proofs").as[NonEmptySet[SignatureProof]]
+      } yield Signed(value, proofs)
+
+  implicit val timeoutVotesEncoder: Encoder[NonEmptySet[Signed[TimeoutVote]]] =
+    NonEmptySetCodec.encoder[Signed[TimeoutVote]]
+  implicit val timeoutVotesDecoder: Decoder[NonEmptySet[Signed[TimeoutVote]]] =
+    NonEmptySetCodec.decoder[Signed[TimeoutVote]]
+
+  @derive(eqv, show, encoder, decoder)
+  case class TimeoutCertificate(
+    fromView: Long,
+    toView: Long,
+    facilitatorsHash: Hash,
+    lastSnapshotHash: Hash,
+    reason: TimeoutReason,
+    votes: NonEmptySet[Signed[TimeoutVote]]
+  )
+
   // Eviction declarations: sparse negative-evidence mechanism that lets the committee
   // shrink for persistently-absent peers. Same architecture as VCC — signed votes
   // accumulate, a deterministic certificate assembles at quorum, the certificate is
