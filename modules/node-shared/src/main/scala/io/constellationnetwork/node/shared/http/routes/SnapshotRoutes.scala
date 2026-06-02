@@ -11,6 +11,7 @@ import io.constellationnetwork.node.shared.config.types.{SnapshotServingConfig, 
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.ext.http4s.SnapshotOrdinalVar
+import io.constellationnetwork.node.shared.http.p2p.headers.`X-Id`
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{
   ConcurrencyLimitMiddleware,
   PerIpBandwidthLimitMiddleware,
@@ -81,12 +82,13 @@ final case class SnapshotRoutes[F[_]: Async: Metrics, S <: Snapshot: Encoder, SI
   private val endpointLabel = Metrics.unsafeLabelName("endpoint")
   private val outcomeLabel = Metrics.unsafeLabelName("outcome")
   private val limiterLabel = Metrics.unsafeLabelName("limiter")
+  private val callerLabel = Metrics.unsafeLabelName("caller")
 
-  private def snapshotStreamTags(endpoint: String, outcome: String): Metrics.TagSeq =
-    Seq(endpointLabel -> endpoint, outcomeLabel -> outcome)
+  private def snapshotStreamTags(endpoint: String, outcome: String, caller: String): Metrics.TagSeq =
+    Seq(endpointLabel -> endpoint, outcomeLabel -> outcome, callerLabel -> caller)
 
-  private def snapshotStreamLimitTags(endpoint: String, limiter: String): Metrics.TagSeq =
-    Seq(endpointLabel -> endpoint, limiterLabel -> limiter, outcomeLabel -> "throttled")
+  private def snapshotStreamLimitTags(endpoint: String, limiter: String, caller: String): Metrics.TagSeq =
+    Seq(endpointLabel -> endpoint, limiterLabel -> limiter, outcomeLabel -> "throttled", callerLabel -> caller)
 
   private def requestClientIp(req: Request[F]): String =
     req.headers
@@ -96,6 +98,9 @@ final case class SnapshotRoutes[F[_]: Async: Metrics, S <: Snapshot: Encoder, SI
       .filter(_.nonEmpty)
       .orElse(req.remote.map(_.host.toString))
       .getOrElse("unknown")
+
+  private def snapshotStreamCaller(req: Request[F]): String =
+    req.headers.get[`X-Id`].fold("external")(_ => "peer")
 
   private def classifySnapshotStreamOutcome(status: Status): String =
     status match {
@@ -119,7 +124,8 @@ final case class SnapshotRoutes[F[_]: Async: Metrics, S <: Snapshot: Encoder, SI
 
   private def observeSnapshotStreamLimit(req: Request[F], limiter: String, observed: Long, cap: Long): F[Unit] =
     SnapshotRoutes.heavyweightEndpoint(req).traverse_ { endpoint =>
-      Metrics[F].incrementCounter("dag_snapshot_stream_limit_total", snapshotStreamLimitTags(endpoint, limiter)) >>
+      Metrics[F]
+        .incrementCounter("dag_snapshot_stream_limit_total", snapshotStreamLimitTags(endpoint, limiter, snapshotStreamCaller(req))) >>
         logger.debug(
           s"Snapshot stream $limiter limit rejected endpoint=$endpoint ip=${requestClientIp(req)} observed=$observed cap=$cap"
         )
@@ -141,15 +147,16 @@ final case class SnapshotRoutes[F[_]: Async: Metrics, S <: Snapshot: Encoder, SI
       response <- action.handleErrorWith { err =>
         Async[F].realTime.flatMap { end =>
           val duration = end - start
+          val tags = snapshotStreamTags(endpoint, "error", snapshotStreamCaller(req))
           updateSnapshotStreamActive(endpoint, -1) >>
-            Metrics[F].incrementCounter("dag_snapshot_stream_request_total", snapshotStreamTags(endpoint, "error")) >>
-            Metrics[F].recordTimeHistogram("dag_snapshot_stream", duration, snapshotStreamTags(endpoint, "error")) >>
+            Metrics[F].incrementCounter("dag_snapshot_stream_request_total", tags) >>
+            Metrics[F].recordTimeHistogram("dag_snapshot_stream", duration, tags) >>
             logger.warn(err)(s"Snapshot stream handler failed endpoint=$endpoint ip=${requestClientIp(req)}") >>
             Async[F].raiseError[Response[F]](err)
         }
       }
       outcome = classifySnapshotStreamOutcome(response.status)
-      tags = snapshotStreamTags(endpoint, outcome)
+      tags = snapshotStreamTags(endpoint, outcome, snapshotStreamCaller(req))
       bytes = response.contentLength
       finalize = Async[F].realTime.flatMap { end =>
         val duration = end - start
@@ -458,6 +465,17 @@ final case class SnapshotRoutes[F[_]: Async: Metrics, S <: Snapshot: Encoder, SI
 }
 
 object SnapshotRoutes {
+  private val endpointLabel = Metrics.unsafeLabelName("endpoint")
+  private val outcomeLabel = Metrics.unsafeLabelName("outcome")
+  private val limiterLabel = Metrics.unsafeLabelName("limiter")
+  private val callerLabel = Metrics.unsafeLabelName("caller")
+
+  private def snapshotStreamCaller[F[_]](req: Request[F]): String =
+    req.headers.get[`X-Id`].fold("external")(_ => "peer")
+
+  private def snapshotStreamLimitTags(endpoint: String, limiter: String, caller: String): Metrics.TagSeq =
+    Seq(endpointLabel -> endpoint, limiterLabel -> limiter, outcomeLabel -> "throttled", callerLabel -> caller)
+
   def make[F[_]: Async: Metrics, S <: Snapshot: Encoder, SI <: SnapshotInfo[_]: Encoder](
     snapshotStorage: SnapshotStorage[F, S, SI],
     lastNSnapshotStorage: Option[LastSnapshotStorage[F, S, SI]],
@@ -494,11 +512,7 @@ object SnapshotRoutes {
               heavyweightEndpoint(req).traverse_ { endpoint =>
                 Metrics[F].incrementCounter(
                   "dag_snapshot_stream_limit_total",
-                  Seq(
-                    Metrics.unsafeLabelName("endpoint") -> endpoint,
-                    Metrics.unsafeLabelName("limiter") -> "request",
-                    Metrics.unsafeLabelName("outcome") -> "throttled"
-                  )
+                  snapshotStreamLimitTags(endpoint, "request", snapshotStreamCaller(req))
                 )
               }
             }
@@ -527,11 +541,7 @@ object SnapshotRoutes {
               heavyweightEndpoint(req).traverse_ { endpoint =>
                 Metrics[F].incrementCounter(
                   "dag_snapshot_stream_limit_total",
-                  Seq(
-                    Metrics.unsafeLabelName("endpoint") -> endpoint,
-                    Metrics.unsafeLabelName("limiter") -> "bandwidth",
-                    Metrics.unsafeLabelName("outcome") -> "throttled"
-                  )
+                  snapshotStreamLimitTags(endpoint, "bandwidth", snapshotStreamCaller(req))
                 )
               }
             }
