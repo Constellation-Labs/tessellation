@@ -672,7 +672,10 @@ object types {
     //     is signed outcome state. This does not shrink Core or change quorum; it only
     //     keeps sustained non-signers out of the leader slot until certified
     //     timeout/shrink replaces local Core-gate inference.
-    consensusSchemaVersion: Int = 23,
+    //     v24: first-class TimeoutVote / TimeoutCertificate collection. TC is signed and
+    //     parent-hash anchored but intentionally inert in v24: it assembles/stores evidence
+    //     only and does not advance view, shrink Core, or validate proposals.
+    consensusSchemaVersion: Int = 24,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with

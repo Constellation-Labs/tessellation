@@ -298,6 +298,24 @@ object GlobalSnapshotConsensus {
         Slf4jLogger.getLogger[F]
       )
 
+      timeoutVoter = new GossipingTimeoutVoter[
+        F,
+        GlobalSnapshotEvent,
+        GlobalSnapshotKey,
+        GlobalSnapshotArtifact,
+        GlobalSnapshotContext,
+        GlobalSnapshotStatus,
+        GlobalConsensusOutcome,
+        GlobalConsensusKind
+      ](
+        selfId,
+        keyPair,
+        gossip,
+        consensusStorage,
+        (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
+        Slf4jLogger.getLogger[F]
+      )
+
       evictionVoter = new GossipingEvictionVoter[
         F,
         GlobalSnapshotEvent,
@@ -361,6 +379,7 @@ object GlobalSnapshotConsensus {
           facilitatorSelector,
           peerQualityTracker,
           viewChangeVoter,
+          timeoutVoter,
           evictionVoter,
           admissionVoter,
           (o: GlobalConsensusOutcome) => !o.recentProofSizes.values.exists(_ >= effectiveConsensusConfig.bootstrapCompleteProofsThreshold),

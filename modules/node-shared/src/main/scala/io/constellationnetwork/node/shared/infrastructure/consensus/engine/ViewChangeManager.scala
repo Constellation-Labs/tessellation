@@ -7,7 +7,7 @@ import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event}
 import io.constellationnetwork.node.shared.infrastructure.consensus._
-import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.ProposalQC
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{ProposalQC, TimeoutReason}
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 
 import org.typelevel.log4cats.SelfAwareStructuredLogger
@@ -62,7 +62,8 @@ class ViewChangeManager[F[_]: Async, Key, Artifact, Ctx, Status, Outcome, Kind](
   peerQualityTracker: PeerQualityTracker[F],
   queue: Queue[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]],
   logger: SelfAwareStructuredLogger[F],
-  voter: ViewChangeVoter[F, Key]
+  voter: ViewChangeVoter[F, Key],
+  timeoutVoter: TimeoutVoter[F, Key]
 ) {
 
   /** Request a Phase 2 quorum-certified view change: record peer quality for the old leader, gossip a signed `ViewChangeVote`, and queue
@@ -78,7 +79,8 @@ class ViewChangeManager[F[_]: Async, Key, Artifact, Ctx, Status, Outcome, Kind](
     */
   def performViewChange(
     key: Key,
-    currentState: ConsensusState[Key, Status, Outcome, Kind]
+    currentState: ConsensusState[Key, Status, Outcome, Kind],
+    timeoutReason: TimeoutReason = TimeoutReason.NoProgress
   ): F[Unit] = {
     val fromView = currentState.viewNumber.toLong
     val toView = fromView + 1L
@@ -97,9 +99,11 @@ class ViewChangeManager[F[_]: Async, Key, Artifact, Ctx, Status, Outcome, Kind](
       peerQualityTracker.recordViewChange(currentState.leader) >>
       storage.getVoteLock(key).flatMap { maybeLock =>
         val highestKnownQc = maybeLock.flatMap(_.lockedQc)
-        voter.emitViewChangeVote(key, fromView, toView, highestKnownQc)
+        voter.emitViewChangeVote(key, fromView, toView, highestKnownQc) >>
+          timeoutVoter.emitTimeoutVote(key, fromView, toView, highestKnownQc, timeoutReason)
       } >>
-      queue.offer(ConsensusCommand.CheckViewChangeAssembly(key))
+      queue.offer(ConsensusCommand.CheckViewChangeAssembly(key)) >>
+      queue.offer(ConsensusCommand.CheckTimeoutCertificateAssembly(key))
   }
 
 }

@@ -30,6 +30,13 @@ object message {
   @derive(encoder, decoder)
   case class ConsensusPeerVote[K](key: K, vote: Signed[ViewChangeVote])
 
+  /** Signed per-peer timeout vote. Initially collected as inert evidence in parallel with ViewChangeVote/VCC so the cluster can prove
+    * whether timeout quorum forms in the same stalls where local abandon loops fire. It does not mutate view or committee until the later
+    * TC apply phase.
+    */
+  @derive(encoder, decoder)
+  case class ConsensusPeerTimeoutVote[K](key: K, vote: Signed[TimeoutVote])
+
   /** Signed per-peer eviction vote. Same wire-envelope rationale as [[ConsensusPeerVote]] — EvictionCertificate assembly requires the
     * individual [[Signed]] proof per vote to survive end-to-end so the certificate embedded in a later Proposal remains independently
     * verifiable by any node reading the Proposal (including peers that never saw the original gossip).

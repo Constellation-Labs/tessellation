@@ -99,6 +99,7 @@ object ConsensusEventLoop {
     facilitatorSelector: FacilitatorSelector,
     peerQualityTracker: PeerQualityTracker[F],
     viewChangeVoter: ViewChangeVoter[F, Key],
+    timeoutVoter: TimeoutVoter[F, Key],
     evictionVoter: EvictionVoter[F, Key],
     admissionVoter: AdmissionVoter[F, Key],
     isInBootstrap: Outcome => Boolean,
@@ -153,7 +154,8 @@ object ConsensusEventLoop {
         peerQualityTracker,
         queue,
         Slf4jLogger.getLogger[F],
-        viewChangeVoter
+        viewChangeVoter,
+        timeoutVoter
       )
       abandonmentTracker = new AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](ctx, healthRef)
       b2AtTipStreakRef <- Ref.of[F, Map[PeerId, Int]](Map.empty)

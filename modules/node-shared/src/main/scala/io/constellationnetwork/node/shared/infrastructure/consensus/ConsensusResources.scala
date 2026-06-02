@@ -25,6 +25,8 @@ case class ConsensusResources[A, Kind](
   artifacts: Map[Hash, A],
   updatedAt: FiniteDuration,
   viewChangeVotes: Map[(Long, Long), Map[PeerId, Signed[ViewChangeVote]]] = Map.empty,
+  timeoutVotes: Map[(Long, Long), Map[PeerId, Signed[TimeoutVote]]] = Map.empty,
+  timeoutCertificates: Map[(Long, Long), TimeoutCertificate] = Map.empty,
   proposalQcs: Map[(Long, Hash), ProposalQC] = Map.empty,
   // EvictionVotes collected for the current round. Outer key = target peer (who the
   // cluster is considering evicting), inner key = voter (who cast the vote). Round-scoped
@@ -49,6 +51,8 @@ object ConsensusResources {
       Map.empty[Hash, A],
       time,
       Map.empty[(Long, Long), Map[PeerId, Signed[ViewChangeVote]]],
+      Map.empty[(Long, Long), Map[PeerId, Signed[TimeoutVote]]],
+      Map.empty[(Long, Long), TimeoutCertificate],
       Map.empty[(Long, Hash), ProposalQC],
       Map.empty[PeerId, Map[PeerId, Signed[EvictionVote]]]
     )

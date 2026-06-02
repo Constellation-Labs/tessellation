@@ -78,6 +78,16 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     vote: Signed[ViewChangeVote]
   ): F[Option[ConsensusResources[Artifact, Kind]]]
 
+  private[consensus] def addTimeoutVote(
+    origin: PeerId,
+    key: Key,
+    fromView: Long,
+    toView: Long,
+    vote: Signed[TimeoutVote]
+  ): F[Option[ConsensusResources[Artifact, Kind]]]
+
+  private[consensus] def storeTimeoutCertificate(key: Key, cert: TimeoutCertificate): F[Option[ConsensusResources[Artifact, Kind]]]
+
   private[consensus] def addProposalQc(key: Key, qc: ProposalQC): F[Option[ConsensusResources[Artifact, Kind]]]
 
   /** Attempt to atomically lock a local vote for (view, proposalHash). Returns Right(VoteLock) on success, or Left(VoteRejection) if the
@@ -508,6 +518,28 @@ object ConsensusStorage {
             val updatedPerTransition = currentPerTransition.updated(origin, vote)
             val updatedMap = resources.viewChangeVotes.updated(transitionKey, updatedPerTransition)
             resources.copy(viewChangeVotes = updatedMap)
+          }
+
+        def addTimeoutVote(
+          origin: PeerId,
+          key: Key,
+          fromView: Long,
+          toView: Long,
+          vote: Signed[TimeoutVote]
+        ): F[Option[ConsensusResources[Artifact, Kind]]] =
+          updateResources(key) { resources =>
+            val transitionKey = (fromView, toView)
+            val currentPerTransition = resources.timeoutVotes.getOrElse(transitionKey, Map.empty)
+            val updatedPerTransition = currentPerTransition.updated(origin, vote)
+            val updatedMap = resources.timeoutVotes.updated(transitionKey, updatedPerTransition)
+            resources.copy(timeoutVotes = updatedMap)
+          }
+
+        def storeTimeoutCertificate(key: Key, cert: TimeoutCertificate): F[Option[ConsensusResources[Artifact, Kind]]] =
+          updateResources(key) { resources =>
+            val transitionKey = (cert.fromView, cert.toView)
+            if (resources.timeoutCertificates.contains(transitionKey)) resources
+            else resources.copy(timeoutCertificates = resources.timeoutCertificates.updated(transitionKey, cert))
           }
 
         def addProposalQc(key: Key, qc: ProposalQC): F[Option[ConsensusResources[Artifact, Kind]]] =

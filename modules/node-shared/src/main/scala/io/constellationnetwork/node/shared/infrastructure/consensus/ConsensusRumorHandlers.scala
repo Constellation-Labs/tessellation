@@ -59,7 +59,11 @@ class ConsensusRumorHandlers[F[
   val viewChangeVoteHandler: RumorHandler[F] =
     RumorHandlerWithQueue.peer[F, ConsensusPeerVote[Key]](queue.offer)
 
-  /** 10. EvictionVote (signed, routed via ConsensusPeerEvictionVote for the same per-vote Signed preservation rationale as ViewChangeVote).
+  /** 10. TimeoutVote (signed, routed separately from ViewChangeVote while TC is collect-only). */
+  val timeoutVoteHandler: RumorHandler[F] =
+    RumorHandlerWithQueue.peer[F, ConsensusPeerTimeoutVote[Key]](queue.offer)
+
+  /** 11. EvictionVote (signed, routed via ConsensusPeerEvictionVote for the same per-vote Signed preservation rationale as ViewChangeVote).
     *
     * Without this registration, inbound ConsensusPeerEvictionVote rumors gossiped by other peers are silently dropped at the rumor-router
     * layer — Kryo decodes them, but nothing dispatches them to the ConsensusCommand queue. That kept EvictionCertificate assembly stuck at
@@ -69,13 +73,13 @@ class ConsensusRumorHandlers[F[
   val evictionVoteHandler: RumorHandler[F] =
     RumorHandlerWithQueue.peer[F, ConsensusPeerEvictionVote[Key]](queue.offer)
 
-  /** 11. AdmissionVote (B2, symmetric counterpart of EvictionVote). Same wiring requirements — without registration, inbound
+  /** 12. AdmissionVote (B2, symmetric counterpart of EvictionVote). Same wiring requirements — without registration, inbound
     * ConsensusPeerAdmissionVote rumors are silently dropped.
     */
   val admissionVoteHandler: RumorHandler[F] =
     RumorHandlerWithQueue.peer[F, ConsensusPeerAdmissionVote[Key]](queue.offer)
 
-  /** 12. AssembledVcc (re-distribution of a locally-built ViewChangeCertificate). Lets peers that did NOT see local quorum for a
+  /** 13. AssembledVcc (re-distribution of a locally-built ViewChangeCertificate). Lets peers that did NOT see local quorum for a
     * `(fromView, toView)` transition still store the VCC locally, so they can build a valid proposal when they next lead at `view > 0`.
     * Symmetric wiring to the other vote handlers -- without registration, inbound ConsensusAssembledVcc rumors are silently dropped at the
     * rumor-router layer.
