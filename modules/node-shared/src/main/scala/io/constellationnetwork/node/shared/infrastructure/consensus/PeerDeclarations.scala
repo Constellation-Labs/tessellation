@@ -17,6 +17,11 @@ object PeerDeclarationsArbitraries {
   implicit val vccOptionArb: Arbitrary[Option[ViewChangeCertificate]] =
     Arbitrary(Gen.const(None))
 
+  // Same rationale for TimeoutCertificate: random PeerDeclarations do not need
+  // cryptographically signed timeout certs unless a test constructs one explicitly.
+  implicit val timeoutCertificateOptionArb: Arbitrary[Option[TimeoutCertificate]] =
+    Arbitrary(Gen.const(None))
+
   // Same rationale for EvictionCertificate list: the cert wraps a NonEmptySet[Signed[EvictionVote]]
   // that needs full crypto generators. Property-based test fixtures almost never need random
   // eviction certificates; tests that need a real cert build one explicitly.

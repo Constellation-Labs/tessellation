@@ -675,7 +675,15 @@ object types {
     //     v24: first-class TimeoutVote / TimeoutCertificate collection. TC is signed and
     //     parent-hash anchored but intentionally inert in v24: it assembles/stores evidence
     //     only and does not advance view, shrink Core, or validate proposals.
-    consensusSchemaVersion: Int = 24,
+    //     v25: TC becomes active. Delayed TC apply advances the view deterministically from
+    //     signed quorum evidence (atomic on viewNumber==fromView); leaders carry VCC OR TC on
+    //     view>seed proposals; followers validate TC-carried proposals (view linkage, quorum,
+    //     parent/facilitator hash, witness pool, divergent + carry-forward highest-QC). `Proposal`
+    //     gains `timeoutCertificate: Option[TimeoutCertificate]` -- a wire change, so deploy as a
+    //     coordinated cold L0 restart. As always the jar/config-hash mismatch at handshake is the
+    //     real gate; this bump is the audit anchor. Not yet: certified shrink/yield, TC gossip
+    //     rehydration.
+    consensusSchemaVersion: Int = 25,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with

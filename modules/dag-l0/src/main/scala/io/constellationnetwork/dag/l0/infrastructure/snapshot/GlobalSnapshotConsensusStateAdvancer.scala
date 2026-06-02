@@ -986,11 +986,26 @@ object GlobalSnapshotConsensusStateAdvancer {
           maybeAssembledVcc <-
             if (state.viewNumber > state.initialViewNumber) consensusStorage.getAssembledVcc(state.key)
             else none[ViewChangeCertificate].pure[F]
+          maybeTimeoutCertificate <-
+            if (state.viewNumber > state.initialViewNumber)
+              consensusStorage
+                .getResources(state.key)
+                .map(_.timeoutCertificates.get((state.viewNumber.toLong - 1L, state.viewNumber.toLong)))
+            else none[TimeoutCertificate].pure[F]
           vccHighestQc = maybeAssembledVcc.flatMap(_.highestQcInVcc)
+          tcHighestQc = maybeTimeoutCertificate.flatMap { tc =>
+            val qcs = tc.votes.toNonEmptyList.toList.flatMap(_.value.highestKnownQc)
+            qcs.groupBy(_.view).toList.sortBy(_._1).lastOption.flatMap {
+              case (_, atView) =>
+                val hashes = atView.map(_.proposalHash).toSet
+                if (hashes.size === 1) atView.headOption else None
+            }
+          }
           // Highest-QC carry-forward: if the VCC carries a QC, the leader MUST propose that hash.
           // If our locally-built artifact hash differs, abort and let the next view retry. Mirror
           // the fetch gate above -- only enforce when post-seed.
           vccMismatch = isLeader && state.viewNumber > state.initialViewNumber && vccHighestQc.exists(_.proposalHash =!= hash)
+          tcMismatch = isLeader && state.viewNumber > state.initialViewNumber && tcHighestQc.exists(_.proposalHash =!= hash)
           // Missing VCC at view > 0 is normally a race (VCC was cleared between assembly and
           // proposal build) -- but if Core has degenerated to a single peer there is no quorum
           // to assemble from, so no VCC is achievable. Suppress the abort in that case: the
@@ -1005,8 +1020,11 @@ object GlobalSnapshotConsensusStateAdvancer {
           // `viewNumber > initialViewNumber`, a real view-change has occurred and the VCC
           // requirement re-engages.
           isRoundStartView = state.viewNumber === state.initialViewNumber
-          vccMissing = isLeader && state.viewNumber > 0 && maybeAssembledVcc.isEmpty && !isSoloCore && !isRoundStartView
-          aborted = (isLeader && leaderLock.flatMap(_.lockedQc).exists(_.proposalHash =!= hash)) || vccMismatch || vccMissing
+          viewCertMissing =
+            isLeader && state.viewNumber > 0 && maybeAssembledVcc.isEmpty && maybeTimeoutCertificate.isEmpty && !isSoloCore && !isRoundStartView
+          aborted = (isLeader && leaderLock
+            .flatMap(_.lockedQc)
+            .exists(_.proposalHash =!= hash)) || vccMismatch || tcMismatch || viewCertMissing
           _ <- ConsensusLog
             .warn(
               logger,
@@ -1039,10 +1057,23 @@ object GlobalSnapshotConsensusStateAdvancer {
               state.key.show,
               role,
               Event.WithdrawValidationFail,
-              "reason" -> "vcc_missing_for_view_gt_0",
+              "reason" -> "tc_highest_qc_mismatch",
+              "qcHash" -> tcHighestQc.map(_.proposalHash.show.take(8)).getOrElse("none"),
+              "proposingHash" -> hash.show.take(8),
               "view" -> state.viewNumber.toString
             )
-            .whenA(vccMissing)
+            .whenA(tcMismatch)
+          _ <- ConsensusLog
+            .warn(
+              logger,
+              Category.Validation,
+              state.key.show,
+              role,
+              Event.WithdrawValidationFail,
+              "reason" -> "view_cert_missing_for_view_gt_0",
+              "view" -> state.viewNumber.toString
+            )
+            .whenA(viewCertMissing)
         } yield
           if (aborted) none[Transition]
           else
@@ -1078,6 +1109,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                         state.lastOutcome.finished.snapshotHash,
                         state.viewNumber.toLong,
                         maybeAssembledVcc,
+                        maybeTimeoutCertificate,
                         ecs.toList,
                         acs.toList,
                         observedResponders,
@@ -1166,14 +1198,20 @@ object GlobalSnapshotConsensusStateAdvancer {
                       maybeVcc <-
                         if (state.viewNumber > 0) consensusStorage.getAssembledVcc(state.key)
                         else none[ViewChangeCertificate].pure[F]
+                      maybeTc <-
+                        if (state.viewNumber > state.initialViewNumber)
+                          consensusStorage
+                            .getResources(state.key)
+                            .map(_.timeoutCertificates.get((state.viewNumber.toLong - 1L, state.viewNumber.toLong)))
+                        else none[TimeoutCertificate].pure[F]
                       ecs <-
                         if (isInBootstrap(state)) Set.empty[EvictionCertificate].pure[F]
                         else consensusStorage.getAssembledEvictionCertificates(state.key)
                       acs <-
                         if (isInBootstrap(state)) Set.empty[AdmissionCertificate].pure[F]
                         else consensusStorage.getAssembledAdmissionCertificates(state.key)
-                    } yield (maybeVcc, ecs, acs)).flatMap {
-                      case (maybeVcc, ecs, acs) =>
+                    } yield (maybeVcc, maybeTc, ecs, acs)).flatMap {
+                      case (maybeVcc, maybeTc, ecs, acs) =>
                         ConsensusLog.info(
                           logger,
                           Category.Phase,
@@ -1193,6 +1231,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                             status.lastSnapshotHash,
                             state.viewNumber.toLong,
                             maybeVcc,
+                            maybeTc,
                             ecs.toList,
                             acs.toList,
                             // v7 codex turn 2 fix #2: re-spread MUST read observedResponders
@@ -1429,6 +1468,7 @@ object GlobalSnapshotConsensusStateAdvancer {
           proposalView = proposal.view,
           proposalHash = proposal.hash,
           proposalVcc = proposal.vcc,
+          proposalTimeoutCertificate = proposal.timeoutCertificate,
           initialViewNumber = state.initialViewNumber,
           coreSize = state.coreFacilitators.value.size,
           facilitatorsHash = facilitatorsHash,
@@ -1453,6 +1493,18 @@ object GlobalSnapshotConsensusStateAdvancer {
           val invalidPeers = results.toList.collect { case Left(pid) => pid.code }
           if (invalidPeers.isEmpty) Right(())
           else Left(ProposalRejection(s"vcc_invalid_signatures peers=${invalidPeers.mkString(",")}"))
+        }
+
+      private def verifyTcSignatures(tc: TimeoutCertificate)(implicit hasher: Hasher[F]): F[Either[ProposalRejection, Unit]] =
+        tc.votes.toNonEmptyList.traverse { signedVote =>
+          signedVote.hasValidSignature[F].map {
+            case true  => Right(()): Either[ProposalRejection, Unit]
+            case false => Left(ProposalRejection(signedVote.proofs.head.id.show.take(8)))
+          }
+        }.map { results =>
+          val invalidPeers = results.toList.collect { case Left(pid) => pid.code }
+          if (invalidPeers.isEmpty) Right(())
+          else Left(ProposalRejection(s"tc_invalid_signatures peers=${invalidPeers.mkString(",")}"))
         }
 
       // Phase B1 bootstrap gate. Mirrors Phase 4's penalty-accrual suppression: while the chain
@@ -1742,8 +1794,9 @@ object GlobalSnapshotConsensusStateAdvancer {
           val isStaleSlotPattern =
             leaderProposal.view < state.initialViewNumber.toLong &&
               leaderProposal.vcc.isEmpty &&
+              leaderProposal.timeoutCertificate.isEmpty &&
               rejection.code.startsWith("view") &&
-              rejection.code.endsWith("_proposal_missing_vcc")
+              rejection.code.endsWith("_proposal_missing_view_cert")
           // Alpha.97 stale-local-view detection. Distinct from the stale-slot pattern
           // above: the stale-slot fires when our recorded `initialViewNumber` advanced
           // past the leader's proposalView (the slot self-heals via prune). Stale-local-
@@ -1751,8 +1804,9 @@ object GlobalSnapshotConsensusStateAdvancer {
           // round state is the wedge. Recover via the in-place soft reset.
           val isStaleLocalViewPattern =
             !isStaleSlotPattern && (
-              (rejection.code.startsWith("view") && rejection.code.endsWith("_proposal_missing_vcc")) ||
-                rejection.code.startsWith("vcc_view_mismatch")
+              (rejection.code.startsWith("view") && rejection.code.endsWith("_proposal_missing_view_cert")) ||
+                rejection.code.startsWith("vcc_view_mismatch") ||
+                rejection.code.startsWith("tc_view_mismatch")
             )
           val maybePruneAndMeter =
             if (isStaleSlotPattern)
@@ -1853,6 +1907,14 @@ object GlobalSnapshotConsensusStateAdvancer {
                 }
               case None => resolveLeaderProposalInner(state, status, resources, leaderProposal)
             }
+            val afterViewCertSig: F[Option[Transition]] = leaderProposal.timeoutCertificate match {
+              case Some(tc) =>
+                verifyTcSignatures(tc).flatMap {
+                  case Left(reason) => logVccReject(reason)
+                  case Right(_)     => afterVccSig
+                }
+              case None => afterVccSig
+            }
             // B1 eviction-certificate validation layered onto the same path. Validation
             // short-circuits if any cert fails so an adversarial leader cannot smuggle
             // malformed evictions into proposal acceptance. B2 admission-certificate
@@ -1862,11 +1924,11 @@ object GlobalSnapshotConsensusStateAdvancer {
               validateProposalEcs(state, leaderProposal, status.facilitatorsHash) match {
                 case Left(reason) => logEcsReject(reason)
                 case Right(_) =>
-                  if (leaderProposal.evictionCertificates.isEmpty) afterVccSig
+                  if (leaderProposal.evictionCertificates.isEmpty) afterViewCertSig
                   else
                     verifyEcsSignatures(leaderProposal).flatMap {
                       case Left(reason) => logEcsReject(reason)
-                      case Right(_)     => afterVccSig
+                      case Right(_)     => afterViewCertSig
                     }
               }
             val afterAcs: F[Option[Transition]] =
@@ -2932,6 +2994,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         lastSnapshotHash: Hash,
         view: Long = 0L,
         vcc: Option[ViewChangeCertificate] = None,
+        timeoutCertificate: Option[TimeoutCertificate] = None,
         evictionCertificates: List[EvictionCertificate] = List.empty,
         admissionCertificates: List[AdmissionCertificate] = List.empty,
         observedResponders: List[PeerId] = List.empty,
@@ -2947,7 +3010,18 @@ object GlobalSnapshotConsensusStateAdvancer {
         val declaration =
           ConsensusPeerDeclaration(
             key,
-            Proposal(hash, facilitatorsHash, lastSnapshotHash, view, vcc, sortedEcs, sortedAcs, sortedObs, observedSelfHealth)
+            Proposal(
+              hash = hash,
+              facilitatorsHash = facilitatorsHash,
+              lastSnapshotHash = lastSnapshotHash,
+              view = view,
+              vcc = vcc,
+              timeoutCertificate = timeoutCertificate,
+              evictionCertificates = sortedEcs,
+              admissionCertificates = sortedAcs,
+              observedResponders = sortedObs,
+              observedSelfHealth = observedSelfHealth
+            )
           )
         val targets = state.facilitators.value.toSet
 

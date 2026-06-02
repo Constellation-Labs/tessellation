@@ -9,6 +9,7 @@ import scala.concurrent.duration._
 import scala.reflect.runtime.universe.TypeTag
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.TimeoutReason
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand._
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine._
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.GetConsensusOutcomeRequest
@@ -333,27 +334,51 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                           )
                         )
                     case Right(tc) =>
-                      storage.storeTimeoutCertificate(key, tc) >>
-                        ConsensusLog.info(
-                          log,
-                          Category.Phase,
-                          key.show,
-                          "n/a",
-                          LogEvent.ViewChange,
-                          "assembly" -> "timeout_cert_assembled",
-                          "timeoutReason" -> reason.toString,
-                          "fromView" -> fromView.toString,
-                          "toView" -> toView.toString,
-                          "votes" -> votesBySigner.size.toString,
-                          "quorum" -> q.toString
-                        ) >>
-                        Metrics[F].incrementCounter(
-                          "dag_consensus_timeout_certificate_total",
-                          Seq(
-                            unsafeLabelName("outcome") -> "assembled",
-                            unsafeLabelName("reason") -> reason.toString
+                      for {
+                        shouldSchedule <- storage.markTimeoutCertificateApplyScheduled(key, lastSnapshotHash, fromView, toView)
+                        _ <- storage.storeTimeoutCertificate(key, tc)
+                        _ <- ConsensusLog
+                          .info(
+                            log,
+                            Category.Phase,
+                            key.show,
+                            "n/a",
+                            LogEvent.ViewChange,
+                            "assembly" -> "timeout_cert_assembled",
+                            "timeoutReason" -> reason.toString,
+                            "fromView" -> fromView.toString,
+                            "toView" -> toView.toString,
+                            "votes" -> votesBySigner.size.toString,
+                            "quorum" -> q.toString,
+                            "applyDelayMs" -> config.viewChangeApplyDelay.toMillis.toString
                           )
-                        )
+                          .whenA(shouldSchedule)
+                        _ <- Metrics[F]
+                          .incrementCounter(
+                            "dag_consensus_timeout_certificate_total",
+                            Seq(
+                              unsafeLabelName("outcome") -> "scheduled",
+                              unsafeLabelName("reason") -> reason.toString
+                            )
+                          )
+                          .whenA(shouldSchedule)
+                        _ <- Metrics[F]
+                          .incrementCounter(
+                            "dag_consensus_timeout_certificate_total",
+                            Seq(
+                              unsafeLabelName("outcome") -> "duplicate_suppressed",
+                              unsafeLabelName("reason") -> reason.toString
+                            )
+                          )
+                          .unlessA(shouldSchedule)
+                        _ <- Async[F]
+                          .start(
+                            Temporal[F].sleep(config.viewChangeApplyDelay) >>
+                              queue.offer(ConsensusCommand.CheckTimeoutCertificateApply(key, fromView, toView))
+                          )
+                          .void
+                          .whenA(shouldSchedule)
+                      } yield ()
                   }
                 case Nil =>
                   log.debug(
@@ -389,6 +414,42 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                       )
                     )
               }
+          }
+        }
+    }
+
+  def checkTimeoutCertificateApply(key: Key, fromView: Long, toView: Long): F[Unit] =
+    storage.getState(key).flatMap {
+      case None => Async[F].unit
+      case Some(state) if ctx.ops.isFinished(state.status) =>
+        Metrics[F].incrementCounter(
+          "dag_consensus_timeout_certificate_apply_total",
+          Seq(
+            unsafeLabelName("outcome") -> "stale",
+            unsafeLabelName("reason") -> "round_finished"
+          )
+        )
+      case Some(state) if state.viewNumber.toLong =!= fromView =>
+        Metrics[F].incrementCounter(
+          "dag_consensus_timeout_certificate_apply_total",
+          Seq(
+            unsafeLabelName("outcome") -> "stale",
+            unsafeLabelName("reason") -> "view_already_changed"
+          )
+        )
+      case Some(state) =>
+        storage.getResources(key).flatMap { resources =>
+          resources.timeoutCertificates.get((fromView, toView)) match {
+            case None =>
+              Metrics[F].incrementCounter(
+                "dag_consensus_timeout_certificate_apply_total",
+                Seq(
+                  unsafeLabelName("outcome") -> "waiting_for_certificate",
+                  unsafeLabelName("reason") -> "not_stored"
+                )
+              )
+            case Some(tc) =>
+              applyCertifiedTimeoutCertificate(key, state, resources, fromView, toView, tc.reason)
           }
         }
     }
@@ -587,6 +648,165 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
               Seq(
                 unsafeLabelName("outcome") -> "divergent_facilitators_hash",
                 unsafeLabelName("reason") -> "multiple_hashes"
+              )
+            )
+      }
+  }
+
+  private def applyCertifiedTimeoutCertificate(
+    key: Key,
+    state: ConsensusState[Key, Status, Outcome, Kind],
+    resources: ConsensusResources[Artifact, Kind],
+    fromView: Long,
+    toView: Long,
+    reason: TimeoutReason
+  ): F[Unit] = {
+    val votes = resources.timeoutVotes.getOrElse((fromView, toView), Map.empty)
+    val reasonVotes = votes.collect { case (pid, signed) if signed.value.reason === reason => pid -> signed }
+    val n = state.coreFacilitators.value.size
+    val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
+
+    if (reasonVotes.size < q)
+      Metrics[F].incrementCounter(
+        "dag_consensus_timeout_certificate_apply_total",
+        Seq(
+          unsafeLabelName("outcome") -> "waiting_for_quorum",
+          unsafeLabelName("reason") -> "insufficient_votes"
+        )
+      )
+    else
+      votes.values.filter(_.value.reason === reason).map(_.value.facilitatorsHash).toSet.toList match {
+        case singleHash :: Nil =>
+          val tcPool = widerWitnessPoolAll(state)
+          val lastSnapshotHash = ctx.lastSnapshotHashOf(state.lastOutcome)
+          TimeoutCertificateBuilder.build(fromView, toView, singleHash, lastSnapshotHash, reason, reasonVotes, q, tcPool) match {
+            case Left(error) =>
+              ConsensusLog.warn(
+                log,
+                Category.Phase,
+                key.show,
+                "n/a",
+                LogEvent.ViewChange,
+                "assembly" -> "timeout_cert_apply_build_failed",
+                "reason" -> error.code,
+                "timeoutReason" -> reason.toString,
+                "fromView" -> fromView.toString,
+                "toView" -> toView.toString,
+                "votes" -> reasonVotes.size.toString,
+                "quorum" -> q.toString
+              ) >>
+                Metrics[F].incrementCounter(
+                  "dag_consensus_timeout_certificate_apply_total",
+                  Seq(
+                    unsafeLabelName("outcome") -> "build_failed",
+                    unsafeLabelName("reason") -> error.code
+                  )
+                )
+            case Right(_) =>
+              val leaderPool = StateTransitions.viewChangeLeaderPool(
+                state.coreFacilitators.value,
+                state.facilitators.value
+              )
+              val newLeader = facilitatorSelector.selectLeader(leaderPool, state.entropy, toView.toInt)
+              val resetStatus = ctx.ops.freshCollectingFacilities(state.status)
+              val modify: ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] =
+                new ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] {
+                  def apply(
+                    maybeState: Option[ConsensusState[Key, Status, Outcome, Kind]]
+                  ): F[Option[(Option[ConsensusState[Key, Status, Outcome, Kind]], Boolean)]] =
+                    maybeState match {
+                      case Some(s) if s.viewNumber.toLong === fromView =>
+                        val updated: ConsensusState[Key, Status, Outcome, Kind] = resetStatus match {
+                          case Some(fresh) =>
+                            s.copy(
+                              viewNumber = toView.toInt,
+                              leader = newLeader,
+                              status = fresh,
+                              withdrawnFacilitators = WithdrawnFacilitators.empty
+                            )
+                          case None =>
+                            s.copy(
+                              viewNumber = toView.toInt,
+                              leader = newLeader,
+                              withdrawnFacilitators = WithdrawnFacilitators.empty
+                            )
+                        }
+                        (updated.some, true).some.pure[F]
+                      case _ =>
+                        none[(Option[ConsensusState[Key, Status, Outcome, Kind]], Boolean)].pure[F]
+                    }
+                }
+
+              for {
+                advanced <- storage.condModifyState[Boolean](key)(modify)
+                didAdvance = advanced.getOrElse(false)
+                _ <- ConsensusLog
+                  .info(
+                    log,
+                    Category.Phase,
+                    key.show,
+                    "n/a",
+                    LogEvent.ViewChange,
+                    "assembly" -> "timeout_cert_advanced",
+                    "timeoutReason" -> reason.toString,
+                    "fromView" -> fromView.toString,
+                    "toView" -> toView.toString,
+                    "votes" -> reasonVotes.size.toString,
+                    "quorum" -> q.toString,
+                    "leaderPool" -> (if (leaderPool == state.coreFacilitators.value) "core" else "facilitators_fallback"),
+                    "leaderPoolSize" -> leaderPool.size.toString,
+                    "newLeader" -> ConsensusLog.pid(newLeader),
+                    "statusReset" -> resetStatus.isDefined.toString
+                  )
+                  .whenA(didAdvance)
+                _ <- Metrics[F]
+                  .incrementCounter(
+                    "dag_consensus_timeout_certificate_apply_total",
+                    Seq(
+                      unsafeLabelName("outcome") -> "advanced",
+                      unsafeLabelName("reason") -> reason.toString
+                    )
+                  )
+                  .whenA(didAdvance)
+                _ <- Metrics[F]
+                  .incrementCounter(
+                    "dag_consensus_timeout_certificate_apply_total",
+                    Seq(
+                      unsafeLabelName("outcome") -> "not_advanced_race",
+                      unsafeLabelName("reason") -> "state_already_advanced"
+                    )
+                  )
+                  .unlessA(didAdvance)
+                _ <- Metrics[F].updateGauge("dag_consensus_view_number", toView).whenA(didAdvance)
+                _ <- queue.offer(ConsensusCommand.CheckUpdate(key)).whenA(didAdvance)
+              } yield ()
+          }
+        case Nil =>
+          Metrics[F].incrementCounter(
+            "dag_consensus_timeout_certificate_apply_total",
+            Seq(
+              unsafeLabelName("outcome") -> "waiting_for_quorum",
+              unsafeLabelName("reason") -> "reason_votes_missing"
+            )
+          )
+        case multiple =>
+          ConsensusLog.warn(
+            log,
+            Category.Phase,
+            key.show,
+            "n/a",
+            LogEvent.ViewChange,
+            "assembly" -> "timeout_cert_apply_divergent_facilitators_hash",
+            "hashes" -> multiple.size.toString,
+            "timeoutReason" -> reason.toString,
+            "fromView" -> fromView.toString,
+            "toView" -> toView.toString
+          ) >>
+            Metrics[F].incrementCounter(
+              "dag_consensus_timeout_certificate_apply_total",
+              Seq(
+                unsafeLabelName("outcome") -> "divergent_facilitators_hash",
+                unsafeLabelName("reason") -> reason.toString
               )
             )
       }

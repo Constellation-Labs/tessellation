@@ -9,10 +9,10 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
-/** Assembles inert timeout certificates from signed timeout votes.
+/** Assembles timeout certificates from signed timeout votes.
   *
-  * Phase 1 intentionally does not apply the certificate to state. The builder exists so testnet can prove whether timeout quorum forms during
-  * stalls before TC is allowed to drive view advancement or certified shrink.
+  * TC application reuses this builder at apply time so a locally stored or proposal-carried certificate is checked against the same quorum,
+  * witness-pool, parent-hash, and highest-QC invariants as local assembly.
   */
 object TimeoutCertificateBuilder {
 
