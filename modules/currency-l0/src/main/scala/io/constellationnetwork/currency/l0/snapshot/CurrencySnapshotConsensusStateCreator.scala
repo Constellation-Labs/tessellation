@@ -108,15 +108,13 @@ object CurrencySnapshotConsensusStateCreator {
         candidates <- consensusStorage.getCandidates(key.next)
         previousEligible = lastOutcome.eligibleOrFacilitators
         approvedCandidates = lastOutcome.finished.candidates.value
-        seedlistPeerIds = seedlist.map(_.map(_.peerId)).getOrElse(Set.empty)
+        seedlistPeerIds = seedlist.fold(List.empty[PeerId])(_.toList.map(_.peerId))
 
         filteredPreviousEligible = previousEligible
           .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
 
         filteredCandidates = approvedCandidates
           .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
-
-        previousEligibleSet = filteredPreviousEligible.toSet
 
         // Full base. Removed peers stay in this set so they can re-enter in future rounds;
         // the multi-round penalty filter (penalizedPeers below) is the only behavioural gate
@@ -326,11 +324,38 @@ object CurrencySnapshotConsensusStateCreator {
         // Quality-weighted leader selection using consensus-agreed integer quality scores.
         // v19: leader pool draws ONLY from the Core committee. See dag-l0 mirror.
         coreList = committees.core
-        graduatedLeaderPool = coreList.filter { pid =>
-          val (completed, participated) = lastOutcome.peerQuality.getOrElse(pid, (0, 0))
-          participated >= config.minParticipationObservations && completed >= 1
-        }
-        leaderPool = if (graduatedLeaderPool.size >= 2) graduatedLeaderPool else coreList
+        leaderEligibility = LeaderEligibility.fromRecentSigners(
+          core = coreList,
+          peerQuality = lastOutcome.peerQuality,
+          recentSigners = lastOutcome.recentSigners,
+          minParticipationObservations = config.minParticipationObservations,
+          minLeaderPoolSize = config.minLeaderPoolSize
+        )
+        leaderPool = leaderEligibility.leaderPool
+        exclusionReasonLabel = Metrics.unsafeLabelName("reason")
+        exclusionDecisionLabel = Metrics.unsafeLabelName("decision")
+        _ <- leaderEligibility.exclusions
+          .groupBy(_.reason.label)
+          .toList
+          .traverse_ {
+            case (reason, exclusions) =>
+              Metrics[F].incrementCounterBy(
+                "dag_consensus_leader_eligibility_total",
+                exclusions.size,
+                Seq(
+                  exclusionDecisionLabel -> "excluded",
+                  exclusionReasonLabel -> reason
+                )
+              )
+          }
+        _ <- Metrics[F].incrementCounterBy(
+          "dag_consensus_leader_eligibility_total",
+          leaderPool.size,
+          Seq(
+            exclusionDecisionLabel -> "eligible",
+            exclusionReasonLabel -> "selected_pool"
+          )
+        )
         // Phase 1 + phase 2 combined view seed. Mirror of dag-l0; see
         // GlobalSnapshotConsensusStateCreator for full rationale.
         nowMs <- Clock[F].realTime.map(_.toMillis)
@@ -358,6 +383,12 @@ object CurrencySnapshotConsensusStateCreator {
           "eligible" -> allEligible.size.toString,
           "active" -> active.size.toString,
           "core" -> coreList.size.toString,
+          "leaderPool" -> leaderPool.size.toString,
+          "graduatedLeaderPool" -> leaderEligibility.graduatedPoolSize.toString,
+          "recentSignerLeaderPool" -> leaderEligibility.recentSignerPoolSize.toString,
+          "recentSignerWindow" -> leaderEligibility.recentWindowSize.toString,
+          "recentSignerFilterApplied" -> leaderEligibility.recentFilterApplied.toString,
+          "leaderExclusions" -> leaderEligibility.exclusions.size.toString,
           "excluded" -> (allEligible.size - eligibleThisRound.size).toString,
           "leader" -> ConsensusLog.pid(leader)
         )

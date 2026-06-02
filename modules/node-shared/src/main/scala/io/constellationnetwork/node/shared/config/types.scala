@@ -666,7 +666,13 @@ object types {
     //     the most-recent `TierTransitions.DemotionConsecutiveMisses` signer sets, not on a
     //     single missed signature). `coreCommitteeSize` is in `deterministicConfigHash`, so
     //     the config-hash + jar-hash are the gate; v22 is the audit anchor for B.
-    consensusSchemaVersion: Int = 22,
+    //     v23: leader selection also narrows the Core leader pool to peers present in the
+    //     most-recent `TierTransitions.DemotionConsecutiveMisses` signer sets, when that
+    //     leaves at least `minLeaderPoolSize` candidates. Deterministic: `recentSigners`
+    //     is signed outcome state. This does not shrink Core or change quorum; it only
+    //     keeps sustained non-signers out of the leader slot until certified
+    //     timeout/shrink replaces local Core-gate inference.
+    consensusSchemaVersion: Int = 23,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with
