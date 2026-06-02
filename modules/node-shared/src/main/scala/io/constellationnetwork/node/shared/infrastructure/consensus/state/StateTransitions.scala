@@ -393,6 +393,20 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                       "quorum" -> q.toString
                     )
                   )
+                case _ :: Nil =>
+                  log.debug(
+                    ConsensusLog.format(
+                      Category.Phase,
+                      key.show,
+                      "n/a",
+                      LogEvent.ViewChange,
+                      "assembly" -> "timeout_waiting_for_quorum",
+                      "timeoutReason" -> reason.toString,
+                      "votes" -> votesBySigner.size.toString,
+                      "quorum" -> q.toString,
+                      "hashes" -> "1"
+                    )
+                  )
                 case multiple =>
                   ConsensusLog.warn(
                     log,
