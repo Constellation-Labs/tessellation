@@ -249,7 +249,13 @@ object CurrencySnapshotConsensusStateCreator {
         // Apply deterministic subset selection using hash-distance ordering
         // Uses the previous round's snapshot hash as entropy for randomization
         entropy = lastOutcome.finished.snapshotHash
-        activeFacilitators = facilitatorSelector.select(eligibleThisRound, entropy)
+        selectedFacilitators = facilitatorSelector.select(eligibleThisRound, entropy)
+        activeAdmission = ActiveFacilitatorAdmission.fromRecentSigners(
+          selected = selectedFacilitators,
+          recentSigners = lastOutcome.recentSigners,
+          minActiveSize = coreCommitteeSize
+        )
+        activeFacilitators = activeAdmission.active
 
         _ <- ConsensusLog
           .info(
@@ -260,9 +266,42 @@ object CurrencySnapshotConsensusStateCreator {
             Event.FacilitatorSubsetting,
             "allEligible" -> allEligible.size.toString,
             "eligibleThisRound" -> eligibleThisRound.size.toString,
-            "selected" -> activeFacilitators.size.toString
+            "selected" -> selectedFacilitators.size.toString,
+            "active" -> activeFacilitators.size.toString,
+            "recentSignerPool" -> activeAdmission.recentSignerPoolSize.toString,
+            "recentSignerWindow" -> activeAdmission.recentWindowSize.toString,
+            "recentSignerFilterApplied" -> activeAdmission.recentFilterApplied.toString,
+            "recentSignerExclusions" -> activeAdmission.exclusions.size.toString
           )
-          .whenA(activeFacilitators.size < allEligible.size)
+          .whenA(selectedFacilitators.size < allEligible.size || activeAdmission.exclusions.nonEmpty)
+
+        admissionReasonLabel = Metrics.unsafeLabelName("reason")
+        admissionDecisionLabel = Metrics.unsafeLabelName("decision")
+        _ <- activeAdmission.exclusions
+          .groupBy(_.reason.label)
+          .toList
+          .traverse_ {
+            case (reason, exclusions) =>
+              Metrics[F].incrementCounterBy(
+                "dag_consensus_active_facilitator_admission_total",
+                exclusions.size,
+                Seq(
+                  admissionDecisionLabel -> "excluded",
+                  admissionReasonLabel -> reason
+                )
+              )
+          }
+        _ <- Metrics[F].incrementCounterBy(
+          "dag_consensus_active_facilitator_admission_total",
+          activeFacilitators.size,
+          Seq(
+            admissionDecisionLabel -> "admitted",
+            admissionReasonLabel -> "selected_pool"
+          )
+        )
+        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_selected_size", selectedFacilitators.size.toLong)
+        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_admitted_size", activeFacilitators.size.toLong)
+        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_recent_pool_size", activeAdmission.recentSignerPoolSize.toLong)
 
         (withdrawn, active) = activeFacilitators.partition { peerId =>
           resources.withdrawalsMap.get(peerId).contains(CurrencyConsensusKind.Facility)
@@ -384,6 +423,9 @@ object CurrencySnapshotConsensusStateCreator {
           "active" -> active.size.toString,
           "core" -> coreList.size.toString,
           "leaderPool" -> leaderPool.size.toString,
+          "recentSignerActivePool" -> activeAdmission.recentSignerPoolSize.toString,
+          "recentSignerActiveFilterApplied" -> activeAdmission.recentFilterApplied.toString,
+          "activeExclusions" -> activeAdmission.exclusions.size.toString,
           "graduatedLeaderPool" -> leaderEligibility.graduatedPoolSize.toString,
           "recentSignerLeaderPool" -> leaderEligibility.recentSignerPoolSize.toString,
           "recentSignerWindow" -> leaderEligibility.recentWindowSize.toString,
